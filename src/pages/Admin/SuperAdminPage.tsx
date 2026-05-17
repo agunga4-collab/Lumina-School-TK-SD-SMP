@@ -1,0 +1,1699 @@
+import * as React from "react";
+import { motion } from "motion/react";
+import {
+  Users,
+  Mail,
+  UserPlus,
+  CheckCircle2,
+  XCircle,
+  Search,
+  Trash2,
+  Edit2,
+  ShieldCheck,
+  ChevronRight,
+  Loader2,
+  Sparkles,
+  ArrowRight,
+  AlertCircle,
+  Plus,
+  Filter,
+  Smile,
+  Footprints,
+  Brain,
+  GraduationCap,
+  BookOpen,
+} from "lucide-react";
+import {
+  getAllInvites,
+  getPendingUsers,
+  addInvite,
+  updateInvite,
+  deleteInvite,
+  activateUser,
+  getClasses,
+  addClass,
+  updateClass,
+  deleteClass,
+  getTeachers,
+} from "../../lib/firebase";
+import { auth } from "../../lib/firebase";
+import { User, RoleInvite, UserRole, UnitType, Class } from "../../types";
+import { cn } from "../../lib/utils";
+
+export default function SuperAdminPage() {
+  const [selectedUnit, setSelectedUnit] = React.useState<UnitType | "ALL">(
+    "ALL",
+  );
+  const [activeTab, setActiveTab] = React.useState<
+    "STAFF" | "STUDENT" | "PARENT" | "CLASSES"
+  >("STAFF");
+  const [invites, setInvites] = React.useState<(RoleInvite & { id: string })[]>(
+    [],
+  );
+  const [pendingUsers, setPendingUsers] = React.useState<User[]>([]);
+  const [classes, setClasses] = React.useState<Class[]>([]);
+  const [teachers, setTeachers] = React.useState<User[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [isModalOpen, setIsModalOpen] = React.useState(false);
+  const [isClassModalOpen, setIsClassModalOpen] = React.useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = React.useState(false);
+  const [importMode, setImportMode] = React.useState<
+    "STAFF" | "STUDENT" | "PARENT"
+  >("STAFF");
+  const [searchTerm, setSearchTerm] = React.useState("");
+
+  // Import State
+  const [importLoading, setImportLoading] = React.useState(false);
+  const [importResult, setImportResult] = React.useState<{
+    created: number;
+    updated: number;
+    skipped: number;
+    errors: string[];
+  } | null>(null);
+  const [resetLoading, setResetLoading] = React.useState(false);
+
+  // Form state
+  const [formLoading, setFormLoading] = React.useState(false);
+  const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [formData, setFormData] = React.useState<Omit<RoleInvite, "createdAt">>(
+    {
+      name: "",
+      email: "",
+      role: "TEACHER",
+      unitId: "JUNIOR_HIGH",
+      jobTitle: "",
+      status: "ready",
+      luminaId: "",
+      nisn: "",
+      nickname: "",
+      gender: "",
+      parentEmail: "",
+      fatherName: "",
+      motherName: "",
+      linkedStudents: [],
+    },
+  );
+
+  // Class Form State
+  const [classFormData, setClassFormData] = React.useState({
+    grade: "7",
+    className: "",
+    academicYear: "2025/2026",
+    homeroomTeacherId: "",
+    unitId: "JUNIOR_HIGH" as UnitType,
+  });
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const [inv, pend, cls, tchs] = await Promise.all([
+        getAllInvites(),
+        getPendingUsers(),
+        getClasses(),
+        getTeachers(),
+      ]);
+      setInvites(inv || []);
+      setPendingUsers(pend || []);
+      setClasses(cls || []);
+      setTeachers(tchs || []);
+    } catch (error) {
+      console.error("Error fetching admin data:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetData = async () => {
+    if (
+      !confirm(
+        "⚠️ PERINGATAN: Ini akan MENGHAPUS SEMUA data dummy (siswa, kasus MTSS, asesmen, LXD, dsb) di semua unit (TK, SD, SMP). Tindakan ini tidak dapat dibatalkan. Lanjutkan?",
+      )
+    )
+      return;
+
+    setResetLoading(true);
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const response = await fetch("/api/admin/reset-dummy-data", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+      });
+
+      let result;
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        result = await response.json();
+      } else {
+        const text = await response.text();
+        console.error("[SuperAdmin] Reset error - Non-JSON response:", text);
+        throw new Error(
+          `Server returned non-JSON response (${response.status}).`,
+        );
+      }
+
+      if (result.success) {
+        alert("Pembersihan data berhasil! Silakan mulai mengisi data baru.");
+        fetchData();
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (error: any) {
+      alert("Error: " + error.message);
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    fetchData();
+  }, []);
+
+  const handleImport = async () => {
+    setImportLoading(true);
+    setImportResult(null);
+    setIsImportModalOpen(false);
+
+    try {
+      const sheetId =
+        import.meta.env.VITE_GOOGLE_SHEET_ID_LUMINA || "GOOGLE_SHEET_ID_LUMINA";
+      let sheetName = "";
+
+      if (importMode === "STAFF")
+        sheetName = import.meta.env.VITE_GOOGLE_SHEET_NAME_GURU || "GuruLumina";
+      else if (importMode === "STUDENT") sheetName = "SiswaLumina";
+      else if (importMode === "PARENT") sheetName = "OrtuLumina";
+
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) throw new Error("Authentication required");
+
+      const response = await fetch("/api/admin/bulk-import-users", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ sheetId, sheetName, mode: importMode }),
+      });
+
+      let result;
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        result = await response.json();
+      } else {
+        const text = await response.text();
+        console.error("[SuperAdmin] Non-JSON response:", text);
+        throw new Error(
+          `Server returned non-JSON response (${response.status}). Mohon hubungi admin.`,
+        );
+      }
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Server error");
+      }
+
+      setImportResult({
+        created: result.created,
+        updated: result.updated,
+        skipped: result.skipped,
+        errors: result.errors || [],
+      });
+      fetchData();
+    } catch (error: any) {
+      console.error("[SuperAdmin] Import error:", error);
+      alert("Error: " + error.message);
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const handleCreateOrUpdateClass = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormLoading(true);
+    try {
+      const fullClassName = `${classFormData.grade} ${classFormData.className}`;
+      const teacher = teachers.find(
+        (t) => t.uid === classFormData.homeroomTeacherId,
+      );
+
+      const classData = {
+        name: fullClassName,
+        grade: classFormData.grade,
+        unitId: classFormData.unitId,
+        academicYear: classFormData.academicYear,
+        homeroomTeacherId: classFormData.homeroomTeacherId || undefined,
+        homeroomTeacherName: teacher?.displayName || undefined,
+        status: "active" as const,
+      };
+
+      if (editingId && activeTab === "classes") {
+        await updateClass(editingId, classData);
+      } else {
+        await addClass(classData);
+      }
+
+      setIsClassModalOpen(false);
+      setEditingId(null);
+      setClassFormData({
+        grade: "7",
+        className: "",
+        academicYear: "2025/2026",
+        homeroomTeacherId: "",
+        unitId: "JUNIOR_HIGH",
+      });
+      fetchData();
+      alert("Kelas berhasil disimpan!");
+    } catch (error: any) {
+      console.error("Class form error:", error);
+      alert("Error: " + error.message);
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
+  const handleCreateOrUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormLoading(true);
+    try {
+      if (editingId) {
+        await updateInvite(editingId, formData);
+      } else {
+        const inviteId = await addInvite(formData);
+
+        // Auto-create Parent Invite if Student has parent details
+        if (
+          formData.role === "STUDENT" &&
+          formData.parentEmail &&
+          (formData.fatherName || formData.motherName)
+        ) {
+          const parentName =
+            formData.fatherName || formData.motherName || "Orang Tua";
+          const parentInvite: Omit<RoleInvite, "createdAt"> = {
+            name: parentName,
+            email: formData.parentEmail,
+            role: "PARENT",
+            unitId: formData.unitId,
+            status: "ready",
+            linkedStudents: [formData.luminaId || `INVITE_${inviteId}`],
+          };
+
+          // Check if parent invite already exists for this email
+          const existingInvites = await getAllInvites();
+          const existingParent = existingInvites.find(
+            (i) =>
+              i.email.toLowerCase() === formData.parentEmail?.toLowerCase() &&
+              i.role === "PARENT",
+          );
+
+          if (existingParent) {
+            // Update existing parent's linked students
+            const currentLinks = existingParent.linkedStudents || [];
+            if (
+              !currentLinks.includes(formData.luminaId || `INVITE_${inviteId}`)
+            ) {
+              await updateInvite(existingParent.id, {
+                linkedStudents: [
+                  ...currentLinks,
+                  formData.luminaId || `INVITE_${inviteId}`,
+                ],
+              });
+            }
+          } else {
+            // Add new parent invite
+            await addInvite(parentInvite);
+          }
+        }
+      }
+      setIsModalOpen(false);
+      setEditingId(null);
+      setFormData({
+        name: "",
+        email: "",
+        role: "TEACHER",
+        unitId: "JUNIOR_HIGH",
+        jobTitle: "",
+        status: "ready",
+        luminaId: "",
+        nisn: "",
+        nickname: "",
+        gender: "",
+        parentEmail: "",
+        fatherName: "",
+        motherName: "",
+        linkedStudents: [],
+      });
+      fetchData();
+    } catch (error) {
+      console.error("Form error:", error);
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Hapus undangan ini?")) return;
+    try {
+      await deleteInvite(id);
+      fetchData();
+    } catch (error: any) {
+      console.error("Delete error:", error);
+      alert("Gagal menghapus: " + error.message);
+    }
+  };
+
+  const handleActivate = async (uid: string, email: string) => {
+    const invite = invites.find(
+      (i) =>
+        i.email.toLowerCase() === email.toLowerCase() && i.status === "ready",
+    );
+    try {
+      await activateUser(uid, invite);
+      if (invite) {
+        await updateInvite(invite.id, { status: "used" });
+      }
+      fetchData();
+      alert("Akun berhasil diaktifkan!");
+    } catch (error) {
+      console.error("Activation error:", error);
+    }
+  };
+
+  const handleDeleteClass = async (id: string) => {
+    if (
+      !confirm(
+        "Hapus kelas ini? Ini tidak akan menghapus data siswa, namun referensi kelas di enrollment mungkin terputus.",
+      )
+    )
+      return;
+    try {
+      await deleteClass(id);
+      fetchData();
+    } catch (error: any) {
+      alert("Gagal menghapus kelas: " + error.message);
+    }
+  };
+
+  const unitStats = React.useMemo(() => {
+    const units: UnitType[] = ["KINDERGARTEN", "ELEMENTARY", "JUNIOR_HIGH"];
+    return units.reduce(
+      (acc, unit) => {
+        acc[unit] = {
+          students: invites.filter(
+            (i) => i.unitId === unit && i.role === "STUDENT",
+          ).length,
+          staff: invites.filter(
+            (i) =>
+              i.unitId === unit &&
+              [
+                "TEACHER",
+                "STAFF",
+                "BK_MENTOR",
+                "HEAD_UNIT",
+                "HEAD_JUNIOR",
+              ].includes(i.role),
+          ).length,
+          classes: classes.filter((c) => c.unitId === unit).length,
+          pending: pendingUsers.filter((u) => u.unitId === unit).length,
+        };
+        return acc;
+      },
+      {} as Record<string, any>,
+    );
+  }, [invites, classes, pendingUsers]);
+
+  const filteredInvites = invites.filter((i) => {
+    const matchesSearch =
+      i.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      i.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (i.luminaId &&
+        i.luminaId.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    const matchesUnit = selectedUnit === "ALL" || i.unitId === selectedUnit;
+
+    if (activeTab === "STAFF") {
+      return (
+        matchesSearch &&
+        matchesUnit &&
+        [
+          "SUPER_ADMIN",
+          "HEAD_UNIT",
+          "HEAD_JUNIOR",
+          "TEACHER",
+          "BK_MENTOR",
+          "STAFF",
+        ].includes(i.role)
+      );
+    }
+    if (activeTab === "STUDENT") {
+      return matchesSearch && matchesUnit && i.role === "STUDENT";
+    }
+    if (activeTab === "PARENT") {
+      return matchesSearch && matchesUnit && i.role === "PARENT";
+    }
+    return matchesSearch && matchesUnit;
+  });
+
+  const filteredClasses = classes.filter((c) => {
+    const matchesSearch =
+      c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.academicYear.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.homeroomTeacherName?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesUnit = selectedUnit === "ALL" || c.unitId === selectedUnit;
+    return matchesSearch && matchesUnit;
+  });
+
+  const filteredPending = pendingUsers.filter((u) => {
+    const matchesSearch =
+      u.displayName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      u.email.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesUnit = selectedUnit === "ALL" || u.unitId === selectedUnit;
+    return matchesSearch && matchesUnit;
+  });
+
+  const counts = {
+    STAFF: invites.filter(
+      (i) =>
+        (selectedUnit === "ALL" || i.unitId === selectedUnit) &&
+        [
+          "TEACHER",
+          "STAFF",
+          "BK_MENTOR",
+          "HEAD_UNIT",
+          "HEAD_JUNIOR",
+          "SUPER_ADMIN",
+        ].includes(i.role),
+    ).length,
+    STUDENT: invites.filter(
+      (i) =>
+        (selectedUnit === "ALL" || i.unitId === selectedUnit) &&
+        i.role === "STUDENT",
+    ).length,
+    PARENT: invites.filter(
+      (i) =>
+        (selectedUnit === "ALL" || i.unitId === selectedUnit) &&
+        i.role === "PARENT",
+    ).length,
+    CLASSES: classes.filter(
+      (c) => selectedUnit === "ALL" || c.unitId === selectedUnit,
+    ).length,
+    PENDING: pendingUsers.filter(
+      (u) => selectedUnit === "ALL" || u.unitId === selectedUnit,
+    ).length,
+  };
+
+  return (
+    <div className="space-y-10 pb-20 max-w-7xl mx-auto">
+      <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+        <div className="space-y-1">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-blue-600 rounded-2xl text-white shadow-xl shadow-blue-100">
+              <ShieldCheck size={28} />
+            </div>
+            <h1 className="text-4xl font-black text-gray-900 tracking-tight italic uppercase">
+              Lumina <span className="text-blue-600">Admin</span>
+            </h1>
+          </div>
+          <p className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">
+            Centralised Authority & Access Management
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={handleResetData}
+            disabled={resetLoading}
+            className="px-6 py-4 bg-red-50 text-red-600 border border-red-100 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-red-100 transition-all disabled:opacity-50"
+          >
+            {resetLoading ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <Trash2 size={16} />
+            )}
+            Reset Data
+          </button>
+
+          <div className="relative group">
+            <button className="px-6 py-4 bg-white border border-gray-100 text-gray-700 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-gray-50 transition-all shadow-sm">
+              <Mail size={16} />
+              Impor Massal
+            </button>
+            <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-2xl shadow-2xl border border-gray-100 py-3 hidden group-hover:block z-50 animate-in fade-in slide-in-from-top-2">
+              <button
+                onClick={() => {
+                  setImportMode("STAFF");
+                  setIsImportModalOpen(true);
+                }}
+                className="w-full px-5 py-2.5 text-left text-[10px] font-black text-gray-600 hover:bg-gray-50 uppercase tracking-widest"
+              >
+                Undangan Staff
+              </button>
+              <button
+                onClick={() => {
+                  setImportMode("STUDENT");
+                  setIsImportModalOpen(true);
+                }}
+                className="w-full px-5 py-2.5 text-left text-[10px] font-black text-gray-600 hover:bg-gray-50 uppercase tracking-widest"
+              >
+                Data Siswa
+              </button>
+              <button
+                onClick={() => {
+                  setImportMode("PARENT");
+                  setIsImportModalOpen(true);
+                }}
+                className="w-full px-5 py-2.5 text-left text-[10px] font-black text-gray-600 hover:bg-gray-50 uppercase tracking-widest"
+              >
+                Data Orang Tua
+              </button>
+            </div>
+          </div>
+
+          <button
+            onClick={() => {
+              setEditingId(null);
+              setFormData({
+                name: "",
+                email: "",
+                role: "TEACHER",
+                unitId: selectedUnit === "ALL" ? "JUNIOR_HIGH" : selectedUnit,
+                jobTitle: "",
+                status: "ready",
+                luminaId: "",
+                linkedStudents: [],
+              });
+              setIsModalOpen(true);
+            }}
+            className="px-8 py-4 bg-gray-900 text-white rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-blue-600 transition-all shadow-xl shadow-blue-100/20"
+          >
+            <Plus size={16} />
+            Undang Manual
+          </button>
+        </div>
+      </header>
+
+      {/* Unit Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {[
+          {
+            id: "KINDERGARTEN",
+            name: "Kindergarten",
+            icon: <Smile className="text-orange-500" />,
+            color: "orange",
+          },
+          {
+            id: "ELEMENTARY",
+            name: "Elementary",
+            icon: <Footprints className="text-blue-500" />,
+            color: "blue",
+          },
+          {
+            id: "JUNIOR_HIGH",
+            name: "Junior High",
+            icon: <Brain className="text-purple-500" />,
+            color: "purple",
+          },
+        ].map((unit) => (
+          <motion.button
+            key={unit.id}
+            whileHover={{ y: -5 }}
+            onClick={() => setSelectedUnit(unit.id as any)}
+            className={cn(
+              "text-left p-8 rounded-[2.5rem] border-2 transition-all relative overflow-hidden group",
+              selectedUnit === unit.id
+                ? "bg-white border-blue-500 shadow-2xl shadow-blue-100"
+                : "bg-white border-gray-50 hover:border-gray-200 shadow-sm",
+            )}
+          >
+            <div className="relative z-10 space-y-4">
+              <div className="flex items-center justify-between">
+                <div
+                  className={cn(
+                    "p-4 rounded-[1.5rem]",
+                    selectedUnit === unit.id
+                      ? "bg-blue-50 text-blue-600"
+                      : "bg-gray-50 text-gray-400",
+                  )}
+                >
+                  {unit.icon}
+                </div>
+                {unitStats[unit.id]?.pending > 0 && (
+                  <span className="px-3 py-1 bg-red-100 text-red-600 rounded-full text-[9px] font-black uppercase tracking-widest">
+                    {unitStats[unit.id].pending} Pending
+                  </span>
+                )}
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-gray-900 tracking-tight italic uppercase">
+                  {unit.name}
+                </h3>
+                <div className="flex items-center gap-4 mt-2">
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                      Students
+                    </p>
+                    <p className="text-lg font-black text-gray-700">
+                      {unitStats[unit.id]?.students || 0}
+                    </p>
+                  </div>
+                  <div className="w-px h-8 bg-gray-100" />
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                      Staff
+                    </p>
+                    <p className="text-lg font-black text-gray-700">
+                      {unitStats[unit.id]?.staff || 0}
+                    </p>
+                  </div>
+                  <div className="w-px h-8 bg-gray-100" />
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                      Classes
+                    </p>
+                    <p className="text-lg font-black text-gray-700">
+                      {unitStats[unit.id]?.classes || 0}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="pt-4 flex items-center gap-2 text-blue-600 opacity-0 group-hover:opacity-100 transition-all translate-x-2 group-hover:translate-x-0">
+                <span className="text-[10px] font-black uppercase tracking-widest">
+                  Kelola Unit
+                </span>
+                <ChevronRight size={14} />
+              </div>
+            </div>
+            {selectedUnit === unit.id && (
+              <div className="absolute top-0 right-0 p-4">
+                <CheckCircle2 className="text-blue-500" size={20} />
+              </div>
+            )}
+          </motion.button>
+        ))}
+      </div>
+
+      {/* Main Content Area */}
+      <div className="space-y-8">
+        {/* Navigation Bar */}
+        <div className="bg-white p-4 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6">
+          {/* Unit Selector */}
+          <div className="flex items-center p-1 bg-gray-50 rounded-2xl">
+            <button
+              onClick={() => setSelectedUnit("ALL")}
+              className={cn(
+                "px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                selectedUnit === "ALL"
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-gray-400 hover:text-gray-600",
+              )}
+            >
+              Semua Unit
+            </button>
+            {["KINDERGARTEN", "ELEMENTARY", "JUNIOR_HIGH"].map((uid) => (
+              <button
+                key={uid}
+                onClick={() => setSelectedUnit(uid as any)}
+                className={cn(
+                  "px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                  selectedUnit === uid
+                    ? "bg-white text-blue-600 shadow-sm"
+                    : "text-gray-400 hover:text-gray-600",
+                )}
+              >
+                {uid.replace("_", " ")}
+              </button>
+            ))}
+          </div>
+
+          {/* Role Selector */}
+          <div className="flex items-center gap-1 overflow-x-auto pb-2 md:pb-0">
+            {[
+              { id: "STAFF", icon: <Users size={14} />, label: "Staff" },
+              {
+                id: "STUDENT",
+                icon: <GraduationCap size={14} />,
+                label: "Siswa",
+              },
+              { id: "PARENT", icon: <Users size={14} />, label: "Ortu" },
+              { id: "CLASSES", icon: <BookOpen size={14} />, label: "Kelas" },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={cn(
+                  "px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all whitespace-nowrap",
+                  activeTab === tab.id
+                    ? "bg-gray-900 text-white shadow-xl shadow-gray-200"
+                    : "text-gray-400 hover:text-gray-600 hover:bg-gray-50",
+                )}
+              >
+                {tab.icon}
+                {tab.label}
+                <span
+                  className={cn(
+                    "ml-1 px-1.5 py-0.5 rounded-md text-[8px] font-black",
+                    activeTab === tab.id
+                      ? "bg-white/20 text-white"
+                      : "bg-gray-100 text-gray-400",
+                  )}
+                >
+                  {counts[tab.id as keyof typeof counts]}
+                </span>
+              </button>
+            ))}
+            <div className="w-px h-8 bg-gray-100 mx-2" />
+            <button
+              onClick={() => setActiveTab("PENDING" as any)}
+              className={cn(
+                "px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all",
+                activeTab === "PENDING"
+                  ? "bg-red-600 text-white shadow-xl shadow-red-100"
+                  : "text-red-400 hover:bg-red-50",
+              )}
+            >
+              <AlertCircle size={14} />
+              Pending
+              <span
+                className={cn(
+                  "ml-1 px-1.5 py-0.5 rounded-md text-[8px] font-black",
+                  activeTab === "PENDING" ? "bg-white/20" : "bg-red-50",
+                )}
+              >
+                {counts.PENDING}
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* View Content */}
+        <div className="space-y-6">
+          {/* Search and Filters */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="relative flex-1 max-w-md">
+              <Search
+                className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-300"
+                size={18}
+              />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder={`Cari di unit ${selectedUnit === "ALL" ? "semua" : selectedUnit.toLowerCase()}...`}
+                className="w-full pl-14 pr-6 py-4 bg-white border border-gray-100 rounded-[1.5rem] shadow-sm text-xs font-bold focus:ring-4 focus:ring-blue-50 focus:border-blue-200 transition-all outline-none"
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              {activeTab === "CLASSES" && (
+                <button
+                  onClick={() => {
+                    setEditingId(null);
+                    setClassFormData({
+                      grade: "7",
+                      className: "",
+                      academicYear: "2025/2026",
+                      homeroomTeacherId: "",
+                      unitId:
+                        selectedUnit === "ALL" ? "JUNIOR_HIGH" : selectedUnit,
+                    });
+                    setIsClassModalOpen(true);
+                  }}
+                  className="px-6 py-4 bg-gray-900 text-white rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-blue-600 transition-all shadow-lg"
+                >
+                  <Plus size={16} />
+                  Tambah Kelas
+                </button>
+              )}
+              <button className="p-4 bg-white border border-gray-100 rounded-2xl text-gray-400 hover:text-blue-600 transition-all shadow-sm">
+                <Filter size={18} />
+              </button>
+            </div>
+          </div>
+
+          {/* Table/List Area */}
+          <div className="bg-white rounded-[3rem] border border-gray-100 shadow-xl shadow-gray-50 overflow-hidden relative min-h-[400px]">
+            {loading && (
+              <div className="absolute inset-0 bg-white/50 backdrop-blur-[2px] z-50 flex items-center justify-center">
+                <Loader2 size={40} className="text-blue-500 animate-spin" />
+              </div>
+            )}
+
+            {activeTab === "CLASSES" ? (
+              <table className="w-full text-left">
+                <thead className="bg-gray-50/50">
+                  <tr>
+                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">
+                      Unit / Nama Kelas
+                    </th>
+                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">
+                      Grade
+                    </th>
+                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 text-center">
+                      TA
+                    </th>
+                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">
+                      Wali Kelas
+                    </th>
+                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 text-right">
+                      Aksi
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {filteredClasses.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={5}
+                        className="px-10 py-20 text-center text-gray-400 italic"
+                      >
+                        No classes found in this unit.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredClasses.map((cls) => (
+                      <tr
+                        key={cls.id}
+                        className="group hover:bg-gray-50/50 transition-all"
+                      >
+                        <td className="px-10 py-6">
+                          <div className="flex items-center gap-3">
+                            <div className="w-2 h-2 rounded-full bg-blue-500" />
+                            <div className="flex flex-col">
+                              <span className="text-xs font-black text-gray-900 uppercase tracking-tight italic">
+                                {cls.name}
+                              </span>
+                              <span className="text-[9px] font-bold text-gray-300 uppercase">
+                                {cls.unitId}
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-10 py-6">
+                          <span className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-[9px] font-black uppercase">
+                            {cls.grade}
+                          </span>
+                        </td>
+                        <td className="px-10 py-6 text-center font-bold text-[11px] text-gray-500 tabular-nums">
+                          {cls.academicYear}
+                        </td>
+                        <td className="px-10 py-6">
+                          <span className="text-xs font-bold text-gray-700">
+                            {cls.homeroomTeacherName || "-"}
+                          </span>
+                        </td>
+                        <td className="px-10 py-6 text-right">
+                          <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                            <button
+                              onClick={() => {
+                                setEditingId(cls.id);
+                                const [grade, ...nameParts] =
+                                  cls.name.split(" ");
+                                setClassFormData({
+                                  grade,
+                                  className: nameParts.join(" "),
+                                  academicYear: cls.academicYear,
+                                  homeroomTeacherId:
+                                    cls.homeroomTeacherId || "",
+                                  unitId: cls.unitId,
+                                });
+                                setIsClassModalOpen(true);
+                              }}
+                              className="p-2 text-gray-400 hover:text-blue-600 hover:bg-white rounded-xl shadow-sm"
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteClass(cls.id)}
+                              className="p-2 text-gray-400 hover:text-red-500 hover:bg-white rounded-xl shadow-sm"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            ) : activeTab === "PENDING" ? (
+              <table className="w-full text-left">
+                <thead className="bg-red-50/50">
+                  <tr>
+                    <th className="px-10 py-6 text-[10px] font-black text-red-500 uppercase tracking-widest border-b border-red-50">
+                      Pending Request
+                    </th>
+                    <th className="px-10 py-6 text-[10px] font-black text-red-500 uppercase tracking-widest border-b border-red-50">
+                      Target Unit / Role
+                    </th>
+                    <th className="px-10 py-6 text-[10px] font-black text-red-500 uppercase tracking-widest border-b border-red-50">
+                      Status Undangan
+                    </th>
+                    <th className="px-10 py-6 text-[10px] font-black text-red-500 uppercase tracking-widest border-b border-red-50 text-right">
+                      Aksi
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {filteredPending.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={4}
+                        className="px-10 py-20 text-center text-gray-400 italic"
+                      >
+                        No pending activation requests.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredPending.map((user) => {
+                      const hasInvite = invites.some(
+                        (i) =>
+                          i.email.toLowerCase() === user.email.toLowerCase() &&
+                          i.status === "ready",
+                      );
+                      return (
+                        <tr
+                          key={user.uid}
+                          className="group hover:bg-red-50/20 transition-all"
+                        >
+                          <td className="px-10 py-6">
+                            <div className="flex items-center gap-4">
+                              <div className="w-12 h-12 bg-red-100 rounded-[1.2rem] flex items-center justify-center text-red-600 font-black text-lg italic shadow-sm">
+                                {user.displayName[0]}
+                              </div>
+                              <div>
+                                <p className="text-sm font-black text-gray-900 tracking-tight italic uppercase">
+                                  {user.displayName}
+                                </p>
+                                <p className="text-[10px] font-bold text-gray-400">
+                                  {user.email}
+                                </p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-10 py-6">
+                            <div className="flex flex-col">
+                              <span className="text-[11px] font-black text-gray-700 uppercase tracking-tighter">
+                                {user.role}
+                              </span>
+                              <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">
+                                {user.unitId}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-10 py-6">
+                            {hasInvite ? (
+                              <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-xl w-fit border border-emerald-100">
+                                <CheckCircle2 size={14} />
+                                <span className="text-[9px] font-black uppercase tracking-widest italic">
+                                  Siap Aktivasi
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 text-red-400 bg-red-50 px-3 py-1.5 rounded-xl w-fit border border-red-100">
+                                <XCircle size={14} />
+                                <span className="text-[9px] font-black uppercase tracking-widest italic">
+                                  Undangan Belum Ada
+                                </span>
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-10 py-6 text-right">
+                            <button
+                              onClick={() =>
+                                handleActivate(user.uid, user.email)
+                              }
+                              disabled={!hasInvite}
+                              className={cn(
+                                "px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-xl",
+                                hasInvite
+                                  ? "bg-red-600 text-white shadow-red-100 hover:scale-105 active:scale-95"
+                                  : "bg-gray-100 text-gray-400 cursor-not-allowed",
+                              )}
+                            >
+                              Aktifkan Akun
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            ) : (
+              <table className="w-full text-left">
+                <thead className="bg-gray-50/50">
+                  <tr>
+                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                      Name / Email
+                    </th>
+                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                      Details
+                    </th>
+                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 text-center">
+                      Unit
+                    </th>
+                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                      Status
+                    </th>
+                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 text-right">
+                      Aksi
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {filteredInvites.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={5}
+                        className="px-10 py-20 text-center text-gray-400 italic"
+                      >
+                        No users found match criteria.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredInvites.map((invite) => (
+                      <tr
+                        key={invite.id}
+                        className="group hover:bg-gray-50/30 transition-all"
+                      >
+                        <td className="px-10 py-6">
+                          <div className="flex flex-col">
+                            <span className="text-xs font-black text-gray-900 uppercase tracking-tight italic">
+                              {invite.name}
+                            </span>
+                            <span className="text-[10px] font-bold text-gray-400">
+                              {invite.email}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-10 py-6">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[11px] font-black text-blue-600 uppercase tracking-tighter leading-none">
+                              {invite.role}
+                            </span>
+                            {invite.luminaId && (
+                              <span className="text-[9px] font-bold text-gray-400 uppercase">
+                                {invite.luminaId}
+                              </span>
+                            )}
+                            {invite.jobTitle && (
+                              <span className="text-[9px] font-black text-gray-300 uppercase tracking-widest">
+                                {invite.jobTitle}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-10 py-6 text-center">
+                          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest italic">
+                            {invite.unitId}
+                          </span>
+                        </td>
+                        <td className="px-10 py-6">
+                          <span
+                            className={cn(
+                              "px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest",
+                              invite.status === "ready"
+                                ? "bg-emerald-50 text-emerald-600"
+                                : invite.status === "used"
+                                  ? "bg-blue-50 text-blue-600"
+                                  : "bg-red-50 text-red-600",
+                            )}
+                          >
+                            {invite.status}
+                          </span>
+                        </td>
+                        <td className="px-10 py-6 text-right">
+                          <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                            <button
+                              onClick={() => {
+                                setEditingId(invite.id);
+                                setFormData({ ...invite });
+                                setIsModalOpen(true);
+                              }}
+                              className="p-2 text-gray-400 hover:text-blue-600 hover:bg-white rounded-xl shadow-sm"
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(invite.id)}
+                              className="p-2 text-gray-400 hover:text-red-500 hover:bg-white rounded-xl shadow-sm"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Modal Undangan */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm"
+            onClick={() => setIsModalOpen(false)}
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white w-full max-w-xl rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden"
+          >
+            <div className="p-8 border-b border-gray-50 flex items-center justify-between">
+              <h2 className="text-xl font-black text-gray-900 tracking-tight italic">
+                {editingId ? "Edit Undangan" : "Undang Manual"}
+              </h2>
+              <button
+                onClick={() => setIsModalOpen(false)}
+                className="p-2 text-gray-400 hover:text-gray-900"
+              >
+                <XCircle size={24} strokeWidth={1.5} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateOrUpdate} className="p-8 space-y-6">
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                    Nama{" "}
+                    {formData.role === "STUDENT" ? "Lengkap" : "(Email prefix)"}
+                  </label>
+                  <input
+                    required
+                    type="text"
+                    value={formData.name}
+                    onChange={(e) =>
+                      setFormData({ ...formData, name: e.target.value })
+                    }
+                    className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm italic font-medium focus:ring-2 focus:ring-blue-100"
+                    placeholder={
+                      formData.role === "STUDENT"
+                        ? "Nama Lengkap Siswa"
+                        : "Nama"
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                    Email {formData.role === "STUDENT" ? "Siswa" : "(Username)"}
+                  </label>
+                  <input
+                    required
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => {
+                      const newEmail = e.target.value;
+                      setFormData((prev) => ({
+                        ...prev,
+                        email: newEmail,
+                        name: prev.name || newEmail.split("@")[0],
+                      }));
+                    }}
+                    className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm italic font-medium focus:ring-2 focus:ring-blue-100"
+                    placeholder="email@lazuardi.sch.id"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                    Peran (Role)
+                  </label>
+                  <select
+                    value={formData.role}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        role: e.target.value as UserRole,
+                      })
+                    }
+                    className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="TEACHER">TEACHER</option>
+                    <option value="HEAD_UNIT">HEAD_UNIT</option>
+                    <option value="HEAD_JUNIOR">HEAD_JUNIOR</option>
+                    <option value="BK_MENTOR">BK_MENTOR</option>
+                    <option value="STUDENT">STUDENT</option>
+                    <option value="PARENT">PARENT</option>
+                    <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                    Unit
+                  </label>
+                  <select
+                    value={formData.unitId}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        unitId: e.target.value as UnitType,
+                      })
+                    }
+                    className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="KINDERGARTEN">KINDERGARTEN</option>
+                    <option value="ELEMENTARY">ELEMENTARY</option>
+                    <option value="JUNIOR_HIGH">JUNIOR_HIGH</option>
+                  </select>
+                </div>
+              </div>
+
+              {formData.role === "STUDENT" ? (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                        NIS (Lumina ID)
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.luminaId}
+                        onChange={(e) =>
+                          setFormData({ ...formData, luminaId: e.target.value })
+                        }
+                        className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm italic font-medium focus:ring-2 focus:ring-blue-100"
+                        placeholder="e.g. 2025001"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                        NISN
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.nisn}
+                        onChange={(e) =>
+                          setFormData({ ...formData, nisn: e.target.value })
+                        }
+                        className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm italic font-medium focus:ring-2 focus:ring-blue-100"
+                        placeholder="e.g. 0123456789"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                        Nama Panggilan
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.nickname}
+                        onChange={(e) =>
+                          setFormData({ ...formData, nickname: e.target.value })
+                        }
+                        className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm italic font-medium focus:ring-2 focus:ring-blue-100"
+                        placeholder="Panggilan"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                        Jenis Kelamin
+                      </label>
+                      <select
+                        value={formData.gender}
+                        onChange={(e) =>
+                          setFormData({ ...formData, gender: e.target.value })
+                        }
+                        className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
+                      >
+                        <option value="">Pilih</option>
+                        <option value="L">LAKI-LAKI (L)</option>
+                        <option value="P">PEREMPUAN (P)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-6 -mt-4 pb-6">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                          Nama Ayah
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.fatherName || ""}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              fatherName: e.target.value,
+                            })
+                          }
+                          className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm italic font-medium focus:ring-2 focus:ring-blue-100"
+                          placeholder="Nama Ayah"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                          Nama Ibu
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.motherName || ""}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              motherName: e.target.value,
+                            })
+                          }
+                          className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm italic font-medium focus:ring-2 focus:ring-blue-100"
+                          placeholder="Nama Ibu"
+                        />
+                      </div>
+                    </div>
+                    <label
+                      className={cn(
+                        "text-[10px] font-black uppercase tracking-widest ml-1 transition-all",
+                        !formData.fatherName && !formData.motherName
+                          ? "text-gray-300"
+                          : "text-gray-400",
+                      )}
+                    >
+                      Email Orang Tua{" "}
+                      {!formData.fatherName &&
+                        !formData.motherName &&
+                        "(Isi nama ortu dulu)"}
+                    </label>
+                    <input
+                      type="email"
+                      disabled={!formData.fatherName && !formData.motherName}
+                      value={formData.parentEmail}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          parentEmail: e.target.value,
+                        })
+                      }
+                      className={cn(
+                        "w-full px-5 py-4 border-none rounded-2xl text-sm italic font-medium focus:ring-2 transition-all",
+                        !formData.fatherName && !formData.motherName
+                          ? "bg-gray-50 opacity-50 cursor-not-allowed"
+                          : "bg-gray-50 focus:ring-blue-100",
+                      )}
+                      placeholder="ortu@gmail.com"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-6">
+                  {formData.role === "PARENT" ? (
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                        IDs Anak (comma separated)
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.linkedStudents?.join(",")}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            linkedStudents: e.target.value
+                              .split(",")
+                              .map((s) => s.trim()),
+                          })
+                        }
+                        className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm italic font-medium focus:ring-2 focus:ring-blue-100"
+                        placeholder="ID1, ID2"
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                        Jabatan / Kelas
+                      </label>
+                      <select
+                        value={formData.jobTitle}
+                        onChange={(e) =>
+                          setFormData({ ...formData, jobTitle: e.target.value })
+                        }
+                        className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
+                      >
+                        <option value="">Pilih Kelas (Opsional)</option>
+                        {classes.map((c) => (
+                          <option key={c.id} value={c.name}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="pt-4 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="flex-1 py-4 text-xs font-black text-gray-400 uppercase tracking-widest"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={formLoading}
+                  className="flex-1 py-4 bg-[#002366] text-white rounded-2xl font-bold flex items-center justify-center gap-2"
+                >
+                  {formLoading && (
+                    <Loader2 size={18} className="animate-spin" />
+                  )}
+                  {editingId ? "Update" : "Terbitkan"}
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Modal Tambah/Edit Kelas */}
+      {isClassModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm"
+            onClick={() => setIsClassModalOpen(false)}
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white w-full max-w-xl rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden"
+          >
+            <div className="p-8 border-b border-gray-50 flex items-center justify-between">
+              <h2 className="text-xl font-black text-gray-900 tracking-tight italic">
+                {editingId ? "Edit Kelas" : "Tambah Kelas Baru"}
+              </h2>
+              <button
+                onClick={() => setIsClassModalOpen(false)}
+                className="p-2 text-gray-400 hover:text-gray-900"
+              >
+                <XCircle size={24} strokeWidth={1.5} />
+              </button>
+            </div>
+
+            <form
+              onSubmit={handleCreateOrUpdateClass}
+              className="p-8 space-y-6"
+            >
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                    Grade
+                  </label>
+                  <select
+                    required
+                    value={classFormData.grade}
+                    onChange={(e) =>
+                      setClassFormData({
+                        ...classFormData,
+                        grade: e.target.value,
+                      })
+                    }
+                    className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="7">7</option>
+                    <option value="8">8</option>
+                    <option value="9">9</option>
+                    <option value="10">10</option>
+                    <option value="11">11</option>
+                    <option value="12">12</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                    Nama Unik (e.g. Baiji)
+                  </label>
+                  <input
+                    required
+                    type="text"
+                    value={classFormData.className}
+                    onChange={(e) =>
+                      setClassFormData({
+                        ...classFormData,
+                        className: e.target.value,
+                      })
+                    }
+                    className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm italic font-medium focus:ring-2 focus:ring-blue-100"
+                    placeholder="Contoh: Baiji"
+                  />
+                </div>
+              </div>
+
+              <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 flex items-center justify-between">
+                <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">
+                  Review Nama Kelas:
+                </span>
+                <span className="font-black text-blue-700 italic">
+                  {classFormData.grade} {classFormData.className || "..."}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                    Tahun Ajaran
+                  </label>
+                  <input
+                    required
+                    type="text"
+                    value={classFormData.academicYear}
+                    onChange={(e) =>
+                      setClassFormData({
+                        ...classFormData,
+                        academicYear: e.target.value,
+                      })
+                    }
+                    className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
+                    placeholder="2025/2026"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                    Unit
+                  </label>
+                  <select
+                    value={classFormData.unitId}
+                    onChange={(e) =>
+                      setClassFormData({
+                        ...classFormData,
+                        unitId: e.target.value as UnitType,
+                      })
+                    }
+                    className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="JUNIOR_HIGH">JUNIOR_HIGH</option>
+                    <option value="ELEMENTARY">ELEMENTARY</option>
+                    <option value="KINDERGARTEN">KINDERGARTEN</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                  Wali Kelas
+                </label>
+                <select
+                  value={classFormData.homeroomTeacherId}
+                  onChange={(e) =>
+                    setClassFormData({
+                      ...classFormData,
+                      homeroomTeacherId: e.target.value,
+                    })
+                  }
+                  className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
+                >
+                  <option value="">Pilih Wali Kelas</option>
+                  {teachers.map((t) => (
+                    <option key={t.uid} value={t.uid}>
+                      {t.displayName} ({t.email})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="pt-4 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsClassModalOpen(false)}
+                  className="flex-1 py-4 text-xs font-black text-gray-400 uppercase tracking-widest"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={formLoading}
+                  className="flex-1 py-4 bg-[#002366] text-white rounded-2xl font-bold flex items-center justify-center gap-2"
+                >
+                  {formLoading && (
+                    <Loader2 size={18} className="animate-spin" />
+                  )}
+                  Simpan Kelas
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Modal Konfirmasi Impor */}
+      {isImportModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-gray-900/60 backdrop-blur-md"
+            onClick={() => setIsImportModalOpen(false)}
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl relative z-10 p-10 text-center space-y-6"
+          >
+            <div className="w-20 h-20 bg-blue-50 rounded-3xl mx-auto flex items-center justify-center text-blue-600">
+              <Mail size={40} />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-2xl font-black text-gray-900 tracking-tight italic">
+                Konfirmasi Impor
+              </h2>
+              <p className="text-sm text-gray-500 leading-relaxed">
+                Mulai proses impor massal <b>{importMode}</b> dari Google
+                Sheets?
+              </p>
+              <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 text-left space-y-1">
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                  Target Sheet
+                </p>
+                <p className="text-xs font-bold text-blue-600">
+                  {importMode === "STAFF"
+                    ? "GuruLumina"
+                    : importMode === "STUDENT"
+                      ? "SiswaLumina"
+                      : "OrtuLumina"}
+                </p>
+              </div>
+            </div>
+            <div className="pt-4 flex gap-3">
+              <button
+                onClick={() => setIsImportModalOpen(false)}
+                className="flex-1 py-4 text-xs font-black text-gray-400 uppercase tracking-widest"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleImport}
+                disabled={importLoading}
+                className="flex-1 py-4 bg-[#002366] text-white rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-100"
+              >
+                {importLoading && (
+                  <Loader2 size={18} className="animate-spin" />
+                )}
+                Mulai Impor
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </div>
+  );
+}

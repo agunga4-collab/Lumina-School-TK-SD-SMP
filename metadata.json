@@ -1,0 +1,8 @@
+{
+  "name": "Remix: LUMINA – Lazuardi Unified Memory \u0026 Insight Navigation Assistant",
+  "description": "Asisten AI Pendidikan Lazuardi untuk guru, orang tua, dan siswa. Dilengkapi sistem MTSS Behavior otomatis dengan fitur Smart Alerts, Notifikasi CICO, dan Monitoring Tiered Support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

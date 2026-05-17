@@ -1,0 +1,625 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "App users including teachers, parents, and admins.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["TEACHER", "HEAD_UNIT", "HEAD_JUNIOR", "BK_MENTOR", "PARENT", "STUDENT", "SUPER_ADMIN", "GUEST"] },
+        "jobTitle": { "type": "string" },
+        "unitId": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "pending", "disabled"] },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["uid", "email", "role", "status"]
+    },
+    "RoleInvite": {
+      "title": "RoleInvite",
+      "description": "Pre-defined invites for onboarding users.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "jobTitle": { "type": "string" },
+        "role": { "type": "string" },
+        "unitId": { "type": "string" },
+        "status": { "type": "string", "enum": ["ready", "used"] }
+      },
+      "required": ["email", "role", "status"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Student master data.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "nisn": { "type": "string" },
+        "currentUnit": { "type": "string" },
+        "classId": { "type": "string" }
+      },
+      "required": ["id", "name", "currentUnit"]
+    },
+    "MTSSCase": {
+      "title": "MTSSCase",
+      "description": "MTSS behavior case tracking.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "classId": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "tier": { "type": "string", "enum": ["Tier 1", "Tier 2", "Tier 3"] },
+        "status": { "type": "string", "enum": ["OPEN", "IN_PROGRESS", "ESCALATED", "UNDER_REVIEW", "CLOSED"] },
+        "picId": { "type": "string" },
+        "picName": { "type": "string" },
+        "totalConcerns": { "type": "number" },
+        "lastConcernSummary": { "type": "string" },
+        "lastConcernDate": { "type": "number" },
+        "lastUpdatedAt": { "type": "number" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "studentId", "status", "tier"]
+    },
+    "MTSSConcern": {
+      "title": "MTSSConcern",
+      "description": "Specific incident under a behavior case.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "description": { "type": "string" },
+        "reporterId": { "type": "string" },
+        "interventionsTried": { "type": "array", "items": { "type": "string" } },
+        "progressNotes": { "type": "string" },
+        "nextSteps": { "type": "string" },
+        "nextStepPicId": { "type": "string" },
+        "nextStepDueDate": { "type": "string" },
+        "isDone": { "type": "boolean" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "date", "description", "reporterId"]
+    },
+    "CICOSession": {
+      "title": "CICOSession",
+      "description": "Daily Check-In Check-Out session for Tier 2.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "caseId": { "type": "string" },
+        "date": { "type": "string" },
+        "goals": { "type": "array" },
+        "teacherNotes": { "type": "string" },
+        "hasSignature": { "type": "boolean" }
+      }
+    },
+    "BIPPlan": {
+      "title": "BIPPlan",
+      "description": "Behavior Intervention Plan for Tier 3 (Intensive).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "caseId": { "type": "string" },
+        "strategies": { "type": "string" },
+        "homeProgram": { "type": "string" },
+        "isConfidential": { "type": "boolean" }
+      }
+    },
+    "Reflection": {
+      "title": "Reflection",
+      "description": "Student self-reflection entries.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "topic": { "type": "string" },
+        "incident": { "type": "string" },
+        "feelings": { "type": "string" },
+        "improvement": { "type": "string" },
+        "aiReflection": { "type": "string" },
+        "aiQuestions": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "studentId", "topic", "incident", "createdAt"]
+    },
+    "LiteracyProgress": {
+      "title": "LiteracyProgress",
+      "description": "Literacy and numeracy progress records.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "area": { "type": "string", "enum": ["BAHASA", "ENGLISH", "MENGAJI", "NUMERASI"] },
+        "level": { "type": "number" },
+        "notes": { "type": "string" },
+        "assessedAt": { "type": "number" },
+        "assessedBy": { "type": "string" }
+      },
+      "required": ["id", "studentId", "area", "level", "assessedAt", "assessedBy"]
+    },
+    "SelfExploration": {
+      "title": "SelfExploration",
+      "description": "Student self-exploration profile (goals, interests, etc.).",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "strengths": { "type": "array", "items": { "type": "string" } },
+        "interests": { "type": "array", "items": { "type": "string" } },
+        "values": { "type": "array", "items": { "type": "string" } },
+        "shortTermGoals": { "type": "array" },
+        "longTermGoals": { "type": "array" },
+        "supportNeeded": { "type": "array", "items": { "type": "string" } },
+        "visibility": { "type": "string", "enum": ["SELF", "MENTOR", "PARENT"] },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["studentId", "updatedAt"]
+    },
+    "Attendance": {
+      "title": "Attendance",
+      "description": "Daily attendance records.",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "date": { "type": "string" },
+        "status": { "type": "string", "enum": ["PRESENT", "SICK", "PERMISSION", "NO_NEWS"] },
+        "emotion": { "type": "string", "enum": ["HAPPY", "OK", "SAD", "ANGRY"] },
+        "unit": { "type": "string" },
+        "recordedBy": { "type": "string" }
+      },
+      "required": ["studentId", "date", "status"]
+    },
+    "LearningGoal": {
+      "title": "LearningGoal",
+      "description": "Academic learning goals/targets for a grade and subject.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string" },
+        "unitId": { "type": "string", "enum": ["ELEMENTARY", "JUNIOR_HIGH"] },
+        "grade": { "type": "string" },
+        "subject": { "type": "string" },
+        "strand": { "type": "string" },
+        "goalText": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "code", "unitId", "grade", "subject", "goalText", "isActive"]
+    },
+    "LXD": {
+      "title": "LXD",
+      "description": "Learning Experience Design - Lesson planning covering weekly lessons, unit activities, or learning journeys.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["WEEKLY_LESSONS", "UNIT_AKTIVITAS", "LEARNING_JOURNEY"] },
+        "title": { "type": "string" },
+        "unitId": { "type": "string", "enum": ["ELEMENTARY", "JUNIOR_HIGH"] },
+        "grade": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "semester": { "type": "string", "enum": ["1", "2"] },
+        "status": { "type": "string", "enum": ["DRAFT", "PUBLISHED"] },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "type", "title", "unitId", "status", "createdBy"]
+    },
+    "ReportCard": {
+      "title": "ReportCard",
+      "description": "Lazuardi academic reports.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["MONTHLY", "MIDTERM", "END_TERM_LAZUARDI"] },
+        "period": { "type": "string" },
+        "classId": { "type": "string" },
+        "status": { "type": "string", "enum": ["DRAFT", "SUBMITTED", "APPROVED", "PUBLISHED"] }
+      },
+      "required": ["id", "type", "status"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "In-app notifications for users.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "type": { "type": "string" },
+        "message": { "type": "string" },
+        "isRead": { "type": "boolean" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "userId", "type", "message", "isRead", "createdAt"]
+    },
+    "BehaviorNotification": {
+      "title": "BehaviorNotification",
+      "description": "Smart behavior alerts and MTSS notifications.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "severity": { "type": "string", "enum": ["INFO", "WARNING", "HIGH"] },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "caseId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "targetUserIds": { "type": "array", "items": { "type": "string" } },
+        "isRead": { "type": "object" },
+        "isDismissed": { "type": "object" },
+        "actionUrl": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "expiresAt": { "type": "number" }
+      },
+      "required": ["id", "type", "severity", "title", "message", "targetUserIds", "createdAt", "expiresAt"]
+    },
+    "MTSSAcademicCase": {
+      "title": "MTSSAcademicCase",
+      "description": "MTSS academic case tracking.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "semester": { "type": "string", "enum": ["1", "2"] },
+        "currentTier": { "type": "string", "enum": ["Tier 1", "Tier 2", "Tier 3"] },
+        "status": { "type": "string", "enum": ["SCREENING", "INITIAL_MEETING", "ACTIVE", "UNDER_REVIEW", "ESCALATED", "CLOSED"] },
+        "subjectDomains": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "studentId", "status", "currentTier", "academicYear"]
+    },
+    "MTSSAcademicGoal": {
+      "title": "MTSSAcademicGoal",
+      "description": "Learning goals for an academic MTSS case.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "caseId": { "type": "string" },
+        "title": { "type": "string" },
+        "status": { "type": "string" }
+      }
+    },
+    "MTSSAcademicSession": {
+      "title": "MTSSAcademicSession",
+      "description": "Individual intervention sessions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "caseId": { "type": "string" },
+        "date": { "type": "number" },
+        "activitySummary": { "type": "string" }
+      }
+    },
+    "MTSSAcademicAlert": {
+      "title": "MTSSAcademicAlert",
+      "description": "Smart alerts and compliance checks for MTSS Academic.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "caseId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "type": { "type": "string" },
+        "severity": { "type": "string", "enum": ["INFO", "WARNING", "CRITICAL"] },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string", "enum": ["OPEN", "ACKNOWLEDGED", "RESOLVED", "DISMISSED", "ARCHIVED"] },
+        "createdAt": { "type": "number" }
+      }
+    },
+    "MTSSAcademicMeeting": {
+      "title": "MTSSAcademicMeeting",
+      "description": "Formal meetings regarding an academic MTSS case.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "caseId": { "type": "string" },
+        "meetingType": { "type": "string", "enum": ["INITIAL", "FOLLOW_UP", "REVIEW", "TIER_3_PLANNING"] },
+        "date": { "type": "number" },
+        "summaryCurrentData": { "type": "string" }
+      }
+    },
+    "MTSSAcademicPlan": {
+      "title": "MTSSAcademicPlan",
+      "description": "The specific intervention plan details.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "caseId": { "type": "string" },
+        "tier": { "type": "string", "enum": ["Tier 2", "Tier 3"] },
+        "status": { "type": "string", "enum": ["DRAFT", "ACTIVE", "COMPLETED", "REVISED"] }
+      }
+    },
+    "MTSSAcademicEvaluation": {
+      "title": "MTSSAcademicEvaluation",
+      "description": "Periodic evaluations of intervention effectiveness.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "caseId": { "type": "string" },
+        "evaluationType": { "type": "string", "enum": ["TIER_2_REPORT", "TIER_3_REVIEW", "MID_PROGRAM_REVIEW", "FINAL_REVIEW"] },
+        "strategyDecision": { "type": "string", "enum": ["CONTINUE", "REVISE", "REPLACE", "ESCALATE", "CLOSE"] }
+      }
+    },
+    "MTSSAcademicAuditRecord": {
+      "title": "MTSSAcademicAuditRecord",
+      "description": "Audit trail for academic case interactions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "caseId": { "type": "string" },
+        "action": { "type": "string" },
+        "timestamp": { "type": "number" }
+      }
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Detailed attendance record with sync metadata.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "date": { "type": "string" },
+        "status": { "type": "string", "enum": ["HADIR", "SAKIT", "IZIN", "ALPA", "LATE"] },
+        "syncStatus": { "type": "string", "enum": ["PENDING", "SYNCED", "FAILED"] }
+      }
+    },
+    "Assessment": {
+      "title": "Assessment",
+      "description": "Student assessment scores records.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "lxdId": { "type": "string" },
+        "classId": { "type": "string" },
+        "assessedBy": { "type": "string" },
+        "assessedAt": { "type": "number" }
+      }
+    },
+    "ReportConfig": {
+      "title": "ReportConfig",
+      "description": "Academic report settings per unit.",
+      "type": "object",
+      "properties": {
+        "unitId": { "type": "string" },
+        "subjectOrder": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "Enrollment": {
+      "title": "Enrollment",
+      "description": "Student enrollment in a class.",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "classId": { "type": "string" },
+        "academicYear": { "type": "string" }
+      }
+    },
+    "Class": {
+      "title": "Class",
+      "description": "Class entity.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "grade": { "type": "string" },
+        "unitId": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "archived"] }
+      }
+    },
+    "ParentStudentLink": {
+      "title": "ParentStudentLink",
+      "description": "Relationship between parent and students.",
+      "type": "object",
+      "properties": {
+        "parentId": { "type": "string" },
+        "studentIds": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "ParentReportView": {
+      "title": "ParentReportView",
+      "description": "View tracking for parent reports.",
+      "type": "object",
+      "properties": {
+        "parentId": { "type": "string" },
+        "reportId": { "type": "string" },
+        "viewedAt": { "type": "number" }
+      }
+    },
+    "AppNotification": {
+      "title": "AppNotification",
+      "description": "Standard app notification model.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "type": { "type": "string" },
+        "message": { "type": "string" },
+        "isRead": { "type": "boolean" },
+        "createdAt": { "type": "number" }
+      }
+    },
+    "MTSSAcademicTimelinePhase": {
+      "title": "MTSSAcademicTimelinePhase",
+      "description": "Timeline phase for school MTSS cycles.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "schoolUnit": { "type": "string" },
+        "phase": { "type": "string" },
+        "startDate": { "type": "number" },
+        "endDate": { "type": "number" }
+      }
+    },
+    "MTSSAcademicDocumentRecord": {
+      "title": "MTSSAcademicDocumentRecord",
+      "description": "Meta record for generated intervention documents.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "caseId": { "type": "string" },
+        "type": { "type": "string" },
+        "fileName": { "type": "string" },
+        "status": { "type": "string", "enum": ["GENERATED", "ARCHIVED", "SUPERSEDED"] }
+      }
+    },
+    "MTSSAcademicBackupConfig": {
+      "title": "MTSSAcademicBackupConfig",
+      "description": "Configuration for academic data backup.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "schoolUnit": { "type": "string" },
+        "isEnabled": { "type": "boolean" }
+      }
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "User profiles."
+    },
+    "students/{studentId}": {
+      "schema": "Student",
+      "description": "Student information."
+    },
+    "behaviorCases/{caseId}": {
+      "schema": "MTSSCase",
+      "description": "MTSS behavioral cases."
+    },
+    "behaviorCases/{caseId}/concerns/{concernId}": {
+      "schema": "MTSSConcern",
+      "description": "Sub-collection of incidents for a behavior case."
+    },
+    "cicoSessions/{sessionId}": {
+      "schema": "CICODailyReport",
+      "description": "Daily CICO tracking for Tier 2."
+    },
+    "cicoGoalConfigs/{caseId}": {
+      "schema": "CICOGoalConfig",
+      "description": "Configuration for CICO goals per student case."
+    },
+    "bipPlans/{planId}": {
+      "schema": "BIPPlan",
+      "description": "Intensive intervention plans for Tier 3."
+    },
+    "reflections/{reflectionId}": {
+      "schema": "Reflection",
+      "description": "Student self-reflections."
+    },
+    "literacyProgress/{progressId}": {
+      "schema": "LiteracyProgress",
+      "description": "Literacy and numeracy progress records."
+    },
+    "selfExploration/{studentId}": {
+      "schema": "SelfExploration",
+      "description": "Student self-exploration profile summaries."
+    },
+    "attendance/{attendanceId}": {
+      "schema": "AttendanceRecord",
+      "description": "Daily attendance records with sync status."
+    },
+    "roleInvites/{inviteId}": {
+      "schema": "RoleInvite",
+      "description": "Onboarding invitations for various roles."
+    },
+    "learning_goals/{goalId}": {
+      "schema": "LearningGoal",
+      "description": "Bank of academic learning goals."
+    },
+    "lxd/{lxdId}": {
+      "schema": "LXD",
+      "description": "Academic lesson plans (LXD)."
+    },
+    "assessments/{assessmentId}": {
+      "schema": "Assessment",
+      "description": "Student assessment scores mapped to LXD goals."
+    },
+    "reportCards/{reportId}": {
+      "schema": "ReportCard",
+      "description": "Academic report cards."
+    },
+    "reportConfig/{unitId}": {
+      "schema": "ReportConfig",
+      "description": "Configuration for report card subject order and mappings."
+    },
+    "notifications/{notifId}": {
+      "schema": "AppNotification",
+      "description": "General in-app notifications."
+    },
+    "behavior_notifications/{notifId}": {
+      "schema": "BehaviorNotification",
+      "description": "Behavior-related smart alerts and system notifications."
+    },
+    "enrollments/{enrollmentId}": {
+      "schema": "Enrollment",
+      "description": "Mapping of students to classes per academic year."
+    },
+    "classes/{classId}": {
+      "schema": "Class",
+      "description": "School class metadata."
+    },
+    "parentStudentLinks/{linkId}": {
+      "schema": "ParentStudentLink",
+      "description": "Relationship between parent accounts and student NIS."
+    },
+    "parentReportViews/{viewId}": {
+      "schema": "ParentReportView",
+      "description": "Log of parent views for specific student reports."
+    },
+    "juniorhigh_mtss_academic_cases/{caseId}": {
+      "schema": "MTSSAcademicCase",
+      "description": "Main collection for MTSS Academic cases."
+    },
+    "juniorhigh_mtss_academic_cases/{caseId}/goals/{goalId}": {
+      "schema": "MTSSAcademicGoal",
+      "description": "Domain-specific goals for an academic MTSS case."
+    },
+    "juniorhigh_mtss_academic_cases/{caseId}/sessions/{sessionId}": {
+      "schema": "MTSSAcademicSession",
+      "description": "Individual intervention sessions for an academic case."
+    },
+    "juniorhigh_mtss_academic_cases/{caseId}/meetings/{meetingId}": {
+      "schema": "MTSSAcademicMeeting",
+      "description": "Parent and team meetings for academic MTSS cases."
+    },
+    "juniorhigh_mtss_academic_cases/{caseId}/plans/{planId}": {
+      "schema": "MTSSAcademicPlan",
+      "description": "Instructional plan details for academic interventions."
+    },
+    "juniorhigh_mtss_academic_cases/{caseId}/evaluations/{evaluationId}": {
+      "schema": "MTSSAcademicEvaluation",
+      "description": "Periodic reviews and evaluations for academic cases."
+    },
+    "juniorhigh_mtss_academic_cases/{caseId}/audits/{auditId}": {
+      "schema": "MTSSAcademicAuditRecord",
+      "description": "Activity log for academic case changes."
+    },
+    "juniorhigh_mtss_academic_timeline/{phaseId}": {
+      "schema": "MTSSAcademicTimelinePhase",
+      "description": "School-wide timeline phases for MTSS cycles."
+    },
+    "juniorhigh_mtss_academic_documents/{docId}": {
+      "schema": "MTSSAcademicDocumentRecord",
+      "description": "Registry of PDF documents in Drive for academic cases."
+    },
+    "juniorhigh_mtss_academic_backup_config/{configId}": {
+      "schema": "MTSSAcademicBackupConfig",
+      "description": "System configuration for academic backup automation."
+    },
+    "juniorhigh_mtss_academic_alerts/{alertId}": {
+      "schema": "MTSSAcademicAlert",
+      "description": "Compliance and SOP alerts for academic MTSS cases."
+    }
+  }
+}
