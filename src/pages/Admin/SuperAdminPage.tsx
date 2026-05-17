@@ -108,6 +108,7 @@ export default function SuperAdminPage() {
   const [expandedClassId, setExpandedClassId] = React.useState<string | null>(
     null,
   );
+  const [expandedStudentsSortDir, setExpandedStudentsSortDir] = React.useState<"asc" | "desc">("asc");
   const [importResult, setImportResult] = React.useState<{
     created: number;
     updated: number;
@@ -1018,9 +1019,17 @@ export default function SuperAdminPage() {
                     </tr>
                   ) : (
                     filteredClasses.map((cls) => {
-                      const classStudents = invites.filter(
-                        (i) => i.role === "STUDENT" && i.classId === cls.name
-                      );
+                      const classStudents = invites
+                        .filter((i) => i.role === "STUDENT" && i.classId === cls.name)
+                        .sort((a, b) => {
+                          const aName = a.name.toLowerCase();
+                          const bName = b.name.toLowerCase();
+                          if (expandedStudentsSortDir === "asc") {
+                            return aName < bName ? -1 : aName > bName ? 1 : 0;
+                          } else {
+                            return aName > bName ? -1 : aName < bName ? 1 : 0;
+                          }
+                        });
                       const isExpanded = expandedClassId === cls.id;
                       
                       return (
@@ -1104,7 +1113,20 @@ export default function SuperAdminPage() {
                           
                           {isExpanded && (
                             <tr className="bg-blue-50/10">
-                              <td colSpan={6} className="px-10 py-4">
+                              <td colSpan={6} className="px-10 py-6">
+                                <div className="flex items-center justify-between mb-4">
+                                  <div className="flex items-center gap-2">
+                                    <Users size={14} className="text-blue-600" />
+                                    <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Daftar Siswa Terdaftar</span>
+                                  </div>
+                                  <button 
+                                    onClick={() => setExpandedStudentsSortDir(expandedStudentsSortDir === "asc" ? "desc" : "asc")}
+                                    className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-100 rounded-xl text-[9px] font-black uppercase tracking-tight text-gray-500 hover:text-blue-600 hover:border-blue-100 transition-all shadow-sm"
+                                  >
+                                    <ArrowUpDown size={12} />
+                                    Sort: {expandedStudentsSortDir === "asc" ? "A-Z" : "Z-A"}
+                                  </button>
+                                </div>
                                 <motion.div 
                                   initial={{ opacity: 0, y: -10 }}
                                   animate={{ opacity: 1, y: 0 }}

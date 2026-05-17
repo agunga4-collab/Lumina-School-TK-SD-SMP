@@ -3,13 +3,13 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   CheckCircle2, AlertCircle, Clock, UserX, Search, Filter, 
   Save, Calendar, ChevronRight, AlertTriangle, MessageSquare, 
-  Settings2, BarChart3, Bell, RefreshCw
+  Settings2, BarChart3, Bell, RefreshCw, Layers
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { db, auth } from '../../lib/firebase';
-import { collection, query, where, getDocs, setDoc, doc, serverTimestamp, getDoc } from 'firebase/firestore';
-import { AttendanceStatus, AttendanceRecord, Student } from '../../types';
+import { collection, query, where, getDocs, setDoc, doc, serverTimestamp, getDoc, orderBy } from 'firebase/firestore';
+import { AttendanceStatus, AttendanceRecord, Student, UnitType, Class } from '../../types';
 import { attendanceSyncService } from '../../services/attendanceBackupConfigService';
 import { toast } from 'sonner';
 
@@ -25,8 +25,11 @@ const mockStudents: StudentAttendance[] = [];
 
 export default function Attendance() {
   const navigate = useNavigate();
+  const { activeUnit } = useOutletContext<{ activeUnit: UnitType }>();
   const [view, setView] = React.useState<'INPUT' | 'RECAP' | 'ALERTS'>('INPUT');
   const [students, setStudents] = React.useState<StudentAttendance[]>([]);
+  const [classes, setClasses] = React.useState<Class[]>([]);
+  const [loadingClasses, setLoadingClasses] = React.useState(true);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [recapStats, setRecapStats] = React.useState({
@@ -58,9 +61,34 @@ export default function Attendance() {
       attendanceRate: total > 0 ? Math.round((hadir / total) * 100) : 0
     });
   }, [students]);
-  const [selectedClass, setSelectedClass] = React.useState('8-A');
+  const [selectedClass, setSelectedClass] = React.useState('');
   const [selectedDate, setSelectedDate] = React.useState(new Date().toISOString().split('T')[0]);
   const [userProfile, setUserProfile] = React.useState<any>(null); // In real app, from AuthContext
+
+  // Fetch classes for active unit
+  React.useEffect(() => {
+    const fetchClasses = async () => {
+      setLoadingClasses(true);
+      try {
+        const q = query(
+          collection(db, 'classes'),
+          where('unitId', '==', activeUnit),
+          orderBy('name', 'asc')
+        );
+        const snap = await getDocs(q);
+        const classList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Class));
+        setClasses(classList);
+        if (classList.length > 0 && !selectedClass) {
+          setSelectedClass(classList[0].name);
+        }
+      } catch (err) {
+        console.error('Error fetching classes:', err);
+      } finally {
+        setLoadingClasses(false);
+      }
+    };
+    fetchClasses();
+  }, [activeUnit]);
 
   // Real App context would come from a global config or active semester hook
   const activeAcademicYear = '2025/2026';
@@ -84,17 +112,23 @@ export default function Attendance() {
     const loadStudents = async () => {
       setLoading(true);
       try {
-        // Query students in selected class
-        const q = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('jobTitle', '==', selectedClass));
-        const snap = await getDocs(q);
+        // Query students in selected class - check both classId and jobTitle for compatibility
+        const qByClassId = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('classId', '==', selectedClass));
+        const qByJobTitle = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('jobTitle', '==', selectedClass));
         
-        const studentList: StudentAttendance[] = snap.docs.map(doc => ({
+        const [snap1, snap2] = await Promise.all([getDocs(qByClassId), getDocs(qByJobTitle)]);
+        
+        // Merge results and remove duplicates
+        const combinedDocs = [...snap1.docs, ...snap2.docs];
+        const uniqueDocs = Array.from(new Map(combinedDocs.map(d => [d.id, d])).values());
+
+        const studentList: StudentAttendance[] = uniqueDocs.map(doc => ({
           id: doc.id,
-          name: doc.data().name,
-          status: 'HADIR',
+          name: doc.data().name || doc.data().displayName,
+          status: 'HADIR' as AttendanceStatus,
           note: '',
           absencesThisMonth: 0 // In real app, calculate from recent records
-        }));
+        })).sort((a, b) => a.name.localeCompare(b.name));
 
         // Load existing records for today
         const recordsQ = query(
@@ -224,7 +258,7 @@ export default function Attendance() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Manajemen Kehadiran</h1>
           <div className="flex items-center gap-2">
-            <p className="text-gray-500 font-medium">Lumina Junior High - Unit Dashboard</p>
+            <p className="text-gray-500 font-medium">{activeUnit?.replace('_', ' ')} - Unit Dashboard</p>
             {isAdmin && (
               <button 
                 onClick={() => navigate('backup-config')}
@@ -248,17 +282,28 @@ export default function Attendance() {
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-wrap items-center justify-between gap-4">
              <div className="flex items-center gap-4">
                 <div className="flex flex-col">
-                   <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Kelas</span>
-                   <select 
-                    value={selectedClass}
-                    onChange={(e) => setSelectedClass(e.target.value)}
-                    className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-bold outline-none cursor-pointer hover:border-blue-300 transition-colors"
-                   >
-                    <option value="8-A">8-A</option>
-                    <option value="8-B">8-B</option>
-                    <option value="7-A">7-A</option>
-                    <option value="9-A">9-A</option>
-                  </select>
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Kelas</span>
+                  <div className="relative">
+                    <select 
+                      value={selectedClass}
+                      disabled={loadingClasses}
+                      onChange={(e) => setSelectedClass(e.target.value)}
+                      className="bg-gray-50 border border-gray-200 rounded-lg pl-3 pr-8 py-1.5 text-sm font-bold outline-none cursor-pointer hover:border-blue-300 transition-colors appearance-none min-w-[120px]"
+                    >
+                      {loadingClasses ? (
+                        <option>Loading...</option>
+                      ) : classes.length === 0 ? (
+                        <option>No Classes</option>
+                      ) : (
+                        classes.map(c => (
+                          <option key={c.id} value={c.name}>{c.name}</option>
+                        ))
+                      )}
+                    </select>
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                      <Layers size={14} />
+                    </div>
+                  </div>
                 </div>
                 <div className="flex flex-col">
                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Tanggal</span>
