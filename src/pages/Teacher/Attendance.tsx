@@ -79,7 +79,7 @@ export default function Attendance() {
         const classList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Class));
         setClasses(classList);
         if (classList.length > 0 && !selectedClass) {
-          setSelectedClass(classList[0].name);
+          setSelectedClass(classList[0].id); // Use ID instead of Name
         }
       } catch (err) {
         console.error('Error fetching classes:', err);
@@ -112,39 +112,52 @@ export default function Attendance() {
     const loadStudents = async () => {
       setLoading(true);
       try {
+        // Get the actual class name for fallback queries
+        const currentClassEntity = classes.find(c => c.id === selectedClass || c.name === selectedClass);
+        const className = currentClassEntity?.name || selectedClass;
+        const classId = currentClassEntity?.id || selectedClass;
+
         // Query students in selected class - check users, roleInvites, and students collections
-        const qByClassId = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('classId', '==', selectedClass));
-        const qByJobTitle = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('jobTitle', '==', selectedClass));
-        const qInvites = query(collection(db, 'roleInvites'), where('role', '==', 'STUDENT'), where('classId', '==', selectedClass));
-        const qStudents = query(collection(db, 'students'), where('classId', '==', selectedClass));
+        // We check BOTH id and name for classId field in Firestore to be safe
+        const qByClassId = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('classId', '==', classId));
+        const qByClassName = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('classId', '==', className));
+        const qByJobTitle = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('jobTitle', 'in', [classId, className]));
         
-        const [snap1, snap2, snap3, snap4] = await Promise.all([
+        const qInvitesId = query(collection(db, 'roleInvites'), where('role', '==', 'STUDENT'), where('classId', '==', classId));
+        const qInvitesName = query(collection(db, 'roleInvites'), where('role', '==', 'STUDENT'), where('classId', '==', className));
+        
+        const qStudentsId = query(collection(db, 'students'), where('classId', '==', classId));
+        const qStudentsName = query(collection(db, 'students'), where('classId', '==', className));
+        
+        const [snap1, snap2, snap3, snap4, snap5, snap6, snap7] = await Promise.all([
           getDocs(qByClassId), 
+          getDocs(qByClassName),
           getDocs(qByJobTitle),
-          getDocs(qInvites),
-          getDocs(qStudents)
+          getDocs(qInvitesId),
+          getDocs(qInvitesName),
+          getDocs(qStudentsId),
+          getDocs(qStudentsName)
         ]);
         
         // Merge results and remove duplicates (using ID or luminaId as key)
-        const combinedDocs = [...snap1.docs, ...snap2.docs, ...snap3.docs, ...snap4.docs];
+        const combinedDocs = [...snap1.docs, ...snap2.docs, ...snap3.docs, ...snap4.docs, ...snap5.docs, ...snap6.docs, ...snap7.docs];
         const uniqueDocsMap = new Map();
         
         combinedDocs.forEach(d => {
           const data = d.data();
-          const luminaId = data.luminaId || data.nis || data.id;
-          const id = luminaId || d.id; 
+          // Use NIS/LuminaID if available, else doc ID
+          const studentId = data.luminaId || data.nis || data.nisn || d.id;
           
-          if (!uniqueDocsMap.has(id)) {
-            uniqueDocsMap.set(id, { id: d.id, ...data });
+          if (!uniqueDocsMap.has(studentId)) {
+            uniqueDocsMap.set(studentId, { docId: d.id, ...data });
           } else {
-            // Merge data if already exists (prefer name if available)
-            const existing = uniqueDocsMap.get(id);
-            uniqueDocsMap.set(id, { ...existing, ...data });
+            const existing = uniqueDocsMap.get(studentId);
+            uniqueDocsMap.set(studentId, { ...existing, ...data });
           }
         });
 
         const studentList: StudentAttendance[] = Array.from(uniqueDocsMap.values()).map(data => ({
-          id: data.luminaId || data.nis || data.id,
+          id: data.luminaId || data.nis || data.docId,
           name: data.name || data.displayName || data.fullName || "Siswa Tanpa Nama",
           status: 'HADIR' as AttendanceStatus,
           note: '',
@@ -154,7 +167,7 @@ export default function Attendance() {
         // Load existing records for today
         const recordsQ = query(
           collection(db, 'attendance_records'),
-          where('classId', '==', selectedClass),
+          where('classId', 'in', [classId, className]),
           where('date', '==', selectedDate)
         );
         const recordsSnap = await getDocs(recordsQ);
@@ -317,7 +330,7 @@ export default function Attendance() {
                         <option>No Classes</option>
                       ) : (
                         classes.map(c => (
-                          <option key={c.id} value={c.name}>{c.name}</option>
+                          <option key={c.id} value={c.id}>{c.name}</option>
                         ))
                       )}
                     </select>

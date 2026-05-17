@@ -1,7 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAnalytics } from 'firebase/analytics';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { initializeFirestore, doc, getDoc, setDoc, updateDoc, getDocFromServer, collection, query, where, getDocs, limit, writeBatch, deleteDoc } from 'firebase/firestore';
+import { initializeFirestore, doc, getDoc, setDoc, updateDoc, getDocFromServer, collection, query, where, getDocs, limit, writeBatch, deleteDoc, orderBy } from 'firebase/firestore';
 export { doc, writeBatch };
 import { mtssSnapshotTriggerService } from '../services/mtssSnapshotTriggerService.ts';
 import firebaseConfig from '../../firebase-applet-config.json' with { type: 'json' };
@@ -176,15 +176,15 @@ export async function createUserOnboarding(user: any): Promise<AppUser> {
       uid: user.uid,
       email: email,
       displayName: user.displayName || 'User',
-      photoURL: user.photoURL || undefined,
+      photoURL: user.photoURL || null,
       role: invite.role as UserRole,
-      jobTitle: invite.jobTitle,
+      jobTitle: invite.jobTitle || null,
       unitId: invite.unitId,
-      luminaId: invite.luminaId,
-      nickname: invite.nickname,
-      linkedStudents: invite.linkedStudents,
-      classId: (invite as any).classId,
-      academicYear: (invite as any).academicYear,
+      luminaId: invite.luminaId || null,
+      nickname: invite.nickname || null,
+      linkedStudents: invite.linkedStudents || [],
+      classId: (invite as any).classId || null,
+      academicYear: (invite as any).academicYear || null,
       status: 'active',
       createdAt: existingProfile?.createdAt || Date.now()
     };
@@ -291,12 +291,12 @@ export async function activateUser(uid: string, inviteData?: RoleInvite): Promis
     if (inviteData) {
       updates.role = inviteData.role;
       updates.unitId = inviteData.unitId;
-      updates.jobTitle = inviteData.jobTitle;
-      updates.luminaId = inviteData.luminaId;
-      updates.nickname = inviteData.nickname;
-      updates.linkedStudents = inviteData.linkedStudents;
-      updates.classId = (inviteData as any).classId;
-      updates.academicYear = (inviteData as any).academicYear;
+      updates.jobTitle = inviteData.jobTitle || null;
+      updates.luminaId = inviteData.luminaId || null;
+      updates.nickname = inviteData.nickname || null;
+      updates.linkedStudents = inviteData.linkedStudents || [];
+      updates.classId = (inviteData as any).classId || null;
+      updates.academicYear = (inviteData as any).academicYear || null;
     }
     
     await updateDoc(userRef, updates);
@@ -1637,11 +1637,20 @@ export async function getStudents(): Promise<Student[]> {
 
 export async function getClasses(): Promise<Class[]> {
   try {
-    const q = query(collection(db, 'classes'));
+    const q = query(collection(db, 'classes'), orderBy('name', 'asc'));
     const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Class));
   } catch (err: any) {
-    handleFirestoreError(err, 'list', 'classes');
+    console.error('Error in getClasses:', err);
+    // Fallback without order if index missing
+    try {
+      const q2 = query(collection(db, 'classes'));
+      const snapshot2 = await getDocs(q2);
+      return snapshot2.docs.map(doc => ({ id: doc.id, ...doc.data() } as Class));
+    } catch (innerErr) {
+       handleFirestoreError(innerErr, 'list', 'classes');
+       return [];
+    }
   }
 }
 

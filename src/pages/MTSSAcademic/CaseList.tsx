@@ -100,7 +100,9 @@ export default function CaseList() {
   };
 
   const filteredCases = cases.filter(c => {
+    const student = students.find(s => s.id === c.studentId);
     const matchesSearch = c.studentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         (student?.nickname && student.nickname.toLowerCase().includes(searchQuery.toLowerCase())) ||
                          c.primaryConcern.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesTier = filterTier === 'ALL' || c.currentTier === filterTier;
     const matchesStatus = filterStatus === 'ALL' || c.status === filterStatus;

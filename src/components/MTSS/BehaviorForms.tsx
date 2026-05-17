@@ -11,11 +11,12 @@ import { useAuth } from '../../context/AuthContext';
 import { 
   getTeachers, getStudentsByClass, getActiveCaseForStudent,
   createMTSSCase, addMTSSConcern, updateMTSSCase, closeMTSSCase,
-  saveCICOGoalConfig, createBehaviorAlert, getMTSSConcerns
+  saveCICOGoalConfig, createBehaviorAlert, getMTSSConcerns, getStudents
 } from '../../lib/firebase';
 import type { 
   MTSSCase, MTSSConcern, MTSSTier, User as AppUser, Student, CICOGoal, BehaviorNotification 
 } from '../../types';
+import StudentSearch from '../StudentSearch';
 
 interface ModalProps {
   isOpen: boolean;
@@ -87,9 +88,11 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess }: { isOpen: boolean, o
   React.useEffect(() => {
     const loadBatch = async () => {
       // For demo, load all students or filter by class if available
-      const s = await getStudentsByClass(profile?.classId || '7A', '2025/2026');
+      const [s, t] = await Promise.all([
+        getStudents(),
+        getTeachers()
+      ]);
       setStudents(s || []);
-      const t = await getTeachers();
       setTeachers(t);
     };
     if (isOpen) loadBatch();
@@ -177,14 +180,30 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess }: { isOpen: boolean, o
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
            <div className="space-y-2">
               <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-2">Pilih Siswa</label>
-              <select 
-                value={formData.studentId}
-                onChange={(e) => handleStudentSelect(e.target.value)}
-                className={cn("w-full px-6 py-4 rounded-xl bg-gray-50 border transition-all font-bold text-sm uppercase tracking-tighter", errors.studentId ? "border-rose-300" : "border-transparent focus:border-blue-300")}
-              >
-                <option value="">Cari Siswa...</option>
-                {students.map(s => <option key={s.id} value={s.id}>{s.name} ({s.classId})</option>)}
-              </select>
+              <StudentSearch 
+                placeholder="Cari nama atau panggilan..."
+                onSelect={(student) => handleStudentSelect(student.id)}
+              />
+              {formData.studentId && (
+                <div className="mt-2 px-4 py-3 bg-blue-50 rounded-xl border border-blue-100 flex items-center justify-between">
+                   <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center text-blue-600 font-black text-xs">
+                         {students.find(s => s.id === formData.studentId)?.name[0]}
+                      </div>
+                      <div>
+                         <p className="text-[10px] font-black uppercase text-gray-900">{students.find(s => s.id === formData.studentId)?.name}</p>
+                         <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">{students.find(s => s.id === formData.studentId)?.classId}</p>
+                      </div>
+                   </div>
+                   <button 
+                     type="button" 
+                     onClick={() => setFormData(p => ({ ...p, studentId: '' }))}
+                     className="p-1 hover:bg-white rounded-md text-gray-400 hover:text-rose-500 transition-all"
+                   >
+                      <X size={14} />
+                   </button>
+                </div>
+              )}
               {errors.studentId && <p className="text-[10px] font-black text-rose-500 uppercase tracking-widest mt-1 ml-2">{errors.studentId}</p>}
            </div>
            <div className="space-y-2">

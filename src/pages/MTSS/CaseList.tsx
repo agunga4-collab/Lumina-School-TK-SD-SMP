@@ -10,9 +10,9 @@ import { useNavigate, Link, useOutletContext } from 'react-router-dom';
 import { cn, formatDate } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { collection, query, onSnapshot, orderBy, where } from 'firebase/firestore';
-import { db, handleFirestoreError, getBehaviorNotifications, markBehaviorNotificationAsRead } from '../../lib/firebase.ts';
+import { db, handleFirestoreError, getBehaviorNotifications, markBehaviorNotificationAsRead, getStudents } from '../../lib/firebase.ts';
 import { NewCaseForm } from '../../components/MTSS/BehaviorForms';
-import type { MTSSCase, MTSSStatus, MTSSTier, BehaviorNotification } from '../../types';
+import type { MTSSCase, MTSSStatus, MTSSTier, BehaviorNotification, Student } from '../../types';
 
 export default function CaseList() {
   const { profile } = useAuth();
@@ -25,17 +25,22 @@ export default function CaseList() {
   const [showOnlyActive, setShowOnlyActive] = React.useState(true);
   
   const [cases, setCases] = React.useState<MTSSCase[]>([]);
+  const [students, setStudents] = React.useState<Student[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [showNewCaseModal, setShowNewCaseModal] = React.useState(false);
   const [notifications, setNotifications] = React.useState<BehaviorNotification[]>([]);
 
   React.useEffect(() => {
     if (!profile) return;
-    const loadNotifs = async () => {
-      const data = await getBehaviorNotifications(profile.uid);
-      setNotifications(data || []);
+    const loadData = async () => {
+      const [notifsData, studentsData] = await Promise.all([
+        getBehaviorNotifications(profile.uid),
+        getStudents()
+      ]);
+      setNotifications(notifsData || []);
+      setStudents(studentsData || []);
     };
-    loadNotifs();
+    loadData();
   }, [profile]);
 
   React.useEffect(() => {
@@ -68,7 +73,11 @@ export default function CaseList() {
   const noUpdate7Days = cases.filter(c => c.status !== 'CLOSED' && (Date.now() - c.lastUpdatedAt) > (7 * 86400000)).length;
 
   const filteredCases = cases.filter(c => {
-    const matchSearch = c.studentName.toLowerCase().includes(searchTerm.toLowerCase()) || c.classId.includes(searchTerm);
+    const student = students.find(s => s.id === c.studentId);
+    const matchSearch = 
+      c.studentName.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      (student?.nickname && student.nickname.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      c.classId.includes(searchTerm);
     const matchTier = tierFilter === 'all' || c.tier === tierFilter;
     const matchStatus = statusFilter === 'all' || c.status === statusFilter;
     const matchClass = classFilter === 'all' || c.classId === classFilter;

@@ -78,6 +78,10 @@ export default function SuperAdminPage() {
     key: string;
     direction: "asc" | "desc";
   }>({ key: "name", direction: "asc" });
+  const [classSortConfig, setClassSortConfig] = React.useState<{
+    key: "name" | "unitId" | "grade" | "academicYear";
+    direction: "asc" | "desc";
+  }>({ key: "name", direction: "asc" });
 
   const handleSort = (key: string) => {
     let direction: "asc" | "desc" = "asc";
@@ -85,6 +89,14 @@ export default function SuperAdminPage() {
       direction = "desc";
     }
     setSortConfig({ key, direction });
+  };
+
+  const handleClassSort = (key: typeof classSortConfig.key) => {
+    let direction: "asc" | "desc" = "asc";
+    if (classSortConfig.key === key && classSortConfig.direction === "asc") {
+      direction = "desc";
+    }
+    setClassSortConfig({ key, direction });
   };
 
   // Import State
@@ -583,14 +595,28 @@ export default function SuperAdminPage() {
     return sortableItems;
   }, [filteredInvites, sortConfig, studentIdToName]);
 
-  const filteredClasses = classes.filter((c) => {
-    const matchesSearch =
-      c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      c.academicYear.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      c.homeroomTeacherName?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesUnit = selectedUnit === "ALL" || c.unitId === selectedUnit;
-    return matchesSearch && matchesUnit;
-  });
+  const sortedClasses = React.useMemo(() => {
+    const filtered = classes.filter((c) => {
+      const matchesSearch =
+        c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        c.academicYear.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        c.homeroomTeacherName?.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesUnit = selectedUnit === "ALL" || c.unitId === selectedUnit;
+      return matchesSearch && matchesUnit;
+    });
+
+    return filtered.sort((a, b) => {
+      const aValue = a[classSortConfig.key] || "";
+      const bValue = b[classSortConfig.key] || "";
+      if (aValue.toString().toLowerCase() < bValue.toString().toLowerCase()) {
+        return classSortConfig.direction === "asc" ? -1 : 1;
+      }
+      if (aValue.toString().toLowerCase() > bValue.toString().toLowerCase()) {
+        return classSortConfig.direction === "asc" ? 1 : -1;
+      }
+      return 0;
+    });
+  }, [classes, searchTerm, selectedUnit, classSortConfig]);
 
   const filteredPending = pendingUsers.filter((u) => {
     const matchesSearch =
@@ -987,17 +1013,35 @@ export default function SuperAdminPage() {
               <table className="w-full text-left">
                 <thead className="bg-gray-50/50">
                   <tr>
-                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">
-                      Unit / Nama Kelas
+                    <th 
+                      onClick={() => handleClassSort("name")}
+                      className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 cursor-pointer hover:bg-gray-100"
+                    >
+                      <div className="flex items-center gap-2">
+                        Unit / Nama Kelas
+                        <SortIcon column="name" currentConfig={classSortConfig} />
+                      </div>
                     </th>
                     <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 text-center">
                       Siswa
                     </th>
-                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 text-center">
-                      Grade
+                    <th 
+                      onClick={() => handleClassSort("grade")}
+                      className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 text-center cursor-pointer hover:bg-gray-100"
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                        Grade
+                        <SortIcon column="grade" currentConfig={classSortConfig} />
+                      </div>
                     </th>
-                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 text-center">
-                      TA
+                    <th 
+                      onClick={() => handleClassSort("academicYear")}
+                      className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 text-center cursor-pointer hover:bg-gray-100"
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                        TA
+                        <SortIcon column="academicYear" currentConfig={classSortConfig} />
+                      </div>
                     </th>
                     <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">
                       Wali Kelas
@@ -1008,19 +1052,19 @@ export default function SuperAdminPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {filteredClasses.length === 0 ? (
+                  {sortedClasses.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={5}
+                        colSpan={6}
                         className="px-10 py-20 text-center text-gray-400 italic"
                       >
                         No classes found in this unit.
                       </td>
                     </tr>
                   ) : (
-                    filteredClasses.map((cls) => {
+                    sortedClasses.map((cls) => {
                       const classStudents = invites
-                        .filter((i) => i.role === "STUDENT" && i.classId === cls.name)
+                        .filter((i) => i.role === "STUDENT" && (i.classId === cls.id || i.classId === cls.name))
                         .sort((a, b) => {
                           const aName = a.name.toLowerCase();
                           const bName = b.name.toLowerCase();

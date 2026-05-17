@@ -1236,6 +1236,12 @@ app.post("/api/admin/bulk-import-users", async (req, res) => {
         let jobTitle = "";
         let luminaId = "";
         let linkedStudents: string[] = [];
+        let classId = "";
+        let academicYear = "";
+        let nisn = "";
+        let nickname = "";
+        let gender = "";
+        let parentEmail = "";
 
         if (mode === "STAFF") {
           // Format STAFF: email | jobTitle | role | unitId
@@ -1251,15 +1257,15 @@ app.post("/api/admin/bulk-import-users", async (req, res) => {
           // Format STUDENT (New Format):
           // A: luminaId, B: nisn, C: fullName, D: nickname, E: gender, F: email, G: parentEmail, H: classId, I: unitId, J: academicYear
           luminaId = (row[0] || "").trim();
-          const nisn = (row[1] || "").trim();
+          nisn = (row[1] || "").trim();
           const fullName = (row[2] || "").trim();
-          const nickname = (row[3] || "").trim();
-          const gender = (row[4] || "").trim().toUpperCase(); // L or P
+          nickname = (row[3] || "").trim();
+          gender = (row[4] || "").trim().toUpperCase(); // L or P
           email = (row[5] || "").trim().toLowerCase();
-          const parentEmail = (row[6] || "").trim().toLowerCase();
-          const classId = (row[7] || "").trim(); // Example: "7 Baiji"
+          parentEmail = (row[6] || "").trim().toLowerCase();
+          classId = (row[7] || "").trim(); // Example: "7 Baiji"
           unitId = (row[8] || "").trim().toUpperCase(); // JUNIOR_HIGH
-          const academicYear = (row[9] || "").trim(); // Example: "2025/2026"
+          academicYear = (row[9] || "").trim(); // Example: "2025/2026"
 
           if (!luminaId || !email) {
             skipped++;
@@ -1372,6 +1378,14 @@ app.post("/api/admin/bulk-import-users", async (req, res) => {
             jobTitle,
             luminaId,
             linkedStudents,
+            ...(mode === 'STUDENT' ? {
+              classId,
+              academicYear,
+              nisn,
+              nickname,
+              gender,
+              parentEmail
+            } : {}),
             status: "ready",
             createdAt: FieldValue.serverTimestamp(),
           });
@@ -1387,6 +1401,10 @@ app.post("/api/admin/bulk-import-users", async (req, res) => {
             (currentData.unitId || "") !== unitId ||
             (currentData.jobTitle || "") !== jobTitle ||
             (currentData.luminaId || "") !== luminaId ||
+            (mode === 'STUDENT' && (
+              currentData.classId !== classId ||
+              currentData.academicYear !== academicYear
+            )) ||
             JSON.stringify(currentData.linkedStudents || []) !==
               JSON.stringify(linkedStudents);
 
@@ -1397,6 +1415,15 @@ app.post("/api/admin/bulk-import-users", async (req, res) => {
               jobTitle,
               luminaId,
             };
+
+            if (mode === "STUDENT") {
+              updates.classId = classId;
+              updates.academicYear = academicYear;
+              updates.nisn = nisn;
+              updates.nickname = nickname;
+              updates.gender = gender;
+              updates.parentEmail = parentEmail;
+            }
 
             // For parents, merge linkedStudents if needed or replacement?
             // Requirement says "UPDATE dokumen" if there's changes.
