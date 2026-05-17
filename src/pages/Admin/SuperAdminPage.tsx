@@ -1337,7 +1337,7 @@ export default function SuperAdminPage() {
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="bg-white w-full max-w-xl rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden"
+            className="bg-white w-full max-w-xl rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-[90vh]"
           >
             <div className="p-8 border-b border-gray-50 flex items-center justify-between">
               <h2 className="text-xl font-black text-gray-900 tracking-tight italic">
@@ -1351,7 +1351,7 @@ export default function SuperAdminPage() {
               </button>
             </div>
 
-            <form onSubmit={handleCreateOrUpdate} className="p-8 space-y-6">
+            <form onSubmit={handleCreateOrUpdate} className="p-8 space-y-6 overflow-y-auto flex-1 custom-scrollbar">
               <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
@@ -1691,7 +1691,7 @@ export default function SuperAdminPage() {
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="bg-white w-full max-w-xl rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden"
+            className="bg-white w-full max-w-xl rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-[90vh]"
           >
             <div className="p-8 border-b border-gray-50 flex items-center justify-between">
               <h2 className="text-xl font-black text-gray-900 tracking-tight italic">
@@ -1707,7 +1707,7 @@ export default function SuperAdminPage() {
 
             <form
               onSubmit={handleCreateOrUpdateClass}
-              className="p-8 space-y-6"
+              className="p-8 space-y-6 overflow-y-auto flex-1"
             >
               <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-2">
