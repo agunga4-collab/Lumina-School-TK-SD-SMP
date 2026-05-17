@@ -541,6 +541,16 @@ export default function SuperAdminPage() {
     return sortableItems;
   }, [filteredInvites, sortConfig]);
 
+  const studentIdToName = React.useMemo(() => {
+    const map: Record<string, string> = {};
+    invites.forEach((i) => {
+      if (i.role === "STUDENT" && i.luminaId) {
+        map[i.luminaId] = i.name;
+      }
+    });
+    return map;
+  }, [invites]);
+
   const filteredClasses = classes.filter((c) => {
     const matchesSearch =
       c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -1173,6 +1183,11 @@ export default function SuperAdminPage() {
                         Details
                       </th>
                     )}
+                    {activeTab === "PARENT" && (
+                      <th className="px-6 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                        Siswa Terhubung
+                      </th>
+                    )}
                     <th className="px-6 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 text-center">
                       Unit
                     </th>
@@ -1274,6 +1289,27 @@ export default function SuperAdminPage() {
                               {invite.jobTitle && (
                                 <span className="text-[9px] font-black text-gray-300 uppercase tracking-widest">
                                   {invite.jobTitle}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        )}
+
+                        {activeTab === "PARENT" && (
+                          <td className="px-6 py-6">
+                            <div className="flex flex-wrap gap-2">
+                              {invite.linkedStudents && invite.linkedStudents.length > 0 ? (
+                                invite.linkedStudents.map((sid, idx) => (
+                                  <span key={idx} className="px-3 py-1 bg-blue-50 text-blue-600 text-[10px] font-black rounded-lg uppercase tracking-tight flex items-center gap-2 border border-blue-100">
+                                    <span className="opacity-40 font-mono">{sid}</span>
+                                    {studentIdToName[sid] && (
+                                      <span className="font-black italic text-blue-700">{studentIdToName[sid]}</span>
+                                    )}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-[10px] font-bold text-gray-300 italic">
+                                  Belum terhubung
                                 </span>
                               )}
                             </div>
