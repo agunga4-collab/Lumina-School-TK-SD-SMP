@@ -4,12 +4,14 @@ import { useNavigate } from 'react-router-dom';
 import { 
   ChevronLeft, Info, Send, User, Calendar, 
   MapPin, Clock, FileText, AlertCircle, Sparkles,
-  Layers, MessageSquare, Briefcase, Loader2
+  Layers, MessageSquare, Briefcase, Loader2, X
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { createMTSSCase, addMTSSConcern } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import type { MTSSTier, MTSSStatus } from '../../types';
+
+import StudentSearch from '../../components/StudentSearch';
 
 export default function CreateCase() {
   const navigate = useNavigate();
@@ -100,15 +102,30 @@ export default function CreateCase() {
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Nama Lengkap Siswa</label>
-                <input
-                  required
-                  type="text"
-                  placeholder="E.g. Dika Ramadhan"
-                  className="w-full px-6 py-4 rounded-2xl bg-gray-50 border border-transparent focus:bg-white focus:border-blue-300 focus:ring-4 focus:ring-blue-50 outline-none transition-all font-bold text-sm"
-                  value={formData.studentName}
-                  onChange={e => setFormData(prev => ({ ...prev, studentName: e.target.value }))}
+                <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Cari & Pilih Siswa</label>
+                <StudentSearch 
+                  placeholder="Ketik nama lengkap atau panggilan..."
+                  onSelect={(student) => {
+                    setFormData(prev => ({ 
+                      ...prev, 
+                      studentName: student.name,
+                      studentId: student.id,
+                      classId: student.className || prev.classId
+                    }));
+                  }}
                 />
+                {formData.studentName && (
+                  <div className="mt-2 px-4 py-2 bg-blue-50 rounded-xl flex items-center justify-between">
+                    <span className="text-xs font-bold text-blue-700">Terpilih: {formData.studentName}</span>
+                    <button 
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, studentName: '', studentId: '' }))}
+                      className="text-blue-400 hover:text-blue-600"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="space-y-2">
                 <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Kelas</label>

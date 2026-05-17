@@ -181,6 +181,7 @@ export async function createUserOnboarding(user: any): Promise<AppUser> {
       jobTitle: invite.jobTitle,
       unitId: invite.unitId,
       luminaId: invite.luminaId,
+      nickname: invite.nickname,
       linkedStudents: invite.linkedStudents,
       classId: (invite as any).classId,
       academicYear: (invite as any).academicYear,
@@ -292,6 +293,7 @@ export async function activateUser(uid: string, inviteData?: RoleInvite): Promis
       updates.unitId = inviteData.unitId;
       updates.jobTitle = inviteData.jobTitle;
       updates.luminaId = inviteData.luminaId;
+      updates.nickname = inviteData.nickname;
       updates.linkedStudents = inviteData.linkedStudents;
       updates.classId = (inviteData as any).classId;
       updates.academicYear = (inviteData as any).academicYear;

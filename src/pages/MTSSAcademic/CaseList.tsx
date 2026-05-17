@@ -33,6 +33,8 @@ import {
 } from '../../types';
 import { format } from 'date-fns';
 
+import StudentSearch from '../../components/StudentSearch';
+
 const DOMAINS: { value: MTSSAcademicDomain; label: string; color: string }[] = [
   { value: 'ENGLISH', label: 'English', color: 'bg-blue-100 text-blue-700' },
   { value: 'NUMERACY', label: 'Numeracy', color: 'bg-amber-100 text-amber-700' },
@@ -491,17 +493,18 @@ function CreateCaseModal({ onClose, students, onSuccess }: { onClose: () => void
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           <div>
             <label className="block text-sm font-bold text-slate-700 mb-1.5">Student <span className="text-rose-500">*</span></label>
-            <select
-              required
-              value={formData.studentId}
-              onChange={(e) => setFormData({ ...formData, studentId: e.target.value })}
-              className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all"
-            >
-              <option value="">Select Student</option>
-              {students.map(s => (
-                <option key={s.id} value={s.id}>{s.name} ({s.id})</option>
-              ))}
-            </select>
+            <StudentSearch 
+              placeholder="Search name or nickname..."
+              onSelect={(student) => setFormData({ ...formData, studentId: student.id })}
+            />
+            {formData.studentId && (
+              <div className="mt-2 text-xs font-bold text-emerald-600 bg-emerald-50 p-2 rounded-lg flex items-center justify-between">
+                <span>Selected: {students.find(s => s.id === formData.studentId)?.name || formData.studentId}</span>
+                <button type="button" onClick={() => setFormData({ ...formData, studentId: '' })} className="hover:text-emerald-800">
+                  <Plus size={14} className="rotate-45" />
+                </button>
+              </div>
+            )}
           </div>
 
           <div>

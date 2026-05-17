@@ -11,6 +11,8 @@ import { getAssessments, deleteAssessment } from '../../lib/firebase';
 import { Assessment, User as AppUser } from '../../types';
 import { cn } from '../../lib/utils';
 
+import StudentSearch from '../../components/StudentSearch';
+
 export default function AssessmentList() {
   const { currentUser } = useOutletContext<{ currentUser: AppUser }>();
   const navigate = useNavigate();
@@ -117,6 +119,12 @@ export default function AssessmentList() {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full bg-white border border-gray-100 pl-16 pr-8 py-5 rounded-[2rem] text-sm font-bold shadow-sm focus:ring-4 focus:ring-blue-50 outline-none transition-all"
+          />
+        </div>
+        <div className="relative flex-1 group">
+          <StudentSearch 
+            placeholder="Cari profil siswa (nama/panggilan)..."
+            onSelect={(student) => navigate(`/academic/buku-nilai/siswa/${student.id}`)}
           />
         </div>
         <div className="flex gap-2">

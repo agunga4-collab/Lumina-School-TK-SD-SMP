@@ -42,6 +42,8 @@ import { buildScreeningResult, aggregateClassSummaries } from '../../services/mt
 import { format, isWithinInterval } from 'date-fns';
 import { toast } from 'sonner';
 
+import StudentSearch from '../../components/StudentSearch';
+
 export default function Screening() {
   const { currentUser } = useAuth();
   const navigate = useNavigate();
@@ -238,13 +240,9 @@ export default function Screening() {
            </div>
 
            <div className="relative w-full md:w-80">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <input 
-                type="text"
-                placeholder={activeView === 'BY_STUDENT' ? "Find student..." : "Search classes..."}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-11 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-bold focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all"
+              <StudentSearch 
+                placeholder={activeView === 'BY_STUDENT' ? "Cari nama/panggilan..." : "Cari kelas..."}
+                onSelect={(student) => setSearchQuery(student.name)}
               />
            </div>
         </div>

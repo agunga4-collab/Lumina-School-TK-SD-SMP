@@ -712,6 +712,7 @@ export type UnitType = 'KINDERGARTEN' | 'ELEMENTARY' | 'JUNIOR_HIGH';
 export interface Student {
   id: string; // NIS
   name: string;
+  nickname?: string;
   nisn?: string;
   currentUnit: string;
   classId: string;
@@ -1228,6 +1229,7 @@ export interface User {
   jobTitle?: string;
   unitId?: string;
   luminaId?: string; // For Students
+  nickname?: string;
   linkedStudents?: string[]; // For Parents
   classId?: string; // For Students
   academicYear?: string; // For Students

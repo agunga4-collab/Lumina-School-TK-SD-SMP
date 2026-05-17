@@ -16,6 +16,10 @@ import { collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { ReportCard, StudentReport, User as AppUser, ReportConfig, SEEnrollment } from '../../../types';
 import { cn } from '../../../lib/utils';
 
+import { toast } from 'sonner';
+
+import StudentSearch from '../../../components/StudentSearch';
+
 const SCORE_LABELS = { A: 'Achieved', D: 'Developing', B: 'Beginning' };
 
 export default function ReportInput() {
@@ -216,6 +220,19 @@ export default function ReportInput() {
             <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
                <Users size={14} /> Student List
             </h3>
+
+            <StudentSearch 
+               placeholder="Loncat ke siswa..."
+               onSelect={(student) => {
+                  const idx = report.studentReports.findIndex(s => s.studentId === student.id || s.studentName === student.name);
+                  if (idx !== -1) {
+                     setCurrentStudentIndex(idx);
+                  } else {
+                     toast.error("Siswa tidak ditemukan dalam sesi rapor ini");
+                  }
+               }}
+            />
+
             <div className="space-y-2 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
                {report.studentReports.map((s, idx) => (
                  <button

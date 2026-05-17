@@ -1435,7 +1435,13 @@ export default function SuperAdminPage() {
                           <td className="px-6 py-6">
                             <div className="flex flex-wrap gap-2">
                               {invite.linkedStudents && invite.linkedStudents.length > 0 ? (
-                                invite.linkedStudents.map((sid, idx) => (
+                                [...invite.linkedStudents]
+                                  .sort((a, b) => {
+                                    const nameA = studentIdToName[a] ? studentIdToName[a].toLowerCase() : a;
+                                    const nameB = studentIdToName[b] ? studentIdToName[b].toLowerCase() : b;
+                                    return nameA.localeCompare(nameB);
+                                  })
+                                  .map((sid, idx) => (
                                   <span key={idx} className="px-3 py-1 bg-blue-50 text-blue-600 text-[10px] font-black rounded-lg uppercase tracking-tight flex items-center gap-2 border border-blue-100">
                                     <span className="opacity-40 font-mono">{sid}</span>
                                     {studentIdToName[sid] && (

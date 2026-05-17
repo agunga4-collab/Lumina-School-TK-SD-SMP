@@ -10,6 +10,8 @@ import { db } from '../../lib/firebase';
 import { collection, query, where, getDocs, doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { toast } from 'sonner';
 
+import StudentSearch from '../../components/StudentSearch';
+
 interface LatenessRecord {
   id: string;
   name: string;
@@ -169,13 +171,30 @@ export default function Lateness() {
                   </select>
                 </div>
                 <div className="relative flex-1 max-w-xs">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
-                  <input 
-                    type="text" 
-                    placeholder="Cari siswa..." 
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-100 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500" 
+                  <StudentSearch 
+                    placeholder="Cari nama/panggilan..."
+                    onSelect={(student) => {
+                      // Check if already in list
+                      if (records.some(r => r.id === student.id)) {
+                        toast.info(`${student.name} sudah ada di daftar`);
+                        return;
+                      }
+                      
+                      const newRecord: LatenessRecord = {
+                        id: student.id,
+                        name: student.name,
+                        arrivalTime: '',
+                        reason: '',
+                        parentNote: false,
+                        countThisMonth: 0
+                      };
+                      setRecords([newRecord, ...records]);
+                      
+                      // Also update class to the student's class if available
+                      if (student.classId) {
+                        setSelectedClass(student.classId);
+                      }
+                    }}
                   />
                 </div>
              </div>
