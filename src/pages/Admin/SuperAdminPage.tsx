@@ -1,4 +1,5 @@
 import * as React from "react";
+import axios from "axios";
 import { motion } from "motion/react";
 import {
   Users,
@@ -25,6 +26,9 @@ import {
   ArrowUpDown,
   ChevronUp,
   ChevronDown,
+  RefreshCw,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import {
   getAllInvites,
@@ -85,6 +89,25 @@ export default function SuperAdminPage() {
 
   // Import State
   const [importLoading, setImportLoading] = React.useState(false);
+  const [syncLoading, setSyncLoading] = React.useState(false);
+
+  const handleSyncParents = async () => {
+    try {
+      setSyncLoading(true);
+      const response = await axios.post("/api/admin/sync-parents-data");
+      const { created, updated, totalParents } = response.data;
+      alert(`Sinkronisasi Selesai!\nTotal Wali: ${totalParents}\nBaru: ${created}\nUpdate: ${updated}`);
+      fetchData(); // Refresh list
+    } catch (error: any) {
+      console.error("Sync error:", error);
+      alert("Gagal sinkronisasi: " + (error.response?.data?.error || error.message));
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+  const [expandedClassId, setExpandedClassId] = React.useState<string | null>(
+    null,
+  );
   const [importResult, setImportResult] = React.useState<{
     created: number;
     updated: number;
@@ -522,12 +545,30 @@ export default function SuperAdminPage() {
     return matchesSearch && matchesUnit;
   });
 
+  const studentIdToName = React.useMemo(() => {
+    const map: Record<string, string> = {};
+    invites.forEach((i) => {
+      if (i.role === "STUDENT" && i.luminaId) {
+        map[i.luminaId] = i.name;
+      }
+    });
+    return map;
+  }, [invites]);
+
   const sortedInvites = React.useMemo(() => {
     const sortableItems = [...filteredInvites];
     if (sortConfig.key) {
       sortableItems.sort((a, b) => {
-        const aValue = (a as any)[sortConfig.key] || "";
-        const bValue = (b as any)[sortConfig.key] || "";
+        let aValue: any = (a as any)[sortConfig.key] || "";
+        let bValue: any = (b as any)[sortConfig.key] || "";
+
+        // Custom sorting for linkedStudents
+        if (sortConfig.key === "linkedStudents") {
+          const aId = a.linkedStudents?.[0] || "";
+          const bId = b.linkedStudents?.[0] || "";
+          aValue = studentIdToName[aId] || aId;
+          bValue = studentIdToName[bId] || bId;
+        }
 
         if (aValue.toString().toLowerCase() < bValue.toString().toLowerCase()) {
           return sortConfig.direction === "asc" ? -1 : 1;
@@ -539,17 +580,7 @@ export default function SuperAdminPage() {
       });
     }
     return sortableItems;
-  }, [filteredInvites, sortConfig]);
-
-  const studentIdToName = React.useMemo(() => {
-    const map: Record<string, string> = {};
-    invites.forEach((i) => {
-      if (i.role === "STUDENT" && i.luminaId) {
-        map[i.luminaId] = i.name;
-      }
-    });
-    return map;
-  }, [invites]);
+  }, [filteredInvites, sortConfig, studentIdToName]);
 
   const filteredClasses = classes.filter((c) => {
     const matchesSearch =
@@ -617,6 +648,21 @@ export default function SuperAdminPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          {activeTab === "PARENT" && (
+            <button
+              onClick={handleSyncParents}
+              disabled={syncLoading}
+              className="px-6 py-4 bg-blue-50 text-blue-600 border border-blue-100 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-blue-100 transition-all disabled:opacity-50"
+            >
+              {syncLoading ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <RefreshCw size={16} />
+              )}
+              Sinkron Data Wali
+            </button>
+          )}
+
           <button
             onClick={handleResetData}
             disabled={resetLoading}
@@ -943,7 +989,10 @@ export default function SuperAdminPage() {
                     <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">
                       Unit / Nama Kelas
                     </th>
-                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">
+                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 text-center">
+                      Siswa
+                    </th>
+                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 text-center">
                       Grade
                     </th>
                     <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 text-center">
@@ -968,68 +1017,127 @@ export default function SuperAdminPage() {
                       </td>
                     </tr>
                   ) : (
-                    filteredClasses.map((cls) => (
-                      <tr
-                        key={cls.id}
-                        className="group hover:bg-gray-50/50 transition-all"
-                      >
-                        <td className="px-10 py-6">
-                          <div className="flex items-center gap-3">
-                            <div className="w-2 h-2 rounded-full bg-blue-500" />
-                            <div className="flex flex-col">
-                              <span className="text-xs font-black text-gray-900 uppercase tracking-tight italic">
-                                {cls.name}
+                    filteredClasses.map((cls) => {
+                      const classStudents = invites.filter(
+                        (i) => i.role === "STUDENT" && i.classId === cls.name
+                      );
+                      const isExpanded = expandedClassId === cls.id;
+                      
+                      return (
+                        <React.Fragment key={cls.id}>
+                          <tr
+                            className={cn(
+                              "group hover:bg-gray-50/50 transition-all",
+                              isExpanded && "bg-blue-50/20"
+                            )}
+                          >
+                            <td className="px-10 py-6">
+                              <div className="flex items-center gap-3">
+                                <div className="w-2 h-2 rounded-full bg-blue-500" />
+                                <div className="flex flex-col">
+                                  <span className="text-xs font-black text-gray-900 uppercase tracking-tight italic">
+                                    {cls.name}
+                                  </span>
+                                  <span className="text-[9px] font-bold text-gray-300 uppercase">
+                                    {cls.unitId}
+                                  </span>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-10 py-6 text-center">
+                              <button
+                                onClick={() => setExpandedClassId(isExpanded ? null : cls.id)}
+                                className={cn(
+                                  "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-tight flex items-center gap-2 transition-all",
+                                  isExpanded 
+                                    ? "bg-blue-600 text-white shadow-lg shadow-blue-200" 
+                                    : "bg-gray-100 text-gray-600 hover:bg-blue-50 hover:text-blue-600"
+                                )}
+                              >
+                                {isExpanded ? <EyeOff size={12} /> : <Eye size={12} />}
+                                {classStudents.length} Siswa
+                              </button>
+                            </td>
+                            <td className="px-10 py-6 text-center">
+                              <span className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-[9px] font-black uppercase">
+                                {cls.grade}
                               </span>
-                              <span className="text-[9px] font-bold text-gray-300 uppercase">
-                                {cls.unitId}
+                            </td>
+                            <td className="px-10 py-6 text-center font-bold text-[11px] text-gray-500 tabular-nums">
+                              {cls.academicYear}
+                            </td>
+                            <td className="px-10 py-6">
+                              <span className="text-xs font-bold text-gray-700">
+                                {cls.homeroomTeacherName || "-"}
                               </span>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-10 py-6">
-                          <span className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-[9px] font-black uppercase">
-                            {cls.grade}
-                          </span>
-                        </td>
-                        <td className="px-10 py-6 text-center font-bold text-[11px] text-gray-500 tabular-nums">
-                          {cls.academicYear}
-                        </td>
-                        <td className="px-10 py-6">
-                          <span className="text-xs font-bold text-gray-700">
-                            {cls.homeroomTeacherName || "-"}
-                          </span>
-                        </td>
-                        <td className="px-10 py-6 text-right">
-                          <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-all">
-                            <button
-                              onClick={() => {
-                                setEditingId(cls.id);
-                                const [grade, ...nameParts] =
-                                  cls.name.split(" ");
-                                setClassFormData({
-                                  grade,
-                                  className: nameParts.join(" "),
-                                  academicYear: cls.academicYear,
-                                  homeroomTeacherId:
-                                    cls.homeroomTeacherId || "",
-                                  unitId: cls.unitId,
-                                });
-                                setIsClassModalOpen(true);
-                              }}
-                              className="p-2 text-gray-400 hover:text-blue-600 hover:bg-white rounded-xl shadow-sm"
-                            >
-                              <Edit2 size={16} />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteClass(cls.id)}
-                              className="p-2 text-gray-400 hover:text-red-500 hover:bg-white rounded-xl shadow-sm"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
+                            </td>
+                            <td className="px-10 py-6 text-right">
+                              <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                                <button
+                                  onClick={() => {
+                                    setEditingId(cls.id);
+                                    const [grade, ...nameParts] =
+                                      cls.name.split(" ");
+                                    setClassFormData({
+                                      grade,
+                                      className: nameParts.join(" "),
+                                      academicYear: cls.academicYear,
+                                      homeroomTeacherId:
+                                        cls.homeroomTeacherId || "",
+                                      unitId: cls.unitId,
+                                    });
+                                    setIsClassModalOpen(true);
+                                  }}
+                                  className="p-2 text-gray-400 hover:text-blue-600 hover:bg-white rounded-xl shadow-sm"
+                                >
+                                  <Edit2 size={16} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteClass(cls.id)}
+                                  className="p-2 text-gray-400 hover:text-red-500 hover:bg-white rounded-xl shadow-sm"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                          
+                          {isExpanded && (
+                            <tr className="bg-blue-50/10">
+                              <td colSpan={6} className="px-10 py-4">
+                                <motion.div 
+                                  initial={{ opacity: 0, y: -10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"
+                                >
+                                  {classStudents.length === 0 ? (
+                                    <div className="col-span-full py-8 text-center text-[10px] font-bold text-gray-400 uppercase tracking-widest italic">
+                                      Belum ada siswa di kelas ini
+                                    </div>
+                                  ) : (
+                                    classStudents.map((s) => (
+                                      <div key={s.id} className="p-3 bg-white border border-blue-50 rounded-2xl flex items-center gap-3 shadow-sm">
+                                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-[10px] font-black text-blue-600">
+                                          {s.name.charAt(0)}
+                                        </div>
+                                        <div className="flex flex-col">
+                                          <span className="text-[10px] font-black text-gray-900 uppercase">
+                                            {s.name}
+                                          </span>
+                                          <span className="text-[9px] font-mono text-gray-400">
+                                            {s.luminaId}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    ))
+                                  )}
+                                </motion.div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -1184,8 +1292,14 @@ export default function SuperAdminPage() {
                       </th>
                     )}
                     {activeTab === "PARENT" && (
-                      <th className="px-6 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
-                        Siswa Terhubung
+                      <th 
+                        onClick={() => handleSort("linkedStudents")}
+                        className="px-6 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 cursor-pointer hover:bg-gray-100"
+                      >
+                        <div className="flex items-center gap-2">
+                          Siswa Terhubung
+                          <SortIcon column="linkedStudents" currentConfig={sortConfig} />
+                        </div>
                       </th>
                     )}
                     <th className="px-6 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 text-center">
