@@ -112,23 +112,44 @@ export default function Attendance() {
     const loadStudents = async () => {
       setLoading(true);
       try {
-        // Query students in selected class - check both classId and jobTitle for compatibility
+        // Query students in selected class - check users, roleInvites, and students collections
         const qByClassId = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('classId', '==', selectedClass));
         const qByJobTitle = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('jobTitle', '==', selectedClass));
+        const qInvites = query(collection(db, 'roleInvites'), where('role', '==', 'STUDENT'), where('classId', '==', selectedClass));
+        const qStudents = query(collection(db, 'students'), where('classId', '==', selectedClass));
         
-        const [snap1, snap2] = await Promise.all([getDocs(qByClassId), getDocs(qByJobTitle)]);
+        const [snap1, snap2, snap3, snap4] = await Promise.all([
+          getDocs(qByClassId), 
+          getDocs(qByJobTitle),
+          getDocs(qInvites),
+          getDocs(qStudents)
+        ]);
         
-        // Merge results and remove duplicates
-        const combinedDocs = [...snap1.docs, ...snap2.docs];
-        const uniqueDocs = Array.from(new Map(combinedDocs.map(d => [d.id, d])).values());
+        // Merge results and remove duplicates (using ID or luminaId as key)
+        const combinedDocs = [...snap1.docs, ...snap2.docs, ...snap3.docs, ...snap4.docs];
+        const uniqueDocsMap = new Map();
+        
+        combinedDocs.forEach(d => {
+          const data = d.data();
+          const luminaId = data.luminaId || data.nis || data.id;
+          const id = luminaId || d.id; 
+          
+          if (!uniqueDocsMap.has(id)) {
+            uniqueDocsMap.set(id, { id: d.id, ...data });
+          } else {
+            // Merge data if already exists (prefer name if available)
+            const existing = uniqueDocsMap.get(id);
+            uniqueDocsMap.set(id, { ...existing, ...data });
+          }
+        });
 
-        const studentList: StudentAttendance[] = uniqueDocs.map(doc => ({
-          id: doc.id,
-          name: doc.data().name || doc.data().displayName,
+        const studentList: StudentAttendance[] = Array.from(uniqueDocsMap.values()).map(data => ({
+          id: data.luminaId || data.nis || data.id,
+          name: data.name || data.displayName || data.fullName || "Siswa Tanpa Nama",
           status: 'HADIR' as AttendanceStatus,
           note: '',
-          absencesThisMonth: 0 // In real app, calculate from recent records
-        })).sort((a, b) => a.name.localeCompare(b.name));
+          absencesThisMonth: 0 
+        })).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
         // Load existing records for today
         const recordsQ = query(
