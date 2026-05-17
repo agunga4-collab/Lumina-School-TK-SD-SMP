@@ -35,8 +35,9 @@ import {
   updateClass,
   deleteClass,
   getTeachers,
+  db,
 } from "../../lib/firebase";
-import { auth } from "../../lib/firebase";
+import { auth, writeBatch, doc } from "../../lib/firebase";
 import { User, RoleInvite, UserRole, UnitType, Class } from "../../types";
 import { cn } from "../../lib/utils";
 
@@ -90,6 +91,8 @@ export default function SuperAdminPage() {
       parentEmail: "",
       fatherName: "",
       motherName: "",
+      classId: "",
+      academicYear: "2025/2026",
       linkedStudents: [],
     },
   );
@@ -281,6 +284,50 @@ export default function SuperAdminPage() {
         await updateInvite(editingId, formData);
       } else {
         const inviteId = await addInvite(formData);
+
+        // If STUDENT, also ensure student and enrollment records exist
+        if (formData.role === "STUDENT" && formData.luminaId && formData.classId && formData.academicYear) {
+          try {
+            const batch = writeBatch(db);
+            
+            // 1. Ensure student record
+            const studentRef = doc(db, "students", formData.luminaId);
+            batch.set(studentRef, {
+              id: formData.luminaId,
+              luminaId: formData.luminaId,
+              name: formData.name,
+              email: formData.email,
+              classId: formData.classId,
+              unitId: formData.unitId,
+              academicYear: formData.academicYear,
+              nisn: formData.nisn || "",
+              nickname: formData.nickname || "",
+              gender: formData.gender || "",
+              parentEmail: formData.parentEmail || "",
+              status: "active",
+              updatedAt: Date.now(),
+              createdAt: Date.now()
+            }, { merge: true });
+
+            // 2. Ensure enrollment record
+            const enrollmentId = `${formData.luminaId}_${formData.academicYear.replace(/\//g, "-")}`;
+            const enrollmentRef = doc(db, "enrollments", enrollmentId);
+            batch.set(enrollmentRef, {
+              id: enrollmentId,
+              studentId: formData.luminaId,
+              classId: formData.classId,
+              unitId: formData.unitId,
+              academicYear: formData.academicYear,
+              status: "active",
+              updatedAt: Date.now()
+            }, { merge: true });
+
+            await batch.commit();
+            console.log("[SuperAdmin] Created/Updated Student & Enrollment for manual invite.");
+          } catch (err) {
+            console.error("[SuperAdmin] Failed to create student/enrollment records:", err);
+          }
+        }
 
         // Auto-create Parent Invite if Student has parent details
         if (
@@ -581,6 +628,8 @@ export default function SuperAdminPage() {
                 jobTitle: "",
                 status: "ready",
                 luminaId: "",
+                classId: "",
+                academicYear: "2025/2026",
                 linkedStudents: [],
               });
               setIsModalOpen(true);
@@ -1270,6 +1319,43 @@ export default function SuperAdminPage() {
                   <div className="grid grid-cols-2 gap-6">
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                        Tahun Ajaran
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.academicYear}
+                        onChange={(e) =>
+                          setFormData({ ...formData, academicYear: e.target.value })
+                        }
+                        className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm italic font-medium focus:ring-2 focus:ring-blue-100"
+                        placeholder="2025/2026"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                        Pilih Kelas
+                      </label>
+                      <select
+                        value={formData.classId}
+                        onChange={(e) =>
+                          setFormData({ ...formData, classId: e.target.value })
+                        }
+                        className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
+                      >
+                        <option value="">Pilih Kelas</option>
+                        {classes
+                          .filter((c) => c.unitId === formData.unitId)
+                          .map((c) => (
+                            <option key={c.id} value={c.name}>
+                              {c.name}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
                         NIS (Lumina ID)
                       </label>
                       <input
@@ -1659,6 +1745,11 @@ export default function SuperAdminPage() {
               <p className="text-sm text-gray-500 leading-relaxed">
                 Mulai proses impor massal <b>{importMode}</b> dari Google
                 Sheets?
+                {importMode === "STUDENT" && (
+                  <span className="block mt-2 text-[10px] text-blue-500 font-bold uppercase tracking-tight">
+                    * Pastikan sheet menyertakan kolom: luminaId, classId, dan academicYear.
+                  </span>
+                )}
               </p>
               <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 text-left space-y-1">
                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">

@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { getAnalytics } from 'firebase/analytics';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { initializeFirestore, doc, getDoc, setDoc, updateDoc, getDocFromServer, collection, query, where, getDocs, limit, writeBatch, deleteDoc } from 'firebase/firestore';
+export { doc, writeBatch };
 import { mtssSnapshotTriggerService } from '../services/mtssSnapshotTriggerService.ts';
 import firebaseConfig from '../../firebase-applet-config.json' with { type: 'json' };
 import type { 
@@ -181,6 +182,8 @@ export async function createUserOnboarding(user: any): Promise<AppUser> {
       unitId: invite.unitId,
       luminaId: invite.luminaId,
       linkedStudents: invite.linkedStudents,
+      classId: (invite as any).classId,
+      academicYear: (invite as any).academicYear,
       status: 'active',
       createdAt: existingProfile?.createdAt || Date.now()
     };
@@ -290,6 +293,8 @@ export async function activateUser(uid: string, inviteData?: RoleInvite): Promis
       updates.jobTitle = inviteData.jobTitle;
       updates.luminaId = inviteData.luminaId;
       updates.linkedStudents = inviteData.linkedStudents;
+      updates.classId = (inviteData as any).classId;
+      updates.academicYear = (inviteData as any).academicYear;
     }
     
     await updateDoc(userRef, updates);

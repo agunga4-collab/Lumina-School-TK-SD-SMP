@@ -1229,6 +1229,8 @@ export interface User {
   unitId?: string;
   luminaId?: string; // For Students
   linkedStudents?: string[]; // For Parents
+  classId?: string; // For Students
+  academicYear?: string; // For Students
   photoURL?: string;
   signatureUrl?: string | null;
   niy?: string | null;
@@ -1251,6 +1253,8 @@ export interface RoleInvite {
   fatherName?: string;
   motherName?: string;
   linkedStudents?: string[]; // For Parents
+  classId?: string; // For Students
+  academicYear?: string; // For Students
   status: 'ready' | 'used' | 'revoked';
   createdAt: number;
 }
