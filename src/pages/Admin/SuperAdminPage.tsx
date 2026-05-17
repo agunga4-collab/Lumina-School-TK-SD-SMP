@@ -22,6 +22,9 @@ import {
   Brain,
   GraduationCap,
   BookOpen,
+  ArrowUpDown,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import {
   getAllInvites,
@@ -40,6 +43,11 @@ import {
 import { auth, writeBatch, doc } from "../../lib/firebase";
 import { User, RoleInvite, UserRole, UnitType, Class } from "../../types";
 import { cn } from "../../lib/utils";
+
+function SortIcon({ column, currentConfig }: { column: string; currentConfig: { key: string; direction: "asc" | "desc" } }) {
+  if (currentConfig.key !== column) return <ArrowUpDown size={12} className="text-gray-300" />;
+  return currentConfig.direction === "asc" ? <ChevronUp size={12} className="text-blue-500" /> : <ChevronDown size={12} className="text-blue-500" />;
+}
 
 export default function SuperAdminPage() {
   const [selectedUnit, setSelectedUnit] = React.useState<UnitType | "ALL">(
@@ -62,6 +70,18 @@ export default function SuperAdminPage() {
     "STAFF" | "STUDENT" | "PARENT"
   >("STAFF");
   const [searchTerm, setSearchTerm] = React.useState("");
+  const [sortConfig, setSortConfig] = React.useState<{
+    key: string;
+    direction: "asc" | "desc";
+  }>({ key: "name", direction: "asc" });
+
+  const handleSort = (key: string) => {
+    let direction: "asc" | "desc" = "asc";
+    if (sortConfig.key === key && sortConfig.direction === "asc") {
+      direction = "desc";
+    }
+    setSortConfig({ key, direction });
+  };
 
   // Import State
   const [importLoading, setImportLoading] = React.useState(false);
@@ -502,6 +522,25 @@ export default function SuperAdminPage() {
     return matchesSearch && matchesUnit;
   });
 
+  const sortedInvites = React.useMemo(() => {
+    const sortableItems = [...filteredInvites];
+    if (sortConfig.key) {
+      sortableItems.sort((a, b) => {
+        const aValue = (a as any)[sortConfig.key] || "";
+        const bValue = (b as any)[sortConfig.key] || "";
+
+        if (aValue.toString().toLowerCase() < bValue.toString().toLowerCase()) {
+          return sortConfig.direction === "asc" ? -1 : 1;
+        }
+        if (aValue.toString().toLowerCase() > bValue.toString().toLowerCase()) {
+          return sortConfig.direction === "asc" ? 1 : -1;
+        }
+        return 0;
+      });
+    }
+    return sortableItems;
+  }, [filteredInvites, sortConfig]);
+
   const filteredClasses = classes.filter((c) => {
     const matchesSearch =
       c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -880,7 +919,7 @@ export default function SuperAdminPage() {
           </div>
 
           {/* Table/List Area */}
-          <div className="bg-white rounded-[3rem] border border-gray-100 shadow-xl shadow-gray-50 overflow-hidden relative min-h-[400px]">
+          <div className="bg-white rounded-[3rem] border border-gray-100 shadow-xl shadow-gray-50 overflow-x-auto relative min-h-[400px]">
             {loading && (
               <div className="absolute inset-0 bg-white/50 backdrop-blur-[2px] z-50 flex items-center justify-center">
                 <Loader2 size={40} className="text-blue-500 animate-spin" />
@@ -1089,43 +1128,85 @@ export default function SuperAdminPage() {
                 </tbody>
               </table>
             ) : (
-              <table className="w-full text-left">
+              <table className="w-full text-left min-w-[1200px]">
                 <thead className="bg-gray-50/50">
                   <tr>
-                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
-                      Name / Email
+                    <th 
+                      onClick={() => handleSort("name")}
+                      className="px-8 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 cursor-pointer hover:bg-gray-100 transition-all"
+                    >
+                      <div className="flex items-center gap-2">
+                        Name / Email
+                        <SortIcon column="name" currentConfig={sortConfig} />
+                      </div>
                     </th>
-                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
-                      Details
-                    </th>
-                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 text-center">
+                    {activeTab === "STUDENT" && (
+                      <>
+                        <th className="px-6 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                          Panggilan
+                        </th>
+                        <th 
+                          onClick={() => handleSort("luminaId")}
+                          className="px-6 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 cursor-pointer hover:bg-gray-100"
+                        >
+                          <div className="flex items-center gap-2">
+                            NIS
+                            <SortIcon column="luminaId" currentConfig={sortConfig} />
+                          </div>
+                        </th>
+                        <th className="px-6 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                          NISN
+                        </th>
+                        <th className="px-4 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                          JK
+                        </th>
+                        <th className="px-6 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 text-center">
+                          Kelas
+                        </th>
+                        <th className="px-6 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                          Ortu
+                        </th>
+                      </>
+                    )}
+                    {activeTab === "STAFF" && (
+                      <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                        Details
+                      </th>
+                    )}
+                    <th className="px-6 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 text-center">
                       Unit
                     </th>
-                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
-                      Status
+                    <th 
+                      onClick={() => handleSort("status")}
+                      className="px-8 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 cursor-pointer hover:bg-gray-100"
+                    >
+                      <div className="flex items-center gap-2">
+                        Status
+                        <SortIcon column="status" currentConfig={sortConfig} />
+                      </div>
                     </th>
-                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 text-right">
+                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 text-right sticky right-0 bg-white shadow-[-10px_0_15px_-5px_rgba(0,0,0,0.05)] z-10">
                       Aksi
                     </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {filteredInvites.length === 0 ? (
+                  {sortedInvites.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={5}
+                        colSpan={activeTab === "STUDENT" ? 10 : 5}
                         className="px-10 py-20 text-center text-gray-400 italic"
                       >
                         No users found match criteria.
                       </td>
                     </tr>
                   ) : (
-                    filteredInvites.map((invite) => (
+                    sortedInvites.map((invite) => (
                       <tr
                         key={invite.id}
                         className="group hover:bg-gray-50/30 transition-all"
                       >
-                        <td className="px-10 py-6">
+                        <td className="px-8 py-6">
                           <div className="flex flex-col">
                             <span className="text-xs font-black text-gray-900 uppercase tracking-tight italic">
                               {invite.name}
@@ -1135,29 +1216,74 @@ export default function SuperAdminPage() {
                             </span>
                           </div>
                         </td>
-                        <td className="px-10 py-6">
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[11px] font-black text-blue-600 uppercase tracking-tighter leading-none">
-                              {invite.role}
-                            </span>
-                            {invite.luminaId && (
-                              <span className="text-[9px] font-bold text-gray-400 uppercase">
-                                {invite.luminaId}
+                        
+                        {activeTab === "STUDENT" && (
+                          <>
+                            <td className="px-6 py-6">
+                              <span className="text-[11px] font-bold text-gray-600 uppercase">
+                                {invite.nickname || "-"}
                               </span>
-                            )}
-                            {invite.jobTitle && (
-                              <span className="text-[9px] font-black text-gray-300 uppercase tracking-widest">
-                                {invite.jobTitle}
+                            </td>
+                            <td className="px-6 py-6">
+                              <span className="text-[11px] font-mono font-bold text-blue-600">
+                                {invite.luminaId || "-"}
                               </span>
-                            )}
-                          </div>
+                            </td>
+                            <td className="px-6 py-6">
+                              <span className="text-[11px] font-mono text-gray-400">
+                                {invite.nisn || "-"}
+                              </span>
+                            </td>
+                            <td className="px-4 py-6">
+                              <span className={cn(
+                                "px-2 py-0.5 rounded-md text-[9px] font-black",
+                                invite.gender === "L" ? "bg-blue-50 text-blue-500" : "bg-pink-50 text-pink-500"
+                              )}>
+                                {invite.gender || "?"}
+                              </span>
+                            </td>
+                            <td className="px-6 py-6 text-center">
+                              <span className="text-[11px] font-black text-gray-700 italic">
+                                {invite.classId || "-"}
+                              </span>
+                            </td>
+                            <td className="px-6 py-6">
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-[9px] font-black text-gray-400 uppercase tracking-tighter">
+                                  {invite.fatherName ? `A: ${invite.fatherName}` : ""}
+                                </span>
+                                <span className="text-[9px] font-black text-gray-400 uppercase tracking-tighter">
+                                  {invite.motherName ? `I: ${invite.motherName}` : ""}
+                                </span>
+                                {invite.parentEmail && (
+                                  <span className="text-[8px] font-bold text-blue-400 truncate max-w-[120px]">
+                                    {invite.parentEmail}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                          </>
+                        )}
+
+                        {activeTab === "STAFF" && (
+                          <td className="px-10 py-6">
+                            <div className="flex flex-col gap-1">
+                              <span className="text-[11px] font-black text-blue-600 uppercase tracking-tighter leading-none">
+                                {invite.role}
+                              </span>
+                              {invite.jobTitle && (
+                                <span className="text-[9px] font-black text-gray-300 uppercase tracking-widest">
+                                  {invite.jobTitle}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        )}
+
+                        <td className="px-6 py-6 text-center text-[10px] font-black text-gray-400 uppercase italic">
+                          {invite.unitId}
                         </td>
-                        <td className="px-10 py-6 text-center">
-                          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest italic">
-                            {invite.unitId}
-                          </span>
-                        </td>
-                        <td className="px-10 py-6">
+                        <td className="px-8 py-6">
                           <span
                             className={cn(
                               "px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest",
@@ -1171,7 +1297,7 @@ export default function SuperAdminPage() {
                             {invite.status}
                           </span>
                         </td>
-                        <td className="px-10 py-6 text-right">
+                        <td className="px-10 py-6 text-right sticky right-0 bg-white group-hover:bg-gray-50 transition-all z-10 shadow-[-10px_0_15px_-5px_rgba(0,0,0,0.05)]">
                           <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-all">
                             <button
                               onClick={() => {
