@@ -33,38 +33,25 @@ export default function Attendance() {
   const [loadingClasses, setLoadingClasses] = React.useState(true);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
   const [recapStats, setRecapStats] = React.useState({
     hadir: 0,
     sakit: 0,
     izin: 0,
     alpa: 0,
+    late: 0,
     attendanceRate: 0
   });
-  const [threshold, setThreshold] = React.useState(3);
-  const [latenessRecords, setLatenessRecords] = React.useState<any[]>([]);
-
-  // Calculate recap stats based on loaded students or fetch from DB
-  React.useEffect(() => {
-    if (students.length === 0) return;
-    
-    // In a real app, this would be an aggregate query
-    // For now, let's just use current students list snapshot
-    const total = students.length;
-    const hadir = students.filter(s => s.status === 'HADIR').length;
-    const sakit = students.filter(s => s.status === 'SAKIT').length;
-    const izin = students.filter(s => s.status === 'IZIN').length;
-    const alpa = students.filter(s => s.status === 'ALPA').length;
-    
-    setRecapStats({
-      hadir,
-      sakit,
-      izin,
-      alpa,
-      attendanceRate: total > 0 ? Math.round((hadir / total) * 100) : 0
-    });
-  }, [students]);
   const [selectedClass, setSelectedClass] = React.useState('');
   const [selectedDate, setSelectedDate] = React.useState(new Date().toISOString().split('T')[0]);
+  
+  const now = new Date();
+  const [recapMonth, setRecapMonth] = React.useState((now.getMonth() + 1).toString().padStart(2, '0'));
+  const [recapYear, setRecapYear] = React.useState(now.getFullYear().toString());
+  const [recapData, setRecapData] = React.useState<Record<string, { hadir: number, sakit: number, izin: number, alpa: number, late: number }>>({});
+  const [loadingRecap, setLoadingRecap] = React.useState(false);
+
+  const [threshold, setThreshold] = React.useState(3);
   const [userProfile, setUserProfile] = React.useState<any>(null); // In real app, from AuthContext
 
   // Fetch classes for active unit
@@ -113,6 +100,7 @@ export default function Attendance() {
   React.useEffect(() => {
     const loadStudents = async () => {
       setLoading(true);
+      setError(null);
       try {
         // Get the actual class name for fallback queries
         const currentClassEntity = classes.find(c => c.id === selectedClass || c.name === selectedClass);
@@ -186,8 +174,9 @@ export default function Attendance() {
           // No students found in this class
           setStudents([]);
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error loading students:', err);
+        setError(err.message || 'Gagal memuat data siswa. Pastikan koneksi internet stabil.');
         setStudents([]);
       } finally {
         setLoading(false);
@@ -196,6 +185,87 @@ export default function Attendance() {
 
     loadStudents();
   }, [selectedClass, selectedDate]);
+
+  // Load Monthly Recap Data
+  React.useEffect(() => {
+    if (view !== 'RECAP' || !selectedClass) return;
+
+    const loadMonthlyRecap = async () => {
+      setLoadingRecap(true);
+      try {
+        const currentClassEntity = classes.find(c => c.id === selectedClass || c.name === selectedClass);
+        const className = currentClassEntity?.name || selectedClass;
+        const classId = currentClassEntity?.id || selectedClass;
+
+        const monthPrefix = `${recapYear}-${recapMonth}`;
+        
+        // Query all records for this month
+        // We might need to use >= and <= for date if we want to be more precise, 
+        // but '==' with string prefix only works if we query the whole collection.
+        // Better: use where('date', '>=', `${monthPrefix}-01`) and where('date', '<=', `${monthPrefix}-31`)
+        const q = query(
+          collection(db, 'attendance_records'),
+          where('classId', 'in', [classId, className]),
+          where('date', '>=', `${monthPrefix}-01`),
+          where('date', '<=', `${monthPrefix}-31`)
+        );
+
+        const snap = await getDocs(q);
+        const agg: Record<string, { hadir: number, sakit: number, izin: number, alpa: number, late: number }> = {};
+        
+        let totalHadir = 0;
+        let totalSakit = 0;
+        let totalIzin = 0;
+        let totalAlpa = 0;
+        let totalLate = 0;
+
+        snap.docs.forEach(doc => {
+          const data = doc.data();
+          const sId = data.studentId;
+          const status = data.status;
+
+          if (!agg[sId]) agg[sId] = { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
+          
+          if (status === 'HADIR') { agg[sId].hadir++; totalHadir++; }
+          else if (status === 'SAKIT') { agg[sId].sakit++; totalSakit++; }
+          else if (status === 'IZIN') { agg[sId].izin++; totalIzin++; }
+          else if (status === 'ALPA') { agg[sId].alpa++; totalAlpa++; }
+          else if (status === 'LATE') { agg[sId].late++; totalLate++; }
+        });
+
+        setRecapData(agg);
+        
+        const totalRecords = snap.docs.length;
+        const studentCount = students.length || 1;
+        
+        setRecapStats({
+          hadir: totalHadir,
+          sakit: totalSakit,
+          izin: totalIzin,
+          alpa: totalAlpa,
+          late: totalLate,
+          attendanceRate: totalRecords > 0 ? Math.round((totalHadir / totalRecords) * 100) : 0
+        });
+
+      } catch (err) {
+        console.error('Error loading monthly recap:', err);
+      } finally {
+        setLoadingRecap(false);
+      }
+    };
+
+    loadMonthlyRecap();
+  }, [view, selectedClass, recapMonth, recapYear, students.length]);
+
+  const setDateToToday = () => {
+    setSelectedDate(new Date().toISOString().split('T')[0]);
+  };
+
+  const setDateToYesterday = () => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    setSelectedDate(yesterday.toISOString().split('T')[0]);
+  };
 
   const handleStatusChange = (id: string, newStatus: AttendanceStatus) => {
     setStudents(students.map(s => s.id === id ? { ...s, status: newStatus } : s));
@@ -344,12 +414,26 @@ export default function Attendance() {
                 </div>
                 <div className="flex flex-col">
                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Tanggal</span>
-                   <input 
-                    type="date"
-                    value={selectedDate}
-                    onChange={(e) => setSelectedDate(e.target.value)}
-                    className="px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-bold outline-none cursor-pointer"
-                   />
+                   <div className="flex items-center gap-2">
+                     <input 
+                      type="date"
+                      value={selectedDate}
+                      onChange={(e) => setSelectedDate(e.target.value)}
+                      className="px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-bold outline-none cursor-pointer hover:border-blue-300 transition-colors"
+                     />
+                     <button 
+                       onClick={setDateToToday}
+                       className="px-2 py-1.5 text-[10px] font-bold bg-gray-100 text-gray-500 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition-all whitespace-nowrap"
+                     >
+                       Hari Ini
+                     </button>
+                     <button 
+                       onClick={setDateToYesterday}
+                       className="px-2 py-1.5 text-[10px] font-bold bg-gray-100 text-gray-500 rounded-lg hover:bg-orange-50 hover:text-orange-600 transition-all whitespace-nowrap"
+                     >
+                       Kemarin
+                     </button>
+                   </div>
                 </div>
              </div>
              <div className="flex gap-2">
@@ -363,24 +447,43 @@ export default function Attendance() {
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            {error && (
+              <div className="p-4 bg-red-50 border-b border-red-100 flex items-center gap-3 text-red-600 text-sm font-medium">
+                <AlertTriangle size={18} />
+                {error}
+              </div>
+            )}
             <table className="w-full text-left">
               <thead className="bg-gray-50/50 border-b border-gray-100">
                 <tr>
                   <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Nama Siswa</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Status Kehadiran</th>
+                  <th className="px-1 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Status Kehadiran</th>
                   <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Catatan Tambahan</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Risiko</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Eskalasi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {students.map((student) => (
+                {loading ? (
+                   <tr>
+                     <td colSpan={4} className="px-6 py-12 text-center text-gray-400 font-medium">
+                        <RefreshCw size={24} className="animate-spin mx-auto mb-2 text-blue-500" />
+                        Memuat data siswa...
+                     </td>
+                   </tr>
+                ) : students.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-12 text-center text-gray-400 font-medium italic">
+                       {selectedClass ? 'Tidak ada siswa yang ditemukan di kelas ini.' : 'Pilih kelas terlebih dahulu.'}
+                    </td>
+                  </tr>
+                ) : students.map((student) => (
                   <tr key={student.id} className="hover:bg-gray-50/50 transition-colors">
                     <td className="px-6 py-4">
-                      <p className="font-bold text-gray-900 text-sm">{student.name}</p>
+                      <p className="font-bold text-gray-900 text-sm whitespace-nowrap">{student.name}</p>
                       <p className="text-[10px] text-gray-400 font-medium">#{student.id}</p>
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="flex gap-1 bg-gray-100 p-1 rounded-lg w-fit">
+                    <td className="px-2 py-4">
+                      <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit mx-auto">
                         <StatusBtn 
                           active={student.status === 'HADIR'} 
                           type="HADIR" 
@@ -409,22 +512,25 @@ export default function Attendance() {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <input 
-                        type="text" 
-                        placeholder="Tambahkan catatan..."
-                        className="w-full bg-transparent border-b border-transparent focus:border-blue-300 outline-none text-sm transition-all py-1 placeholder:text-gray-300"
-                        value={student.note}
-                        onChange={(e) => handleNoteChange(student.id, e.target.value)}
-                      />
+                      <div className="relative group">
+                        <MessageSquare size={14} className="absolute left-0 top-1/2 -translate-y-1/2 text-gray-300 group-hover:text-blue-400 transition-colors" />
+                        <input 
+                          type="text" 
+                          placeholder="Tambahkan catatan..."
+                          className="w-full bg-transparent border-b border-transparent focus:border-blue-300 outline-none text-sm transition-all py-1 pl-6 placeholder:text-gray-300"
+                          value={student.note}
+                          onChange={(e) => handleNoteChange(student.id, e.target.value)}
+                        />
+                      </div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-6 py-4 text-right">
                       {student.absencesThisMonth >= threshold ? (
-                        <div className="flex items-center gap-1.5 text-red-500 bg-red-50 px-2 py-1 rounded-md border border-red-100 w-fit">
-                           <AlertTriangle size={12} />
-                           <span className="text-[10px] font-black uppercase">Risiko Tinggi</span>
+                        <div className="flex items-center justify-end gap-1.5 text-red-500 font-black">
+                           <AlertTriangle size={14} />
+                           <span className="text-[10px] uppercase tracking-tighter">High Risk</span>
                         </div>
                       ) : (
-                        <span className="text-[10px] font-bold text-gray-300 uppercase">Normal</span>
+                        <span className="text-[10px] font-bold text-emerald-500 uppercase">Aman</span>
                       )}
                     </td>
                   </tr>
@@ -448,18 +554,46 @@ export default function Attendance() {
 
       {view === 'RECAP' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-wrap items-center gap-4">
+            <div className="flex flex-col">
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Bulan</span>
+              <select 
+                value={recapMonth}
+                onChange={(e) => setRecapMonth(e.target.value)}
+                className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-bold outline-none cursor-pointer"
+              >
+                {['01','02','03','04','05','06','07','08','09','10','11','12'].map(m => (
+                  <option key={m} value={m}>{new Date(2000, parseInt(m)-1).toLocaleString('id-ID', { month: 'long' })}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Tahun</span>
+              <select 
+                value={recapYear}
+                onChange={(e) => setRecapYear(e.target.value)}
+                className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-bold outline-none cursor-pointer"
+              >
+                {[2024, 2025, 2026].map(y => (
+                  <option key={y} value={y.toString()}>{y}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
             <RecapCard title="Tingkat Hadir" value={`${recapStats.attendanceRate}%`} icon={<CheckCircle2 className="text-green-600" />} />
             <RecapCard title="Total Sakit" value={recapStats.sakit.toString()} icon={<Clock className="text-blue-600" />} />
             <RecapCard title="Total Izin" value={recapStats.izin.toString()} icon={<AlertCircle className="text-yellow-600" />} />
             <RecapCard title="Total Alpa" value={recapStats.alpa.toString()} icon={<UserX className="text-red-600" />} />
+            <RecapCard title="Terlambat" value={recapStats.late.toString()} icon={<Clock className="text-orange-600" />} />
           </div>
 
-          <div className="bg-white rounded-2xl p-8 shadow-sm border border-gray-100 space-y-6">
-            <div className="flex justify-between items-center">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center">
               <h3 className="font-bold text-gray-900 flex items-center gap-2">
                 <BarChart3 size={18} className="text-blue-500" />
-                Rekap Kehadiran Bulan April
+                Rekap Kehadiran {new Date(parseInt(recapYear), parseInt(recapMonth)-1).toLocaleString('id-ID', { month: 'long', year: 'numeric' })}
               </h3>
               <div className="flex gap-2">
                  <button 
@@ -471,25 +605,60 @@ export default function Attendance() {
               </div>
             </div>
             
-            <div className="space-y-4">
-              {students.map(s => (
-                <div key={s.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100">
-                   <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center font-bold text-blue-600 border border-blue-50">
-                        {s.name[0]}
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-gray-900">{s.name}</p>
-                        <p className="text-xs text-gray-500">Status Hari Ini: {s.status}</p>
-                      </div>
-                   </div>
-                   <div className="flex gap-8">
-                      <Stats label="H" value={s.status === 'HADIR' ? '1' : '0'} color="green" />
-                      <Stats label="S" value={s.status === 'SAKIT' ? '1' : '0'} color="blue" />
-                      <Stats label="A" value={s.status === 'ALPA' ? '1' : '0'} color="red" />
-                   </div>
-                </div>
-              ))}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-gray-50/50 border-b border-gray-100">
+                  <tr>
+                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Nama Siswa</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Hadir</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Sakit</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Izin</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Alpa</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Late</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {loadingRecap ? (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-12 text-center text-gray-400 font-medium">
+                        <RefreshCw size={24} className="animate-spin mx-auto mb-2" />
+                        Memuat data rekap...
+                      </td>
+                    </tr>
+                  ) : students.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-12 text-center text-gray-400 font-medium">
+                        Tidak ada data siswa.
+                      </td>
+                    </tr>
+                  ) : students.map((s) => {
+                    const stats = recapData[s.id] || { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
+                    return (
+                      <tr key={s.id} className="hover:bg-gray-50/50 transition-colors">
+                        <td className="px-6 py-4">
+                          <p className="font-bold text-gray-900 text-sm">{s.name}</p>
+                          <p className="text-[10px] text-gray-400 font-medium">#{s.id}</p>
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <StatsBadge value={stats.hadir} color="green" />
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <StatsBadge value={stats.sakit} color="blue" />
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <StatsBadge value={stats.izin} color="yellow" />
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <StatsBadge value={stats.alpa} color="red" />
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <StatsBadge value={stats.late} color="orange" />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -564,6 +733,26 @@ export default function Attendance() {
         </div>
       )}
     </div>
+  );
+}
+
+function StatsBadge({ value, color }: { value: number; color: 'green' | 'blue' | 'yellow' | 'red' | 'orange' }) {
+  const colors = {
+    green: 'bg-green-50 text-green-700 border-green-100',
+    blue: 'bg-blue-50 text-blue-700 border-blue-100',
+    yellow: 'bg-yellow-50 text-yellow-700 border-yellow-100',
+    red: 'bg-red-50 text-red-700 border-red-100',
+    orange: 'bg-orange-50 text-orange-700 border-orange-100',
+  };
+  
+  return (
+    <span className={cn(
+      "inline-flex items-center justify-center w-8 h-8 rounded-lg border font-bold text-xs",
+      colors[color],
+      value === 0 && "opacity-30 border-transparent bg-transparent text-gray-300"
+    )}>
+      {value}
+    </span>
   );
 }
 

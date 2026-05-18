@@ -3,9 +3,12 @@ import { getApps, initializeApp, cert } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
 // Firebase Admin Initialization
+let initError: string | null = null;
 try {
   const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
-  if (serviceAccountJson && !getApps().length) {
+  if (!serviceAccountJson) {
+    initError = "FIREBASE_SERVICE_ACCOUNT environment variable is missing";
+  } else if (!getApps().length) {
     const serviceAccount = JSON.parse(serviceAccountJson);
     if (serviceAccount.private_key) {
       serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
@@ -15,6 +18,7 @@ try {
     });
   }
 } catch (err: any) {
+  initError = `FirebaseAdmin initialization failed: ${err.message}`;
   console.error("[FirebaseAdmin] Initialization failed:", err.message);
 }
 
@@ -34,7 +38,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const db = getAdminDb();
   if (!db) {
-    return res.status(503).json({ success: false, message: "Firebase Admin not initialized" });
+    return res.status(503).json({ 
+      success: false, 
+      message: "Firebase Admin not initialized",
+      error: initError || "Unknown error during initialization"
+    });
   }
 
   try {
@@ -46,7 +54,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .get();
 
     const students = studentsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-    
+    console.log(`[SyncParents] Found ${students.length} students in roleInvites`);
     // 2. Map parentEmail to list of student luminaIds
     const parentMap: Record<string, { name: string; linkedStudents: string[]; unitId: string }> = {};
 
