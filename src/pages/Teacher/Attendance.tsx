@@ -2,13 +2,13 @@ import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   CheckCircle2, AlertCircle, Clock, UserX, Search, Filter, 
-  Save, Calendar, ChevronRight, AlertTriangle, MessageSquare, 
-  Settings2, BarChart3, Bell, RefreshCw, Layers
+  Save, Calendar, ChevronRight, ChevronLeft, AlertTriangle, MessageSquare, 
+  Settings2, BarChart3, Bell, RefreshCw, Layers, Trash2
 } from 'lucide-react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { db, auth } from '../../lib/firebase';
-import { collection, query, where, getDocs, setDoc, doc, serverTimestamp, getDoc, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, setDoc, doc, serverTimestamp, getDoc, orderBy, deleteDoc } from 'firebase/firestore';
 import { AttendanceStatus, AttendanceRecord, Student, UnitType, Class } from '../../types';
 import { attendanceSyncService } from '../../services/attendanceBackupConfigService';
 import { toast } from 'sonner';
@@ -17,7 +17,7 @@ import StudentSearch from '../../components/StudentSearch';
 interface StudentAttendance {
   id: string;
   name: string;
-  status: AttendanceStatus;
+  status: AttendanceStatus | null;
   note: string;
   absencesThisMonth: number;
 }
@@ -33,6 +33,8 @@ export default function Attendance() {
   const [loadingClasses, setLoadingClasses] = React.useState(true);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
+  const [deleting, setDeleting] = React.useState(false);
+  const [lastSaved, setLastSaved] = React.useState<{date: string, classId: string} | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [recapStats, setRecapStats] = React.useState({
     hadir: 0,
@@ -149,7 +151,7 @@ export default function Attendance() {
         const studentList: StudentAttendance[] = Array.from(uniqueDocsMap.values()).map(data => ({
           id: data.luminaId || data.nis || data.docId,
           name: data.name || data.displayName || data.fullName || "Siswa Tanpa Nama",
-          status: 'HADIR' as AttendanceStatus,
+          status: null,
           note: '',
           absencesThisMonth: 0 
         })).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
@@ -167,7 +169,7 @@ export default function Attendance() {
         if (studentList.length > 0) {
           setStudents(studentList.map(s => ({
             ...s,
-            status: (recordsMap.get(s.id) as AttendanceStatus) || 'HADIR',
+            status: (recordsMap.get(s.id) as AttendanceStatus) || null,
             note: notesMap.get(s.id) || ''
           })));
         } else {
@@ -185,6 +187,59 @@ export default function Attendance() {
 
     loadStudents();
   }, [selectedClass, selectedDate]);
+
+  const handleDeleteOne = async (studentId: string) => {
+    if (!window.confirm('Hapus data kehadiran untuk siswa ini?')) return;
+    
+    setDeleting(true);
+    try {
+      const recordId = `${selectedClass}_${selectedDate}_${studentId}`;
+      await deleteDoc(doc(db, 'attendance_records', recordId));
+      
+      setStudents(students.map(s => s.id === studentId ? { ...s, status: null, note: '' } : s));
+      toast.success('Data dihapus', { description: 'Kehadiran individu berhasil dihapus' });
+    } catch (err) {
+      console.error('Delete error:', err);
+      toast.error('Gagal menghapus data');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    const hasData = students.some(s => s.status !== null);
+    if (!hasData) {
+      toast.error('Tidak ada data untuk dihapus');
+      return;
+    }
+
+    if (!window.confirm(`Hapus SEMUA data kehadiran untuk kelas ini pada tanggal ${selectedDate}? Tindakan ini tidak dapat dibatalkan.`)) return;
+    
+    setDeleting(true);
+    try {
+      const currentClassEntity = classes.find(c => c.id === selectedClass || c.name === selectedClass);
+      const className = currentClassEntity?.name || selectedClass;
+      const classId = currentClassEntity?.id || selectedClass;
+
+      const q = query(
+        collection(db, 'attendance_records'),
+        where('classId', 'in', [classId, className]),
+        where('date', '==', selectedDate)
+      );
+
+      const snap = await getDocs(q);
+      const deletePromises = snap.docs.map(d => deleteDoc(d.ref));
+      await Promise.all(deletePromises);
+      
+      setStudents(students.map(s => ({ ...s, status: null, note: '' })));
+      toast.success('Pembersihan Selesai', { description: `Semua data kehadiran tanggal ${selectedDate} telah dihapus.` });
+    } catch (err) {
+      console.error('Delete error:', err);
+      toast.error('Gagal menghapus semua data');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   // Load Monthly Recap Data
   React.useEffect(() => {
@@ -257,6 +312,18 @@ export default function Attendance() {
     loadMonthlyRecap();
   }, [view, selectedClass, recapMonth, recapYear, students.length]);
 
+  const handlePrevDate = () => {
+    const d = new Date(selectedDate);
+    d.setDate(d.getDate() - 1);
+    setSelectedDate(d.toISOString().split('T')[0]);
+  };
+
+  const handleNextDate = () => {
+    const d = new Date(selectedDate);
+    d.setDate(d.getDate() + 1);
+    setSelectedDate(d.toISOString().split('T')[0]);
+  };
+
   const setDateToToday = () => {
     setSelectedDate(new Date().toISOString().split('T')[0]);
   };
@@ -276,6 +343,12 @@ export default function Attendance() {
   };
   
   const handleSaveAll = async () => {
+    const unselectedCount = students.filter(s => s.status === null).length;
+    if (unselectedCount > 0) {
+      const confirmSave = window.confirm(`${unselectedCount} siswa belum memiliki status kehadiran. Lanjutkan simpan? (Siswa tanpa status tidak akan disimpan/dianggap belum diabsen)`);
+      if (!confirmSave) return;
+    }
+
     setSaving(true);
     let successCount = 0;
     let syncCount = 0;
@@ -284,6 +357,8 @@ export default function Attendance() {
       const userEmail = auth.currentUser?.email || 'unknown_teacher';
 
       for (const student of students) {
+        if (student.status === null) continue;
+
         const recordId = `${selectedClass}_${selectedDate}_${student.id}`;
         const record: AttendanceRecord = {
           id: recordId,
@@ -314,8 +389,7 @@ export default function Attendance() {
         
         successCount++;
 
-        // 2. Real-time Backup Sync (Fire and Forget or Sequential?)
-        // Sequential for more feedback in this turn
+        // 2. Real-time Backup Sync
         const syncResult = await attendanceSyncService.triggerSync(record);
         if (syncResult.success) {
           syncCount++;
@@ -335,6 +409,7 @@ export default function Attendance() {
         }
       }
 
+      setLastSaved({ date: selectedDate, classId: selectedClass });
       toast.success('Kehadiran Disimpan', {
         description: `${successCount} data berhasil disimpan. ${syncCount} berhasil di-backup ke Google Sheets.`
       });
@@ -355,7 +430,7 @@ export default function Attendance() {
       case 'SAKIT': return <Clock size={18} />;
       case 'IZIN': return <AlertCircle size={18} />;
       case 'ALPA': return <UserX size={18} />;
-      case 'LATE': return <Clock className="text-orange-500" size={18} />;
+      default: return null;
     }
   };
 
@@ -414,7 +489,14 @@ export default function Attendance() {
                 </div>
                 <div className="flex flex-col">
                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Tanggal</span>
-                   <div className="flex items-center gap-2">
+                   <div className="flex items-center gap-1">
+                     <button 
+                       onClick={handlePrevDate}
+                       className="p-1.5 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-lg transition-all"
+                       title="Tanggal Sebelumnya"
+                     >
+                       <ChevronLeft size={16} />
+                     </button>
                      <input 
                       type="date"
                       value={selectedDate}
@@ -422,17 +504,26 @@ export default function Attendance() {
                       className="px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-bold outline-none cursor-pointer hover:border-blue-300 transition-colors"
                      />
                      <button 
-                       onClick={setDateToToday}
-                       className="px-2 py-1.5 text-[10px] font-bold bg-gray-100 text-gray-500 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition-all whitespace-nowrap"
+                       onClick={handleNextDate}
+                       className="p-1.5 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-lg transition-all"
+                       title="Tanggal Berikutnya"
                      >
-                       Hari Ini
+                       <ChevronRight size={16} />
                      </button>
-                     <button 
-                       onClick={setDateToYesterday}
-                       className="px-2 py-1.5 text-[10px] font-bold bg-gray-100 text-gray-500 rounded-lg hover:bg-orange-50 hover:text-orange-600 transition-all whitespace-nowrap"
-                     >
-                       Kemarin
-                     </button>
+                     <div className="flex items-center gap-1 ml-2">
+                        <button 
+                          onClick={setDateToToday}
+                          className="px-2 py-1.5 text-[10px] font-bold bg-gray-100 text-gray-500 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition-all whitespace-nowrap"
+                        >
+                          Hari Ini
+                        </button>
+                        <button 
+                          onClick={setDateToYesterday}
+                          className="px-2 py-1.5 text-[10px] font-bold bg-gray-100 text-gray-500 rounded-lg hover:bg-orange-50 hover:text-orange-600 transition-all whitespace-nowrap"
+                        >
+                          Kemarin
+                        </button>
+                     </div>
                    </div>
                 </div>
              </div>
@@ -442,6 +533,14 @@ export default function Attendance() {
                   className="px-4 py-2 bg-blue-50 text-blue-600 rounded-xl text-sm font-bold border border-blue-100 hover:bg-blue-100 transition-all active:scale-95"
                 >
                   Cek Semua Hadir
+                </button>
+                <button 
+                  onClick={handleDeleteAll}
+                  disabled={deleting}
+                  className="px-4 py-2 bg-red-50 text-red-600 rounded-xl text-sm font-bold border border-red-100 hover:bg-red-100 transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {deleting ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                  Hapus Semua Data Hari Ini
                 </button>
              </div>
           </div>
@@ -459,6 +558,7 @@ export default function Attendance() {
                   <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Nama Siswa</th>
                   <th className="px-1 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Status Kehadiran</th>
                   <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Catatan Tambahan</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Tindakan</th>
                   <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Eskalasi</th>
                 </tr>
               </thead>
@@ -504,11 +604,6 @@ export default function Attendance() {
                           type="ALPA" 
                           onClick={() => handleStatusChange(student.id, 'ALPA')} 
                         />
-                        <StatusBtn 
-                          active={student.status === 'LATE'} 
-                          type="LATE" 
-                          onClick={() => handleStatusChange(student.id, 'LATE')} 
-                        />
                       </div>
                     </td>
                     <td className="px-6 py-4">
@@ -521,6 +616,19 @@ export default function Attendance() {
                           value={student.note}
                           onChange={(e) => handleNoteChange(student.id, e.target.value)}
                         />
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex justify-center">
+                        {student.status && (
+                          <button 
+                            onClick={() => handleDeleteOne(student.id)}
+                            className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                            title="Hapus Kehadiran Siswa Ini"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        )}
                       </div>
                     </td>
                     <td className="px-6 py-4 text-right">
@@ -539,7 +647,13 @@ export default function Attendance() {
             </table>
           </div>
 
-          <div className="flex justify-end pt-4">
+          <div className="flex justify-end items-center gap-4 pt-4">
+             {lastSaved && lastSaved.date === selectedDate && lastSaved.classId === selectedClass && (
+               <div className="flex items-center gap-1.5 text-emerald-600 font-bold text-sm bg-emerald-50 px-4 py-2 rounded-xl border border-emerald-100 animate-in fade-in slide-in-from-right-2">
+                 <CheckCircle2 size={16} />
+                 Data Sudah Disimpan
+               </div>
+             )}
              <button 
               onClick={handleSaveAll}
               disabled={saving}
@@ -581,12 +695,11 @@ export default function Attendance() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
             <RecapCard title="Tingkat Hadir" value={`${recapStats.attendanceRate}%`} icon={<CheckCircle2 className="text-green-600" />} />
             <RecapCard title="Total Sakit" value={recapStats.sakit.toString()} icon={<Clock className="text-blue-600" />} />
             <RecapCard title="Total Izin" value={recapStats.izin.toString()} icon={<AlertCircle className="text-yellow-600" />} />
             <RecapCard title="Total Alpa" value={recapStats.alpa.toString()} icon={<UserX className="text-red-600" />} />
-            <RecapCard title="Terlambat" value={recapStats.late.toString()} icon={<Clock className="text-orange-600" />} />
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -614,20 +727,19 @@ export default function Attendance() {
                     <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Sakit</th>
                     <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Izin</th>
                     <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Alpa</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Late</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {loadingRecap ? (
                     <tr>
-                      <td colSpan={6} className="px-6 py-12 text-center text-gray-400 font-medium">
+                      <td colSpan={5} className="px-6 py-12 text-center text-gray-400 font-medium">
                         <RefreshCw size={24} className="animate-spin mx-auto mb-2" />
                         Memuat data rekap...
                       </td>
                     </tr>
                   ) : students.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-6 py-12 text-center text-gray-400 font-medium">
+                      <td colSpan={5} className="px-6 py-12 text-center text-gray-400 font-medium">
                         Tidak ada data siswa.
                       </td>
                     </tr>
@@ -650,9 +762,6 @@ export default function Attendance() {
                         </td>
                         <td className="px-6 py-4 text-center">
                           <StatsBadge value={stats.alpa} color="red" />
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          <StatsBadge value={stats.late} color="orange" />
                         </td>
                       </tr>
                     );
@@ -771,12 +880,14 @@ function ViewButton({ active, onClick, label }: { active: boolean; onClick: () =
 }
 
 function StatusBtn({ active, type, onClick }: { active: boolean; type: AttendanceStatus; onClick: () => void }) {
+  if (type === 'LATE') return null;
+
   const colors = {
     HADIR: active ? 'bg-green-500 text-white shadow-lg' : 'text-gray-400 hover:bg-green-50 hover:text-green-500',
     SAKIT: active ? 'bg-blue-500 text-white shadow-lg' : 'text-gray-400 hover:bg-blue-50 hover:text-blue-500',
     IZIN: active ? 'bg-yellow-500 text-white shadow-lg' : 'text-gray-400 hover:bg-yellow-50 hover:text-yellow-500',
     ALPA: active ? 'bg-red-500 text-white shadow-lg' : 'text-gray-400 hover:bg-red-50 hover:text-red-500',
-    LATE: active ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:bg-orange-50 hover:text-orange-500',
+    LATE: '', // Hidden anyway
   };
 
   return (
