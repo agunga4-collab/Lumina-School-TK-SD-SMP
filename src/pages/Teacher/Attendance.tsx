@@ -12,6 +12,7 @@ import { collection, query, where, getDocs, setDoc, doc, serverTimestamp, getDoc
 import { AttendanceStatus, AttendanceRecord, Student, UnitType, Class } from '../../types';
 import { attendanceSyncService } from '../../services/attendanceBackupConfigService';
 import { toast } from 'sonner';
+import StudentSearch from '../../components/StudentSearch';
 
 interface StudentAttendance {
   id: string;
@@ -40,6 +41,7 @@ export default function Attendance() {
     attendanceRate: 0
   });
   const [threshold, setThreshold] = React.useState(3);
+  const [latenessRecords, setLatenessRecords] = React.useState<any[]>([]);
 
   // Calculate recap stats based on loaded students or fetch from DB
   React.useEffect(() => {
@@ -283,6 +285,7 @@ export default function Attendance() {
       case 'SAKIT': return <Clock size={18} />;
       case 'IZIN': return <AlertCircle size={18} />;
       case 'ALPA': return <UserX size={18} />;
+      case 'LATE': return <Clock className="text-orange-500" size={18} />;
     }
   };
 
@@ -397,6 +400,11 @@ export default function Attendance() {
                           active={student.status === 'ALPA'} 
                           type="ALPA" 
                           onClick={() => handleStatusChange(student.id, 'ALPA')} 
+                        />
+                        <StatusBtn 
+                          active={student.status === 'LATE'} 
+                          type="LATE" 
+                          onClick={() => handleStatusChange(student.id, 'LATE')} 
                         />
                       </div>
                     </td>
@@ -579,6 +587,7 @@ function StatusBtn({ active, type, onClick }: { active: boolean; type: Attendanc
     SAKIT: active ? 'bg-blue-500 text-white shadow-lg' : 'text-gray-400 hover:bg-blue-50 hover:text-blue-500',
     IZIN: active ? 'bg-yellow-500 text-white shadow-lg' : 'text-gray-400 hover:bg-yellow-50 hover:text-yellow-500',
     ALPA: active ? 'bg-red-500 text-white shadow-lg' : 'text-gray-400 hover:bg-red-50 hover:text-red-500',
+    LATE: active ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:bg-orange-50 hover:text-orange-500',
   };
 
   return (

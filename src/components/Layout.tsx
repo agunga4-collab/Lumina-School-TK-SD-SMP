@@ -210,10 +210,10 @@ export function Layout() {
               {currentUnit === 'ELEMENTARY' && (
                 <div className="space-y-1">
                   <NavSectionLabel label="Akademik" />
+                  <NavItem to="/lateness" icon={<Clock size={18} />} label="Keterlambatan" />
                   <NavItem to="/attendance" icon={<CheckSquare size={18} />} label="Kehadiran" />
                   <NavItem to="/academic/learning-goals" icon={<Target size={18} />} label="Learning Goals" />
                   <NavItem to="/academic/lxd" icon={<BookOpen size={18} />} label="LXD" />
-                  <NavItem to="/lateness" icon={<Clock size={18} />} label="Keterlambatan" />
                   <NavItem to="/literacy/input" icon={<BookOpen size={18} />} label="Literasi & Numerasi" />
                   <NavItem to="/observations" icon={<Eye size={18} />} label="Observasi Guru" />
                 </div>
@@ -222,6 +222,7 @@ export function Layout() {
               {currentUnit === 'JUNIOR_HIGH' && (
                 <div className="space-y-1">
                   <NavSectionLabel label="Akademik & MTSS" />
+                  <NavItem to="/lateness" icon={<Clock size={18} />} label="Tardiness" />
                   <NavItem to="/attendance" icon={<CheckSquare size={18} />} label="Kehadiran" />
                   <NavItem to="/academic/learning-goals" icon={<Target size={18} />} label="Learning Goals" />
                   <NavItem to="/academic/lxd" icon={<BookOpen size={18} />} label="LXD" />
@@ -235,7 +236,6 @@ export function Layout() {
                   )}
                   <NavItem to="/academic/buku-nilai" icon={<BarChart3 size={18} />} label="Buku Nilai" />
                   <NavItem to="/academic/rapor" icon={<FileText size={18} />} label="Rapor" />
-                  <NavItem to="/lateness" icon={<Clock size={18} />} label="Tardiness" />
                   <NavItem to="/self-exploration" icon={<Sparkles size={18} />} label="Self-Exploration" />
                   <NavItem to="/junior-high/behavior/mtss/overview" icon={<ShieldAlert size={18} />} label="MTSS Behavior" />
                   <NavItem to="/junior-high/academic/mtss/overview" icon={<GraduationCap size={18} />} label="MTSS Academic" />

@@ -164,10 +164,10 @@ function Shortcut({ role, unit }: { role: UserRole; unit: UnitType }) {
       );
     } else {
       shortcuts.push(
+        { label: unit === 'JUNIOR_HIGH' ? 'Tardiness' : 'Keterlambatan', icon: <Clock size={20} />, to: '/lateness', color: 'bg-pink-50 text-pink-600' },
         { label: 'Kehadiran', icon: <CheckSquare size={20} />, to: '/attendance', color: 'bg-blue-50 text-blue-600' },
         { label: 'Literasi/Num', icon: <BookOpen size={20} />, to: '/literacy/input', color: 'bg-emerald-50 text-emerald-600' },
-        { label: 'MTSS Intv', icon: <ShieldAlert size={20} />, to: '/mtss/cases', color: 'bg-orange-50 text-orange-600' },
-        { label: 'Keterlambatan', icon: <Clock size={20} />, to: '/lateness', color: 'bg-pink-50 text-pink-600' }
+        { label: 'MTSS Intv', icon: <ShieldAlert size={20} />, to: '/mtss/cases', color: 'bg-orange-50 text-orange-600' }
       );
     }
   } else if (isBK) {

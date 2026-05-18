@@ -183,8 +183,8 @@ export async function createUserOnboarding(user: any): Promise<AppUser> {
       luminaId: invite.luminaId || null,
       nickname: invite.nickname || null,
       linkedStudents: invite.linkedStudents || [],
-      classId: (invite as any).classId || null,
-      academicYear: (invite as any).academicYear || null,
+      classId: (invite as any).classId ?? null,
+      academicYear: (invite as any).academicYear ?? null,
       status: 'active',
       createdAt: existingProfile?.createdAt || Date.now()
     };
@@ -219,9 +219,11 @@ export async function createUserOnboarding(user: any): Promise<AppUser> {
       uid: user.uid,
       email: email,
       displayName: user.displayName || 'User',
-      photoURL: user.photoURL || undefined,
+      photoURL: user.photoURL || null,
       role: existingProfile?.role || 'GUEST',
       unitId: existingProfile?.unitId || 'JUNIOR_HIGH',
+      classId: existingProfile?.classId ?? null,
+      academicYear: existingProfile?.academicYear ?? null,
       status: 'pending',
       createdAt: existingProfile?.createdAt || Date.now()
     };
@@ -295,8 +297,8 @@ export async function activateUser(uid: string, inviteData?: RoleInvite): Promis
       updates.luminaId = inviteData.luminaId || null;
       updates.nickname = inviteData.nickname || null;
       updates.linkedStudents = inviteData.linkedStudents || [];
-      updates.classId = (inviteData as any).classId || null;
-      updates.academicYear = (inviteData as any).academicYear || null;
+      updates.classId = (inviteData as any).classId ?? null;
+      updates.academicYear = (inviteData as any).academicYear ?? null;
     }
     
     await updateDoc(userRef, updates);
