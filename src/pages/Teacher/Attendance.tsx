@@ -51,6 +51,8 @@ export default function Attendance() {
   const [recapMonth, setRecapMonth] = React.useState((now.getMonth() + 1).toString().padStart(2, '0'));
   const [recapYear, setRecapYear] = React.useState(now.getFullYear().toString());
   const [recapData, setRecapData] = React.useState<Record<string, { hadir: number, sakit: number, izin: number, alpa: number, late: number }>>({});
+  const [recapMatrix, setRecapMatrix] = React.useState<Record<string, Record<string, string>>>({});
+  const [recapViewMode, setRecapViewMode] = React.useState<'SUMMARY' | 'MATRIX'>('SUMMARY');
   const [loadingRecap, setLoadingRecap] = React.useState(false);
 
   const [threshold, setThreshold] = React.useState(3);
@@ -267,6 +269,7 @@ export default function Attendance() {
 
         const snap = await getDocs(q);
         const agg: Record<string, { hadir: number, sakit: number, izin: number, alpa: number, late: number }> = {};
+        const matrix: Record<string, Record<string, string>> = {};
         
         let totalHadir = 0;
         let totalSakit = 0;
@@ -278,8 +281,12 @@ export default function Attendance() {
           const data = doc.data();
           const sId = data.studentId;
           const status = data.status;
+          const date = data.date; // YYYY-MM-DD
 
           if (!agg[sId]) agg[sId] = { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
+          if (!matrix[sId]) matrix[sId] = {};
+          
+          matrix[sId][date] = status;
           
           if (status === 'HADIR') { agg[sId].hadir++; totalHadir++; }
           else if (status === 'SAKIT') { agg[sId].sakit++; totalSakit++; }
@@ -289,6 +296,7 @@ export default function Attendance() {
         });
 
         setRecapData(agg);
+        setRecapMatrix(matrix);
         
         const totalRecords = snap.docs.length;
         const studentCount = students.length || 1;
@@ -703,71 +711,150 @@ export default function Attendance() {
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center">
+            <div className="p-6 border-b border-gray-100 flex flex-wrap justify-between items-center gap-4">
               <h3 className="font-bold text-gray-900 flex items-center gap-2">
                 <BarChart3 size={18} className="text-blue-500" />
-                Rekap Kehadiran {new Date(parseInt(recapYear), parseInt(recapMonth)-1).toLocaleString('id-ID', { month: 'long', year: 'numeric' })}
+                Rekap {new Date(parseInt(recapYear), parseInt(recapMonth)-1).toLocaleString('id-ID', { month: 'long', year: 'numeric' })}
               </h3>
+              <div className="flex bg-gray-100 p-1 rounded-xl">
+                <button 
+                  onClick={() => setRecapViewMode('SUMMARY')}
+                  className={cn(
+                    "px-4 py-1.5 text-xs font-bold rounded-lg transition-all",
+                    recapViewMode === 'SUMMARY' ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                  )}
+                >
+                  Ringkasan
+                </button>
+                <button 
+                  onClick={() => setRecapViewMode('MATRIX')}
+                  className={cn(
+                    "px-4 py-1.5 text-xs font-bold rounded-lg transition-all",
+                    recapViewMode === 'MATRIX' ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                  )}
+                >
+                  Tabel Harian
+                </button>
+              </div>
               <div className="flex gap-2">
                  <button 
                   onClick={() => attendanceSyncService.downloadPdfRecap(selectedClass, activeAcademicYear, activeSemester)}
                   className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 active:scale-95 transition-all"
                  >
-                  Cetak Laporan (PDF)
+                  Cetak (PDF)
                  </button>
               </div>
             </div>
             
             <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-gray-50/50 border-b border-gray-100">
-                  <tr>
-                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Nama Siswa</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Hadir</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Sakit</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Izin</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Alpa</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {loadingRecap ? (
+              {recapViewMode === 'SUMMARY' ? (
+                <table className="w-full text-left">
+                  <thead className="bg-gray-50/50 border-b border-gray-100">
                     <tr>
-                      <td colSpan={5} className="px-6 py-12 text-center text-gray-400 font-medium">
-                        <RefreshCw size={24} className="animate-spin mx-auto mb-2" />
-                        Memuat data rekap...
-                      </td>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Nama Siswa</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Hadir</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Sakit</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Izin</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Alpa</th>
                     </tr>
-                  ) : students.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="px-6 py-12 text-center text-gray-400 font-medium">
-                        Tidak ada data siswa.
-                      </td>
-                    </tr>
-                  ) : students.map((s) => {
-                    const stats = recapData[s.id] || { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
-                    return (
-                      <tr key={s.id} className="hover:bg-gray-50/50 transition-colors">
-                        <td className="px-6 py-4">
-                          <p className="font-bold text-gray-900 text-sm">{s.name}</p>
-                          <p className="text-[10px] text-gray-400 font-medium">#{s.id}</p>
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          <StatsBadge value={stats.hadir} color="green" />
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          <StatsBadge value={stats.sakit} color="blue" />
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          <StatsBadge value={stats.izin} color="yellow" />
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          <StatsBadge value={stats.alpa} color="red" />
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {loadingRecap ? (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-12 text-center text-gray-400 font-medium">
+                          <RefreshCw size={24} className="animate-spin mx-auto mb-2" />
+                          Memuat data rekap...
                         </td>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    ) : students.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-12 text-center text-gray-400 font-medium">
+                          Tidak ada data siswa.
+                        </td>
+                      </tr>
+                    ) : students.map((s) => {
+                      const stats = recapData[s.id] || { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
+                      return (
+                        <tr key={s.id} className="hover:bg-gray-50/50 transition-colors">
+                          <td className="px-6 py-4">
+                            <p className="font-bold text-gray-900 text-sm">{s.name}</p>
+                            <p className="text-[10px] text-gray-400 font-medium">#{s.id}</p>
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            <StatsBadge value={stats.hadir} color="green" />
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            <StatsBadge value={stats.sakit} color="blue" />
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            <StatsBadge value={stats.izin} color="yellow" />
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            <StatsBadge value={stats.alpa} color="red" />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="relative">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-gray-50/50 border-b border-gray-100">
+                      <tr>
+                        <th className="sticky left-0 z-10 bg-gray-50 px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest border-r border-gray-100 min-w-[200px]">
+                          Nama Siswa
+                        </th>
+                        {Array.from({ length: new Date(parseInt(recapYear), parseInt(recapMonth), 0).getDate() }, (_, i) => i + 1).map(day => (
+                          <th key={day} className="px-3 py-4 text-[10px] font-bold text-gray-400 text-center border-r border-gray-50 min-w-[40px]">
+                            {day}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {loadingRecap ? (
+                        <tr>
+                          <td colSpan={32} className="px-6 py-12 text-center text-gray-400 font-medium">
+                            <RefreshCw size={24} className="animate-spin mx-auto mb-2" />
+                            Memuat tabel harian...
+                          </td>
+                        </tr>
+                      ) : students.map((s) => {
+                        const daysInMonth = new Date(parseInt(recapYear), parseInt(recapMonth), 0).getDate();
+                        const studentMatrix = recapMatrix[s.id] || {};
+                        
+                        return (
+                          <tr key={s.id} className="hover:bg-gray-50/30 transition-colors">
+                            <td className="sticky left-0 z-10 bg-white px-6 py-3 border-r border-gray-100 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
+                              <p className="font-bold text-gray-900 text-xs truncate max-w-[150px]">{s.name}</p>
+                            </td>
+                            {Array.from({ length: daysInMonth }, (_, i) => {
+                              const day = i + 1;
+                              const dateStr = `${recapYear}-${recapMonth}-${day.toString().padStart(2, '0')}`;
+                              const status = studentMatrix[dateStr];
+                              
+                              let symbol = '-';
+                              let colorClass = 'text-gray-200';
+                              
+                              if (status === 'HADIR') { symbol = 'H'; colorClass = 'text-green-600 font-black'; }
+                              else if (status === 'SAKIT') { symbol = 'S'; colorClass = 'text-blue-600 font-black'; }
+                              else if (status === 'IZIN') { symbol = 'I'; colorClass = 'text-yellow-600 font-black'; }
+                              else if (status === 'ALPA') { symbol = 'A'; colorClass = 'text-red-600 font-black'; }
+
+                              return (
+                                <td key={day} className={cn("px-3 py-3 text-center text-xs border-r border-gray-50", colorClass)}>
+                                  {symbol}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         </div>
