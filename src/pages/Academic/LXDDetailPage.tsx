@@ -31,6 +31,13 @@ import { LXD, User as AppUser, LXDType, LearningGoal, LXDStatus, LXDApproval, Ap
 import { cn } from '../../lib/utils';
 import axios from 'axios';
 
+const STRAND_LABELS = {
+  moralSpiritual: "Moral-Spiritual Strand",
+  imaginal: "Imaginal Strand",
+  rational: "Rational Strand",
+  materialPhysical: "Material-Physical Strand"
+};
+
 const STRAND_ICONS = {
   moralSpiritual: <Smile size={23} className="text-pink-500" />,
   imaginal: <Sparkles size={23} className="text-purple-500" />,
@@ -50,6 +57,8 @@ export default function LXDDetailPage() {
   const [processingApproval, setProcessingApproval] = React.useState(false);
   const [currentUserData, setCurrentUserData] = React.useState<any>(null);
   const [backingUp, setBackingUp] = React.useState(false);
+  const [backupPreviewModalOpen, setBackupPreviewModalOpen] = React.useState(false);
+  const [tempPdfBase64, setTempPdfBase64] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     const fetchUserData = async () => {
@@ -258,10 +267,10 @@ export default function LXDDetailPage() {
 
         <h2>1. Integral Education Strands</h2>
         <div class="strand-grid">
-          ${strandHTML('Moral Spiritual', lx.integralStrands?.moralSpiritual)}
-          ${strandHTML('Imaginal', lx.integralStrands?.imaginal)}
-          ${strandHTML('Rational', lx.integralStrands?.rational)}
-          ${strandHTML('Material Physical', lx.integralStrands?.materialPhysical)}
+          ${strandHTML(STRAND_LABELS.moralSpiritual, lx.integralStrands?.moralSpiritual)}
+          ${strandHTML(STRAND_LABELS.imaginal, lx.integralStrands?.imaginal)}
+          ${strandHTML(STRAND_LABELS.rational, lx.integralStrands?.rational)}
+          ${strandHTML(STRAND_LABELS.materialPhysical, lx.integralStrands?.materialPhysical)}
         </div>
 
         <h2>2. Lesson Overview</h2>
@@ -547,312 +556,180 @@ export default function LXDDetailPage() {
     if (!lxdData) throw new Error('LXD data is not available');
     
     const doc = new jsPDF();
-    let y = 15;
+    const margin = 15;
+    const maxWidth = 180;
+    let y = 20;
 
     const checkPageBreak = (needed: number) => {
-      if (y + needed > 280) {
+      if (y + needed > 270) {
         doc.addPage();
-        y = 15;
+        y = 20;
         return true;
       }
       return false;
     };
 
-    const drawSectionHeader = (title: string, number: string) => {
-      checkPageBreak(25);
+    const drawSectionHeader = (title: string) => {
+      checkPageBreak(20);
       doc.setFillColor(0, 35, 102); // #002366
-      doc.rect(10, y, 4, 10, 'F');
+      doc.rect(margin, y, 3, 8, 'F');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(12);
       doc.setTextColor(0, 35, 102);
-      doc.text(`${number}. ${title.toUpperCase()}`, 18, y + 8);
-      y += 15;
+      doc.text(title.toUpperCase(), margin + 6, y + 6);
+      y += 12;
     };
 
-    // --- Header ---
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
+    const drawText = (text: string, options: { fontSize?: number, fontStyle?: 'normal'|'bold'|'italic', color?: [number, number, number], spacing?: number } = {}) => {
+      const { fontSize = 10, fontStyle = 'normal', color = [0, 0, 0], spacing = 5 } = options;
+      doc.setFont('helvetica', fontStyle);
+      doc.setFontSize(fontSize);
+      doc.setTextColor(color[0], color[1], color[2]);
+      
+      const lines = doc.splitTextToSize(text || '-', maxWidth);
+      const lineHeight = fontSize * 0.5;
+      const height = lines.length * lineHeight;
+      checkPageBreak(height + spacing);
+      doc.text(lines, margin, y);
+      y += height + spacing;
+    };
+
+    // 1. Header
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
     doc.setTextColor(100);
-    doc.text('Lazuardi Global Compassionate School — Junior High', 105, y, { align: 'center' });
-    y += 6;
+    doc.text('Lazuardi GCS Junior High', 105, y, { align: 'center' });
+    y += 10;
+    
+    doc.setFontSize(18);
+    doc.setTextColor(0, 35, 102);
+    const titleLines = doc.splitTextToSize(lxdData.title || '-', 170);
+    doc.text(titleLines, 105, y, { align: 'center' });
+    y += (titleLines.length * 8) + 5;
 
     const lxdTypeLabel = {
       'WEEKLY_LESSONS': 'Weekly Lessons',
       'UNIT_AKTIVITAS': 'Unit Aktivitas',
       'LEARNING_JOURNEY': 'Learning Journey'
     }[lxdData.type] || lxdData.type;
-
     doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(0, 35, 102);
-    doc.text(`LEARNING EXPERIENCE DESIGN — ${lxdTypeLabel.toUpperCase()}`, 105, y, { align: 'center' });
-    y += 10;
+    doc.setFont('helvetica', 'italic');
+    doc.text(`Learning Experience Design: ${lxdTypeLabel.toUpperCase()}`, 105, y, { align: 'center' });
+    y += 15;
 
-    doc.setFontSize(20);
-    doc.setTextColor(0);
-    const titleLines = doc.splitTextToSize(lxdData.title || '-', 180);
-    doc.text(titleLines, 105, y, { align: 'center' });
-    y += (titleLines.length * 8) + 10;
-
-    // --- Metadata Grid ---
-    doc.setDrawColor(240);
-    doc.rect(10, y, 190, 45, 'S');
-    
-    doc.setFontSize(7);
-    doc.setTextColor(150);
-    doc.text('SUBJECT', 15, y + 8);
-    doc.text('GRADE', 60, y + 8);
-    doc.text('ACADEMIC YEAR', 105, y + 8);
-    doc.text('SEMESTER', 150, y + 8);
-
-    doc.setTextColor(0);
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'bold');
-    doc.text(lxdData.subject || '-', 15, y + 14);
-    doc.text(lxdData.grade || lxdData.grades?.join(', ') || '-', 60, y + 14);
-    doc.text(lxdData.academicYear || '-', 105, y + 14);
-    doc.text(lxdData.semester === '1' ? 'Semester 1' : 'Semester 2', 150, y + 14);
-
-    y += 22;
-    doc.setFontSize(7);
-    doc.setTextColor(150);
-    doc.setFont('helvetica', 'normal');
-    doc.text('DURATION', 15, y + 8);
-    doc.text('MEETINGS', 60, y + 8);
-    doc.text('CREATED BY', 105, y + 8);
-    doc.text('STATUS', 150, y + 8);
-
-    doc.setTextColor(0);
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'bold');
-    doc.text(lxdData.weeks || lxdData.duration || '-', 15, y + 14);
-    doc.text(lxdData.numberOfMeetings?.toString() || lxdData.meetings?.length?.toString() || '-', 60, y + 14);
-    doc.text(lxdData.createdBy || '-', 105, y + 14);
-    doc.text(lxdData.status || '-', 150, y + 14);
-
-    y += 35;
-
-    // --- Section 1: Integral Education Strands ---
-    drawSectionHeader('Integral Education Strands', '1');
-    if (lxdData.integralStrands) {
-      const strands = [
-        { key: 'moralSpiritual', label: 'Moral Spiritual' },
-        { key: 'imaginal', label: 'Imaginal' },
-        { key: 'rational', label: 'Rational' },
-        { key: 'materialPhysical', label: 'Material Physical' }
-      ];
-
-      strands.forEach(strand => {
-        const details = lxdData.integralStrands![strand.key as keyof typeof lxdData.integralStrands];
-        if (!details) return;
-
-        checkPageBreak(30);
+    // 2. Metadata
+    drawSectionHeader('Project Metadata');
+    const drawMetadataField = (label: string, value: string) => {
+        checkPageBreak(8);
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(10);
-        doc.setTextColor(0, 35, 102);
-        doc.text(strand.label.toUpperCase(), 15, y);
-        y += 6;
-
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(7);
+        doc.setFontSize(9);
         doc.setTextColor(150);
-        doc.text('INDICATORS', 15, y);
-        y += 5;
-
-        doc.setTextColor(60);
-        doc.setFontSize(8);
-        if (details.indicators && details.indicators.length > 0) {
-          details.indicators.forEach((ind: string) => {
-            checkPageBreak(6);
-            const indLines = doc.splitTextToSize(`• ${ind}`, 170);
-            doc.text(indLines, 20, y);
-            y += (indLines.length * 5);
-          });
-        } else {
-          doc.text('-', 20, y);
-          y += 5;
-        }
-
-        y += 2;
-        doc.setFontSize(7);
-        doc.setTextColor(150);
-        doc.text('EXPERIENCE', 15, y);
-        y += 4;
-        doc.setTextColor(60);
-        doc.setFont('helvetica', 'italic');
-        const narrativeLines = doc.splitTextToSize(`"${details.narrative || '-'}"`, 175);
-        checkPageBreak(narrativeLines.length * 5 + 10);
-        doc.text(narrativeLines, 15, y);
-        y += (narrativeLines.length * 5) + 10;
+        doc.text(label.toUpperCase(), margin, y);
         doc.setFont('helvetica', 'normal');
-      });
-    }
-
-    // --- Section 2: Lesson Overview ---
-    drawSectionHeader('Lesson Overview', '2');
-    
-    const drawMetaText = (label: string, content: string, isItalic = false) => {
-      checkPageBreak(15);
-      doc.setFontSize(7);
-      doc.setTextColor(150);
-      doc.setFont('helvetica', 'normal');
-      doc.text(label.toUpperCase(), 15, y);
-      y += 5;
-      doc.setTextColor(40);
-      doc.setFontSize(9);
-      if (isItalic) doc.setFont('helvetica', 'italic');
-      const lines = doc.splitTextToSize(content || '-', 175);
-      checkPageBreak(lines.length * 5 + 5);
-      doc.text(lines, 15, y);
-      y += (lines.length * 5) + 8;
-      doc.setFont('helvetica', 'normal');
+        doc.setTextColor(0);
+        doc.text(value || '-', margin + 45, y);
+        y += 7;
     };
 
-    drawMetaText('Generative Topics', Array.isArray(lxdData.generativeTopics) ? lxdData.generativeTopics.join(', ') : (lxdData.generativeTopics || '-'));
-    drawMetaText('Essential Question', `"${lxdData.essentialQuestion || '-'}"`, true);
-    
-    checkPageBreak(20);
-    doc.setFontSize(7);
-    doc.setTextColor(150);
-    doc.text('LINKED GOALS', 15, y);
-    y += 5;
-    learningGoals.forEach(lg => {
-      const goalLines = doc.splitTextToSize(lg.goalText, 160);
-      checkPageBreak(goalLines.length * 5 + 5);
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(0, 35, 102);
-      doc.text(lg.code, 15, y);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(60);
-      doc.text(goalLines, 28, y);
-      y += (goalLines.length * 5) + 4;
-    });
-    y += 5;
-
-    // --- Section 3: Meetings & Activities ---
-    drawSectionHeader('Meetings & Activities', '3');
-    (lxdData.meetings || []).forEach((m: any) => {
-      checkPageBreak(40);
-      doc.setFillColor(245, 248, 255);
-      doc.rect(10, y, 190, 10, 'F');
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10);
-      doc.setTextColor(0, 35, 102);
-      doc.text(`MEETING #${m.meetingNumber}: ${m.title?.toUpperCase() || '-'}`, 15, y + 7);
-      y += 18;
-
-      doc.setFontSize(7);
-      doc.setTextColor(150);
-      doc.text('LEARNING OBJECTIVES', 15, y);
-      y += 5;
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(50);
-      doc.setFontSize(8);
-      if (m.learningObjective && m.learningObjective.length > 0) {
-        m.learningObjective.forEach((lo: string) => {
-          checkPageBreak(6);
-          const loLines = doc.splitTextToSize(`• ${lo}`, 170);
-          doc.text(loLines, 18, y);
-          y += (loLines.length * 5);
-        });
-      } else {
-        doc.text('-', 18, y);
-        y += 5;
-      }
-      
-      y += 5;
-      const stageY = y;
-      const drawStage = (label: string, content: string, xPos: number) => {
-          doc.setFontSize(7);
-          doc.setTextColor(150);
-          doc.text(label.toUpperCase(), xPos, stageY);
-          doc.setTextColor(70);
-          doc.setFontSize(8);
-          const stageLines = doc.splitTextToSize(content || '-', 50);
-          doc.text(stageLines, xPos, stageY + 5);
-          return stageLines.length * 4.5 + 10;
-      };
-      
-      const h1 = drawStage('Opening', m.opening, 15);
-      const h2 = drawStage('Main Activities', m.mainActivities, 72);
-      const h3 = drawStage('Closing', m.closing, 130);
-      
-      y += Math.max(h1, h2, h3);
-      y += 10;
-    });
-
-    // --- Rubric ---
-    drawSectionHeader('Assessment Rubric', '4');
-    checkPageBreak(20);
-    doc.setFillColor(0, 35, 102);
-    doc.rect(10, y, 190, 10, 'F');
-    doc.setFontSize(8);
-    doc.setTextColor(255);
-    doc.text('GOAL / CRITERIA', 15, y + 7);
-    doc.text('BEGINNING', 60, y + 7);
-    doc.text('DEVELOPING', 105, y + 7);
-    doc.text('ACHIEVED', 150, y + 7);
-    y += 14;
-
-    (lxdData.rubric || []).forEach((row: any) => {
-      const lg = learningGoals.find(g => g.id === row.goalId);
-      const c1Lines = doc.splitTextToSize(`${lg?.code || '?'}\n${row.criteriaLabel || '-'}\nM${row.assessedInMeeting || '-'}`, 40);
-      const c2Lines = doc.splitTextToSize(row.beginning || '-', 40);
-      const c3Lines = doc.splitTextToSize(row.developing || '-', 40);
-      const c4Lines = doc.splitTextToSize(row.achieved || '-', 45);
-      
-      const rowHeight = Math.max(c1Lines.length, c2Lines.length, c3Lines.length, c4Lines.length) * 5 + 5;
-      checkPageBreak(rowHeight + 5);
-
-      doc.setTextColor(0, 35, 102);
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'bold');
-      doc.text(c1Lines, 15, y);
-      
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(80);
-      doc.text(c2Lines, 60, y);
-      doc.text(c3Lines, 105, y);
-      
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(0);
-      doc.text(c4Lines, 150, y);
-      
-      y += rowHeight;
-      doc.setDrawColor(240);
-      doc.line(10, y, 200, y);
-      y += 8;
-    });
-
-    // --- Signatures ---
-    checkPageBreak(50);
+    drawMetadataField('Subject', lxdData.subject || '-');
+    drawMetadataField('Grade', lxdData.grade || lxdData.grades?.join(', ') || '-');
+    drawMetadataField('Academic Year', lxdData.academicYear || '-');
+    drawMetadataField('Semester', lxdData.semester === '1' ? 'Semester 1' : 'Semester 2');
+    drawMetadataField('Status', lxdData.status || '-');
+    drawMetadataField('Created By', lxdData.createdBy || '-');
     y += 10;
-    doc.setFontSize(7);
-    doc.setTextColor(150);
-    doc.setFont('helvetica', 'normal');
-    doc.text('SUBMISSION DATE', 15, y);
-    doc.text('PRINCIPAL', 75, y);
-    doc.text('SUBJECT TEACHER', 135, y);
+
+    // 3. Integral Education Strands
+    drawSectionHeader('Integral Education Strands');
+    const strands = [
+        { key: 'moralSpiritual', label: STRAND_LABELS.moralSpiritual },
+        { key: 'imaginal', label: STRAND_LABELS.imaginal },
+        { key: 'rational', label: STRAND_LABELS.rational },
+        { key: 'materialPhysical', label: STRAND_LABELS.materialPhysical }
+    ];
+
+    strands.forEach(s => {
+        const data = lxdData.integralStrands?.[s.key as keyof typeof lxdData.integralStrands];
+        if (!data) return;
+        
+        drawText(s.label, { fontStyle: 'bold', fontSize: 11, color: [0, 35, 102] });
+        drawText('Indicators:', { fontStyle: 'bold', fontSize: 9, color: [150, 150, 150], spacing: 2 });
+        if (data.indicators && data.indicators.length > 0) {
+            data.indicators.forEach((ind: string) => {
+                drawText(`• ${ind}`, { fontSize: 9, spacing: 4 });
+            });
+        } else {
+            drawText('-', { fontSize: 9 });
+        }
+        drawText('Narrative:', { fontStyle: 'bold', fontSize: 9, color: [150, 150, 150], spacing: 2 });
+        drawText(data.narrative || '-', { fontStyle: 'italic', fontSize: 9 });
+        y += 5;
+    });
+
+    // 4. Lesson Overview
+    drawSectionHeader('Lesson Overview');
+    drawText('Generative Topics:', { fontStyle: 'bold', fontSize: 10, color: [100, 100, 100], spacing: 2 });
+    drawText(Array.isArray(lxdData.generativeTopics) ? lxdData.generativeTopics.join(', ') : (lxdData.generativeTopics || '-'), { fontSize: 10 });
     
-    y += 8;
-    doc.setFontSize(10);
-    doc.setTextColor(0);
+    drawText('Driving Questions:', { fontStyle: 'bold', fontSize: 10, color: [100, 100, 100], spacing: 2 });
+    drawText(lxdData.essentialQuestion || '-', { fontStyle: 'italic', fontSize: 10 });
+    
+    drawText('Learning Goals:', { fontStyle: 'bold', fontSize: 10, color: [100, 100, 100], spacing: 2 });
+    learningGoals.forEach(lg => {
+        drawText(`${lg.code}: ${lg.goalText}`, { fontSize: 10, spacing: 4 });
+    });
+    y += 10;
+
+    // 5. Assessment Rubrics
+    if (lxdData.rubric && lxdData.rubric.length > 0) {
+        drawSectionHeader('Assessment Rubrics');
+        lxdData.rubric.forEach((row: any) => {
+            const lg = learningGoals.find(g => g.id === row.goalId);
+            checkPageBreak(35);
+            drawText(`Goal: ${lg?.code || '?'}${row.criteriaLabel ? ` - ${row.criteriaLabel}` : ''}`, { fontStyle: 'bold', fontSize: 10 });
+            drawText(`Beginning: ${row.beginning || '-'}`, { fontSize: 9, spacing: 3 });
+            drawText(`Developing: ${row.developing || '-'}`, { fontSize: 9, spacing: 3 });
+            drawText(`Achieved: ${row.achieved || '-'}`, { fontSize: 9, spacing: 3 });
+            y += 5;
+        });
+    }
+
+    // 6. Tanda tangan
+    checkPageBreak(60);
+    drawSectionHeader('Submission & Signatures');
+    drawText(`Submission Date: ${lxdData.signatures?.submissionDate || '-'}`, { fontSize: 10 });
+    
+    y += 10;
+    const sigY = y;
     doc.setFont('helvetica', 'bold');
-    doc.text(lxdData.signatures?.submissionDate || '-', 15, y);
-    doc.text(lxdData.signatures?.principal?.name || '____________________', 75, y);
-    doc.text(lxdData.signatures?.subjectTeacher?.name || '____________________', 135, y);
+    doc.setFontSize(10);
+    doc.text('Principal', margin, sigY);
+    doc.text('Subject Teacher', margin + 95, sigY);
+    
+    y += 20;
+    doc.setFont('helvetica', 'normal');
+    doc.text(lxdData.signatures?.principal?.name || '____________________', margin, y);
+    doc.text(lxdData.signatures?.subjectTeacher?.name || '____________________', margin + 95, y);
     
     y += 5;
     doc.setFontSize(8);
     doc.setTextColor(120);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`NIY: ${lxdData.signatures?.principal?.niy || '-'}`, 75, y);
-    doc.text(`NIY: ${lxdData.signatures?.subjectTeacher?.niy || '-'}`, 135, y);
-
-    doc.setFontSize(7);
-    doc.setTextColor(200);
-    doc.text(`Lumina System — Generated on ${new Date().toLocaleString()}`, 105, 290, { align: 'center' });
+    doc.text(`NIY: ${lxdData.signatures?.principal?.niy || '-'}`, margin, y);
+    doc.text(`NIY: ${lxdData.signatures?.subjectTeacher?.niy || '-'}`, margin + 95, y);
+    
+    // Header & Footer on each page
+    const pageCount = (doc as any).internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.setTextColor(180);
+        // Page Header
+        doc.text('Lazuardi GCS Junior High - LXD Document', margin, 10);
+        doc.text(lxdData.title?.substring(0, 50) || '-', 195, 10, { align: 'right' });
+        // Page Footer
+        doc.text(`Halaman ${i} dari ${pageCount}`, 195, 285, { align: 'right' });
+    }
 
     return doc.output('datauristring').split(',')[1];
   };
@@ -869,18 +746,31 @@ export default function LXDDetailPage() {
 
     try {
       setBackingUp(true);
-      
-      // 1. Generate PDF from data using pure jsPDF text API
       const pdfBase64 = await generateLxdPdfBase64(lx, lgs);
+      setTempPdfBase64(pdfBase64);
+      setBackupPreviewModalOpen(true);
+    } catch (error: any) {
+      console.error("Backup preview error:", error);
+      alert("Gagal membuat preview PDF.");
+    } finally {
+      setBackingUp(false);
+    }
+  };
 
-      // 2. Call Backup API
+  const confirmBackup = async () => {
+    if (!lx || !tempPdfBase64) return;
+    
+    try {
+      setBackingUp(true);
       const response = await axios.post('/api/lxd-backup', {
         lxdId: lx.id,
-        pdfBase64: pdfBase64
+        pdfBase64: tempPdfBase64
       });
 
       if (response.data.ok) {
         alert("LXD successfully backed up to Google Drive!");
+        setBackupPreviewModalOpen(false);
+        setTempPdfBase64(null);
         await fetchData();
       } else {
         alert("Backup failed: " + response.data.message);
@@ -890,6 +780,21 @@ export default function LXDDetailPage() {
       alert("Backup error: " + (error.response?.data?.message || error.message));
     } finally {
       setBackingUp(false);
+    }
+  };
+
+  const viewTempPdf = () => {
+    if (!tempPdfBase64) return;
+    try {
+      const blob = new Blob(
+        [Uint8Array.from(atob(tempPdfBase64), c => c.charCodeAt(0))],
+        { type: 'application/pdf' }
+      );
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+    } catch (err) {
+      console.error("Preview error:", err);
+      alert("Gagal membuka PDF.");
     }
   };
 
@@ -1125,7 +1030,7 @@ export default function LXDDetailPage() {
                     <div className="flex items-center gap-3">
                       {STRAND_ICONS[key as keyof typeof STRAND_ICONS]}
                       <h4 className="text-xs font-black uppercase tracking-widest text-gray-900 border-b-2 border-gray-100 pb-1">
-                        {key.replace(/([A-Z])/g, ' $1')}
+                        {STRAND_LABELS[key as keyof typeof STRAND_LABELS] || key}
                       </h4>
                     </div>
                     <div className="space-y-3">
@@ -1448,7 +1353,7 @@ export default function LXDDetailPage() {
                   />
                 </div>
 
-                <div className="flex gap-3">
+                <div className="flex gap-4">
                   <button 
                     onClick={() => setRejectModalOpen(false)}
                     className="flex-1 py-3 bg-gray-50 text-gray-400 rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-gray-100 transition-all"
@@ -1462,6 +1367,75 @@ export default function LXDDetailPage() {
                   >
                     {processingApproval ? <Loader2 size={16} className="animate-spin mx-auto" /> : 'Confirm Reject'}
                   </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Backup Preview Modal */}
+        {backupPreviewModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-indigo-900/40 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden border border-indigo-100"
+            >
+              <div className="p-8 space-y-6">
+                <div className="flex items-center gap-4">
+                   <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center">
+                      <HardDrive size={24} />
+                   </div>
+                   <div>
+                      <h3 className="text-xl font-black text-indigo-900 uppercase tracking-tighter italic">LXD Backup Preview</h3>
+                      <p className="text-xs font-bold text-indigo-400 uppercase tracking-widest">Verifikasi PDF sebelum dikirim ke Drive</p>
+                   </div>
+                </div>
+
+                <div className="p-6 bg-gray-50 rounded-2xl border border-gray-100 space-y-4">
+                  <div className="flex items-center gap-3 text-gray-600">
+                    <FileText size={18} className="text-indigo-400" />
+                    <span className="text-sm font-bold uppercase tracking-tight">{lx.title}</span>
+                  </div>
+                  <p className="text-xs text-gray-400 leading-relaxed">
+                    Dokumen PDF telah digenerate. Silakan lihat preview terlebih dahulu sebelum melakukan backup ke Google Drive.
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-3">
+                   <button 
+                     onClick={viewTempPdf}
+                     className="w-full px-4 py-4 bg-white text-indigo-600 border border-indigo-100 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-50 transition-all flex items-center justify-center gap-2"
+                   >
+                     <ExternalLink size={14} /> Lihat PDF Preview
+                   </button>
+                   
+                   <div className="flex gap-4 w-full">
+                      <button 
+                        onClick={() => {
+                          setBackupPreviewModalOpen(false);
+                          setTempPdfBase64(null);
+                        }}
+                        className="flex-1 px-4 py-3 bg-gray-50 text-gray-500 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-gray-100 transition-all"
+                      >
+                        Batal
+                      </button>
+                      <button 
+                        onClick={confirmBackup}
+                        disabled={backingUp}
+                        className="flex-1 px-4 py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {backingUp ? <Loader2 size={14} className="animate-spin" /> : <HardDrive size={14} />} 
+                        Konfirmasi Backup
+                      </button>
+                   </div>
                 </div>
               </div>
             </motion.div>

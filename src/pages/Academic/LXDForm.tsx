@@ -23,10 +23,17 @@ import { ACADEMIC_SUBJECTS, ACADEMIC_YEARS, ACADEMIC_GRADES } from '../../consta
 const ASSESSMENT_TYPES = ["Formative", "AaL", "AfL", "AoL", "Exit Ticket", "Quiz", "Project", "Observation", "Self-Assessment", "Peer-Assessment"];
 const INSTRUCTIONAL_STRATEGIES = ["Think-Pair-Share", "Gallery Walk", "Socratic Seminar", "Jigsaw", "Flipped Classroom", "Direct Instruction", "Inquiry-based", "Experiential Learning"];
 const INTEGRAL_INDICATORS = {
-  moralSpiritual: ["Self-awareness", "Empathy", "Integrity", "Justice", "Compassion", "Service"],
-  imaginal: ["Creativity", "Visualisation", "Aesthetics", "Intuition", "Playfulness"],
-  rational: ["Critical Thinking", "Problem Solving", "Logic", "Analysis", "Evaluation"],
-  materialPhysical: ["Physical Literacy", "Sustainability", "Wellness", "Precision", "Technical Skill"]
+  moralSpiritual: ["Connection to God", "Connection to Self", "Connection to Other Creations", "Emotional Intelligence", "Character Education (Lazuardi 20)"],
+  imaginal: ["Imagination", "Aesthetics", "Creativity", "Innovation", "Individual Interests / Talents / Dispositions"],
+  rational: ["Cognitive Flexibility", "Ways of Thinking", "Problem Finding / Solving", "Reflection", "Information-Seeking Skills"],
+  materialPhysical: ["Senses (5 and beyond)", "Physical Education", "Psychomotor Domain Targets", "Sensory Development & Awareness", "Health Education"]
+};
+
+const STRAND_LABELS = {
+  moralSpiritual: "Moral-Spiritual Strand",
+  imaginal: "Imaginal Strand",
+  rational: "Rational Strand",
+  materialPhysical: "Material-Physical Strand"
 };
 
 const STRAND_ICONS = {
@@ -548,7 +555,7 @@ export default function LXDForm() {
                             <div className="flex items-center justify-between">
                                <div className="flex items-center gap-3">
                                   {STRAND_ICONS[strand]}
-                                  <h3 className="text-sm font-black text-gray-900 uppercase tracking-widest">{strand.replace(/([A-Z])/g, ' $1')}</h3>
+                                  <h3 className="text-sm font-black text-gray-900 uppercase tracking-widest">{STRAND_LABELS[strand]}</h3>
                                </div>
                             </div>
 

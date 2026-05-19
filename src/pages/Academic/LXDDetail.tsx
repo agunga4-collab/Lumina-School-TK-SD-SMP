@@ -12,6 +12,13 @@ import { getLXDById, deleteLXD, updateLXD, getLearningGoals } from '../../lib/fi
 import { LXD, User as AppUser, UnitType, LXDType, LearningGoal } from '../../types';
 import { cn } from '../../lib/utils';
 
+const STRAND_LABELS = {
+  moralSpiritual: "Moral-Spiritual Strand",
+  imaginal: "Imaginal Strand",
+  rational: "Rational Strand",
+  materialPhysical: "Material-Physical Strand"
+};
+
 const STRAND_ICONS = {
   moralSpiritual: <Smile size={23} className="text-pink-500" />,
   imaginal: <Sparkles size={23} className="text-purple-500" />,
@@ -234,7 +241,7 @@ export default function LXDDetail() {
                     <div key={strand} className="p-8 bg-white rounded-[2.5rem] border border-gray-100 shadow-sm flex flex-col gap-4">
                        <div className="flex items-center gap-3">
                           {STRAND_ICONS[strand]}
-                          <h4 className="text-xs font-black uppercase tracking-widest text-gray-900">{strand.replace(/([A-Z])/g, ' $1')}</h4>
+                          <h4 className="text-xs font-black uppercase tracking-widest text-gray-900">{STRAND_LABELS[strand as keyof typeof STRAND_LABELS] || strand}</h4>
                        </div>
                        <div className="flex flex-wrap gap-2">
                           {(lx.integralStrands as any)[strand].indicators.map((ind: string) => (
