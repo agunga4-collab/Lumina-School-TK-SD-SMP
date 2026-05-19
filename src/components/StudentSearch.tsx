@@ -79,14 +79,32 @@ export default function StudentSearch({ onSelect, placeholder = "Cari siswa...",
         // Merge and filter
         const allStudents = [...activeStudents, ...invitedStudents];
         
-        // De-duplicate by name (since a user might be in both if they just onboarded)
-        // Or better, de-duplicate by something more unique if possible
-        const uniqueStudents = Array.from(new Map(allStudents.map(s => [s.name, s])).values());
+        // De-duplicate by ID (active students preferred over invited if same person)
+        const uniqueStudentsMap = new Map();
+        allStudents.forEach(s => {
+          if (!uniqueStudentsMap.has(s.id) || !s.id.startsWith('INVITE_')) {
+            uniqueStudentsMap.set(s.id, s);
+          }
+        });
+        
+        const uniqueStudents = Array.from(uniqueStudentsMap.values());
 
-        const filtered = uniqueStudents.filter(s => 
-          s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-          (s.nickname && s.nickname.toLowerCase().includes(searchTerm.toLowerCase()))
-        ).slice(0, 8);
+        const filtered = uniqueStudents.filter(s => {
+          const lowerName = s.name.toLowerCase();
+          // Stricter filtering for class placeholders and mock accounts
+          const isClassPlaceholder = 
+            lowerName === 'gc smp' || 
+            lowerName.includes('grade ') || 
+            lowerName.includes('kelas ') ||
+            lowerName.includes('general class') ||
+            lowerName.includes('placeholder') ||
+            lowerName.includes('test student');
+            
+          return !isClassPlaceholder && s.name.length > 2 && (
+            lowerName.includes(searchTerm.toLowerCase()) || 
+            (s.nickname && s.nickname.toLowerCase().includes(searchTerm.toLowerCase()))
+          );
+        }).slice(0, 10);
 
         setResults(filtered);
       } catch (err) {

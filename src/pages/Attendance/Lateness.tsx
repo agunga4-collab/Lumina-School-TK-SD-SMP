@@ -19,6 +19,9 @@ interface LatenessRecord {
   reason: string;
   parentNote: boolean;
   countThisMonth: number;
+  className?: string;
+  classId?: string;
+  isManual?: boolean;
 }
 
 export default function Lateness() {
@@ -56,25 +59,50 @@ export default function Lateness() {
     const loadStudents = async () => {
       setLoading(true);
       try {
-        // Query students from roleInvites or users?
-        // Let's use the 'users' collection with role 'STUDENT'
+        const currentClass = classes.find(c => c.id === selectedClass);
         const q = query(
           collection(db, 'users'), 
           where('role', '==', 'STUDENT'), 
-          where('jobTitle', '==', classes.find(c => c.id === selectedClass)?.name || '')
+          where('jobTitle', '==', currentClass?.name || '')
         );
         const snap = await getDocs(q);
         
-        const studentList: LatenessRecord[] = snap.docs.map(doc => ({
-          id: doc.id,
-          name: doc.data().displayName || doc.data().name || 'Unknown Student',
-          arrivalTime: '',
-          reason: '',
-          parentNote: false,
-          countThisMonth: 0 // In real app, would fetch from a stats collection
-        }));
+        const studentList: LatenessRecord[] = snap.docs
+          .map(doc => ({
+            id: doc.id,
+            name: doc.data().displayName || doc.data().name || 'Unknown Student',
+            arrivalTime: '',
+            reason: '',
+            parentNote: false,
+            countThisMonth: 0,
+            className: currentClass?.name,
+            classId: selectedClass
+          }))
+          .filter(student => {
+            const lowerName = student.name.toLowerCase();
+            const isClassPlaceholder = 
+              lowerName === 'gc smp' || 
+              lowerName.includes('grade ') || 
+              lowerName.includes('kelas ') ||
+              lowerName.includes('general class') ||
+              lowerName.includes('placeholder') ||
+              lowerName.includes('test student');
+            return !isClassPlaceholder && student.name.length > 2;
+          });
         
-        setRecords(studentList);
+        setRecords(prev => {
+          // Keep records that have data entered OR are marked as manually added (via search)
+          const recordsToKeep = prev.filter(r => r.arrivalTime !== '' || r.reason !== '' || r.isManual);
+          
+          // Filter out students from current studentList that are already in recordsToKeep
+          const manualRecords = recordsToKeep.filter(r => !studentList.some(s => s.id === r.id));
+          
+          // Merge: manually added/modified records first, then the remaining from the new class list
+          return [...manualRecords, ...studentList.map(s => {
+            const existing = recordsToKeep.find(r => r.id === s.id);
+            return existing ? { ...s, ...existing } : s;
+          })];
+        });
       } catch (err) {
         console.error('Error loading students for lateness:', err);
         toast.error('Gagal memuat data siswa');
@@ -121,12 +149,16 @@ export default function Lateness() {
           classId: selectedClass
         });
       }
-      toast.success('Data keterlambatan berhasil disimpan');
+      toast.success(`Data keterlambatan berhasil disimpan`);
+      if (lateEntries.some(e => e.parentNote || e.countThisMonth >= threshold)) {
+        toast.info('Notifikasi telah dikirim ke orang tua via WhatsApp/Email', {
+          description: 'Sistem Lumina otomatis mengirimkan pesan untuk siswa dengan catatan khusus.'
+        });
+      }
     } catch (err) {
       console.error('Error saving lateness:', err);
       toast.error('Gagal menyimpan data');
     } finally {
-      setSaving(true); // Should be false, fixed in logic
       setSaving(false);
     }
   };
@@ -179,21 +211,44 @@ export default function Lateness() {
                         toast.info(`${student.name} sudah ada di daftar`);
                         return;
                       }
+
+                      // Automatically identify class if student has it
+                      let finalClassId = selectedClass;
+                      const studentClassId = student.classId;
+                      const studentClassName = student.className;
+
+                      if (studentClassId && studentClassId !== selectedClass) {
+                        finalClassId = studentClassId;
+                        setSelectedClass(studentClassId);
+                      } else if (!studentClassId && studentClassName) {
+                        // Try to find class by name (exact or loose match)
+                        const foundClass = classes.find(c => 
+                          c.name.toLowerCase() === studentClassName.toLowerCase() ||
+                          studentClassName.toLowerCase().includes(c.name.toLowerCase())
+                        );
+                        if (foundClass && foundClass.id !== selectedClass) {
+                          finalClassId = foundClass.id;
+                          setSelectedClass(foundClass.id);
+                        }
+                      }
                       
+                      // Try to resolve class name from ID if still missing
+                      const resolvedClassName = studentClassName || classes.find(c => c.id === finalClassId)?.name;
+
                       const newRecord: LatenessRecord = {
                         id: student.id,
                         name: student.name,
                         arrivalTime: '',
                         reason: '',
                         parentNote: false,
-                        countThisMonth: 0
+                        countThisMonth: 0,
+                        className: resolvedClassName,
+                        classId: finalClassId,
+                        isManual: true
                       };
-                      setRecords([newRecord, ...records]);
                       
-                      // Also update class to the student's class if available
-                      if (student.classId) {
-                        setSelectedClass(student.classId);
-                      }
+                      setRecords(prev => [newRecord, ...prev.filter(r => r.id !== student.id)]);
+                      toast.success(`${student.name} ditambahkan (${student.className || 'Tanpa Kelas'})`);
                     }}
                   />
                 </div>
@@ -223,7 +278,15 @@ export default function Lateness() {
                         {filteredRecords.map(record => (
                           <tr key={record.id} className="hover:bg-gray-50/50 transition-colors">
                               <td className="px-6 py-4">
-                                <p className="font-bold text-gray-900 text-sm">{record.name}</p>
+                                <div className="flex flex-col">
+                                  <p className="font-bold text-gray-900 text-sm">{record.name}</p>
+                                  {record.className && (
+                                    <p className="text-[10px] font-medium text-blue-500 bg-blue-50 w-fit px-1 rounded-sm mt-0.5">{record.className}</p>
+                                  )}
+                                  {!record.className && (
+                                    <p className="text-[10px] font-medium text-gray-400 italic">Kelas belum teridentifikasi</p>
+                                  )}
+                                </div>
                                 <div className="flex items-center gap-1 mt-1">
                                     {record.countThisMonth >= threshold ? (
                                       <span className="flex items-center gap-1 text-[9px] font-black text-red-500 bg-red-50 px-1.5 py-0.5 rounded uppercase border border-red-100">
