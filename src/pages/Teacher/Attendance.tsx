@@ -676,13 +676,27 @@ export default function Attendance() {
 
       {view === 'RECAP' && (
         <div className="space-y-6">
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-wrap items-center gap-4">
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-wrap items-center gap-6">
+            <div className="flex flex-col">
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Kelas</span>
+              <select 
+                value={selectedClass}
+                onChange={(e) => setSelectedClass(e.target.value)}
+                className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-bold outline-none cursor-pointer hover:border-blue-300 transition-colors"
+                disabled={loadingClasses}
+              >
+                <option value="">Pilih Kelas</option>
+                {classes.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
             <div className="flex flex-col">
               <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Bulan</span>
               <select 
                 value={recapMonth}
                 onChange={(e) => setRecapMonth(e.target.value)}
-                className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-bold outline-none cursor-pointer"
+                className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-bold outline-none cursor-pointer hover:border-blue-300 transition-colors"
               >
                 {['01','02','03','04','05','06','07','08','09','10','11','12'].map(m => (
                   <option key={m} value={m}>{new Date(2000, parseInt(m)-1).toLocaleString('id-ID', { month: 'long' })}</option>
@@ -694,7 +708,7 @@ export default function Attendance() {
               <select 
                 value={recapYear}
                 onChange={(e) => setRecapYear(e.target.value)}
-                className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-bold outline-none cursor-pointer"
+                className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-bold outline-none cursor-pointer hover:border-blue-300 transition-colors"
               >
                 {[2024, 2025, 2026].map(y => (
                   <option key={y} value={y.toString()}>{y}</option>
