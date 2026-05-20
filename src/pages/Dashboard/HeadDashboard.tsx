@@ -6,9 +6,9 @@ import {
 import { 
   AlertTriangle, CheckCircle, Clock, ChevronRight, 
   ShieldAlert, Activity, LayoutGrid, Timer,
-  Loader2
+  Loader2, BarChart3, Users
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useOutletContext } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { 
   collection, 
@@ -18,9 +18,12 @@ import {
   limit
 } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import { MTSSAcademicCase, MTSSAcademicAlert } from '../../types';
+import { MTSSAcademicCase, MTSSAcademicAlert, UnitType } from '../../types';
+import AttendanceAnalysis from './AttendanceAnalysis';
 
 export default function HeadDashboard() {
+  const { activeUnit } = useOutletContext<{ activeUnit: UnitType }>();
+  const [activeTab, setActiveTab] = React.useState<'MTSS' | 'ATTENDANCE'>('MTSS');
   const [loading, setLoading] = React.useState(true);
   const [stats, setStats] = React.useState({
     t1: 0, t2: 0, t3: 0,
@@ -120,176 +123,233 @@ export default function HeadDashboard() {
   }
 
   return (
-    <div className="max-h-screen overflow-hidden flex flex-col space-y-4">
-      <header className="flex justify-between items-start">
+    <div className="max-h-screen overflow-hidden flex flex-col space-y-6">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Dashboard Kepala Sekolah</h1>
-          <p className="text-sm text-gray-500 font-medium">Ringkasan MTSS & Perilaku Unit Junior High</p>
+          <h1 className="text-3xl font-black text-gray-900 tracking-tighter italic uppercase">Analisis Unit</h1>
+          <p className="text-sm text-gray-500 font-medium">Pusat Kendali & Insight Strategis Unit {activeUnit?.replace('_', ' ')}</p>
         </div>
-        <div className="flex gap-3">
-          <Link 
-            to="/mtss/cases" 
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg shadow-blue-100"
-          >
-            Lihat Semua Kasus
-            <ChevronRight size={16} />
-          </Link>
+        
+        <div className="flex bg-gray-100 p-1.5 rounded-[1.25rem] border border-gray-200">
+           <TabButton 
+            active={activeTab === 'MTSS'} 
+            onClick={() => setActiveTab('MTSS')} 
+            label="Eskalasi Akademik" 
+            icon={<ShieldAlert size={14} />} 
+           />
+           <TabButton 
+            active={activeTab === 'ATTENDANCE'} 
+            onClick={() => setActiveTab('ATTENDANCE')} 
+            label="Analisis Kehadiran" 
+            icon={<Clock size={14} />} 
+           />
         </div>
+
+        {activeTab === 'MTSS' && (
+          <div className="flex gap-3">
+            <Link 
+              to="/mtss/cases" 
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-blue-100 italic"
+            >
+              Semua Kasus
+              <ChevronRight size={14} />
+            </Link>
+          </div>
+        )}
       </header>
 
-      {/* Ringkasan MTSS Cards */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-red-50 flex items-center justify-center text-red-600">
-            <ShieldAlert size={24} />
-          </div>
-          <div>
-            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Kasus per Tier</p>
-            <div className="flex gap-3 mt-1">
-              <span className="text-sm font-bold text-green-600">T1: {stats.t1}</span>
-              <span className="text-sm font-bold text-yellow-600">T2: {stats.t2}</span>
-              <span className="text-sm font-bold text-red-600">T3: {stats.t3}</span>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600">
-            <Activity size={24} />
-          </div>
-          <div>
-            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Status Aktif</p>
-            <div className="flex gap-3 mt-1">
-              <span className="text-sm font-bold text-blue-600">OPEN: {stats.open}</span>
-              <span className="text-sm font-bold text-orange-600">REVIEW: {stats.review}</span>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-green-50 flex items-center justify-center text-green-600">
-            <CheckCircle size={24} />
-          </div>
-          <div>
-            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Selesai Bulan Ini</p>
-            <p className="text-xl font-bold text-gray-900 mt-0.5">{stats.completedMonth} Kasus</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4 flex-1 overflow-hidden">
-        {/* Left Column: Trend & Snapshot */}
-        <div className="space-y-4 overflow-hidden flex flex-col">
-          {/* Trend Chart */}
-          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex-1 flex flex-col min-h-0">
-            <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2 mb-4">
-              <Activity size={16} className="text-blue-500" />
-              Tren Kasus Per Minggu
-            </h3>
-            <div className="flex-1 min-h-0">
-              {trendData.some(d => d.kasus > 0) ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={trendData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                    <Tooltip cursor={{fill: '#f9fafb'}} contentStyle={{ borderRadius: '8px', border: 'none', borderBottom: '1px solid #f3f4f6' }} />
-                    <Bar dataKey="kasus" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={30} />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex items-center justify-center text-gray-400 text-xs font-medium">
-                  Belum ada data tren kasus mingguan
+      <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+        {activeTab === 'MTSS' ? (
+          <div className="space-y-6 pb-20">
+            {/* Ringkasan MTSS Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-gray-100 flex items-center gap-5 hover:shadow-md transition-shadow">
+                <div className="w-14 h-14 rounded-2xl bg-red-50 flex items-center justify-center text-red-600 shadow-inner">
+                  <ShieldAlert size={28} />
                 </div>
-              )}
-            </div>
-          </div>
-
-          {/* Snapshot Kelas */}
-          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 max-h-[160px] overflow-y-auto">
-            <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2 mb-3">
-              <LayoutGrid size={16} className="text-purple-500" />
-              Snapshot Kasus Per Kelas
-            </h3>
-            <div className="grid grid-cols-5 gap-2">
-              {classSnapshot.length > 0 ? classSnapshot.map(c => (
-                <div key={c.class} className="bg-gray-50 p-2 rounded-xl text-center border border-gray-100">
-                  <p className="text-[10px] font-bold text-gray-400">{c.class}</p>
-                  <p className="text-sm font-bold text-gray-800">{c.cases}</p>
-                </div>
-              )) : (
-                <div className="col-span-5 text-center py-4 text-gray-400 text-xs italic font-medium">
-                  Tidak ada kasus aktif di kelas manapun
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column: Highlights Overdue */}
-        <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex flex-col overflow-hidden">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2">
-              <Timer size={16} className="text-red-500" />
-              Highlight: Belum Selesai {'>'} 2 Minggu
-            </h3>
-            {overdueHighlights.length > 0 && (
-              <span className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold rounded-full uppercase">Urgent</span>
-            )}
-          </div>
-          <div className="space-y-3 overflow-y-auto flex-1 pr-2">
-            {overdueHighlights.length > 0 ? overdueHighlights.map((h, idx) => (
-              <motion.div 
-                key={h.id}
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: idx * 0.1 }}
-                className="p-4 rounded-2xl bg-gray-50 border border-gray-100 space-y-2 group hover:bg-white hover:shadow-md transition-all cursor-pointer"
-              >
-                <div className="flex justify-between items-start">
-                  <div>
-                    <p className="font-bold text-gray-900 text-sm">{h.name}</p>
-                    <p className="text-[10px] text-gray-400 font-medium">Oleh: {h.reporter}</p>
+                <div>
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Kasus per Tier</p>
+                  <div className="flex gap-4">
+                    <div className="flex flex-col">
+                      <span className="text-sm font-black text-emerald-600 leading-none">T1: {stats.t1}</span>
+                    </div>
+                    <div className="flex flex-col border-l border-gray-100 pl-4">
+                      <span className="text-sm font-black text-yellow-600 leading-none">T2: {stats.t2}</span>
+                    </div>
+                    <div className="flex flex-col border-l border-gray-100 pl-4">
+                      <span className="text-sm font-black text-red-600 leading-none">T3: {stats.t3}</span>
+                    </div>
                   </div>
-                  <span className={cn(
-                    "px-2 py-0.5 rounded text-[9px] font-black uppercase",
-                    h.tier === 'Tier 3' ? "bg-red-100 text-red-700" : "bg-yellow-100 text-yellow-700"
-                  )}>
-                    {h.tier}
-                  </span>
                 </div>
-                <div className="flex items-center gap-2 text-red-600 pt-1">
-                  <Clock size={12} />
-                  <span className="text-[11px] font-bold">Terbuka selama {h.duration}</span>
-                </div>
-                <Link 
-                  to={`/mtss/cases/${h.id}`}
-                  className="block w-full mt-2 py-1.5 text-center text-[10px] font-bold text-blue-600 bg-white border border-blue-50 rounded-lg hover:bg-blue-600 hover:text-white transition-colors opacity-0 group-hover:opacity-100"
-                >
-                  Lihat Detail Kasus
-                </Link>
-              </motion.div>
-            )) : (
-              <div className="h-40 bg-gray-50/50 rounded-2xl border border-dashed border-gray-200 flex items-center justify-center text-gray-400 text-[10px] font-medium italic">
-                Semua kasus berjalan sesuai timeline
               </div>
-            )}
-          </div>
-          
-          {alerts.length > 0 && (
-            <div className="mt-4 pt-4 border-t border-gray-50">
-              <div className="space-y-2">
-                {alerts.map(alert => (
-                  <div key={alert.id} className="flex items-center gap-3 bg-blue-50 p-3 rounded-xl border border-blue-100">
-                    <AlertTriangle size={16} className="text-blue-600 shrink-0" />
-                    <p className="text-[10px] text-blue-800 leading-tight">
-                      {alert.message}
-                    </p>
+              <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-gray-100 flex items-center gap-5 hover:shadow-md transition-shadow">
+                <div className="w-14 h-14 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600 shadow-inner">
+                  <Activity size={28} />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Status Aktif</p>
+                  <div className="flex gap-4">
+                    <div className="flex flex-col">
+                      <span className="text-sm font-black text-blue-600 leading-none">OPEN: {stats.open}</span>
+                    </div>
+                    <div className="flex flex-col border-l border-gray-100 pl-4">
+                      <span className="text-sm font-black text-orange-600 leading-none">REVIEW: {stats.review}</span>
+                    </div>
                   </div>
-                ))}
+                </div>
+              </div>
+              <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-gray-100 flex items-center gap-5 hover:shadow-md transition-shadow">
+                <div className="w-14 h-14 rounded-2xl bg-green-50 flex items-center justify-center text-green-600 shadow-inner">
+                  <CheckCircle size={28} />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Selesai Bulan Ini</p>
+                  <p className="text-2xl font-black text-gray-900 tracking-tight leading-none italic">{stats.completedMonth} <span className="text-xs text-gray-400 uppercase font-bold not-italic">Kasus</span></p>
+                </div>
               </div>
             </div>
-          )}
-        </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+              {/* Left Column: Trend & Snapshot */}
+              <div className="space-y-6 flex flex-col">
+                {/* Trend Chart */}
+                <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100 flex-1 flex flex-col min-h-[300px]">
+                  <h3 className="font-black italic uppercase tracking-tighter text-blue-600 text-lg flex items-center gap-2 mb-6">
+                    <Activity size={20} />
+                    Tren Kasus Per Minggu
+                  </h3>
+                  <div className="flex-1 min-h-0">
+                    {trendData.some(d => d.kasus > 0) ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={trendData}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                          <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9ca3af', fontWeight: 'bold' }} />
+                          <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9ca3af', fontWeight: 'bold' }} />
+                          <Tooltip cursor={{fill: '#f9fafb'}} contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
+                          <Bar dataKey="kasus" fill="#3b82f6" radius={[6, 6, 0, 0]} barSize={40} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="h-full flex flex-col items-center justify-center text-gray-400 text-xs font-bold gap-3">
+                        <Activity size={32} className="opacity-20" />
+                        Belum ada data tren kasus mingguan
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Snapshot Kelas */}
+                <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100">
+                  <h3 className="font-black italic uppercase tracking-tighter text-purple-600 text-lg flex items-center gap-2 mb-6">
+                    <LayoutGrid size={20} />
+                    Snapshot Kasus Per Kelas
+                  </h3>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                    {classSnapshot.length > 0 ? classSnapshot.map(c => (
+                      <div key={c.class} className="bg-gray-50/50 p-4 rounded-2xl text-center border border-gray-50 group hover:border-purple-200 hover:bg-white transition-all">
+                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">{c.class}</p>
+                        <p className="text-xl font-black text-gray-800">{c.cases}</p>
+                      </div>
+                    )) : (
+                      <div className="col-span-5 text-center py-6 text-gray-400 text-xs italic font-bold uppercase tracking-widest opacity-50">
+                        Tidak ada kasus aktif di kelas manapun
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column: Highlights Overdue */}
+              <div className="bg-white rounded-[3rem] p-8 shadow-sm border border-gray-100 flex flex-col">
+                <div className="flex items-center justify-between mb-8">
+                  <h3 className="font-black italic uppercase tracking-tighter text-red-600 text-lg flex items-center gap-2">
+                    <Timer size={20} />
+                    Highlight: Belum Selesai {'>'} 2 Minggu
+                  </h3>
+                  {overdueHighlights.length > 0 && (
+                    <span className="px-3 py-1 bg-red-100 text-red-700 text-[10px] font-black rounded-full uppercase tracking-widest animate-pulse">Urgent</span>
+                  )}
+                </div>
+                <div className="space-y-4 flex-1">
+                  {overdueHighlights.length > 0 ? overdueHighlights.map((h, idx) => (
+                    <motion.div 
+                      key={h.id}
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: idx * 0.1 }}
+                      className="p-5 rounded-3xl bg-gray-50/50 border border-transparent space-y-3 group hover:bg-white hover:shadow-xl hover:border-red-100 transition-all cursor-pointer overflow-hidden relative"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-black text-gray-900 text-base italic tracking-tight">{h.name}</p>
+                          <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Oleh: {h.reporter}</p>
+                        </div>
+                        <span className={cn(
+                          "px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest",
+                          h.tier === 'Tier 3' ? "bg-red-100 text-red-700" : "bg-yellow-100 text-yellow-700"
+                        )}>
+                          {h.tier}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-red-600">
+                        <Clock size={14} />
+                        <span className="text-xs font-black uppercase italic">Terbuka selama {h.duration}</span>
+                      </div>
+                      <Link 
+                        to={`/mtss/cases/${h.id}`}
+                        className="block w-full py-2 bg-[#002366] text-white rounded-xl text-center text-[10px] font-black uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-all translate-y-2 group-hover:translate-y-0"
+                      >
+                        Buka Detail Kasus
+                      </Link>
+                    </motion.div>
+                  )) : (
+                    <div className="h-60 bg-gray-50/30 rounded-[2.5rem] border border-dashed border-gray-200 flex flex-col items-center justify-center text-gray-400 text-[10px] font-bold uppercase tracking-widest gap-4">
+                      <CheckCircle size={40} className="opacity-10" />
+                      Semua kasus berjalan sesuai timeline
+                    </div>
+                  )}
+                </div>
+                
+                {alerts.length > 0 && (
+                  <div className="mt-8 pt-8 border-t border-gray-50">
+                    <div className="space-y-3">
+                      {alerts.map(alert => (
+                        <div key={alert.id} className="flex items-center gap-4 bg-blue-50/50 p-4 rounded-2xl border border-blue-50 group hover:bg-blue-50 transition-colors">
+                          <div className="p-2 bg-white rounded-xl text-blue-600 shadow-sm shrink-0">
+                            <AlertTriangle size={18} />
+                          </div>
+                          <p className="text-[11px] text-blue-900 font-bold leading-normal">
+                            {alert.message}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <AttendanceAnalysis unitId={activeUnit} />
+        )}
       </div>
     </div>
+  );
+}
+
+function TabButton({ active, onClick, label, icon }: { active: boolean; onClick: () => void; label: string; icon: React.ReactNode }) {
+  return (
+    <button 
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-2 px-4 py-2.5 rounded-[1rem] text-xs font-black transition-all uppercase tracking-widest",
+        active 
+          ? "bg-white text-[#002366] shadow-sm italic" 
+          : "text-gray-400 hover:text-gray-600 hover:bg-white/50"
+      )}
+    >
+      {icon}
+      {label}
+    </button>
   );
 }

@@ -3,12 +3,14 @@ import { motion } from 'motion/react';
 import { 
   Clock, AlertCircle, Calendar, Search, 
   Save, History, Bell, MessageSquare, ArrowRight,
-  TrendingUp, UserCheck, Loader2
+  TrendingUp, UserCheck, Loader2, Trash2
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { db } from '../../lib/firebase';
 import { collection, query, where, getDocs, doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { toast } from 'sonner';
+import { useOutletContext } from 'react-router-dom';
+import { UnitType } from '../../types';
 
 import StudentSearch from '../../components/StudentSearch';
 
@@ -25,6 +27,7 @@ interface LatenessRecord {
 }
 
 export default function Lateness() {
+  const { activeUnit } = useOutletContext<{ activeUnit: UnitType }>();
   const [records, setRecords] = React.useState<LatenessRecord[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -126,6 +129,11 @@ export default function Lateness() {
     setRecords(records.map(r => r.id === id ? { ...r, parentNote: !r.parentNote } : r));
   };
 
+  const removeRecord = (id: string) => {
+    setRecords(records.filter(r => r.id !== id));
+    toast.info('Siswa dihapus dari daftar input');
+  };
+
   const handleSave = async () => {
     const lateEntries = records.filter(r => r.arrivalTime !== '');
     if (lateEntries.length === 0) {
@@ -168,12 +176,23 @@ export default function Lateness() {
     r.id.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const getUnitInfo = () => {
+    switch(activeUnit) {
+      case 'KINDERGARTEN': return { name: 'Kindergarten', time: '08:00', label: 'TK' };
+      case 'ELEMENTARY': return { name: 'Elementary', time: '07:15', label: 'SD' };
+      case 'JUNIOR_HIGH': return { name: 'Junior High', time: '07:30', label: 'SMP' };
+      default: return { name: 'Academy', time: '07:30', label: 'Sekolah' };
+    }
+  };
+
+  const unitInfo = getUnitInfo();
+
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-12">
       <header className="flex justify-between items-end">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Data Keterlambatan</h1>
-          <p className="text-gray-500 font-medium">Lumina Elementary - Jam Masuk: 07:15 WIB</p>
+          <p className="text-gray-500 font-medium">Lumina {unitInfo.name} - Jam Masuk: {unitInfo.time} WIB</p>
         </div>
         <div className="bg-blue-50 px-4 py-2 rounded-xl border border-blue-100 flex items-center gap-2">
            <Calendar className="text-blue-600" size={18} />
@@ -272,6 +291,7 @@ export default function Lateness() {
                           <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Waktu Tiba</th>
                           <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Alasan / Keterangan</th>
                           <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Izin Ortu</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Batal</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
@@ -326,6 +346,15 @@ export default function Lateness() {
                                     <UserCheck size={18} />
                                 </button>
                               </td>
+                              <td className="px-6 py-4 text-right">
+                                <button 
+                                    onClick={() => removeRecord(record.id)}
+                                    className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                                    title="Hapus dari daftar"
+                                >
+                                    <Trash2 size={18} />
+                                </button>
+                              </td>
                           </tr>
                         ))}
                     </tbody>
@@ -357,7 +386,7 @@ export default function Lateness() {
                  Siswa yang terlambat <strong>{threshold} kali</strong> atau lebih dalam satu bulan akan otomatis terdaftar sebagai "Butuh Perhatian" di Dashboard Kepala Sekolah.
               </p>
               <div className="p-4 bg-white/50 rounded-2xl border border-orange-200 text-[11px] text-orange-900 font-medium italic">
-                 "Halo Wali Kelas SD - Arka sudah terlambat 3 kali bulan ini. Mohon diskusikan dengan orang tua saat penjemputan hari ini."
+                 "Halo Wali Kelas {unitInfo.label} - Arka sudah terlambat 3 kali bulan ini. Mohon diskusikan dengan orang tua saat penjemputan hari ini."
               </div>
            </div>
 
