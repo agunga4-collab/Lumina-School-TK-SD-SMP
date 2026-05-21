@@ -15,6 +15,7 @@ import { NotificationBell } from './NotificationBell';
 import { useBehaviorAlerts } from '../hooks/useBehaviorAlerts';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { toast } from 'sonner';
 
 export function Layout() {
   const { profile, signOut } = useAuth();
@@ -52,9 +53,14 @@ export function Layout() {
   const currentUser = profile;
 
   // Use state for activeUnit so Super Admin can switch
-  const [activeUnit, setActiveUnit] = React.useState<UnitType | null>(
-    (currentUser?.unitId as UnitType) || 'JUNIOR_HIGH'
-  );
+  const [activeUnit, setActiveUnit] = React.useState<UnitType | null>(null);
+
+  // Automatically bypass unit selector for students and parents
+  React.useEffect(() => {
+    if (currentUser && (currentUser.role === 'STUDENT' || currentUser.role === 'PARENT')) {
+      setActiveUnit((currentUser.unitId as UnitType) || 'JUNIOR_HIGH');
+    }
+  }, [currentUser]);
 
   // Student selection for Parents
   const [selectedStudentId, setSelectedStudentId] = React.useState<string | null>(
@@ -83,38 +89,103 @@ export function Layout() {
     }
   };
 
-  // If Super Admin has cleared their active unit to switch
-  if (currentUser.role === 'SUPER_ADMIN' && !activeUnit) {
+  const ALL_UNITS: { value: UnitType; label: string }[] = [
+    { value: 'KINDERGARTEN', label: 'Kindergarten' },
+    { value: 'ELEMENTARY', label: 'Elementary' },
+    { value: 'JUNIOR_HIGH', label: 'Junior High' },
+  ];
+
+  const getAccessibleUnits = (user: any): UnitType[] => {
+    if (!user) return [];
+    if (user.role === 'SUPER_ADMIN') {
+      return ['KINDERGARTEN', 'ELEMENTARY', 'JUNIOR_HIGH'];
+    }
+    if (Array.isArray(user.assignedUnits) && user.assignedUnits.length > 0) {
+      return user.assignedUnits as UnitType[];
+    }
+    if (user.unitId) {
+      return [user.unitId as UnitType];
+    }
+    return [];
+  };
+
+  const handleSelectUnit = (selectedUnit: UnitType) => {
+    const accessibleUnits = getAccessibleUnits(currentUser);
+    const hasAccess = currentUser?.role === 'SUPER_ADMIN' || accessibleUnits.includes(selectedUnit);
+
+    if (!hasAccess) {
+      toast.error('Akses Ditolak', {
+        description: 'Anda tidak memiliki izin untuk masuk ke unit ini.'
+      });
+      return;
+    }
+
+    setActiveUnit(selectedUnit);
+  };
+
+  // If activeUnit is not chosen yet, show unit selection dashboard for staff users
+  if (!activeUnit && currentUser.role !== 'STUDENT' && currentUser.role !== 'PARENT') {
+    const accessibleUnits = getAccessibleUnits(currentUser);
+
     return (
       <div className="h-screen bg-gray-50 flex items-center justify-center p-6">
         <div className="max-w-4xl w-full space-y-8">
            <div className="text-center space-y-2">
               <div className="inline-flex items-center gap-3 mb-4">
                  <LuminaLogo size="lg" />
-                 <h1 className="text-3xl font-black text-gray-900 tracking-tight">LUMINA</h1>
+                 <h1 className="text-3xl font-black text-gray-900 tracking-tight text-blue-600">LUMINA</h1>
               </div>
-              <h2 className="text-xl font-bold text-gray-800">Mode Super Admin</h2>
-              <p className="text-gray-500">Pilih unit pendidikan yang ingin Anda tinjau saat ini.</p>
+              <h2 className="text-xl font-bold text-gray-800">Pilih Unit Pendidikan</h2>
+              <p className="text-gray-500">Pilih unit utama yang ingin Anda gunakan hari ini.</p>
            </div>
 
            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {(['KINDERGARTEN', 'ELEMENTARY', 'JUNIOR_HIGH'] as UnitType[]).map(unit => (
-                  <button 
-                    key={unit}
-                    onClick={() => setActiveUnit(unit)}
-                    className="group bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm hover:shadow-xl hover:border-blue-200 transition-all text-left flex flex-col justify-between aspect-square"
-                  >
-                     <div className={cn("p-4 rounded-2xl w-fit mb-4", getUnitColor(unit).split(' ')[1])}>
-                        {unit === 'KINDERGARTEN' && <Heart className="text-pink-500" />}
-                        {unit === 'ELEMENTARY' && <Baby className="text-emerald-500" />}
-                        {unit === 'JUNIOR_HIGH' && <Target className="text-blue-500" />}
-                     </div>
-                     <div>
-                        <h3 className="text-lg font-black text-gray-900 group-hover:text-blue-600 transition-colors">{getUnitName(unit)}</h3>
-                        <p className="text-xs text-gray-400 font-bold mt-1 uppercase tracking-widest leading-loose">Masuk Portal</p>
-                     </div>
-                  </button>
-              ))}
+              {ALL_UNITS.map(unitObj => {
+                  const unit = unitObj.value;
+                  const isAccessible = currentUser.role === 'SUPER_ADMIN' || accessibleUnits.includes(unit);
+
+                  return (
+                      <button 
+                        key={unit}
+                        onClick={() => handleSelectUnit(unit)}
+                        className={cn(
+                          "group bg-white p-8 rounded-[2.5rem] border shadow-sm transition-all text-left flex flex-col justify-between aspect-square relative overflow-hidden",
+                          isAccessible 
+                            ? "hover:shadow-xl hover:border-blue-200 border-gray-100 cursor-pointer" 
+                            : "border-gray-200 opacity-60 cursor-not-allowed bg-gray-50/50"
+                        )}
+                      >
+                         {!isAccessible && (
+                            <div className="absolute top-4 right-4 bg-gray-100/80 text-gray-400 p-1.5 rounded-full border border-gray-200" title="Terkunci - Tidak ada akses">
+                               <ShieldAlert size={14} />
+                            </div>
+                         )}
+                         <div className={cn(
+                           "p-4 rounded-2xl w-fit mb-4 group-hover:scale-105 transition-transform", 
+                           isAccessible 
+                             ? getUnitColor(unit).split(' ')[1] 
+                             : "text-gray-400 bg-gray-100"
+                         )}>
+                            {unit === 'KINDERGARTEN' && <Heart className={isAccessible ? "text-pink-500" : "text-gray-400"} />}
+                            {unit === 'ELEMENTARY' && <Baby className={isAccessible ? "text-emerald-500" : "text-gray-400"} />}
+                            {unit === 'JUNIOR_HIGH' && <Target className={isAccessible ? "text-blue-500" : "text-gray-400"} />}
+                         </div>
+                         <div>
+                            <h3 className={cn(
+                              "text-lg font-black transition-colors",
+                              isAccessible 
+                                ? "text-gray-900 group-hover:text-blue-600" 
+                                : "text-gray-500"
+                            )}>
+                              {getUnitName(unit)}
+                            </h3>
+                            <p className="text-xs text-gray-400 font-bold mt-1 uppercase tracking-widest leading-loose">
+                              {isAccessible ? "Masuk Portal" : "Terkunci"}
+                            </p>
+                         </div>
+                      </button>
+                  );
+              })}
            </div>
 
            <div className="text-center">
@@ -320,7 +391,7 @@ export function Layout() {
                 <p className="text-[10px] lg:text-[11px] font-medium text-gray-500">Beranda Portal Lumina</p>
              </div>
 
-             {currentUser.role === 'SUPER_ADMIN' && (
+             {currentUser.role !== 'STUDENT' && currentUser.role !== 'PARENT' && (
                 <div className="ml-4 pl-4 border-l border-gray-100">
                    <button 
                      onClick={() => setActiveUnit(null)}
