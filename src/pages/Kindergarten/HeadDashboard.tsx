@@ -24,7 +24,7 @@ export default function KindergartenHeadDashboard() {
            <p className="text-gray-500 font-medium tracking-tight">Monitoring Unit Lumina Kindergarten</p>
         </div>
         <div className="flex bg-white p-2 rounded-2xl shadow-sm border border-gray-100 items-center gap-4">
-           <div className="flex items-center gap-2 px-4 py-1.5 bg-pink-50 text-pink-600 rounded-xl text-sm font-bold border border-pink-100">
+           <div className="flex items-center gap-2 px-4 py-1.5 bg-emerald-50 text-emerald-700 rounded-xl text-sm font-bold border border-emerald-100">
               <Calendar size={16} />
               {new Intl.DateTimeFormat('id-ID', { month: 'long', year: 'numeric' }).format(new Date())}
            </div>
@@ -34,7 +34,7 @@ export default function KindergartenHeadDashboard() {
       {/* Overview Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <StatCard label="Kehadiran" value="0%" detail="Unit TK" icon={<Users className="text-blue-500" />} />
-        <StatCard label="Indeks Bahagia" value="0%" detail="N/A" icon={<Heart className="text-pink-500" />} />
+        <StatCard label="Indeks Bahagia" value="0%" detail="N/A" icon={<Heart className="text-emerald-500" />} />
         <StatCard label="Progres BSH/BSB" value="0%" detail="Belum ada data" icon={<Star className="text-yellow-500" />} />
         <StatCard label="Aktivitas Sentra" value="0" detail="Belum dimulai" icon={<Palette className="text-purple-500" />} />
       </div>
@@ -43,7 +43,7 @@ export default function KindergartenHeadDashboard() {
         {/* Emotional Distribution */}
         <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100 space-y-6">
            <h3 className="font-bold text-gray-900 flex items-center gap-2 border-b border-gray-50 pb-4">
-              <Activity size={18} className="text-pink-500" />
+              <Activity size={18} className="text-emerald-500" />
               Distribusi Emosi Anak
            </h3>
            <div className="h-64 flex flex-col items-center justify-center border border-dashed border-gray-100 rounded-3xl">
@@ -94,14 +94,14 @@ export default function KindergartenHeadDashboard() {
         </div>
 
         {/* Sentra Activity Highlights */}
-        <div className="bg-pink-600 rounded-[2.5rem] p-8 text-white shadow-xl shadow-pink-100 relative overflow-hidden">
+        <div className="bg-emerald-600 rounded-[2.5rem] p-8 text-white shadow-xl shadow-emerald-100 relative overflow-hidden">
            <div className="absolute top-0 right-0 p-10 opacity-10">
               <BarChart3 size={120} />
            </div>
            <div className="space-y-6 relative z-10">
               <h3 className="font-bold text-sm bg-white/20 w-fit px-4 py-1 rounded-full uppercase tracking-widest">Aktivitas Sentra</h3>
               <div className="space-y-4 py-6 border border-white/10 border-dashed rounded-2xl text-center">
-                 <p className="text-[10px] font-black text-pink-200 uppercase tracking-widest">Belum Ada Pembelajaran</p>
+                 <p className="text-[10px] font-black text-emerald-200 uppercase tracking-widest">Belum Ada Pembelajaran</p>
               </div>
               <button disabled className="w-full py-3.5 bg-white/10 text-white/50 font-black rounded-2xl text-[10px] uppercase tracking-widest border border-white/5 cursor-not-allowed">
                  Lihat Detail Kurikulum
@@ -135,7 +135,7 @@ function SentraHero({ label, value, icon }: { label: string; value: string; icon
     <div className="flex items-center gap-4 bg-white/10 p-4 rounded-2xl border border-white/15">
        <div className="p-2 bg-white/20 rounded-xl">{icon}</div>
        <div>
-          <p className="text-[10px] font-bold text-pink-100 uppercase tracking-widest opacity-80">{label}</p>
+          <p className="text-[10px] font-bold text-emerald-100 uppercase tracking-widest opacity-80">{label}</p>
           <p className="font-bold text-sm tracking-tight">{value}</p>
        </div>
     </div>

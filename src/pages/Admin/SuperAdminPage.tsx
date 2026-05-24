@@ -29,7 +29,10 @@ import {
   RefreshCw,
   Eye,
   EyeOff,
+  Image as ImageIcon,
+  Upload,
 } from "lucide-react";
+import { getDoc, setDoc } from "firebase/firestore";
 import {
   getAllInvites,
   getPendingUsers,
@@ -58,8 +61,83 @@ export default function SuperAdminPage() {
     "ALL",
   );
   const [activeTab, setActiveTab] = React.useState<
-    "STAFF" | "STUDENT" | "PARENT" | "CLASSES"
+    "STAFF" | "STUDENT" | "PARENT" | "CLASSES" | "LOGO"
   >("STAFF");
+  const [logos, setLogos] = React.useState<{
+    KINDERGARTEN: { rectangular: string; square: string };
+    ELEMENTARY: { rectangular: string; square: string };
+    JUNIOR_HIGH: { rectangular: string; square: string };
+  }>({
+    KINDERGARTEN: { rectangular: "", square: "" },
+    ELEMENTARY: { rectangular: "", square: "" },
+    JUNIOR_HIGH: { rectangular: "", square: "" },
+  });
+  const [isLogosSaving, setIsLogosSaving] = React.useState(false);
+
+  const handleLogoUpload = (unit: "KINDERGARTEN" | "ELEMENTARY" | "JUNIOR_HIGH", type: "rectangular" | "square", file: File) => {
+    if (!file) return;
+    
+    if (!file.type.startsWith("image/")) {
+      alert("Harap pilih file gambar (.png, .jpg, .jpeg, .webp, .svg)!");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const base64 = e.target?.result as string;
+      
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        
+        let targetWidth = 400;
+        let targetHeight = 400;
+        
+        if (type === "rectangular") {
+          targetWidth = 300;
+          targetHeight = 100;
+        } else {
+          targetWidth = 150;
+          targetHeight = 150;
+        }
+        
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        
+        ctx.fillStyle = "transparent";
+        ctx.fillRect(0, 0, targetWidth, targetHeight);
+        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+        
+        const compressedBase64 = canvas.toDataURL("image/png");
+        
+        setLogos((prev) => ({
+          ...prev,
+          [unit]: {
+            ...prev[unit],
+            [type]: compressedBase64,
+          },
+        }));
+      };
+      img.src = base64;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveLogos = async (updatedLogos = logos) => {
+    setIsLogosSaving(true);
+    try {
+      localStorage.setItem("lumina_school_logos", JSON.stringify(updatedLogos));
+      await setDoc(doc(db, "settings", "logos"), updatedLogos);
+      alert("Logo berhasil disimpan ke sistem dan tersinkronisasi! ✨");
+    } catch (err: any) {
+      console.error("Error saving school logos:", err);
+      alert("Gagal menyingkronkan ke cloud, namun logo tersimpan lokal di browser Anda: " + err.message);
+    } finally {
+      setIsLogosSaving(false);
+    }
+  };
   const [invites, setInvites] = React.useState<(RoleInvite & { id: string })[]>(
     [],
   );
@@ -175,6 +253,25 @@ export default function SuperAdminPage() {
       setPendingUsers(pend || []);
       setClasses(cls || []);
       setTeachers(tchs || []);
+
+      // Fetch Logos from settings/logos
+      try {
+        const logoDoc = await getDoc(doc(db, "settings", "logos"));
+        if (logoDoc.exists()) {
+          setLogos(logoDoc.data() as any);
+        } else {
+          const localLogos = localStorage.getItem("lumina_school_logos");
+          if (localLogos) {
+            setLogos(JSON.parse(localLogos));
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to load logos from Firestore, fallback to localStorage:", err);
+        const localLogos = localStorage.getItem("lumina_school_logos");
+        if (localLogos) {
+          setLogos(JSON.parse(localLogos));
+        }
+      }
     } catch (error) {
       console.error("Error fetching admin data:", error);
     } finally {
@@ -908,6 +1005,7 @@ export default function SuperAdminPage() {
               },
               { id: "PARENT", icon: <Users size={14} />, label: "Ortu" },
               { id: "CLASSES", icon: <BookOpen size={14} />, label: "Kelas" },
+              { id: "LOGO", icon: <ImageIcon size={14} />, label: "Logo" },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -929,7 +1027,7 @@ export default function SuperAdminPage() {
                       : "bg-gray-100 text-gray-400",
                   )}
                 >
-                  {counts[tab.id as keyof typeof counts]}
+                  {tab.id === "LOGO" ? 6 : counts[tab.id as keyof typeof counts]}
                 </span>
               </button>
             ))}
@@ -1311,6 +1409,190 @@ export default function SuperAdminPage() {
                   )}
                 </tbody>
               </table>
+            ) : activeTab === "LOGO" ? (
+              <div id="logo-uploader-container" className="p-8 space-y-8 bg-white rounded-[3rem] border border-gray-100">
+                <div id="logo-uploader-header" className="bg-gradient-to-r from-blue-500/15 via-indigo-500/10 to-transparent p-6 rounded-3xl border border-blue-100/50 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+                  <div className="space-y-1.5 flex-1">
+                    <h3 className="font-bold text-gray-950 flex items-center gap-2">
+                      <Sparkles size={16} className="text-blue-600 animate-pulse" />
+                      Sistem Unggah Logo Ganda (Dual-Logo System)
+                    </h3>
+                    <p className="text-xs text-gray-600 leading-relaxed max-w-3xl">
+                      Lumina mendukung penyimpanan logo berukuran ganda untuk masing-masing unit pendidikan (**TK, SD, dan SMP**). 
+                      Logo persegi panjang digunakan untuk laporan rapor (KOP rapor) & header sekolah, sedangkan logo persegi digunakan untuk avatar profil, favicon, serta stempel digital resmi.
+                    </p>
+                  </div>
+                  <button
+                    id="btn-save-all-logos"
+                    onClick={() => handleSaveLogos()}
+                    disabled={isLogosSaving}
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-black px-6 py-3.5 rounded-2xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50 text-[10px] uppercase tracking-widest shrink-0 self-stretch md:self-auto justify-center"
+                  >
+                    {isLogosSaving ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+                    Simpan Semua Logo
+                  </button>
+                </div>
+
+                <div id="logo-uploader-grid" className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                  {[
+                    { id: "KINDERGARTEN" as const, unitTitle: "Unit Kindergarten (TK)", accent: "emerald", label: "Lumina Kindergarten" },
+                    { id: "ELEMENTARY" as const, unitTitle: "Unit Elementary (SD)", accent: "blue", label: "Lumina Elementary School" },
+                    { id: "JUNIOR_HIGH" as const, unitTitle: "Unit Junior High (SMP)", accent: "indigo", label: "Lumina Junior High School" }
+                  ].map((unitInfo) => {
+                    const unit = unitInfo.id;
+                    const unitLogos = logos[unit] || { rectangular: "", square: "" };
+                    
+                    return (
+                      <div id={`logo-card-${unit}`} key={unit} className="bg-gray-50/30 rounded-[2rem] border border-gray-100 p-6 space-y-6 flex flex-col justify-between">
+                        <div className="space-y-2">
+                          <span className={cn(
+                            "px-2.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest",
+                            unit === "KINDERGARTEN" && "bg-emerald-50 text-emerald-700 border border-emerald-100",
+                            unit === "ELEMENTARY" && "bg-blue-50 text-blue-700 border border-blue-100",
+                            unit === "JUNIOR_HIGH" && "bg-indigo-50 text-indigo-700 border border-indigo-100"
+                          )}>
+                            {unitInfo.unitTitle}
+                          </span>
+                          <h4 className="text-sm font-black text-gray-900 tracking-tight leading-tight">{unitInfo.label}</h4>
+                          <p className="text-[10px] text-gray-400 font-bold">Harap unggah logo berukuran sesuai aspek rasio untuk performa terbaik.</p>
+                        </div>
+
+                        <div className="space-y-5 flex-1 mt-2">
+                          {/* 1. Rectangular Logo Shape */}
+                          <div className="space-y-2">
+                            <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-wider text-gray-400">
+                              <span>Logo Persegi Panjang (3:1)</span>
+                              <span className="text-[8px] text-blue-500">Rekomendasi: 300x100 px</span>
+                            </div>
+
+                            {unitLogos.rectangular ? (
+                              <div id={`preview-rect-${unit}`} className="border border-gray-100 rounded-2xl p-4 bg-white relative overflow-hidden flex items-center justify-center h-24 group shadow-sm">
+                                <img src={unitLogos.rectangular} alt="Logo Rectangular" className="max-h-full max-w-full object-contain mix-blend-multiply" />
+                                <div className="absolute inset-0 bg-gray-950/40 backdrop-blur-[1px] opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center gap-2">
+                                  <label id={`lbl-rect-upload-${unit}`} className="p-2 bg-white/90 hover:bg-white text-gray-900 rounded-xl text-[10px] font-bold uppercase tracking-wider cursor-pointer shadow-md transition-transform hover:scale-105">
+                                    Ganti
+                                    <input
+                                      id={`input-file-rect-${unit}`}
+                                      type="file"
+                                      accept="image/*"
+                                      className="hidden"
+                                      onChange={(e) => {
+                                        const file = e.target.files?.[0];
+                                        if (file) handleLogoUpload(unit, "rectangular", file);
+                                      }}
+                                    />
+                                  </label>
+                                  <button
+                                    id={`btn-clear-rect-${unit}`}
+                                    onClick={() => {
+                                      setLogos(prev => ({
+                                        ...prev,
+                                        [unit]: { ...prev[unit], rectangular: "" }
+                                      }));
+                                    }}
+                                    className="p-2 bg-red-600/95 hover:bg-red-700 text-white rounded-xl text-[10px] font-bold uppercase tracking-wider shadow-md transition-transform hover:scale-105"
+                                  >
+                                    Hapus
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <label id={`dropzone-rect-${unit}`} className="border border-dashed border-gray-200 hover:border-blue-400 rounded-2xl h-24 flex flex-col items-center justify-center bg-white hover:bg-blue-50/10 cursor-pointer group transition-all">
+                                <Upload size={18} className="text-gray-300 group-hover:text-blue-500 transition-colors mb-1.5" />
+                                <span className="text-[10px] font-bold text-gray-450 group-hover:text-blue-600">Klik / Seret Gambar</span>
+                                <span className="text-[8px] text-gray-300 font-bold uppercase tracking-widest mt-0.5">landscape</span>
+                                <input
+                                  id={`input-file-rect-empty-${unit}`}
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) handleLogoUpload(unit, "rectangular", file);
+                                  }}
+                                />
+                              </label>
+                            )}
+                          </div>
+
+                          {/* 2. Square Logo Shape */}
+                          <div className="space-y-2">
+                            <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-wider text-gray-400">
+                              <span>Logo Persegi (1:1)</span>
+                              <span className="text-[8px] text-blue-500">Rekomendasi: 150x150 px</span>
+                            </div>
+
+                            {unitLogos.square ? (
+                              <div id={`preview-square-${unit}`} className="border border-gray-100 rounded-2xl p-4 bg-white relative overflow-hidden flex items-center justify-center h-28 group shadow-sm">
+                                <img src={unitLogos.square} alt="Logo Square" className="h-20 w-20 object-contain rounded-xl shadow-inner bg-white p-1 border border-gray-105" />
+                                <div className="absolute inset-0 bg-gray-950/40 backdrop-blur-[1px] opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center gap-2">
+                                  <label id={`lbl-square-upload-${unit}`} className="p-2 bg-white/90 hover:bg-white text-gray-950 rounded-xl text-[10px] font-bold uppercase tracking-wider cursor-pointer shadow-md transition-transform hover:scale-105">
+                                    Ganti
+                                    <input
+                                      id={`input-file-square-${unit}`}
+                                      type="file"
+                                      accept="image/*"
+                                      className="hidden"
+                                      onChange={(e) => {
+                                        const file = e.target.files?.[0];
+                                        if (file) handleLogoUpload(unit, "square", file);
+                                      }}
+                                    />
+                                  </label>
+                                  <button
+                                    id={`btn-clear-square-${unit}`}
+                                    onClick={() => {
+                                      setLogos(prev => ({
+                                        ...prev,
+                                        [unit]: { ...prev[unit], square: "" }
+                                      }));
+                                    }}
+                                    className="p-2 bg-red-600/95 hover:bg-red-700 text-white rounded-xl text-[10px] font-bold uppercase tracking-wider shadow-md transition-transform hover:scale-105"
+                                  >
+                                    Hapus
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <label id={`dropzone-square-${unit}`} className="border border-dashed border-gray-200 hover:border-blue-400 rounded-2xl h-28 flex flex-col items-center justify-center bg-white hover:bg-blue-50/10 cursor-pointer group transition-all">
+                                <Upload size={18} className="text-gray-300 group-hover:text-blue-500 transition-colors mb-1.5" />
+                                <span className="text-[10px] font-bold text-gray-450 group-hover:text-blue-600">Klik / Seret Gambar</span>
+                                <span className="text-[8px] text-gray-300 font-bold uppercase tracking-widest mt-0.5">square 1:1</span>
+                                <input
+                                  id={`input-file-square-empty-${unit}`}
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) handleLogoUpload(unit, "square", file);
+                                  }}
+                                />
+                              </label>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Reset individual unit logos */}
+                        {(unitLogos.rectangular || unitLogos.square) && (
+                          <button
+                            id={`btn-clear-unit-logos-${unit}`}
+                            onClick={() => {
+                              setLogos(prev => ({
+                                ...prev,
+                                [unit]: { rectangular: "", square: "" }
+                              }));
+                            }}
+                            className="w-full text-center text-[10px] font-black uppercase text-red-500 hover:text-red-700 tracking-wider pt-3 border-t border-dashed border-gray-200 transition-colors"
+                          >
+                            Reset Logo Unit Ini
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             ) : (
               <table className="w-full text-left min-w-[1200px]">
                 <thead className="bg-gray-50/50">

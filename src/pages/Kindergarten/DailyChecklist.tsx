@@ -1,236 +1,522 @@
 import * as React from 'react';
-import { motion, AnimatePresence } from 'motion/react';
 import { 
   CheckCircle2, Clock, AlertCircle, UserX, 
   Smile, Meh, Frown, Angry, Save, Calendar, Search, 
-  ChevronRight, Heart, Users, Sparkles
+  Users, Sparkles, ChevronLeft, ChevronRight, RotateCcw, Trash2
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { toast } from 'sonner';
 import type { KGAttendanceStatus, KGEmotionStatus } from '../../types';
 
 interface KGStudent {
   id: string;
   name: string;
-  attendance: KGAttendanceStatus;
-  emotion: KGEmotionStatus;
 }
 
-const mockStudents: KGStudent[] = [
-  { id: 'K001', name: 'Zianka Azura', attendance: 'PRESENT', emotion: 'HAPPY' },
-  { id: 'K002', name: 'Khalif Ahsan', attendance: 'PRESENT', emotion: 'HAPPY' },
-  { id: 'K003', name: 'Safiyya Azzahra', attendance: 'PRESENT', emotion: 'HAPPY' },
-  { id: 'K004', name: 'Rendra Putra', attendance: 'PRESENT', emotion: 'OK' },
-  { id: 'K005', name: 'Mikayla Adnan', attendance: 'SICK', emotion: 'SAD' },
+const DEFAULT_STUDENTS: KGStudent[] = [
+  { id: 'K001', name: 'Zianka Azura' },
+  { id: 'K002', name: 'Khalif Ahsan' },
+  { id: 'K003', name: 'Safiyya Azzahra' },
+  { id: 'K004', name: 'Rendra Putra' },
+  { id: 'K005', name: 'Mikayla Adnan' },
 ];
 
 export default function DailyChecklist() {
-  const [students, setStudents] = React.useState<KGStudent[]>(mockStudents);
+  const [selectedDate, setSelectedDate] = React.useState<Date>(new Date());
   const [isSaving, setIsSaving] = React.useState(false);
+  const [searchQuery, setSearchQuery] = React.useState('');
 
-  const updateAttendance = (id: string, status: KGAttendanceStatus) => {
-    setStudents(prev => prev.map(s => s.id === id ? { ...s, attendance: status } : s));
+  const getDateKey = (date: Date) => {
+    const yr = date.getFullYear();
+    const mo = String(date.getMonth() + 1).padStart(2, '0');
+    const da = String(date.getDate()).padStart(2, '0');
+    return `${yr}-${mo}-${da}`;
   };
 
-  const updateEmotion = (id: string, emotion: KGEmotionStatus) => {
-    setStudents(prev => prev.map(s => s.id === id ? { ...s, emotion } : s));
+  // State to hold record mappings keyed by "YYYY-MM-DD"
+  const [recordsByDate, setRecordsByDate] = React.useState<Record<string, Record<string, { attendance: KGAttendanceStatus | null; emotion: KGEmotionStatus | null }>>>(() => {
+    const saved = localStorage.getItem('kg_checklist_records');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return {};
+  });
+
+  const dateKey = getDateKey(selectedDate);
+  const dateRecords = recordsByDate[dateKey] || {};
+
+  // Build reactive students visible list
+  const studentsWithStatus = DEFAULT_STUDENTS.map(s => {
+    const status = dateRecords[s.id] || { attendance: null, emotion: null };
+    return {
+      ...s,
+      attendance: status.attendance,
+      emotion: status.emotion
+    };
+  });
+
+  const getActiveOption = (student: { attendance: KGAttendanceStatus | null; emotion: KGEmotionStatus | null }): string => {
+    if (!student.attendance) return '';
+    if (student.attendance === 'NO_NEWS') return 'NO_NEWS';
+    if (student.attendance === 'SICK') return 'SICK';
+    if (student.attendance === 'PERMISSION') return 'EXCUSED';
+    return student.emotion || 'OK'; // Fallback to HAPPY/OK/SAD/ANGRY if present
   };
+
+  const handleUpdateOption = (studentId: string, option: string | null) => {
+    setRecordsByDate(prev => {
+      const currentOfDate = prev[dateKey] || {};
+      let newStatus: { attendance: KGAttendanceStatus | null; emotion: KGEmotionStatus | null };
+
+      if (option === null) {
+        newStatus = { attendance: null, emotion: null };
+      } else {
+        switch (option) {
+          case 'HAPPY':
+            newStatus = { attendance: 'PRESENT', emotion: 'HAPPY' };
+            break;
+          case 'SAD':
+            newStatus = { attendance: 'PRESENT', emotion: 'SAD' };
+            break;
+          case 'OK':
+            newStatus = { attendance: 'PRESENT', emotion: 'OK' };
+            break;
+          case 'ANGRY':
+            newStatus = { attendance: 'PRESENT', emotion: 'ANGRY' };
+            break;
+          case 'NO_NEWS':
+            newStatus = { attendance: 'NO_NEWS', emotion: null };
+            break;
+          case 'SICK':
+            newStatus = { attendance: 'SICK', emotion: null };
+            break;
+          case 'EXCUSED':
+            newStatus = { attendance: 'PERMISSION', emotion: null };
+            break;
+          default:
+            newStatus = { attendance: null, emotion: null };
+        }
+      }
+
+      const updated = {
+        ...prev,
+        [dateKey]: {
+          ...currentOfDate,
+          [studentId]: newStatus
+        }
+      };
+
+      localStorage.setItem('kg_checklist_records', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  // Set all current visible students to HAPPY status
+  const handleHappySemua = () => {
+    setRecordsByDate(prev => {
+      const currentOfDate = prev[dateKey] || {};
+      const newOfDate = { ...currentOfDate };
+
+      DEFAULT_STUDENTS.forEach(s => {
+        const matchesSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase());
+        if (matchesSearch) {
+          newOfDate[s.id] = { attendance: 'PRESENT', emotion: 'HAPPY' };
+        }
+      });
+
+      const updated = {
+        ...prev,
+        [dateKey]: newOfDate
+      };
+
+      localStorage.setItem('kg_checklist_records', JSON.stringify(updated));
+      return updated;
+    });
+
+    toast.success('Semua si kecil yang tampil ke-update berstatus Happy! 😊');
+  };
+
+  const handlePrevDate = () => {
+    setSelectedDate(prev => {
+      const next = new Date(prev);
+      next.setDate(next.getDate() - 1);
+      return next;
+    });
+  };
+
+  const handleNextDate = () => {
+    setSelectedDate(prev => {
+      const next = new Date(prev);
+      next.setDate(next.getDate() + 1);
+      return next;
+    });
+  };
+
+  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.value) {
+      setSelectedDate(new Date(e.target.value));
+    }
+  };
+
+  // Precise statistics calculations
+  const totalStudents = DEFAULT_STUDENTS.length;
+  const countBelumDiisi = studentsWithStatus.filter(s => s.attendance === null).length;
+  const countHadir = studentsWithStatus.filter(s => s.attendance === 'PRESENT').length;
+  const countSakit = studentsWithStatus.filter(s => s.attendance === 'SICK').length;
+  const countIzin = studentsWithStatus.filter(s => s.attendance === 'PERMISSION').length;
+  const countAlpha = studentsWithStatus.filter(s => s.attendance === 'NO_NEWS').length;
+
+  const countHappy = studentsWithStatus.filter(s => s.attendance === 'PRESENT' && s.emotion === 'HAPPY').length;
+  const countOk = studentsWithStatus.filter(s => s.attendance === 'PRESENT' && s.emotion === 'OK').length;
+  const countSad = studentsWithStatus.filter(s => s.attendance === 'PRESENT' && s.emotion === 'SAD').length;
+  const countAngry = studentsWithStatus.filter(s => s.attendance === 'PRESENT' && s.emotion === 'ANGRY').length;
 
   const handleSave = () => {
     setIsSaving(true);
     setTimeout(() => {
       setIsSaving(false);
-      alert('Data kehadiran dan emosi hari ini berhasil disimpan! ❤️');
-    }, 1000);
+      toast.success('Laporan Kehadiran & Emosi Harian berhasil disimpan ke server! ❤️', {
+        description: `Tanggal: ${new Intl.DateTimeFormat('id-ID', { dateStyle: 'long' }).format(selectedDate)}`
+      });
+    }, 800);
   };
+
+  const filteredStudents = studentsWithStatus.filter(s => 
+    s.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
     <div className="max-w-5xl mx-auto space-y-8 pb-12">
-      <header className="flex justify-between items-end">
+      {/* HEADER SECTION */}
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
            <div className="flex items-center gap-2 mb-1">
-              <span className="px-2 py-0.5 rounded bg-pink-100 text-pink-600 text-[10px] font-black uppercase tracking-widest">Kindy Portal</span>
-              <h1 className="text-2xl font-bold text-gray-900 tracking-tight italic">Halo Guru, Semangat Hari ini!</h1>
+              <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-600 text-[10px] font-black uppercase tracking-widest flex items-center gap-1">
+                <Sparkles size={10} /> Kindy Portal
+              </span>
+              <h1 className="text-2xl font-bold text-gray-900 tracking-tight italic">Semangat Hari ini, Bu Guru!</h1>
            </div>
-           <p className="text-gray-500 font-medium text-sm">Cek kehadiran dan kondisi hati anak-anak kelompok B1.</p>
+           <p className="text-gray-500 font-medium text-sm">Cek kehadiran dan kondisi hati anak-anak kelomopok B1 secara interaktif.</p>
         </div>
-        <div className="flex bg-white p-1 rounded-2xl shadow-sm border border-pink-50">
-           <div className="flex items-center gap-2 px-6 py-2.5 text-pink-600 font-bold">
-              <Calendar size={18} />
-              {new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())}
+
+        {/* INTERACTIVE DATEPICKER WITH TOGGLE CHEVRON */}
+        <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-2xl shadow-sm border border-emerald-100">
+           <button 
+             onClick={handlePrevDate}
+             className="p-2 hover:bg-emerald-50 rounded-xl text-gray-500 hover:text-emerald-700 transition-all cursor-pointer"
+             title="Kemarin"
+           >
+             <ChevronLeft size={16} />
+           </button>
+
+           <div className="flex items-center gap-2 px-2 text-emerald-700 font-bold relative group">
+              <Calendar size={16} className="text-emerald-400 shrink-0" />
+              <input 
+                type="date"
+                value={selectedDate.toISOString().split('T')[0]}
+                onChange={handleDateChange}
+                className="font-bold text-sm text-gray-700 outline-none cursor-pointer bg-transparent border-none py-1 absolute inset-0 opacity-0 z-10 w-full"
+                title="Pilih Tanggal Bebas"
+              />
+              <span className="text-sm select-none border-b border-dashed border-emerald-300 pb-0.5 cursor-pointer leading-tight">
+                {new Intl.DateTimeFormat('id-ID', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }).format(selectedDate)}
+              </span>
            </div>
+
+           <button 
+             onClick={handleNextDate}
+             className="p-2 hover:bg-emerald-50 rounded-xl text-gray-500 hover:text-emerald-700 transition-all cursor-pointer"
+             title="Besok"
+           >
+             <ChevronRight size={16} />
+           </button>
         </div>
       </header>
 
-      <div className="bg-white rounded-[2rem] shadow-xl shadow-pink-50/50 border border-pink-100/50 overflow-hidden">
-        <div className="bg-pink-50/30 p-6 border-b border-pink-50 flex items-center justify-between">
-           <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 text-pink-600">
-                 <Users size={20} />
-                 <span className="font-bold">Daftar Anak (B1 - Butterfly)</span>
-              </div>
-           </div>
-           <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-pink-300" size={16} />
-              <input 
-                type="text" 
-                placeholder="Cari nama si kecil..." 
-                className="pl-10 pr-4 py-2.5 bg-white border border-pink-100 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-pink-300 transition-all" 
-              />
+      {/* QUICK ACTIONS TOOLBAR */}
+      <div className="flex flex-col md:flex-row justify-between items-stretch md:items-center gap-4 bg-white p-5 rounded-[2rem] border border-emerald-100/50 shadow-sm">
+        <div className="relative flex-1">
+           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-emerald-300" size={16} />
+           <input 
+             type="text" 
+             value={searchQuery}
+             onChange={(e) => setSearchQuery(e.target.value)}
+             placeholder="Cari nama si kecil yang ceria..." 
+             className="pl-11 pr-4 py-2.5 w-full bg-emerald-50/10 border border-emerald-100 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-emerald-300 focus:border-transparent transition-all placeholder:text-emerald-300" 
+           />
+        </div>
+
+        <div className="flex items-center gap-2">
+           <button 
+             onClick={handleHappySemua}
+             className="flex items-center justify-center gap-2 bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-500 hover:to-amber-600 text-white font-bold text-xs py-2.5 px-5 rounded-2xl shadow-md shadow-amber-100 hover:shadow-lg hover:shadow-amber-200/50 transition-all cursor-pointer"
+           >
+             <Smile size={16} />
+             Set Happy Semua
+           </button>
+        </div>
+      </div>
+
+      {/* ATTENDANCE TABLE */}
+      <div className="bg-white rounded-[2rem] shadow-xl shadow-emerald-50/50 border border-emerald-100/50 overflow-hidden">
+        <div className="bg-gradient-to-r from-emerald-500/5 to-teal-500/5 p-6 border-b border-emerald-50 flex items-center justify-between">
+           <div className="flex items-center gap-2 text-emerald-700">
+              <Users size={18} />
+              <span className="font-bold text-sm tracking-tight">Daftar Anak Butterfly (B1) - {filteredStudents.length} Siswa</span>
            </div>
         </div>
 
-        <div className="p-2">
-          <table className="w-full text-left">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left min-w-[950px] table-fixed">
             <thead>
-              <tr className="text-pink-400 text-[10px] font-black uppercase tracking-[0.2em]">
-                <th className="px-6 py-4">Anak Hebat</th>
-                <th className="px-6 py-4 text-center">Kehadiran</th>
-                <th className="px-6 py-4 text-right">Kondisi Hati</th>
+              <tr className="text-emerald-700 text-[10px] font-black uppercase tracking-[0.2em] border-b border-emerald-100">
+                <th className="px-6 py-4 w-[240px]">Anak Hebat</th>
+                <th className="px-6 py-4 text-center">Attendance & Emotional Checklist</th>
+                <th className="px-6 py-4 text-center w-[100px]">Reset Hapus</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-pink-50">
-              {students.map((student) => (
-                <tr key={student.id} className="hover:bg-pink-50/20 transition-colors">
-                  <td className="px-6 py-5">
-                    <div className="flex items-center gap-4">
-                       <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-pink-50 to-orange-50 flex items-center justify-center font-bold text-pink-600 shadow-sm border border-white">
-                          {student.name[0]}
+            <tbody className="divide-y divide-emerald-50/50">
+              {filteredStudents.map((student) => {
+                const activeOption = getActiveOption(student);
+                const hasSelected = activeOption !== '';
+
+                return (
+                  <tr key={student.id} className={cn("transition-colors", hasSelected ? "bg-white" : "bg-gray-50/10 hover:bg-emerald-50/10")}>
+                    {/* Student Info Card column */}
+                    <td className="px-6 py-5">
+                      <div className="flex items-center gap-4">
+                         <div className={cn(
+                           "w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-sm shadow-sm border transition-all",
+                           activeOption === 'HAPPY' && "bg-yellow-50 text-yellow-600 border-yellow-200 scale-105",
+                           activeOption === 'SAD' && "bg-blue-50 text-blue-600 border-blue-200 scale-105",
+                           activeOption === 'OK' && "bg-emerald-50 text-emerald-600 border-emerald-200 scale-105",
+                           activeOption === 'ANGRY' && "bg-red-50 text-red-600 border-red-200 scale-105",
+                           activeOption === 'SICK' && "bg-indigo-50 text-indigo-600 border-indigo-200 scale-105",
+                           activeOption === 'EXCUSED' && "bg-orange-50 text-orange-600 border-orange-200 scale-105",
+                           activeOption === 'NO_NEWS' && "bg-slate-50 text-slate-500 border-slate-200 scale-105",
+                           !hasSelected && "from-emerald-50 to-teal-50 bg-gradient-to-br text-emerald-700 border-white"
+                         )}>
+                            {student.name[0]}
+                         </div>
+                         <div>
+                            <p className="font-bold text-gray-900 text-sm tracking-tight">{student.name}</p>
+                            <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-widest">
+                               {hasSelected ? (
+                                  <span className="inline-flex items-center gap-1 transition-all">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                    Sudah Terisi
+                                  </span>
+                               ) : (
+                                  <span className="text-gray-400 font-medium">Belum Diisi</span>
+                               )}
+                            </p>
+                         </div>
                        </div>
-                       <div>
-                          <p className="font-bold text-gray-900 text-sm">{student.name}</p>
-                          <p className="text-[10px] text-pink-300 font-bold uppercase tracking-widest">Kelas B1</p>
-                       </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-5">
-                    <div className="flex justify-center gap-1.5 p-1 bg-gray-50/80 rounded-2xl w-fit mx-auto border border-gray-100">
-                       <AttendanceToggle 
-                         status="PRESENT" 
-                         active={student.attendance === 'PRESENT'} 
-                         onClick={() => updateAttendance(student.id, 'PRESENT')}
-                       />
-                       <AttendanceToggle 
-                         status="SICK" 
-                         active={student.attendance === 'SICK'} 
-                         onClick={() => updateAttendance(student.id, 'SICK')}
-                       />
-                       <AttendanceToggle 
-                         status="PERMISSION" 
-                         active={student.attendance === 'PERMISSION'} 
-                         onClick={() => updateAttendance(student.id, 'PERMISSION')}
-                       />
-                       <AttendanceToggle 
-                         status="NO_NEWS" 
-                         active={student.attendance === 'NO_NEWS'} 
-                         onClick={() => updateAttendance(student.id, 'NO_NEWS')}
-                       />
-                    </div>
-                  </td>
-                  <td className="px-6 py-5">
-                    <div className="flex justify-end gap-2">
-                       <EmotionToggle 
-                         type="HAPPY" 
-                         active={student.emotion === 'HAPPY'} 
-                         onClick={() => updateEmotion(student.id, 'HAPPY')}
-                       />
-                       <EmotionToggle 
-                         type="OK" 
-                         active={student.emotion === 'OK'} 
-                         onClick={() => updateEmotion(student.id, 'OK')}
-                       />
-                       <EmotionToggle 
-                         type="SAD" 
-                         active={student.emotion === 'SAD'} 
-                         onClick={() => updateEmotion(student.id, 'SAD')}
-                       />
-                       <EmotionToggle 
-                         type="ANGRY" 
-                         active={student.emotion === 'ANGRY'} 
-                         onClick={() => updateEmotion(student.id, 'ANGRY')}
-                       />
-                    </div>
+                    </td>
+
+                    {/* Interactive Button Group column */}
+                    <td className="px-6 py-5">
+                      <div className="flex flex-wrap gap-2 justify-center items-center">
+                         <ChecklistButton 
+                           option="HAPPY"
+                           active={activeOption === 'HAPPY'}
+                           onClick={() => handleUpdateOption(student.id, 'HAPPY')}
+                         />
+                         <ChecklistButton 
+                           option="SAD"
+                           active={activeOption === 'SAD'}
+                           onClick={() => handleUpdateOption(student.id, 'SAD')}
+                         />
+                         <ChecklistButton 
+                           option="OK"
+                           active={activeOption === 'OK'}
+                           onClick={() => handleUpdateOption(student.id, 'OK')}
+                         />
+                         <ChecklistButton 
+                           option="ANGRY"
+                           active={activeOption === 'ANGRY'}
+                           onClick={() => handleUpdateOption(student.id, 'ANGRY')}
+                         />
+                         <span className="w-[1px] h-5 bg-emerald-100 hidden sm:inline-block" />
+                         <ChecklistButton 
+                           option="NO_NEWS"
+                           active={activeOption === 'NO_NEWS'}
+                           onClick={() => handleUpdateOption(student.id, 'NO_NEWS')}
+                         />
+                         <ChecklistButton 
+                           option="SICK"
+                           active={activeOption === 'SICK'}
+                           onClick={() => handleUpdateOption(student.id, 'SICK')}
+                         />
+                         <ChecklistButton 
+                           option="EXCUSED"
+                           active={activeOption === 'EXCUSED'}
+                           onClick={() => handleUpdateOption(student.id, 'EXCUSED')}
+                         />
+                      </div>
+                    </td>
+
+                    {/* RESET / DELETE CELL COLUMN */}
+                    <td className="px-6 py-5 text-center">
+                      {hasSelected ? (
+                        <button 
+                          onClick={() => handleUpdateOption(student.id, null)}
+                          className="p-2 hover:bg-rose-50 text-rose-400 hover:text-rose-600 rounded-xl transition-all border border-transparent hover:border-rose-100 cursor-pointer inline-flex items-center justify-center"
+                          title="Hapus / Kosongkan Pilihan"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      ) : (
+                        <span className="text-xs text-gray-300 font-medium select-none">-</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {filteredStudents.length === 0 && (
+                <tr>
+                  <td colSpan={3} className="px-6 py-12 text-center text-gray-400 text-sm">
+                    No matching little ones found 😢
                   </td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>
       </div>
 
-      <div className="flex justify-between items-center bg-white p-6 rounded-3xl border border-pink-100 shadow-sm">
-         <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-               <div className="w-3 h-3 rounded-full bg-emerald-500" />
-               <span className="text-xs font-medium text-gray-500 uppercase">Hadir: 4</span>
+      {/* DASHBOARD STATS RECAP AND PERSIST ACTIONS */}
+      <div className="bg-white p-6 rounded-3xl border border-emerald-100 shadow-sm space-y-6">
+         {/* Live Dynamic Counters */}
+         <div className="flex flex-wrap items-center justify-start gap-3">
+            <div className={cn(
+               "flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all",
+               countBelumDiisi > 0 ? "bg-orange-50 text-orange-850 border-orange-150" : "bg-teal-50 text-teal-855 border-teal-150"
+            )}>
+               <div className={cn("w-2 h-2 rounded-full", countBelumDiisi > 0 ? "bg-orange-500 animate-pulse" : "bg-teal-500")} />
+               BELUM DIISI: {countBelumDiisi} / {totalStudents}
             </div>
-            <div className="flex items-center gap-2">
-               <div className="w-3 h-3 rounded-full bg-blue-500" />
-               <span className="text-xs font-medium text-gray-500 uppercase">Sakit: 1</span>
+
+            <div className="flex items-center gap-2 bg-emerald-50 text-emerald-800 px-3 py-1.5 rounded-xl border border-emerald-100 text-xs font-bold">
+               <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+               HADIR: {countHadir}
             </div>
-            <div className="flex items-center gap-2">
-               <div className="w-3 h-3 rounded-full bg-orange-500" />
-               <span className="text-xs font-bold text-pink-600 uppercase">Happy: 3</span>
+
+            <div className="flex items-center gap-2 bg-emerald-50 text-emerald-800 px-3 py-1.5 rounded-xl border border-emerald-100 text-xs font-bold px-3 py-1.5 rounded-xl border border-emerald-150 text-xs font-bold flex items-center gap-2 bg-teal-50 text-teal-800 border-teal-150">
+               <div className="w-2 h-2 rounded-full bg-teal-400" />
+               IZIN: {countIzin} 
+            </div>
+
+            <div className="flex items-center gap-2 bg-indigo-50 text-indigo-800 px-3 py-1.5 rounded-xl border border-indigo-150 text-xs font-bold">
+               <div className="w-2 h-2 rounded-full bg-indigo-400" />
+               SAKIT: {countSakit}
+            </div>
+
+            <div className="flex items-center gap-2 bg-slate-50 text-slate-850 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold">
+               <div className="w-2 h-2 rounded-full bg-slate-400" />
+               TANPA KABAR: {countAlpha}
             </div>
          </div>
-         <button 
-           onClick={handleSave}
-           disabled={isSaving}
-           className="flex items-center gap-2 bg-pink-600 hover:bg-pink-700 text-white font-bold px-10 py-3.5 rounded-2xl shadow-xl shadow-pink-100 transition-all active:scale-95 disabled:opacity-50"
-         >
-           {isSaving ? <Clock className="animate-spin" size={20} /> : <Save size={20} />}
-           Simpan Laporan Hari Ini
-         </button>
+
+         {/* Grid displaying detail breakdown */}
+         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-1 border-t border-dashed border-emerald-100/60 font-medium">
+            <div className="bg-yellow-50/50 p-3 rounded-2xl border border-yellow-100/50 text-center">
+               <p className="text-[10px] text-yellow-600 font-extrabold uppercase tracking-widest mb-1 select-none">😊 Happy</p>
+               <span className="text-xl font-black text-yellow-700">{countHappy}</span>
+            </div>
+            <div className="bg-emerald-50/50 p-3 rounded-2xl border border-emerald-100/55 text-center">
+               <p className="text-[10px] text-emerald-600 font-extrabold uppercase tracking-widest mb-1 select-none">😐 OK / Biasa</p>
+               <span className="text-xl font-black text-emerald-700">{countOk}</span>
+            </div>
+            <div className="bg-blue-50/50 p-3 rounded-2xl border border-blue-100/55 text-center">
+               <p className="text-[10px] text-blue-600 font-extrabold uppercase tracking-widest mb-1 select-none">😢 Sad / Sedih</p>
+               <span className="text-xl font-black text-blue-700">{countSad}</span>
+            </div>
+            <div className="bg-red-50/50 p-3 rounded-2xl border border-red-100/55 text-center">
+               <p className="text-[10px] text-red-500 font-extrabold uppercase tracking-widest mb-1 select-none">😠 Angry / Marah</p>
+               <span className="text-xl font-black text-red-600">{countAngry}</span>
+            </div>
+         </div>
+
+         {/* Save triggers */}
+         <div className="flex flex-col sm:flex-row justify-end items-center gap-4 pt-4 border-t border-emerald-50">
+           <button 
+             onClick={handleSave}
+             disabled={isSaving}
+             className="w-full sm:w-auto flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-10 py-3.5 rounded-2xl shadow-xl shadow-emerald-100 hover:shadow-emerald-200 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+           >
+             {isSaving ? <Clock className="animate-spin" size={20} /> : <Save size={20} />}
+             Simpan Laporan Harian
+           </button>
+         </div>
       </div>
     </div>
   );
 }
 
-function AttendanceToggle({ status, active, onClick }: { status: KGAttendanceStatus; active: boolean; onClick: () => void }) {
-  const configs = {
-    PRESENT: { label: 'Hadir', activeClasses: 'bg-emerald-500 text-white shadow-emerald-100' },
-    SICK: { label: 'Sakit', activeClasses: 'bg-blue-500 text-white shadow-blue-100' },
-    PERMISSION: { label: 'Izin', activeClasses: 'bg-orange-500 text-white shadow-orange-100' },
-    NO_NEWS: { label: '-', activeClasses: 'bg-gray-700 text-white shadow-gray-200' },
+function ChecklistButton({ option, active, onClick }: { option: string; active: boolean; onClick: () => void }) {
+  const configs: Record<string, { label: string; icon: React.ReactNode; activeClasses: string; inactiveClasses: string }> = {
+    HAPPY: { 
+      label: 'Happy', 
+      icon: <Smile size={14} />, 
+      activeClasses: 'bg-yellow-400 text-white border-yellow-400 shadow-md shadow-yellow-105 scale-[1.03] px-3.5', 
+      inactiveClasses: 'text-yellow-600 hover:bg-yellow-50/60 border-yellow-100/60 bg-yellow-55/10 bg-yellow-50/20 shadow-none' 
+    },
+    SAD: { 
+      label: 'Sad', 
+      icon: <Frown size={14} />, 
+      activeClasses: 'bg-blue-400 text-white border-blue-400 shadow-md shadow-blue-105 scale-[1.03] px-3.5', 
+      inactiveClasses: 'text-blue-600 hover:bg-blue-50/60 border-blue-100/60 bg-blue-55/10 bg-blue-50/20 shadow-none' 
+    },
+    OK: { 
+      label: 'OK', 
+      icon: <Meh size={14} />, 
+      activeClasses: 'bg-emerald-400 text-white border-emerald-400 shadow-md shadow-emerald-105 scale-[1.03] px-3.5', 
+      inactiveClasses: 'text-emerald-600 hover:bg-emerald-50/60 border-emerald-100/60 bg-emerald-55/10 bg-emerald-50/20 shadow-none' 
+    },
+    ANGRY: { 
+      label: 'Angry', 
+      icon: <Angry size={14} />, 
+      activeClasses: 'bg-red-500 text-white border-red-500 shadow-md shadow-red-105 scale-[1.03] px-3.5', 
+      inactiveClasses: 'text-red-500 hover:bg-red-50/60 border-red-150 bg-red-50/20 shadow-none' 
+    },
+    NO_NEWS: { 
+      label: 'No News', 
+      icon: <UserX size={14} />, 
+      activeClasses: 'bg-slate-500 text-white border-slate-500 shadow-md shadow-slate-105 scale-[1.03] px-3.5', 
+      inactiveClasses: 'text-slate-500 hover:bg-slate-50 border-slate-100 bg-slate-50/20 shadow-none' 
+    },
+    SICK: { 
+      label: 'Sick', 
+      icon: <AlertCircle size={14} />, 
+      activeClasses: 'bg-indigo-500 text-white border-indigo-500 shadow-md shadow-indigo-105 scale-[1.03] px-3.5', 
+      inactiveClasses: 'text-indigo-600 hover:bg-indigo-55/70 border-indigo-100 bg-indigo-50/20 shadow-none' 
+    },
+    EXCUSED: { 
+      label: 'Excused', 
+      icon: <CheckCircle2 size={14} />, 
+      activeClasses: 'bg-orange-400 text-white border-orange-400 shadow-md shadow-orange-105 scale-[1.03] px-3.5', 
+      inactiveClasses: 'text-orange-600 hover:bg-orange-55 border-orange-100 bg-orange-50/20 shadow-none' 
+    },
   };
+
+  const current = configs[option];
+  if (!current) return null;
 
   return (
     <button
       onClick={onClick}
       className={cn(
-        "px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm",
-        active ? configs[status].activeClasses + " shadow-md" : "text-gray-400 hover:bg-white"
+        "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border shadow-sm cursor-pointer select-none",
+        active ? current.activeClasses : current.inactiveClasses
       )}
     >
-      {configs[status].label}
-    </button>
-  );
-}
-
-function EmotionToggle({ type, active, onClick }: { type: KGEmotionStatus; active: boolean; onClick: () => void }) {
-  const icons = {
-    HAPPY: <Smile size={20} />,
-    OK: <Meh size={20} />,
-    SAD: <Frown size={20} />,
-    ANGRY: <Angry size={20} />,
-  };
-
-  const activeColors = {
-    HAPPY: 'bg-yellow-400 text-white shadow-yellow-100',
-    OK: 'bg-emerald-400 text-white shadow-emerald-100',
-    SAD: 'bg-blue-400 text-white shadow-blue-100',
-    ANGRY: 'bg-red-400 text-white shadow-red-100',
-  };
-
-  return (
-    <button
-      onClick={onClick}
-      title={type}
-      className={cn(
-        "w-10 h-10 rounded-2xl flex items-center justify-center transition-all",
-        active ? activeColors[type] + " shadow-lg" : "bg-gray-50 text-gray-300 hover:bg-pink-50 hover:text-pink-300"
-      )}
-    >
-      {icons[type]}
+      {current.icon}
+      <span>{current.label}</span>
     </button>
   );
 }

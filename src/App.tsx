@@ -53,6 +53,7 @@ import StudentProgress from './pages/Student/StudentProgress';
 import DailyChecklist from './pages/Kindergarten/DailyChecklist';
 import ObservationKG from './pages/Kindergarten/Observation';
 import WeeklyReview from './pages/Kindergarten/WeeklyReview';
+import WeeklySummary from './pages/Kindergarten/WeeklySummary';
 import HeadDashboardKG from './pages/Kindergarten/HeadDashboard';
 import ParentViewKG from './pages/Kindergarten/ParentView';
 import StudentPassport from './pages/Student/StudentPassport';
@@ -300,6 +301,7 @@ export default function App() {
           <Route path="kindy">
             <Route path="checklist" element={<DailyChecklist />} />
             <Route path="observation" element={<ObservationKG />} />
+            <Route path="weekly-summary" element={<WeeklySummary />} />
             <Route path="weekly-review" element={<WeeklyReview />} />
           </Route>
           <Route path="child">

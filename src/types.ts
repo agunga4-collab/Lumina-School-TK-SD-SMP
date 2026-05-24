@@ -1554,3 +1554,60 @@ export const MTSSBehaviorPdfType = {
 } as const;
 
 export type MTSSBehaviorPdfType = (typeof MTSSBehaviorPdfType)[keyof typeof MTSSBehaviorPdfType];
+
+export type KGWeeklyReportDraft = {
+  studentId: string;
+  studentName: string;
+  nickName?: string;
+  className?: string;
+  classGroup?: string;
+  ageGroup?: 'PRA_TK' | 'TK_A' | 'TK_B';
+  monthLabel: string;
+  weekLabel: string;
+  theme?: string;
+  dateRangeLabel: string;
+
+  weeklyObservationItems: Array<{
+    dayLabel: string;
+    dateKey: string;
+    activity?: string;
+    domain?: string;
+    objective?: string;
+    grade?: string;
+    notes?: string;
+    photoUrl?: string | null;
+    generalPhotoUrl?: string | null;
+  }>;
+
+  groupedObservationSummary: Array<{
+    domain: string;
+    activityList: string[];
+    objectiveList: string[];
+    grades: string[];
+    mergedNotes: string[];
+  }>;
+
+  dailySnapshots: Array<{
+    dayKey: 'MONDAY' | 'TUESDAY' | 'WEDNESDAY' | 'THURSDAY' | 'FRIDAY';
+    label: string;
+    photoUrl: string | null;
+    fallbackText: string;
+  }>;
+
+  attendanceSummary: {
+    happy: number;
+    sad: number;
+    angry: number;
+    ok: number;
+    noNews: number;
+    sick: number;
+    izin: number;
+    earlyLeave: number;
+  };
+
+  aiWeeklyCommentsDraft?: string;
+  aiSocialEmotionalDraft?: string;
+  teacherEditedWeeklyComments?: string;
+  teacherEditedSocialEmotional?: string;
+};
+

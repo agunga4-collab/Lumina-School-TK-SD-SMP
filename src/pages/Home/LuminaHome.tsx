@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { 
   LayoutDashboard, ClipboardList, ShieldAlert, User as UserIcon, Target, 
   Users, Home, Eye, CheckSquare, Mail, BookOpen, Folder, Heart, 
-  Baby, History, BarChart3, TrendingUp, Clock, Camera, Smile,
+  Baby, History, BarChart3, TrendingUp, Clock, Camera, Smile, Sparkles,
   ChevronRight, Bell, Calendar, Zap, AlertCircle, ArrowRight, Map
 } from 'lucide-react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
@@ -152,14 +152,15 @@ function Shortcut({ role, unit }: { role: UserRole; unit: UnitType }) {
       { label: 'Analisis Unit', icon: <LayoutDashboard size={20} />, to: unit === 'KINDERGARTEN' ? '/dashboard/head-kindy' : '/dashboard/head', color: 'bg-blue-50 text-blue-600' },
       { label: 'MTSS Summary', icon: <BarChart3 size={20} />, to: '/mtss/cases', color: 'bg-purple-50 text-purple-600' },
       { label: 'Passport Siswa', icon: <Map size={20} />, to: '/child/passport', color: 'bg-emerald-50 text-emerald-600' },
-      { label: 'Laporan Unit', icon: <BookOpen size={20} />, to: '/', color: 'bg-pink-50 text-pink-600' }
+      { label: 'Laporan Unit', icon: <BookOpen size={20} />, to: '/', color: 'bg-teal-50 text-teal-600' }
     );
   } else if (isTeacher) {
     if (unit === 'KINDERGARTEN') {
       shortcuts.push(
-        { label: 'Input Hadir', icon: <Smile size={20} />, to: '/kindy/checklist', color: 'bg-pink-50 text-pink-600' },
-        { label: 'Observasi', icon: <Camera size={20} />, to: '/kindy/observation', color: 'bg-blue-50 text-blue-600' },
-        { label: 'Weekly Review', icon: <History size={20} />, to: '/kindy/weekly-review', color: 'bg-emerald-50 text-emerald-600' },
+        { label: 'Attendance & Emotional Checklist', icon: <Smile size={20} />, to: '/kindy/checklist', color: 'bg-emerald-50 text-emerald-700' },
+        { label: 'Observation Data', icon: <Camera size={20} />, to: '/kindy/observation', color: 'bg-emerald-50 text-emerald-700' },
+        { label: 'Weekly Summary & AI', icon: <Sparkles size={20} />, to: '/kindy/weekly-summary', color: 'bg-emerald-50 text-emerald-600' },
+        { label: 'Weekly Report (Final)', icon: <History size={20} />, to: '/kindy/weekly-review', color: 'bg-emerald-50 text-emerald-600' },
         { label: 'Passport', icon: <Map size={20} />, to: '/child/passport', color: 'bg-orange-50 text-orange-600' }
       );
     } else {
@@ -182,7 +183,7 @@ function Shortcut({ role, unit }: { role: UserRole; unit: UnitType }) {
       { label: 'Passport Anak', icon: <Map size={20} />, to: '/child/passport', color: 'bg-blue-50 text-blue-600' },
       { label: 'Progress Belajar', icon: <TrendingUp size={20} />, to: '/child/progress', color: 'bg-emerald-50 text-emerald-600' },
       { label: 'Kehadiran', icon: <CheckSquare size={20} />, to: '/child/attendance', color: 'bg-orange-50 text-orange-600' },
-      { label: 'Pesan', icon: <Mail size={20} />, to: '/messages', color: 'bg-pink-50 text-pink-600' }
+      { label: 'Pesan', icon: <Mail size={20} />, to: '/messages', color: 'bg-indigo-50 text-indigo-600' }
     );
   } else if (isStudent) {
     shortcuts.push(

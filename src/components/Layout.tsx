@@ -13,7 +13,7 @@ import { useAuth } from '../context/AuthContext';
 import { LuminaLogo } from './LuminaLogo';
 import { NotificationBell } from './NotificationBell';
 import { useBehaviorAlerts } from '../hooks/useBehaviorAlerts';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { toast } from 'sonner';
 
@@ -22,6 +22,40 @@ export function Layout() {
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [pendingLXDCount, setPendingLXDCount] = React.useState(0);
+  const [logos, setLogos] = React.useState<{
+    KINDERGARTEN: { rectangular: string; square: string };
+    ELEMENTARY: { rectangular: string; square: string };
+    JUNIOR_HIGH: { rectangular: string; square: string };
+  }>({
+    KINDERGARTEN: { rectangular: "", square: "" },
+    ELEMENTARY: { rectangular: "", square: "" },
+    JUNIOR_HIGH: { rectangular: "", square: "" },
+  });
+
+  React.useEffect(() => {
+    const fetchLogos = async () => {
+      try {
+        const logoDoc = await getDoc(doc(db, "settings", "logos"));
+        if (logoDoc.exists()) {
+          setLogos(logoDoc.data() as any);
+        } else {
+          const localLogos = localStorage.getItem("lumina_school_logos");
+          if (localLogos) {
+            setLogos(JSON.parse(localLogos));
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to load school logos in Layout selector:", err);
+        const localLogos = localStorage.getItem("lumina_school_logos");
+        if (localLogos) {
+          try {
+            setLogos(JSON.parse(localLogos));
+          } catch (_) {}
+        }
+      }
+    };
+    fetchLogos();
+  }, []);
   
   // Close sidebar on navigation (mobile)
   React.useEffect(() => {
@@ -82,7 +116,7 @@ export function Layout() {
 
   const getUnitColor = (unit: UnitType) => {
     switch(unit) {
-      case 'KINDERGARTEN': return 'text-pink-600 bg-pink-50 border-pink-100';
+      case 'KINDERGARTEN': return 'text-emerald-700 bg-emerald-50 border-emerald-100';
       case 'ELEMENTARY': return 'text-emerald-600 bg-emerald-50 border-emerald-100';
       case 'JUNIOR_HIGH': return 'text-blue-600 bg-blue-50 border-blue-100';
       default: return 'text-gray-600 bg-gray-50';
@@ -160,16 +194,30 @@ export function Layout() {
                                <ShieldAlert size={14} />
                             </div>
                          )}
-                         <div className={cn(
-                           "p-4 rounded-2xl w-fit mb-4 group-hover:scale-105 transition-transform", 
-                           isAccessible 
-                             ? getUnitColor(unit).split(' ')[1] 
-                             : "text-gray-400 bg-gray-100"
-                         )}>
-                            {unit === 'KINDERGARTEN' && <Heart className={isAccessible ? "text-pink-500" : "text-gray-400"} />}
-                            {unit === 'ELEMENTARY' && <Baby className={isAccessible ? "text-emerald-500" : "text-gray-400"} />}
-                            {unit === 'JUNIOR_HIGH' && <Target className={isAccessible ? "text-blue-500" : "text-gray-400"} />}
-                         </div>
+                         {logos[unit]?.rectangular ? (
+                           <div className="w-full h-16 flex items-center justify-start mb-4 overflow-hidden rounded-xl">
+                             <img 
+                               src={logos[unit].rectangular} 
+                               alt={`${getUnitName(unit)} Logo`} 
+                               className={cn(
+                                 "max-h-full max-w-full object-contain mix-blend-multiply transition-transform group-hover:scale-105 duration-300",
+                                 !isAccessible && "grayscale opacity-50 whitespace-nowrap"
+                               )}
+                               referrerPolicy="no-referrer"
+                             />
+                           </div>
+                         ) : (
+                           <div className={cn(
+                             "p-4 rounded-2xl w-fit mb-4 group-hover:scale-105 transition-transform", 
+                             isAccessible 
+                               ? getUnitColor(unit).split(' ')[1] 
+                               : "text-gray-400 bg-gray-100"
+                           )}>
+                              {unit === 'KINDERGARTEN' && <Heart className={isAccessible ? "text-emerald-600" : "text-gray-400"} />}
+                              {unit === 'ELEMENTARY' && <Baby className={isAccessible ? "text-emerald-500" : "text-gray-400"} />}
+                              {unit === 'JUNIOR_HIGH' && <Target className={isAccessible ? "text-blue-500" : "text-gray-400"} />}
+                           </div>
+                         )}
                          <div>
                             <h3 className={cn(
                               "text-lg font-black transition-colors",
@@ -272,9 +320,10 @@ export function Layout() {
               {currentUnit === 'KINDERGARTEN' && (
                 <div className="space-y-1">
                   <NavSectionLabel label="Keseharian & Belajar" />
-                  <NavItem to="/kindy/checklist" icon={<Smile size={18} />} label="Hadir & Emosi" />
-                  <NavItem to="/kindy/observation" icon={<Camera size={18} />} label="Observasi & Foto" />
-                  <NavItem to="/kindy/weekly-review" icon={<History size={18} />} label="Weekly Review" />
+                  <NavItem to="/kindy/checklist" icon={<Smile size={18} />} label="Attendance & Emotional Checklist" />
+                  <NavItem to="/kindy/observation" icon={<Camera size={18} />} label="Observation Data" />
+                  <NavItem to="/kindy/weekly-summary" icon={<Sparkles size={18} />} label="Weekly Summary & AI" />
+                  <NavItem to="/kindy/weekly-review" icon={<History size={18} />} label="Weekly Report (Final)" />
                 </div>
               )}
 

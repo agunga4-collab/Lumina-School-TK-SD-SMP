@@ -23,6 +23,123 @@ export default function ParentView() {
   const [isEditingAi, setIsEditingAi] = React.useState(false);
   const [showAiLabel, setShowAiLabel] = React.useState(false);
 
+  // Dynamic fetch of weekly review (SEL & General Comment) for K001
+  const savedReview = React.useMemo(() => {
+    try {
+      const saved = localStorage.getItem('kg_weekly_review_K001');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return null;
+  }, []);
+
+  const displaySelNotes = savedReview?.selNotes || "";
+  const displayGeneralComment = savedReview?.generalComment || "";
+
+  // Dynamic fetch of attendance & emotion stats from kg_checklist_records
+  const checklistStats = React.useMemo(() => {
+    const saved = localStorage.getItem('kg_checklist_records');
+    let totalDays = 0;
+    let presentDays = 0;
+    let happy = 0;
+    let ok = 0;
+    let sad = 0;
+    let angry = 0;
+
+    if (saved) {
+      try {
+        const records = JSON.parse(saved);
+        Object.values(records).forEach((dayData: any) => {
+          const ziankaStatus = dayData?.['K001'];
+          if (ziankaStatus) {
+            totalDays++;
+            if (ziankaStatus.attendance === 'PRESENT') {
+              presentDays++;
+              if (ziankaStatus.emotion === 'HAPPY') happy++;
+              else if (ziankaStatus.emotion === 'OK') ok++;
+              else if (ziankaStatus.emotion === 'SAD') sad++;
+              else if (ziankaStatus.emotion === 'ANGRY') angry++;
+            }
+          }
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    const attendanceRate = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 0;
+    
+    return {
+      attendanceRate,
+      presentDays,
+      totalDays,
+      happy,
+      ok,
+      sad,
+      angry,
+      hasData: totalDays > 0
+    };
+  }, []);
+
+  // Dynamic fetch of uploaded photos for K001 from all sessions
+  const activityPhotos = React.useMemo(() => {
+    const photos: { url: string; caption: string }[] = [];
+    
+    // Constant mappings to support captions
+    const sentraLabels: Record<string, string> = {
+      'MAKE_BELIEVE': 'Make-Believe',
+      'ISLAMIC_AWARENESS': 'Islamic Awareness',
+      'LIBRARY_LITERACY': 'Library & Literacy',
+      'DISCOVERY': 'Discovery',
+      'BLOCKS_BUILDING': 'Blocks & Building',
+      'ART_EXPLORATIONS': 'Art Explorations',
+      'ENGLISH': 'English',
+      'MUSIC': 'Music',
+      'OUTSIDE': 'Outside',
+      'AUDIO_VISUAL': 'Audio Visual',
+    };
+
+    const domainLabels: Record<string, string> = {
+      'AGAMA_BUDI_PEKERTI': 'Nilai Agama',
+      'SOSIAL_EMOSIONAL': 'Sosial-Emosional',
+      'BAHASA': 'Bahasa',
+      'KOGNITIF': 'Kognitif',
+      'FISIK_MOTORIK': 'Fisik-Motorik',
+      'SENI': 'Seni',
+    };
+
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('kg_obs_hist_')) {
+        try {
+          const data = JSON.parse(localStorage.getItem(key) || '{}');
+          const studentPhoto = data?.observations?.['K001']?.photo;
+          const fallbackPhoto = data?.generalPhoto;
+          const finalPhoto = studentPhoto || fallbackPhoto;
+          
+          if (finalPhoto) {
+            const sentraId = data.selectedActivity;
+            const domainId = data.selectedDomain;
+            const sentraName = sentraLabels[sentraId] || sentraId || "Aktivitas";
+            const domainName = domainLabels[domainId] || domainId || "Sentra";
+            
+            photos.push({
+              url: finalPhoto,
+              caption: `${sentraName} - ${domainName}`
+            });
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
+    
+    return photos;
+  }, []);
+
   const handleGenerateAiSummary = async () => {
     setIsAiLoading(true);
     setAiSummary("");
@@ -69,26 +186,21 @@ export default function ParentView() {
     }
   };
 
-  const activityPhotos = [
-    { url: 'https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?auto=format&fit=crop&q=80&w=300', caption: 'Bermain Pasir' },
-    { url: 'https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?auto=format&fit=crop&q=80&w=300', caption: 'Sesi Melukis' },
-    { url: 'https://images.unsplash.com/photo-1516627145497-ae6968895b74?auto=format&fit=crop&q=80&w=300', caption: 'Senyum Pagi' },
-  ];
 
   return (
     <div className="max-w-4xl mx-auto space-y-10 pb-20">
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 bg-white p-8 rounded-[2.5rem] border border-pink-50 shadow-sm relative overflow-hidden">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 bg-white p-8 rounded-[2.5rem] border border-emerald-50 shadow-sm relative overflow-hidden">
         <div className="absolute top-0 right-0 p-8 opacity-5">
-           <Heart size={100} className="text-pink-500" />
+           <Heart size={100} className="text-emerald-500" />
         </div>
         <div className="flex gap-6 items-center relative z-10">
-           <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-pink-500 to-orange-400 flex items-center justify-center text-white text-3xl font-black shadow-xl shadow-pink-100 border-4 border-white">
+           <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-emerald-600 to-teal-500 flex items-center justify-center text-white text-3xl font-black shadow-xl shadow-emerald-100 border-4 border-white">
               Z
            </div>
            <div>
               <h1 className="text-2xl font-black text-gray-900 tracking-tight leading-none italic">Zianka Azura</h1>
               <p className="text-gray-500 font-bold mt-2 flex items-center gap-2">
-                 <span className="w-2 h-2 rounded-full bg-pink-500" />
+                 <span className="w-2 h-2 rounded-full bg-emerald-500" />
                  Lumina Kindergarten • Kelompok B1
               </p>
            </div>
@@ -96,7 +208,7 @@ export default function ParentView() {
         <button 
           onClick={handleGenerateAiSummary}
           disabled={isAiLoading}
-          className="bg-gradient-to-br from-pink-600 to-rose-600 text-white font-black text-xs uppercase tracking-widest px-8 py-4 rounded-3xl shadow-xl shadow-pink-100 hover:scale-105 transition-all active:scale-95 disabled:opacity-50 flex items-center gap-3 relative z-10"
+          className="bg-gradient-to-br from-emerald-600 to-teal-600 text-white font-black text-xs uppercase tracking-widest px-8 py-4 rounded-3xl shadow-xl shadow-emerald-100 hover:scale-105 transition-all active:scale-95 disabled:opacity-50 flex items-center gap-3 relative z-10"
         >
           {isAiLoading ? <Loader2 className="animate-spin" size={20} /> : <Sparkles size={20} />}
           Buat Ringkasan Progress (AI)
@@ -108,7 +220,7 @@ export default function ParentView() {
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-pink-600 rounded-[3rem] p-10 text-white shadow-2xl shadow-pink-100 space-y-8 relative overflow-hidden"
+            className="bg-emerald-700 rounded-[3rem] p-10 text-white shadow-2xl shadow-emerald-100 space-y-8 relative overflow-hidden"
           >
              <div className="absolute top-0 left-0 p-10 opacity-10">
                 <Heart size={150} />
@@ -119,12 +231,12 @@ export default function ParentView() {
                    <span className="text-[10px] font-black uppercase tracking-widest leading-none">Pesan Cinta dari Lumina AI</span>
                 </div>
                 {aiSummary && (
-                  <button 
-                    onClick={() => setIsEditingAi(!isEditingAi)}
-                    className="p-2 bg-white/20 rounded-xl hover:bg-white/30 transition-all"
-                  >
-                    {isEditingAi ? <CheckCircle2 size={18} /> : <Edit3 size={18} />}
-                  </button>
+                   <button 
+                     onClick={() => setIsEditingAi(!isEditingAi)}
+                     className="p-2 bg-white/20 rounded-xl hover:bg-white/30 transition-all"
+                   >
+                     {isEditingAi ? <CheckCircle2 size={18} /> : <Edit3 size={18} />}
+                   </button>
                 )}
              </div>
              {isEditingAi ? (
@@ -140,19 +252,19 @@ export default function ParentView() {
                </p>
              )}
              {showAiLabel && (
-               <p className="text-[10px] font-bold text-pink-200 italic mt-2 relative z-10">Dihasilkan oleh Lumina AI – mohon review sebelum disimpan</p>
+               <p className="text-[10px] font-bold text-emerald-200 italic mt-2 relative z-10">Dihasilkan oleh Lumina AI – mohon review sebelum disimpan</p>
              )}
              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
                 {aiRecs.map((rec, i) => (
                   <div key={i} className="bg-white/10 rounded-3xl p-6 border border-white/15 backdrop-blur-sm space-y-4">
                      <div className="flex items-center gap-2 border-b border-white/10 pb-2">
-                        <Home size={16} className="text-pink-100" />
+                        <Home size={16} className="text-emerald-100" />
                         <h4 className="font-black text-[10px] uppercase tracking-widest">{rec.domain}</h4>
                      </div>
                      <ul className="space-y-3">
                         {rec.activities.map((act, j) => (
                           <li key={j} className="flex gap-3 text-xs font-bold leading-snug">
-                             <span className="w-1.5 h-1.5 rounded-full bg-pink-100 mt-1 shrink-0" />
+                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-100 mt-1 shrink-0" />
                              {act}
                           </li>
                         ))}
@@ -174,7 +286,7 @@ export default function ParentView() {
                     <h3 className="font-black text-xs uppercase tracking-widest text-emerald-800">Weekly SEL Notes</h3>
                  </div>
                  <p className="text-gray-700 leading-relaxed italic font-medium p-4 bg-gray-50 rounded-2xl border border-gray-100">
-                    "Ananda Zianka menunjukkan kondisi emosi yang stabil dan ceria minggu ini. Ia mulai menunjukkan empati dengan menghibur temannya yang terjatuh di taman."
+                    {displaySelNotes ? `"${displaySelNotes}"` : "Belum ada catatan jurnal perkembangan sosial-emosional minggu ini dari guru."}
                  </p>
               </section>
 
@@ -184,7 +296,7 @@ export default function ParentView() {
                     <h3 className="font-black text-xs uppercase tracking-widest text-blue-800">Weekly General Comment</h3>
                  </div>
                  <p className="text-gray-700 leading-relaxed italic font-medium p-4 bg-gray-50 rounded-2xl border border-gray-100">
-                    "Pekan ini Zianka konsisten dalam mengantri dan merapikan alat main secara mandiri. Fokus bimbingan ke depan adalah melatih kepercayaan diri dalam presentasi."
+                    {displayGeneralComment ? `"${displayGeneralComment}"` : "Belum ada catatan umum perkembangan minggu ini dari guru."}
                  </p>
               </section>
            </div>
@@ -196,22 +308,30 @@ export default function ParentView() {
                     <Camera size={18} />
                     Galeri Aktivitas Pekan Ini
                  </h3>
-                 <span className="text-[10px] font-black text-pink-400">LIHAT SEMUA</span>
+                 <span className="text-[10px] font-black text-emerald-500">LIHAT SEMUA</span>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                 {activityPhotos.map((p, i) => (
-                   <motion.div 
-                     key={i} 
-                     whileHover={{ scale: 1.05 }}
-                     className="aspect-square rounded-3xl bg-gray-50 overflow-hidden relative group cursor-pointer border border-gray-100"
-                   >
-                     <img src={p.url} alt={p.caption} className="w-full h-full object-cover" />
-                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
-                        <p className="text-white text-[10px] font-bold uppercase tracking-widest">{p.caption}</p>
-                     </div>
-                   </motion.div>
-                 ))}
-              </div>
+              
+              {activityPhotos.length === 0 ? (
+                <div className="py-12 flex flex-col items-center justify-center border border-dashed border-gray-150 rounded-3xl text-center bg-gray-50/20">
+                   <Camera size={36} className="text-gray-300 mb-2" />
+                   <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Belum ada foto kegiatan pekan ini</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                   {activityPhotos.map((p, i) => (
+                     <motion.div 
+                       key={i} 
+                       whileHover={{ scale: 1.05 }}
+                       className="aspect-square rounded-3xl bg-gray-50 overflow-hidden relative group cursor-pointer border border-gray-100"
+                     >
+                       <img src={p.url} alt={p.caption} className="w-full h-full object-cover" />
+                       <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
+                          <p className="text-white text-[10px] font-bold uppercase tracking-widest leading-tight">{p.caption}</p>
+                       </div>
+                     </motion.div>
+                   ))}
+                </div>
+              )}
            </div>
         </div>
 
@@ -219,24 +339,31 @@ export default function ParentView() {
         <div className="space-y-8">
            <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100 space-y-6">
               <h3 className="font-bold text-gray-900 flex items-center gap-2 border-b border-gray-50 pb-4 uppercase text-[10px] tracking-widest">
-                 <Activity size={18} className="text-pink-500" />
+                 <Activity size={18} className="text-emerald-600" />
                  Kehadiran & Emosi
               </h3>
               <div className="space-y-6">
                  <div>
                     <div className="flex justify-between items-end mb-2">
-                       <span className="text-2xl font-black text-gray-900 tracking-tighter">95%</span>
-                       <span className="text-[10px] font-black text-emerald-500 uppercase">Sangat Rajin</span>
+                       <span className="text-2xl font-black text-gray-900 tracking-tighter">{checklistStats.hasData ? `${checklistStats.attendanceRate}%` : "0%"}</span>
+                       <span className="text-[10px] font-black text-emerald-500 uppercase">
+                          {checklistStats.hasData 
+                            ? (checklistStats.attendanceRate >= 90 ? "Sangat Rajin" : "Normal") 
+                            : "Belum Ada Data"}
+                        </span>
                     </div>
                     <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Hadir di Sekolah</p>
                     <div className="w-full h-2 bg-gray-50 rounded-full mt-3 border border-gray-100 overflow-hidden">
-                       <div className="h-full bg-emerald-500 w-[95%] rounded-full shadow-lg" />
+                       <div 
+                          className="h-full bg-emerald-500 rounded-full shadow-lg transition-all duration-500" 
+                          style={{ width: `${checklistStats.hasData ? checklistStats.attendanceRate : 0}%` }}
+                        />
                     </div>
                  </div>
 
                  <div className="grid grid-cols-2 gap-4">
-                    <EmotionMiniStat icon={<Smile className="text-yellow-400" />} label="Happy" count={4} />
-                    <EmotionMiniStat icon={<Meh className="text-emerald-400" />} label="OK" count={1} />
+                    <EmotionMiniStat icon={<Smile className="text-yellow-400" />} label="Happy" count={checklistStats.happy} />
+                    <EmotionMiniStat icon={<Meh className="text-emerald-400" />} label="OK" count={checklistStats.ok} />
                  </div>
               </div>
            </div>

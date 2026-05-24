@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import { getApps, initializeApp, cert } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { GoogleGenAI } from "@google/genai";
 import axios from "axios";
 import { parse } from "csv-parse/sync";
 import fs from "fs";
@@ -1562,6 +1563,104 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
   } catch (error: any) {
     console.error("[SyncParents] Error:", error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Generate Weekly Core Comments from Observations
+app.post("/api/kindergarten/generate-weekly-comment", async (req, res) => {
+  try {
+    const { studentName, nickName, ageGroup, observationSummary } = req.body;
+    if (!studentName) {
+      return res.status(400).json({ error: "Missing studentName" });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
+    }
+
+    const stageString = ageGroup === 'PRA_TK' ? 'Pra TK (usia 2-4 tahun)' : ageGroup === 'TK_B' ? 'TK B (usia 5-6 tahun)' : 'TK A (usia 4-5 tahun)';
+
+    let formattedObs = "Tidak ada records observasi minggu ini.";
+    if (Array.isArray(observationSummary) && observationSummary.length > 0) {
+      formattedObs = observationSummary.map(obs => {
+        const mergedNotesStr = Array.isArray(obs.mergedNotes) && obs.mergedNotes.length > 0
+          ? obs.mergedNotes.map((n: string) => `- ${n}`).join("\n")
+          : "- Mengikuti aktivitas dengan baik.";
+        return `Domain: ${obs.domain}\nAktivitas: ${obs.activityList?.join(", ") || "-"}\nCapaian: ${obs.grades?.join(", ") || "-"}\nCatatan Perkembangan:\n${mergedNotesStr}`;
+      }).join("\n\n");
+    }
+
+    const prompt = `Buat sebuah laporan narasi mingguan untuk seorang siswa yang berada di ${stageString}. Gunakan 6 developmental stages (Nilai Agama dan Budi Pekerti, Sosial-Emosional, Bahasa, Kognitif, Fisik-Motorik, Seni) sebagai hal yang menjadi fokus dalam laporan. Mulai dengan 'Minggu ini,' atau '${nickName || studentName} ...'. Gunakan EYD dengan benar. Jika ada domain atau sentra yang berulang, penjelasan digabung saja dan tidak berulang. Jangan gunakan tanda seru. Buat dalam 1 paragraf utuh/tidak terpisah.\n\nBerikut data observasi mingguan siswa:\n${formattedObs}`;
+
+    const ai = new GoogleGenAI({
+      apiKey: apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash",
+      contents: prompt,
+    });
+
+    res.json({ text: response.text || "" });
+  } catch (error: any) {
+    console.error("[WeeklyCommentsAI] Error calling Gemini API:", error);
+    res.status(500).json({ error: error.message || "Gagal mengenerate komentar menggunakan AI." });
+  }
+});
+
+// API: Generate Weekly Social-Emotional Comments from Attendance
+app.post("/api/kindergarten/generate-sel-comment", async (req, res) => {
+  try {
+    const { studentName, nickName, ageGroup, attendanceSummary } = req.body;
+    if (!studentName) {
+      return res.status(400).json({ error: "Missing studentName" });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
+    }
+
+    const ageText = ageGroup === 'PRA_TK' ? 'usia 2-4 tahun (Pra TK)' : ageGroup === 'TK_B' ? 'usia 5-6 tahun (TK B)' : 'usia 4-5 tahun (TK A)';
+    
+    const h = attendanceSummary?.happy || 0;
+    const s = attendanceSummary?.sad || 0;
+    const a = attendanceSummary?.angry || 0;
+    const o = attendanceSummary?.ok || 0;
+    const n = attendanceSummary?.noNews || 0;
+    const sk = attendanceSummary?.sick || 0;
+    const i = attendanceSummary?.izin || 0;
+    const el = attendanceSummary?.earlyLeave || 0;
+
+    const prompt = `Saya ingin membuat komentar mingguan untuk laporan perkembangan Sosial Emosional siswa ${ageText}. Berikut adalah data kehadiran dan emosi siswa dalam 1 minggu terakhir:
+Happy: ${h}, Sad: ${s}, Angry: ${a}, OK: ${o}, No News: ${n}, Sick: ${sk}, Izin: ${i}, Early Leave: ${el}
+Buatkan saya satu paragraf komentar dalam bahasa Indonesia yang singkat dan positif, cocok untuk laporan mingguan. Komentar harus sesuai dengan tahapan perkembangan sosial emosional anak usia yang sesuai, menggambarkan kemampuan anak mengenali dan mengekspresikan emosi, serta bagaimana ia merespons dukungan orang dewasa.
+Gunakan bahasa yang hangat untuk ananda bernama: ${nickName || studentName}`;
+
+    const ai = new GoogleGenAI({
+      apiKey: apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash",
+      contents: prompt,
+    });
+
+    res.json({ text: response.text || "" });
+  } catch (error: any) {
+    console.error("[SelCommentsAI] Error calling Gemini API:", error);
+    res.status(500).json({ error: error.message || "Gagal mengenerate komentar SEL menggunakan AI." });
   }
 });
 
