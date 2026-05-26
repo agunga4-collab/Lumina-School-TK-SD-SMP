@@ -10,20 +10,13 @@ import {
 import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
 import type { KGActivity, KGDomain, KGGrading } from '../../types';
+import { DEFAULT_STUDENTS } from '../../lib/kindergartenWeeklyReport';
 
 interface StudentObservation {
   grading: KGGrading | null;
   notes: string;
   photo: string | null;
 }
-
-const DEFAULT_STUDENTS = [
-  { id: 'K001', name: 'Zianka Azura' },
-  { id: 'K002', name: 'Khalif Ahsan' },
-  { id: 'K003', name: 'Safiyya Azzahra' },
-  { id: 'K004', name: 'Rendra Putra' },
-  { id: 'K005', name: 'Mikayla Adnan' },
-];
 
 const activities: { id: KGActivity; label: string; icon: React.ReactNode; color: string }[] = [
   { id: 'MAKE_BELIEVE', label: 'Make-Believe', icon: <Compass />, color: 'teal' },
@@ -54,21 +47,6 @@ const grades: { id: KGGrading; label: string; color: string; desc: string }[] = 
   { id: 'BSB', label: 'Berkembang Sangat Baik', color: 'bg-teal-100 text-teal-800 border-teal-200', desc: 'Anak mandiri dan mampu membantu teman' },
   { id: 'ABSENT', label: 'Tidak Masuk', color: 'bg-gray-100 text-gray-500 border-gray-200', desc: 'Siswa tidak datang ke sekolah' },
   { id: 'NOT_PARTICIPATING', label: 'Tidak Mengikuti', color: 'bg-gray-100 text-gray-500 border-gray-200', desc: 'Ada di sekolah tapi tidak mengikuti sesi' },
-];
-
-const GENERAL_PHOTO_TEMPLATES = [
-  "https://images.unsplash.com/photo-1540317580114-ed6853f54743?auto=format&fit=crop&q=80&w=600", // kids hands
-  "https://images.unsplash.com/photo-1502082553048-f009c37129b9?auto=format&fit=crop&q=80&w=600", // classroom blocks
-  "https://images.unsplash.com/photo-1576086213369-97a306d36557?auto=format&fit=crop&q=80&w=600", // learning science
-  "https://images.unsplash.com/photo-1516627145497-ae6968895b74?auto=format&fit=crop&q=80&w=600", // toddler painting
-];
-
-const STUDENT_PHOTO_TEMPLATES = [
-  "https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?auto=format&fit=crop&q=80&w=300", // girl studying
-  "https://images.unsplash.com/photo-1562157873-818bc0726f68?auto=format&fit=crop&q=80&w=300", // drawing boy
-  "https://images.unsplash.com/photo-1596461404969-9ae70f2830c1?auto=format&fit=crop&q=80&w=300", // clay kid
-  "https://images.unsplash.com/photo-1489710437720-ebb67ec84dd2?auto=format&fit=crop&q=80&w=300", // happy girl smiling
-  "https://images.unsplash.com/photo-1510154221590-ff63e90a136f?auto=format&fit=crop&q=80&w=300"  // play kid
 ];
 
 export default function Observation() {
@@ -137,27 +115,42 @@ export default function Observation() {
     });
   };
 
-  // Simulated uploader for general activity photo
-  const handleGeneralPhotoSimulate = () => {
-    setIsUploadingGeneral(true);
-    setTimeout(() => {
-      // Pick random general photo template
-      const randomIdx = Math.floor(Math.random() * GENERAL_PHOTO_TEMPLATES.length);
-      setGeneralPhoto(GENERAL_PHOTO_TEMPLATES[randomIdx]);
-      setIsUploadingGeneral(false);
-      toast.success('Foto General berhasil diunggah! ✨');
-    }, 1000);
+  // Real uploader for general activity photo
+  const handleGeneralPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setIsUploadingGeneral(true);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setGeneralPhoto(reader.result as string);
+        setIsUploadingGeneral(false);
+        toast.success('Foto Kegiatan Utama berhasil diunggah! ✨');
+      };
+      reader.onerror = () => {
+        setIsUploadingGeneral(false);
+        toast.error('Gagal membaca fail foto.');
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
-  // Simulated uploader for specific student photo
-  const handleStudentPhotoSimulate = (studentId: string) => {
-    setUploadProgress(prev => ({ ...prev, [studentId]: true }));
-    setTimeout(() => {
-      const randomIdx = Math.floor(Math.random() * STUDENT_PHOTO_TEMPLATES.length);
-      updateStudentField(studentId, 'photo', STUDENT_PHOTO_TEMPLATES[randomIdx]);
-      setUploadProgress(prev => ({ ...prev, [studentId]: false }));
-      toast.success('Foto khusus siswa berhasil diunggah! 📸');
-    }, 800);
+  // Real uploader for specific student photo
+  const handleStudentPhotoUpload = (studentId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setUploadProgress(prev => ({ ...prev, [studentId]: true }));
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        updateStudentField(studentId, 'photo', reader.result as string);
+        setUploadProgress(prev => ({ ...prev, [studentId]: false }));
+        toast.success('Foto khusus siswa berhasil diunggah! 📸');
+      };
+      reader.onerror = () => {
+        setUploadProgress(prev => ({ ...prev, [studentId]: false }));
+        toast.error('Gagal membaca fail foto.');
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleSaveAll = () => {
@@ -351,15 +344,18 @@ export default function Observation() {
                   <div className="relative aspect-video rounded-2xl overflow-hidden group bg-gray-100 border border-gray-100 shadow-inner">
                     <img src={generalPhoto} alt="General Activity" className="w-full h-full object-cover transition-transform group-hover:scale-105" />
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                      <button 
-                        onClick={handleGeneralPhotoSimulate}
-                        className="p-2.5 bg-white/90 hover:bg-white text-gray-800 rounded-xl font-bold text-xs transition-transform hover:scale-105 flex items-center gap-1.5 shadow-md"
-                      >
+                      <label className="p-2.5 bg-white/90 hover:bg-white text-gray-800 rounded-xl font-bold text-xs transition-transform hover:scale-105 flex items-center gap-1.5 shadow-md cursor-pointer">
                         <RefreshCw size={14} className="text-emerald-600" /> Ganti
-                      </button>
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          onChange={handleGeneralPhotoUpload} 
+                          className="hidden" 
+                        />
+                      </label>
                       <button 
                         onClick={clearGeneralPhoto}
-                        className="p-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-xs transition-transform hover:scale-105 flex items-center gap-1.5 shadow-md"
+                        className="p-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-xs transition-transform hover:scale-105 flex items-center gap-1.5 shadow-md cursor-pointer"
                       >
                         <Trash2 size={14} /> Hapus
                       </button>
@@ -389,21 +385,23 @@ export default function Observation() {
                       Sesi ini tidak dapat disimpan sebelum Foto General diunggah.
                     </p>
                   </div>
-                  <button
-                    onClick={handleGeneralPhotoSimulate}
-                    disabled={isUploadingGeneral}
-                    className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase tracking-widest px-5 py-2.5 rounded-xl shadow-lg shadow-rose-100 transition-all hover:scale-103"
-                  >
+                  <label className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase tracking-widest px-5 py-2.5 rounded-xl shadow-lg shadow-rose-100 transition-all hover:scale-103 cursor-pointer">
                     {isUploadingGeneral ? (
                       <>
-                        <Loader2 className="animate-spin" size={14} /> Unggah Kegiatan...
+                        <Loader2 className="animate-spin" size={14} /> Membaca...
                       </>
                     ) : (
                       <>
                         <Upload size={14} /> Unggah Foto Kegiatan
                       </>
                     )}
-                  </button>
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      onChange={handleGeneralPhotoUpload} 
+                      className="hidden" 
+                    />
+                  </label>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -560,13 +558,10 @@ export default function Observation() {
                       </div>
                     </div>
 
-                    {/* Simulation trigger buttons */}
-                    <button
-                      type="button"
-                      onClick={() => handleStudentPhotoSimulate(student.id)}
-                      disabled={!!uploadProgress[student.id]}
+                    {/* Native student-specific file uploader */}
+                    <label
                       className={cn(
-                        "w-full py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all flex items-center justify-center gap-1.5",
+                        "w-full py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all flex items-center justify-center gap-1.5 cursor-pointer",
                         hasSpecificPhoto 
                           ? "bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700" 
                           : "bg-white hover:bg-gray-50 border-gray-200 text-gray-600"
@@ -574,7 +569,7 @@ export default function Observation() {
                     >
                       {uploadProgress[student.id] ? (
                         <>
-                          <Loader2 className="animate-spin" size={10} /> Unggah...
+                          <Loader2 className="animate-spin" size={10} /> Membaca...
                         </>
                       ) : (
                         <>
@@ -582,7 +577,13 @@ export default function Observation() {
                           {hasSpecificPhoto ? "Ganti Foto Khusus" : "Unggah Foto Khusus"}
                         </>
                       )}
-                    </button>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        onChange={(e) => handleStudentPhotoUpload(student.id, e)} 
+                        className="hidden" 
+                      />
+                    </label>
                     
                     {!hasSpecificPhoto && generalPhoto && (
                       <span className="text-[8px] text-gray-400 leading-none text-center block italic">

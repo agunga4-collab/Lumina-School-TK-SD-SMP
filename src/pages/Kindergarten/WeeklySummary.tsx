@@ -35,7 +35,7 @@ export default function WeeklySummary() {
   });
 
   // Theme of the current period
-  const [globalTheme, setGlobalTheme] = React.useState<string>('Aku dan Lingkunganku');
+  const [globalTheme, setGlobalTheme] = React.useState<string>('');
 
   // Trigger recalculation trigger
   const [reloadCounter, setReloadCounter] = React.useState<number>(0);
@@ -167,10 +167,8 @@ export default function WeeklySummary() {
       toast.success(`Komentar Sosial Emosional untuk ${currentDraft.studentName} berhasil digenerate! ✨`);
     } catch (e: any) {
       console.error(e);
-      // Fallback
-      const sName = currentDraft.studentName;
-      const nick = currentDraft.nickName || sName.split(' ')[0];
-      const fallbackText = `Ananda ${nick} menunjukkan kesiapan bersosialisasi yang penuh antusiasme selama minggu ini. Ia mampu mengekspresikan emosi riangnya secara positif serta siap mematuhi instruksi guru di kelas.`;
+      // Fallback - Neutral Empty State
+      const fallbackText = '';
       
       saveIndividualStudentDraft(studentId, {
         ...currentDraft,
@@ -178,7 +176,7 @@ export default function WeeklySummary() {
         attendanceCommentAiDraft: fallbackText,
         attendanceCommentTeacherEdited: fallbackText
       });
-      toast.warning(`Sistem menggunakan draft optimasi lokal: ${e.message}`);
+      toast.error(`Gagal menghubungkan Guru AI Lumina. Silakan isi draf secara manual.`);
     } finally {
       setGeneratingSelId(null);
     }
@@ -222,15 +220,13 @@ export default function WeeklySummary() {
       toast.success(`Weekly Comments (Observasi) untuk ${currentDraft.studentName} berhasil digenerate! ✨`);
     } catch (e: any) {
       console.error(e);
-      // Fallback
-      const sName = currentDraft.studentName;
-      const nick = currentDraft.nickName || sName.split(' ')[0];
+      // Fallback - Extract actual documented observations from the week, or keep empty (no fake stories)
       const sampleNotes = (currentDraft.groupedObservationSummary || [])
         .map((obs: any) => obs.mergedNotes?.join(' '))
         .filter(Boolean)
         .join('. ');
 
-      const fallbackText = `Minggu ini, ${nick} berpartisipasi proaktif dalam sentra pembelajaran kelompok B1. ${sampleNotes || 'Ananda menunjukkan kemandirian kognitif dan fisik motorik yang berkembang sangat baik sepanjang pekan pengamatan.'}`;
+      const fallbackText = sampleNotes || '';
       
       saveIndividualStudentDraft(studentId, {
         ...currentDraft,
@@ -238,7 +234,7 @@ export default function WeeklySummary() {
         observationCommentAiDraft: fallbackText,
         observationCommentTeacherEdited: fallbackText
       });
-      toast.warning(`Sistem memakai draft cadangan: ${e.message}`);
+      toast.error(`Gagal menghubungkan Guru AI Lumina. Silakan isi draf secara manual.`);
     } finally {
       setGeneratingWeeklyId(null);
     }

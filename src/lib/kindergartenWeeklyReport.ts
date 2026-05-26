@@ -273,7 +273,7 @@ export function aggregateKGWeeklyReport(
     ageGroup: student.ageGroup,
     monthLabel,
     weekLabel,
-    theme: 'Aku dan Lingkunganku', // Default/Theme placeholder
+    theme: '', // Empty theme default
     dateRangeLabel,
     weeklyObservationItems,
     groupedObservationSummary,
@@ -497,7 +497,7 @@ export function aggregateKGWeeklyReportForPeriod(
     classGroup: 'B1',
     ageGroup: student.ageGroup,
     monthLabel,
-    theme: 'Aku dan Lingkunganku',
+    theme: '',
     dateRangeLabel,
     weeklyObservationItems,
     groupedObservationSummary,

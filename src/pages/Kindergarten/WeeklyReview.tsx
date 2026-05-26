@@ -34,6 +34,13 @@ export default function WeeklyReview() {
 
   const [loadedDraft, setLoadedDraft] = React.useState<any | null>(null);
 
+  const [teacherName, setTeacherName] = React.useState<string>(() => {
+    return localStorage.getItem('kg_teacher_name') || '';
+  });
+  const [teacherNip, setTeacherNip] = React.useState<string>(() => {
+    return localStorage.getItem('kg_teacher_nip') || '';
+  });
+
   // Sync date ranges to sessionStorage when changed
   React.useEffect(() => {
     sessionStorage.setItem('kindy_report_start', startDateStr);
@@ -115,7 +122,7 @@ export default function WeeklyReview() {
   const hasDraft = !!loadedDraft;
   const finalWeeklyComments = loadedDraft?.teacherEditedWeeklyComments || loadedDraft?.aiWeeklyCommentsDraft || '';
   const finalSocialEmotional = loadedDraft?.teacherEditedSocialEmotional || loadedDraft?.aiSocialEmotionalDraft || '';
-  const finalTheme = loadedDraft?.theme || 'Aku dan Lingkunganku';
+  const finalTheme = (loadedDraft?.theme && loadedDraft.theme.trim() !== '') ? loadedDraft.theme : 'Tema Belum Ditentukan';
   const finalSnapshots = loadedDraft?.dailySnapshots || [];
   const finalAttendance = loadedDraft?.attendanceSummary || { happy: 0, sad: 0, angry: 0, ok: 0, noNews: 0, sick: 0, izin: 0, earlyLeave: 0 };
   const finalObsSummary = loadedDraft?.groupedObservationSummary || [];
@@ -396,7 +403,9 @@ export default function WeeklyReview() {
                 <div className="grid grid-cols-12 leading-none">
                   <span className="col-span-4 font-bold text-emerald-100">Class</span>
                   <span className="col-span-1 text-emerald-100/70 text-center">:</span>
-                  <span className="col-span-7 font-bold text-white">{loadedDraft.classGroup || loadedDraft.className || "A3 Kakatua"}</span>
+                  <span className="col-span-7 font-bold text-white">
+                    {loadedDraft?.classGroup || loadedDraft?.className || (DEFAULT_STUDENTS.find(s => s.id === selectedStudentId)?.ageGroup === 'TK_B' ? 'TK-B Butterfly' : 'TK-A Caterpillar')}
+                  </span>
                 </div>
                 <div className="grid grid-cols-12 leading-none">
                   <span className="col-span-4 font-bold text-emerald-100">Theme</span>
@@ -445,18 +454,21 @@ export default function WeeklyReview() {
             {renderSnapshotCard('WEDNESDAY', getSnapForDay('WEDNESDAY'))}
           </div>
 
+          {/* SECTION II.B: SNAPSHOTS GRID ROUND 2 (Thursday, Friday - Centered & exactly same size as Row 1) */}
+          <div className="flex flex-col sm:flex-row justify-center gap-3">
+            <div className="w-full sm:w-[calc((100%-24px)/3)]">
+              {renderSnapshotCard('THURSDAY', getSnapForDay('THURSDAY'))}
+            </div>
+            <div className="w-full sm:w-[calc((100%-24px)/3)]">
+              {renderSnapshotCard('FRIDAY', getSnapForDay('FRIDAY'))}
+            </div>
+          </div>
+
           {/* SECTION III & IV: COHESIVE LOWER GRID (UNEVEN 3:2 COLUMNS FOR 1.5X PROPORTION) */}
           <div className="grid grid-cols-5 gap-3 items-stretch">
             
-            {/* Column A (Left): Thursday Snapshot & Social Emotional progress (col-span-3) */}
-            <div className="col-span-3 flex flex-col gap-3">
-              {/* Snapshot Thursday with EXACT matching size, aligned to right for visual centering */}
-              <div className="w-full flex justify-end">
-                <div className="w-[calc((500%-48px)/9)]">
-                  {renderSnapshotCard('THURSDAY', getSnapForDay('THURSDAY'))}
-                </div>
-              </div>
-              
+            {/* Column A (Left): Social Emotional progress (col-span-3) */}
+            <div className="col-span-3 flex flex-col">
               {/* SOCIAL-EMOTIONAL LEARNING DEVELOPMENT */}
               <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col flex-1 min-h-[140px] md:min-h-[150px]">
                 <div className="bg-[#109E58] text-white text-center py-1.5 font-extrabold text-[11px] tracking-wider uppercase">
@@ -472,34 +484,49 @@ export default function WeeklyReview() {
               </div>
             </div>
 
-            {/* Column B (Right): Friday Snapshot & Teacher Signature area (col-span-2) */}
-            <div className="col-span-2 flex flex-col gap-3">
-              {/* Snapshot Friday with EXACT matching size, aligned to left for visual centering */}
-              <div className="w-full flex justify-start">
-                <div className="w-[calc((500%-12px)/6)]">
-                  {renderSnapshotCard('FRIDAY', getSnapForDay('FRIDAY'))}
-                </div>
-              </div>
-
+            {/* Column B (Right): Teacher Signature area (col-span-2) */}
+            <div className="col-span-2 flex flex-col">
               {/* Signature block with date */}
               <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col flex-1 min-h-[140px] md:min-h-[150px]">
                 <div className="bg-[#109E58] text-white text-center py-1.5 font-extrabold text-[11px] tracking-wider uppercase">
                   {formattedSignDate}
                 </div>
                 <div className="p-3 bg-white flex-1 flex flex-col items-center justify-center min-h-[100px] py-1.5">
-                  <svg className="w-20 h-10 text-indigo-950 my-0.5" viewBox="0 0 120 60" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M15 42 Q 35 20, 45 45 T 75 18 T 105 32" />
-                    <path d="M25 38 C 20 22, 50 12, 42 42" />
-                    <path d="M48 35 L 72 35" />
-                    <path d="M68 25 C 75 15, 82 45, 78 40" />
-                  </svg>
-                  <div className="text-center font-sans mt-1">
-                    <div className="font-extrabold text-[12px] text-gray-900 border-b border-gray-300 w-32 pb-0.5 mx-auto uppercase">
-                      Toharoh
-                    </div>
-                    <div className="text-[10px] text-gray-500 font-bold mt-1 uppercase">
-                      11.00.003
-                    </div>
+                  <div className="h-10 flex items-center justify-center">
+                    {teacherName ? (
+                      <svg className="w-16 h-8 text-emerald-800/60 opacity-80" viewBox="0 0 120 60" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M15 42 Q 35 20, 45 45 T 75 18 T 105 32" />
+                        <path d="M25 38 C 20 22, 50 12, 42 42" />
+                        <path d="M48 35 L 72 35" />
+                        <path d="M68 25 C 75 15, 82 45, 78 40" />
+                      </svg>
+                    ) : (
+                      <span className="text-[10px] text-gray-300 italic font-bold select-none py-2 block print:hidden">Tanda Tangan Guru</span>
+                    )}
+                  </div>
+                  <div className="text-center font-sans mt-2 flex flex-col items-center gap-1 w-full">
+                    <input 
+                      type="text"
+                      value={teacherName}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setTeacherName(val);
+                        localStorage.setItem('kg_teacher_name', val);
+                      }}
+                      placeholder="NAMA GURU"
+                      className="text-center font-extrabold text-[11px] text-gray-900 border-b border-dotted border-gray-300 w-36 pb-0.5 mx-auto uppercase focus:border-solid focus:border-emerald-500 outline-none print:border-none print:p-0 print:m-0"
+                    />
+                    <input 
+                      type="text"
+                      value={teacherNip}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setTeacherNip(val);
+                        localStorage.setItem('kg_teacher_nip', val);
+                      }}
+                      placeholder="NIP / No Registrasi"
+                      className="text-center text-[9px] text-gray-500 font-bold uppercase w-36 outline-none border-b border-dotted border-gray-200 focus:border-solid focus:border-emerald-500 print:border-none print:p-0 print:m-0"
+                    />
                   </div>
                 </div>
               </div>

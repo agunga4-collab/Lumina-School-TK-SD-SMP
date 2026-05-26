@@ -4,10 +4,16 @@ import {
   Sparkles, Heart, Star, Camera, Calendar, 
   MessageCircleHeart, LayoutGrid, CheckCircle2, 
   ChevronRight, Smile, Meh, Frown, Angry, 
-  Activity, BookOpen, Coffee, Home, Loader2, Send, Edit3
+  Activity, BookOpen, Coffee, Home, Loader2, Send, Edit3, ChevronLeft
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { KGEmotionStatus } from '../../types';
+import { 
+  DEFAULT_STUDENTS, 
+  getMonday, 
+  formatDateToKey 
+} from '../../lib/kindergartenWeeklyReport';
+import { getSummaryKey } from './WeeklySummary';
 
 interface AiRecommendation {
   domain: string;
@@ -17,16 +23,45 @@ interface AiRecommendation {
 import { GoogleGenAI, Type } from '@google/genai';
 
 export default function ParentView() {
+  const [selectedStudentId, setSelectedStudentId] = React.useState<string>('K001');
+
+  // Load start and end date from sessionStorage or use current week's Mon-Fri
+  const [startDateStr, setStartDateStr] = React.useState<string>(() => {
+    const fromSession = sessionStorage.getItem('kindy_report_start');
+    if (fromSession) return fromSession;
+    const mon = getMonday(new Date());
+    return formatDateToKey(mon);
+  });
+  const [endDateStr, setEndDateStr] = React.useState<string>(() => {
+    const fromSession = sessionStorage.getItem('kindy_report_end');
+    if (fromSession) return fromSession;
+    const mon = getMonday(new Date());
+    const fri = new Date(mon);
+    fri.setDate(mon.getDate() + 4);
+    return formatDateToKey(fri);
+  });
+
   const [isAiLoading, setIsAiLoading] = React.useState(false);
   const [aiSummary, setAiSummary] = React.useState<string>("");
   const [aiRecs, setAiRecs] = React.useState<AiRecommendation[]>([]);
   const [isEditingAi, setIsEditingAi] = React.useState(false);
   const [showAiLabel, setShowAiLabel] = React.useState(false);
 
-  // Dynamic fetch of weekly review (SEL & General Comment) for K001
+  const currentStudent = React.useMemo(() => {
+    return DEFAULT_STUDENTS.find(s => s.id === selectedStudentId) || DEFAULT_STUDENTS[0];
+  }, [selectedStudentId]);
+
+  // Sync date ranges in sessionStorage
+  React.useEffect(() => {
+    sessionStorage.setItem('kindy_report_start', startDateStr);
+    sessionStorage.setItem('kindy_report_end', endDateStr);
+  }, [startDateStr, endDateStr]);
+
+  // Dynamic fetch of weekly review (SEL & General Comment) from the actual teacher's review store
   const savedReview = React.useMemo(() => {
     try {
-      const saved = localStorage.getItem('kg_weekly_review_K001');
+      const summaryKey = getSummaryKey(selectedStudentId, startDateStr, endDateStr);
+      const saved = localStorage.getItem(summaryKey);
       if (saved) {
         return JSON.parse(saved);
       }
@@ -34,12 +69,13 @@ export default function ParentView() {
       console.error(e);
     }
     return null;
-  }, []);
+  }, [selectedStudentId, startDateStr, endDateStr]);
 
-  const displaySelNotes = savedReview?.selNotes || "";
-  const displayGeneralComment = savedReview?.generalComment || "";
+  const displaySelNotes = savedReview?.teacherEditedSocialEmotional || savedReview?.attendanceCommentTeacherEdited || savedReview?.attendanceCommentAiDraft || "";
+  const displayGeneralComment = savedReview?.teacherEditedWeeklyComments || savedReview?.observationCommentTeacherEdited || savedReview?.observationCommentAiDraft || "";
+  const displayTheme = savedReview?.theme || "";
 
-  // Dynamic fetch of attendance & emotion stats from kg_checklist_records
+  // Dynamic fetch of attendance & emotion stats from kg_checklist_records matching our dates & studentId
   const checklistStats = React.useMemo(() => {
     const saved = localStorage.getItem('kg_checklist_records');
     let totalDays = 0;
@@ -52,16 +88,29 @@ export default function ParentView() {
     if (saved) {
       try {
         const records = JSON.parse(saved);
-        Object.values(records).forEach((dayData: any) => {
-          const ziankaStatus = dayData?.['K001'];
-          if (ziankaStatus) {
+        
+        // Generate list of date strings in current period
+        const start = new Date(startDateStr);
+        const end = new Date(endDateStr);
+        const temp = new Date(start);
+        const datesInPeriod: string[] = [];
+        
+        while (temp <= end) {
+          datesInPeriod.push(formatDateToKey(temp));
+          temp.setDate(temp.getDate() + 1);
+        }
+
+        datesInPeriod.forEach(dateKey => {
+          const dayData = records[dateKey];
+          const studentStatus = dayData?.[selectedStudentId];
+          if (studentStatus) {
             totalDays++;
-            if (ziankaStatus.attendance === 'PRESENT') {
+            if (studentStatus.attendance === 'PRESENT') {
               presentDays++;
-              if (ziankaStatus.emotion === 'HAPPY') happy++;
-              else if (ziankaStatus.emotion === 'OK') ok++;
-              else if (ziankaStatus.emotion === 'SAD') sad++;
-              else if (ziankaStatus.emotion === 'ANGRY') angry++;
+              if (studentStatus.emotion === 'HAPPY') happy++;
+              else if (studentStatus.emotion === 'OK') ok++;
+              else if (studentStatus.emotion === 'SAD') sad++;
+              else if (studentStatus.emotion === 'ANGRY') angry++;
             }
           }
         });
@@ -82,9 +131,9 @@ export default function ParentView() {
       angry,
       hasData: totalDays > 0
     };
-  }, []);
+  }, [selectedStudentId, startDateStr, endDateStr]);
 
-  // Dynamic fetch of uploaded photos for K001 from all sessions
+  // Dynamic fetch of uploaded photos for selectedStudentId within our active period dates
   const activityPhotos = React.useMemo(() => {
     const photos: { url: string; caption: string }[] = [];
     
@@ -111,25 +160,33 @@ export default function ParentView() {
       'SENI': 'Seni',
     };
 
+    const start = new Date(startDateStr);
+    const end = new Date(endDateStr);
+    const startTs = start.setHours(0,0,0,0);
+    const endTs = end.setHours(23,59,59,999);
+
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (key && key.startsWith('kg_obs_hist_')) {
         try {
           const data = JSON.parse(localStorage.getItem(key) || '{}');
-          const studentPhoto = data?.observations?.['K001']?.photo;
-          const fallbackPhoto = data?.generalPhoto;
-          const finalPhoto = studentPhoto || fallbackPhoto;
-          
-          if (finalPhoto) {
-            const sentraId = data.selectedActivity;
-            const domainId = data.selectedDomain;
-            const sentraName = sentraLabels[sentraId] || sentraId || "Aktivitas";
-            const domainName = domainLabels[domainId] || domainId || "Sentra";
+          const obsTimestamp = data.timestamp || Date.now();
+          if (obsTimestamp >= startTs && obsTimestamp <= endTs) {
+            const studentPhoto = data?.observations?.[selectedStudentId]?.photo;
+            const fallbackPhoto = data?.generalPhoto;
+            const finalPhoto = studentPhoto || fallbackPhoto;
             
-            photos.push({
-              url: finalPhoto,
-              caption: `${sentraName} - ${domainName}`
-            });
+            if (finalPhoto) {
+              const sentraId = data.selectedActivity;
+              const domainId = data.selectedDomain;
+              const sentraName = sentraLabels[sentraId] || sentraId || "Aktivitas";
+              const domainName = domainLabels[domainId] || domainId || "Sentra";
+              
+              photos.push({
+                url: finalPhoto,
+                caption: `${sentraName} - ${domainName}`
+              });
+            }
           }
         } catch (e) {
           console.error(e);
@@ -138,7 +195,33 @@ export default function ParentView() {
     }
     
     return photos;
-  }, []);
+  }, [selectedStudentId, startDateStr, endDateStr]);
+
+  const handlePrevWeek = () => {
+    try {
+      const s = new Date(startDateStr);
+      const e = new Date(endDateStr);
+      s.setDate(s.getDate() - 7);
+      e.setDate(e.getDate() - 7);
+      setStartDateStr(formatDateToKey(s));
+      setEndDateStr(formatDateToKey(e));
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleNextWeek = () => {
+    try {
+      const s = new Date(startDateStr);
+      const e = new Date(endDateStr);
+      s.setDate(s.getDate() + 7);
+      e.setDate(e.getDate() + 7);
+      setStartDateStr(formatDateToKey(s));
+      setEndDateStr(formatDateToKey(e));
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const handleGenerateAiSummary = async () => {
     setIsAiLoading(true);
@@ -150,7 +233,7 @@ export default function ParentView() {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: "Tulis ringkasan perkembangan untuk orang tua anak TK bernama Zianka. Sertakan 3 rekomendasi aktivitas di rumah. Kembalikan dalam JSON format dengan field 'summary' (string) dan 'recommendations' (array of {domain, activities}).",
+        contents: `Tulis ringkasan perkembangan untuk orang tua anak TK bernama ${currentStudent.name}. Sertakan 3 rekomendasi aktivitas di rumah. Kembalikan dalam JSON format dengan field 'summary' (string) dan 'recommendations' (array of {domain, activities}).`,
         config: {
           responseMimeType: "application/json",
           responseSchema: {
@@ -189,26 +272,100 @@ export default function ParentView() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-10 pb-20">
+      
+      {/* Dynamic Controls Header: Student Picker & Date filter */}
+      <div className="bg-white p-6 rounded-[2rem] border border-gray-150 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div className="space-y-1">
+            <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest block">Dashboard Orang Tua</span>
+            <h2 className="text-xl font-black text-gray-900 tracking-tight">Pilih Siswa & Rentang Tanggal</h2>
+          </div>
+          
+          <div className="flex items-center gap-2 bg-gray-50 border border-gray-150 rounded-xl p-1">
+            <button
+              onClick={handlePrevWeek}
+              className="p-1 px-2 hover:bg-white rounded-lg text-emerald-800 transition-all cursor-pointer"
+              title="7 Hari Sebelumnya"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <div className="text-[10px] font-black text-gray-600 uppercase">
+              Pekan Evaluasi
+            </div>
+            <button
+              onClick={handleNextWeek}
+              className="p-1 px-2 hover:bg-white rounded-lg text-emerald-800 transition-all cursor-pointer"
+              title="7 Hari Selanjutnya"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block">Pilih Nama Anak Hebat</label>
+            <div className="flex flex-wrap gap-1.5">
+              {DEFAULT_STUDENTS.map(s => {
+                const isSelected = s.id === selectedStudentId;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setSelectedStudentId(s.id)}
+                    className={cn(
+                      "px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer",
+                      isSelected 
+                        ? "bg-[#109E58] text-white border-transparent shadow shadow-emerald-600/20"
+                        : "bg-gray-50 text-gray-600 border-gray-100 hover:bg-gray-100"
+                    )}
+                  >
+                    {s.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block">Rencana Tanggal Pengamatan</label>
+            <div className="grid grid-cols-2 gap-2">
+              <input 
+                type="date"
+                value={startDateStr}
+                onChange={(e) => setStartDateStr(e.target.value)}
+                className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none text-gray-700"
+              />
+              <input 
+                type="date"
+                value={endDateStr}
+                onChange={(e) => setEndDateStr(e.target.value)}
+                className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none text-gray-700"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
       <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 bg-white p-8 rounded-[2.5rem] border border-emerald-50 shadow-sm relative overflow-hidden">
         <div className="absolute top-0 right-0 p-8 opacity-5">
            <Heart size={100} className="text-emerald-500" />
         </div>
         <div className="flex gap-6 items-center relative z-10">
-           <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-emerald-600 to-teal-500 flex items-center justify-center text-white text-3xl font-black shadow-xl shadow-emerald-100 border-4 border-white">
-              Z
+           <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-emerald-600 to-teal-500 flex items-center justify-center text-white text-3xl font-black shadow-xl shadow-emerald-100 border-4 border-white uppercase">
+              {currentStudent?.nickName?.[0] || 'S'}
            </div>
            <div>
-              <h1 className="text-2xl font-black text-gray-900 tracking-tight leading-none italic">Zianka Azura</h1>
-              <p className="text-gray-500 font-bold mt-2 flex items-center gap-2">
+              <h1 className="text-2xl font-black text-gray-900 tracking-tight leading-none italic uppercase">{currentStudent?.name}</h1>
+              <p className="text-gray-500 font-bold mt-2 flex items-center gap-2 text-xs">
                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                 Lumina Kindergarten • Kelompok B1
+                 Lumina Kindergarten • Kelompok {currentStudent?.ageGroup === 'TK_B' ? 'TK-B Butterfly' : 'TK-A Caterpillar'} ({currentStudent?.id})
               </p>
            </div>
         </div>
         <button 
           onClick={handleGenerateAiSummary}
           disabled={isAiLoading}
-          className="bg-gradient-to-br from-emerald-600 to-teal-600 text-white font-black text-xs uppercase tracking-widest px-8 py-4 rounded-3xl shadow-xl shadow-emerald-100 hover:scale-105 transition-all active:scale-95 disabled:opacity-50 flex items-center gap-3 relative z-10"
+          className="bg-gradient-to-br from-emerald-600 to-teal-600 text-white font-black text-xs uppercase tracking-widest px-8 py-4 rounded-3xl shadow-xl shadow-emerald-100 hover:scale-105 transition-all active:scale-95 disabled:opacity-50 flex items-center gap-3 relative z-10 cursor-pointer"
         >
           {isAiLoading ? <Loader2 className="animate-spin" size={20} /> : <Sparkles size={20} />}
           Buat Ringkasan Progress (AI)
