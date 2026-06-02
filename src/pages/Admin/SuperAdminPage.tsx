@@ -31,8 +31,10 @@ import {
   EyeOff,
   Image as ImageIcon,
   Upload,
+  Play,
+  Terminal,
 } from "lucide-react";
-import { getDoc, setDoc } from "firebase/firestore";
+import { getDoc, setDoc, collection, getDocs, updateDoc, deleteDoc, query, where } from "firebase/firestore";
 import {
   getAllInvites,
   getPendingUsers,
@@ -48,7 +50,7 @@ import {
   db,
 } from "../../lib/firebase";
 import { auth, writeBatch, doc } from "../../lib/firebase";
-import { User, RoleInvite, UserRole, UnitType, Class } from "../../types";
+import { User, RoleInvite, UserRole, UnitType, Class, PromptTemplate } from "../../types";
 import { cn } from "../../lib/utils";
 
 function SortIcon({ column, currentConfig }: { column: string; currentConfig: { key: string; direction: "asc" | "desc" } }) {
@@ -61,7 +63,7 @@ export default function SuperAdminPage() {
     "ALL",
   );
   const [activeTab, setActiveTab] = React.useState<
-    "STAFF" | "STUDENT" | "PARENT" | "CLASSES" | "LOGO"
+    "STAFF" | "STUDENT" | "PARENT" | "CLASSES" | "LOGO" | "PROMPTS" | "KNOWLEDGE_BASE"
   >("STAFF");
   const [logos, setLogos] = React.useState<{
     KINDERGARTEN: { rectangular: string; square: string };
@@ -207,6 +209,259 @@ export default function SuperAdminPage() {
   } | null>(null);
   const [resetLoading, setResetLoading] = React.useState(false);
 
+  // States for Prompt templates
+  const [promptTemplates, setPromptTemplates] = React.useState<PromptTemplate[]>([]);
+  const [isPromptModalOpen, setIsPromptModalOpen] = React.useState(false);
+  const [isTestModalOpen, setIsTestModalOpen] = React.useState(false);
+  const [selectedPrompt, setSelectedPrompt] = React.useState<PromptTemplate | null>(null);
+  const [promptFormData, setPromptFormData] = React.useState<Omit<PromptTemplate, "id" | "createdAt" | "updatedAt">>({
+    key: "",
+    name: "",
+    unit: "KINDERGARTEN",
+    category: "report",
+    prompt: "",
+    variables: [],
+    description: "",
+    isActive: true,
+    updatedBy: "",
+  });
+
+  const [testVariables, setTestVariables] = React.useState<Record<string, string>>({});
+  const [testResult, setTestResult] = React.useState<string>("");
+  const [isTestingPrompt, setIsTestingPrompt] = React.useState(false);
+
+  // States for Knowledge Base
+  const [knowledgeBase, setKnowledgeBase] = React.useState<any[]>([]);
+  const [syncKnowledgeLoading, setSyncKnowledgeLoading] = React.useState(false);
+  const [syncResult, setSyncResult] = React.useState<any | null>(null);
+  const [folderIdText, setFolderIdText] = React.useState("1if5MJST18x6zHOXJTi7W82BAqkwEbBBd");
+
+  const handleSyncKnowledge = async () => {
+    try {
+      setSyncKnowledgeLoading(true);
+      setSyncResult(null);
+      const user = auth.currentUser;
+      if (!user) {
+        alert("Sesi Anda habis. Harap login ulang.");
+        return;
+      }
+      const token = await user.getIdToken();
+      
+      const response = await axios.post("/api/sync-knowledge", {
+        folderId: folderIdText.trim()
+      }, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      
+      if (response.data) {
+        const { total, synced, errors } = response.data;
+        setSyncResult({ total, synced, errors });
+        alert(`Selesai! Berhasil sinkronisasi ${synced} dari ${total} file Google Docs.`);
+        // Reload knowledge items
+        const kbSnap = await getDocs(collection(db, "knowledgeBase"));
+        setKnowledgeBase(kbSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
+      }
+    } catch (err: any) {
+      console.error("Knowledge base sync fail:", err);
+      alert("Gagal sinkronisasi data: " + (err.response?.data?.error || err.message));
+    } finally {
+      setSyncKnowledgeLoading(false);
+    }
+  };
+
+  const handleDeleteKnowledgeDoc = async (docId: string) => {
+    if (!window.confirm("Apakah Anda yakin ingin menghapus dokumen ini dari Knowledge Base?")) {
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, "knowledgeBase", docId));
+      alert("Dokumen berhasil dihapus dari Knowledge Base!");
+      setKnowledgeBase(knowledgeBase.filter(d => d.id !== docId));
+    } catch (err: any) {
+      console.error("Delete knowledge doc fail:", err);
+      alert("Gagal menghapus dokumen: " + err.message);
+    }
+  };
+
+  const detectVariables = (text: string): string[] => {
+    const matches = text.match(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g);
+    if (!matches) return [];
+    return Array.from(new Set(matches.map(m => m.replace(/\{\{\s*|\s*\}\}/g, ""))));
+  };
+
+  const handleOpenPromptModal = (prompt: PromptTemplate | null = null) => {
+    if (prompt) {
+      setSelectedPrompt(prompt);
+      setPromptFormData({
+        key: prompt.key,
+        name: prompt.name,
+        unit: prompt.unit,
+        category: prompt.category,
+        prompt: prompt.prompt,
+        variables: prompt.variables || [],
+        description: prompt.description || "",
+        isActive: prompt.isActive,
+        updatedBy: prompt.updatedBy || "",
+      });
+    } else {
+      setSelectedPrompt(null);
+      setPromptFormData({
+        key: "",
+        name: "",
+        unit: selectedUnit === "ALL" ? "KINDERGARTEN" : selectedUnit,
+        category: "report",
+        prompt: "",
+        variables: [],
+        description: "",
+        isActive: true,
+        updatedBy: "",
+      });
+    }
+    setIsPromptModalOpen(true);
+  };
+
+  const handleSavePrompt = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!promptFormData.key || !promptFormData.name || !promptFormData.prompt) {
+      alert("Harap lengkapi Key, Nama, dan Teks Prompt!");
+      return;
+    }
+
+    const snakeCaseRegex = /^[a-z0-0_]+$/;
+    if (!snakeCaseRegex.test(promptFormData.key)) {
+      // Just double-check if numbers and characters are fine
+    }
+
+    setFormLoading(true);
+    try {
+      const emailAdmin = auth.currentUser?.email || "admin@lumina.id";
+      const variablesList = detectVariables(promptFormData.prompt);
+
+      const promptData = {
+        key: promptFormData.key.trim(),
+        name: promptFormData.name.trim(),
+        unit: promptFormData.unit,
+        category: promptFormData.category,
+        prompt: promptFormData.prompt,
+        variables: variablesList,
+        description: promptFormData.description || "",
+        isActive: promptFormData.isActive,
+        updatedAt: Date.now(),
+        updatedBy: emailAdmin,
+      };
+
+      if (selectedPrompt) {
+        await setDoc(doc(db, "promptTemplates", selectedPrompt.id), {
+          ...promptData,
+          id: selectedPrompt.id,
+          createdAt: selectedPrompt.createdAt || Date.now(),
+        }, { merge: true });
+        alert("Prompt template berhasil diperbaiki! ✨");
+      } else {
+        const qCheck = query(collection(db, "promptTemplates"), where("key", "==", promptFormData.key.trim()));
+        const dupSnap = await getDocs(qCheck);
+        if (!dupSnap.empty) {
+          alert(`Key "${promptFormData.key}" sudah digunakan oleh template lain. Gunakan nama key yang unik!`);
+          setFormLoading(false);
+          return;
+        }
+
+        const docRef = doc(collection(db, "promptTemplates"));
+        await setDoc(docRef, {
+          ...promptData,
+          id: docRef.id,
+          createdAt: Date.now(),
+        });
+        alert("Prompt template baru berhasil ditambahkan! ✨");
+      }
+
+      setIsPromptModalOpen(false);
+      // Fetch latest templates after change
+      const promptsSnap = await getDocs(collection(db, "promptTemplates"));
+      setPromptTemplates(promptsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
+    } catch (err: any) {
+      console.error("Error saving prompt template:", err);
+      alert("Gagal menyimpan prompt template: " + err.message);
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
+  const handleTogglePromptActive = async (prompt: PromptTemplate) => {
+    try {
+      const updatedStatus = !prompt.isActive;
+      await updateDoc(doc(db, "promptTemplates", prompt.id), {
+        isActive: updatedStatus,
+        updatedAt: Date.now(),
+        updatedBy: auth.currentUser?.email || "admin@lumina.id",
+      });
+      setPromptTemplates(prev =>
+        prev.map(p => p.id === prompt.id ? { ...p, isActive: updatedStatus } : p)
+      );
+    } catch (err: any) {
+      console.error("Failed to toggle status:", err);
+      alert("Gagal mengubah status template: " + err.message);
+    }
+  };
+
+  const handleDeletePrompt = async (prompt: PromptTemplate) => {
+    if (!confirm(`Apakah Anda yakin ingin menghapus template prompt "${prompt.name}"?\nSistem AI yang mengandalkan prompt ini mungkin kembali ke default.`)) return;
+
+    try {
+      await deleteDoc(doc(db, "promptTemplates", prompt.id));
+      setPromptTemplates(prev => prev.filter(p => p.id !== prompt.id));
+      alert("Prompt template berhasil dihapus.");
+    } catch (err: any) {
+      console.error("Delete failed:", err);
+      alert("Gagal menghapus template: " + err.message);
+    }
+  };
+
+  const handleOpenTestModal = (prompt: PromptTemplate) => {
+    setSelectedPrompt(prompt);
+    const variables = prompt.variables || detectVariables(prompt.prompt);
+    const initialVars: Record<string, string> = {};
+    variables.forEach(v => {
+      initialVars[v] = "";
+    });
+    setTestVariables(initialVars);
+    setTestResult("");
+    setIsTestModalOpen(true);
+  };
+
+  const handleRunPromptTest = async () => {
+    if (!selectedPrompt) return;
+    setIsTestingPrompt(true);
+    setTestResult("");
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const response = await fetch("/api/test-prompt", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          promptKey: selectedPrompt.key,
+          variables: testVariables,
+        }),
+      });
+
+      const resData = await response.json();
+      if (response.ok) {
+        setTestResult(resData.text || "No text was returned by the AI.");
+      } else {
+        setTestResult(`Error: ${resData.error || "Gagal menguji."}`);
+      }
+    } catch (err: any) {
+      setTestResult(`Connection Error: ${err.message}`);
+    } finally {
+      setIsTestingPrompt(false);
+    }
+  };
+
   // Form state
   const [formLoading, setFormLoading] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
@@ -253,6 +508,22 @@ export default function SuperAdminPage() {
       setPendingUsers(pend || []);
       setClasses(cls || []);
       setTeachers(tchs || []);
+
+      // Fetch AI Prompt Templates
+      try {
+        const promptsSnap = await getDocs(collection(db, "promptTemplates"));
+        setPromptTemplates(promptsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
+      } catch (err) {
+        console.warn("Failed to load prompt templates from Firestore:", err);
+      }
+
+      // Fetch Knowledge Base list
+      try {
+        const kbSnap = await getDocs(collection(db, "knowledgeBase"));
+        setKnowledgeBase(kbSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
+      } catch (err) {
+        console.warn("Failed to load knowledge base from Firestore:", err);
+      }
 
       // Fetch Logos from settings/logos
       try {
@@ -311,7 +582,14 @@ export default function SuperAdminPage() {
       }
 
       if (result.success) {
-        alert("Pembersihan data berhasil! Silakan mulai mengisi data baru.");
+        // Clear kindergarten local data from localStorage which might contain dummy histories
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const key = localStorage.key(i);
+          if (key && (key.startsWith("kg_") || key.startsWith("kindy_") || key.includes("kindergarten"))) {
+            localStorage.removeItem(key);
+          }
+        }
+        alert("Pembersihan data dummy berhasil di semua unit (termasuk TK/Kindy)! Silakan mulai mengisi data baru. ✨");
         fetchData();
       } else {
         throw new Error(result.error);
@@ -752,6 +1030,10 @@ export default function SuperAdminPage() {
     PENDING: pendingUsers.filter(
       (u) => selectedUnit === "ALL" || u.unitId === selectedUnit,
     ).length,
+    PROMPTS: promptTemplates.filter(
+      (p) => selectedUnit === "ALL" || p.unit === "ALL" || p.unit === selectedUnit,
+    ).length,
+    KNOWLEDGE_BASE: knowledgeBase.length,
   };
 
   return (
@@ -1006,6 +1288,8 @@ export default function SuperAdminPage() {
               { id: "PARENT", icon: <Users size={14} />, label: "Ortu" },
               { id: "CLASSES", icon: <BookOpen size={14} />, label: "Kelas" },
               { id: "LOGO", icon: <ImageIcon size={14} />, label: "Logo" },
+              { id: "PROMPTS", icon: <Sparkles size={14} />, label: "Prompts" },
+              { id: "KNOWLEDGE_BASE", icon: <Brain size={14} />, label: "Knowledge" },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -1092,6 +1376,43 @@ export default function SuperAdminPage() {
                   <Plus size={16} />
                   Tambah Kelas
                 </button>
+              )}
+              {activeTab === "PROMPTS" && (
+                <button
+                  onClick={() => handleOpenPromptModal(null)}
+                  className="px-6 py-4 bg-gray-900 text-white rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-blue-600 transition-all shadow-lg font-bold"
+                >
+                  <Plus size={16} />
+                  Tambah Prompt
+                </button>
+              )}
+              {activeTab === "KNOWLEDGE_BASE" && (
+                <div className="flex items-center gap-3">
+                  <input
+                    type="text"
+                    value={folderIdText}
+                    onChange={(e) => setFolderIdText(e.target.value)}
+                    placeholder="Folder Google Drive ID..."
+                    className="px-4 py-3 bg-gray-50 border border-gray-150 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-blue-100 outline-none w-64"
+                  />
+                  <button
+                    onClick={handleSyncKnowledge}
+                    disabled={syncKnowledgeLoading}
+                    className="px-6 py-4 bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-300 text-white rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all shadow-lg font-bold cursor-pointer"
+                  >
+                    {syncKnowledgeLoading ? (
+                      <>
+                        <Loader2 size={16} className="animate-spin" />
+                        Syncing...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw size={16} />
+                        Sync dari Google Drive
+                      </>
+                    )}
+                  </button>
+                </div>
               )}
               <button className="p-4 bg-white border border-gray-100 rounded-2xl text-gray-400 hover:text-blue-600 transition-all shadow-sm">
                 <Filter size={18} />
@@ -1409,6 +1730,152 @@ export default function SuperAdminPage() {
                   )}
                 </tbody>
               </table>
+            ) : activeTab === "PROMPTS" ? (
+              <div className="p-8 space-y-6" id="prompt-templates-manager">
+                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-gray-100 pb-6">
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-950 flex items-center gap-2">
+                      <Sparkles size={18} className="text-blue-600 animate-pulse" />
+                      Manajer Prompt AI (AI Prompt Manager)
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Kelola semua instruksi prompt system AI untuk Lumina secara aman. Ubah variabel, sesuaikan nada model, tanpa perlu deploy ulang platform.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleOpenPromptModal(null)}
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-black px-5 py-3 rounded-2xl shadow-lg shadow-blue-100 transition-all active:scale-95 text-[10px] uppercase tracking-widest shrink-0 font-bold"
+                  >
+                    <Plus size={14} />
+                    Tambah Template Baru
+                  </button>
+                </div>
+
+                {promptTemplates.filter(p => {
+                  const matchesUnit = selectedUnit === "ALL" || p.unit === "ALL" || p.unit === selectedUnit;
+                  const matchesSearch = !searchTerm || 
+                    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    p.key.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    (p.description && p.description.toLowerCase().includes(searchTerm.toLowerCase()));
+                  return matchesUnit && matchesSearch;
+                }).length === 0 ? (
+                  <div className="text-center py-20 bg-gray-50/50 rounded-[2rem] border border-dashed border-gray-100">
+                    <Sparkles className="mx-auto text-gray-300 animate-pulse mb-3" size={32} />
+                    <p className="text-xs font-bold text-gray-550">Belum ada template prompt yang cocok.</p>
+                    <p className="text-[10px] text-gray-400 mt-1 leading-relaxed">
+                      Silakan sesuaikan filter unit di atas atau tambahkan prompt template baru secepatnya.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left min-w-[950px]">
+                      <thead>
+                        <tr className="border-b border-gray-50">
+                          <th className="py-4 pr-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Informasi Prompt</th>
+                          <th className="py-4 px-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Unit & Kategori</th>
+                          <th className="py-4 px-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Variabel</th>
+                          <th className="py-4 pr-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Pembaruan Terakhir</th>
+                          <th className="py-4 px-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Status</th>
+                          <th className="py-4 pl-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {promptTemplates.filter(p => {
+                          const matchesUnit = selectedUnit === "ALL" || p.unit === "ALL" || p.unit === selectedUnit;
+                          const matchesSearch = !searchTerm || 
+                            p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                            p.key.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                            (p.description && p.description.toLowerCase().includes(searchTerm.toLowerCase()));
+                          return matchesUnit && matchesSearch;
+                        }).map((prompt) => (
+                          <tr key={prompt.id} className="hover:bg-gray-50/35 transition-colors group">
+                            <td className="py-5 pr-4">
+                              <div className="space-y-1">
+                                <p className="font-bold text-gray-900 group-hover:text-blue-600 transition-colors text-sm">{prompt.name}</p>
+                                <p className="font-mono text-[9px] text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md w-fit font-bold">{prompt.key}</p>
+                                {prompt.description && (
+                                  <p className="text-xs text-gray-500 leading-relaxed max-w-md">{prompt.description}</p>
+                                )}
+                              </div>
+                            </td>
+                            <td className="py-5 px-4 text-center">
+                              <div className="flex flex-col items-center gap-1.5">
+                                <span className={cn(
+                                  "px-2.5 py-1 rounded-full text-[8px] font-black uppercase tracking-widest border",
+                                  prompt.unit === "ALL" && "bg-orange-50 text-orange-600 border-orange-100",
+                                  prompt.unit === "KINDERGARTEN" && "bg-purple-50 text-purple-600 border-purple-100",
+                                  prompt.unit === "ELEMENTARY" && "bg-teal-50 text-teal-600 border-teal-100",
+                                  prompt.unit === "JUNIOR_HIGH" && "bg-blue-50 text-blue-600 border-blue-100"
+                                )}>
+                                  {prompt.unit}
+                                </span>
+                                <span className="text-[9px] text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border border-gray-100">
+                                  {prompt.category || "General"}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-5 px-4 text-center">
+                              {prompt.variables && prompt.variables.length > 0 ? (
+                                <div className="flex flex-wrap justify-center gap-1 max-w-[150px] mx-auto">
+                                  {prompt.variables.map((v, i) => (
+                                    <span key={i} className="bg-blue-50 text-blue-600 font-mono text-[9px] px-1.5 py-0.5 rounded border border-blue-100/30">
+                                      {v}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-[10px] text-gray-400 italic">No variables</span>
+                              )}
+                            </td>
+                            <td className="py-5 pr-4 text-xs text-gray-550">
+                              <div className="space-y-0.5">
+                                <p className="font-semibold text-gray-700">{prompt.updatedBy || "System Admin"}</p>
+                                <p className="text-[9px] text-gray-400 font-bold whitespace-nowrap">
+                                  {prompt.updatedAt ? new Date(prompt.updatedAt).toLocaleString("id-ID") : "-"}
+                                </p>
+                              </div>
+                            </td>
+                            <td className="py-5 px-4 text-center font-bold">
+                              <button
+                                onClick={() => handleTogglePromptActive(prompt)}
+                                className={cn(
+                                  "w-12 h-6 rounded-full p-1 transition-colors relative inline-flex items-center",
+                                  prompt.isActive ? "bg-emerald-500" : "bg-gray-200"
+                                )}
+                              >
+                                <span className={cn(
+                                  "w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-200",
+                                  prompt.isActive ? "translate-x-6" : "translate-x-0"
+                                )} />
+                              </button>
+                            </td>
+                            <td className="py-5 text-right whitespace-nowrap space-x-1">
+                              <button
+                                onClick={() => handleOpenTestModal(prompt)}
+                                className="px-3 py-1.5 bg-indigo-55 hover:bg-blue-600 text-white bg-blue-500 rounded-xl text-[9px] font-black uppercase tracking-wider transition-colors cursor-pointer"
+                              >
+                                Test
+                              </button>
+                              <button
+                                onClick={() => handleOpenPromptModal(prompt)}
+                                className="px-3 py-1.5 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-xl text-[9px] font-black uppercase tracking-wider transition-colors border border-gray-100"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => handleDeletePrompt(prompt)}
+                                className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl text-[9px] font-black uppercase tracking-wider transition-colors border border-red-100/50"
+                              >
+                                Hapus
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             ) : activeTab === "LOGO" ? (
               <div id="logo-uploader-container" className="p-8 space-y-8 bg-white rounded-[3rem] border border-gray-100">
                 <div id="logo-uploader-header" className="bg-gradient-to-r from-blue-500/15 via-indigo-500/10 to-transparent p-6 rounded-3xl border border-blue-100/50 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
@@ -1592,6 +2059,81 @@ export default function SuperAdminPage() {
                     );
                   })}
                 </div>
+              </div>
+            ) : activeTab === "KNOWLEDGE_BASE" ? (
+              <div className="p-8 space-y-6 bg-white rounded-[3rem] border border-gray-100">
+                <div className="bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-transparent p-6 rounded-3xl border border-emerald-100/50 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+                  <div className="space-y-1.5 flex-1">
+                    <h3 className="font-bold text-gray-950 flex items-center gap-2">
+                      <Sparkles size={16} className="text-emerald-600 animate-pulse" />
+                      Pangkalan Data Pengetahuan AI (Grounded Knowledge Base)
+                    </h3>
+                    <p className="text-xs text-gray-600 leading-relaxed">
+                      Dokumen di bawah ini disinkronisasikan langsung dari folder repositori Google Drive resmi Lazuardi GCS. AI Lumina Chat memanfaatkan konten dokumen ini untuk memberikan jawaban yang kredibel, akurat, dan grounded (sesuai fakta).
+                    </p>
+                  </div>
+                  {syncResult && (
+                    <div className="bg-white/80 px-4 py-2.5 rounded-2xl border border-emerald-100 text-[10px] font-bold text-emerald-800 space-y-0.5">
+                      <p>Total Diperiksa: {syncResult.total}</p>
+                      <p>Berhasil Disinkronkan: {syncResult.synced}</p>
+                      {syncResult.errors && syncResult.errors.length > 0 && (
+                        <p className="text-red-500">Error: {syncResult.errors.length} file</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {knowledgeBase.length === 0 ? (
+                  <div className="text-center py-24 text-gray-400 italic space-y-3">
+                    <Brain size={40} className="mx-auto text-gray-300 animate-pulse" />
+                    <p>Belum ada dokumen di Knowledge Base. Masukkan Google Drive Folder ID dan klik sync di atas.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead className="bg-gray-50/50">
+                        <tr>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">Judul Dokumen</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">Drive File ID</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">Jumlah Kata</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 text-center">Waktu Sinkronisasi</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 text-right">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {knowledgeBase.map((docItem) => (
+                          <tr key={docItem.id} className="hover:bg-gray-50/40 transition-colors">
+                            <td className="px-6 py-4">
+                              <span className="font-bold text-gray-900 text-sm flex items-center gap-2">
+                                <BookOpen size={14} className="text-blue-500" />
+                                {docItem.title || "Tanpa Judul"}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className="font-mono text-xs text-gray-500 bg-gray-50 px-2 py-1 rounded border border-gray-100">
+                                {docItem.driveFileId || docItem.id}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 font-bold text-gray-600 text-sm">
+                              {docItem.wordCount || 0} kata
+                            </td>
+                            <td className="px-6 py-4 text-center text-xs text-gray-500">
+                              {docItem.lastSynced ? new Date(docItem.lastSynced).toLocaleString() : "-"}
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <button
+                                onClick={() => handleDeleteKnowledgeDoc(docItem.id)}
+                                className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-650 rounded-xl text-[10px] font-black uppercase tracking-wider transition-colors border border-red-200"
+                              >
+                                Hapus
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             ) : (
               <table className="w-full text-left min-w-[1200px]">
@@ -2410,6 +2952,341 @@ export default function SuperAdminPage() {
                   <Loader2 size={18} className="animate-spin" />
                 )}
                 Mulai Impor
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Modal Tambah/Edit Prompt Template */}
+      {isPromptModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" id="prompt-form-modal">
+          <div
+            className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm"
+            onClick={() => setIsPromptModalOpen(false)}
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-[90vh]"
+          >
+            <div className="p-8 border-b border-gray-150 flex items-center justify-between">
+              <h2 className="text-xl font-black text-gray-900 tracking-tight italic flex items-center gap-2">
+                <Sparkles className="text-blue-600 animate-pulse" size={20} />
+                {selectedPrompt ? "Edit Template Prompt" : "Tambah Template Prompt Baru"}
+              </h2>
+              <button
+                onClick={() => setIsPromptModalOpen(false)}
+                className="p-2 text-gray-400 hover:text-gray-900 cursor-pointer"
+              >
+                <XCircle size={24} strokeWidth={1.5} />
+              </button>
+            </div>
+
+            <form
+              onSubmit={handleSavePrompt}
+              className="p-8 space-y-5 overflow-y-auto flex-1 text-left"
+            >
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5 col-span-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                    System Key (Code Name / Unique Key)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    disabled={!!selectedPrompt}
+                    placeholder="contoh: kindergarten_weekly_report"
+                    value={promptFormData.key}
+                    onChange={(e) => setPromptFormData({ ...promptFormData, key: e.target.value })}
+                    className="w-full px-5 py-4 bg-gray-50 border border-gray-150 rounded-2xl text-xs font-bold focus:ring-2 focus:ring-blue-100 disabled:opacity-50 disabled:bg-gray-100"
+                  />
+                  {!selectedPrompt && (
+                    <p className="text-[9px] text-gray-400 italic ml-1">
+                      * Gunakan format snake_case (huruf kecil & underscore). Tidak boleh ada spasi atau simbol khusus.
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-1.5 col-span-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                    Display Name (Nama Tampilan)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="contoh: Weekly Report - Kindergarten"
+                    value={promptFormData.name}
+                    onChange={(e) => setPromptFormData({ ...promptFormData, name: e.target.value })}
+                    className="w-full px-5 py-4 bg-gray-50 border border-gray-150 rounded-2xl text-xs font-bold focus:ring-2 focus:ring-blue-100"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                    School Unit (Unit Sekolah)
+                  </label>
+                  <select
+                    value={promptFormData.unit}
+                    onChange={(e) => setPromptFormData({ ...promptFormData, unit: e.target.value as any })}
+                    className="w-full px-5 py-4 bg-gray-50 border border-gray-150 rounded-2xl text-xs font-bold focus:ring-2 focus:ring-blue-100 outline-none"
+                  >
+                    <option value="ALL">ALL (Semua Unit)</option>
+                    <option value="KINDERGARTEN">KINDERGARTEN (TK)</option>
+                    <option value="ELEMENTARY">ELEMENTARY (SD)</option>
+                    <option value="JUNIOR_HIGH">JUNIOR HIGH (SMP)</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                    Category (Kategori)
+                  </label>
+                  <select
+                    value={promptFormData.category}
+                    onChange={(e) => setPromptFormData({ ...promptFormData, category: e.target.value as any })}
+                    className="w-full px-5 py-4 bg-gray-50 border border-gray-150 rounded-2xl text-xs font-bold focus:ring-2 focus:ring-blue-100 outline-none"
+                  >
+                    <option value="report">Report (Rapor & Komentar)</option>
+                    <option value="chat">Chat (Lumina Chat)</option>
+                    <option value="analysis">Analysis (Asesmen & Data)</option>
+                    <option value="notification">Notification (Notifikasi Ortu)</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1.5 col-span-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                    Description (Deskripsi Singkat Kegunaan)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Masukkan kegunaan prompt ini..."
+                    value={promptFormData.description}
+                    onChange={(e) => setPromptFormData({ ...promptFormData, description: e.target.value })}
+                    className="w-full px-5 py-4 bg-gray-50 border border-gray-150 rounded-2xl text-xs font-bold focus:ring-2 focus:ring-blue-100"
+                  />
+                </div>
+
+                <div className="space-y-1.5 col-span-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                      System Prompt (Teks Instruksi AI)
+                    </label>
+                    <span className="text-[9px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded font-black uppercase tracking-wider">
+                      Auto-Detect Variables
+                    </span>
+                  </div>
+                  <textarea
+                    required
+                    rows={8}
+                    placeholder="Tulis instruksi system prompt di sini... Gunakan Double Braces {{variableName}} untuk menandai variabel dinamis. Contoh: 'Sajikan evaluasi mingguan untuk siswa bernama {{studentName}}.'"
+                    value={promptFormData.prompt}
+                    onChange={(e) => setPromptFormData({ ...promptFormData, prompt: e.target.value })}
+                    className="w-full px-5 py-4 bg-gray-50 border border-gray-150 font-mono text-xs rounded-2xl focus:ring-2 focus:ring-blue-100 whitespace-pre-wrap leading-relaxed outline-none"
+                  />
+                </div>
+
+                <div className="col-span-2 bg-blue-50/30 p-4 rounded-2xl border border-blue-100/50 space-y-1">
+                  <p className="text-[10px] font-black text-blue-600 uppercase tracking-wider">
+                    Variabel Terdeteksi Saat Ini:
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {detectVariables(promptFormData.prompt).length > 0 ? (
+                      detectVariables(promptFormData.prompt).map((v) => (
+                        <span key={v} className="bg-blue-100 text-blue-700 font-mono text-[10px] px-2 py-0.5 rounded border border-blue-200">
+                          {`{{${v}}}`}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-[10px] text-gray-400 italic">
+                        Belum ada variabel terdeteksi. Gunakan pola {"{{nama_variabel}}"} pada teks prompt di atas.
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 pt-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                    Status Aktif
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setPromptFormData({ ...promptFormData, isActive: !promptFormData.isActive })}
+                    className={cn(
+                      "w-12 h-6 rounded-full p-1 transition-colors relative inline-flex items-center",
+                      promptFormData.isActive ? "bg-emerald-500" : "bg-gray-200"
+                    )}
+                  >
+                    <span className={cn(
+                      "w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-200",
+                      promptFormData.isActive ? "translate-x-6" : "translate-x-0"
+                    )} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-6 border-t border-gray-50 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsPromptModalOpen(false)}
+                  className="flex-1 py-4 text-xs font-black text-gray-400 uppercase tracking-widest cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={formLoading}
+                  className="flex-1 py-4 bg-[#002366] hover:bg-blue-900 transition-colors text-white rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-100 cursor-pointer"
+                >
+                  {formLoading ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                  Simpan Template
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Modal Test Prompt Template */}
+      {isTestModalOpen && selectedPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" id="test-prompt-modal">
+          <div
+            className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm"
+            onClick={() => setIsTestModalOpen(false)}
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white w-full max-w-4xl rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-[95vh]"
+          >
+            <div className="p-8 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-black text-gray-900 tracking-tight italic flex items-center gap-2">
+                  <Play size={18} className="text-emerald-500" />
+                  KONSOL UJI PROMPT (PROMPT TEST CONSOLE)
+                </h2>
+                <p className="text-[10px] text-gray-400 uppercase tracking-wider font-bold mt-1">
+                  Uji output AI langsung dengan live data menggunakan model <span className="text-emerald-600">Gemini 2.5 Flash</span>
+                </p>
+              </div>
+              <button
+                onClick={() => setIsTestModalOpen(false)}
+                className="p-2 text-gray-400 hover:text-gray-900 cursor-pointer"
+              >
+                <XCircle size={24} strokeWidth={1.5} />
+              </button>
+            </div>
+
+            <div className="p-8 space-y-6 overflow-y-auto flex-1 grid grid-cols-1 md:grid-cols-2 gap-8 text-left">
+              <div className="space-y-5">
+                <div className="p-5 bg-gray-50 rounded-2xl border border-gray-100 space-y-2">
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-200 pb-1">
+                    Informasi Template
+                  </p>
+                  <p className="text-sm font-bold text-gray-800">{selectedPrompt.name}</p>
+                  <p className="font-mono text-[9px] text-gray-500 bg-gray-200/50 px-2 py-0.5 rounded w-fit font-bold">{selectedPrompt.key}</p>
+                </div>
+
+                <div className="space-y-3">
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                    Input Variabel Uji
+                  </p>
+                  
+                  {Object.keys(testVariables).length === 0 ? (
+                    <p className="text-xs text-gray-500 italic p-4 bg-gray-50 rounded-xl">
+                      Template ini tidak memiliki variabel. Anda bisa langsung menjalankan test.
+                    </p>
+                  ) : (
+                    <div className="space-y-4">
+                      {Object.keys(testVariables).map((v) => (
+                        <div key={v} className="space-y-1.5">
+                          <label className="text-[10px] font-mono font-bold text-gray-500 uppercase tracking-wide">
+                            {`{{${v}}}`}
+                          </label>
+                          <textarea
+                            rows={selectedPrompt.key.includes("report") ? 4 : 2}
+                            placeholder={`Masukkan contoh isi nilai untuk variabel ${v}...`}
+                            value={testVariables[v]}
+                            onChange={(e) => setTestVariables({ ...testVariables, [v]: e.target.value })}
+                            className="w-full px-4 py-3 bg-gray-50 border border-gray-150 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-105 outline-none leading-relaxed"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleRunPromptTest}
+                  disabled={isTestingPrompt}
+                  className="w-full py-4 bg-emerald-500 hover:bg-emerald-600 active:scale-95 transition-all text-white rounded-2xl font-black text-[11px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-xl shadow-emerald-100 cursor-pointer"
+                >
+                  {isTestingPrompt ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      Memproses Evaluasi Gemini...
+                    </>
+                  ) : (
+                    <>
+                      <Play size={14} fill="currentColor" />
+                      Jalankan Tes Prompt
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Live result column */}
+              <div className="flex flex-col h-full space-y-3">
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                  Output Hasil Simulasi AI
+                </p>
+                <div className="flex-1 bg-gray-900 text-gray-100 p-6 rounded-[2rem] font-mono text-xs overflow-y-auto min-h-[300px] border border-gray-805 shadow-inner relative whitespace-pre-wrap leading-relaxed select-text">
+                  {isTestingPrompt && (
+                    <div className="absolute inset-0 bg-gray-900/80 backdrop-blur-[1px] flex flex-col items-center justify-center text-center space-y-3">
+                      <Sparkles size={24} className="text-emerald-400 animate-spin" />
+                      <p className="text-[10px] font-black uppercase text-emerald-400 tracking-wider">
+                        Running Generation...
+                      </p>
+                    </div>
+                  )}
+
+                  {testResult ? (
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center text-[10px] text-gray-500 uppercase font-black tracking-widest border-b border-gray-800 pb-2">
+                        <span>Response</span>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(testResult);
+                            alert("Teks simulasi berhasil dicopas! 📋");
+                          }}
+                          className="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded uppercase font-bold text-[8px] cursor-pointer"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                      <p className="text-gray-200 select-text font-sans text-xs leading-relaxed whitespace-pre-wrap">{testResult}</p>
+                    </div>
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center text-center text-gray-500 py-10">
+                      <Terminal size={28} className="mb-2 text-gray-600" />
+                      <p className="text-[10px] font-bold uppercase tracking-wider">Awaiting Execution</p>
+                      <p className="text-[9px] mt-1 text-gray-400 max-w-xs leading-normal">
+                        Nilai variabel di sebelah kiri akan disubstitusikan ke dalam templates, kemudian dikirim langsung ke Gemini. Hasil output akan dicetak di sini.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-8 border-t border-gray-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsTestModalOpen(false)}
+                className="px-8 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors cursor-pointer"
+              >
+                Tutup Konsol
               </button>
             </div>
           </motion.div>

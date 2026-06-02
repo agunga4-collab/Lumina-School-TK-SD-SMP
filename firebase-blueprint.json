@@ -482,6 +482,40 @@
         "schoolUnit": { "type": "string" },
         "isEnabled": { "type": "boolean" }
       }
+    },
+    "PromptTemplate": {
+      "title": "PromptTemplate",
+      "description": "Centralized AI prompt management system.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "key": { "type": "string" },
+        "name": { "type": "string" },
+        "unit": { "type": "string", "enum": ["ALL", "KINDERGARTEN", "ELEMENTARY", "JUNIOR_HIGH"] },
+        "category": { "type": "string", "enum": ["report", "chat", "analysis", "notification"] },
+        "prompt": { "type": "string" },
+        "variables": { "type": "array", "items": { "type": "string" } },
+        "description": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["id", "key", "name", "unit", "category", "prompt", "isActive"]
+    },
+    "KnowledgeBase": {
+      "title": "KnowledgeBase",
+      "description": "Dynamic organization knowledge documents from Google Drive for AI grounding.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "wordCount": { "type": "number" },
+        "lastSynced": { "type": "number" },
+        "driveFileId": { "type": "string" }
+      },
+      "required": ["id", "title", "content", "lastSynced"]
     }
   },
   "firestore": {
@@ -620,6 +654,14 @@
     "juniorhigh_mtss_academic_alerts/{alertId}": {
       "schema": "MTSSAcademicAlert",
       "description": "Compliance and SOP alerts for academic MTSS cases."
+    },
+    "promptTemplates/{promptId}": {
+      "schema": "PromptTemplate",
+      "description": "Centralized AI prompt templates."
+    },
+    "knowledgeBase/{docId}": {
+      "schema": "KnowledgeBase",
+      "description": "Synced documents from Google Drive for AI grounding."
     }
   }
 }

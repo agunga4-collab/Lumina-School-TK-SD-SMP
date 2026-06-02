@@ -1611,3 +1611,18 @@ export type KGWeeklyReportDraft = {
   teacherEditedSocialEmotional?: string;
 };
 
+export interface PromptTemplate {
+  id: string;
+  key: string;
+  name: string;
+  unit: "ALL" | "KINDERGARTEN" | "ELEMENTARY" | "JUNIOR_HIGH";
+  category: "report" | "chat" | "analysis" | "notification";
+  prompt: string;
+  variables: string[];
+  description: string;
+  isActive: boolean;
+  createdAt: number;
+  updatedAt: number;
+  updatedBy: string;
+}
+

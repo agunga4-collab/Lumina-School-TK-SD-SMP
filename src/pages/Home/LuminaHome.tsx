@@ -215,9 +215,64 @@ function Shortcut({ role, unit }: { role: UserRole; unit: UnitType }) {
 }
 
 function StatusCard({ role, unit }: { role: UserRole; unit: UnitType }) {
-  // Clear hardcoded dummy stats
+  const stats = React.useMemo(() => {
+    if (unit !== 'KINDERGARTEN') return null;
+    
+    const savedChecklist = localStorage.getItem('kg_checklist_records');
+    if (!savedChecklist) return null;
+    
+    try {
+      const records = JSON.parse(savedChecklist);
+      let totalSlots = 0;
+      let presentCount = 0;
+      let happyCount = 0;
+      
+      Object.values(records).forEach((studentMap: any) => {
+        Object.values(studentMap).forEach((status: any) => {
+          totalSlots++;
+          if (status.attendance === 'PRESENT') {
+            presentCount++;
+            if (status.emotion === 'HAPPY' || status.emotion === 'OK') {
+              happyCount++;
+            }
+          }
+        });
+      });
+      
+      return {
+        hasData: totalSlots > 0,
+        attendanceRate: totalSlots > 0 ? Math.round((presentCount / totalSlots) * 100) : 0,
+        happyRate: presentCount > 0 ? Math.round((happyCount / presentCount) * 100) : 0,
+        totalEntries: totalSlots
+      };
+    } catch {
+      return null;
+    }
+  }, [unit]);
+
+  if (unit === 'KINDERGARTEN' && stats && stats.hasData) {
+    return (
+      <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-100 p-6 rounded-[2.5rem] space-y-4 w-full">
+         <div className="flex items-center justify-between">
+            <span className="text-[9px] font-black uppercase tracking-widest text-emerald-800 bg-emerald-100/60 px-3 py-1 rounded-full">Statistik Lumina Kindergarten</span>
+            <Sparkles className="text-emerald-500 animate-pulse" size={14} />
+         </div>
+         <div className="grid grid-cols-2 gap-4">
+            <div className="bg-white p-4 rounded-2xl border border-emerald-50 shadow-sm">
+               <span className="text-[8px] font-black uppercase tracking-widest text-gray-400">Rataan Kehadiran</span>
+               <div className="text-xl font-black text-emerald-800">{stats.attendanceRate}%</div>
+            </div>
+            <div className="bg-white p-4 rounded-2xl border border-emerald-50 shadow-sm">
+               <span className="text-[8px] font-black uppercase tracking-widest text-gray-400">Indeks Bahagia</span>
+               <div className="text-xl font-black text-rose-600">{stats.happyRate}%</div>
+            </div>
+         </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col items-center justify-center p-12 bg-gray-50 border border-dashed border-gray-200 rounded-2xl">
+    <div className="flex flex-col items-center justify-center p-12 bg-gray-50 border border-dashed border-gray-200 rounded-2xl w-full">
        <BarChart3 className="text-gray-300 mb-2" size={32} />
        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Belum Ada Data</p>
     </div>

@@ -288,6 +288,16 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow write: if isJuniorHighStaff();
     }
+
+    match /promptTemplates/{promptId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /knowledgeBase/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
   }
 }
 

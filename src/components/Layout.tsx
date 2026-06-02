@@ -13,6 +13,7 @@ import { useAuth } from '../context/AuthContext';
 import { LuminaLogo } from './LuminaLogo';
 import { NotificationBell } from './NotificationBell';
 import { useBehaviorAlerts } from '../hooks/useBehaviorAlerts';
+import LuminaChat from './LuminaChat';
 import { collection, query, where, onSnapshot, doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { toast } from 'sonner';
@@ -235,6 +236,9 @@ export function Layout() {
                   );
               })}
            </div>
+
+           {/* Lumina Grounded AI Chat Assistant */}
+           <LuminaChat userId={currentUser.uid} />
 
            <div className="text-center">
               <button 

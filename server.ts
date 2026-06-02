@@ -1566,6 +1566,193 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
   }
 });
 
+// Helper: Replace prompt variables
+function replacePromptVariables(promptText: string, variables: Record<string, string> = {}) {
+  let result = promptText;
+  for (const [key, value] of Object.entries(variables)) {
+    const regex1 = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'g');
+    const regex2 = new RegExp(`\\{\\s*${key}\\s*\\}`, 'g');
+    result = result.replace(regex1, value).replace(regex2, value);
+  }
+  return result;
+}
+
+// Helper: Get AI Prompt template dynamically
+export async function getPrompt(key: string, variables?: Record<string, string>): Promise<string> {
+  try {
+    const db = getAdminDb();
+    if (!db) {
+      return `[Prompt belum diisi. Silakan edit melalui Prompt Manager.]`;
+    }
+
+    const snap = await db.collection("promptTemplates")
+      .where("key", "==", key)
+      .where("isActive", "==", true)
+      .limit(1)
+      .get();
+
+    if (snap.empty) {
+      console.warn(`[getPrompt] Active prompt template with key "${key}" not found. Using default placeholder.`);
+      return `[Prompt belum diisi. Silakan edit melalui Prompt Manager.]`;
+    }
+
+    const doc = snap.docs[0];
+    const templateData = doc.data();
+    const rawPromptText = templateData.prompt || "";
+
+    if (variables) {
+      return replacePromptVariables(rawPromptText, variables);
+    }
+    return rawPromptText;
+  } catch (error: any) {
+    console.error(`[getPrompt] Error fetching prompt key "${key}":`, error);
+    return `[Prompt belum diisi. Silakan edit melalui Prompt Manager.]`;
+  }
+}
+
+// Helper: Seed initial prompt templates if missing
+async function seedPromptTemplates() {
+  try {
+    const db = getAdminDb();
+    if (!db) {
+      console.log("[PromptTemplatesSeed] Skipping seed: adminDb is not initialized.");
+      return;
+    }
+    const collectionRef = db.collection("promptTemplates");
+    const snap = await collectionRef.limit(1).get();
+    if (!snap.empty) {
+      console.log("[PromptTemplatesSeed] Prompt templates already exist, skipping seed.");
+      return;
+    }
+
+    const initialTemplates = [
+      {
+        key: "kindergarten_weekly_report",
+        name: "Weekly Report - Kindergarten",
+        unit: "KINDERGARTEN",
+        category: "report",
+        prompt: "Buat sebuah laporan narasi mingguan untuk seorang siswa yang berada di {{ageGroupStageString}}. Gunakan 6 developmental stages (Nilai Agama dan Budi Pekerti, Sosial-Emosional, Bahasa, Kognitif, Fisik-Motorik, Seni) sebagai hal yang menjadi fokus dalam laporan. Mulai dengan 'Minggu ini,' atau '{{nickName}} ...'. Gunakan EYD dengan benar. Jika ada domain atau sentra yang berulang, penjelasan digabung saja dan tidak berulang. Jangan gunakan tanda seru. Buat dalam 1 paragraf utuh/tidak terpisah.\n\nBerikut data observasi mingguan siswa:\n{{observationSummary}}",
+        variables: ["studentName", "nickName", "ageGroupStageString", "observationSummary"],
+        description: "Prompt template untuk generate laporan narasi perkembangan mingguan siswa TK berdasarkan hasil observasi guru.",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        updatedBy: "system@lumina.id"
+      },
+      {
+        key: "kindergarten_sel_report",
+        name: "Social-Emotional Development Report - Kindergarten",
+        unit: "KINDERGARTEN",
+        category: "report",
+        prompt: "Saya ingin membuat komentar mingguan untuk laporan perkembangan Sosial Emosional siswa {{ageGroupStageString}}. Berikut adalah data kehadiran dan emosi siswa dalam 1 minggu terakhir:\nHappy: {{happy}}, Sad: {{sad}}, Angry: {{angry}}, OK: {{ok}}, No News: {{noNews}}, Sick: {{sick}}, Izin: {{izin}}, Early Leave: {{earlyLeave}}\nBuatkan saya satu paragraf komentar dalam bahasa Indonesia yang singkat dan positif, cocok untuk laporan mingguan. Komentar harus sesuai dengan tahapan perkembangan sosial emosional anak usia yang sesuai, menggambarkan kemampuan anak mengenali dan mengekspresikan emosi, serta bagaimana ia merespons dukungan orang dewasa.\nGunakan bahasa yang hangat untuk ananda bernama: {{nickName}}",
+        variables: ["studentName", "nickName", "ageGroupStageString", "happy", "sad", "angry", "ok", "noNews", "sick", "izin", "earlyLeave"],
+        description: "Prompt template untuk menganalisis perkembangan sosial-emosional siswa TK dari data presensi dan ekspresi harian.",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        updatedBy: "system@lumina.id"
+      }
+    ];
+
+    for (const template of initialTemplates) {
+      const docRef = collectionRef.doc();
+      await docRef.set({
+        id: docRef.id,
+        ...template
+      });
+      console.log(`[PromptTemplatesSeed] Seeding default template: ${template.key}`);
+    }
+  } catch (error: any) {
+    console.error("[PromptTemplatesSeed] Dynamic prompt template seeding failed:", error);
+  }
+}
+
+// Automatically trigger seed check on server boot
+setTimeout(() => {
+  seedPromptTemplates();
+}, 2000);
+
+// API: Test Prompt with variables (Super Admin Only)
+app.post("/api/test-prompt", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    
+    let decodedToken;
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    const db = getAdminDb();
+    if (!db) {
+      return res.status(500).json({ error: "Firestore is not online." });
+    }
+
+    const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+    const userRole = userDoc.exists ? userDoc.data()?.role : null;
+    const isSuperAdmin = userRole === "SUPER_ADMIN" || decodedToken.email === "agunga4@gmail.com";
+
+    if (!isSuperAdmin) {
+      return res.status(403).json({ error: "Access denied. Active Super Admin permission required." });
+    }
+
+    const { promptKey, promptText, variables } = req.body;
+
+    let finalPromptText = "";
+    if (promptKey) {
+      const snap = await db.collection("promptTemplates")
+        .where("key", "==", promptKey)
+        .limit(1)
+        .get();
+      if (snap.empty) {
+        return res.status(404).json({ error: `Template "${promptKey}" was not found.` });
+      }
+      finalPromptText = snap.docs[0].data().prompt || "";
+    } else if (promptText) {
+      finalPromptText = promptText;
+    } else {
+      return res.status(400).json({ error: "Specify promptKey or direct text." });
+    }
+
+    // Substitute variable placeholders
+    finalPromptText = replacePromptVariables(finalPromptText, variables || {});
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey: apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: finalPromptText,
+    });
+
+    res.json({
+      success: true,
+      promptSent: finalPromptText,
+      text: response.text || ""
+    });
+  } catch (error: any) {
+    console.error("[TestPromptError] Error resolving prompt run:", error);
+    res.status(500).json({ error: error.message || "Unknown server error." });
+  }
+});
+
 // API: Generate Weekly Core Comments from Observations
 app.post("/api/kindergarten/generate-weekly-comment", async (req, res) => {
   try {
@@ -1591,7 +1778,12 @@ app.post("/api/kindergarten/generate-weekly-comment", async (req, res) => {
       }).join("\n\n");
     }
 
-    const prompt = `Buat sebuah laporan narasi mingguan untuk seorang siswa yang berada di ${stageString}. Gunakan 6 developmental stages (Nilai Agama dan Budi Pekerti, Sosial-Emosional, Bahasa, Kognitif, Fisik-Motorik, Seni) sebagai hal yang menjadi fokus dalam laporan. Mulai dengan 'Minggu ini,' atau '${nickName || studentName} ...'. Gunakan EYD dengan benar. Jika ada domain atau sentra yang berulang, penjelasan digabung saja dan tidak berulang. Jangan gunakan tanda seru. Buat dalam 1 paragraf utuh/tidak terpisah.\n\nBerikut data observasi mingguan siswa:\n${formattedObs}`;
+    const prompt = await getPrompt("kindergarten_weekly_report", {
+      studentName,
+      nickName: nickName || studentName,
+      ageGroupStageString: stageString,
+      observationSummary: formattedObs,
+    });
 
     const ai = new GoogleGenAI({
       apiKey: apiKey,
@@ -1603,7 +1795,7 @@ app.post("/api/kindergarten/generate-weekly-comment", async (req, res) => {
     });
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash",
+      model: "gemini-3.5-flash",
       contents: prompt,
     });
 
@@ -1638,10 +1830,19 @@ app.post("/api/kindergarten/generate-sel-comment", async (req, res) => {
     const i = attendanceSummary?.izin || 0;
     const el = attendanceSummary?.earlyLeave || 0;
 
-    const prompt = `Saya ingin membuat komentar mingguan untuk laporan perkembangan Sosial Emosional siswa ${ageText}. Berikut adalah data kehadiran dan emosi siswa dalam 1 minggu terakhir:
-Happy: ${h}, Sad: ${s}, Angry: ${a}, OK: ${o}, No News: ${n}, Sick: ${sk}, Izin: ${i}, Early Leave: ${el}
-Buatkan saya satu paragraf komentar dalam bahasa Indonesia yang singkat dan positif, cocok untuk laporan mingguan. Komentar harus sesuai dengan tahapan perkembangan sosial emosional anak usia yang sesuai, menggambarkan kemampuan anak mengenali dan mengekspresikan emosi, serta bagaimana ia merespons dukungan orang dewasa.
-Gunakan bahasa yang hangat untuk ananda bernama: ${nickName || studentName}`;
+    const prompt = await getPrompt("kindergarten_sel_report", {
+      studentName,
+      nickName: nickName || studentName,
+      ageGroupStageString: ageText,
+      happy: String(h),
+      sad: String(s),
+      angry: String(a),
+      ok: String(o),
+      noNews: String(n),
+      sick: String(sk),
+      izin: String(i),
+      earlyLeave: String(el),
+    });
 
     const ai = new GoogleGenAI({
       apiKey: apiKey,
@@ -1653,7 +1854,7 @@ Gunakan bahasa yang hangat untuk ananda bernama: ${nickName || studentName}`;
     });
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash",
+      model: "gemini-3.5-flash",
       contents: prompt,
     });
 
@@ -1956,6 +2157,262 @@ app.post("/api/lxd-backup", async (req, res) => {
       message: error.message,
       details: error.response?.data || null
     });
+  }
+});
+
+
+// ==========================================
+// LUMINA CHAT & KNOWLEDGE BASE INTEGRATION
+// ==========================================
+
+// API: Lumina Chat - grounded AI responder
+app.post("/api/lumina-chat", async (req, res) => {
+  try {
+    const { question, userId } = req.body;
+    if (!question || !userId) {
+      return res.status(400).json({ error: "Missing required fields: question and userId" });
+    }
+
+    const db = getAdminDb();
+    if (!db) {
+      return res.status(500).json({ error: "Database offline" });
+    }
+
+    // 1. Validate userId
+    const userDoc = await db.collection("users").doc(userId).get();
+    if (!userDoc.exists) {
+      return res.status(401).json({ error: "Unauthorized: Active user session is required." });
+    }
+
+    // 2. Fetch prompt from Firestore matching lumina_chat_system and isActive == true
+    const promptSnap = await db.collection("promptTemplates")
+      .where("key", "==", "lumina_chat_system")
+      .where("isActive", "==", true)
+      .limit(1)
+      .get();
+
+    let systemInstructionText = "";
+    if (!promptSnap.empty) {
+      systemInstructionText = promptSnap.docs[0].data().prompt;
+    } else {
+      // Default fallback system instruction
+      systemInstructionText = "Anda adalah Lumina Chat, asisten AI Lazuardi GCS (Global Compassionate School). " +
+        "Bantulah pengguna menjawab pertanyaan hangat tentang sekolah berbasis pada dokumen context yang diberikan. " +
+        "Format jawaban Anda persis dalam pola ini:\n\n🇮🇩 Bahasa Indonesia:\n[Jawaban Bahasa Indonesia]\n\n🇬🇧 English:\n[Jawaban Bahasa Inggris]";
+
+      // Self-seeding template for administrator convenience
+      try {
+        await db.collection("promptTemplates").doc("lumina_chat_system_default").set({
+          id: "lumina_chat_system_default",
+          key: "lumina_chat_system",
+          name: "Lumina Chat System Default Prompt",
+          unit: "ALL",
+          category: "chat",
+          prompt: systemInstructionText,
+          variables: [],
+          description: "Default fallback system instruction for grounded answering.",
+          isActive: true,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          updatedBy: "System Initiative"
+        });
+        console.log("[LuminaChat] Auto-seeded default lumina_chat_system template successfully.");
+      } catch (seedErr: any) {
+        console.warn("[LuminaChat] Skipping auto-seed fail:", seedErr.message);
+      }
+    }
+
+    // 3. Fetch knowledgeBase documents and filter relevant context using case-insensitive search
+    const docsSnap = await db.collection("knowledgeBase").get();
+    let relevantDocs: any[] = [];
+    
+    // Simple custom scoring search based on question keywords
+    const cleanQuestion = question.toLowerCase().replace(/[^a-zA-Z0-9\s]/g, " ");
+    const keywords = cleanQuestion.split(/\s+/).filter((w: string) => w.length > 2);
+
+    if (docsSnap && !docsSnap.empty) {
+      relevantDocs = docsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      if (keywords.length > 0) {
+        relevantDocs = relevantDocs.map(doc => {
+          let score = 0;
+          const titleLower = (doc.title || "").toLowerCase();
+          const contentLower = (doc.content || "").toLowerCase();
+
+          // Title matching yields highest priority
+          if (titleLower.includes(question.toLowerCase())) score += 50;
+          if (contentLower.includes(question.toLowerCase())) score += 20;
+
+          keywords.forEach((kw: string) => {
+            if (titleLower.includes(kw)) score += 10;
+            if (contentLower.includes(kw)) score += 2;
+          });
+
+          return { ...doc, score };
+        })
+        .filter(doc => doc.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5);
+      } else {
+        relevantDocs = relevantDocs.slice(0, 5);
+      }
+    }
+
+    // 4. Combine context and identify sources lists
+    const context = relevantDocs.map((doc, idx) => `Document ${idx + 1}: [${doc.title}]\n${doc.content}`).join("\n\n");
+    const sources = relevantDocs.map(doc => doc.title);
+
+    // 5. Send to Gemini API with correct structure
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: "Gemini API key is not configured." });
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey: apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+
+    const finalResponse = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: `Konteks dokumen:\n${context || "Tidak ada dokumen pendukung relevan ditemukan di pangkalan data pengetahuan Lazuardi GCS."}\n\nPertanyaan: ${question}`,
+      config: {
+        systemInstruction: systemInstructionText,
+      }
+    });
+
+    const aiText = finalResponse.text || "";
+    let answerID = "";
+    let answerEN = "";
+
+    // 6. Robust parsing for separators: "🇮🇩 Bahasa Indonesia:" and "🇬🇧 English:"
+    const idKey = "🇮🇩 Bahasa Indonesia:";
+    const enKey = "🇬🇧 English:";
+
+    const idIndex = aiText.indexOf(idKey);
+    const enIndex = aiText.indexOf(enKey);
+
+    if (idIndex !== -1 && enIndex !== -1) {
+      if (idIndex < enIndex) {
+        answerID = aiText.substring(idIndex + idKey.length, enIndex).trim();
+        answerEN = aiText.substring(enIndex + enKey.length).trim();
+      } else {
+        answerEN = aiText.substring(enIndex + enKey.length, idIndex).trim();
+        answerID = aiText.substring(idIndex + idKey.length).trim();
+      }
+    } else if (idIndex !== -1) {
+      answerID = aiText.substring(idIndex + idKey.length).trim();
+      answerEN = "Sorry, English response is not generated by the AI.";
+    } else if (enIndex !== -1) {
+      answerEN = aiText.substring(enIndex + enKey.length).trim();
+      answerID = "Maaf, respon dalam Bahasa Indonesia tidak di-generate oleh AI.";
+    } else {
+      answerID = aiText;
+      answerEN = aiText;
+    }
+
+    return res.json({
+      answerID,
+      answerEN,
+      sources,
+    });
+
+  } catch (error: any) {
+    console.error("[LuminaChatError] Fail to execute grounded chat:", error);
+    return res.status(500).json({ error: error.message || "Unknown chat failure" });
+  }
+});
+
+// API: Sync Knowledge - Super Admin Google Drive pull
+app.post("/api/sync-knowledge", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+
+    let decodedToken;
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    const db = getAdminDb();
+    if (!db) {
+      return res.status(500).json({ error: "Firestore is not online." });
+    }
+
+    const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+    const userRole = userDoc.exists ? userDoc.data()?.role : null;
+    const isSuperAdmin = userRole === "SUPER_ADMIN" || decodedToken.email === "agunga4@gmail.com";
+
+    if (!isSuperAdmin) {
+      return res.status(403).json({ error: "Access denied. Active Super Admin permission required." });
+    }
+
+    const folderId = req.body.folderId || "1if5MJST18x6zHOXJTi7W82BAqkwEbBBd";
+    const driveInstance = getDrive();
+
+    // Query standard document type Google Docs files in the specified folder
+    const q = `'${folderId}' in parents and mimeType = 'application/vnd.google-apps.document' and trashed = false`;
+    const response = await driveInstance.files.list({
+      q,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+      fields: "files(id, name)",
+    });
+
+    const files = response.data.files || [];
+    let synced = 0;
+    const errors: string[] = [];
+
+    for (const file of files) {
+      try {
+        if (!file.id || !file.name) continue;
+
+        // Export active Google doc to raw plaintext text
+        const exportRes = await driveInstance.files.export({
+          fileId: file.id,
+          mimeType: "text/plain",
+        });
+
+        const plainContent = typeof exportRes.data === "string" ? exportRes.data : JSON.stringify(exportRes.data);
+        const wordCount = plainContent.split(/\s+/).filter(Boolean).length;
+
+        const docPayload = {
+          id: file.id,
+          title: file.name,
+          content: plainContent,
+          wordCount: wordCount,
+          lastSynced: Date.now(),
+          driveFileId: file.id,
+        };
+
+        // Upsert doc to firestore collection knowledgeBase
+        await db.collection("knowledgeBase").doc(file.id).set(docPayload, { merge: true });
+        synced++;
+      } catch (fileErr: any) {
+        console.error(`[SyncKnowledge] File ${file.name || file.id} failed:`, fileErr.message);
+        errors.push(`Error on "${file.name || file.id}": ${fileErr.message}`);
+      }
+    }
+
+    return res.json({
+      total: files.length,
+      synced,
+      errors,
+    });
+
+  } catch (error: any) {
+    console.error("[SyncKnowledgeError] Sync action failed:", error);
+    return res.status(500).json({ error: error.message || "Failed to sync knowledge." });
   }
 });
 
