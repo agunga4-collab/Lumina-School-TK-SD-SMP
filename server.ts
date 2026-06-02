@@ -2275,28 +2275,22 @@ app.post("/api/lumina-chat", async (req, res) => {
       MODEL = "gemini-2.5-flash";
     }
 
-    const aiResponse = await fetch(`${BASE_URL}/chat/completions`, {
-      method: "POST",
+    const aiResponse = await axios.post(`${BASE_URL}/chat/completions`, {
+      model: MODEL,
+      messages: [
+        { role: "system", content: systemInstructionText },
+        { role: "user", content: `Konteks dokumen:\n${context || "Tidak ada dokumen pendukung relevan ditemukan di pangkalan data pengetahuan Lazuardi GCS."}\n\nPertanyaan: ${question}` }
+      ],
+      temperature: 0.7
+    }, {
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${API_KEY}`,
       },
-      body: JSON.stringify({
-        model: MODEL,
-        messages: [
-          { role: "system", content: systemInstructionText },
-          { role: "user", content: `Konteks dokumen:\n${context || "Tidak ada dokumen pendukung relevan ditemukan di pangkalan data pengetahuan Lazuardi GCS."}\n\nPertanyaan: ${question}` }
-        ],
-        temperature: 0.7
-      }),
+      timeout: 30000
     });
 
-    if (!aiResponse.ok) {
-      const errText = await aiResponse.text();
-      throw new Error(`LLM API failed: ${aiResponse.status} - ${errText}`);
-    }
-
-    const resJson = await aiResponse.json() as any;
+    const resJson = aiResponse.data;
     const aiText = resJson.choices?.[0]?.message?.content || "";
     let answerID = "";
     let answerEN = "";

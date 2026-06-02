@@ -11,9 +11,6 @@ function initFirebase() {
       throw new Error('FIREBASE_SERVICE_ACCOUNT env is missing');
     }
     const serviceAccount = JSON.parse(serviceAccountJson);
-    if (serviceAccount.private_key) {
-      serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
-    }
     initializeApp({ credential: cert(serviceAccount) });
   }
   return getFirestore();
