@@ -80,7 +80,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const folderId = req.body.folderId || "1if5MJST18x6zHOXJTi7W82BAqkwEbBBd";
+    console.log('[SyncKnowledge] Starting sync, folderId:', folderId);
+
     const driveInstance = getDrive();
+    console.log('[SyncKnowledge] Google auth initialized');
 
     // Query standard document type Google Docs files in the specified folder
     const q = `'${folderId}' in parents and mimeType = 'application/vnd.google-apps.document' and trashed = false`;
@@ -92,6 +95,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     const files = response.data.files || [];
+    console.log('[SyncKnowledge] Files found:', files.length);
+
     let synced = 0;
     const errors: string[] = [];
 
@@ -121,7 +126,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         await db.collection("knowledgeBase").doc(file.id).set(docPayload, { merge: true });
         synced++;
       } catch (fileErr: any) {
-        console.error(`[SyncKnowledge] File ${file.name || file.id} failed:`, fileErr.message);
+        console.error('[SyncKnowledge] Error on file:', file.name, fileErr.message);
         errors.push(`Error on "${file.name || file.id}": ${fileErr.message}`);
       }
     }
@@ -133,7 +138,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
   } catch (error: any) {
-    console.error("[SyncKnowledgeError] Sync action failed:", error);
-    return res.status(500).json({ error: error.message || "Failed to sync knowledge." });
+    console.error('[SyncKnowledge] Fatal error:', error.message, error.stack);
+    return res.status(500).json({ error: error.message || "Unknown error", stack: error.stack });
   }
 }
