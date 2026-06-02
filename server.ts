@@ -2262,30 +2262,34 @@ app.post("/api/lumina-chat", async (req, res) => {
     const context = relevantDocs.map((doc, idx) => `Document ${idx + 1}: [${doc.title}]\n${doc.content}`).join("\n\n");
     const sources = relevantDocs.map(doc => doc.title);
 
-    // 5. Send to Gemini API with correct structure
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "Gemini API key is not configured." });
+    // 5. Call Koboil LLM API via standard chat completion endpoint
+    const BASE_URL = process.env.VITE_AI_BASE_URL || "https://api.koboillm.com/v1";
+    const API_KEY = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
+    const MODEL = process.env.VITE_AI_MODEL || "gemini/gemini-2.5-flash-lite";
+
+    const aiResponse = await fetch(`${BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [
+          { role: "system", content: systemInstructionText },
+          { role: "user", content: `Konteks dokumen:\n${context || "Tidak ada dokumen pendukung relevan ditemukan di pangkalan data pengetahuan Lazuardi GCS."}\n\nPertanyaan: ${question}` }
+        ],
+        temperature: 0.7
+      }),
+    });
+
+    if (!aiResponse.ok) {
+      const errText = await aiResponse.text();
+      throw new Error(`Koboil LLM API failed: ${aiResponse.status} - ${errText}`);
     }
 
-    const ai = new GoogleGenAI({
-      apiKey: apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
-    });
-
-    const finalResponse = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: `Konteks dokumen:\n${context || "Tidak ada dokumen pendukung relevan ditemukan di pangkalan data pengetahuan Lazuardi GCS."}\n\nPertanyaan: ${question}`,
-      config: {
-        systemInstruction: systemInstructionText,
-      }
-    });
-
-    const aiText = finalResponse.text || "";
+    const resJson = await aiResponse.json() as any;
+    const aiText = resJson.choices?.[0]?.message?.content || "";
     let answerID = "";
     let answerEN = "";
 
