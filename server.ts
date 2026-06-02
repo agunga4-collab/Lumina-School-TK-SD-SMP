@@ -2262,10 +2262,18 @@ app.post("/api/lumina-chat", async (req, res) => {
     const context = relevantDocs.map((doc, idx) => `Document ${idx + 1}: [${doc.title}]\n${doc.content}`).join("\n\n");
     const sources = relevantDocs.map(doc => doc.title);
 
-    // 5. Call Koboil LLM API via standard chat completion endpoint
-    const BASE_URL = process.env.VITE_AI_BASE_URL || "https://api.koboillm.com/v1";
-    const API_KEY = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
-    const MODEL = process.env.VITE_AI_MODEL || "gemini/gemini-2.5-flash-lite";
+    // 5. Call Koboil LLM API or Google Gemini OpenAI-compatible endpoint via standard chat completion
+    let BASE_URL = process.env.VITE_AI_BASE_URL || "https://api.koboillm.com/v1";
+    let API_KEY = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
+    let MODEL = process.env.VITE_AI_MODEL || "gemini/gemini-2.5-flash-lite";
+
+    // Dynamic routing fallback: If using a Google Gemini native API key (AIza...) with the default Koboil URL, 
+    // reroute to the official Google Gemini OpenAI-compatible REST endpoint.
+    if (API_KEY.startsWith("AIza") && BASE_URL.includes("koboillm.com")) {
+      console.log("[LuminaChat] Direct Gemini Key detected in server.ts. Rerouting to Official Google Gemini OpenAI-compatible endpoint.");
+      BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
+      MODEL = "gemini-2.5-flash";
+    }
 
     const aiResponse = await fetch(`${BASE_URL}/chat/completions`, {
       method: "POST",
@@ -2285,7 +2293,7 @@ app.post("/api/lumina-chat", async (req, res) => {
 
     if (!aiResponse.ok) {
       const errText = await aiResponse.text();
-      throw new Error(`Koboil LLM API failed: ${aiResponse.status} - ${errText}`);
+      throw new Error(`LLM API failed: ${aiResponse.status} - ${errText}`);
     }
 
     const resJson = await aiResponse.json() as any;
@@ -2327,7 +2335,15 @@ app.post("/api/lumina-chat", async (req, res) => {
 
   } catch (error: any) {
     console.error("[LuminaChatError] Fail to execute grounded chat:", error);
-    return res.status(500).json({ error: error.message || "Unknown chat failure" });
+    let errorMsg = "Unknown chat failure";
+    if (error instanceof Error) {
+      errorMsg = error.message;
+    } else if (typeof error === "string") {
+      errorMsg = error;
+    } else if (error) {
+      errorMsg = JSON.stringify(error);
+    }
+    return res.status(500).json({ error: errorMsg, stack: error?.stack });
   }
 });
 
