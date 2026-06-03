@@ -28,8 +28,10 @@ export default function LuminaChat({ userId }: { userId: string }) {
   const [activeLangTab, setActiveLangTab] = React.useState<"ID" | "EN">("ID");
 
   const popularPrompts = [
-    "Bagaimana panduan MTSS di unit Sekolah?",
-    "Apa format standar laporan LXD guru?",
+    "Bagaimana panduan MTSS Behavior?",
+    "Apa saja strands dalam Integral Education?",
+    "Apa itu Learning Journey?",
+    "Apa itu Self-Exploration?",
   ];
 
   const handleSend = async (text: string) => {
