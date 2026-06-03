@@ -24,13 +24,58 @@ export const ACTIVITY_LABEL_MAP: Record<string, string> = {
   MORNING_MOVEMENT: 'Morning Movement'
 };
 
-export const DEFAULT_STUDENTS = [
-  { id: 'K001', name: 'Zianka Azura', nickName: 'Zianka', ageGroup: 'TK_A' as const },
-  { id: 'K002', name: 'Khalif Ahsan', nickName: 'Khalif', ageGroup: 'TK_A' as const },
-  { id: 'K003', name: 'Safiyya Azzahra', nickName: 'Safiyya', ageGroup: 'TK_A' as const },
-  { id: 'K004', name: 'Rendra Putra', nickName: 'Rendra', ageGroup: 'TK_A' as const },
-  { id: 'K005', name: 'Mikayla Adnan', nickName: 'Mikayla', ageGroup: 'TK_B' as const },
-];
+export interface KGStudent {
+  id: string;
+  name: string;
+  nickName: string;
+  ageGroup: 'TK_A' | 'TK_B';
+}
+
+export const getStoredStudents = (): KGStudent[] => {
+  if (typeof window === 'undefined') return [];
+  const saved = localStorage.getItem('kg_students');
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item: any) => ({
+          id: String(item.id || ''),
+          name: String(item.name || ''),
+          nickName: String(item.nickName || ''),
+          ageGroup: (item.ageGroup === 'TK_B' ? 'TK_B' : 'TK_A') as 'TK_A' | 'TK_B'
+        }));
+      }
+    } catch (e) {
+      console.error('[kindergartenWeeklyReport] Error parsing kg_students', e);
+    }
+  }
+  return []; // Delete default dummy data (returns empty)
+};
+
+export const saveStoredStudents = (students: KGStudent[]) => {
+  localStorage.setItem('kg_students', JSON.stringify(students));
+};
+
+export const DEFAULT_STUDENTS: KGStudent[] = new Proxy([] as KGStudent[], {
+  get(target, prop) {
+    const list = getStoredStudents();
+    if (prop === '$$typeof' || prop === 'constructor' || prop === 'then') return undefined;
+    const val = (list as any)[prop];
+    return typeof val === 'function' ? val.bind(list) : val;
+  },
+  has(target, prop) {
+    const list = getStoredStudents();
+    return prop in list;
+  },
+  ownKeys(target) {
+    const list = getStoredStudents();
+    return Reflect.ownKeys(list);
+  },
+  getOwnPropertyDescriptor(target, prop) {
+    const list = getStoredStudents();
+    return Reflect.getOwnPropertyDescriptor(list, prop);
+  }
+});
 
 // Helper: Format Date to YYYY-MM-DD
 export function formatDateToKey(date: Date): string {

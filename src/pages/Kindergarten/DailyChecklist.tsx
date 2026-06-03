@@ -7,21 +7,68 @@ import {
 import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
 import type { KGAttendanceStatus, KGEmotionStatus } from '../../types';
-
-interface KGStudent {
-  id: string;
-  name: string;
-}
-
-const DEFAULT_STUDENTS: KGStudent[] = [
-  { id: 'K001', name: 'Zianka Azura' },
-  { id: 'K002', name: 'Khalif Ahsan' },
-  { id: 'K003', name: 'Safiyya Azzahra' },
-  { id: 'K004', name: 'Rendra Putra' },
-  { id: 'K005', name: 'Mikayla Adnan' },
-];
+import { 
+  getStoredStudents, 
+  saveStoredStudents, 
+  KGStudent 
+} from '../../lib/kindergartenWeeklyReport';
 
 export default function DailyChecklist() {
+  const [students, setStudents] = React.useState<KGStudent[]>(() => getStoredStudents());
+  const [showManager, setShowManager] = React.useState(false);
+  const [newStudentName, setNewStudentName] = React.useState('');
+  const [newStudentNickname, setNewStudentNickname] = React.useState('');
+  const [newStudentGroup, setNewStudentGroup] = React.useState<'TK_A' | 'TK_B'>('TK_A');
+
+  const handleAddStudent = () => {
+    if (!newStudentName.trim() || !newStudentNickname.trim()) {
+      toast.error('Mohon isi nama lengkap dan nama panggilan siswa terlebih dahulu.');
+      return;
+    }
+    
+    // Generate next unique id
+    const currentMaxId = students.reduce((acc, current) => {
+      const match = current.id.match(/\d+/);
+      if (match) {
+        const num = parseInt(match[0], 10);
+        return Math.max(acc, num);
+      }
+      return acc;
+    }, 0);
+    
+    const nextIdNum = currentMaxId + 1;
+    const nextId = `K${String(nextIdNum).padStart(3, '0')}`;
+    
+    const newStudent: KGStudent = {
+      id: nextId,
+      name: newStudentName.trim(),
+      nickName: newStudentNickname.trim(),
+      ageGroup: newStudentGroup
+    };
+    
+    const updatedStudents = [...students, newStudent];
+    setStudents(updatedStudents);
+    saveStoredStudents(updatedStudents);
+    
+    // Clean up input form
+    setNewStudentName('');
+    setNewStudentNickname('');
+    
+    toast.success(`Berhasil menambahkan anak cerdas ${newStudent.name}! 🌟`);
+  };
+
+  const handleDeleteStudent = (studentId: string) => {
+    const originalStudents = [...students];
+    const target = originalStudents.find(s => s.id === studentId);
+    
+    if (!target) return;
+    
+    const updatedStudents = originalStudents.filter(s => s.id !== studentId);
+    setStudents(updatedStudents);
+    saveStoredStudents(updatedStudents);
+    
+    toast.success(`Siswa ${target.name} berhasil dihapus dari sistem! 💖`);
+  };
   const [selectedDate, setSelectedDate] = React.useState<Date>(new Date());
   const [isSaving, setIsSaving] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -50,7 +97,7 @@ export default function DailyChecklist() {
   const dateRecords = recordsByDate[dateKey] || {};
 
   // Build reactive students visible list
-  const studentsWithStatus = DEFAULT_STUDENTS.map(s => {
+  const studentsWithStatus = students.map(s => {
     const status = dateRecords[s.id] || { attendance: null, emotion: null };
     return {
       ...s,
@@ -121,7 +168,7 @@ export default function DailyChecklist() {
       const currentOfDate = prev[dateKey] || {};
       const newOfDate = { ...currentOfDate };
 
-      DEFAULT_STUDENTS.forEach(s => {
+      students.forEach(s => {
         const matchesSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase());
         if (matchesSearch) {
           newOfDate[s.id] = { attendance: 'PRESENT', emotion: 'HAPPY' };
@@ -163,7 +210,7 @@ export default function DailyChecklist() {
   };
 
   // Precise statistics calculations
-  const totalStudents = DEFAULT_STUDENTS.length;
+  const totalStudents = students.length;
   const countBelumDiisi = studentsWithStatus.filter(s => s.attendance === null).length;
   const countHadir = studentsWithStatus.filter(s => s.attendance === 'PRESENT').length;
   const countSakit = studentsWithStatus.filter(s => s.attendance === 'SICK').length;
@@ -252,6 +299,19 @@ export default function DailyChecklist() {
 
         <div className="flex items-center gap-2">
            <button 
+             onClick={() => setShowManager(!showManager)}
+             className={cn(
+               "flex items-center justify-center gap-2 font-bold text-xs py-2.5 px-5 rounded-2xl transition-all border cursor-pointer",
+               showManager 
+                 ? "bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-100" 
+                 : "bg-emerald-50 text-emerald-700 border-emerald-100 hover:bg-emerald-100/70"
+             )}
+           >
+             <Users size={16} />
+             {showManager ? 'Tutup Kelola Siswa' : 'Kelola Siswa'}
+           </button>
+
+           <button 
              onClick={handleHappySemua}
              className="flex items-center justify-center gap-2 bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-500 hover:to-amber-600 text-white font-bold text-xs py-2.5 px-5 rounded-2xl shadow-md shadow-amber-100 hover:shadow-lg hover:shadow-amber-200/50 transition-all cursor-pointer"
            >
@@ -260,6 +320,125 @@ export default function DailyChecklist() {
            </button>
         </div>
       </div>
+
+      {/* STUDENT MANAGER COLLAPSIBLE PANEL */}
+      {showManager && (
+        <div className="bg-white p-6 rounded-[2.5rem] border border-emerald-100 shadow-xl shadow-emerald-50/20 space-y-6">
+          <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+            <div className="flex items-center gap-2">
+              <Users className="text-emerald-600" size={20} />
+              <h3 className="font-extrabold text-gray-900 text-sm tracking-tight">Pengelola Siswa (Murid Lazuardi)</h3>
+            </div>
+            <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-xl">
+              {students.length} Siswa Terdaftar
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* TAMBAH SISWA BARU FORM */}
+            <div className="md:col-span-1 bg-gray-50/50 p-5 rounded-3xl border border-gray-100 space-y-4">
+              <span className="text-[10px] font-black uppercase text-emerald-600 tracking-wider block">Tambah Siswa Baru</span>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs text-gray-400 font-bold mb-1.5 block">Nama Lengkap</label>
+                  <input 
+                    type="text"
+                    value={newStudentName}
+                    onChange={(e) => setNewStudentName(e.target.value)}
+                    placeholder="Contoh: Zianka Azura"
+                    className="w-full px-3.5 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-300 outline-none transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 font-bold mb-1.5 block">Nama Panggilan</label>
+                  <input 
+                    type="text"
+                    value={newStudentNickname}
+                    onChange={(e) => setNewStudentNickname(e.target.value)}
+                    placeholder="Contoh: Zianka"
+                    className="w-full px-3.5 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-300 outline-none transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 font-bold mb-1.5 block">Kelompok Usia</label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNewStudentGroup('TK_A')}
+                      className={cn(
+                        "flex-1 py-2 text-xs font-bold rounded-xl border transition-all cursor-pointer",
+                        newStudentGroup === 'TK_A' 
+                          ? "bg-emerald-600 border-emerald-600 text-white" 
+                          : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
+                      )}
+                    >
+                      TK_A (4-5 Th)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewStudentGroup('TK_B')}
+                      className={cn(
+                        "flex-1 py-2 text-xs font-bold rounded-xl border transition-all cursor-pointer",
+                        newStudentGroup === 'TK_B' 
+                          ? "bg-emerald-600 border-emerald-600 text-white" 
+                          : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
+                      )}
+                    >
+                      TK_B (5-6 Th)
+                    </button>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddStudent}
+                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer mt-2"
+                >
+                  <Sparkles size={14} />
+                  Simpan Siswa
+                </button>
+              </div>
+            </div>
+
+            {/* DAFTAR SISWA TERDAFTAR */}
+            <div className="md:col-span-2 space-y-3">
+              <span className="text-[10px] font-black uppercase text-gray-400 tracking-wider block">Daftar Aktif</span>
+              
+              <div className="max-h-[300px] overflow-y-auto border border-gray-100 rounded-3xl divide-y divide-gray-50 bg-white">
+                {students.map((student) => (
+                  <div key={student.id} className="flex justify-between items-center p-3.5 hover:bg-gray-50 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-100 flex items-center justify-center font-black text-xs">
+                        {student.name[0] || 'S'}
+                      </div>
+                      <div>
+                        <div className="font-bold text-gray-900 text-sm tracking-tight">{student.name}</div>
+                        <div className="text-[10px] text-gray-400 font-medium">
+                          Panggilan: "{student.nickName}" | Kelompok: {student.ageGroup === 'TK_A' ? 'TK_A Caterpillar' : 'TK_B Butterfly'} ({student.id})
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteStudent(student.id)}
+                      className="p-2 hover:bg-rose-50 text-rose-400 hover:text-rose-600 rounded-xl transition-all cursor-pointer border border-transparent hover:border-rose-100"
+                      title="Hapus Siswa"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+
+                {students.length === 0 && (
+                  <div className="p-8 text-center text-gray-450 text-sm italic font-medium">
+                    Belum ada siswa terdaftar. Silakan tambahkan siswa di form sebelah kiri 💖
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ATTENDANCE TABLE */}
       <div className="bg-white rounded-[2rem] shadow-xl shadow-emerald-50/50 border border-emerald-100/50 overflow-hidden">

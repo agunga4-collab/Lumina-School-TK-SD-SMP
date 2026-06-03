@@ -28,7 +28,6 @@ export default function LuminaChat({ userId }: { userId: string }) {
   const [activeLangTab, setActiveLangTab] = React.useState<"ID" | "EN">("ID");
 
   const popularPrompts = [
-    "Apa visi dan misi dari Lazuardi GCS?",
     "Bagaimana panduan MTSS di unit Sekolah?",
     "Apa format standar laporan LXD guru?",
   ];

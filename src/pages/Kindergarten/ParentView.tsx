@@ -532,7 +532,7 @@ export default function ParentView() {
               <div className="space-y-4 relative z-10">
                  <h3 className="font-black text-[10px] uppercase tracking-widest border-b border-white/20 pb-2">Status Portofolio</h3>
                  <p className="text-2xl font-black italic">Lengkap ✨</p>
-                 <p className="text-xs text-emerald-50 font-medium leading-relaxed italic opacity-80">Semua observasi dan foto aktivitas Zianka sudah diunggah oleh Guru.</p>
+                 <p className="text-xs text-emerald-50 font-medium leading-relaxed italic opacity-80">Semua observasi dan foto aktivitas {currentStudent?.nickName || currentStudent?.name || "Ananda"} sudah diunggah oleh Guru.</p>
               </div>
               <button className="w-full py-4 mt-6 bg-white text-emerald-700 font-black rounded-3xl text-[10px] shadow-xl hover:bg-emerald-50 transition-all uppercase tracking-widest">
                  Lihat Full Portofolio
