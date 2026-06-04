@@ -2165,10 +2165,40 @@ app.post("/api/lxd-backup", async (req, res) => {
 // LUMINA CHAT & KNOWLEDGE BASE INTEGRATION
 // ==========================================
 
+// STOPWORDS list for Indonesian & English to prevent generic interrogatives/pronouns from shifting the conversation context
+const STOPWORDS = new Set([
+  // Indonesian Interrogatives, Pronouns & Auxiliaries
+  "siapa", "apa", "mengapa", "bagaimana", "kapan", "dimana", "di", "mana", "ke", "dari",
+  "yang", "untuk", "pada", "dengan", "oleh", "ini", "itu", "dan", "atau", "tetapi",
+  "saya", "kamu", "dia", "mereka", "kita", "kami", "anda", "beliau", "punya", "ada", "adalah", "yaitu",
+  "yakni", "ialah", "merupakan", "saja", "nya", "kah", "lah", "pun", "semua", "beberapa", "banyak", "sedikit",
+  "sebutkan", "berikan", "jelaskan", "deskripsikan", "ceritakan", "tunjukkan", "tuliskan", "jawab", "jawablah",
+  "pertanyaan", "tanya", "bertanya", "tentang", "mengenai", "terkait", "terhadap", "bagi", "buat", "atas",
+  "dalam", "luar", "antara", "sebelum", "sesudah", "setelah", "hingga", "sampai", "sehingga",
+  "karena", "sebab", "oleh karena itu", "jika", "kalau", "apabila", "bila", "supaya", "agar",
+  "bertanggung", "tanggung", "jawab", "bertanggungjawab", "melakukan", "terlibat", "menjadi", "bisa", "dapat",
+  "boleh", "harus", "wajib", "perlu", "patut", "akan", "sedang", "telah", "sudah", "belum", "pernah",
+  "bukan", "tidak", "jangan", "tiada", "tidaklah", "bukanlah", "siapakah", "apakah", "bagaimanakah",
+  
+  // English Interrogatives, Pronouns & Auxiliaries
+  "who", "what", "why", "how", "where", "when", "which", "whose", "whom",
+  "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did",
+  "a", "an", "the", "and", "or", "but", "if", "because", "as", "until", "while", "of", "at", "by", "for",
+  "with", "about", "against", "between", "into", "through", "during", "before", "after", "above", "below",
+  "to", "from", "up", "down", "in", "out", "on", "off", "over", "under", "again", "further", "then", "once",
+  "here", "there", "all", "any", "both", "each", "few", "more", "most", "other",
+  "some", "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very", "can", "will",
+  "just", "should", "now", "describe", "explain", "tell", "show", "give", "list", "responsible", "responsibility"
+]);
+
 // API: Lumina Chat - grounded AI responder
 app.post("/api/lumina-chat", async (req, res) => {
   try {
-    const { question, userId } = req.body;
+    const { question, userId, history = [], language = "ID" } = req.body;
+    
+    // Log history received for debugging
+    console.log('[LuminaChat] history received:', JSON.stringify(history));
+
     if (!question || !userId) {
       return res.status(400).json({ error: "Missing required fields: question and userId" });
     }
@@ -2196,65 +2226,96 @@ app.post("/api/lumina-chat", async (req, res) => {
       systemInstructionText = promptSnap.docs[0].data().prompt;
     } else {
       // Default fallback system instruction
-      systemInstructionText = "Anda adalah Lumina Chat, asisten AI Lazuardi GCS (Global Compassionate School). " +
-        "Bantulah pengguna menjawab pertanyaan hangat tentang sekolah berbasis pada dokumen context yang diberikan. " +
-        "Format jawaban Anda persis dalam pola ini:\n\n🇮🇩 Bahasa Indonesia:\n[Jawaban Bahasa Indonesia]\n\n🇬🇧 English:\n[Jawaban Bahasa Inggris]";
-
-      // Self-seeding template for administrator convenience
-      try {
-        await db.collection("promptTemplates").doc("lumina_chat_system_default").set({
-          id: "lumina_chat_system_default",
-          key: "lumina_chat_system",
-          name: "Lumina Chat System Default Prompt",
-          unit: "ALL",
-          category: "chat",
-          prompt: systemInstructionText,
-          variables: [],
-          description: "Default fallback system instruction for grounded answering.",
-          isActive: true,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          updatedBy: "System Initiative"
-        });
-        console.log("[LuminaChat] Auto-seeded default lumina_chat_system template successfully.");
-      } catch (seedErr: any) {
-        console.warn("[LuminaChat] Skipping auto-seed fail:", seedErr.message);
-      }
+      systemInstructionText = "Anda adalah Lumina Chat, asisten AI Lajuardi GCS (Global Compassionate School). " +
+        "Bantulah pengguna menjawab pertanyaan hangat tentang sekolah berbasis pada dokumen context yang diberikan.";
     }
+
+    // Append output language instruction to restrict generation and save tokens
+    let languageInstruction = "";
+    if (language === "EN") {
+      languageInstruction = "\n\nYou MUST respond ONLY in English. Do NOT write in Indonesian language. " +
+        "Format your answer exactly with this label at the very beginning of your response:\n" +
+        "🇬🇧 English:\n[Your English response]";
+    } else {
+      languageInstruction = "\n\nAnda HARUS merespon HANYA dalam Bahasa Indonesia. JANGAN menulis dalam Bahasa Inggris. " +
+        "Format jawaban Anda persis dengan label ini di awal respon:\n" +
+        "🇮🇩 Bahasa Indonesia:\n[Jawaban Bahasa Indonesia Anda]";
+    }
+
+    systemInstructionText += languageInstruction;
 
     // 3. Fetch knowledgeBase documents and filter relevant context using case-insensitive search
     const docsSnap = await db.collection("knowledgeBase").get();
     let relevantDocs: any[] = [];
     
-    // Simple custom scoring search based on question keywords
-    const cleanQuestion = question.toLowerCase().replace(/[^a-zA-Z0-9\s]/g, " ");
-    const keywords = cleanQuestion.split(/\s+/).filter((w: string) => w.length > 2);
+    // Ekstrak topik dari history (ambil 2 pesan user terakhir)
+    const historyContext = history
+      .filter((h: any) => h.role === 'user')
+      .slice(-2)
+      .map((h: any) => h.content || "")
+      .join(' ');
+
+    // Gunakan gabungan untuk scoring dokumen
+    const searchQuery = historyContext.trim() ? (historyContext.trim() + ' ' + question) : question;
+
+    // Simple custom scoring search based on question and search query keywords
+    const cleanSearchQuery = searchQuery.toLowerCase().replace(/[^a-zA-Z0-9\s]/g, " ");
+    const keywords = cleanSearchQuery.split(/\s+/).filter((w: string) => w.length > 2);
+    const filteredKeywords = keywords.filter(kw => !STOPWORDS.has(kw.toLowerCase()));
+
+    // Dokumen yang sudah dirujuk sebelumnya dapat prioritas lebih tinggi
+    const previousSources = history
+      .filter((h: any) => h.role === 'assistant' && h.sources)
+      .flatMap((h: any) => h.sources || []);
+
+    const cleanQuestionOnly = question.toLowerCase().replace(/[^a-zA-Z0-9\s]/g, " ");
+    const questionKeywords = cleanQuestionOnly.split(/\s+/).filter((w: string) => w.length > 2);
+    const filteredQuestionKeywords = questionKeywords.filter(kw => !STOPWORDS.has(kw.toLowerCase()));
+
+    const isGenericFollowUp = history.length > 0 && filteredQuestionKeywords.length === 0 && previousSources.length > 0;
 
     if (docsSnap && !docsSnap.empty) {
-      relevantDocs = docsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const allDocs: any[] = docsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
-      if (keywords.length > 0) {
-        relevantDocs = relevantDocs.map(doc => {
-          let score = 0;
-          const titleLower = (doc.title || "").toLowerCase();
-          const contentLower = (doc.content || "").toLowerCase();
-
-          // Title matching yields highest priority
-          if (titleLower.includes(question.toLowerCase())) score += 50;
-          if (contentLower.includes(question.toLowerCase())) score += 20;
-
-          keywords.forEach((kw: string) => {
-            if (titleLower.includes(kw)) score += 10;
-            if (contentLower.includes(kw)) score += 2;
-          });
-
-          return { ...doc, score };
-        })
-        .filter(doc => doc.score > 0)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 5);
+      if (isGenericFollowUp) {
+        // Reuse previous sources directly to avoid noisy irrelevant documents
+        relevantDocs = allDocs.filter(doc => previousSources.includes(doc.title));
       } else {
-        relevantDocs = relevantDocs.slice(0, 5);
+        relevantDocs = allDocs;
+        const scoringKeywords = filteredKeywords.length > 0 ? filteredKeywords : keywords;
+
+        if (scoringKeywords.length > 0) {
+          relevantDocs = relevantDocs.map(doc => {
+            let score = 0;
+            const titleLower = (doc.title || "").toLowerCase();
+            const contentLower = (doc.content || "").toLowerCase();
+
+            // Title matching yields highest priority
+            if (titleLower.includes(searchQuery.toLowerCase())) score += 80;
+            if (contentLower.includes(searchQuery.toLowerCase())) score += 30;
+
+            // Directly check the original question too
+            if (titleLower.includes(question.toLowerCase())) score += 50;
+            if (contentLower.includes(question.toLowerCase())) score += 15;
+
+            scoringKeywords.forEach((kw: string) => {
+              if (titleLower.includes(kw)) score += 20;
+              if (contentLower.includes(kw)) score += 4;
+            });
+
+            // Saat scoring, tambahkan bonus jika dokumen pernah dirujuk
+            if (previousSources.includes(doc.title)) {
+              score += 150; // Give a massive boost to active topics
+            }
+
+            return { ...doc, score };
+          })
+          .filter(doc => doc.score > 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 5);
+        } else {
+          relevantDocs = relevantDocs.slice(0, 5);
+        }
       }
     }
 
@@ -2262,7 +2323,73 @@ app.post("/api/lumina-chat", async (req, res) => {
     const context = relevantDocs.map((doc, idx) => `Document ${idx + 1}: [${doc.title}]\n${doc.content}`).join("\n\n");
     const sources = relevantDocs.map(doc => doc.title);
 
-    // 5. Call Koboil LLM API or Google Gemini OpenAI-compatible endpoint via standard chat completion
+    // 5. Build alternating history with combined assistant responses
+    const trimmedHistory = history.slice(-10);
+
+    const mappedHistory = trimmedHistory.map((h: any) => {
+      let contentStr = "";
+      if (h.role === "assistant") {
+        // If content is an object with answerID/answerEN
+        if (typeof h.content === "object" && h.content !== null) {
+          const ansID = h.content.answerID || h.content.contentID || "";
+          const ansEN = h.content.answerEN || h.content.contentEN || "";
+          contentStr = `${ansID} / ${ansEN}`;
+        }
+        // If the item itself has direct fields
+        else if (h.answerID !== undefined || h.answerEN !== undefined || h.contentID !== undefined || h.contentEN !== undefined) {
+          const ansID = h.answerID || h.contentID || "";
+          const ansEN = h.answerEN || h.contentEN || "";
+          contentStr = `${ansID} / ${ansEN}`;
+        }
+        else {
+          contentStr = String(h.content || "");
+        }
+      } else {
+        if (typeof h.content === "object" && h.content !== null) {
+          contentStr = h.content.contentID || h.content.answerID || "";
+        } else {
+          contentStr = String(h.content || "");
+        }
+      }
+      return {
+        role: h.role === "assistant" ? "assistant" : "user",
+        content: contentStr,
+        sources: h.sources || []
+      };
+    });
+
+    // 6. Check if new keyword is detected in the current query compared to previous user history elements
+    let hasNewKeyword = false;
+
+    if (history.length > 0 && filteredQuestionKeywords.length > 0) {
+      const historyText = history
+        .filter((h: any) => h.role === "user")
+        .map((h: any) => {
+          let text = "";
+          if (typeof h.content === "object" && h.content !== null) {
+            text = h.content.contentID || h.content.answerID || "";
+          } else {
+            text = String(h.content || "");
+          }
+          return text.toLowerCase();
+        })
+        .join(" ");
+
+      hasNewKeyword = filteredQuestionKeywords.some((kw: string) => !historyText.includes(kw.toLowerCase()));
+    }
+
+    const shouldInjectContext = (history.length === 0) || hasNewKeyword || isGenericFollowUp;
+
+    let finalUserMessage = "";
+    if (shouldInjectContext) {
+      // First message or newly matching keywords found
+      finalUserMessage = `Konteks dokumen:\n${context || "Tidak ada dokumen pendukung relevan ditemukan di pangkalan data pengetahuan Lazuardi GCS."}\n\nPertanyaan: ${question}`;
+    } else {
+      // Subsequent generic conversational message without duplicating heavy context documents to save tokens
+      finalUserMessage = question;
+    }
+
+    // 7. Call Koboil LLM API or Google Gemini OpenAPI-compatible endpoint via standard chat completion
     let BASE_URL = process.env.VITE_AI_BASE_URL || "https://api.koboillm.com/v1";
     let API_KEY = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
     let MODEL = process.env.VITE_AI_MODEL || "gemini/gemini-2.5-flash-lite";
@@ -2279,7 +2406,8 @@ app.post("/api/lumina-chat", async (req, res) => {
       model: MODEL,
       messages: [
         { role: "system", content: systemInstructionText },
-        { role: "user", content: `Konteks dokumen:\n${context || "Tidak ada dokumen pendukung relevan ditemukan di pangkalan data pengetahuan Lazuardi GCS."}\n\nPertanyaan: ${question}` }
+        ...mappedHistory,
+        { role: "user", content: finalUserMessage }
       ],
       temperature: 0.7
     }, {
@@ -2295,7 +2423,7 @@ app.post("/api/lumina-chat", async (req, res) => {
     let answerID = "";
     let answerEN = "";
 
-    // 6. Robust parsing for separators: "🇮🇩 Bahasa Indonesia:" and "🇬🇧 English:"
+    // 8. Robust parsing for separators: "🇮🇩 Bahasa Indonesia:" and "🇬🇧 English:"
     const idKey = "🇮🇩 Bahasa Indonesia:";
     const enKey = "🇬🇧 English:";
 
@@ -2312,19 +2440,26 @@ app.post("/api/lumina-chat", async (req, res) => {
       }
     } else if (idIndex !== -1) {
       answerID = aiText.substring(idIndex + idKey.length).trim();
-      answerEN = "Sorry, English response is not generated by the AI.";
+      answerEN = "";
     } else if (enIndex !== -1) {
       answerEN = aiText.substring(enIndex + enKey.length).trim();
-      answerID = "Maaf, respon dalam Bahasa Indonesia tidak di-generate oleh AI.";
+      answerID = "";
     } else {
-      answerID = aiText;
-      answerEN = aiText;
+      if (language === "EN") {
+        answerEN = aiText;
+        answerID = "";
+      } else {
+        answerID = aiText;
+        answerEN = "";
+      }
     }
+
+    const finalSources = shouldInjectContext ? sources : [];
 
     return res.json({
       answerID,
       answerEN,
-      sources,
+      sources: finalSources,
     });
 
   } catch (error: any) {

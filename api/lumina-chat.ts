@@ -27,6 +27,32 @@ function getAdminDb() {
   }
 }
 
+// STOPWORDS list for Indonesian & English to prevent generic interrogatives/pronouns from shifting the conversation context
+const STOPWORDS = new Set([
+  // Indonesian Interrogatives, Pronouns & Auxiliaries
+  "siapa", "apa", "mengapa", "bagaimana", "kapan", "dimana", "di", "mana", "ke", "dari",
+  "yang", "untuk", "pada", "dengan", "oleh", "ini", "itu", "dan", "atau", "tetapi",
+  "saya", "kamu", "dia", "mereka", "kita", "kami", "anda", "beliau", "punya", "ada", "adalah", "yaitu",
+  "yakni", "ialah", "merupakan", "saja", "nya", "kah", "lah", "pun", "semua", "beberapa", "banyak", "sedikit",
+  "sebutkan", "berikan", "jelaskan", "deskripsikan", "ceritakan", "tunjukkan", "tuliskan", "jawab", "jawablah",
+  "pertanyaan", "tanya", "bertanya", "tentang", "mengenai", "terkait", "terhadap", "bagi", "buat", "atas",
+  "dalam", "luar", "antara", "sebelum", "sesudah", "setelah", "hingga", "sampai", "sehingga",
+  "karena", "sebab", "oleh karena itu", "jika", "kalau", "apabila", "bila", "supaya", "agar",
+  "bertanggung", "tanggung", "jawab", "bertanggungjawab", "melakukan", "terlibat", "menjadi", "bisa", "dapat",
+  "boleh", "harus", "wajib", "perlu", "patut", "akan", "sedang", "telah", "sudah", "belum", "pernah",
+  "bukan", "tidak", "jangan", "tiada", "tidaklah", "bukanlah", "siapakah", "apakah", "bagaimanakah",
+  
+  // English Interrogatives, Pronouns & Auxiliaries
+  "who", "what", "why", "how", "where", "when", "which", "whose", "whom",
+  "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did",
+  "a", "an", "the", "and", "or", "but", "if", "because", "as", "until", "while", "of", "at", "by", "for",
+  "with", "about", "against", "between", "into", "through", "during", "before", "after", "above", "below",
+  "to", "from", "up", "down", "in", "out", "on", "off", "over", "under", "again", "further", "then", "once",
+  "here", "there", "all", "any", "both", "each", "few", "more", "most", "other",
+  "some", "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very", "can", "will",
+  "just", "should", "now", "describe", "explain", "tell", "show", "give", "list", "responsible", "responsibility"
+]);
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -88,35 +114,74 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const docsSnap = await db.collection("knowledgeBase").get();
     let relevantDocs: any[] = [];
     
-    // Simple custom scoring search based on question keywords
-    const cleanQuestion = question.toLowerCase().replace(/[^a-zA-Z0-9\s]/g, " ");
-    const keywords = cleanQuestion.split(/\s+/).filter((w: string) => w.length > 2);
+    // Ekstrak topik dari history (ambil 2 pesan user terakhir)
+    const historyContext = history
+      .filter((h: any) => h.role === 'user')
+      .slice(-2)
+      .map((h: any) => h.content || "")
+      .join(' ');
+
+    // Gunakan gabungan untuk scoring dokumen
+    const searchQuery = historyContext.trim() ? (historyContext.trim() + ' ' + question) : question;
+
+    // Simple custom scoring search based on question and search query keywords
+    const cleanSearchQuery = searchQuery.toLowerCase().replace(/[^a-zA-Z0-9\s]/g, " ");
+    const keywords = cleanSearchQuery.split(/\s+/).filter((w: string) => w.length > 2);
+    const filteredKeywords = keywords.filter(kw => !STOPWORDS.has(kw.toLowerCase()));
+
+    // Dokumen yang sudah dirujuk sebelumnya dapat prioritas lebih tinggi
+    const previousSources = history
+      .filter((h: any) => h.role === 'assistant' && h.sources)
+      .flatMap((h: any) => h.sources || []);
+
+    const cleanQuestionOnly = question.toLowerCase().replace(/[^a-zA-Z0-9\s]/g, " ");
+    const questionKeywords = cleanQuestionOnly.split(/\s+/).filter((w: string) => w.length > 2);
+    const filteredQuestionKeywords = questionKeywords.filter(kw => !STOPWORDS.has(kw.toLowerCase()));
+
+    const isGenericFollowUp = history.length > 0 && filteredQuestionKeywords.length === 0 && previousSources.length > 0;
 
     if (docsSnap && !docsSnap.empty) {
-      relevantDocs = docsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const allDocs: any[] = docsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
-      if (keywords.length > 0) {
-        relevantDocs = relevantDocs.map(doc => {
-          let score = 0;
-          const titleLower = (doc.title || "").toLowerCase();
-          const contentLower = (doc.content || "").toLowerCase();
-
-          // Title matching yields highest priority
-          if (titleLower.includes(question.toLowerCase())) score += 50;
-          if (contentLower.includes(question.toLowerCase())) score += 20;
-
-          keywords.forEach((kw: string) => {
-            if (titleLower.includes(kw)) score += 10;
-            if (contentLower.includes(kw)) score += 2;
-          });
-
-          return { ...doc, score };
-        })
-        .filter(doc => doc.score > 0)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 5);
+      if (isGenericFollowUp) {
+        // Reuse previous sources directly to avoid noisy irrelevant documents
+        relevantDocs = allDocs.filter(doc => previousSources.includes(doc.title));
       } else {
-        relevantDocs = relevantDocs.slice(0, 5);
+        relevantDocs = allDocs;
+        const scoringKeywords = filteredKeywords.length > 0 ? filteredKeywords : keywords;
+
+        if (scoringKeywords.length > 0) {
+          relevantDocs = relevantDocs.map(doc => {
+            let score = 0;
+            const titleLower = (doc.title || "").toLowerCase();
+            const contentLower = (doc.content || "").toLowerCase();
+
+            // Title matching yields highest priority
+            if (titleLower.includes(searchQuery.toLowerCase())) score += 80;
+            if (contentLower.includes(searchQuery.toLowerCase())) score += 30;
+
+            // Directly check the original question too
+            if (titleLower.includes(question.toLowerCase())) score += 50;
+            if (contentLower.includes(question.toLowerCase())) score += 15;
+
+            scoringKeywords.forEach((kw: string) => {
+              if (titleLower.includes(kw)) score += 20;
+              if (contentLower.includes(kw)) score += 4;
+            });
+
+            // Saat scoring, tambahkan bonus jika dokumen pernah dirujuk
+            if (previousSources.includes(doc.title)) {
+              score += 150; // Give a massive boost to active topics
+            }
+
+            return { ...doc, score };
+          })
+          .filter(doc => doc.score > 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 5);
+        } else {
+          relevantDocs = relevantDocs.slice(0, 5);
+        }
       }
     }
 
@@ -154,13 +219,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       return {
         role: h.role === "assistant" ? "assistant" : "user",
-        content: contentStr
+        content: contentStr,
+        sources: h.sources || []
       };
     });
 
     // 6. Check if new keyword is detected in the current query compared to previous user history elements
     let hasNewKeyword = false;
-    if (history.length > 0 && keywords.length > 0) {
+
+    if (history.length > 0 && filteredQuestionKeywords.length > 0) {
       const historyText = history
         .filter((h: any) => h.role === "user")
         .map((h: any) => {
@@ -174,10 +241,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         })
         .join(" ");
 
-      hasNewKeyword = keywords.some((kw: string) => !historyText.includes(kw));
+      hasNewKeyword = filteredQuestionKeywords.some((kw: string) => !historyText.includes(kw.toLowerCase()));
     }
 
-    const shouldInjectContext = (history.length === 0) || hasNewKeyword;
+    const shouldInjectContext = (history.length === 0) || hasNewKeyword || isGenericFollowUp;
 
     let finalUserMessage = "";
     if (shouldInjectContext) {
@@ -253,10 +320,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
+    const finalSources = shouldInjectContext ? sources : [];
+
     return res.json({
       answerID,
       answerEN,
-      sources,
+      sources: finalSources,
     });
 
   } catch (error: any) {

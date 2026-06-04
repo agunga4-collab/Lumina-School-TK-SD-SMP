@@ -64,10 +64,11 @@ export default function LuminaChat({ userId }: { userId: string }) {
     setLoading(true);
 
     try {
-      // Map prior conversation history (excluding the user message we just sent) using the content field
+      // Map prior conversation history (excluding the user message we just sent) using the content field and passing sources
       const historyPayload = messages.map(msg => ({
         role: msg.role,
-        content: msg.content || msg.contentID || ""
+        content: msg.content || msg.contentID || "",
+        sources: msg.sources || []
       }));
 
       const response = await axios.post("/api/lumina-chat", {
