@@ -10,6 +10,7 @@ export interface ChatMessage {
   contentEN: string;  // versi English
   sources?: string[];
   timestamp: Date;
+  selectedLanguage?: "ID" | "EN";
 }
 
 export default function LuminaChat({ userId }: { userId: string }) {
@@ -24,6 +25,7 @@ export default function LuminaChat({ userId }: { userId: string }) {
   ]);
   const [inputText, setInputText] = React.useState("");
   const [loading, setLoading] = React.useState(false);
+  const [outputLang, setOutputLang] = React.useState<"ID" | "EN" >("ID");
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
 
@@ -61,13 +63,14 @@ export default function LuminaChat({ userId }: { userId: string }) {
       // Map prior conversation history (excluding the user message we just sent)
       const historyPayload = messages.map(msg => ({
         role: msg.role,
-        content: msg.contentID // English or Indo content, standardizing to Indo since model grounds knowledge
+        content: msg.role === "user" ? msg.contentID : (msg.contentID || msg.contentEN)
       }));
 
       const response = await axios.post("/api/lumina-chat", {
         question: text,
         userId: userId,
-        history: historyPayload
+        history: historyPayload,
+        language: outputLang
       });
 
       const { answerID, answerEN, sources } = response.data;
@@ -78,7 +81,8 @@ export default function LuminaChat({ userId }: { userId: string }) {
         contentID: answerID,
         contentEN: answerEN,
         sources: sources || [],
-        timestamp: new Date()
+        timestamp: new Date(),
+        selectedLanguage: outputLang
       };
 
       setMessages(prev => [...prev, botMsg]);
@@ -89,7 +93,8 @@ export default function LuminaChat({ userId }: { userId: string }) {
         role: "assistant",
         contentID: `Maaf, terjadi kesalahan saat menghubungi AI: ${err.response?.data?.error || err.message}`,
         contentEN: `Sorry, an error occurred while reaching the AI: ${err.response?.data?.error || err.message}`,
-        timestamp: new Date()
+        timestamp: new Date(),
+        selectedLanguage: outputLang
       };
       setMessages(prev => [...prev, errBotMsg]);
     } finally {
@@ -124,11 +129,10 @@ export default function LuminaChat({ userId }: { userId: string }) {
             </div>
             <div>
               <h3 className="font-black text-gray-950 text-sm tracking-tight">Lumina Chat AI</h3>
-              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest font-mono">Grounded Memory</p>
             </div>
           </div>
           <p className="text-xs text-gray-500 leading-relaxed font-semibold">
-            Asisten cerdas berbasis data internal Lazuardi GCS. Menjawab berdasarkan dokumen sah sekolah dengan memori percakapan.
+            Asisten cerdas berbasis pengetahuan dan data Lazuardi GCS.
           </p>
 
           {/* New Chat Reset Button */}
@@ -163,11 +167,37 @@ export default function LuminaChat({ userId }: { userId: string }) {
           </div>
         </div>
 
-        {/* Footer info instead of language switch */}
-        <div className="hidden md:block py-2 text-center border-t border-gray-100">
-          <p className="text-[9px] text-gray-400 font-bold uppercase tracking-widest">
-            🇺🇳 Dual-Language Output
+        {/* Output Language Selector to save input/output tokens */}
+        <div className="py-3.5 border-t border-gray-150 space-y-2">
+          <p className="text-[9px] font-black uppercase tracking-widest text-gray-400">
+            Output Bahasa
           </p>
+          <div className="flex bg-gray-100 p-1 rounded-xl gap-1">
+            <button
+              type="button"
+              onClick={() => setOutputLang("ID")}
+              className={cn(
+                "flex-1 text-[10px] font-black uppercase tracking-wider py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer select-none",
+                outputLang === "ID"
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-gray-400 hover:text-gray-600"
+              )}
+            >
+              <span>🇮🇩</span> Indo
+            </button>
+            <button
+              type="button"
+              onClick={() => setOutputLang("EN")}
+              className={cn(
+                "flex-1 text-[10px] font-black uppercase tracking-wider py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer select-none",
+                outputLang === "EN"
+                  ? "bg-white text-indigo-600 shadow-sm"
+                  : "text-gray-400 hover:text-gray-600"
+              )}
+            >
+              <span>🇬🇧</span> English
+            </button>
+          </div>
         </div>
       </div>
 
@@ -191,26 +221,34 @@ export default function LuminaChat({ userId }: { userId: string }) {
                 ) : (
                   <div className="space-y-3.5">
                     {/* Indonesian Section */}
-                    <div>
-                      <div className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1.5 flex items-center gap-1 select-none">
-                        <span>🇮🇩</span>
-                        <span>Bahasa Indonesia</span>
+                    {(!msg.selectedLanguage || msg.selectedLanguage === "ID") && msg.contentID && (
+                      <div>
+                        {msg.selectedLanguage && (
+                          <div className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1.5 flex items-center gap-1 select-none">
+                            <span>🇮🇩</span>
+                            <span>Bahasa Indonesia</span>
+                          </div>
+                        )}
+                        <p className="font-bold text-gray-900 whitespace-pre-wrap leading-relaxed">
+                          {msg.contentID}
+                        </p>
                       </div>
-                      <p className="font-bold text-gray-900 whitespace-pre-wrap leading-relaxed">
-                        {msg.contentID}
-                      </p>
-                    </div>
+                    )}
 
                     {/* English Section */}
-                    <div className="pt-3 border-t border-gray-100">
-                      <div className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-1.5 flex items-center gap-1 select-none">
-                        <span>🇬🇧</span>
-                        <span>English Response</span>
+                    {(!msg.selectedLanguage || msg.selectedLanguage === "EN") && msg.contentEN && (
+                      <div className={cn(!msg.selectedLanguage && "pt-3 border-t border-gray-100")}>
+                        {msg.selectedLanguage && (
+                          <div className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-1.5 flex items-center gap-1 select-none">
+                            <span>🇬🇧</span>
+                            <span>English Response</span>
+                          </div>
+                        )}
+                        <p className="font-semibold text-gray-650 italic whitespace-pre-wrap leading-relaxed">
+                          {msg.contentEN}
+                        </p>
                       </div>
-                      <p className="font-semibold text-gray-650 italic whitespace-pre-wrap leading-relaxed">
-                        {msg.contentEN}
-                      </p>
-                    </div>
+                    )}
 
                     {/* Sources reference */}
                     {msg.sources && msg.sources.length > 0 && (
