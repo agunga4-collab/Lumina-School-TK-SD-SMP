@@ -34,6 +34,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const { question, userId, history = [], language = "ID" } = req.body;
+    
+    // Log history received for debugging
+    console.log('[LuminaChat] history received:', JSON.stringify(history));
+
     if (!question || !userId) {
       return res.status(400).json({ error: "Missing required fields: question and userId" });
     }
@@ -120,7 +124,71 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const context = relevantDocs.map((doc, idx) => `Document ${idx + 1}: [${doc.title}]\n${doc.content}`).join("\n\n");
     const sources = relevantDocs.map(doc => doc.title);
 
-    // 5. Call Koboil LLM API or Google Gemini OpenAPI-compatible endpoint via standard chat completion
+    // 5. Build alternating history with combined assistant responses
+    const trimmedHistory = history.slice(-10);
+
+    const mappedHistory = trimmedHistory.map((h: any) => {
+      let contentStr = "";
+      if (h.role === "assistant") {
+        // If content is an object with answerID/answerEN
+        if (typeof h.content === "object" && h.content !== null) {
+          const ansID = h.content.answerID || h.content.contentID || "";
+          const ansEN = h.content.answerEN || h.content.contentEN || "";
+          contentStr = `${ansID} / ${ansEN}`;
+        }
+        // If the item itself has direct fields
+        else if (h.answerID !== undefined || h.answerEN !== undefined || h.contentID !== undefined || h.contentEN !== undefined) {
+          const ansID = h.answerID || h.contentID || "";
+          const ansEN = h.answerEN || h.contentEN || "";
+          contentStr = `${ansID} / ${ansEN}`;
+        }
+        else {
+          contentStr = String(h.content || "");
+        }
+      } else {
+        if (typeof h.content === "object" && h.content !== null) {
+          contentStr = h.content.contentID || h.content.answerID || "";
+        } else {
+          contentStr = String(h.content || "");
+        }
+      }
+      return {
+        role: h.role === "assistant" ? "assistant" : "user",
+        content: contentStr
+      };
+    });
+
+    // 6. Check if new keyword is detected in the current query compared to previous user history elements
+    let hasNewKeyword = false;
+    if (history.length > 0 && keywords.length > 0) {
+      const historyText = history
+        .filter((h: any) => h.role === "user")
+        .map((h: any) => {
+          let text = "";
+          if (typeof h.content === "object" && h.content !== null) {
+            text = h.content.contentID || h.content.answerID || "";
+          } else {
+            text = String(h.content || "");
+          }
+          return text.toLowerCase();
+        })
+        .join(" ");
+
+      hasNewKeyword = keywords.some((kw: string) => !historyText.includes(kw));
+    }
+
+    const shouldInjectContext = (history.length === 0) || hasNewKeyword;
+
+    let finalUserMessage = "";
+    if (shouldInjectContext) {
+      // First message or newly matching keywords found
+      finalUserMessage = `Konteks dokumen:\n${context || "Tidak ada dokumen pendukung relevan ditemukan di pangkalan data pengetahuan Lazuardi GCS."}\n\nPertanyaan: ${question}`;
+    } else {
+      // Subsequent generic conversational message without duplicating heavy context documents to save tokens
+      finalUserMessage = question;
+    }
+
+    // 7. Call Koboil LLM API or Google Gemini OpenAPI-compatible endpoint via standard chat completion
     let BASE_URL = process.env.VITE_AI_BASE_URL || "https://api.koboillm.com/v1";
     let API_KEY = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
     let MODEL = process.env.VITE_AI_MODEL || "gemini/gemini-2.5-flash-lite";
@@ -133,17 +201,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       MODEL = "gemini-2.5-flash";
     }
 
-    const trimmedHistory = history.slice(-10);
-
     const aiResponse = await axios.post(`${BASE_URL}/chat/completions`, {
       model: MODEL,
       messages: [
         { role: "system", content: systemInstructionText },
-        ...trimmedHistory.map((h: any) => ({
-          role: h.role === "assistant" ? "assistant" : "user",
-          content: h.content
-        })),
-        { role: "user", content: `Konteks dokumen:\n${context || "Tidak ada dokumen pendukung relevan ditemukan di pangkalan data pengetahuan Lazuardi GCS."}\n\nPertanyaan: ${question}` }
+        ...mappedHistory,
+        { role: "user", content: finalUserMessage }
       ],
       temperature: 0.7
     }, {
@@ -159,7 +222,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let answerID = "";
     let answerEN = "";
 
-    // 6. Robust parsing for separators: "🇮🇩 Bahasa Indonesia:" and "🇬🇧 English:"
+    // 8. Robust parsing for separators: "🇮🇩 Bahasa Indonesia:" and "🇬🇧 English:"
     const idKey = "🇮🇩 Bahasa Indonesia:";
     const enKey = "🇬🇧 English:";
 

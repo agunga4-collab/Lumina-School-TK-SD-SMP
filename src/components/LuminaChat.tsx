@@ -6,6 +6,7 @@ import { cn } from "../lib/utils";
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
+  content?: string;
   contentID: string;  // versi Bahasa Indonesia
   contentEN: string;  // versi English
   sources?: string[];
@@ -18,6 +19,8 @@ export default function LuminaChat({ userId }: { userId: string }) {
     {
       id: "welcome",
       role: "assistant",
+      content: "Halo! Saya Lumina Chat, asisten AI resmi Lazuardi GCS. Tanyakan apa saja mengenai kurikulum, peraturan sekolah, panduan guru, atau info MTSS & LXD akademis resmi.\n\n" +
+        "Hello! I am Lumina Chat, the official AI assistant of Lazuardi GCS. Ask me anything about the curriculum, school policies, teacher guides, or MTSS & LXD academic info.",
       contentID: "Halo! Saya Lumina Chat, asisten AI resmi Lazuardi GCS. Tanyakan apa saja mengenai kurikulum, peraturan sekolah, panduan guru, atau info MTSS & LXD akademis resmi.",
       contentEN: "Hello! I am Lumina Chat, the official AI assistant of Lazuardi GCS. Ask me anything about the curriculum, school policies, teacher guides, or MTSS & LXD academic info.",
       timestamp: new Date()
@@ -46,6 +49,7 @@ export default function LuminaChat({ userId }: { userId: string }) {
     const userMsg: ChatMessage = {
       id: `m-${Date.now()}-user`,
       role: "user",
+      content: text,
       contentID: text,
       contentEN: text,
       timestamp: new Date()
@@ -60,10 +64,10 @@ export default function LuminaChat({ userId }: { userId: string }) {
     setLoading(true);
 
     try {
-      // Map prior conversation history (excluding the user message we just sent)
+      // Map prior conversation history (excluding the user message we just sent) using the content field
       const historyPayload = messages.map(msg => ({
         role: msg.role,
-        content: msg.role === "user" ? msg.contentID : (msg.contentID || msg.contentEN)
+        content: msg.content || msg.contentID || ""
       }));
 
       const response = await axios.post("/api/lumina-chat", {
@@ -78,6 +82,7 @@ export default function LuminaChat({ userId }: { userId: string }) {
       const botMsg: ChatMessage = {
         id: `m-${Date.now()}-bot`,
         role: "assistant",
+        content: answerID + "\n\n" + answerEN,
         contentID: answerID,
         contentEN: answerEN,
         sources: sources || [],
@@ -91,6 +96,8 @@ export default function LuminaChat({ userId }: { userId: string }) {
       const errBotMsg: ChatMessage = {
         id: `m-${Date.now()}-bot`,
         role: "assistant",
+        content: `Maaf, terjadi kesalahan saat menghubungi AI: ${err.response?.data?.error || err.message}\n\n` +
+          `Sorry, an error occurred while reaching the AI: ${err.response?.data?.error || err.message}`,
         contentID: `Maaf, terjadi kesalahan saat menghubungi AI: ${err.response?.data?.error || err.message}`,
         contentEN: `Sorry, an error occurred while reaching the AI: ${err.response?.data?.error || err.message}`,
         timestamp: new Date(),
@@ -107,6 +114,8 @@ export default function LuminaChat({ userId }: { userId: string }) {
       {
         id: "welcome",
         role: "assistant",
+        content: "Halo! Saya Lumina Chat, asisten AI resmi Lazuardi GCS. Tanyakan apa saja mengenai kurikulum, peraturan sekolah, panduan guru, atau info MTSS & LXD akademis resmi.\n\n" +
+          "Hello! I am Lumina Chat, the official AI assistant of Lazuardi GCS. Ask me anything about the curriculum, school policies, teacher guides, or MTSS & LXD academic info.",
         contentID: "Halo! Saya Lumina Chat, asisten AI resmi Lazuardi GCS. Tanyakan apa saja mengenai kurikulum, peraturan sekolah, panduan guru, atau info MTSS & LXD akademis resmi.",
         contentEN: "Hello! I am Lumina Chat, the official AI assistant of Lazuardi GCS. Ask me anything about the curriculum, school policies, teacher guides, or MTSS & LXD academic info.",
         timestamp: new Date()
