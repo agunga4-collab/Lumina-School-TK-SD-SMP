@@ -33,7 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { question, userId } = req.body;
+    const { question, userId, history = [] } = req.body;
     if (!question || !userId) {
       return res.status(400).json({ error: "Missing required fields: question and userId" });
     }
@@ -140,10 +140,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       MODEL = "gemini-2.5-flash";
     }
 
+    const trimmedHistory = history.slice(-10);
+
     const aiResponse = await axios.post(`${BASE_URL}/chat/completions`, {
       model: MODEL,
       messages: [
         { role: "system", content: systemInstructionText },
+        ...trimmedHistory.map((h: any) => ({
+          role: h.role === "assistant" ? "assistant" : "user",
+          content: h.content
+        })),
         { role: "user", content: `Konteks dokumen:\n${context || "Tidak ada dokumen pendukung relevan ditemukan di pangkalan data pengetahuan Lazuardi GCS."}\n\nPertanyaan: ${question}` }
       ],
       temperature: 0.7
