@@ -33,6 +33,10 @@ import {
   Upload,
   Play,
   Terminal,
+  LayoutDashboard,
+  PlusSquare,
+  Lock,
+  Menu,
 } from "lucide-react";
 import { getDoc, setDoc, collection, getDocs, updateDoc, deleteDoc, query, where } from "firebase/firestore";
 import {
@@ -63,8 +67,19 @@ export default function SuperAdminPage() {
     "ALL",
   );
   const [activeTab, setActiveTab] = React.useState<
-    "STAFF" | "STUDENT" | "PARENT" | "CLASSES" | "LOGO" | "PROMPTS" | "KNOWLEDGE_BASE"
+    "STAFF" | "STUDENT" | "PARENT" | "CLASSES" | "LOGO" | "PROMPTS" | "KNOWLEDGE_BASE" | "PENDING"
   >("STAFF");
+  const [activeMenu, setActiveMenu] = React.useState<
+    "overview" | "user-undangan" | "user-pending" | "kelas" | "ai-prompts" | "ai-knowledge" | "ai-logo" | "import-massal" | "import-sync" | "sistem-reset"
+  >("overview");
+  const [collapsedGroups, setCollapsedGroups] = React.useState<Record<string, boolean>>({
+    USER: false,
+    KELAS: false,
+    AI: false,
+    IMPORT: false,
+    SISTEM: false,
+  });
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = React.useState(false);
   const [logos, setLogos] = React.useState<{
     KINDERGARTEN: { rectangular: string; square: string };
     ELEMENTARY: { rectangular: string; square: string };
@@ -268,6 +283,102 @@ export default function SuperAdminPage() {
       alert("Gagal sinkronisasi data: " + (err.response?.data?.error || err.message));
     } finally {
       setSyncKnowledgeLoading(false);
+    }
+  };
+
+  // Google Sheets import custom states
+  const defaultSheetId = import.meta.env.VITE_GOOGLE_SHEET_ID_LUMINA || "1NOfiH3ZJ5-9rW-vRE3Hq7q_uP8gVWhGZ6p7LgXN1-E4";
+  const [studentSheetId, setStudentSheetId] = React.useState<string>(defaultSheetId);
+  const [studentSheetName, setStudentSheetName] = React.useState<string>("SiswaLumina");
+  const [staffSheetId, setStaffSheetId] = React.useState<string>(defaultSheetId);
+  const [staffSheetName, setStaffSheetName] = React.useState<string>("StaffLumina");
+  const [parentSheetId, setParentSheetId] = React.useState<string>(defaultSheetId);
+  const [parentSheetName, setParentSheetName] = React.useState<string>("OrangTuaLumina");
+  const [activeImportSection, setActiveImportSection] = React.useState<"STUDENT" | "STAFF" | "PARENT" | null>(null);
+  const [importSectionResult, setImportSectionResult] = React.useState<Record<string, { created: number; updated: number; skipped: number; errors: any[] } | null>>({
+    STUDENT: null,
+    STAFF: null,
+    PARENT: null,
+  });
+
+  const handleSectionImport = async (mode: "STUDENT" | "STAFF" | "PARENT") => {
+    let sheetId = "";
+    let sheetName = "";
+
+    if (mode === "STUDENT") {
+      sheetId = studentSheetId.trim();
+      sheetName = studentSheetName.trim();
+    } else if (mode === "STAFF") {
+      sheetId = staffSheetId.trim();
+      sheetName = staffSheetName.trim();
+    } else if (mode === "PARENT") {
+      sheetId = parentSheetId.trim();
+      sheetName = parentSheetName.trim();
+    }
+
+    if (!sheetId) {
+      alert("Silakan masukkan Google Sheet ID terlebih dahulu.");
+      return;
+    }
+    if (!sheetName) {
+      alert("Silakan masukkan nama sheet terlebih dahulu.");
+      return;
+    }
+
+    setImportLoading(true);
+    setActiveImportSection(mode);
+
+    // Reset result for this mode
+    setImportSectionResult(prev => ({
+      ...prev,
+      [mode]: null,
+    }));
+
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) throw new Error("Authentication required");
+
+      const response = await fetch("/api/admin/bulk-import-users", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ sheetId, sheetName, mode }),
+      });
+
+      let result;
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        result = await response.json();
+      } else {
+        const text = await response.text();
+        console.error("[SuperAdmin] Non-JSON response:", text);
+        throw new Error(
+          `Server returned non-JSON response (${response.status}). Mohon hubungi admin.`,
+        );
+      }
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Server error");
+      }
+
+      setImportSectionResult(prev => ({
+        ...prev,
+        [mode]: {
+          created: result.created || 0,
+          updated: result.updated || 0,
+          skipped: result.skipped || 0,
+          errors: result.errors || [],
+        }
+      }));
+      fetchData();
+    } catch (error: any) {
+      console.error("[SuperAdmin] Import error:", error);
+      alert("Error: " + error.message);
+    } finally {
+      setImportLoading(false);
+      setActiveImportSection(null);
     }
   };
 
@@ -1036,311 +1147,636 @@ export default function SuperAdminPage() {
     KNOWLEDGE_BASE: knowledgeBase.length,
   };
 
-  return (
-    <div className="space-y-10 pb-20 max-w-7xl mx-auto">
-      <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
-        <div className="space-y-1">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-blue-600 rounded-2xl text-white shadow-xl shadow-blue-100">
-              <ShieldCheck size={28} />
-            </div>
-            <h1 className="text-4xl font-black text-gray-900 tracking-tight italic uppercase">
-              Lumina <span className="text-blue-600">Admin</span>
-            </h1>
-          </div>
-          <p className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">
-            Centralised Authority & Access Management
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          {activeTab === "PARENT" && (
-            <button
-              onClick={handleSyncParents}
-              disabled={syncLoading}
-              className="px-6 py-4 bg-blue-50 text-blue-600 border border-blue-100 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-blue-100 transition-all disabled:opacity-50"
-            >
-              {syncLoading ? (
-                <Loader2 size={16} className="animate-spin" />
-              ) : (
-                <RefreshCw size={16} />
-              )}
-              Sinkron Data Wali
-            </button>
+  const renderSidebarContent = () => (
+    <div className="flex flex-col gap-6">
+      <div className="space-y-1">
+        <button
+          onClick={() => {
+            setActiveMenu("overview");
+            setIsMobileSidebarOpen(false);
+          }}
+          className={cn(
+            "w-full px-4 py-3 rounded-xl text-xs font-bold transition-all text-left flex items-center gap-3",
+            activeMenu === "overview"
+              ? "bg-blue-600 text-white font-black shadow-lg shadow-blue-900/30"
+              : "hover:bg-slate-900 text-slate-400 hover:text-slate-250"
           )}
-
-          <button
-            onClick={handleResetData}
-            disabled={resetLoading}
-            className="px-6 py-4 bg-red-50 text-red-600 border border-red-100 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-red-100 transition-all disabled:opacity-50"
-          >
-            {resetLoading ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
-              <Trash2 size={16} />
-            )}
-            Reset Data
-          </button>
-
-          <div className="relative group">
-            <button className="px-6 py-4 bg-white border border-gray-100 text-gray-700 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-gray-50 transition-all shadow-sm">
-              <Mail size={16} />
-              Impor Massal
-            </button>
-            <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-2xl shadow-2xl border border-gray-100 py-3 hidden group-hover:block z-50 animate-in fade-in slide-in-from-top-2">
-              <button
-                onClick={() => {
-                  setImportMode("STAFF");
-                  setIsImportModalOpen(true);
-                }}
-                className="w-full px-5 py-2.5 text-left text-[10px] font-black text-gray-600 hover:bg-gray-50 uppercase tracking-widest"
-              >
-                Undangan Staff
-              </button>
-              <button
-                onClick={() => {
-                  setImportMode("STUDENT");
-                  setIsImportModalOpen(true);
-                }}
-                className="w-full px-5 py-2.5 text-left text-[10px] font-black text-gray-600 hover:bg-gray-50 uppercase tracking-widest"
-              >
-                Data Siswa
-              </button>
-              <button
-                onClick={() => {
-                  setImportMode("PARENT");
-                  setIsImportModalOpen(true);
-                }}
-                className="w-full px-5 py-2.5 text-left text-[10px] font-black text-gray-600 hover:bg-gray-50 uppercase tracking-widest"
-              >
-                Data Orang Tua
-              </button>
-            </div>
-          </div>
-
-          <button
-            onClick={() => {
-              setEditingId(null);
-              setFormData({
-                name: "",
-                email: "",
-                role: "TEACHER",
-                unitId: selectedUnit === "ALL" ? "JUNIOR_HIGH" : selectedUnit,
-                jobTitle: "",
-                status: "ready",
-                luminaId: "",
-                classId: "",
-                academicYear: "2025/2026",
-                linkedStudents: [],
-              });
-              setIsModalOpen(true);
-            }}
-            className="px-8 py-4 bg-gray-900 text-white rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-blue-600 transition-all shadow-xl shadow-blue-100/20"
-          >
-            <Plus size={16} />
-            Undang Manual
-          </button>
-        </div>
-      </header>
-
-      {/* Unit Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {[
-          {
-            id: "KINDERGARTEN",
-            name: "Kindergarten",
-            icon: <Smile className="text-orange-500" />,
-            color: "orange",
-          },
-          {
-            id: "ELEMENTARY",
-            name: "Elementary",
-            icon: <Footprints className="text-blue-500" />,
-            color: "blue",
-          },
-          {
-            id: "JUNIOR_HIGH",
-            name: "Junior High",
-            icon: <Brain className="text-purple-500" />,
-            color: "purple",
-          },
-        ].map((unit) => (
-          <motion.button
-            key={unit.id}
-            whileHover={{ y: -5 }}
-            onClick={() => setSelectedUnit(unit.id as any)}
-            className={cn(
-              "text-left p-8 rounded-[2.5rem] border-2 transition-all relative overflow-hidden group",
-              selectedUnit === unit.id
-                ? "bg-white border-blue-500 shadow-2xl shadow-blue-100"
-                : "bg-white border-gray-50 hover:border-gray-200 shadow-sm",
-            )}
-          >
-            <div className="relative z-10 space-y-4">
-              <div className="flex items-center justify-between">
-                <div
-                  className={cn(
-                    "p-4 rounded-[1.5rem]",
-                    selectedUnit === unit.id
-                      ? "bg-blue-50 text-blue-600"
-                      : "bg-gray-50 text-gray-400",
-                  )}
-                >
-                  {unit.icon}
-                </div>
-                {unitStats[unit.id]?.pending > 0 && (
-                  <span className="px-3 py-1 bg-red-100 text-red-600 rounded-full text-[9px] font-black uppercase tracking-widest">
-                    {unitStats[unit.id].pending} Pending
-                  </span>
-                )}
-              </div>
-              <div>
-                <h3 className="text-xl font-black text-gray-900 tracking-tight italic uppercase">
-                  {unit.name}
-                </h3>
-                <div className="flex items-center gap-4 mt-2">
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                      Students
-                    </p>
-                    <p className="text-lg font-black text-gray-700">
-                      {unitStats[unit.id]?.students || 0}
-                    </p>
-                  </div>
-                  <div className="w-px h-8 bg-gray-100" />
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                      Staff
-                    </p>
-                    <p className="text-lg font-black text-gray-700">
-                      {unitStats[unit.id]?.staff || 0}
-                    </p>
-                  </div>
-                  <div className="w-px h-8 bg-gray-100" />
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                      Classes
-                    </p>
-                    <p className="text-lg font-black text-gray-700">
-                      {unitStats[unit.id]?.classes || 0}
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <div className="pt-4 flex items-center gap-2 text-blue-600 opacity-0 group-hover:opacity-100 transition-all translate-x-2 group-hover:translate-x-0">
-                <span className="text-[10px] font-black uppercase tracking-widest">
-                  Kelola Unit
-                </span>
-                <ChevronRight size={14} />
-              </div>
-            </div>
-            {selectedUnit === unit.id && (
-              <div className="absolute top-0 right-0 p-4">
-                <CheckCircle2 className="text-blue-500" size={20} />
-              </div>
-            )}
-          </motion.button>
-        ))}
+        >
+          <LayoutDashboard size={16} />
+          Overview
+        </button>
       </div>
 
-      {/* Main Content Area */}
-      <div className="space-y-8">
-        {/* Navigation Bar */}
-        <div className="bg-white p-4 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6">
-          {/* Unit Selector */}
-          <div className="flex items-center p-1 bg-gray-50 rounded-2xl">
-            <button
-              onClick={() => setSelectedUnit("ALL")}
-              className={cn(
-                "px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
-                selectedUnit === "ALL"
-                  ? "bg-white text-blue-600 shadow-sm"
-                  : "text-gray-400 hover:text-gray-600",
-              )}
-            >
-              Semua Unit
-            </button>
-            {["KINDERGARTEN", "ELEMENTARY", "JUNIOR_HIGH"].map((uid) => (
-              <button
-                key={uid}
-                onClick={() => setSelectedUnit(uid as any)}
-                className={cn(
-                  "px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
-                  selectedUnit === uid
-                    ? "bg-white text-blue-600 shadow-sm"
-                    : "text-gray-400 hover:text-gray-600",
-                )}
-              >
-                {uid.replace("_", " ")}
-              </button>
-            ))}
+      {/* Group: USER */}
+      <div className="space-y-1">
+        <div 
+          onClick={() => setCollapsedGroups(prev => ({ ...prev, USER: !prev.USER }))}
+          className="flex items-center justify-between text-[10px] font-black text-slate-500 uppercase tracking-widest px-3 py-1 cursor-pointer hover:text-slate-350 select-none"
+        >
+          <div className="flex items-center gap-2">
+            <Users size={12} />
+            <span>USER</span>
           </div>
-
-          {/* Role Selector */}
-          <div className="flex items-center gap-1 overflow-x-auto pb-2 md:pb-0">
-            {[
-              { id: "STAFF", icon: <Users size={14} />, label: "Staff" },
-              {
-                id: "STUDENT",
-                icon: <GraduationCap size={14} />,
-                label: "Siswa",
-              },
-              { id: "PARENT", icon: <Users size={14} />, label: "Ortu" },
-              { id: "CLASSES", icon: <BookOpen size={14} />, label: "Kelas" },
-              { id: "LOGO", icon: <ImageIcon size={14} />, label: "Logo" },
-              { id: "PROMPTS", icon: <Sparkles size={14} />, label: "Prompts" },
-              { id: "KNOWLEDGE_BASE", icon: <Brain size={14} />, label: "Knowledge" },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={cn(
-                  "px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all whitespace-nowrap",
-                  activeTab === tab.id
-                    ? "bg-gray-900 text-white shadow-xl shadow-gray-200"
-                    : "text-gray-400 hover:text-gray-600 hover:bg-gray-50",
-                )}
-              >
-                {tab.icon}
-                {tab.label}
-                <span
-                  className={cn(
-                    "ml-1 px-1.5 py-0.5 rounded-md text-[8px] font-black",
-                    activeTab === tab.id
-                      ? "bg-white/20 text-white"
-                      : "bg-gray-100 text-gray-400",
-                  )}
-                >
-                  {tab.id === "LOGO" ? 6 : counts[tab.id as keyof typeof counts]}
-                </span>
-              </button>
-            ))}
-            <div className="w-px h-8 bg-gray-100 mx-2" />
+          <ChevronDown 
+            size={12} 
+            className={cn("transition-transform duration-200", collapsedGroups.USER && "rotate-180")} 
+          />
+        </div>
+        
+        {!collapsedGroups.USER && (
+          <div className="space-y-0.5 pl-2 mt-1">
             <button
-              onClick={() => setActiveTab("PENDING" as any)}
+              onClick={() => {
+                setActiveMenu("user-undangan");
+                if (activeTab === "PENDING" || activeTab === "CLASSES" || activeTab === "PROMPTS" || activeTab === "KNOWLEDGE_BASE" || activeTab === "LOGO") {
+                  setActiveTab("STAFF");
+                }
+                setIsMobileSidebarOpen(false);
+              }}
               className={cn(
-                "px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all",
-                activeTab === "PENDING"
-                  ? "bg-red-600 text-white shadow-xl shadow-red-100"
-                  : "text-red-400 hover:bg-red-50",
+                "w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-left flex items-center justify-between transition-all",
+                activeMenu === "user-undangan"
+                  ? "bg-slate-900 text-white font-bold border border-slate-800"
+                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200"
               )}
             >
-              <AlertCircle size={14} />
-              Pending
-              <span
-                className={cn(
-                  "ml-1 px-1.5 py-0.5 rounded-md text-[8px] font-black",
-                  activeTab === "PENDING" ? "bg-white/20" : "bg-red-50",
-                )}
-              >
+              <div className="flex items-center gap-2.5 flex-1 select-none">
+                <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                <span>Undangan</span>
+              </div>
+              <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-slate-900 text-slate-500 border border-slate-850">
+                {counts.STAFF + counts.STUDENT + counts.PARENT}
+              </span>
+            </button>
+            <button
+              onClick={() => {
+                setActiveMenu("user-pending");
+                setActiveTab("PENDING");
+                setIsMobileSidebarOpen(false);
+              }}
+              className={cn(
+                "w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-left flex items-center justify-between transition-all",
+                activeMenu === "user-pending"
+                  ? "bg-slate-900 text-white font-bold border border-slate-800"
+                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200"
+              )}
+            >
+              <div className="flex items-center gap-2.5 flex-1 select-none">
+                <div className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                <span>Pending</span>
+              </div>
+              <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-red-950 text-red-400">
                 {counts.PENDING}
               </span>
             </button>
           </div>
+        )}
+      </div>
+
+      {/* Group: KELAS */}
+      <div className="space-y-1">
+        <div 
+          onClick={() => setCollapsedGroups(prev => ({ ...prev, KELAS: !prev.KELAS }))}
+          className="flex items-center justify-between text-[10px] font-black text-slate-500 uppercase tracking-widest px-3 py-1 cursor-pointer hover:text-slate-350 select-none animate-none"
+        >
+          <div className="flex items-center gap-2">
+            <BookOpen size={12} />
+            <span>KELAS</span>
+          </div>
+          <ChevronDown 
+            size={12} 
+            className={cn("transition-transform duration-200", collapsedGroups.KELAS && "rotate-180")} 
+          />
+        </div>
+        
+        {!collapsedGroups.KELAS && (
+          <div className="space-y-0.5 pl-2 mt-1">
+            <button
+              onClick={() => {
+                setActiveMenu("kelas");
+                setActiveTab("CLASSES");
+                setIsMobileSidebarOpen(false);
+              }}
+              className={cn(
+                "w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-left flex items-center justify-between transition-all",
+                activeMenu === "kelas"
+                  ? "bg-slate-900 text-white font-bold border border-slate-800"
+                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200"
+              )}
+            >
+              <div className="flex items-center gap-2.5 flex-1 select-none">
+                <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                <span>Manajemen</span>
+              </div>
+              <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-slate-900 text-slate-500 border border-slate-850">
+                {counts.CLASSES}
+              </span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Group: AI & KONTEN */}
+      <div className="space-y-1">
+        <div 
+          onClick={() => setCollapsedGroups(prev => ({ ...prev, AI: !prev.AI }))}
+          className="flex items-center justify-between text-[10px] font-black text-slate-500 uppercase tracking-widest px-3 py-1 cursor-pointer hover:text-slate-350 select-none animate-none"
+        >
+          <div className="flex items-center gap-2">
+            <Sparkles size={12} />
+            <span>AI & KONTEN</span>
+          </div>
+          <ChevronDown 
+            size={12} 
+            className={cn("transition-transform duration-200", collapsedGroups.AI && "rotate-180")} 
+          />
+        </div>
+        
+        {!collapsedGroups.AI && (
+          <div className="space-y-0.5 pl-2 mt-1">
+            <button
+              onClick={() => {
+                setActiveMenu("ai-prompts");
+                setActiveTab("PROMPTS");
+                setIsMobileSidebarOpen(false);
+              }}
+              className={cn(
+                "w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-left flex items-center justify-between transition-all",
+                activeMenu === "ai-prompts"
+                  ? "bg-slate-900 text-white font-bold border border-slate-800"
+                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200"
+              )}
+            >
+              <div className="flex items-center gap-2.5 flex-1 select-none">
+                <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                <span>Prompts</span>
+              </div>
+              <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-slate-900 text-slate-500 border border-slate-850">
+                {counts.PROMPTS}
+              </span>
+            </button>
+            <button
+              onClick={() => {
+                setActiveMenu("ai-knowledge");
+                setActiveTab("KNOWLEDGE_BASE");
+                setIsMobileSidebarOpen(false);
+              }}
+              className={cn(
+                "w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-left flex items-center justify-between transition-all",
+                activeMenu === "ai-knowledge"
+                  ? "bg-slate-900 text-white font-bold border border-slate-800"
+                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200"
+              )}
+            >
+              <div className="flex items-center gap-2.5 flex-1 select-none">
+                <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                <span>Knowledge</span>
+              </div>
+              <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-slate-900 text-slate-500 border border-slate-850">
+                {counts.KNOWLEDGE_BASE}
+              </span>
+            </button>
+            <button
+              onClick={() => {
+                setActiveMenu("ai-logo");
+                setActiveTab("LOGO");
+                setIsMobileSidebarOpen(false);
+              }}
+              className={cn(
+                "w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-left flex items-center justify-between transition-all",
+                activeMenu === "ai-logo"
+                  ? "bg-slate-900 text-white font-bold border border-slate-800"
+                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200"
+              )}
+            >
+              <div className="flex items-center gap-2.5 flex-1 select-none">
+                <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                <span>Logo</span>
+              </div>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Group: IMPORT */}
+      <div className="space-y-1">
+        <div 
+          onClick={() => setCollapsedGroups(prev => ({ ...prev, IMPORT: !prev.IMPORT }))}
+          className="flex items-center justify-between text-[10px] font-black text-slate-500 uppercase tracking-widest px-3 py-1 cursor-pointer hover:text-slate-350 select-none animate-none"
+        >
+          <div className="flex items-center gap-2">
+            <PlusSquare size={12} />
+            <span>IMPORT</span>
+          </div>
+          <ChevronDown 
+            size={12} 
+            className={cn("transition-transform duration-200", collapsedGroups.IMPORT && "rotate-180")} 
+          />
+        </div>
+        
+        {!collapsedGroups.IMPORT && (
+          <div className="space-y-0.5 pl-2 mt-1">
+            <button
+              onClick={() => {
+                setActiveMenu("import-massal");
+                setIsMobileSidebarOpen(false);
+              }}
+              className={cn(
+                "w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-left flex items-center justify-between transition-all",
+                activeMenu === "import-massal"
+                  ? "bg-slate-900 text-white font-bold border border-slate-800"
+                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200"
+              )}
+            >
+              <div className="flex items-center gap-2.5 flex-1 select-none">
+                <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                <span>Impor Massal</span>
+              </div>
+            </button>
+            <button
+              onClick={() => {
+                setActiveMenu("import-sync");
+                setIsMobileSidebarOpen(false);
+              }}
+              className={cn(
+                "w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-left flex items-center justify-between transition-all",
+                activeMenu === "import-sync"
+                  ? "bg-slate-900 text-white font-bold border border-slate-800"
+                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200"
+              )}
+            >
+              <div className="flex items-center gap-2.5 flex-1 select-none">
+                <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                <span>Sync Data</span>
+              </div>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Group: SISTEM */}
+      <div className="space-y-1">
+        <div 
+          onClick={() => setCollapsedGroups(prev => ({ ...prev, SISTEM: !prev.SISTEM }))}
+          className="flex items-center justify-between text-[10px] font-black text-slate-500 uppercase tracking-widest px-3 py-1 cursor-pointer hover:text-slate-355 select-none animate-none"
+        >
+          <div className="flex items-center gap-2">
+            <Lock size={12} />
+            <span>SISTEM</span>
+          </div>
+          <ChevronDown 
+            size={12} 
+            className={cn("transition-transform duration-200", collapsedGroups.SISTEM && "rotate-180")} 
+          />
+        </div>
+        
+        {!collapsedGroups.SISTEM && (
+          <div className="space-y-0.5 pl-2 mt-1">
+            <button
+              onClick={() => {
+                setActiveMenu("sistem-reset");
+                setIsMobileSidebarOpen(false);
+              }}
+              className={cn(
+                "w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-left flex items-center justify-between transition-all",
+                activeMenu === "sistem-reset"
+                  ? "bg-slate-900 text-white font-bold border border-slate-800"
+                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200"
+              )}
+            >
+              <div className="flex items-center gap-2.5 flex-1 select-none">
+                <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                <span>Reset Data</span>
+              </div>
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
+      {/* Top Admin Header Banner */}
+      <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm shrink-0">
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={() => setIsMobileSidebarOpen(true)}
+            className="p-2 -ml-2 text-gray-500 hover:text-gray-700 md:hidden transition-all duration-150"
+          >
+            <Menu size={20} />
+          </button>
+          <div className="p-2 bg-blue-600 rounded-xl text-white shadow-md">
+            <ShieldCheck size={20} />
+          </div>
+          <div>
+            <h1 className="text-base md:text-lg font-black text-gray-900 tracking-tight italic uppercase flex items-center gap-2">
+              Lumina <span className="text-blue-600">Admin</span>
+              <span className="hidden sm:inline bg-blue-50 text-blue-605 px-2 py-0.5 rounded-full text-[8.5px] font-black not-italic uppercase ml-2 border border-blue-100">
+                Command Center
+              </span>
+            </h1>
+            <p className="hidden xs:block text-[8px] md:text-[9.5px] font-black text-gray-400 uppercase tracking-widest leading-none">
+              Centralised Authority & Access Management
+            </p>
+          </div>
         </div>
 
-        {/* View Content */}
-        <div className="space-y-6">
+        {/* Global Unit Selector */}
+        <div className="flex items-center p-1 bg-gray-50 border border-gray-200 rounded-xl">
+          <button
+            onClick={() => setSelectedUnit("ALL")}
+            className={cn(
+              "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all",
+              selectedUnit === "ALL"
+                ? "bg-white text-blue-600 shadow-sm font-black"
+                : "text-gray-450 hover:text-gray-700",
+            )}
+          >
+            Semua Unit
+          </button>
+          {["KINDERGARTEN", "ELEMENTARY", "JUNIOR_HIGH"].map((uid) => (
+            <button
+              key={uid}
+              onClick={() => setSelectedUnit(uid as any)}
+              className={cn(
+                "hidden sm:inline px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all",
+                selectedUnit === uid
+                  ? "bg-white text-blue-605 shadow-sm font-black"
+                  : "text-gray-450 hover:text-gray-700",
+              )}
+            >
+              {uid.replace("_", " ")}
+            </button>
+          ))}
+        </div>
+      </header>
+
+      <div className="flex-1 flex flex-col md:flex-row relative">
+        {/* MOBILE DRAWER SIDEBAR */}
+        {isMobileSidebarOpen && (
+          <div className="fixed inset-0 z-50 md:hidden flex">
+            <div 
+              className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm"
+              onClick={() => setIsMobileSidebarOpen(false)}
+            />
+            <motion.aside 
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              className="relative w-64 bg-slate-950 text-slate-300 flex flex-col h-full p-4 space-y-6 z-10 border-r border-slate-800"
+            >
+              <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-2">
+                <span className="text-xs font-black uppercase tracking-widest text-slate-400">Navigasi Admin</span>
+                <button onClick={() => setIsMobileSidebarOpen(false)} className="text-slate-500 hover:text-white font-extrabold p-1">✕</button>
+              </div>
+              {renderSidebarContent()}
+            </motion.aside>
+          </div>
+        )}
+
+        {/* DESKTOP SIDEBAR KIRI */}
+        <aside className="hidden md:flex w-[230px] bg-slate-950 text-slate-300 flex-col border-r border-slate-800 shrink-0 select-none sticky top-[73px] h-[calc(100vh-73px)] overflow-y-auto custom-scrollbar p-4 space-y-6">
+          {renderSidebarContent()}
+        </aside>
+
+        {/* KONTEN UTAMA */}
+        <main className="flex-1 p-6 md:p-8 bg-slate-50 overflow-y-auto w-full min-h-[calc(100vh-73px)]">
+          <div className="max-w-7xl mx-auto space-y-6">
+
+            {/* VIEWS: OVERVIEW */}
+            {activeMenu === "overview" && (
+              <div className="space-y-8 animate-in fade-in duration-200">
+                <div className="space-y-1">
+                  <h2 className="text-2xl font-black text-gray-900 tracking-tight italic uppercase">
+                    Admin Command Dashboard
+                  </h2>
+                  <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">
+                    Pusat Konfigurasi & Statistik Unit Lazuardi GCS
+                  </p>
+                </div>
+                          {/* Unit Summary Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {[
+                    {
+                      id: "KINDERGARTEN",
+                      name: "Kindergarten",
+                      icon: <Smile className="text-orange-500" />,
+                      color: "orange",
+                    },
+                    {
+                      id: "ELEMENTARY",
+                      name: "Elementary",
+                      icon: <Footprints className="text-blue-500" />,
+                      color: "blue",
+                    },
+                    {
+                      id: "JUNIOR_HIGH",
+                      name: "Junior High",
+                      icon: <Brain className="text-purple-500" />,
+                      color: "purple",
+                    },
+                  ].map((unit) => (
+                    <motion.button
+                      key={unit.id}
+                      whileHover={{ y: -5 }}
+                      onClick={() => setSelectedUnit(unit.id as any)}
+                      className={cn(
+                        "text-left p-8 rounded-[2.5rem] border-2 transition-all relative overflow-hidden group w-full cursor-pointer",
+                        selectedUnit === unit.id
+                          ? "bg-white border-blue-500 shadow-2xl shadow-blue-100"
+                          : "bg-white border-gray-50 hover:border-gray-200 shadow-sm",
+                      )}
+                    >
+                      <div className="relative z-10 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div
+                            className={cn(
+                              "p-4 rounded-[1.5rem]",
+                              selectedUnit === unit.id
+                                ? "bg-blue-50 text-blue-600"
+                                : "bg-gray-50 text-gray-400",
+                            )}
+                          >
+                            {unit.icon}
+                          </div>
+                          {unitStats[unit.id as keyof typeof unitStats]?.pending > 0 && (
+                            <span className="px-3 py-1 bg-red-100 text-red-700 rounded-full text-[9px] font-black uppercase tracking-widest">
+                              {unitStats[unit.id as keyof typeof unitStats].pending} Pending
+                            </span>
+                          )}
+                        </div>
+                        <div>
+                          <h3 className="text-xl font-black text-gray-900 tracking-tight italic uppercase">
+                            {unit.name}
+                          </h3>
+                          <div className="flex items-center gap-4 mt-2">
+                            <div className="space-y-0.5">
+                              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+                                Students
+                              </p>
+                              <p className="text-lg font-black text-gray-700">
+                                {unitStats[unit.id as keyof typeof unitStats]?.students || 0}
+                              </p>
+                            </div>
+                            <div className="w-px h-8 bg-gray-100" />
+                            <div className="space-y-0.5">
+                              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+                                Staff
+                              </p>
+                              <p className="text-lg font-black text-gray-700">
+                                {unitStats[unit.id as keyof typeof unitStats]?.staff || 0}
+                              </p>
+                            </div>
+                            <div className="w-px h-8 bg-gray-100" />
+                            <div className="space-y-0.5">
+                              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+                                Classes
+                              </p>
+                              <p className="text-lg font-black text-gray-700">
+                                {unitStats[unit.id as keyof typeof unitStats]?.classes || 0}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="pt-2 flex items-center gap-2 text-blue-600 opacity-0 group-hover:opacity-100 transition-all translate-x-2 group-hover:translate-x-0">
+                          <span className="text-[10px] font-black uppercase tracking-widest">
+                            Kelola Unit
+                          </span>
+                          <ChevronRight size={14} />
+                        </div>
+                      </div>
+                      {selectedUnit === unit.id && (
+                        <div className="absolute top-0 right-0 p-4">
+                          <CheckCircle2 className="text-blue-500" size={20} />
+                        </div>
+                      )}
+                    </motion.button>
+                  ))}
+                </div>
+
+                {/* General Welcome Card */}
+                <div className="bg-white p-8 rounded-[2rem] border border-gray-100 shadow-sm space-y-4">
+                  <h3 className="text-lg font-black text-gray-900 tracking-tight flex items-center gap-2">
+                    Selamat Datang di Command Center Lumina Admin
+                  </h3>
+                  <p className="text-xs text-gray-500 leading-relaxed max-w-4xl">
+                    Silakan gunakan navigasi sidebar sebelah kiri untuk mengelola berbagai fitur administrasi. Filter unit di bagian atas header berlaku secara global untuk memudahkan pencarian data pada unit (TK, SD, SMP) tertentu secara dinamis.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-4">
+                    <div onClick={() => { setActiveMenu("user-undangan"); setActiveTab("STAFF"); }} className="p-4 bg-slate-50 hover:bg-blue-50/40 rounded-2xl border border-gray-100 cursor-pointer transition-all">
+                      <p className="text-xs font-black text-slate-800">Undangan Staff</p>
+                      <p className="text-[10px] text-gray-450 mt-1 uppercase">Kelola {counts.STAFF} Staff</p>
+                    </div>
+                    <div onClick={() => { setActiveMenu("user-undangan"); setActiveTab("STUDENT"); }} className="p-4 bg-slate-50 hover:bg-blue-50/40 rounded-2xl border border-gray-100 cursor-pointer transition-all">
+                      <p className="text-xs font-black text-slate-800">Undangan Siswa</p>
+                      <p className="text-[10px] text-gray-455 mt-1 uppercase">Kelola {counts.STUDENT} Siswa</p>
+                    </div>
+                    <div onClick={() => { setActiveMenu("ai-prompts"); }} className="p-4 bg-slate-50 hover:bg-blue-50/40 rounded-2xl border border-gray-100 cursor-pointer transition-all">
+                      <p className="text-xs font-black text-slate-800">AI Prompts</p>
+                      <p className="text-[10px] text-gray-455 mt-1 uppercase">Evaluasi {counts.PROMPTS} Prompts</p>
+                    </div>
+                    <div onClick={() => { setActiveMenu("import-massal"); }} className="p-4 bg-slate-50 hover:bg-blue-55/40 rounded-2xl border border-gray-100 cursor-pointer transition-all">
+                      <p className="text-xs font-black text-slate-800">Impor Massal</p>
+                      <p className="text-[10px] text-gray-455 mt-1 uppercase">Impor Spreadsheet</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            {/* VIEWS: DATABASE LISTS (STANDARD RENDER IN SIDEBAR MENU) */}
+            {["user-undangan", "user-pending", "kelas", "ai-prompts", "ai-knowledge", "ai-logo"].includes(activeMenu) && (
+              <div className="space-y-8 animate-in fade-in duration-200">
+                {/* Dynamically adjust title based on activeMenu */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-2xl font-black text-gray-900 tracking-tight italic uppercase">
+                      {activeMenu === "user-undangan" && "Manajemen Undangan"}
+                      {activeMenu === "user-pending" && "Pending Aktivasi Akun"}
+                      {activeMenu === "kelas" && "Manajemen Kelas"}
+                      {activeMenu === "ai-prompts" && "Templat Prompt AI"}
+                      {activeMenu === "ai-knowledge" && "Knowledge Base Sync"}
+                      {activeMenu === "ai-logo" && "Sistem Unggah Logo"}
+                    </h2>
+                    <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">
+                      {activeMenu === "user-undangan" && `Pusat Log Undangan Aktif (${counts[activeTab as keyof typeof counts] || 0} ${activeTab.toLowerCase()})`}
+                      {activeMenu === "user-pending" && "Daftar User Pendaftar Baru yang Memerlukan Tindakan"}
+                      {activeMenu === "kelas" && "Atur Kelas, Angkatan & Guru Lazuardi GCS"}
+                      {activeMenu === "ai-prompts" && "Ubah & Atur Instruksi Agen Gemini Lazuardi-AI"}
+                      {activeMenu === "ai-knowledge" && "Sinkronkan & Indeks Google Drive Folder ID"}
+                      {activeMenu === "ai-logo" && "Dual Logos Per-Education Unit TK/SD/SMP"}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    {activeMenu === "user-undangan" && (
+                      <button
+                        onClick={() => {
+                          setEditingId(null);
+                          setFormData({
+                            name: "",
+                            email: "",
+                            role: "TEACHER",
+                            unitId: selectedUnit === "ALL" ? "JUNIOR_HIGH" : selectedUnit,
+                            jobTitle: "",
+                            status: "ready",
+                            luminaId: "",
+                            classId: "",
+                            academicYear: "2025/2026",
+                            linkedStudents: [],
+                          });
+                          setIsModalOpen(true);
+                        }}
+                        className="px-6 py-3.5 bg-gray-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-blue-600 transition-all font-sans font-black cursor-pointer"
+                      >
+                        <Plus size={16} />
+                        Undang Manual
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Sub Tab Navigation for Undangan (Active Tab inside user-undangan) */}
+                <div className="space-y-8">
+                  {activeMenu === "user-undangan" && (
+                    <div className="bg-white p-4 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6">
+                      <div className="flex items-center gap-1 overflow-x-auto pb-2 md:pb-0">
+                        {[
+                          { id: "STAFF" as const, icon: <Users size={14} />, label: "Staff" },
+                          { id: "STUDENT" as const, icon: <GraduationCap size={14} />, label: "Siswa" },
+                          { id: "PARENT" as const, icon: <Users size={14} />, label: "Ortu" },
+                        ].map((tab) => (
+                          <button
+                            key={tab.id}
+                            onClick={() => {
+                              setActiveTab(tab.id);
+                            }}
+                            className={cn(
+                              "px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all whitespace-nowrap cursor-pointer",
+                              activeTab === tab.id
+                                ? "bg-gray-900 text-white shadow-xl shadow-gray-200"
+                                : "text-gray-400 hover:text-gray-600 hover:bg-gray-50",
+                            )}
+                          >
+                            {tab.icon}
+                            {tab.label}
+                            <span
+                              className={cn(
+                                "ml-1 px-1.5 py-0.5 rounded-md text-[8px] font-black font-mono",
+                                activeTab === tab.id
+                                  ? "bg-white/20 text-white"
+                                  : "bg-gray-100 text-gray-400",
+                              )}
+                            >
+                              {counts[tab.id as keyof typeof counts]}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* View Content layout wrappers */}
+                  <div className="space-y-6">
           {/* Search and Filters */}
           <div className="flex items-center justify-between gap-4">
             <div className="relative flex-1 max-w-md">
@@ -2371,6 +2807,501 @@ export default function SuperAdminPage() {
             )}
           </div>
         </div>
+      </div>
+            </div>
+          )}
+
+          {activeMenu === "import-massal" && (
+            <div className="space-y-8 animate-in fade-in duration-200">
+              <div>
+                <h2 className="text-2xl font-black text-gray-900 tracking-tight italic uppercase">
+                  Pusat Impor Massal GCS
+                </h2>
+                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">
+                  Sinkronisasikan data spreadsheet Anda secara langsung untuk siswa, staff, dan orang tua.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+                {/* SECTION 1: STUDENT */}
+                <motion.div
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.05 }}
+                  className="bg-white p-8 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col justify-between space-y-6"
+                >
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-3.5 bg-blue-50 text-blue-600 rounded-2xl">
+                        <GraduationCap size={20} />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-black text-gray-900 tracking-tight">
+                          Impor Data Siswa
+                        </h3>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase">
+                          Siswa & Informasi Kelas
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 pt-2">
+                      <div>
+                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
+                          Google Sheets ID
+                        </label>
+                        <input
+                          type="text"
+                          value={studentSheetId}
+                          onChange={(e) => setStudentSheetId(e.target.value)}
+                          placeholder="Sheet ID"
+                          className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
+                          Nama Sheet (Tab)
+                        </label>
+                        <input
+                          type="text"
+                          value={studentSheetName}
+                          onChange={(e) => setStudentSheetName(e.target.value)}
+                          placeholder="SiswaLumina"
+                          className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Column Guide */}
+                    <div className="bg-slate-50/75 p-4 rounded-2xl border border-gray-50">
+                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                        Format Kolom Google Sheets:
+                      </p>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {[
+                          { col: "A", label: "NIS" },
+                          { col: "B", label: "NISN" },
+                          { col: "C", label: "Nama Lengkap" },
+                          { col: "D", label: "Nama Panggilan" },
+                          { col: "E", label: "Gender (L/P)" },
+                          { col: "F", label: "Email Siswa" },
+                          { col: "G", label: "Email Ortu" },
+                          { col: "H", label: "Kelas (e.g. 7 Baiji)" },
+                          { col: "I", label: "Unit (JUNIOR_HIGH)" },
+                          { col: "J", label: "Tahun Ajaran (2025/2026)" },
+                        ].map((item, idx) => (
+                          <div key={idx} className="flex items-center gap-1.5 text-[10px] text-gray-600">
+                            <span className="font-mono bg-blue-50 text-blue-600 font-bold px-1 rounded text-[9px] w-4 text-center">
+                              {item.col}
+                            </span>
+                            <span className="font-sans text-[9px] truncate">{item.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 pt-4">
+                    {/* Section Result */}
+                    {importSectionResult.STUDENT && (
+                      <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl space-y-2">
+                        <p className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                          <CheckCircle2 size={14} /> Berhasil Diimpor
+                        </p>
+                        <div className="grid grid-cols-3 gap-2 text-[10px] font-bold text-emerald-700">
+                          <div>Baru: {importSectionResult.STUDENT.created}</div>
+                          <div>Update: {importSectionResult.STUDENT.updated}</div>
+                          <div>Lewat: {importSectionResult.STUDENT.skipped}</div>
+                        </div>
+                        {importSectionResult.STUDENT.errors.length > 0 && (
+                          <div className="pt-2 border-t border-emerald-200">
+                            <p className="text-[9px] font-black text-red-650 uppercase tracking-widest">
+                              {importSectionResult.STUDENT.errors.length} Kesalahan:
+                            </p>
+                            <div className="max-h-20 overflow-y-auto text-[8px] font-mono text-red-600 mt-1 space-y-0.5">
+                              {importSectionResult.STUDENT.errors.map((err, errIdx) => (
+                                <div key={errIdx}>{String(err)}</div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => handleSectionImport("STUDENT")}
+                      disabled={importLoading}
+                      className="w-full py-3.5 bg-gray-900 text-white hover:bg-blue-600 active:bg-blue-700 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {importLoading && activeImportSection === "STUDENT" ? (
+                        <>
+                          <Loader2 size={14} className="animate-spin" />
+                          Mengimpor Siswa...
+                        </>
+                      ) : (
+                        <>
+                          <Upload size={14} />
+                          Mulai Import Siswa
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </motion.div>
+
+                {/* SECTION 2: STAFF */}
+                <motion.div
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 }}
+                  className="bg-white p-8 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col justify-between space-y-6"
+                >
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-3.5 bg-orange-50 text-orange-600 rounded-2xl">
+                        <Users size={20} />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-black text-gray-900 tracking-tight">
+                          Impor Data Staff
+                        </h3>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase">
+                          Guru & Tenaga Kependidikan
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 pt-2">
+                      <div>
+                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
+                          Google Sheets ID
+                        </label>
+                        <input
+                          type="text"
+                          value={staffSheetId}
+                          onChange={(e) => setStaffSheetId(e.target.value)}
+                          placeholder="Sheet ID"
+                          className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
+                          Nama Sheet (Tab)
+                        </label>
+                        <input
+                          type="text"
+                          value={staffSheetName}
+                          onChange={(e) => setStaffSheetName(e.target.value)}
+                          placeholder="StaffLumina"
+                          className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Column Guide */}
+                    <div className="bg-slate-50/75 p-4 rounded-2xl border border-gray-50">
+                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                        Format Kolom Google Sheets:
+                      </p>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {[
+                          { col: "A", label: "Email" },
+                          { col: "B", label: "Jabatan" },
+                          { col: "C", label: "Role (TEACHER/STAFF/HEAD_UNIT)" },
+                          { col: "D", label: "Unit (KINDERGARTEN, etc.)" },
+                        ].map((item, idx) => (
+                          <div key={idx} className="flex items-center gap-1.5 text-[10px] text-gray-600">
+                            <span className="font-mono bg-orange-50 text-orange-600 font-bold px-1 rounded text-[9px] w-4 text-center">
+                              {item.col}
+                            </span>
+                            <span className="font-sans text-[9px] truncate">{item.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 pt-4">
+                    {/* Section Result */}
+                    {importSectionResult.STAFF && (
+                      <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl space-y-2">
+                        <p className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                          <CheckCircle2 size={14} /> Berhasil Diimpor
+                        </p>
+                        <div className="grid grid-cols-3 gap-2 text-[10px] font-bold text-emerald-700">
+                          <div>Baru: {importSectionResult.STAFF.created}</div>
+                          <div>Update: {importSectionResult.STAFF.updated}</div>
+                          <div>Lewat: {importSectionResult.STAFF.skipped}</div>
+                        </div>
+                        {importSectionResult.STAFF.errors.length > 0 && (
+                          <div className="pt-2 border-t border-emerald-200">
+                            <p className="text-[9px] font-black text-red-650 uppercase tracking-widest">
+                              {importSectionResult.STAFF.errors.length} Kesalahan:
+                            </p>
+                            <div className="max-h-20 overflow-y-auto text-[8px] font-mono text-red-600 mt-1 space-y-0.5">
+                              {importSectionResult.STAFF.errors.map((err, errIdx) => (
+                                <div key={errIdx}>{String(err)}</div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => handleSectionImport("STAFF")}
+                      disabled={importLoading}
+                      className="w-full py-3.5 bg-gray-900 text-white hover:bg-orange-600 active:bg-orange-700 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {importLoading && activeImportSection === "STAFF" ? (
+                        <>
+                          <Loader2 size={14} className="animate-spin" />
+                          Mengimpor Staff...
+                        </>
+                      ) : (
+                        <>
+                          <Upload size={14} />
+                          Mulai Import Staff
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </motion.div>
+
+                {/* SECTION 3: PARENT */}
+                <motion.div
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.15 }}
+                  className="bg-white p-8 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col justify-between space-y-6"
+                >
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-3.5 bg-purple-50 text-purple-600 rounded-2xl">
+                        <Smile size={20} />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-black text-gray-900 tracking-tight">
+                          Impor Data Orang Tua
+                        </h3>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase">
+                          Wali Siswa & Orang Tua GCS
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 pt-2">
+                      <div>
+                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
+                          Google Sheets ID
+                        </label>
+                        <input
+                          type="text"
+                          value={parentSheetId}
+                          onChange={(e) => setParentSheetId(e.target.value)}
+                          placeholder="Sheet ID"
+                          className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
+                          Nama Sheet (Tab)
+                        </label>
+                        <input
+                          type="text"
+                          value={parentSheetName}
+                          onChange={(e) => setParentSheetName(e.target.value)}
+                          placeholder="OrangTuaLumina"
+                          className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Column Guide */}
+                    <div className="bg-slate-50/75 p-4 rounded-2xl border border-gray-50">
+                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                        Format Kolom Google Sheets:
+                      </p>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {[
+                          { col: "A", label: "ID Anak" },
+                          { col: "B", label: "Nama Ortu" },
+                          { col: "C", label: "Email Ortu" },
+                          { col: "D", label: "Unit (TK, SD, SMP)" },
+                        ].map((item, idx) => (
+                          <div key={idx} className="flex items-center gap-1.5 text-[10px] text-gray-600">
+                            <span className="font-mono bg-purple-50 text-purple-600 font-bold px-1 rounded text-[9px] w-4 text-center">
+                              {item.col}
+                            </span>
+                            <span className="font-sans text-[9px] truncate">{item.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 pt-4">
+                    {/* Section Result */}
+                    {importSectionResult.PARENT && (
+                      <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl space-y-2">
+                        <p className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                          <CheckCircle2 size={14} /> Berhasil Diimpor
+                        </p>
+                        <div className="grid grid-cols-3 gap-2 text-[10px] font-bold text-emerald-700">
+                          <div>Baru: {importSectionResult.PARENT.created}</div>
+                          <div>Update: {importSectionResult.PARENT.updated}</div>
+                          <div>Lewat: {importSectionResult.PARENT.skipped}</div>
+                        </div>
+                        {importSectionResult.PARENT.errors.length > 0 && (
+                          <div className="pt-2 border-t border-emerald-200">
+                            <p className="text-[9px] font-black text-red-650 uppercase tracking-widest">
+                              {importSectionResult.PARENT.errors.length} Kesalahan:
+                            </p>
+                            <div className="max-h-20 overflow-y-auto text-[8px] font-mono text-red-600 mt-1 space-y-0.5">
+                              {importSectionResult.PARENT.errors.map((err, errIdx) => (
+                                <div key={errIdx}>{String(err)}</div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => handleSectionImport("PARENT")}
+                      disabled={importLoading}
+                      className="w-full py-3.5 bg-gray-900 text-white hover:bg-purple-600 active:bg-purple-700 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {importLoading && activeImportSection === "PARENT" ? (
+                        <>
+                          <Loader2 size={14} className="animate-spin" />
+                          Mengimpor Ortu...
+                        </>
+                      ) : (
+                        <>
+                          <Upload size={14} />
+                          Mulai Import Orang Tua
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </motion.div>
+              </div>
+            </div>
+          )}
+
+          {activeMenu === "import-sync" && (
+            <div className="space-y-8 animate-in fade-in duration-200">
+              <div>
+                <h2 className="text-2xl font-black text-gray-900 tracking-tight italic uppercase">
+                  Sinkronisasi Relasi Orang Tua
+                </h2>
+                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">
+                  Petakan Email Orang Tua dari Akun Siswa ke Akun Wali secara dinamis.
+                </p>
+              </div>
+
+              <div className="max-w-3xl bg-white p-8 rounded-[2rem] border border-gray-100 shadow-sm space-y-6">
+                <div className="flex items-start gap-4">
+                  <div className="p-4 bg-blue-50 text-blue-600 rounded-3xl shrink-0 mt-1">
+                    <RefreshCw size={24} className={cn(syncLoading && "animate-spin")} />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="text-lg font-black text-gray-900 tracking-tight">
+                      Cara Kerja Sinkronisasi Wali
+                    </h3>
+                    <p className="text-xs text-gray-500 leading-relaxed">
+                      Sistem akan memindai semua siswa terdaftar yang memiliki field "Email Ortu", kemudian mendeteksi akun Ortu yang bersesuaian di sistem. Jika akun Ortu belum memiliki relasi aktif dengan NIM/Lumina ID sang anak, sistem akan menautkannya secara otomatis dan aman.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 p-5 rounded-2xl border border-gray-100">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">
+                    Catatan Penting
+                  </p>
+                  <p className="text-[11px] text-gray-400 leading-relaxed">
+                    Prosedur ini aman dijalankan berulang kali kapan saja tanpa merusak data absensi, nilai, maupun rekam medis siswa dan orang tua. Harap tunggu hingga notifikasi selesai muncul sebelum beralih ke halaman lain.
+                  </p>
+                </div>
+
+                <button
+                  onClick={handleSyncParents}
+                  disabled={syncLoading}
+                  className="px-8 py-4 bg-gray-900 text-white hover:bg-blue-600 active:bg-blue-700 rounded-2xl text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all flex items-center gap-2 disabled:opacity-50 select-none shadow-md shadow-gray-100"
+                >
+                  {syncLoading ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      Sedang Sinkronisasi Wali...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw size={16} />
+                      Mulai Sinkronisasi Wali
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {activeMenu === "sistem-reset" && (
+            <div className="space-y-8 animate-in fade-in duration-200">
+              <div>
+                <h2 className="text-2xl font-black text-gray-900 tracking-tight italic uppercase">
+                  Pusat Reset & Pembersihan Data GCS
+                </h2>
+                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">
+                  Bersihkan database Anda dari data dummy Lazuardi GCS untuk menyiapkan peluncuran produksi yang aman.
+                </p>
+              </div>
+
+              <div className="max-w-3xl bg-white p-8 rounded-[2rem] border border-red-100 shadow-sm space-y-6">
+                <div className="flex items-start gap-4">
+                  <div className="p-4 bg-red-50 text-red-650 rounded-3xl shrink-0 mt-1">
+                    <AlertCircle size={24} className="text-red-600" />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="text-lg font-black text-red-600 tracking-tight italic uppercase">
+                      PERINGATAN: Tindakan Ini Tidak Dapat Dibatalkan!
+                    </h3>
+                    <p className="text-xs text-gray-500 leading-relaxed">
+                      Tindakan ini akan menghapus seluruh data guru, siswa, kelas, relasi orang tua, log kehadiran, back-up rekam akademis/perilaku, dan file pendukung dari semua unit (TK, SD, SMP). Gunakan fitur ini hanya sebelum live production atau jika Anda ingin mengulangi konfigurasi dari awal.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-red-50/40 p-5 rounded-2xl border border-red-50">
+                  <p className="text-[10px] font-black text-red-700 uppercase tracking-widest mb-1.5">
+                    Prosedur Pengosongan
+                  </p>
+                  <p className="text-[11px] text-red-600 leading-relaxed">
+                    Sistem akan melakukan wipe out data secara otomatis di Firebase Firestore dan mengosongkan local storage agen. Setelah proses ini selesai, unit penjemputan di TK dan modul presensi serta modul akademis akan kembali ke kondisi bawaan awal (blank state).
+                  </p>
+                </div>
+
+                <button
+                  onClick={handleResetData}
+                  disabled={resetLoading}
+                  className="px-8 py-4 bg-red-600 hover:bg-red-750 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all flex items-center gap-2 disabled:opacity-50 select-none shadow-md shadow-red-100 font-sans font-black"
+                >
+                  {resetLoading ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      Sedang Menghapus Seluruh Data...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 size={16} />
+                      Mulai Reset & Pengosongan Data GCS
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+          </div>
+        </main>
       </div>
 
       {/* Modal Undangan */}
