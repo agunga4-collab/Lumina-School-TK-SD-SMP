@@ -38,7 +38,38 @@ export const getStoredStudents = (): KGStudent[] => {
     try {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed)) {
-        return parsed.map((item: any) => ({
+        // Filter out dummy/mock students
+        const filtered = parsed.filter((item: any) => {
+          const nameLower = String(item.name || '').toLowerCase();
+          return !(
+            nameLower.includes('aisha kamila') || 
+            nameLower.includes('rafif al-fariz') || 
+            nameLower.includes('nabila syifa') || 
+            nameLower.includes('budi') || 
+            nameLower.includes('siti') || 
+            nameLower.includes('siswa kindergarten') ||
+            item.id === 'K001' ||
+            item.id === 'K002' ||
+            item.id === 'K003'
+          );
+        });
+
+        // If dummy data was indeed found and filtered, rewrite kg_students and clear related storage
+        if (filtered.length !== parsed.length) {
+          localStorage.setItem('kg_students', JSON.stringify(filtered));
+          localStorage.removeItem('kg_checklist_records');
+          localStorage.removeItem('kg_observation_data');
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && (key.startsWith('kg_obs_hist_') || key.startsWith('kg_weekly_summary_') || key.startsWith('kg_weekly_report_'))) {
+              localStorage.removeItem(key);
+              i--;
+            }
+          }
+          return filtered;
+        }
+
+        return filtered.map((item: any) => ({
           id: String(item.id || ''),
           name: String(item.name || ''),
           nickName: String(item.nickName || ''),

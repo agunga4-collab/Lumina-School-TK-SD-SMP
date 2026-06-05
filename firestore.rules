@@ -221,6 +221,11 @@ service cloud.firestore {
       allow write: if isJuniorHighStaff();
     }
 
+    match /elementary_literacy_numeracy/{recordId} {
+      allow read: if isActive();
+      allow write: if isTeacher() || isAdmin() || isJuniorHighStaff();
+    }
+
     match /selfExploration/{studentId} {
       allow read: if isActive() && (
         (isStudent() && studentId == request.auth.uid) || isJuniorHighStaff()

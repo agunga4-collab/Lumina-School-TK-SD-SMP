@@ -218,6 +218,17 @@ function StatusCard({ role, unit }: { role: UserRole; unit: UnitType }) {
   const stats = React.useMemo(() => {
     if (unit !== 'KINDERGARTEN') return null;
     
+    const studentsStr = localStorage.getItem('kg_students');
+    if (!studentsStr) return null;
+    try {
+      const parsedStudents = JSON.parse(studentsStr);
+      if (!Array.isArray(parsedStudents) || parsedStudents.length === 0) {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+    
     const savedChecklist = localStorage.getItem('kg_checklist_records');
     if (!savedChecklist) return null;
     

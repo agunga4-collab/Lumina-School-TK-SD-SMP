@@ -338,7 +338,7 @@ export function Layout() {
                   <NavItem to="/attendance" icon={<CheckSquare size={18} />} label="Kehadiran" />
                   <NavItem to="/academic/learning-goals" icon={<Target size={18} />} label="Learning Goals" />
                   <NavItem to="/academic/lxd" icon={<BookOpen size={18} />} label="LXD" />
-                  <NavItem to="/literacy/input" icon={<BookOpen size={18} />} label="Literasi & Numerasi" />
+                  <NavItem to="/elementary/literasi-numerasi" icon={<BookOpen size={18} />} label="Literasi & Numerasi" />
                   <NavItem to="/observations" icon={<Eye size={18} />} label="Observasi Guru" />
                 </div>
               )}

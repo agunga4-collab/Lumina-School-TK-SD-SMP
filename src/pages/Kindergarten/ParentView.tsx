@@ -48,7 +48,12 @@ export default function ParentView() {
   const [showAiLabel, setShowAiLabel] = React.useState(false);
 
   const currentStudent = React.useMemo(() => {
-    return DEFAULT_STUDENTS.find(s => s.id === selectedStudentId) || DEFAULT_STUDENTS[0];
+    return DEFAULT_STUDENTS.find(s => s.id === selectedStudentId) || DEFAULT_STUDENTS[0] || {
+      id: '',
+      name: 'Belum Ada Siswa',
+      nickName: 'Ananda',
+      ageGroup: 'TK_A' as const
+    };
   }, [selectedStudentId]);
 
   // Sync date ranges in sessionStorage

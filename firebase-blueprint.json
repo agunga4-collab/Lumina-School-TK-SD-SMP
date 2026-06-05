@@ -516,6 +516,44 @@
         "driveFileId": { "type": "string" }
       },
       "required": ["id", "title", "content", "lastSynced"]
+    },
+    "ElementaryLiteracyNumeracy": {
+      "title": "ElementaryLiteracyNumeracy",
+      "description": "Elementary Literacy and Numerasi multi-area records.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "classId": { "type": "string" },
+        "schoolUnit": { "type": "string", "enum": ["ELEMENTARY"] },
+        "academicYear": { "type": "string" },
+        "termSemester": { "type": "string" },
+        "area": { "type": "string", "enum": ["BAHASA", "ENGLISH", "MENGAJI", "MATH"] },
+        "period": { "type": "string" },
+        "wordsRead": { "type": "number" },
+        "errors": { "type": "number" },
+        "wpm": { "type": "number" },
+        "readingLevel": { "type": "string" },
+        "interventionTier": { "type": "string" },
+        "readingComprehensionScore": { "type": "number" },
+        "readingComprehensionNotes": { "type": "string" },
+        "libraryBorrowStatus": { "type": "string" },
+        "oneDayOneBookStatus": { "type": "string" },
+        "followUpAction": { "type": "string" },
+        "iqroLevel": { "type": "string" },
+        "currentSurah": { "type": "string" },
+        "fluency": { "type": "string" },
+        "tajwid": { "type": "string" },
+        "mathLevel": { "type": "string" },
+        "topic": { "type": "string" },
+        "accuracy": { "type": "number" },
+        "speed": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["id", "studentId", "classId", "area", "createdAt"]
     }
   },
   "firestore": {
@@ -554,6 +592,10 @@
     "literacyProgress/{progressId}": {
       "schema": "LiteracyProgress",
       "description": "Literacy and numeracy progress records."
+    },
+    "elementary_literacy_numeracy/{recordId}": {
+      "schema": "ElementaryLiteracyNumeracy",
+      "description": "Elementary multi-area literacy and numeracy progress records."
     },
     "selfExploration/{studentId}": {
       "schema": "SelfExploration",

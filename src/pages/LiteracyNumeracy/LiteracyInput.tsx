@@ -7,19 +7,15 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { LiteracyArea, LiteracyLevel } from '../../types';
+import { db, getStudents, getClasses } from '../../lib/firebase';
+import { collection, addDoc } from 'firebase/firestore';
+import { toast } from 'sonner';
 
 interface Student {
   id: string;
   name: string;
   class: string;
 }
-
-const mockStudents: Student[] = [
-  { id: 'S001', name: 'Dika Ramadhan', class: '8-A' },
-  { id: 'S002', name: 'Alya Putri', class: '8-A' },
-  { id: 'S003', name: 'Farez Rahadian', class: '8-A' },
-  { id: 'S004', name: 'Siti Aminah', class: '8-A' },
-];
 
 const areas: { id: LiteracyArea; label: string; icon: React.ReactNode; color: string }[] = [
   { id: 'BAHASA', label: 'Bahasa Indonesia', icon: <BookOpen />, color: 'blue' },
@@ -47,14 +43,83 @@ export default function LiteracyInput() {
   const [notes, setNotes] = React.useState('');
   const [isSaving, setIsSaving] = React.useState(false);
 
-  const handleSave = () => {
+  const [students, setStudents] = React.useState<Student[]>([]);
+  const [classes, setClasses] = React.useState<any[]>([]);
+  const [selectedClassId, setSelectedClassId] = React.useState<string>('all');
+  const [searchQuery, setSearchQuery] = React.useState<string>('');
+  const [loading, setLoading] = React.useState<boolean>(true);
+
+  React.useEffect(() => {
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        const [allStudents, allClasses] = await Promise.all([
+          getStudents() || [],
+          getClasses() || []
+        ]);
+        
+        // Map classes for easy lookup
+        const classMap = new Map((allClasses || []).map(c => [c.id, c.name]));
+        
+        const mapped = (allStudents || [])
+          .filter(s => {
+            const nameLower = s.name.toLowerCase();
+            return !(
+              nameLower.includes('dika ramadhan') ||
+              nameLower.includes('alya putri') ||
+              nameLower.includes('farez rahadian') ||
+              nameLower.includes('siti aminah')
+            );
+          })
+          .map(s => ({
+            id: s.id,
+            name: s.name,
+            class: classMap.get(s.classId) || s.classId || 'Tidak Ada Kelas'
+          }));
+
+        setStudents(mapped);
+        setClasses(allClasses || []);
+      } catch (err) {
+        console.error('Error loading library/literacy students:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadData();
+  }, []);
+
+  const filteredStudents = React.useMemo(() => {
+    return students.filter(student => {
+      const matchesSearch = student.name.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesClass = selectedClassId === 'all' || student.class === selectedClassId || student.class === classes.find(c => c.id === selectedClassId)?.name;
+      return matchesSearch && matchesClass;
+    });
+  }, [students, searchQuery, selectedClassId, classes]);
+
+  const handleSave = async () => {
     if (!selectedStudent) return;
     setIsSaving(true);
-    setTimeout(() => {
-      setIsSaving(false);
+    try {
+      await addDoc(collection(db, 'assessments'), {
+        category: 'LITERACY',
+        studentId: selectedStudent.id,
+        area: selectedArea,
+        level: level,
+        subLevel: selectedArea === 'MENGAJI' ? mengajiSubLevel : '',
+        notes: notes,
+        date: Date.now(),
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      });
+      
+      toast.success(`Progress ${areas.find(a => a.id === selectedArea)?.label} untuk ${selectedStudent.name} berhasil disimpan!`);
       setNotes('');
-      alert(`Progress ${selectedArea} untuk ${selectedStudent.name} berhasil disimpan!`);
-    }, 1000);
+    } catch (err: any) {
+      console.error('Error saving assessment:', err);
+      toast.error('Gagal menyimpan progres: ' + err.message);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -101,23 +166,61 @@ export default function LiteracyInput() {
 
           <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex flex-col gap-2">
             <div className="flex items-center justify-between px-2 mb-2">
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Daftar Siswa 8-A</p>
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Daftar Siswa</p>
               <Search size={14} className="text-gray-300" />
             </div>
-            <div className="space-y-1">
-              {mockStudents.map(student => (
-                <button
-                  key={student.id}
-                  onClick={() => setSelectedStudent(student)}
-                  className={cn(
-                    "w-full flex items-center justify-between p-3 rounded-xl transition-all",
-                    selectedStudent?.id === student.id ? "bg-blue-50 text-blue-700 ring-1 ring-blue-100" : "text-gray-600 hover:bg-gray-50"
-                  )}
-                >
-                  <span className="text-sm font-bold">{student.name}</span>
-                  {selectedStudent?.id === student.id && <ChevronRight size={16} />}
-                </button>
-              ))}
+
+            <div className="px-2 mb-2">
+              <select
+                value={selectedClassId}
+                onChange={e => setSelectedClassId(e.target.value)}
+                className="w-full bg-gray-50 border border-gray-100 rounded-xl px-2 py-1.5 text-xs font-bold outline-none text-gray-600 focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="all">Semua Kelas</option>
+                {classes.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="px-2 mb-3">
+              <input
+                type="text"
+                placeholder="Cari nama siswa..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full bg-gray-50 border border-gray-100 rounded-xl px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+              />
+            </div>
+
+            <div className="space-y-1 max-h-[300px] overflow-y-auto pr-1">
+              {loading ? (
+                <div className="flex flex-col items-center justify-center py-8 space-y-2 text-gray-400">
+                  <Loader2 size={24} className="animate-spin text-blue-500" />
+                  <span className="text-xs">Memuat siswa...</span>
+                </div>
+              ) : filteredStudents.length > 0 ? (
+                filteredStudents.map(student => (
+                  <button
+                    key={student.id}
+                    onClick={() => setSelectedStudent(student)}
+                    className={cn(
+                      "w-full flex items-center justify-between p-3 rounded-xl transition-all",
+                      selectedStudent?.id === student.id ? "bg-blue-50 text-blue-700 ring-1 ring-blue-100" : "text-gray-600 hover:bg-gray-50"
+                    )}
+                  >
+                    <div className="flex flex-col items-start">
+                      <span className="text-sm font-bold text-left">{student.name}</span>
+                      <span className="text-[10px] text-gray-400 font-medium">{student.class}</span>
+                    </div>
+                    {selectedStudent?.id === student.id && <ChevronRight size={16} />}
+                  </button>
+                ))
+              ) : (
+                <div className="text-center py-8 text-gray-400 text-xs">
+                  Tidak ada siswa ditemukan
+                </div>
+              )}
             </div>
           </div>
         </div>
