@@ -412,6 +412,7 @@ function StatCard({ label, value, icon, color }: { label: string; value: number;
 function CreateCaseModal({ onClose, students, onSuccess }: { onClose: () => void; students: Student[]; onSuccess: () => void }) {
   const { currentUser } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [formData, setFormData] = useState({
     studentId: '',
     subjectDomains: [] as MTSSAcademicDomain[],
@@ -428,8 +429,14 @@ function CreateCaseModal({ onClose, students, onSuccess }: { onClose: () => void
 
     setLoading(true);
     try {
-      const student = students.find(s => s.id === formData.studentId);
+      let student = selectedStudent;
+      if (!student) {
+        student = students.find(s => s.id === formData.studentId);
+      }
       if (!student) throw new Error('Student not found');
+
+      const classIdVal = student.classId || 'N/A';
+      const classNameVal = student.className || (student.classId ? 'Class ' + student.classId : 'Class N/A');
 
       const newCaseId = await addMTSSAcademicCase({
         schoolUnit: 'JUNIOR_HIGH',
@@ -437,8 +444,8 @@ function CreateCaseModal({ onClose, students, onSuccess }: { onClose: () => void
         semester: '1',
         studentId: student.id,
         studentName: student.name,
-        classId: student.classId || 'N/A',
-        className: 'Class ' + (student.classId || 'N/A'), // Mocking class name
+        classId: classIdVal,
+        className: classNameVal,
         homeroomTeacherId: currentUser?.uid || '',
         subjectDomains: formData.subjectDomains,
         primaryConcern: formData.primaryConcern,
@@ -480,7 +487,7 @@ function CreateCaseModal({ onClose, students, onSuccess }: { onClose: () => void
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
       <motion.div 
-        initial={{ scale: 0.95, opacity: 0 }}
+         initial={{ scale: 0.95, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.95, opacity: 0 }}
         className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden"
@@ -497,12 +504,18 @@ function CreateCaseModal({ onClose, students, onSuccess }: { onClose: () => void
             <label className="block text-sm font-bold text-slate-700 mb-1.5">Student <span className="text-rose-500">*</span></label>
             <StudentSearch 
               placeholder="Search name or nickname..."
-              onSelect={(student) => setFormData({ ...formData, studentId: student.id })}
+              onSelect={(student) => {
+                setSelectedStudent(student);
+                setFormData({ ...formData, studentId: student.id });
+              }}
             />
             {formData.studentId && (
               <div className="mt-2 text-xs font-bold text-emerald-600 bg-emerald-50 p-2 rounded-lg flex items-center justify-between">
-                <span>Selected: {students.find(s => s.id === formData.studentId)?.name || formData.studentId}</span>
-                <button type="button" onClick={() => setFormData({ ...formData, studentId: '' })} className="hover:text-emerald-800">
+                <span>Selected: {selectedStudent?.name || students.find(s => s.id === formData.studentId)?.name || formData.studentId}</span>
+                <button type="button" onClick={() => {
+                  setFormData({ ...formData, studentId: '' });
+                  setSelectedStudent(null);
+                }} className="hover:text-emerald-800">
                   <Plus size={14} className="rotate-45" />
                 </button>
               </div>
