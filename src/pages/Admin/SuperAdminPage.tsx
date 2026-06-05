@@ -824,6 +824,33 @@ export default function SuperAdminPage() {
     try {
       if (editingId) {
         await updateInvite(editingId, formData);
+        
+        // Propagate the change to the active user profile if it exists
+        try {
+          const qUser = query(collection(db, "users"), where("email", "==", formData.email.toLowerCase().trim()));
+          const userSnap = await getDocs(qUser);
+          if (!userSnap.empty) {
+            const batch = writeBatch(db);
+            userSnap.docs.forEach((docSnap) => {
+              batch.update(docSnap.ref, {
+                role: formData.role,
+                unitId: formData.unitId,
+                jobTitle: formData.jobTitle || null,
+                luminaId: formData.luminaId || null,
+                nickname: formData.nickname || null,
+                linkedStudents: formData.linkedStudents || [],
+                classId: formData.classId || null,
+                academicYear: formData.academicYear || null,
+                fatherName: formData.fatherName || null,
+                motherName: formData.motherName || null,
+              });
+            });
+            await batch.commit();
+            console.log("[SuperAdmin] Updated active user(s) document to match edited invitation.");
+          }
+        } catch (uErr) {
+          console.error("[SuperAdmin] Failed to propagate edit to active user(s):", uErr);
+        }
       } else {
         const inviteId = await addInvite(formData);
 
