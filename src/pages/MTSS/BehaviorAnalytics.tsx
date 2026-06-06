@@ -22,6 +22,7 @@ import {
   User as AppUser
 } from '../../types';
 import { getBehaviorAnalyticsData, getTeachers } from '../../lib/firebase';
+import { useAcademicYear } from '../../context/AcademicYearContext';
 import { cn, formatDate } from '../../lib/utils';
 import { Link, useNavigate, useOutletContext } from 'react-router-dom';
 import html2canvas from 'html2canvas';
@@ -54,6 +55,7 @@ const DAYS = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat'];
 export default function BehaviorAnalytics() {
   const navigate = useNavigate();
   const { filters: contextFilters } = useOutletContext<{ filters: any }>();
+  const { activeYear, activeSemester } = useAcademicYear();
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [teachers, setTeachers] = useState<AppUser[]>([]);
@@ -172,8 +174,8 @@ export default function BehaviorAnalytics() {
   // Reset Filters
   const handleReset = () => {
     setFilters({
-      academicYear: '2025/2026',
-      semester: '2',
+      academicYear: activeYear || '2025/2026',
+      semester: String(activeSemester || '2') as any,
       dateRange: {
         start: Date.now() - (30 * 24 * 60 * 60 * 1000),
         end: Date.now()
@@ -257,7 +259,7 @@ export default function BehaviorAnalytics() {
              label="Tahun Ajaran" 
              value={filters.academicYear} 
              onChange={(v) => setFilters(f => ({ ...f, academicYear: v }))}
-             options={['2024/2025', '2025/2026']}
+             options={Array.from(new Set(['2024/2025', '2025/2026', activeYear].filter(Boolean)))}
            />
            <FilterGroup 
              label="Semester" 

@@ -6,6 +6,7 @@ import {
   FileSpreadsheet, Cloud
 } from 'lucide-react';
 import { useOutletContext } from 'react-router-dom';
+import { useAcademicYear } from '../../context/AcademicYearContext';
 import { toast } from 'sonner';
 import { 
   getLearningGoals, addLearningGoal, updateLearningGoal, 
@@ -21,11 +22,13 @@ export default function LearningGoalsPage() {
   const [loading, setLoading] = React.useState(true);
   const [searchTerm, setSearchTerm] = React.useState('');
   
+  const { activeYear } = useAcademicYear();
+  
   // Filters
   const [filterUnit, setFilterUnit] = React.useState<string>(currentUser.role === 'SUPER_ADMIN' ? 'ELEMENTARY' : (activeUnit || 'ELEMENTARY'));
   const [filterGrade, setFilterGrade] = React.useState<string>('ALL');
   const [filterSubject, setFilterSubject] = React.useState<string>('ALL');
-  const [filterYear, setFilterYear] = React.useState<string>('2025/2026');
+  const [filterYear, setFilterYear] = React.useState<string>(activeYear || '2025/2026');
   const [filterActive, setFilterActive] = React.useState<string>('ALL');
 
   // Loading states for actions
@@ -42,9 +45,16 @@ export default function LearningGoalsPage() {
     subject: '',
     strand: '',
     goalText: '',
-    academicYear: '2025/2026',
+    academicYear: activeYear || '2025/2026',
     isActive: true
   });
+
+  React.useEffect(() => {
+    if (activeYear) {
+      setFilterYear(activeYear);
+      setFormData(prev => ({ ...prev, academicYear: activeYear }));
+    }
+  }, [activeYear]);
 
   const canEdit = currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'HEAD_UNIT' || currentUser.role === 'TEACHER';
   const canDelete = currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'HEAD_UNIT';
@@ -209,7 +219,7 @@ export default function LearningGoalsPage() {
                 subject: '',
                 strand: '',
                 goalText: '',
-                academicYear: '2025/2026',
+                academicYear: activeYear || '2025/2026',
                 isActive: true
               });
               setIsModalOpen(true);
@@ -271,7 +281,7 @@ export default function LearningGoalsPage() {
               className="px-6 py-3 bg-gray-50 border-none rounded-2xl text-xs font-bold uppercase tracking-wider focus:ring-2 focus:ring-blue-100"
             >
               <option value="ALL">Semua Kelas</option>
-              {filterUnit !== 'ALL' && ACADEMIC_GRADES[filterUnit as 'ELEMENTARY' | 'JUNIOR_HIGH'].map(g => (
+              {filterUnit !== 'ALL' && ACADEMIC_GRADES[filterUnit as keyof typeof ACADEMIC_GRADES]?.map(g => (
                 <option key={g} value={g}>Kelas {g}</option>
               ))}
             </select>
@@ -501,7 +511,7 @@ export default function LearningGoalsPage() {
                           required
                         >
                            <option value="">Pilih Kelas</option>
-                           {ACADEMIC_GRADES[formData.unitId as 'ELEMENTARY' | 'JUNIOR_HIGH'].map(g => (
+                           {ACADEMIC_GRADES[formData.unitId as keyof typeof ACADEMIC_GRADES]?.map(g => (
                              <option key={g} value={g}>Kelas {g}</option>
                            ))}
                         </select>

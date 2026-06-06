@@ -29,7 +29,8 @@ export const ACADEMIC_SUBJECTS = {
 };
 
 export const ACADEMIC_GRADES = {
-  ELEMENTARY: ["1", "2", "3", "4", "5", "6"],
+  KINDERGARTEN: ["Pra TK", "TK A", "TK B"],
+  ELEMENTARY: ["Grade 1", "Grade 2", "Grade 3", "Grade 4", "Grade 5", "Grade 6"],
   JUNIOR_HIGH: ["7", "8", "9"]
 };
 

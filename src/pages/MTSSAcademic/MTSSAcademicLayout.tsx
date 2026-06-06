@@ -4,7 +4,6 @@ import {
   LayoutDashboard, 
   TrendingUp, 
   Eye, 
-  History, 
   BarChart3,
   GraduationCap,
   RefreshCw,
@@ -19,7 +18,6 @@ const TABS = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard, path: '/junior-high/academic/mtss/overview' },
   { id: 'cases', label: 'Cases', icon: TrendingUp, path: '/junior-high/academic/mtss/cases' },
   { id: 'screening', label: 'Screening', icon: Eye, path: '/junior-high/academic/mtss/screening' },
-  { id: 'timeline', label: 'Timeline', icon: History, path: '/junior-high/academic/mtss/timeline' },
   { id: 'analytics', label: 'Analytics', icon: BarChart3, path: '/junior-high/academic/mtss/analytics' },
 ];
 

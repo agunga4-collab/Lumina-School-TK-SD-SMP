@@ -6,7 +6,6 @@ import {
   MTSSAcademicMeeting, 
   MTSSAcademicEvaluation, 
   MTSSAcademicParentDocument,
-  MTSSAcademicTimelinePhase,
   UserRole,
   MTSSAcademicAlertType
 } from '../types';
@@ -26,7 +25,6 @@ export async function generateAlertsForCase(
     meetings: MTSSAcademicMeeting[];
     evaluations: MTSSAcademicEvaluation[];
     documents: MTSSAcademicParentDocument[];
-    timeline: MTSSAcademicTimelinePhase[];
   }
 ) {
   const alerts: Partial<MTSSAcademicAlert>[] = [];

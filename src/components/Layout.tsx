@@ -10,6 +10,7 @@ import { NavLink, Outlet, useLocation, Navigate, useNavigate } from 'react-route
 import { cn } from '../lib/utils';
 import type { UserRole, UnitType } from '../types';
 import { useAuth } from '../context/AuthContext';
+import { useAcademicYear } from '../context/AcademicYearContext';
 import { LuminaLogo } from './LuminaLogo';
 import { NotificationBell } from './NotificationBell';
 import { useBehaviorAlerts } from '../hooks/useBehaviorAlerts';
@@ -20,6 +21,7 @@ import { toast } from 'sonner';
 
 export function Layout() {
   const { profile, signOut } = useAuth();
+  const { activeYear, activeSemester } = useAcademicYear();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [pendingLXDCount, setPendingLXDCount] = React.useState(0);
@@ -468,7 +470,7 @@ export function Layout() {
               <span className="text-xs font-bold text-gray-900 leading-none mb-1">
                 {new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())}
               </span>
-              <span className="text-[10px] text-gray-300 font-bold tracking-widest uppercase">Semester 2 • 2025/2026</span>
+              <span className="text-[10px] text-gray-300 font-bold tracking-widest uppercase">Semester {activeSemester} • {activeYear}</span>
             </div>
           </div>
         </header>

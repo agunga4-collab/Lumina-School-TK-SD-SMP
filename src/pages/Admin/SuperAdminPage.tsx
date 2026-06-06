@@ -38,6 +38,7 @@ import {
   Lock,
   Menu,
 } from "lucide-react";
+import { useAcademicYear } from "../../context/AcademicYearContext";
 import { getDoc, setDoc, collection, getDocs, updateDoc, deleteDoc, query, where } from "firebase/firestore";
 import {
   getAllInvites,
@@ -57,6 +58,12 @@ import { auth, writeBatch, doc } from "../../lib/firebase";
 import { User, RoleInvite, UserRole, UnitType, Class, PromptTemplate } from "../../types";
 import { cn } from "../../lib/utils";
 
+const getGradeOptions = (unitId: string): string[] => {
+  if (unitId === "KINDERGARTEN") return ["Pra TK", "TK A", "TK B"];
+  if (unitId === "ELEMENTARY") return ["Grade 1", "Grade 2", "Grade 3", "Grade 4", "Grade 5", "Grade 6"];
+  return ["7", "8", "9"]; // JUNIOR_HIGH
+};
+
 function SortIcon({ column, currentConfig }: { column: string; currentConfig: { key: string; direction: "asc" | "desc" } }) {
   if (currentConfig.key !== column) return <ArrowUpDown size={12} className="text-gray-300" />;
   return currentConfig.direction === "asc" ? <ChevronUp size={12} className="text-blue-500" /> : <ChevronDown size={12} className="text-blue-500" />;
@@ -70,7 +77,7 @@ export default function SuperAdminPage() {
     "STAFF" | "STUDENT" | "PARENT" | "CLASSES" | "LOGO" | "PROMPTS" | "KNOWLEDGE_BASE" | "PENDING"
   >("STAFF");
   const [activeMenu, setActiveMenu] = React.useState<
-    "overview" | "user-undangan" | "user-pending" | "kelas" | "ai-prompts" | "ai-knowledge" | "ai-logo" | "import-massal" | "import-sync" | "sistem-reset"
+    "overview" | "user-undangan" | "user-pending" | "kelas" | "ai-prompts" | "ai-knowledge" | "ai-logo" | "import-massal" | "import-sync" | "sistem-reset" | "academic-year"
   >("overview");
   const [collapsedGroups, setCollapsedGroups] = React.useState<Record<string, boolean>>({
     USER: false,
@@ -90,6 +97,17 @@ export default function SuperAdminPage() {
     JUNIOR_HIGH: { rectangular: "", square: "" },
   });
   const [isLogosSaving, setIsLogosSaving] = React.useState(false);
+
+  const { activeYear, activeSemester, updateAcademicYear } = useAcademicYear();
+  const [tempYear, setTempYear] = React.useState(activeYear);
+  const [tempSemester, setTempSemester] = React.useState(activeSemester);
+  const [isSavingYear, setIsSavingYear] = React.useState(false);
+  const [showConfirmModal, setShowConfirmModal] = React.useState(false);
+
+  React.useEffect(() => {
+    setTempYear(activeYear);
+    setTempSemester(activeSemester);
+  }, [activeYear, activeSemester]);
 
   const handleLogoUpload = (unit: "KINDERGARTEN" | "ELEMENTARY" | "JUNIOR_HIGH", type: "rectangular" | "square", file: File) => {
     if (!file) return;
@@ -300,6 +318,231 @@ export default function SuperAdminPage() {
     STAFF: null,
     PARENT: null,
   });
+
+  // Copy-Paste Import states
+  const [importSubTab, setImportSubTab] = React.useState<"sheets" | "paste">("sheets");
+  const [pasteMode, setPasteMode] = React.useState<"STUDENT" | "STAFF" | "PARENT">("STUDENT");
+  const [pasteUnit, setPasteUnit] = React.useState<string>("JUNIOR_HIGH");
+  const [pasteClassId, setPasteClassId] = React.useState<string>("");
+  const [pasteAcademicYear, setPasteAcademicYear] = React.useState<string>("2025/2026");
+  const [pasteSemester, setPasteSemester] = React.useState<number>(1);
+  const [pasteText, setPasteText] = React.useState<string>("");
+
+  const [parsedRows, setParsedRows] = React.useState<string[][]>([]);
+  const [detectedHeaders, setDetectedHeaders] = React.useState<string[]>([]);
+  const [columnMappings, setColumnMappings] = React.useState<Record<number, string>>({});
+  const [hasDetectedHeaders, setHasDetectedHeaders] = React.useState<boolean>(false);
+  const [isParsing, setIsParsing] = React.useState<boolean>(false);
+  const [isSavingPaste, setIsSavingPaste] = React.useState<boolean>(false);
+  const [pasteResult, setPasteResult] = React.useState<{ created: number; updated: number; skipped: number; errors: string[] } | null>(null);
+
+  React.useEffect(() => {
+    // Automatically pre-select first class of selected unit when unit changes
+    const filtered = classes.filter(c => c.unitId === pasteUnit && c.status !== "archived");
+    if (filtered.length > 0) {
+      setPasteClassId(filtered[0].name);
+    } else {
+      setPasteClassId("");
+    }
+  }, [pasteUnit, classes]);
+
+  const handleDetectColumns = () => {
+    if (!pasteText.trim()) {
+      alert("Silakan paste data dari Excel atau Google Sheets terlebih dahulu.");
+      return;
+    }
+
+    setIsParsing(true);
+    setPasteResult(null);
+
+    // Parse spreadsheet tsv clipboard structure
+    const rawRows = pasteText.split(/\r?\n/).map(line => line.split("\t"));
+    const nonEmptyRows = rawRows.filter(row => row.some(cell => cell.trim() !== ""));
+
+    if (nonEmptyRows.length === 0) {
+      alert("Tidak ada baris data yang valid ditemukan.");
+      setIsParsing(false);
+      return;
+    }
+
+    // Header Detection (if any common column names are in first row)
+    const firstRow = nonEmptyRows[0];
+    const isHeaderRow = firstRow.some(cell => {
+      const cellLower = cell.trim().toLowerCase();
+      return (
+        cellLower.includes("nama") || 
+        cellLower.includes("email") || 
+        cellLower.includes("nis") || 
+        cellLower.includes("gender") || 
+        cellLower.includes("kelas") || 
+        cellLower.includes("jabatan") || 
+        cellLower.includes("role") ||
+        cellLower.includes("wali") ||
+        cellLower.includes("panggilan")
+      );
+    });
+
+    let dataRows: string[][] = [];
+    let headers: string[] = [];
+
+    if (isHeaderRow) {
+      headers = firstRow.map(cell => cell.trim());
+      dataRows = nonEmptyRows.slice(1);
+      setHasDetectedHeaders(true);
+    } else {
+      headers = firstRow.map((_, i) => `Kolom ${i + 1}`);
+      dataRows = nonEmptyRows;
+      setHasDetectedHeaders(false);
+    }
+
+    setParsedRows(dataRows);
+    setDetectedHeaders(headers);
+
+    // Initial Best Guess Mappings
+    const initialMappings: Record<number, string> = {};
+    headers.forEach((header, i) => {
+      const hLower = header.toLowerCase();
+      if (pasteMode === "STUDENT") {
+        if (hLower.includes("nama panggilan") || hLower.includes("panggilan") || hLower.includes("nickname")) {
+          initialMappings[i] = "nickname";
+        } else if (hLower.includes("nama") || hLower.includes("full") || hLower.includes("lengkap")) {
+          initialMappings[i] = "fullName";
+        } else if (hLower.includes("nisn")) {
+          initialMappings[i] = "nisn";
+        } else if (hLower.includes("nis") || hLower.includes("id") || hLower.includes("lumina")) {
+          initialMappings[i] = "luminaId";
+        } else if (hLower.includes("gender") || hLower.includes("kelamin") || hLower.includes("jenis") || hLower.includes("kelm")) {
+          initialMappings[i] = "gender";
+        } else if (hLower.includes("parent email") || hLower.includes("ortu") || hLower.includes("orang tua") || hLower.includes("wali")) {
+          initialMappings[i] = "parentEmail";
+        } else if (hLower.includes("email") || hLower.includes("mail")) {
+          initialMappings[i] = "email";
+        } else if (hLower.includes("kelas") || hLower.includes("class")) {
+          initialMappings[i] = "classId";
+        } else if (hLower.includes("unit")) {
+          initialMappings[i] = "unitId";
+        } else if (hLower.includes("tahun") || hLower.includes("academic") || hLower.includes("ajaran")) {
+          initialMappings[i] = "academicYear";
+        }
+      } else if (pasteMode === "STAFF") {
+        if (hLower.includes("nama") || hLower.includes("name") || hLower.includes("lengkap")) {
+          initialMappings[i] = "fullName";
+        } else if (hLower.includes("email") || hLower.includes("mail")) {
+          initialMappings[i] = "email";
+        } else if (hLower.includes("jabatan") || hLower.includes("title") || hLower.includes("kerja")) {
+          initialMappings[i] = "jobTitle";
+        } else if (hLower.includes("id") || hLower.includes("lumina") || hLower.includes("nip")) {
+          initialMappings[i] = "luminaId";
+        } else if (hLower.includes("role")) {
+          initialMappings[i] = "role";
+        } else if (hLower.includes("unit")) {
+          initialMappings[i] = "unitId";
+        }
+      } else if (pasteMode === "PARENT") {
+        if (hLower.includes("nama") || hLower.includes("name") || hLower.includes("lengkap")) {
+          initialMappings[i] = "fullName";
+        } else if (hLower.includes("email") || hLower.includes("mail")) {
+          initialMappings[i] = "email";
+        } else if (hLower.includes("anak") || hLower.includes("child") || hLower.includes("siswa") || hLower.includes("student")) {
+          initialMappings[i] = "childId";
+        } else if (hLower.includes("id") || hLower.includes("lumina")) {
+          initialMappings[i] = "luminaId";
+        } else if (hLower.includes("unit")) {
+          initialMappings[i] = "unitId";
+        }
+      }
+    });
+
+    // Positions Fallbacks if no headers were guessed
+    if (Object.keys(initialMappings).length === 0) {
+      if (pasteMode === "STUDENT") {
+        const fallbacks = ["luminaId", "nisn", "fullName", "nickname", "gender", "email", "parentEmail", "classId", "unitId", "academicYear"];
+        headers.forEach((_, i) => {
+          if (fallbacks[i]) initialMappings[i] = fallbacks[i];
+        });
+      } else if (pasteMode === "STAFF") {
+        const fallbacks = ["email", "jobTitle", "role", "unitId", "fullName"];
+        headers.forEach((_, i) => {
+          if (fallbacks[i]) initialMappings[i] = fallbacks[i];
+        });
+      } else if (pasteMode === "PARENT") {
+        const fallbacks = ["childId", "fullName", "email", "unitId"];
+        headers.forEach((_, i) => {
+          if (fallbacks[i]) initialMappings[i] = fallbacks[i];
+        });
+      }
+    }
+
+    setColumnMappings(initialMappings);
+    setIsParsing(false);
+  };
+
+  const handleSavePasteImport = async () => {
+    if (parsedRows.length === 0) {
+      alert("Gagal menyimpan. Harap deteksi kolom data terlebih dahulu.");
+      return;
+    }
+
+    const hasNameMapping = Object.values(columnMappings).some(val => val === "fullName" || val === "name");
+    const hasEmailMapping = Object.values(columnMappings).some(val => val === "email");
+    if (!hasNameMapping && !hasEmailMapping) {
+      alert("Peringatan: Anda wajib memetakan minimal kolom 'Nama Lengkap' atau 'Email' agar data dapat diproses.");
+      return;
+    }
+
+    setIsSavingPaste(true);
+    setPasteResult(null);
+
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) throw new Error("Authentication required");
+
+      const response = await fetch("/api/admin/bulk-import-paste", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          rows: parsedRows,
+          columnMapping: columnMappings,
+          globalConfig: {
+            mode: pasteMode,
+            unitId: pasteUnit,
+            classId: pasteClassId,
+            academicYear: pasteAcademicYear,
+            semester: pasteSemester
+          }
+        }),
+      });
+
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Server error");
+      }
+
+      setPasteResult({
+        created: result.created || 0,
+        updated: result.updated || 0,
+        skipped: result.skipped || 0,
+        errors: result.errors || [],
+      });
+
+      // Clear paste state to prevent duplicate clicks
+      setPasteText("");
+      setParsedRows([]);
+      setDetectedHeaders([]);
+      setColumnMappings({});
+
+      alert("Proses Impor Paste selesai dengan sukses! ✨");
+      fetchData();
+    } catch (error: any) {
+      console.error("[SuperAdmin] Paste import error:", error);
+      alert("Gagal melakukan impor data: " + error.message);
+    } finally {
+      setIsSavingPaste(false);
+    }
+  };
 
   const handleSectionImport = async (mode: "STUDENT" | "STAFF" | "PARENT") => {
     let sheetId = "";
@@ -788,8 +1031,8 @@ export default function SuperAdminPage() {
         grade: classFormData.grade,
         unitId: classFormData.unitId,
         academicYear: classFormData.academicYear,
-        homeroomTeacherId: classFormData.homeroomTeacherId || undefined,
-        homeroomTeacherName: teacher?.displayName || undefined,
+        homeroomTeacherId: classFormData.homeroomTeacherId || null,
+        homeroomTeacherName: teacher?.displayName || null,
         status: "active" as const,
       };
 
@@ -1476,6 +1719,23 @@ export default function SuperAdminPage() {
                 <span>Reset Data</span>
               </div>
             </button>
+            <button
+              onClick={() => {
+                setActiveMenu("academic-year");
+                setIsMobileSidebarOpen(false);
+              }}
+              className={cn(
+                "w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-left flex items-center justify-between transition-all",
+                activeMenu === "academic-year"
+                  ? "bg-slate-900 text-white font-bold border border-slate-800"
+                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200"
+              )}
+            >
+              <div className="flex items-center gap-2.5 flex-1 select-none">
+                <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                <span>Konfigurasi Tahun Ajaran</span>
+              </div>
+            </button>
           </div>
         )}
       </div>
@@ -1824,13 +2084,14 @@ export default function SuperAdminPage() {
                 <button
                   onClick={() => {
                     setEditingId(null);
+                    const defaultUnit = selectedUnit === "ALL" ? "KINDERGARTEN" : selectedUnit;
+                    const defaultGrade = getGradeOptions(defaultUnit)[0];
                     setClassFormData({
-                      grade: "7",
+                      grade: defaultGrade,
                       className: "",
                       academicYear: "2025/2026",
                       homeroomTeacherId: "",
-                      unitId:
-                        selectedUnit === "ALL" ? "JUNIOR_HIGH" : selectedUnit,
+                      unitId: defaultUnit,
                     });
                     setIsClassModalOpen(true);
                   }}
@@ -2011,11 +2272,13 @@ export default function SuperAdminPage() {
                                 <button
                                   onClick={() => {
                                     setEditingId(cls.id);
-                                    const [grade, ...nameParts] =
-                                      cls.name.split(" ");
+                                    const grade = cls.grade || "";
+                                    const className = cls.name.startsWith(grade)
+                                      ? cls.name.substring(grade.length).trim()
+                                      : cls.name;
                                     setClassFormData({
                                       grade,
-                                      className: nameParts.join(" "),
+                                      className: className,
                                       academicYear: cls.academicYear,
                                       homeroomTeacherId:
                                         cls.homeroomTeacherId || "",
@@ -2835,384 +3098,817 @@ export default function SuperAdminPage() {
           </div>
         </div>
       </div>
-            </div>
-          )}
+    </div>
+  )}
 
-          {activeMenu === "import-massal" && (
-            <div className="space-y-8 animate-in fade-in duration-200">
-              <div>
-                <h2 className="text-2xl font-black text-gray-900 tracking-tight italic uppercase">
-                  Pusat Impor Massal GCS
-                </h2>
-                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">
-                  Sinkronisasikan data spreadsheet Anda secara langsung untuk siswa, staff, dan orang tua.
-                </p>
+    {activeMenu === "import-massal" && (
+      <div className="space-y-8 animate-in fade-in duration-200">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-black text-gray-900 tracking-tight italic uppercase">
+                    Pusat Impor Massal GCS
+                  </h2>
+                  <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">
+                    Sinkronisasikan data siswa, staff, dan orang tua via Google Sheets atau salin langsung dari Excel.
+                  </p>
+                </div>
+
+                {/* Tab Selector for Sheets vs Copy-Paste */}
+                <div className="flex bg-slate-100/80 p-1 rounded-2xl border border-gray-200/50 w-full sm:w-auto shrink-0">
+                  <button
+                    onClick={() => setImportSubTab("sheets")}
+                    className={cn(
+                      "px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all select-none cursor-pointer flex items-center justify-center gap-1.5 flex-1 sm:flex-initial",
+                      importSubTab === "sheets"
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-400 hover:text-gray-600"
+                    )}
+                  >
+                    <RefreshCw size={12} className={cn(importLoading && "animate-spin")} />
+                    Google Sheets Sync
+                  </button>
+                  <button
+                    onClick={() => setImportSubTab("paste")}
+                    className={cn(
+                      "px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all select-none cursor-pointer flex items-center justify-center gap-1.5 flex-1 sm:flex-initial",
+                      importSubTab === "paste"
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-400 hover:text-gray-600"
+                    )}
+                  >
+                    <Upload size={12} />
+                    Kopi-Tempel (Copy-Paste)
+                  </button>
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-                {/* SECTION 1: STUDENT */}
-                <motion.div
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.05 }}
-                  className="bg-white p-8 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col justify-between space-y-6"
-                >
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-3">
-                      <div className="p-3.5 bg-blue-50 text-blue-600 rounded-2xl">
-                        <GraduationCap size={20} />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-black text-gray-900 tracking-tight">
-                          Impor Data Siswa
-                        </h3>
-                        <p className="text-[10px] text-gray-400 font-bold uppercase">
-                          Siswa & Informasi Kelas
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-3 pt-2">
-                      <div>
-                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
-                          Google Sheets ID
-                        </label>
-                        <input
-                          type="text"
-                          value={studentSheetId}
-                          onChange={(e) => setStudentSheetId(e.target.value)}
-                          placeholder="Sheet ID"
-                          className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
-                          Nama Sheet (Tab)
-                        </label>
-                        <input
-                          type="text"
-                          value={studentSheetName}
-                          onChange={(e) => setStudentSheetName(e.target.value)}
-                          placeholder="SiswaLumina"
-                          className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Column Guide */}
-                    <div className="bg-slate-50/75 p-4 rounded-2xl border border-gray-50">
-                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                        Format Kolom Google Sheets:
-                      </p>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        {[
-                          { col: "A", label: "NIS" },
-                          { col: "B", label: "NISN" },
-                          { col: "C", label: "Nama Lengkap" },
-                          { col: "D", label: "Nama Panggilan" },
-                          { col: "E", label: "Gender (L/P)" },
-                          { col: "F", label: "Email Siswa" },
-                          { col: "G", label: "Email Ortu" },
-                          { col: "H", label: "Kelas (e.g. 7 Baiji)" },
-                          { col: "I", label: "Unit (JUNIOR_HIGH)" },
-                          { col: "J", label: "Tahun Ajaran (2025/2026)" },
-                        ].map((item, idx) => (
-                          <div key={idx} className="flex items-center gap-1.5 text-[10px] text-gray-600">
-                            <span className="font-mono bg-blue-50 text-blue-600 font-bold px-1 rounded text-[9px] w-4 text-center">
-                              {item.col}
-                            </span>
-                            <span className="font-sans text-[9px] truncate">{item.label}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4 pt-4">
-                    {/* Section Result */}
-                    {importSectionResult.STUDENT && (
-                      <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl space-y-2">
-                        <p className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
-                          <CheckCircle2 size={14} /> Berhasil Diimpor
-                        </p>
-                        <div className="grid grid-cols-3 gap-2 text-[10px] font-bold text-emerald-700">
-                          <div>Baru: {importSectionResult.STUDENT.created}</div>
-                          <div>Update: {importSectionResult.STUDENT.updated}</div>
-                          <div>Lewat: {importSectionResult.STUDENT.skipped}</div>
+              {importSubTab === "paste" ? (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                  {/* Left Column: Input and Setup */}
+                  <div className="lg:col-span-5 space-y-6">
+                    <div className="bg-white p-8 rounded-[2rem] border border-gray-100 shadow-sm space-y-6">
+                      <div className="flex items-center gap-3">
+                        <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl">
+                          <PlusSquare size={18} />
                         </div>
-                        {importSectionResult.STUDENT.errors.length > 0 && (
-                          <div className="pt-2 border-t border-emerald-200">
-                            <p className="text-[9px] font-black text-red-650 uppercase tracking-widest">
-                              {importSectionResult.STUDENT.errors.length} Kesalahan:
-                            </p>
-                            <div className="max-h-20 overflow-y-auto text-[8px] font-mono text-red-600 mt-1 space-y-0.5">
-                              {importSectionResult.STUDENT.errors.map((err, errIdx) => (
-                                <div key={errIdx}>{String(err)}</div>
-                              ))}
+                        <div>
+                          <h3 className="text-md font-black text-gray-900 tracking-tight">
+                            Atur & Tempel Data
+                          </h3>
+                          <p className="text-[10px] text-gray-400 font-bold uppercase">
+                            Pengaturan Global & Input Clipboard
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Tipe Data */}
+                      <div>
+                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-2">
+                          Tipe Data Impor
+                        </label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {[
+                            { id: "STUDENT", label: "Siswa" },
+                            { id: "STAFF", label: "Staff/Guru" },
+                            { id: "PARENT", label: "Orang Tua" },
+                          ].map(t => (
+                            <button
+                              key={t.id}
+                              type="button"
+                              onClick={() => {
+                                setPasteMode(t.id as any);
+                                setParsedRows([]);
+                                setDetectedHeaders([]);
+                                setColumnMappings({});
+                              }}
+                              className={cn(
+                                "py-2.5 text-[10px] font-black uppercase tracking-wider rounded-xl border transition-all cursor-pointer",
+                                pasteMode === t.id
+                                  ? "bg-gray-900 border-gray-900 text-white shadow-sm"
+                                  : "bg-slate-50 border-slate-100 text-gray-500 hover:bg-slate-100"
+                              )}
+                            >
+                              {t.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Global Config Section */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
+                            Unit Tujuan
+                          </label>
+                          <select
+                            value={pasteUnit}
+                            onChange={(e) => setPasteUnit(e.target.value)}
+                            className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white text-gray-700"
+                          >
+                            <option value="KINDERGARTEN">KINDERGARTEN</option>
+                            <option value="ELEMENTARY">ELEMENTARY</option>
+                            <option value="JUNIOR_HIGH">JUNIOR_HIGH</option>
+                          </select>
+                        </div>
+
+                        {pasteMode === "STUDENT" ? (
+                          <div>
+                            <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
+                              Kelas Tujuan
+                            </label>
+                            <select
+                              value={pasteClassId}
+                              onChange={(e) => setPasteClassId(e.target.value)}
+                              className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white text-gray-750"
+                            >
+                              <option value="">-- Pilih Kelas --</option>
+                              {classes
+                                .filter(c => c.unitId === pasteUnit && c.status !== "archived")
+                                .map(c => (
+                                  <option key={c.id} value={c.name}>
+                                    {c.name}
+                                  </option>
+                                ))}
+                            </select>
+                          </div>
+                        ) : (
+                          <div>
+                            <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5 opacity-40">
+                              Kelas Tujuan
+                            </label>
+                            <div className="px-4 py-3 bg-gray-100/50 border border-gray-50 rounded-xl text-xs font-bold text-gray-400 select-none">
+                              Tidak Berlaku
                             </div>
                           </div>
                         )}
                       </div>
-                    )}
 
-                    <button
-                      onClick={() => handleSectionImport("STUDENT")}
-                      disabled={importLoading}
-                      className="w-full py-3.5 bg-gray-900 text-white hover:bg-blue-600 active:bg-blue-700 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      {importLoading && activeImportSection === "STUDENT" ? (
-                        <>
-                          <Loader2 size={14} className="animate-spin" />
-                          Mengimpor Siswa...
-                        </>
-                      ) : (
-                        <>
-                          <Upload size={14} />
-                          Mulai Import Siswa
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </motion.div>
-
-                {/* SECTION 2: STAFF */}
-                <motion.div
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.1 }}
-                  className="bg-white p-8 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col justify-between space-y-6"
-                >
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-3">
-                      <div className="p-3.5 bg-orange-50 text-orange-600 rounded-2xl">
-                        <Users size={20} />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-black text-gray-900 tracking-tight">
-                          Impor Data Staff
-                        </h3>
-                        <p className="text-[10px] text-gray-400 font-bold uppercase">
-                          Guru & Tenaga Kependidikan
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-3 pt-2">
-                      <div>
-                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
-                          Google Sheets ID
-                        </label>
-                        <input
-                          type="text"
-                          value={staffSheetId}
-                          onChange={(e) => setStaffSheetId(e.target.value)}
-                          placeholder="Sheet ID"
-                          className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
-                          Nama Sheet (Tab)
-                        </label>
-                        <input
-                          type="text"
-                          value={staffSheetName}
-                          onChange={(e) => setStaffSheetName(e.target.value)}
-                          placeholder="StaffLumina"
-                          className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Column Guide */}
-                    <div className="bg-slate-50/75 p-4 rounded-2xl border border-gray-50">
-                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                        Format Kolom Google Sheets:
-                      </p>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        {[
-                          { col: "A", label: "Email" },
-                          { col: "B", label: "Jabatan" },
-                          { col: "C", label: "Role (TEACHER/STAFF/HEAD_UNIT)" },
-                          { col: "D", label: "Unit (KINDERGARTEN, etc.)" },
-                        ].map((item, idx) => (
-                          <div key={idx} className="flex items-center gap-1.5 text-[10px] text-gray-600">
-                            <span className="font-mono bg-orange-50 text-orange-600 font-bold px-1 rounded text-[9px] w-4 text-center">
-                              {item.col}
-                            </span>
-                            <span className="font-sans text-[9px] truncate">{item.label}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4 pt-4">
-                    {/* Section Result */}
-                    {importSectionResult.STAFF && (
-                      <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl space-y-2">
-                        <p className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
-                          <CheckCircle2 size={14} /> Berhasil Diimpor
-                        </p>
-                        <div className="grid grid-cols-3 gap-2 text-[10px] font-bold text-emerald-700">
-                          <div>Baru: {importSectionResult.STAFF.created}</div>
-                          <div>Update: {importSectionResult.STAFF.updated}</div>
-                          <div>Lewat: {importSectionResult.STAFF.skipped}</div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
+                            Tahun Ajaran
+                          </label>
+                          <select
+                            value={pasteAcademicYear}
+                            onChange={(e) => setPasteAcademicYear(e.target.value)}
+                            className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white text-gray-700"
+                          >
+                            <option value="2024/2025">2024/2025</option>
+                            <option value="2025/2026">2025/2026</option>
+                            <option value="2026/2027">2026/2027</option>
+                          </select>
                         </div>
-                        {importSectionResult.STAFF.errors.length > 0 && (
-                          <div className="pt-2 border-t border-emerald-200">
-                            <p className="text-[9px] font-black text-red-650 uppercase tracking-widest">
-                              {importSectionResult.STAFF.errors.length} Kesalahan:
-                            </p>
-                            <div className="max-h-20 overflow-y-auto text-[8px] font-mono text-red-600 mt-1 space-y-0.5">
-                              {importSectionResult.STAFF.errors.map((err, errIdx) => (
-                                <div key={errIdx}>{String(err)}</div>
-                              ))}
+
+                        <div>
+                          <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
+                            Semester
+                          </label>
+                          <select
+                            value={pasteSemester}
+                            onChange={(e) => setPasteSemester(Number(e.target.value))}
+                            className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white text-gray-700"
+                          >
+                            <option value={1}>1 (Ganjil)</option>
+                            <option value={2}>2 (Genap)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Textarea Input */}
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-center">
+                          <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block">
+                            Tempel Data Excel / Sheets
+                          </label>
+                          <span className="text-[8px] font-black text-gray-400 uppercase bg-gray-50 px-2 py-0.5 rounded border border-gray-100 font-mono">
+                            Tab Separated
+                          </span>
+                        </div>
+                        <textarea
+                          rows={6}
+                          value={pasteText}
+                          onChange={(e) => setPasteText(e.target.value)}
+                          placeholder="Salin data tabel Anda di Microsoft Excel atau Google Sheets, lalu klik di sini dan tekan tombol Paste (Ctrl+V) untuk menempelkan data..."
+                          className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl text-[10px] font-mono outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-700 resize-y leading-relaxed"
+                        />
+                        <p className="text-[9px] text-gray-400 leading-relaxed font-bold">
+                          Sistem akan mendeteksi baris pertama sebagai nama kolom jika berisi teks header, dan membagi kolom per baris secara otomatis.
+                        </p>
+                      </div>
+
+                      {/* Deteksi Kolom Trigger Button */}
+                      <button
+                        type="button"
+                        onClick={handleDetectColumns}
+                        disabled={isParsing || !pasteText.trim()}
+                        className="w-full py-3.5 bg-gray-900 text-white hover:bg-blue-650 active:bg-blue-700 rounded-2xl text-[10.5px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 shadow-sm disabled:opacity-40"
+                      >
+                        {isParsing ? (
+                          <>
+                            <Loader2 size={14} className="animate-spin" />
+                            Menganalisis Format...
+                          </>
+                        ) : (
+                          <>
+                            <Search size={14} />
+                            Deteksi Kolom & Preview
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Quick Tips */}
+                    <div className="bg-slate-50/70 p-6 rounded-[2rem] border border-gray-100 text-[11px] text-gray-500 space-y-2">
+                      <p className="font-black text-gray-700 text-[9px] uppercase tracking-wider flex items-center gap-1">
+                        <Sparkles size={11} className="text-yellow-500" /> Panduan Impor:
+                      </p>
+                      <ul className="list-disc pl-5 space-y-1 text-[10.5px] text-gray-400 leading-relaxed">
+                        <li>Gunakan data terstruktur. Kolom **Nama Lengkap** adalah satu-satunya kolom wajib di mapping.</li>
+                        <li>NIM (Lumina ID) & Email opsional. Jika kosong, sistem otomatis men-generate data unik yang valid.</li>
+                        <li>Selalu periksa tabel mapping pratinjau sebelum menekan tombol simpan final di kanan.</li>
+                      </ul>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Mapping configuration and Preview */}
+                  <div className="lg:col-span-7 space-y-6">
+                    {parsedRows.length > 0 ? (
+                      <div className="bg-white p-8 rounded-[2rem] border border-gray-100 shadow-sm space-y-6 animate-in fade-in duration-300">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl">
+                              <CheckCircle2 size={18} />
+                            </div>
+                            <div>
+                              <h3 className="text-md font-black text-gray-900 tracking-tight">
+                                Pemetaan & Pratinjau
+                              </h3>
+                              <p className="text-[10px] text-emerald-600 font-bold uppercase">
+                                Terdeteksi {parsedRows.length} baris data clipboard
+                              </p>
                             </div>
                           </div>
-                        )}
-                      </div>
-                    )}
 
-                    <button
-                      onClick={() => handleSectionImport("STAFF")}
-                      disabled={importLoading}
-                      className="w-full py-3.5 bg-gray-900 text-white hover:bg-orange-600 active:bg-orange-700 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      {importLoading && activeImportSection === "STAFF" ? (
-                        <>
-                          <Loader2 size={14} className="animate-spin" />
-                          Mengimpor Staff...
-                        </>
-                      ) : (
-                        <>
-                          <Upload size={14} />
-                          Mulai Import Staff
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </motion.div>
-
-                {/* SECTION 3: PARENT */}
-                <motion.div
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.15 }}
-                  className="bg-white p-8 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col justify-between space-y-6"
-                >
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-3">
-                      <div className="p-3.5 bg-purple-50 text-purple-600 rounded-2xl">
-                        <Smile size={20} />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-black text-gray-900 tracking-tight">
-                          Impor Data Orang Tua
-                        </h3>
-                        <p className="text-[10px] text-gray-400 font-bold uppercase">
-                          Wali Siswa & Orang Tua GCS
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-3 pt-2">
-                      <div>
-                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
-                          Google Sheets ID
-                        </label>
-                        <input
-                          type="text"
-                          value={parentSheetId}
-                          onChange={(e) => setParentSheetId(e.target.value)}
-                          placeholder="Sheet ID"
-                          className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
-                          Nama Sheet (Tab)
-                        </label>
-                        <input
-                          type="text"
-                          value={parentSheetName}
-                          onChange={(e) => setParentSheetName(e.target.value)}
-                          placeholder="OrangTuaLumina"
-                          className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Column Guide */}
-                    <div className="bg-slate-50/75 p-4 rounded-2xl border border-gray-50">
-                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                        Format Kolom Google Sheets:
-                      </p>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        {[
-                          { col: "A", label: "ID Anak" },
-                          { col: "B", label: "Nama Ortu" },
-                          { col: "C", label: "Email Ortu" },
-                          { col: "D", label: "Unit (TK, SD, SMP)" },
-                        ].map((item, idx) => (
-                          <div key={idx} className="flex items-center gap-1.5 text-[10px] text-gray-600">
-                            <span className="font-mono bg-purple-50 text-purple-600 font-bold px-1 rounded text-[9px] w-4 text-center">
-                              {item.col}
-                            </span>
-                            <span className="font-sans text-[9px] truncate">{item.label}</span>
+                          <div className="text-[9px] bg-slate-50 text-slate-500 border border-gray-100 font-black px-2.5 py-1 rounded-xl uppercase tracking-wider">
+                            {hasDetectedHeaders ? "Header Aktif" : "Tanpa Header"}
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4 pt-4">
-                    {/* Section Result */}
-                    {importSectionResult.PARENT && (
-                      <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl space-y-2">
-                        <p className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
-                          <CheckCircle2 size={14} /> Berhasil Diimpor
-                        </p>
-                        <div className="grid grid-cols-3 gap-2 text-[10px] font-bold text-emerald-700">
-                          <div>Baru: {importSectionResult.PARENT.created}</div>
-                          <div>Update: {importSectionResult.PARENT.updated}</div>
-                          <div>Lewat: {importSectionResult.PARENT.skipped}</div>
                         </div>
-                        {importSectionResult.PARENT.errors.length > 0 && (
-                          <div className="pt-2 border-t border-emerald-200">
-                            <p className="text-[9px] font-black text-red-650 uppercase tracking-widest">
-                              {importSectionResult.PARENT.errors.length} Kesalahan:
+
+                        {/* Mapping Tool */}
+                        <div className="border border-slate-100 rounded-2xl overflow-hidden bg-slate-50/50 p-5 space-y-4">
+                          <div>
+                            <h4 className="text-[10px] font-black text-gray-900 uppercase tracking-widest block">
+                              MAPPING KOLOM DATABASE LUMINA
+                            </h4>
+                            <p className="text-[9.5px] text-gray-400 mt-1 leading-relaxed">
+                              Tautkan setiap kolom input Anda dengan field sistem Lumina yang terdaftar untuk tipe **{pasteMode === "STUDENT" ? "SISWA" : pasteMode === "STAFF" ? "STAFF/GURU" : "ORANG TUA"}**.
                             </p>
-                            <div className="max-h-20 overflow-y-auto text-[8px] font-mono text-red-600 mt-1 space-y-0.5">
-                              {importSectionResult.PARENT.errors.map((err, errIdx) => (
-                                <div key={errIdx}>{String(err)}</div>
-                              ))}
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                            {detectedHeaders.map((header, index) => (
+                              <div key={index} className="bg-white p-3.5 rounded-xl border border-gray-100 flex flex-col justify-between space-y-2 shadow-sm">
+                                <div className="flex justify-between items-start gap-1">
+                                  <span className="font-mono bg-blue-50 text-blue-600 font-bold px-1 rounded text-[9px] shrink-0">
+                                    Kolom {index + 1}
+                                  </span>
+                                  <span className="text-[9.5px] font-bold text-gray-400 truncate max-w-[120px]" title={header}>
+                                    {header}
+                                  </span>
+                                </div>
+
+                                <select
+                                  value={columnMappings[index] || ""}
+                                  onChange={(e) => {
+                                    setColumnMappings(prev => ({
+                                      ...prev,
+                                      [index]: e.target.value
+                                    }));
+                                  }}
+                                  className="w-full px-2.5 py-1.5 bg-gray-50 border border-gray-100 rounded-lg text-[10.5px] font-bold outline-none text-gray-800 focus:bg-white focus:ring-1 focus:ring-blue-100"
+                                >
+                                  <option value="">(Abaikan Kolom Ini)</option>
+                                  {pasteMode === "STUDENT" && (
+                                    <>
+                                      <option value="fullName">Nama Lengkap *</option>
+                                      <option value="luminaId">NIM / Lumina ID</option>
+                                      <option value="email">Email Siswa</option>
+                                      <option value="nisn">NISN</option>
+                                      <option value="nickname">Nama Panggilan</option>
+                                      <option value="gender">Jenis Kelamin (L/P)</option>
+                                      <option value="parentEmail">Email Orang Tua</option>
+                                      <option value="classId">Kelas Spesifik</option>
+                                      <option value="unitId">Unit Spesifik</option>
+                                      <option value="academicYear">Tahun Ajaran Spesifik</option>
+                                    </>
+                                  )}
+                                  {pasteMode === "STAFF" && (
+                                    <>
+                                      <option value="fullName">Nama Lengkap *</option>
+                                      <option value="email">Email Staff/Guru *</option>
+                                      <option value="jobTitle">Jabatan Kerja / Tugas</option>
+                                      <option value="role">Role (TEACHER/STAFF/HEAD_UNIT)</option>
+                                      <option value="luminaId">Lumina ID Kepegawaian</option>
+                                      <option value="unitId">Unit Spesifik</option>
+                                    </>
+                                  )}
+                                  {pasteMode === "PARENT" && (
+                                    <>
+                                      <option value="fullName">Nama Lengkap *</option>
+                                      <option value="email">Email Orang Tua *</option>
+                                      <option value="childId">Lumina ID Anak / Siswa *</option>
+                                      <option value="luminaId">Lumina ID Orang Tua</option>
+                                      <option value="unitId">Unit Spesifik</option>
+                                    </>
+                                  )}
+                                </select>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Top 10 Preview Grid */}
+                        <div className="space-y-3">
+                          <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block">
+                            Pratinjau Data (Maksimal 10 Baris Pertama)
+                          </label>
+
+                          <div className="border border-gray-100 rounded-2xl overflow-x-auto">
+                            <table className="w-full text-left border-collapse text-[10.5px]">
+                              <thead>
+                                <tr className="bg-slate-50 border-b border-gray-100 text-gray-500 font-bold select-none">
+                                  <th className="px-4 py-3 text-center w-12 text-[9px] font-mono">#</th>
+                                  {detectedHeaders.map((header, index) => (
+                                    <th key={index} className="px-4 py-3 min-w-[110px]">
+                                      <span className="block text-[8px] text-blue-500 font-mono tracking-widest uppercase">
+                                        {columnMappings[index] ? columnMappings[index] : "diabaikan"}
+                                      </span>
+                                      <span className="block truncate font-bold text-gray-700">{header}</span>
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {parsedRows.slice(0, 10).map((row, rowIdx) => (
+                                  <tr key={rowIdx} className="border-b border-gray-50 hover:bg-slate-50/50">
+                                    <td className="px-4 py-3 text-center text-gray-400 font-mono font-bold">
+                                      {rowIdx + 1}
+                                    </td>
+                                    {detectedHeaders.map((_, colIdx) => (
+                                      <td key={colIdx} className="px-4 py-3 font-semibold text-gray-650 truncate max-w-[180px]">
+                                        {row[colIdx] || <em className="text-gray-300">Kosong</em>}
+                                      </td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+
+                        {/* Summary / Confirmation Area */}
+                        {pasteResult && (
+                          <div className="p-5 bg-emerald-50/70 border border-emerald-100/50 rounded-2xl space-y-3">
+                            <div className="flex items-center justify-between">
+                              <p className="text-[10.5px] font-black text-emerald-800 flex items-center gap-1.5">
+                                <CheckCircle2 size={14} /> HASIL IMPORT TERAKHIR:
+                              </p>
+                              <span className="text-[8px] font-mono font-black uppercase text-emerald-600 bg-white border border-emerald-100 rounded px-1.5 py-0.5 select-none">
+                                BERHASIL
+                              </span>
                             </div>
+                            <div className="grid grid-cols-3 gap-3 text-center font-black">
+                              <div className="p-2 bg-white rounded-xl border border-emerald-100 shadow-sm">
+                                <div className="text-md text-emerald-850">{pasteResult.created}</div>
+                                <div className="text-[8px] text-gray-400 uppercase tracking-widest">BARU</div>
+                              </div>
+                              <div className="p-2 bg-white rounded-xl border border-emerald-100 shadow-sm">
+                                <div className="text-md text-emerald-850">{pasteResult.updated}</div>
+                                <div className="text-[8px] text-gray-400 uppercase tracking-widest">UPDATE</div>
+                              </div>
+                              <div className="p-2 bg-white rounded-xl border border-emerald-100 shadow-sm">
+                                <div className="text-md text-emerald-850">{pasteResult.skipped}</div>
+                                <div className="text-[8px] text-gray-400 uppercase tracking-widest">LEWAT</div>
+                              </div>
+                            </div>
+
+                            {pasteResult.errors.length > 0 && (
+                              <div className="pt-2 border-t border-emerald-100/60">
+                                <p className="text-[9px] font-black text-red-600 uppercase tracking-widest">
+                                  {pasteResult.errors.length} Kesalahan baris data:
+                                </p>
+                                <div className="max-h-28 overflow-y-auto text-[9px] font-mono text-red-650 mt-1.5 space-y-1 bg-white p-3 rounded-lg border border-red-50/50">
+                                  {pasteResult.errors.map((err, errIdx) => (
+                                    <div key={errIdx} className="flex gap-1.5 items-start">
+                                      <span className="text-[8px] font-sans bg-red-50 text-red-500 px-1 rounded">X</span>
+                                      <span>{err}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
+
+                        {/* Execute Import Button */}
+                        <button
+                          type="button"
+                          onClick={handleSavePasteImport}
+                          disabled={isSavingPaste}
+                          className="w-full py-4 bg-gray-950 text-white hover:bg-emerald-600 active:bg-emerald-700 rounded-2xl text-[10.5px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 shadow-md disabled:opacity-40"
+                        >
+                          {isSavingPaste ? (
+                            <>
+                              <Loader2 size={14} className="animate-spin" />
+                              Memproses Impor ({parsedRows.length} Baris)...
+                            </>
+                          ) : (
+                            <>
+                              <Upload size={14} />
+                              Mulai Simpan & Import Sekarang
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="bg-slate-50/50 rounded-[2rem] border-2 border-dashed border-slate-100 h-[420px] flex flex-col items-center justify-center text-center p-8 select-none">
+                        <div className="p-4 bg-white rounded-2xl text-gray-300 shadow-sm mb-3">
+                          <Upload size={28} />
+                        </div>
+                        <h4 className="text-xs font-black text-gray-900 tracking-tight uppercase">Pratinjau Data Otomatis</h4>
+                        <p className="text-[10px] text-gray-400 max-w-[260px] mt-1.5 leading-relaxed font-semibold">
+                          Salin data spreadsheet Anda ke kolom kiri, kemudian klik tombol "Deteksi Kolom & Preview". Pratinjau tabel interaktif akan dinamis muncul di sini.
+                        </p>
                       </div>
                     )}
-
-                    <button
-                      onClick={() => handleSectionImport("PARENT")}
-                      disabled={importLoading}
-                      className="w-full py-3.5 bg-gray-900 text-white hover:bg-purple-600 active:bg-purple-700 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      {importLoading && activeImportSection === "PARENT" ? (
-                        <>
-                          <Loader2 size={14} className="animate-spin" />
-                          Mengimpor Ortu...
-                        </>
-                      ) : (
-                        <>
-                          <Upload size={14} />
-                          Mulai Import Orang Tua
-                        </>
-                      )}
-                    </button>
                   </div>
-                </motion.div>
-              </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+                  {/* SECTION 1: STUDENT */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.05 }}
+                    className="bg-white p-8 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col justify-between space-y-6"
+                  >
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-3.5 bg-blue-50 text-blue-600 rounded-2xl">
+                          <GraduationCap size={20} />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-black text-gray-900 tracking-tight">
+                            Impor Data Siswa
+                          </h3>
+                          <p className="text-[10px] text-gray-400 font-bold uppercase">
+                            Siswa & Informasi Kelas
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 pt-2">
+                        <div>
+                          <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
+                            Google Sheets ID
+                          </label>
+                          <input
+                            type="text"
+                            value={studentSheetId}
+                            onChange={(e) => setStudentSheetId(e.target.value)}
+                            placeholder="Sheet ID"
+                            className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
+                            Nama Sheet (Tab)
+                          </label>
+                          <input
+                            type="text"
+                            value={studentSheetName}
+                            onChange={(e) => setStudentSheetName(e.target.value)}
+                            placeholder="SiswaLumina"
+                            className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Column Guide */}
+                      <div className="bg-slate-50/75 p-4 rounded-2xl border border-gray-50">
+                        <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                          Format Kolom Google Sheets:
+                        </p>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {[
+                            { col: "A", label: "NIS" },
+                            { col: "B", label: "NISN" },
+                            { col: "C", label: "Nama Lengkap" },
+                            { col: "D", label: "Nama Panggilan" },
+                            { col: "E", label: "Gender (L/P)" },
+                            { col: "F", label: "Email Siswa" },
+                            { col: "G", label: "Email Ortu" },
+                            { col: "H", label: "Kelas (e.g. 7 Baiji)" },
+                            { col: "I", label: "Unit (JUNIOR_HIGH)" },
+                            { col: "J", label: "Tahun Ajaran (2025/2026)" },
+                          ].map((item, idx) => (
+                            <div key={idx} className="flex items-center gap-1.5 text-[10px] text-gray-600">
+                              <span className="font-mono bg-blue-50 text-blue-600 font-bold px-1 rounded text-[9px] w-4 text-center">
+                                {item.col}
+                              </span>
+                              <span className="font-sans text-[9px] truncate">{item.label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4 pt-4">
+                      {/* Section Result */}
+                      {importSectionResult.STUDENT && (
+                        <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl space-y-2">
+                          <p className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                            <CheckCircle2 size={14} /> Berhasil Diimpor
+                          </p>
+                          <div className="grid grid-cols-3 gap-2 text-[10px] font-bold text-emerald-700">
+                            <div>Baru: {importSectionResult.STUDENT.created}</div>
+                            <div>Update: {importSectionResult.STUDENT.updated}</div>
+                            <div>Lewat: {importSectionResult.STUDENT.skipped}</div>
+                          </div>
+                          {importSectionResult.STUDENT.errors.length > 0 && (
+                            <div className="pt-2 border-t border-emerald-200">
+                              <p className="text-[9px] font-black text-red-650 uppercase tracking-widest">
+                                {importSectionResult.STUDENT.errors.length} Kesalahan:
+                              </p>
+                              <div className="max-h-20 overflow-y-auto text-[8px] font-mono text-red-600 mt-1 space-y-0.5">
+                                {importSectionResult.STUDENT.errors.map((err, errIdx) => (
+                                  <div key={errIdx}>{String(err)}</div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <button
+                        onClick={() => handleSectionImport("STUDENT")}
+                        disabled={importLoading}
+                        className="w-full py-3.5 bg-gray-900 text-white hover:bg-blue-600 active:bg-blue-700 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        {importLoading && activeImportSection === "STUDENT" ? (
+                          <>
+                            <Loader2 size={14} className="animate-spin" />
+                            Mengimpor Siswa...
+                          </>
+                        ) : (
+                          <>
+                            <Upload size={14} />
+                            Mulai Import Siswa
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </motion.div>
+
+                  {/* SECTION 2: STAFF */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.1 }}
+                    className="bg-white p-8 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col justify-between space-y-6"
+                  >
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-3.5 bg-orange-50 text-orange-600 rounded-2xl">
+                          <Users size={20} />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-black text-gray-900 tracking-tight">
+                            Impor Data Staff
+                          </h3>
+                          <p className="text-[10px] text-gray-400 font-bold uppercase">
+                            Guru & Tenaga Kependidikan
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 pt-2">
+                        <div>
+                          <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
+                            Google Sheets ID
+                          </label>
+                          <input
+                            type="text"
+                            value={staffSheetId}
+                            onChange={(e) => setStaffSheetId(e.target.value)}
+                            placeholder="Sheet ID"
+                            className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
+                            Nama Sheet (Tab)
+                          </label>
+                          <input
+                            type="text"
+                            value={staffSheetName}
+                            onChange={(e) => setStaffSheetName(e.target.value)}
+                            placeholder="StaffLumina"
+                            className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Column Guide */}
+                      <div className="bg-slate-50/75 p-4 rounded-2xl border border-gray-50">
+                        <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                          Format Kolom Google Sheets:
+                        </p>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {[
+                            { col: "A", label: "Email" },
+                            { col: "B", label: "Jabatan" },
+                            { col: "C", label: "Role (TEACHER/STAFF/HEAD_UNIT)" },
+                            { col: "D", label: "Unit (KINDERGARTEN, etc.)" },
+                          ].map((item, idx) => (
+                            <div key={idx} className="flex items-center gap-1.5 text-[10px] text-gray-600">
+                              <span className="font-mono bg-orange-50 text-orange-600 font-bold px-1 rounded text-[9px] w-4 text-center">
+                                {item.col}
+                              </span>
+                              <span className="font-sans text-[9px] truncate">{item.label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4 pt-4">
+                      {/* Section Result */}
+                      {importSectionResult.STAFF && (
+                        <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl space-y-2">
+                          <p className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                            <CheckCircle2 size={14} /> Berhasil Diimpor
+                          </p>
+                          <div className="grid grid-cols-3 gap-2 text-[10px] font-bold text-emerald-700">
+                            <div>Baru: {importSectionResult.STAFF.created}</div>
+                            <div>Update: {importSectionResult.STAFF.updated}</div>
+                            <div>Lewat: {importSectionResult.STAFF.skipped}</div>
+                          </div>
+                          {importSectionResult.STAFF.errors.length > 0 && (
+                            <div className="pt-2 border-t border-emerald-200">
+                              <p className="text-[9px] font-black text-red-650 uppercase tracking-widest">
+                                {importSectionResult.STAFF.errors.length} Kesalahan:
+                              </p>
+                              <div className="max-h-20 overflow-y-auto text-[8px] font-mono text-red-600 mt-1 space-y-0.5">
+                                {importSectionResult.STAFF.errors.map((err, errIdx) => (
+                                  <div key={errIdx}>{String(err)}</div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <button
+                        onClick={() => handleSectionImport("STAFF")}
+                        disabled={importLoading}
+                        className="w-full py-3.5 bg-gray-900 text-white hover:bg-orange-600 active:bg-orange-700 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        {importLoading && activeImportSection === "STAFF" ? (
+                          <>
+                            <Loader2 size={14} className="animate-spin" />
+                            Mengimpor Staff...
+                          </>
+                        ) : (
+                          <>
+                            <Upload size={14} />
+                            Mulai Import Staff
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </motion.div>
+
+                  {/* SECTION 3: PARENT */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.15 }}
+                    className="bg-white p-8 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col justify-between space-y-6"
+                  >
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-3.5 bg-purple-50 text-purple-600 rounded-2xl">
+                          <Smile size={20} />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-black text-gray-900 tracking-tight">
+                            Impor Data Orang Tua
+                          </h3>
+                          <p className="text-[10px] text-gray-400 font-bold uppercase">
+                            Wali Siswa & Orang Tua GCS
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 pt-2">
+                        <div>
+                          <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
+                            Google Sheets ID
+                          </label>
+                          <input
+                            type="text"
+                            value={parentSheetId}
+                            onChange={(e) => setParentSheetId(e.target.value)}
+                            placeholder="Sheet ID"
+                            className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1.5">
+                            Nama Sheet (Tab)
+                          </label>
+                          <input
+                            type="text"
+                            value={parentSheetName}
+                            onChange={(e) => setParentSheetName(e.target.value)}
+                            placeholder="OrangTuaLumina"
+                            className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all text-gray-800"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Column Guide */}
+                      <div className="bg-slate-50/75 p-4 rounded-2xl border border-gray-50">
+                        <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                          Format Kolom Google Sheets:
+                        </p>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {[
+                            { col: "A", label: "ID Anak" },
+                            { col: "B", label: "Nama Ortu" },
+                            { col: "C", label: "Email Ortu" },
+                            { col: "D", label: "Unit (TK, SD, SMP)" },
+                          ].map((item, idx) => (
+                            <div key={idx} className="flex items-center gap-1.5 text-[10px] text-gray-600">
+                              <span className="font-mono bg-purple-50 text-purple-600 font-bold px-1 rounded text-[9px] w-4 text-center">
+                                {item.col}
+                              </span>
+                              <span className="font-sans text-[9px] truncate">{item.label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4 pt-4">
+                      {/* Section Result */}
+                      {importSectionResult.PARENT && (
+                        <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl space-y-2">
+                          <p className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                            <CheckCircle2 size={14} /> Berhasil Diimpor
+                          </p>
+                          <div className="grid grid-cols-3 gap-2 text-[10px] font-bold text-emerald-700">
+                            <div>Baru: {importSectionResult.PARENT.created}</div>
+                            <div>Update: {importSectionResult.PARENT.updated}</div>
+                            <div>Lewat: {importSectionResult.PARENT.skipped}</div>
+                          </div>
+                          {importSectionResult.PARENT.errors.length > 0 && (
+                            <div className="pt-2 border-t border-emerald-200">
+                              <p className="text-[9px] font-black text-red-650 uppercase tracking-widest">
+                                {importSectionResult.PARENT.errors.length} Kesalahan:
+                              </p>
+                              <div className="max-h-20 overflow-y-auto text-[8px] font-mono text-red-600 mt-1 space-y-0.5">
+                                {importSectionResult.PARENT.errors.map((err, errIdx) => (
+                                  <div key={errIdx}>{String(err)}</div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <button
+                        onClick={() => handleSectionImport("PARENT")}
+                        disabled={importLoading}
+                        className="w-full py-3.5 bg-gray-900 text-white hover:bg-purple-600 active:bg-purple-700 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        {importLoading && activeImportSection === "PARENT" ? (
+                          <>
+                            <Loader2 size={14} className="animate-spin" />
+                            Mengimpor Ortu...
+                          </>
+                        ) : (
+                          <>
+                            <Upload size={14} />
+                            Mulai Import Orang Tua
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </motion.div>
+                </div>
+              )}
             </div>
           )}
 
@@ -3325,6 +4021,132 @@ export default function SuperAdminPage() {
                   )}
                 </button>
               </div>
+            </div>
+          )}
+
+          {activeMenu === "academic-year" && (
+            <div className="space-y-8 animate-in fade-in duration-200">
+              <div>
+                <h2 className="text-2xl font-black text-gray-900 tracking-tight italic uppercase">
+                  Konfigurasi Tahun Ajaran Aktif
+                </h2>
+                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">
+                  Atur tahun ajaran dan semester aktif untuk seluruh sistem Lazuardi GCS.
+                </p>
+              </div>
+
+              <div className="max-w-3xl bg-white p-8 rounded-[2rem] border border-gray-100 shadow-sm space-y-6">
+                <div>
+                  <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">
+                    Tahun Ajaran Aktif Saat Ini
+                  </p>
+                  <div className="flex items-center gap-3 bg-blue-50/50 p-4 rounded-2xl border border-blue-50">
+                    <ShieldCheck size={20} className="text-blue-600" />
+                    <span className="text-sm font-bold text-gray-800">
+                      Tahun ajaran aktif saat ini: <span className="text-blue-700">{activeYear}</span> Semester {activeSemester}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-xs font-black text-gray-700 uppercase tracking-widest mb-2">
+                      PILIH TAHUN AJARAN
+                    </label>
+                    <select
+                      value={tempYear}
+                      onChange={(e) => setTempYear(e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 text-xs font-bold"
+                    >
+                      <option value="2024/2025">2024/2025</option>
+                      <option value="2025/2026">2025/2026</option>
+                      <option value="2026/2027">2026/2027</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-black text-gray-700 uppercase tracking-widest mb-2">
+                      PILIH SEMESTER
+                    </label>
+                    <select
+                      value={tempSemester}
+                      onChange={(e) => setTempSemester(Number(e.target.value))}
+                      className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 text-xs font-bold"
+                    >
+                      <option value={1}>Semester 1</option>
+                      <option value={2}>Semester 2</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end pt-4 border-t border-gray-50">
+                  <button
+                    onClick={() => setShowConfirmModal(true)}
+                    className="px-8 py-3.5 bg-gray-900 text-white hover:bg-blue-600 rounded-2xl text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all flex items-center gap-2 shadow-sm"
+                  >
+                    <RefreshCw size={14} />
+                    Simpan & Aktifkan
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Konfirmasi */}
+              {showConfirmModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/35 backdrop-blur-sm">
+                  <div className="bg-white p-8 rounded-[2rem] border border-gray-100 max-w-md w-full shadow-2xl relative space-y-6">
+                    <div className="flex items-start gap-4">
+                      <div className="p-3 bg-red-50 text-red-650 rounded-2xl shrink-0">
+                        <AlertCircle size={24} className="text-red-600" />
+                      </div>
+                      <div className="space-y-2">
+                        <h3 className="text-base font-black text-gray-900 uppercase tracking-tight italic">
+                          Konfirmasi Perubahan
+                        </h3>
+                        <p className="text-xs text-gray-500 leading-relaxed">
+                          Mengubah tahun ajaran aktif akan mempengaruhi tampilan data di seluruh aplikasi. Lanjutkan?
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-50 p-4 rounded-xl space-y-1.5 text-[11px] text-gray-600 border border-gray-100">
+                      <div>
+                        <strong>Tahun Ajaran Baru:</strong> {tempYear}
+                      </div>
+                      <div>
+                        <strong>Semester Baru:</strong> {tempSemester}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 justify-end text-[10px] font-black">
+                      <button
+                        onClick={() => setShowConfirmModal(false)}
+                        className="px-5 py-2.5 hover:bg-gray-100 rounded-xl text-gray-500 uppercase tracking-wider"
+                      >
+                        Batal
+                      </button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            setIsSavingYear(true);
+                            await updateAcademicYear(tempYear, tempSemester);
+                            setShowConfirmModal(false);
+                            alert("Tahun ajaran berhasil diperbarui secara global!");
+                          } catch (err) {
+                            console.error(err);
+                            alert("Gagal mengupdate tahun ajaran aktif.");
+                          } finally {
+                            setIsSavingYear(false);
+                          }
+                        }}
+                        disabled={isSavingYear}
+                        className="px-6 py-2.5 bg-red-600 text-white rounded-xl uppercase tracking-wider flex items-center gap-2 cursor-pointer"
+                      >
+                        {isSavingYear ? "Menyimpan..." : "Ya, Lanjutkan"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
           </div>
@@ -3729,12 +4551,11 @@ export default function SuperAdminPage() {
                     }
                     className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
                   >
-                    <option value="7">7</option>
-                    <option value="8">8</option>
-                    <option value="9">9</option>
-                    <option value="10">10</option>
-                    <option value="11">11</option>
-                    <option value="12">12</option>
+                    {getGradeOptions(classFormData.unitId).map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="space-y-2">
@@ -3791,17 +4612,19 @@ export default function SuperAdminPage() {
                   </label>
                   <select
                     value={classFormData.unitId}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const newUnit = e.target.value as UnitType;
                       setClassFormData({
                         ...classFormData,
-                        unitId: e.target.value as UnitType,
-                      })
-                    }
+                        unitId: newUnit,
+                        grade: getGradeOptions(newUnit)[0],
+                      });
+                    }}
                     className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
                   >
-                    <option value="JUNIOR_HIGH">JUNIOR_HIGH</option>
-                    <option value="ELEMENTARY">ELEMENTARY</option>
-                    <option value="KINDERGARTEN">KINDERGARTEN</option>
+                    <option value="KINDERGARTEN">KINDERGARTEN (Pra TK, TK A, TK B)</option>
+                    <option value="ELEMENTARY">ELEMENTARY (Grade 1-6)</option>
+                    <option value="JUNIOR_HIGH">JUNIOR_HIGH (Grade 7-9)</option>
                   </select>
                 </div>
               </div>

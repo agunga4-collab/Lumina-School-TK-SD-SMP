@@ -23,7 +23,6 @@ import BehaviorAnalytics from './pages/MTSS/BehaviorAnalytics';
 import MTSSAcademicCases from './pages/MTSSAcademic/CaseList';
 import MTSSAcademicScreening from './pages/MTSSAcademic/Screening';
 import MTSSAcademicCaseDetail from './pages/MTSSAcademic/CaseDetail';
-import MTSSAcademicTimeline from './pages/MTSSAcademic/Timeline';
 import MTSSAcademicOverview from './pages/MTSSAcademic/Overview';
 import MTSSBehaviorLayout from './pages/MTSS/MTSSBehaviorLayout';
 import MTSSBehaviorOverview from './pages/MTSS/MTSSBehaviorOverview';
@@ -348,7 +347,6 @@ export default function App() {
               <Route path="cases" element={<MTSSAcademicCases />} />
               <Route path="cases/:id" element={<MTSSAcademicCaseDetail />} />
               <Route path="screening" element={<MTSSAcademicScreening />} />
-              <Route path="timeline" element={<MTSSAcademicTimeline />} />
               <Route path="analytics" element={<MTSSAcademicOverview />} />
               <Route path="backup-config" element={
                 <AdminGuard>

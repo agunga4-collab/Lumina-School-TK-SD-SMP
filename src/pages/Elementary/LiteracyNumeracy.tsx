@@ -7,7 +7,8 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
-import { db, handleFirestoreError, getStudents, getClasses } from '../../lib/firebase';
+import { db, handleFirestoreError, getStudents, getClasses, getActiveStudents } from '../../lib/firebase';
+import { useAcademicYear } from '../../context/AcademicYearContext';
 import { collection, query, where, getDocs, addDoc, doc, updateDoc, orderBy } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { ACADEMIC_YEARS } from '../../constants';
@@ -79,14 +80,22 @@ const PERIODS = [
 
 export default function ElementaryLiteracyNumeracy() {
   const { profile } = useAuth();
+  const { activeYear, activeSemester } = useAcademicYear();
   
   // Global filters
   const [selectedArea, setSelectedArea] = React.useState<AreaType>('BAHASA');
   const [selectedClassId, setSelectedClassId] = React.useState<string>('');
-  const [selectedYear, setSelectedYear] = React.useState<string>('2025/2026');
-  const [selectedSemester, setSelectedSemester] = React.useState<string>('1');
+  const [selectedYear, setSelectedYear] = React.useState<string>(activeYear || '2025/2026');
+  const [selectedSemester, setSelectedSemester] = React.useState<string>(String(activeSemester || '1'));
   const [selectedPeriod, setSelectedPeriod] = React.useState<string>('july-october');
   const [searchQuery, setSearchQuery] = React.useState<string>('');
+
+  React.useEffect(() => {
+    if (activeYear) {
+      setSelectedYear(activeYear);
+      setSelectedSemester(String(activeSemester));
+    }
+  }, [activeYear, activeSemester]);
 
   // Loaded collections
   const [classes, setClasses] = React.useState<any[]>([]);
@@ -139,15 +148,12 @@ export default function ElementaryLiteracyNumeracy() {
     return Math.max(0, numWords - numErrors);
   }, [wordsRead, errors]);
 
-  // Load Classes and Students on Mount
+  // Load Classes and initial selection on Mount
   React.useEffect(() => {
     const loadMetadata = async () => {
       try {
         setLoading(true);
-        const [allClasses, allStudents] = await Promise.all([
-          getClasses() || [],
-          getStudents() || []
-        ]);
+        const allClasses = await getClasses() || [];
 
         // Filter Elementary active classes
         const elementaryClasses = allClasses.filter(c => c.unitId === 'ELEMENTARY' && c.status !== 'archived');
@@ -168,31 +174,9 @@ export default function ElementaryLiteracyNumeracy() {
         if (allowedClassIds.length > 0) {
           setSelectedClassId(allowedClassIds[0]);
         }
-
-        // Map and Filter Students
-        const classMap = new Map(elementaryClasses.map(c => [c.id, c.name]));
-        const elementaryStudents: ElementaryStudent[] = allStudents
-          .filter(s => s.currentUnit === 'ELEMENTARY' && classMap.has(s.classId))
-          .filter(s => {
-            const lowerName = s.name.toLowerCase();
-            return !(
-              lowerName.includes('dika ramadhan') ||
-              lowerName.includes('alya putri') ||
-              lowerName.includes('farez rahadian') ||
-              lowerName.includes('siti aminah')
-            );
-          })
-          .map(s => ({
-            id: s.id,
-            name: s.name,
-            classId: s.classId,
-            className: classMap.get(s.classId) || 'Tidak Ada Kelas'
-          }));
-        
-        setStudents(elementaryStudents);
       } catch (err) {
         console.error('Failed to load elementary configuration data:', err);
-        toast.error('Gagal mengambil data kelas/siswa');
+        toast.error('Gagal mengambil data kelas');
       } finally {
         setLoading(false);
       }
@@ -202,6 +186,53 @@ export default function ElementaryLiteracyNumeracy() {
       loadMetadata();
     }
   }, [profile]);
+
+  // Load dynamic active students for the selected class and selected year
+  React.useEffect(() => {
+    const loadClassStudents = async () => {
+      if (!selectedClassId) return;
+      try {
+        // Fetch using the official active year dynamic query
+        const activeS = await getActiveStudents(selectedClassId, selectedYear);
+        if (activeS && activeS.length > 0) {
+          const mapped = activeS.map(s => ({
+            id: s.id,
+            name: s.name,
+            classId: s.classId,
+            className: classes.find(c => c.id === s.classId)?.name || 'Elementary Student'
+          }));
+          setStudents(mapped);
+        } else {
+          // Graceful fallback to legacy getStudents if enrollments collections are unpopulated
+          const allStudents = await getStudents() || [];
+          const filtered = allStudents
+            .filter(s => s.currentUnit === 'ELEMENTARY' && s.classId === selectedClassId)
+            .filter(s => {
+              const lowerName = s.name.toLowerCase();
+              return !(
+                lowerName.includes('dika ramadhan') ||
+                lowerName.includes('alya putri') ||
+                lowerName.includes('farez rahadian') ||
+                lowerName.includes('siti aminah')
+              );
+            })
+            .map(s => ({
+              id: s.id,
+              name: s.name,
+              classId: s.classId,
+              className: classes.find(c => c.id === s.classId)?.name || 'Elementary Student'
+            }));
+          setStudents(filtered);
+        }
+      } catch (err) {
+        console.error('Failed to load active elementary students:', err);
+      }
+    };
+
+    if (selectedClassId && classes.length > 0) {
+      loadClassStudents();
+    }
+  }, [selectedClassId, selectedYear, classes]);
 
   // Fetch assessment history for class summaries
   const fetchClassHistory = async () => {

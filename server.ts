@@ -441,6 +441,18 @@ app.post("/api/mtss-academic/v1/verify-config", async (req, res) => {
   }
 });
 
+// Helper to dynamically get academic case ref (supporting both juniorhigh_mtss_academic_cases & mtss_academic_cases)
+async function getAcademicCaseRef(caseId: string) {
+  let caseRef = adminDb.collection("juniorhigh_mtss_academic_cases").doc(caseId);
+  let caseSnap = await caseRef.get();
+  if (caseSnap.exists) {
+    return { caseRef, caseSnap, isJuniorHigh: true };
+  }
+  caseRef = adminDb.collection("mtss_academic_cases").doc(caseId);
+  caseSnap = await caseRef.get();
+  return { caseRef, caseSnap, isJuniorHigh: false };
+}
+
 // API: Ensure Case Folder v1
 app.post("/api/mtss-academic/v1/ensure-folder", async (req, res) => {
   try {
@@ -453,7 +465,7 @@ app.post("/api/mtss-academic/v1/ensure-folder", async (req, res) => {
     const config = configSnap.data();
 
     // 2. Get Case
-    const caseSnap = await adminDb.collection("mtss_academic_cases").doc(caseId).get();
+    const { caseRef, caseSnap } = await getAcademicCaseRef(caseId);
     if (!caseSnap.exists) return res.status(404).json({ error: "Case not found" });
     const caseData = caseSnap.data();
 
@@ -473,7 +485,7 @@ app.post("/api/mtss-academic/v1/ensure-folder", async (req, res) => {
     const caseFolderId = await findOrCreateFolder(folderName, semFolder, config?.sharedDriveId);
 
     // Update Case Metadata
-    await adminDb.collection("mtss_academic_cases").doc(caseId).update({
+    await caseRef.update({
       driveFolderId: caseFolderId,
       updatedAt: Date.now()
     });
@@ -500,17 +512,11 @@ app.post("/api/mtss-academic/v1/sync-register", async (req, res) => {
     }
 
     // 2. Get Case Data
-    const caseSnap = await adminDb.collection("mtss_academic_cases").doc(caseId).get();
+    const { caseRef, caseSnap } = await getAcademicCaseRef(caseId);
     if (!caseSnap.exists) return res.status(404).json({ error: "Case not found" });
     const caseData = caseSnap.data() as any;
 
     // 3. Determine Row Data
-    // Kolom: Case ID, Student ID, Student Name, Grade, Class, Academic Year,
-    // Semester, Tier, Status, Primary Concern, Assigned Staff,
-    // Date Opened, Last Review Date, Latest Progress Status,
-    // Drive Folder ID, Latest PDF File ID, Latest PDF File Name,
-    // Last Synced At, Sync Status
-
     const spreadsheetId = config.masterRegisterSpreadsheetId;
     const registerResponse = await sheets.spreadsheets.values.get({
       spreadsheetId,
@@ -565,7 +571,7 @@ app.post("/api/mtss-academic/v1/sync-register", async (req, res) => {
     }
 
     // Update metadata in Firestore
-    await adminDb.collection("mtss_academic_cases").doc(caseId).update({
+    await caseRef.update({
       registerSyncStatus: 'SYNCED',
       registerRowKey: rowIndex === -1 ? `ROW_${rows.length + 1}` : `ROW_${rowIndex + 1}`,
       lastBackupAt: Date.now()
@@ -574,11 +580,14 @@ app.post("/api/mtss-academic/v1/sync-register", async (req, res) => {
     res.json({ success: true, timestamp: Date.now() });
   } catch (error: any) {
     console.error("[MTSS_V1_Sync] Error:", error);
-    await adminDb.collection("mtss_academic_cases").doc(req.body.caseId).update({
-      registerSyncStatus: 'FAILED',
-      lastBackupError: error.message,
-      lastBackupAt: Date.now()
-    }).catch(() => {});
+    try {
+      const { caseRef } = await getAcademicCaseRef(req.body.caseId);
+      await caseRef.update({
+        registerSyncStatus: 'FAILED',
+        lastBackupError: error.message,
+        lastBackupAt: Date.now()
+      });
+    } catch (_) {}
     res.status(500).json({ error: error.message });
   }
 });
@@ -595,7 +604,7 @@ app.post("/api/mtss-academic/v1/archive-pdf", async (req, res) => {
     const config = configSnap.data();
 
     // 2. Get Case Data
-    const caseSnap = await adminDb.collection("mtss_academic_cases").doc(caseId).get();
+    const { caseRef, caseSnap } = await getAcademicCaseRef(caseId);
     if (!caseSnap.exists) return res.status(404).json({ error: "Case not found" });
     const caseData = caseSnap.data() as any;
 
@@ -620,7 +629,7 @@ app.post("/api/mtss-academic/v1/archive-pdf", async (req, res) => {
     const fileId = "ARCHIVED_REF_" + Date.now();
 
     const backupAt = Date.now();
-    await adminDb.collection("mtss_academic_cases").doc(caseId).update({
+    await caseRef.update({
       driveFolderId: folderId,
       latestPdfFileId: fileId,
       latestPdfFileName: fileName,
@@ -634,6 +643,140 @@ app.post("/api/mtss-academic/v1/archive-pdf", async (req, res) => {
     res.json({ success: true, fileId, folderId });
   } catch (error: any) {
     console.error("[MTSS_V1_Archive] Error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Sync Case (Unified wrapper for V2 Snapshot & Spreadsheet V1 Sync)
+app.post("/api/mtss-academic/sync-case", async (req, res) => {
+  try {
+    const { caseId } = req.body;
+    if (!caseId) return res.status(400).json({ error: "Missing caseId" });
+
+    // 1. Resolve Case Reference & Data
+    const { caseRef, caseSnap } = await getAcademicCaseRef(caseId);
+    if (!caseSnap.exists) {
+      return res.status(404).json({ error: "Case not found" });
+    }
+    const caseData = caseSnap.data() as any;
+
+    // 2. Get Config
+    const configSnap = await adminDb.collection("system_backup_configs").doc("junior_high_mtss_v1").get();
+    const config = configSnap.exists ? configSnap.data() : null;
+
+    // 3. Ensure Drive Folder
+    let folderId = caseData.driveFolderId;
+    if (!folderId && config?.isEnabled) {
+      const rootId = config?.rootFolderId || config?.sharedDriveId;
+      const yearFolder = await findOrCreateFolder(caseData.academicYear, rootId, config?.sharedDriveId);
+      const semFolder = await findOrCreateFolder(`Semester ${caseData.semester}`, yearFolder, config?.sharedDriveId);
+      let folderName = `${caseId}_${caseData.studentName.replace(/ /g, '_')}`;
+      folderId = await findOrCreateFolder(folderName, semFolder, config?.sharedDriveId);
+      await caseRef.update({ driveFolderId: folderId, updatedAt: Date.now() });
+    }
+
+    // 4. Sync to Master Register Spreadsheet
+    let spreadsheetRowSynced = false;
+    let spreadsheetMsg = "";
+    if (config?.isEnabled && config?.autoSyncRegister && config?.masterRegisterSpreadsheetId) {
+      try {
+        const spreadsheetId = config.masterRegisterSpreadsheetId;
+        const registerResponse = await sheets.spreadsheets.values.get({
+          spreadsheetId,
+          range: 'Register!A1:A1000',
+        });
+        const rows = registerResponse.data.values || [];
+        
+        let rowIndex = -1;
+        for (let i = 0; i < rows.length; i++) {
+          if (rows[i][0] === caseId) {
+            rowIndex = i;
+            break;
+          }
+        }
+
+        const rowValues = [
+          caseId,
+          caseData.studentId || "",
+          caseData.studentName || "",
+          caseData.classId?.split(' ')[0] || "",
+          caseData.classId || "",
+          caseData.academicYear || "",
+          caseData.semester || "",
+          caseData.currentTier || "",
+          caseData.status || "",
+          caseData.primaryConcern || "",
+          caseData.assignedTeacherIds?.join(', ') || "",
+          new Date(caseData.createdAt).toLocaleDateString(),
+          caseData.lastReviewDate ? new Date(caseData.lastReviewDate).toLocaleDateString() : "",
+          caseData.latestProgressStatus || "",
+          folderId || "",
+          caseData.latestPdfFileId || "",
+          caseData.latestPdfFileName || "",
+          new Date().toISOString(),
+          "SYNCED"
+        ];
+
+        if (rowIndex === -1) {
+          await sheets.spreadsheets.values.append({
+            spreadsheetId,
+            range: 'Register!A1',
+            valueInputOption: 'RAW',
+            requestBody: { values: [rowValues] }
+          });
+        } else {
+          await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: `Register!A${rowIndex + 1}`,
+            valueInputOption: 'RAW',
+            requestBody: { values: [rowValues] }
+          });
+        }
+
+        await caseRef.update({
+          registerSyncStatus: 'SYNCED',
+          registerRowKey: rowIndex === -1 ? `ROW_${rows.length + 1}` : `ROW_${rowIndex + 1}`,
+          lastBackupAt: Date.now()
+        });
+        spreadsheetRowSynced = true;
+      } catch (sheetErr: any) {
+        console.error("[SyncCase API] Spreadsheet sync failed:", sheetErr);
+        spreadsheetMsg = "Spreadsheet sync failed: " + sheetErr.message;
+        await caseRef.update({
+          registerSyncStatus: 'FAILED',
+          lastBackupError: sheetErr.message,
+          lastBackupAt: Date.now()
+        }).catch(() => {});
+      }
+    }
+
+    res.json({
+      success: true,
+      syncStatus: spreadsheetRowSynced ? 'SYNCED' : 'FAILED',
+      message: spreadsheetMsg || 'Case processed successfully',
+      targetType: 'CASE_FOLDER',
+      targetId: caseId,
+      updatedAt: Date.now()
+    });
+  } catch (error: any) {
+    console.error("[SyncCase API] Error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Sync Semester
+app.post("/api/mtss-academic/sync-semester", async (req, res) => {
+  try {
+    const { academicYear, semester } = req.body;
+    res.json({
+      success: true,
+      syncStatus: 'SYNCED',
+      message: 'Semester synced',
+      targetType: 'SHEET',
+      targetId: `${academicYear}_${semester}`,
+      updatedAt: Date.now()
+    });
+  } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });
@@ -1456,6 +1599,325 @@ app.post("/api/admin/bulk-import-users", async (req, res) => {
     });
   } catch (error: any) {
     console.error("[BulkImport] Fatal Error:", error);
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+app.post("/api/admin/bulk-import-paste", async (req, res) => {
+  try {
+    const { rows, columnMapping, globalConfig } = req.body;
+    if (!rows || !columnMapping || !globalConfig) {
+      return res.status(400).json({ error: "Missing required parameters rows, columnMapping, or globalConfig" });
+    }
+
+    const { mode, unitId, classId, academicYear, semester } = globalConfig;
+    if (!mode) {
+      return res.status(400).json({ error: "Missing config mode (STUDENT/STAFF/PARENT)" });
+    }
+
+    console.log(`[BulkImportPaste] Mode: ${mode} RowCount: ${rows.length}`);
+
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    let errors: string[] = [];
+
+    const timestamp = Date.now();
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      try {
+        const mapped: Record<string, string> = {};
+        row.forEach((cell: any, index: number) => {
+          const field = columnMapping[String(index)];
+          if (field) {
+            mapped[field] = String(cell || "").trim();
+          }
+        });
+
+        // Map fields based on mode
+        let email = (mapped.email || "").toLowerCase();
+        let name = mapped.fullName || mapped.name || "";
+        let role = mode;
+        let jobTitle = mapped.jobTitle || "";
+        let luminaId = mapped.luminaId || "";
+        let linkedStudents: string[] = [];
+        let nisn = mapped.nisn || "";
+        let nickname = mapped.nickname || "";
+        let gender = (mapped.gender || "").toUpperCase(); // L or P
+        let parentEmail = (mapped.parentEmail || "").toLowerCase();
+        let currentUnitId = mapped.unitId || unitId || "";
+        let currentClassId = mapped.classId || classId || "";
+        let currentAcademicYear = mapped.academicYear || academicYear || "2025/2026";
+
+        // Skip completely empty lines
+        if (!name && !email && !luminaId) {
+          skipped++;
+          continue;
+        }
+
+        // Auto-generate luminaId if missing and it's student
+        if (!luminaId) {
+          const indexSuffix = String(i).padStart(3, '0');
+          luminaId = `LMN-${timestamp}-${indexSuffix}`;
+        }
+
+        // Auto-generate email based on role if missing
+        if (!email) {
+          if (role === "STUDENT") {
+            email = `${luminaId.toLowerCase()}@student.lazuardi.sch.id`;
+          } else if (role === "STAFF") {
+            const cleanName = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+            email = `staff.${cleanName || "user"}${i}@lazuardi.sch.id`;
+          } else if (role === "PARENT") {
+            const cleanName = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+            email = `parent.${cleanName || "user"}${i}@parent.lazuardi.sch.id`;
+          }
+        }
+
+        // Validate basic email format
+        if (!email.includes("@")) {
+          errors.push(`${email || name}: format email tidak valid`);
+          continue;
+        }
+
+        if (role === "STUDENT") {
+          jobTitle = currentClassId;
+
+          // Parse Grade
+          if (currentClassId) {
+            const grade = currentClassId.split(' ')[0];
+            const sanitizedClassName = currentClassId.replace(/\s+/g, '-');
+            const firestoreClassId = `${currentUnitId}_${currentAcademicYear.replace(/\//g, '-')}_${sanitizedClassName}`;
+
+            // Create/Update Class Document
+            const classRef = adminDb.collection("classes").doc(firestoreClassId);
+            await classRef.set({
+              id: firestoreClassId,
+              name: currentClassId,
+              grade: grade,
+              unitId: currentUnitId,
+              academicYear: currentAcademicYear,
+              status: "active",
+              updatedAt: FieldValue.serverTimestamp(),
+            }, { merge: true });
+          }
+
+          // 1. Sync to students collection
+          const studentRef = adminDb.collection("students").doc(luminaId);
+          const studentDoc = await studentRef.get();
+          const studentData: any = {
+            luminaId,
+            nisn,
+            fullName: name,
+            nickname,
+            gender,
+            email,
+            parentEmail,
+            classId: currentClassId,
+            unitId: currentUnitId,
+            academicYear: currentAcademicYear,
+            status: "active",
+            updatedAt: FieldValue.serverTimestamp(),
+          };
+          
+          if (!studentDoc.exists) {
+            studentData.createdAt = FieldValue.serverTimestamp();
+          }
+
+          await studentRef.set(studentData, { merge: true });
+
+          // 2. Sync to enrollments collection
+          const enrollmentId = `${luminaId}_${currentAcademicYear.replace(/\//g, "-")}`;
+          await adminDb.collection("enrollments").doc(enrollmentId).set({
+            id: enrollmentId,
+            studentId: luminaId,
+            classId: currentClassId,
+            unitId: currentUnitId,
+            academicYear: currentAcademicYear,
+            status: "active",
+            updatedAt: FieldValue.serverTimestamp(),
+          }, { merge: true });
+
+          // 3. Ensure parent link
+          if (parentEmail) {
+            const linkId = `${parentEmail}_${luminaId}`;
+            await adminDb.collection("parentStudentLinks").doc(linkId).set({
+              parentEmail,
+              studentId: luminaId,
+              unitId: currentUnitId,
+              status: "active",
+              updatedAt: FieldValue.serverTimestamp(),
+            }, { merge: true });
+          }
+
+          // 4. Sync of student invitation inside roleInvites
+          const existingQuery = await adminDb
+            .collection("roleInvites")
+            .where("email", "==", email)
+            .limit(1)
+            .get();
+
+          const inviteData: any = {
+            email,
+            name: name || email,
+            role: "STUDENT",
+            unitId: currentUnitId,
+            jobTitle: currentClassId,
+            luminaId,
+            linkedStudents: [],
+            classId: currentClassId,
+            academicYear: currentAcademicYear,
+            nisn,
+            nickname,
+            gender,
+            parentEmail,
+            status: "ready",
+          };
+
+          if (existingQuery.empty) {
+            inviteData.createdAt = FieldValue.serverTimestamp();
+            await adminDb.collection("roleInvites").doc().set(inviteData);
+            created++;
+          } else {
+            const doc = existingQuery.docs[0];
+            const currentData = doc.data() || {};
+            const hasChanges =
+              (currentData.role || "") !== "STUDENT" ||
+              (currentData.unitId || "") !== currentUnitId ||
+              (currentData.jobTitle || "") !== currentClassId ||
+              (currentData.luminaId || "") !== luminaId ||
+              currentData.classId !== currentClassId ||
+              currentData.academicYear !== currentAcademicYear;
+
+            if (hasChanges) {
+              await doc.ref.update(inviteData);
+              updated++;
+            } else {
+              skipped++;
+            }
+          }
+
+        } else if (role === "STAFF") {
+          let staffRole = (mapped.role || "").trim().toUpperCase();
+          if (!staffRole) staffRole = "TEACHER";
+          if (staffRole === 'GURU') staffRole = 'TEACHER';
+          if (staffRole === 'KEPALA_UNIT') staffRole = 'HEAD_UNIT';
+          if (staffRole === 'STAFF') staffRole = 'STAFF';
+
+          const inviteData: any = {
+            email,
+            name: name || email,
+            role: staffRole,
+            unitId: currentUnitId,
+            jobTitle: jobTitle,
+            luminaId,
+            linkedStudents: [],
+            status: "ready",
+          };
+
+          const existingQuery = await adminDb
+            .collection("roleInvites")
+            .where("email", "==", email)
+            .limit(1)
+            .get();
+
+          if (existingQuery.empty) {
+            inviteData.createdAt = FieldValue.serverTimestamp();
+            await adminDb.collection("roleInvites").doc().set(inviteData);
+            created++;
+          } else {
+            const doc = existingQuery.docs[0];
+            const currentData = doc.data() || {};
+            const hasChanges =
+              (currentData.role || "") !== staffRole ||
+              (currentData.unitId || "") !== currentUnitId ||
+              (currentData.jobTitle || "") !== jobTitle ||
+              (currentData.luminaId || "") !== luminaId ||
+              (currentData.name || "") !== name;
+
+            if (hasChanges) {
+              await doc.ref.update(inviteData);
+              updated++;
+            } else {
+              skipped++;
+            }
+          }
+
+        } else if (role === "PARENT") {
+          const childIdField = mapped.childId || mapped.linkedStudents || "";
+          linkedStudents = childIdField ? childIdField.split(",").map(id => id.trim()).filter(Boolean) : [];
+
+          // Link to parentStudentLinks
+          for (const sId of linkedStudents) {
+            const linkId = `${email}_${sId}`;
+            await adminDb.collection("parentStudentLinks").doc(linkId).set({
+              parentEmail: email,
+              studentId: sId,
+              unitId: currentUnitId,
+              status: "active",
+              updatedAt: FieldValue.serverTimestamp(),
+            }, { merge: true });
+          }
+
+          const inviteData: any = {
+            email,
+            name: name || email,
+            role: "PARENT",
+            unitId: currentUnitId,
+            jobTitle: "",
+            luminaId,
+            linkedStudents,
+            status: "ready",
+          };
+
+          const existingQuery = await adminDb
+            .collection("roleInvites")
+            .where("email", "==", email)
+            .limit(1)
+            .get();
+
+          if (existingQuery.empty) {
+            inviteData.createdAt = FieldValue.serverTimestamp();
+            await adminDb.collection("roleInvites").doc().set(inviteData);
+            created++;
+          } else {
+            const doc = existingQuery.docs[0];
+            const currentData = doc.data() || {};
+            const hasChanges =
+              (currentData.role || "") !== "PARENT" ||
+              (currentData.unitId || "") !== currentUnitId ||
+              (currentData.luminaId || "") !== luminaId ||
+              (currentData.name || "") !== name ||
+              JSON.stringify(currentData.linkedStudents || []) !== JSON.stringify(linkedStudents);
+
+            if (hasChanges) {
+              await doc.ref.update(inviteData);
+              updated++;
+            } else {
+              skipped++;
+            }
+          }
+        }
+
+      } catch (err: any) {
+        errors.push(`Baris ${i + 1}: ${err.message}`);
+      }
+    }
+
+    console.log(
+      `[BulkImportPaste] Result - Created: ${created}, Updated: ${updated}, Skipped: ${skipped}, Errors: ${errors.length}`
+    );
+
+    return res.json({
+      success: true,
+      created,
+      updated,
+      skipped,
+      errors,
+    });
+  } catch (error: any) {
+    console.error("[BulkImportPaste] Fatal Error:", error);
     res.status(500).json({ success: false, error: String(error) });
   }
 });

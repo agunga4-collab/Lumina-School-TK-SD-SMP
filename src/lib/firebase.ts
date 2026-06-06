@@ -743,6 +743,39 @@ export async function getStudentsByClass(classId: string, academicYear: string):
   }
 }
 
+export async function getActiveStudents(classId: string, activeYear: string): Promise<Student[]> {
+  try {
+    let q = query(
+      collection(db, 'enrollments'),
+      where('academicYear', '==', activeYear),
+      where('status', '==', 'active')
+    );
+    if (classId && classId !== 'ALL' && classId !== 'all') {
+      q = query(q, where('classId', '==', classId));
+    }
+    const snap = await getDocs(q);
+    const enrollments = snap.docs.map(doc => doc.data() as Enrollment);
+    if (enrollments.length === 0) return [];
+
+    const studentIds = enrollments.map(e => e.studentId);
+    const students: Student[] = [];
+    const chunks = [];
+    for (let i = 0; i < studentIds.length; i += 10) {
+      chunks.push(studentIds.slice(i, i + 10));
+    }
+
+    for (const chunk of chunks) {
+      const sq = query(collection(db, 'students'), where('id', 'in', chunk));
+      const sSnap = await getDocs(sq);
+      students.push(...sSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student)));
+    }
+
+    return students.sort((a, b) => a.name.localeCompare(b.name));
+  } catch (err: any) {
+    handleFirestoreError(err, 'list', 'enrollments/active-students');
+  }
+}
+
 export async function getLearningGoalsByIds(ids: string[]): Promise<LearningGoal[]> {
   if (ids.length === 0) return [];
   try {
@@ -1656,6 +1689,16 @@ export async function getClasses(): Promise<Class[]> {
   }
 }
 
+function cleanUndefinedForFirestore<T extends object>(obj: T): T {
+  const result = { ...obj } as any;
+  for (const key in result) {
+    if (result[key] === undefined) {
+      result[key] = null;
+    }
+  }
+  return result;
+}
+
 export async function addClass(classData: Omit<Class, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
   try {
     // Generate ID: unit_year_name (sanitized)
@@ -1664,12 +1707,12 @@ export async function addClass(classData: Omit<Class, 'id' | 'createdAt' | 'upda
     
     const docRef = doc(db, 'classes', id);
     const now = Date.now();
-    await setDoc(docRef, {
+    await setDoc(docRef, cleanUndefinedForFirestore({
       ...classData,
       id,
       createdAt: now,
       updatedAt: now
-    });
+    }));
     return id;
   } catch (err: any) {
     handleFirestoreError(err, 'create', 'classes');
@@ -1678,10 +1721,10 @@ export async function addClass(classData: Omit<Class, 'id' | 'createdAt' | 'upda
 
 export async function updateClass(id: string, updates: Partial<Class>): Promise<void> {
   try {
-    await updateDoc(doc(db, 'classes', id), {
+    await updateDoc(doc(db, 'classes', id), cleanUndefinedForFirestore({
       ...updates,
       updatedAt: Date.now()
-    });
+    }));
   } catch (err: any) {
     handleFirestoreError(err, 'update', `classes/${id}`);
   }
@@ -1903,125 +1946,7 @@ export async function getMTSSAcademicParentDocuments(caseId: string): Promise<MT
   }
 }
 
-export async function getMTSSAcademicTimeline(schoolUnit: UnitType, academicYear: string, semester: string): Promise<MTSSAcademicTimelinePhase[]> {
-  try {
-    const q = query(
-      collection(db, 'juniorhigh_mtss_academic_timeline'),
-      where('schoolUnit', '==', schoolUnit),
-      where('academicYear', '==', academicYear),
-      where('semester', '==', semester)
-    );
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MTSSAcademicTimelinePhase)).sort((a, b) => a.startDate - b.startDate);
-  } catch (err: any) {
-    handleFirestoreError(err, 'list', 'mtss_academic_timeline');
-  }
-}
 
-export async function initializeMTSSAcademicTimeline(schoolUnit: UnitType, academicYear: string, semester: string): Promise<void> {
-  try {
-    // Check if exists
-    const q = query(
-      collection(db, 'juniorhigh_mtss_academic_timeline'),
-      where('schoolUnit', '==', schoolUnit),
-      where('academicYear', '==', academicYear),
-      where('semester', '==', semester)
-    );
-    const snapshot = await getDocs(q);
-    if (!snapshot.empty) {
-      throw new Error(`Timeline for ${schoolUnit} ${academicYear} Semester ${semester} already exists.`);
-    }
-
-    const batch = writeBatch(db);
-    const timelineRef = collection(db, 'juniorhigh_mtss_academic_timeline');
-
-    // Standard Cycle Phases
-    const phases: Omit<MTSSAcademicTimelinePhase, 'id' | 'createdAt' | 'updatedAt'>[] = [
-      {
-        schoolUnit,
-        academicYear,
-        semester: semester as '1' | '2',
-        phase: 'PLANNING',
-        title: 'Program Planning & Training',
-        description: 'Review previous data, set goals, and refresh teacher training on intervention strategies.',
-        startDate: semester === '1' ? new Date(`${academicYear.split('/')[0]}-07-01`).getTime() : new Date(`${academicYear.split('/')[1].length === 2 ? '20' + academicYear.split('/')[1] : academicYear.split('/')[1]}-01-01`).getTime(),
-        endDate: semester === '1' ? new Date(`${academicYear.split('/')[0]}-07-20`).getTime() : new Date(`${academicYear.split('/')[1].length === 2 ? '20' + academicYear.split('/')[1] : academicYear.split('/')[1]}-01-20`).getTime(),
-        ownerRole: 'MTSS Coordinator',
-        checklistItems: ['Review Q4 Results', 'Update Skill Standards', 'Assign MTSS Roles', 'Complete Faculty Training']
-      },
-      {
-        schoolUnit,
-        academicYear,
-        semester: semester as '1' | '2',
-        phase: 'LAUNCH',
-        title: 'Universal Screening & Launch',
-        description: 'Conduct primary literacy and numeracy screening for all students.',
-        startDate: semester === '1' ? new Date(`${academicYear.split('/')[0]}-07-21`).getTime() : new Date(`${academicYear.split('/')[1].length === 2 ? '20' + academicYear.split('/')[1] : academicYear.split('/')[1]}-01-21`).getTime(),
-        endDate: semester === '1' ? new Date(`${academicYear.split('/')[0]}-08-15`).getTime() : new Date(`${academicYear.split('/')[1].length === 2 ? '20' + academicYear.split('/')[1] : academicYear.split('/')[1]}-02-15`).getTime(),
-        ownerRole: 'Subject Teachers',
-        checklistItems: ['Execute Screening', 'Analyze Class Performance', 'Identify Tier 2 Candidates', 'Initial Parent Notification']
-      },
-      {
-        schoolUnit,
-        academicYear,
-        semester: semester as '1' | '2',
-        phase: 'EXECUTION',
-        title: 'Intervention Cycle 1',
-        description: 'Intensive Tier 2 small group sessions and progress monitoring.',
-        startDate: semester === '1' ? new Date(`${academicYear.split('/')[0]}-08-16`).getTime() : new Date(`${academicYear.split('/')[1].length === 2 ? '20' + academicYear.split('/')[1] : academicYear.split('/')[1]}-02-16`).getTime(),
-        endDate: semester === '1' ? new Date(`${academicYear.split('/')[0]}-10-15`).getTime() : new Date(`${academicYear.split('/')[1].length === 2 ? '20' + academicYear.split('/')[1] : academicYear.split('/')[1]}-04-15`).getTime(),
-        ownerRole: 'Interventionists',
-        checklistItems: ['Initial Team Meeting', 'Bi-weekly Session Logs', 'Goal Progress Tracking', 'Fidelity Check']
-      },
-      {
-        schoolUnit,
-        academicYear,
-        semester: semester as '1' | '2',
-        phase: 'PERFORMANCE_CONTROL',
-        title: 'Mid-Cycle Review',
-        description: 'Evaluating current data and adjusting interventions where necessary.',
-        startDate: semester === '1' ? new Date(`${academicYear.split('/')[0]}-10-16`).getTime() : new Date(`${academicYear.split('/')[1].length === 2 ? '20' + academicYear.split('/')[1] : academicYear.split('/')[1]}-04-16`).getTime(),
-        endDate: semester === '1' ? new Date(`${academicYear.split('/')[0]}-11-15`).getTime() : new Date(`${academicYear.split('/')[1].length === 2 ? '20' + academicYear.split('/')[1] : academicYear.split('/')[1]}-05-15`).getTime(),
-        ownerRole: 'Coordinator & Teachers',
-        checklistItems: ['Analyze Growth Curves', 'Adjust Instructional Groups', 'Parent Communication', 'Tier 3 Escalation Review']
-      },
-      {
-        schoolUnit,
-        academicYear,
-        semester: semester as '1' | '2',
-        phase: 'CLOSING_REVIEW',
-        title: 'Summative Evaluation',
-        description: 'Final evaluation of semester progress and strategy decision for next term.',
-        startDate: semester === '1' ? new Date(`${academicYear.split('/')[0]}-11-16`).getTime() : new Date(`${academicYear.split('/')[1].length === 2 ? '20' + academicYear.split('/')[1] : academicYear.split('/')[1]}-12-15`).getTime(),
-        endDate: semester === '1' ? new Date(`${academicYear.split('/')[0]}-12-25`).getTime() : new Date(`${academicYear.split('/')[1].length === 2 ? '20' + academicYear.split('/')[1] : academicYear.split('/')[1]}-06-25`).getTime(),
-        ownerRole: 'MTSS Team',
-        checklistItems: ['Final Outcome Reports', 'Semester Data Roundup', 'Resource Planning Q2/Q4', 'Teacher Feedback Surveys']
-      }
-    ];
-
-    const now = Date.now();
-    phases.forEach(p => {
-      const docRef = doc(timelineRef);
-      batch.set(docRef, { ...p, id: docRef.id, createdAt: now, updatedAt: now });
-    });
-
-    await batch.commit();
-  } catch (err: any) {
-    if (err.message && err.message.includes("already exists")) throw err;
-    handleFirestoreError(err, 'write', 'mtss_academic_timeline/initialize');
-  }
-}
-
-export async function updateMTSSAcademicPhase(phaseId: string, updates: Partial<MTSSAcademicTimelinePhase>): Promise<void> {
-  try {
-    await updateDoc(doc(db, 'juniorhigh_mtss_academic_timeline', phaseId), {
-      ...updates,
-      updatedAt: Date.now()
-    });
-  } catch (err: any) {
-    handleFirestoreError(err, 'update', `mtss_academic_timeline/${phaseId}`);
-  }
-}
 
 export async function createDraftMTSSCaseFromScreening(
   screeningResult: MTSSAcademicScreeningResult,

@@ -7,9 +7,10 @@ import {
 } from 'lucide-react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { cn } from '../../lib/utils';
-import { db, auth } from '../../lib/firebase';
+import { db, auth, getActiveStudents } from '../../lib/firebase';
 import { collection, query, where, getDocs, setDoc, doc, serverTimestamp, getDoc, orderBy, deleteDoc } from 'firebase/firestore';
 import { AttendanceStatus, AttendanceRecord, Student, UnitType, Class } from '../../types';
+import { useAcademicYear } from '../../context/AcademicYearContext';
 import { attendanceSyncService } from '../../services/attendanceBackupConfigService';
 import { toast } from 'sonner';
 import StudentSearch from '../../components/StudentSearch';
@@ -83,9 +84,11 @@ export default function Attendance() {
     fetchClasses();
   }, [activeUnit]);
 
+  const { activeYear, activeSemester: contextSemester } = useAcademicYear();
+
   // Real App context would come from a global config or active semester hook
-  const activeAcademicYear = '2025/2026';
-  const activeSemester = '2' as const;
+  const activeAcademicYear = activeYear;
+  const activeSemester = String(contextSemester) as any;
 
   React.useEffect(() => {
     // Fetch profile role for visibility check
@@ -112,51 +115,69 @@ export default function Attendance() {
         const classId = currentClassEntity?.id || selectedClass;
 
         // Query students in selected class - check users, roleInvites, and students collections
-        // We check BOTH id and name for classId field in Firestore to be safe
-        const qByClassId = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('classId', '==', classId));
-        const qByClassName = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('classId', '==', className));
-        const qByJobTitle = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('jobTitle', 'in', [classId, className]));
-        
-        const qInvitesId = query(collection(db, 'roleInvites'), where('role', '==', 'STUDENT'), where('classId', '==', classId));
-        const qInvitesName = query(collection(db, 'roleInvites'), where('role', '==', 'STUDENT'), where('classId', '==', className));
-        
-        const qStudentsId = query(collection(db, 'students'), where('classId', '==', classId));
-        const qStudentsName = query(collection(db, 'students'), where('classId', '==', className));
-        
-        const [snap1, snap2, snap3, snap4, snap5, snap6, snap7] = await Promise.all([
-          getDocs(qByClassId), 
-          getDocs(qByClassName),
-          getDocs(qByJobTitle),
-          getDocs(qInvitesId),
-          getDocs(qInvitesName),
-          getDocs(qStudentsId),
-          getDocs(qStudentsName)
-        ]);
-        
-        // Merge results and remove duplicates (using ID or luminaId as key)
-        const combinedDocs = [...snap1.docs, ...snap2.docs, ...snap3.docs, ...snap4.docs, ...snap5.docs, ...snap6.docs, ...snap7.docs];
-        const uniqueDocsMap = new Map();
-        
-        combinedDocs.forEach(d => {
-          const data = d.data();
-          // Use NIS/LuminaID if available, else doc ID
-          const studentId = data.luminaId || data.nis || data.nisn || d.id;
-          
-          if (!uniqueDocsMap.has(studentId)) {
-            uniqueDocsMap.set(studentId, { docId: d.id, ...data });
-          } else {
-            const existing = uniqueDocsMap.get(studentId);
-            uniqueDocsMap.set(studentId, { ...existing, ...data });
+        let studentList: StudentAttendance[] = [];
+        try {
+          const activeS = await getActiveStudents(classId, activeAcademicYear);
+          if (activeS && activeS.length > 0) {
+            studentList = activeS.map(s => ({
+              id: s.id,
+              name: s.name,
+              status: null,
+              note: '',
+              absencesThisMonth: 0
+            }));
           }
-        });
+        } catch (activeErr) {
+          console.warn('Failed to load active students via helper:', activeErr);
+        }
 
-        const studentList: StudentAttendance[] = Array.from(uniqueDocsMap.values()).map(data => ({
-          id: data.luminaId || data.nis || data.docId,
-          name: data.name || data.displayName || data.fullName || "Siswa Tanpa Nama",
-          status: null,
-          note: '',
-          absencesThisMonth: 0 
-        })).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+        if (studentList.length === 0) {
+          // Fallback legacy queries in case enrollments are unpopulated
+          const qByClassId = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('classId', '==', classId));
+          const qByClassName = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('classId', '==', className));
+          const qByJobTitle = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('jobTitle', 'in', [classId, className]));
+          
+          const qInvitesId = query(collection(db, 'roleInvites'), where('role', '==', 'STUDENT'), where('classId', '==', classId));
+          const qInvitesName = query(collection(db, 'roleInvites'), where('role', '==', 'STUDENT'), where('classId', '==', className));
+          
+          const qStudentsId = query(collection(db, 'students'), where('classId', '==', classId));
+          const qStudentsName = query(collection(db, 'students'), where('classId', '==', className));
+          
+          const [snap1, snap2, snap3, snap4, snap5, snap6, snap7] = await Promise.all([
+            getDocs(qByClassId), 
+            getDocs(qByClassName),
+            getDocs(qByJobTitle),
+            getDocs(qInvitesId),
+            getDocs(qInvitesName),
+            getDocs(qStudentsId),
+            getDocs(qStudentsName)
+          ]);
+          
+          // Merge results and remove duplicates (using ID or luminaId as key)
+          const combinedDocs = [...snap1.docs, ...snap2.docs, ...snap3.docs, ...snap4.docs, ...snap5.docs, ...snap6.docs, ...snap7.docs];
+          const uniqueDocsMap = new Map();
+          
+          combinedDocs.forEach(d => {
+            const data = d.data();
+            // Use NIS/LuminaID if available, else doc ID
+            const studentId = data.luminaId || data.nis || data.nisn || d.id;
+            
+            if (!uniqueDocsMap.has(studentId)) {
+              uniqueDocsMap.set(studentId, { docId: d.id, ...data });
+            } else {
+              const existing = uniqueDocsMap.get(studentId);
+              uniqueDocsMap.set(studentId, { ...existing, ...data });
+            }
+          });
+
+          studentList = Array.from(uniqueDocsMap.values()).map(data => ({
+            id: data.luminaId || data.nis || data.docId,
+            name: data.name || data.displayName || data.fullName || "Siswa Tanpa Nama",
+            status: null,
+            note: '',
+            absencesThisMonth: 0 
+          })).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+        }
 
         // Load existing records for today
         const recordsQ = query(

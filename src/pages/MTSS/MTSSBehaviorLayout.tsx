@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useAcademicYear } from '../../context/AcademicYearContext';
 import { 
   LayoutDashboard, 
   ShieldAlert, 
@@ -29,11 +30,21 @@ export default function MTSSBehaviorLayout() {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const isAdmin = profile?.role === 'SUPER_ADMIN';
+  const { activeYear, activeSemester } = useAcademicYear();
   
   const [filters, setFilters] = useState({
-    academicYear: '2025/2026',
-    semester: '2'
+    academicYear: activeYear || '2025/2026',
+    semester: String(activeSemester || '2')
   });
+
+  React.useEffect(() => {
+    if (activeYear) {
+      setFilters({
+        academicYear: activeYear,
+        semester: String(activeSemester)
+      });
+    }
+  }, [activeYear, activeSemester]);
 
   const isPrivileged = profile?.role && [
     'SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'PRINCIPAL', 'VICE_PRINCIPAL'

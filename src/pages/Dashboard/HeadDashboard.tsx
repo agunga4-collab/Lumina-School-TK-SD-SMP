@@ -39,8 +39,8 @@ export default function HeadDashboard() {
     const fetchData = async () => {
       setLoading(true);
       try {
-        const CASES_COLLECTION = 'mtssAcademicCases';
-        const ALERTS_COLLECTION = 'mtssAcademicAlerts';
+        const CASES_COLLECTION = 'juniorhigh_mtss_academic_cases';
+        const ALERTS_COLLECTION = 'juniorhigh_mtss_academic_alerts';
         
         // 1. Fetch All Cases for summary
         const allCasesSnap = await getDocs(collection(db, CASES_COLLECTION));

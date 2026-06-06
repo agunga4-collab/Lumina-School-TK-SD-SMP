@@ -46,7 +46,7 @@ class MTSSSnapshotTriggerService {
 
   private async markPending(moduleType: ModuleType, caseId: string) {
     try {
-      const collectionName = moduleType === 'ACADEMIC' ? 'mtssAcademicCases' : 'behaviorCases';
+      const collectionName = moduleType === 'ACADEMIC' ? 'juniorhigh_mtss_academic_cases' : 'behaviorCases';
       const caseRef = doc(db, collectionName, caseId);
       
       await updateDoc(caseRef, {

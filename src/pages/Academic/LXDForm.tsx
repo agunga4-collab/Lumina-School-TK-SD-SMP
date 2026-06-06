@@ -8,6 +8,7 @@ import {
   Type, HelpCircle, LayoutGrid, Milestone
 } from 'lucide-react';
 import { useOutletContext, useNavigate, useParams } from 'react-router-dom';
+import { useAcademicYear } from '../../context/AcademicYearContext';
 import { 
   getLXDById, addLXD, updateLXD, 
   getLearningGoals 
@@ -58,12 +59,14 @@ export default function LXDForm() {
   const [bankLgs, setBankLgs] = React.useState<LearningGoal[]>([]);
   const [lgSearch, setLgSearch] = React.useState('');
 
+  const { activeYear, activeSemester } = useAcademicYear();
+
   // Main Form State
   const [formData, setFormData] = React.useState<Partial<LXD>>({
     title: "",
     unitId: activeUnit as any,
-    academicYear: "2025/2026",
-    semester: "1",
+    academicYear: activeYear || "2025/2026",
+    semester: String(activeSemester || "1") as any,
     status: "DRAFT",
     linkedGoals: [],
     integralStrands: {
@@ -94,6 +97,16 @@ export default function LXDForm() {
       });
     }
   }, [id, isEdit]);
+
+  React.useEffect(() => {
+    if (!isEdit && activeYear) {
+      setFormData(prev => ({
+        ...prev,
+        academicYear: activeYear,
+        semester: String(activeSemester) as any
+      }));
+    }
+  }, [activeYear, activeSemester, isEdit]);
 
   // Fetch LGs based on filters
   React.useEffect(() => {

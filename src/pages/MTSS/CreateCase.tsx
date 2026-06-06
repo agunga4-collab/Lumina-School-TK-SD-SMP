@@ -9,6 +9,7 @@ import {
 import { cn } from '../../lib/utils';
 import { createMTSSCase, addMTSSConcern } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
+import { useAcademicYear } from '../../context/AcademicYearContext';
 import type { MTSSTier, MTSSStatus } from '../../types';
 
 import StudentSearch from '../../components/StudentSearch';
@@ -16,12 +17,13 @@ import StudentSearch from '../../components/StudentSearch';
 export default function CreateCase() {
   const navigate = useNavigate();
   const { profile } = useAuth();
+  const { activeYear } = useAcademicYear();
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [formData, setFormData] = React.useState({
     studentName: '',
     studentId: '',
     classId: '',
-    academicYear: '2025/2026',
+    academicYear: activeYear || '2025/2026',
     tier: 'Tier 1' as MTSSTier,
     status: 'OPEN' as MTSSStatus,
     date: new Date().toISOString().split('T')[0],
@@ -31,6 +33,12 @@ export default function CreateCase() {
     interventionsTried: '',
     nextSteps: '',
   });
+
+  React.useEffect(() => {
+    if (activeYear) {
+      setFormData(prev => ({ ...prev, academicYear: activeYear }));
+    }
+  }, [activeYear]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

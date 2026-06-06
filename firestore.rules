@@ -111,6 +111,11 @@ service cloud.firestore {
       allow write: if isAdmin() || isMTSSAcademicManager();
     }
 
+    match /systemConfig/{configId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
     match /enrollments/{enrollmentId} {
       allow read: if isActive();
       allow write: if isAdmin() || isMTSSAcademicManager();

@@ -726,6 +726,7 @@ export interface Enrollment {
   studentId: string;
   classId: string;
   academicYear: string;
+  status?: string;
 }
 
 // --- Attendance Backup & Sync Types ---

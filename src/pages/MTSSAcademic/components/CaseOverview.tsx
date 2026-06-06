@@ -11,8 +11,6 @@ import {
   TrendingUp, 
   Target, 
   Users, 
-  Clock, 
-  CheckCircle2, 
   AlertCircle,
   Calendar,
   Zap,
@@ -36,8 +34,8 @@ export default function CaseOverview({ mtssCase, goals, sessions, meetings, plan
   return (
     <div className="space-y-6">
       {/* Primary Concern & Snapshot */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="md:col-span-2 space-y-6">
+      <div className="grid grid-cols-1 gap-6">
+        <div className="space-y-6">
           <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm relative overflow-hidden">
             <div className="absolute top-0 right-0 p-8 text-indigo-50 opacity-20 -rotate-12 translate-x-8 -translate-y-8">
               <Zap size={120} />
@@ -116,39 +114,6 @@ export default function CaseOverview({ mtssCase, goals, sessions, meetings, plan
             </div>
           </div>
         </div>
-
-        {/* Timeline & Actions */}
-        <div className="space-y-6">
-          <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm h-full">
-            <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest mb-6">Program Timeline</h3>
-            <div className="space-y-8 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-100">
-              <TimelineStep 
-                label="Referral & Screening" 
-                date={mtssCase.createdAt} 
-                status="completed" 
-                isLast={false}
-              />
-              <TimelineStep 
-                label="Initial Meeting" 
-                date={meetings.find(m => m.meetingType === 'INITIAL')?.date} 
-                status={mtssCase.status === 'SCREENING' ? 'pending' : 'completed'} 
-                isLast={false}
-              />
-              <TimelineStep 
-                label="Tier 2 Intervention" 
-                date={activePlan?.startDate} 
-                status={mtssCase.currentTier === 'Tier 1' ? 'upcoming' : 'active'} 
-                isLast={false}
-              />
-              <TimelineStep 
-                label="Progress Review" 
-                date={evaluations[0]?.date} 
-                status="upcoming" 
-                isLast={true}
-              />
-            </div>
-          </div>
-        </div>
       </div>
 
       {/* Progress Analysis (Placeholder for Chart) */}
@@ -161,31 +126,6 @@ export default function CaseOverview({ mtssCase, goals, sessions, meetings, plan
           <TrendingUp size={48} className="opacity-20 mb-4" />
           <p className="text-sm font-medium">Progress chart visualization will be displayed here as more session data is collected.</p>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function TimelineStep({ label, date, status, isLast }: { label: string; date?: number; status: 'completed' | 'active' | 'pending' | 'upcoming'; isLast: boolean }) {
-  const configs = {
-    completed: { icon: CheckCircle2, iconColor: 'text-emerald-500 bg-emerald-50', dotColor: 'bg-emerald-500 ring-emerald-100' },
-    active: { icon: TrendingUp, iconColor: 'text-indigo-600 bg-indigo-50', dotColor: 'bg-indigo-600 ring-indigo-100 animate-pulse' },
-    pending: { icon: Clock, iconColor: 'text-amber-500 bg-amber-50', dotColor: 'bg-amber-500 ring-amber-100' },
-    upcoming: { icon: Calendar, iconColor: 'text-slate-300 bg-slate-50', dotColor: 'bg-slate-200 ring-transparent' }
-  };
-
-  const { icon: Icon, iconColor, dotColor } = configs[status];
-
-  return (
-    <div className="relative pl-10">
-      <div className={`absolute left-0 top-1.5 w-6 h-6 rounded-full border-4 border-white ring-4 ${dotColor} z-10 flex items-center justify-center`}>
-        {status === 'completed' && <CheckCircle2 size={12} className="text-white" />}
-      </div>
-      <div>
-        <p className={`text-sm font-black ${status === 'upcoming' ? 'text-slate-400' : 'text-slate-800'}`}>{label}</p>
-        <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-tighter">
-          {date ? format(date, 'dd MMM yyyy') : 'No date set'}
-        </p>
       </div>
     </div>
   );

@@ -40,7 +40,7 @@ export default function ElementaryHeadDashboard() {
         // to satisfy the user's "should be empty" requirement.
         
         // Example dynamic fetching (keep it empty if no docs)
-        const mtssSnap = await getDocs(query(collection(db, "mtssAcademicCases"), where("status", "!=", "CLOSED")));
+        const mtssSnap = await getDocs(query(collection(db, "juniorhigh_mtss_academic_cases"), where("status", "!=", "CLOSED")));
         
         // Initializing with zeros as requested
         setStats({

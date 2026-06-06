@@ -4,7 +4,8 @@ import {
   where, 
   getDocs, 
   Timestamp,
-  orderBy
+  orderBy,
+  collectionGroup
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { 
@@ -26,12 +27,12 @@ import {
   MTSSAcademicStatus
 } from '../types';
 
-const CASES_COLLECTION = 'mtssAcademicCases';
-const SESSIONS_COLLECTION = 'mtssAcademicSessions';
-const EVALUATIONS_COLLECTION = 'mtssAcademicEvaluations';
-const MEETINGS_COLLECTION = 'mtssAcademicMeetings';
-const DOCUMENTS_COLLECTION = 'mtssAcademicParentDocuments';
-const ALERTS_COLLECTION = 'mtssAcademicAlerts';
+const CASES_COLLECTION = 'juniorhigh_mtss_academic_cases';
+const SESSIONS_COLLECTION = 'sessions';
+const EVALUATIONS_COLLECTION = 'evaluations';
+const MEETINGS_COLLECTION = 'meetings';
+const DOCUMENTS_COLLECTION = 'parentDocuments';
+const ALERTS_COLLECTION = 'juniorhigh_mtss_academic_alerts';
 
 export const getMTSSAcademicExecutiveOverview = async (filters: MTSSAcademicAnalyticsFilters): Promise<MTSSAcademicExecutiveOverview> => {
   let q = query(collection(db, CASES_COLLECTION), where('academicYear', '==', filters.academicYear));
@@ -180,7 +181,7 @@ export const getMTSSAcademicComplianceOverview = async (filters: MTSSAcademicAna
 
 export const getMTSSAcademicOutcomeTrends = async (filters: MTSSAcademicAnalyticsFilters): Promise<MTSSAcademicOutcomeTrendPoint[]> => {
   // Normally we would group evaluations by month/term
-  const q = query(collection(db, EVALUATIONS_COLLECTION), orderBy('date', 'desc'));
+  const q = query(collectionGroup(db, EVALUATIONS_COLLECTION), orderBy('date', 'desc'));
   const snapshot = await getDocs(q);
   const evaluations = snapshot.docs.map(doc => doc.data() as MTSSAcademicEvaluation);
 
