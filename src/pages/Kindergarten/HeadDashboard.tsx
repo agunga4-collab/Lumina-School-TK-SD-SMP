@@ -13,6 +13,58 @@ import { cn } from '../../lib/utils';
 import { DEFAULT_STUDENTS } from '../../lib/kindergartenWeeklyReport';
 
 export default function KindergartenHeadDashboard() {
+  // Period filter states
+  const [periodType, setPeriodType] = React.useState<'monthly' | 'semester' | 'yearly' | 'custom'>('monthly');
+  const [selectedMonth, setSelectedMonth] = React.useState<number>(() => new Date().getMonth()); // 0-11
+  const [selectedYear, setSelectedYear] = React.useState<string>('2026');
+  const [selectedSemester, setSelectedSemester] = React.useState<'1' | '2'>('2');
+  const [customStartDate, setCustomStartDate] = React.useState<string>('2026-01-01');
+  const [customEndDate, setCustomEndDate] = React.useState<string>('2026-06-30');
+
+  const isChecklistDateInPeriod = React.useCallback((dateStr: string) => {
+    if (!dateStr) return false;
+    const parts = dateStr.split('-');
+    if (parts.length !== 3) return false;
+    const year = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1; // 0-11
+    
+    if (periodType === 'monthly') {
+      return year === parseInt(selectedYear, 10) && month === selectedMonth;
+    } else if (periodType === 'semester') {
+      if (year !== parseInt(selectedYear, 10)) return false;
+      return selectedSemester === '1' ? (month >= 6 && month <= 11) : (month >= 0 && month <= 5);
+    } else if (periodType === 'yearly') {
+      return year === parseInt(selectedYear, 10);
+    } else if (periodType === 'custom') {
+      return dateStr >= customStartDate && dateStr <= customEndDate;
+    }
+    return true;
+  }, [periodType, selectedMonth, selectedYear, selectedSemester, customStartDate, customEndDate]);
+
+  const isTimestampInPeriod = React.useCallback((timestamp: number) => {
+    if (!timestamp) return true; // Fallback
+    const dateObj = new Date(timestamp);
+    const year = dateObj.getFullYear();
+    const month = dateObj.getMonth();
+    
+    const yyyy = dateObj.getFullYear();
+    const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const dd = String(dateObj.getDate()).padStart(2, '0');
+    const dateStr = `${yyyy}-${mm}-${dd}`;
+    
+    if (periodType === 'monthly') {
+      return year === parseInt(selectedYear, 10) && month === selectedMonth;
+    } else if (periodType === 'semester') {
+      if (year !== parseInt(selectedYear, 10)) return false;
+      return selectedSemester === '1' ? (month >= 6 && month <= 11) : (month >= 0 && month <= 5);
+    } else if (periodType === 'yearly') {
+      return year === parseInt(selectedYear, 10);
+    } else if (periodType === 'custom') {
+      return dateStr >= customStartDate && dateStr <= customEndDate;
+    }
+    return true;
+  }, [periodType, selectedMonth, selectedYear, selectedSemester, customStartDate, customEndDate]);
+
   const stats = React.useMemo(() => {
     // 1. Fetch checklists
     const savedChecklist = localStorage.getItem('kg_checklist_records');
@@ -34,6 +86,7 @@ export default function KindergartenHeadDashboard() {
         const latestDates = sortedDates.slice(0, 5); // check last 5 active checklist days
         
         Object.entries(records).forEach(([dateStr, studentMap]: [string, any]) => {
+          if (!isChecklistDateInPeriod(dateStr)) return;
           Object.entries(studentMap).forEach(([studentId, status]: [string, any]) => {
             const student = DEFAULT_STUDENTS.find(s => s.id === studentId);
             if (!student) return;
@@ -104,6 +157,7 @@ export default function KindergartenHeadDashboard() {
         try {
           const payload = JSON.parse(localStorage.getItem(key) || '{}');
           if (payload && payload.observations) {
+            if (!isTimestampInPeriod(payload.timestamp)) continue;
             totalSentraSessions++;
             const domain = payload.selectedDomain || '';
             const activity = payload.selectedActivity || 'Lainnya';
@@ -212,7 +266,10 @@ export default function KindergartenHeadDashboard() {
       hasObservationData: totalGradingsCount > 0,
       displayEmotionsList
     };
-  }, []);
+  }, [
+    periodType, selectedMonth, selectedYear, selectedSemester, customStartDate, customEndDate,
+    isChecklistDateInPeriod, isTimestampInPeriod
+  ]);
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-12 px-4">
@@ -230,6 +287,145 @@ export default function KindergartenHeadDashboard() {
         </div>
       </header>
 
+      {/* Dynamic Period Filter Selector Panel */}
+      <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-emerald-100/50 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-gray-150/40 pb-4">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-xl bg-emerald-50 text-emerald-600">
+               <Calendar size={18} />
+            </div>
+            <div>
+               <h2 className="text-xs font-black text-emerald-950 uppercase tracking-wide">Pilih Periode Analisis</h2>
+               <p className="text-[10px] text-gray-500 font-medium leading-none mt-0.5">Saring statistik kehadiran, emosi, dan capaian perkembangan secara dinamis</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { id: 'monthly', label: '🗓️ Bulanan' },
+              { id: 'semester', label: '🏫 Semesteran' },
+              { id: 'yearly', label: '📅 Tahunan' },
+              { id: 'custom', label: '✏️ Kustom' }
+            ].map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => setPeriodType(p.id as any)}
+                className={cn(
+                  "px-4 py-2 text-xs font-black rounded-xl transition-all cursor-pointer border",
+                  periodType === p.id 
+                    ? "bg-emerald-600 text-white border-emerald-600 shadow-md shadow-emerald-50" 
+                    : "bg-gray-50 hover:bg-gray-100 text-gray-650 border-gray-100 hover:text-gray-900"
+                )}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-6 pt-1 select-none">
+          {/* Sub-inputs dependent on selected periodType */}
+          {periodType === 'monthly' && (
+            <>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-gray-500">Pilih Bulan:</span>
+                <select
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(parseInt(e.target.value, 10))}
+                  className="px-3 py-1.5 bg-emerald-50/40 border border-emerald-100/80 rounded-xl text-xs font-extrabold text-emerald-800 outline-none cursor-pointer"
+                >
+                  {['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'].map((m, idx) => (
+                    <option key={idx} value={idx}>{m}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-gray-500">Tahun:</span>
+                <select
+                  value={selectedYear}
+                  onChange={(e) => setSelectedYear(e.target.value)}
+                  className="px-3 py-1.5 bg-emerald-50/40 border border-emerald-100/80 rounded-xl text-xs font-extrabold text-emerald-800 outline-none cursor-pointer"
+                >
+                  {['2025', '2026', '2027', '2028', '2029'].map((y) => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
+
+          {periodType === 'semester' && (
+            <>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-gray-500">Pilih Semester:</span>
+                <select
+                  value={selectedSemester}
+                  onChange={(e) => setSelectedSemester(e.target.value as any)}
+                  className="px-3 py-1.5 bg-emerald-50/40 border border-emerald-100/80 rounded-xl text-xs font-extrabold text-emerald-800 outline-none cursor-pointer"
+                >
+                  <option value="1">Semester 1 (Ganjil: Juli - Desember)</option>
+                  <option value="2">Semester 2 (Genap: Januari - Juni)</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-gray-500">Tahun:</span>
+                <select
+                  value={selectedYear}
+                  onChange={(e) => setSelectedYear(e.target.value)}
+                  className="px-3 py-1.5 bg-emerald-50/40 border border-emerald-100/80 rounded-xl text-xs font-extrabold text-emerald-800 outline-none cursor-pointer"
+                >
+                  {['2025', '2026', '2027', '2028', '2029'].map((y) => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
+
+          {periodType === 'yearly' && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-gray-500">Pilih Tahun:</span>
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(e.target.value)}
+                className="px-3 py-1.5 bg-emerald-50/40 border border-emerald-100/80 rounded-xl text-xs font-extrabold text-emerald-800 outline-none cursor-pointer"
+              >
+                {['2025', '2026', '2027', '2028', '2029'].map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {periodType === 'custom' && (
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-gray-500">Mulai Tanggal:</span>
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  className="px-3 py-1.5 bg-emerald-50/40 border border-emerald-100/80 rounded-xl text-xs font-extrabold text-emerald-800 outline-none cursor-pointer"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-gray-500">Sampai Tanggal:</span>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  className="px-3 py-1.5 bg-emerald-50/40 border border-emerald-100/80 rounded-xl text-xs font-extrabold text-emerald-800 outline-none cursor-pointer"
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="ml-auto text-emerald-800 bg-emerald-50/60 border border-emerald-100 px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider">
+             Penyaringan {periodType === 'monthly' ? `Bulanan (${['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'][selectedMonth]} ${selectedYear})` : periodType === 'semester' ? `Semester ${selectedSemester} (${selectedYear})` : periodType === 'yearly' ? `Tahunan (${selectedYear})` : 'Kustom'} ✨
+          </div>
+        </div>
+      </div>
+
       {/* Overview Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
         <StatCard 
@@ -239,7 +435,7 @@ export default function KindergartenHeadDashboard() {
           icon={<Users className="text-blue-500" />} 
         />
         <StatCard 
-          label="Indeks Bahagia" 
+          label="Well-being Index" 
           value={stats.hasChecklistData ? `${stats.happinessIndex}%` : "0%"} 
           detail={stats.hasChecklistData ? "Status perasaan gembira/OK" : "Tidak ada emosi masuk"} 
           icon={<Heart className="text-rose-500" />} 
@@ -290,7 +486,7 @@ export default function KindergartenHeadDashboard() {
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                     <span className="text-xs text-gray-400 font-bold uppercase tracking-widest text-[9px]">Indeks Bahagia</span>
+                     <span className="text-xs text-gray-400 font-bold uppercase tracking-widest text-[9px]">Well-being Index</span>
                      <span className="text-xl font-black text-emerald-600">{stats.happinessIndex}%</span>
                   </div>
                 </div>

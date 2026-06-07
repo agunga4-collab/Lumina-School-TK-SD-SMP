@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  Camera, Upload, Save, X, Sparkles, 
+  Camera, Upload, Save, X, Sparkles, ArrowLeft,
   ChevronRight, LayoutGrid, Heart, BookOpen, 
   Languages, Brain, Activity, Palette, Compass,
   Music, Film, Star, CheckCircle2, Loader2, Image as ImageIcon,
@@ -11,6 +11,7 @@ import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
 import type { KGActivity, KGDomain, KGGrading } from '../../types';
 import { DEFAULT_STUDENTS } from '../../lib/kindergartenWeeklyReport';
+import ObservationBulkPeriodImport from './ObservationBulkPeriodImport';
 
 interface StudentObservation {
   grading: KGGrading | null;
@@ -52,6 +53,7 @@ const grades: { id: KGGrading; label: string; color: string; desc: string }[] = 
 export default function Observation() {
   const [selectedActivity, setSelectedActivity] = React.useState<KGActivity>('ART_EXPLORATIONS');
   const [selectedDomain, setSelectedDomain] = React.useState<KGDomain>('SOSIAL_EMOSIONAL');
+  const [isImportOpen, setIsImportOpen] = React.useState<boolean>(false);
   
   // High fidelity general photo (Starts pre-filled with a beautiful school activity image)
   const [generalPhoto, setGeneralPhoto] = React.useState<string | null>(null);
@@ -191,6 +193,28 @@ export default function Observation() {
   const currentSentraObj = activities.find(a => a.id === selectedActivity);
   const currentDomainObj = domains.find(d => d.id === selectedDomain);
 
+  if (isImportOpen) {
+    return (
+      <div className="max-w-7xl mx-auto space-y-6 pb-16 px-4">
+        <div className="flex justify-start">
+          <button
+            type="button"
+            onClick={() => setIsImportOpen(false)}
+            className="flex items-center gap-2 text-xs font-black text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 rounded-2xl px-5 py-3.5 transition active:scale-95 cursor-pointer border border-emerald-100 uppercase tracking-widest"
+          >
+            <ArrowLeft size={14} strokeWidth={2.5} /> Kembali ke Workspace
+          </button>
+        </div>
+        <ObservationBulkPeriodImport 
+          onClose={() => setIsImportOpen(false)}
+          onImportSuccess={() => {
+            // Success callback: refresh components if needed, etc.
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-16 px-4">
       
@@ -208,7 +232,16 @@ export default function Observation() {
             Guru mengevaluasi aktivitas 1 Sentra & 1 Domain perkembangan utama per pertemuan dengan dukungan foto general wajib.
           </p>
         </div>
-        <div className="flex items-center gap-2 self-start md:self-center">
+        <div className="flex items-center gap-2.5 self-start md:self-center flex-wrap">
+          <button 
+            type="button"
+            onClick={() => setIsImportOpen(true)}
+            className="flex items-center gap-2 bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-white font-black px-5 py-3.5 rounded-2xl shadow-md border-0 transition-all active:scale-95 text-xs uppercase tracking-widest cursor-pointer"
+          >
+            <Sparkles size={15} className="animate-pulse" />
+            Smart Bulk Import (Period)
+          </button>
+          
           <button 
             onClick={handleSaveAll}
             disabled={isSaving}

@@ -243,6 +243,11 @@ service cloud.firestore {
       allow write: if isJuniorHighStaff();
     }
 
+    match /observations/{observationId} {
+      allow read: if isActive();
+      allow write: if isJuniorHighStaff();
+    }
+
     match /learning_goals/{goalId} {
       allow read: if isJuniorHighStaff();
       allow write: if isJuniorHighStaff();

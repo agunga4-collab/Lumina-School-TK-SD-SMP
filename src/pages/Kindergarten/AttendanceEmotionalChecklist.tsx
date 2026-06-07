@@ -31,6 +31,7 @@ export default function AttendanceEmotionalChecklist() {
   const [pasteSelectedMonth, setPasteSelectedMonth] = React.useState<number>(() => new Date().getMonth());
   const [pasteSelectedYear, setPasteSelectedYear] = React.useState<string>(() => '2026');
   const [isAutoDetectPeriod, setIsAutoDetectPeriod] = React.useState<boolean>(false);
+  const [recapViewMode, setRecapViewMode] = React.useState<'emoji' | 'text'>('emoji');
   
   // Mode toggle: Harian vs Lihat Bulanan
   const [checklistMode, setChecklistMode] = React.useState<'daily' | 'monthly'>('daily');
@@ -321,6 +322,19 @@ export default function AttendanceEmotionalChecklist() {
     if (emotion === 'noNews' || status === 'tanpa_kabar') return { emoji: '❓', label: 'Tanpa Kabar' };
     if (status === 'hadir') return { emoji: '😐', label: 'OK' };
     return null;
+  };
+
+  const getTextForStatus = (emotion: string, status: string) => {
+    if (emotion === 'happy') return 'Hpy';
+    if (emotion === 'sad') return 'Sad';
+    if (emotion === 'angry') return 'Ang';
+    if (emotion === 'ok') return 'OK';
+    if (emotion === 'earlyLeave') return 'EL';
+    if (emotion === 'sick' || status === 'sakit') return 'Skt';
+    if (emotion === 'izin' || status === 'izin') return 'Izn';
+    if (emotion === 'noNews' || status === 'tanpa_kabar') return 'Alp';
+    if (status === 'hadir') return 'OK';
+    return '';
   };
 
   const isWeekend = (dayNum: number, yearNum: number, monthNum: number) => {
@@ -1029,6 +1043,8 @@ export default function AttendanceEmotionalChecklist() {
         updatedAt: new Date()
       });
       
+      setRefreshKey(prev => prev + 1);
+      
       toast.success('Checklist Kehadiran Harian disimpan ke server! ❤️', {
         description: `Tanggal: ${new Intl.DateTimeFormat('id-ID', { dateStyle: 'long' }).format(selectedDate)}`
       });
@@ -1127,6 +1143,8 @@ Tindakan ini tidak dapat dibatalkan.`;
 
   const monthlyDataMap = React.useMemo(() => {
     const map: Record<string, Record<string, { emotion: string; status: string }>> = {};
+    
+    // 1. Load from database records
     monthlyRecords.forEach((docData) => {
       const dStr = docData.date; 
       const studentsList = docData.students || [];
@@ -1140,8 +1158,47 @@ Tindakan ini tidak dapat dibatalkan.`;
         };
       });
     });
+
+    // Helper map internal react status to monthly format
+    const mapSystemToMonthlyCell = (rec: { attendance: KGAttendanceStatus | null; emotion: KGEmotionStatus | null }) => {
+      if (!rec || !rec.attendance) return null;
+      if (rec.attendance === 'SICK') return { emotion: 'sick', status: 'sakit' };
+      if (rec.attendance === 'PERMISSION') return { emotion: 'izin', status: 'izin' };
+      if (rec.attendance === 'NO_NEWS') return { emotion: 'noNews', status: 'tanpa_kabar' };
+      
+      const emo = (rec.emotion || 'OK').toLowerCase();
+      const validEmotions = ['happy', 'sad', 'ok', 'angry'];
+      const finalEmo = validEmotions.includes(emo) ? emo : 'ok';
+      return { emotion: finalEmo, status: 'hadir' };
+    };
+
+    // 2. Override with real-time local state modifications (including trash/cleared statuses)
+    Object.entries(recordsByDate).forEach(([dStr, studentMap]) => {
+      const parts = dStr.split('-');
+      if (parts.length === 3) {
+        const year = parts[0];
+        const monthIndex = parseInt(parts[1], 10) - 1; // 0-11 index
+        
+        if (year === monthlySelectedYear && monthIndex === monthlySelectedMonth) {
+          Object.entries(studentMap).forEach(([studentId, rec]) => {
+            if (!map[studentId]) {
+              map[studentId] = {};
+            }
+            
+            const cellVal = mapSystemToMonthlyCell(rec);
+            if (cellVal) {
+              map[studentId][dStr] = cellVal;
+            } else {
+              // Deleted / cleared via trash button
+              delete map[studentId][dStr];
+            }
+          });
+        }
+      }
+    });
+
     return map;
-  }, [monthlyRecords]);
+  }, [monthlyRecords, recordsByDate, monthlySelectedMonth, monthlySelectedYear]);
 
   const totalHadirPerTanggal = React.useMemo(() => {
     const totals: Record<number, number> = {};
@@ -1626,6 +1683,32 @@ Tindakan ini tidak dapat dibatalkan.`;
                   ))}
                 </select>
               </div>
+
+              <div className="flex items-center gap-2 pl-2 border-l border-gray-200">
+                <span className="text-xs font-bold text-gray-500">Tampilan Sel:</span>
+                <div className="inline-flex rounded-xl p-0.5 bg-gray-100 border border-gray-200 shadow-inner">
+                  <button
+                    type="button"
+                    onClick={() => setRecapViewMode('emoji')}
+                    className={cn(
+                      "px-3 py-1 text-[11px] font-extrabold rounded-lg transition-all border-none cursor-pointer",
+                      recapViewMode === 'emoji' ? "bg-white text-emerald-800 shadow-sm" : "text-gray-500 hover:text-gray-700 bg-transparent"
+                    )}
+                  >
+                    🌻 Emoji
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRecapViewMode('text')}
+                    className={cn(
+                      "px-3 py-1 text-[11px] font-extrabold rounded-lg transition-all border-none cursor-pointer",
+                      recapViewMode === 'text' ? "bg-white text-emerald-800 shadow-sm" : "text-gray-500 hover:text-gray-700 bg-transparent"
+                    )}
+                  >
+                    📄 Teks
+                  </button>
+                </div>
+              </div>
             </div>
             
             <div className="flex items-center gap-3">
@@ -1722,7 +1805,25 @@ Tindakan ini tidak dapat dibatalkan.`;
                                   )}
                                   title={record ? `Tanggal ${day}: ${emojiData?.label || record.status}` : undefined}
                                 >
-                                  {emojiData?.emoji || ''}
+                                  {recapViewMode === 'emoji' ? (
+                                    emojiData?.emoji || ''
+                                  ) : record ? (
+                                    <span className={cn(
+                                      "font-extrabold text-[10px] uppercase tracking-tighter",
+                                      record.emotion === 'happy' && "text-amber-500",
+                                      record.emotion === 'ok' && "text-emerald-500",
+                                      record.emotion === 'sad' && "text-blue-500",
+                                      record.emotion === 'angry' && "text-rose-500",
+                                      record.emotion === 'earlyLeave' && "text-yellow-600",
+                                      (record.emotion === 'sick' || record.status === 'sakit') && "text-red-500",
+                                      (record.emotion === 'izin' || record.status === 'izin') && "text-teal-600",
+                                      (record.emotion === 'noNews' || record.status === 'tanpa_kabar') && "text-gray-400"
+                                    )}>
+                                      {getTextForStatus(record.emotion, record.status)}
+                                    </span>
+                                  ) : (
+                                    ''
+                                  )}
                                 </td>
                               );
                             })}

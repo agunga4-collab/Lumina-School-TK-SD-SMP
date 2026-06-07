@@ -16,6 +16,7 @@ import {
   Sparkles,
   ArrowRight,
   AlertCircle,
+  AlertTriangle,
   Plus,
   Filter,
   Smile,
@@ -183,6 +184,8 @@ export default function SuperAdminPage() {
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [isClassModalOpen, setIsClassModalOpen] = React.useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = React.useState(false);
+  const [isDeleteClassConfirmOpen, setIsDeleteClassConfirmOpen] = React.useState(false);
+  const [classToDeleteId, setClassToDeleteId] = React.useState<string | null>(null);
   const [importMode, setImportMode] = React.useState<
     "STAFF" | "STUDENT" | "PARENT"
   >("STAFF");
@@ -1239,16 +1242,19 @@ export default function SuperAdminPage() {
     }
   };
 
-  const handleDeleteClass = async (id: string) => {
-    if (
-      !confirm(
-        "Hapus kelas ini? Ini tidak akan menghapus data siswa, namun referensi kelas di enrollment mungkin terputus.",
-      )
-    )
-      return;
+  const handleDeleteClass = (id: string) => {
+    setClassToDeleteId(id);
+    setIsDeleteClassConfirmOpen(true);
+  };
+
+  const confirmDeleteClass = async () => {
+    if (!classToDeleteId) return;
     try {
-      await deleteClass(id);
+      await deleteClass(classToDeleteId);
+      setIsDeleteClassConfirmOpen(false);
+      setClassToDeleteId(null);
       fetchData();
+      alert("Kelas berhasil dihapus!");
     } catch (error: any) {
       alert("Gagal menghapus kelas: " + error.message);
     }
@@ -5068,6 +5074,71 @@ export default function SuperAdminPage() {
                 className="px-8 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors cursor-pointer"
               >
                 Tutup Konsol
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Modal Warning Penghapusan Kelas */}
+      {isDeleteClassConfirmOpen && classToDeleteId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-gray-900/60 backdrop-blur-md"
+            onClick={() => {
+              setIsDeleteClassConfirmOpen(false);
+              setClassToDeleteId(null);
+            }}
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl relative z-10 p-10 text-center space-y-6"
+          >
+            <div className="w-20 h-20 bg-rose-50 rounded-3xl mx-auto flex items-center justify-center text-rose-600 shadow-md">
+              <AlertTriangle size={40} />
+            </div>
+            
+            <div className="space-y-3">
+              <span className="px-2.5 py-1 bg-rose-100 text-rose-800 text-[10.5px] font-black rounded-full uppercase tracking-wider">
+                Peringatan Penting
+              </span>
+              <h2 className="text-xl font-black text-gray-900 tracking-tight">
+                Hapus Kelas {classes.find(c => c.id === classToDeleteId)?.name || ""}?
+              </h2>
+              <p className="text-xs text-gray-400 leading-relaxed font-semibold">
+                Tindakan ini tidak dapat dibatalkan secara otomatis dari database sistem.
+              </p>
+              
+              <div className="p-4 bg-rose-50/50 rounded-2xl border border-rose-100 text-left space-y-2.5">
+                <span className="text-[9.5px] font-black text-rose-955 uppercase tracking-widest block">
+                  Konsekuensi & Dampak:
+                </span>
+                <ul className="text-[10.5px] text-rose-900 font-bold list-disc pl-4 space-y-1">
+                  <li>Data akun siswa yang terdaftar di kelas <strong className="font-extrabold">tidak akan dihapus</strong>.</li>
+                  <li>Namun, referensi kelas pada riwayat akademik atau rapor siswa tersebut akan terputus.</li>
+                  <li>Nama kelas ini tidak lagi muncul di menu filter wali atau bimbingan guru.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="pt-4 flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsDeleteClassConfirmOpen(false);
+                  setClassToDeleteId(null);
+                }}
+                className="flex-1 py-4 text-xs font-black text-gray-400 bg-gray-50 hover:bg-gray-100 rounded-2xl transition uppercase tracking-widest"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteClass}
+                className="flex-1 py-4 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-rose-100 transition active:scale-97 text-xs uppercase tracking-widest"
+              >
+                <Trash2 size={16} /> Ya, Hapus
               </button>
             </div>
           </motion.div>
