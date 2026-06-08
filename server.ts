@@ -1603,6 +1603,32 @@ app.post("/api/admin/bulk-import-users", async (req, res) => {
   }
 });
 
+app.post("/api/admin/fetch-sheets-csv", async (req, res) => {
+  try {
+    let { sheetId, sheetName } = req.body;
+    if (!sheetId) {
+      return res.status(400).json({ error: "Missing sheetId" });
+    }
+    
+    // Auto-detect if user passed full URL
+    if (sheetId.includes("docs.google.com/spreadsheets")) {
+      const match = sheetId.match(/\/d\/([a-zA-Z0-9-_]+)/);
+      if (match && match[1]) {
+        sheetId = match[1];
+      }
+    }
+    
+    const name = sheetName || "Sheet1";
+    console.log(`[FetchSheetsCSV] Fetching sheet ID: ${sheetId} Name: ${name}`);
+    const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(name)}`;
+    const sheetsResponse = await axios.get(csvUrl);
+    res.json({ success: true, csvData: sheetsResponse.data });
+  } catch (error: any) {
+    console.error("[FetchSheetsCSV] Error fetching google sheet:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.post("/api/admin/bulk-import-paste", async (req, res) => {
   try {
     const { rows, columnMapping, globalConfig } = req.body;

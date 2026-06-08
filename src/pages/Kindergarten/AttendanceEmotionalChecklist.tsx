@@ -167,7 +167,7 @@ export default function AttendanceEmotionalChecklist() {
             }
           }
           const studentId = data.luminaId || docSnap.id;
-          const classId = enrollmentClassMap.get(studentId) || data.classId || '';
+          const classId = enrollmentClassMap.get(docSnap.id) || enrollmentClassMap.get(studentId) || enrollmentClassMap.get(data.luminaId || '') || data.classId || '';
           const ageGroup: 'TK_A' | 'TK_B' = (classId.toUpperCase().includes('TK_A') || classId.toUpperCase().includes('CATERPILLAR')) ? 'TK_A' : 'TK_B';
 
           const existing = map.get(studentId);
@@ -494,12 +494,33 @@ export default function AttendanceEmotionalChecklist() {
     if (!sClass) return false;
     if (sClass === actId || sClass === actName) return true;
     
-    const norm = (str: string) => str.replace(/[\s\-_]+/g, '');
+    const norm = (str: string) => str.replace(/[\s\-_]+/g, '').toLowerCase();
     const normS = norm(sClass);
     const normId = norm(actId);
     const normName = norm(actName);
     
     if (normS === normName || normS === normId) return true;
+    
+    // Check for specific sub-classes
+    const hasKoala = (str: string) => str.includes('koala');
+    const hasPanda = (str: string) => str.includes('panda');
+    const hasCaterpillar = (str: string) => str.includes('caterpillar');
+    const hasButterfly = (str: string) => str.includes('butterfly');
+    
+    if (hasKoala(normS) && hasKoala(normName)) return true;
+    if (hasPanda(normS) && hasPanda(normName)) return true;
+    if (hasCaterpillar(normS) && hasCaterpillar(normName)) return true;
+    if (hasButterfly(normS) && hasButterfly(normName)) return true;
+
+    // Prevent generic "tka" from loosely matching specific sub-classes like "tkakoala" / "tkapanda"
+    const specificClassWords = ['koala', 'panda', 'caterpillar', 'butterfly'];
+    const hasSpecS = specificClassWords.some(w => normS.includes(w));
+    const hasSpecAct = specificClassWords.some(w => normId.includes(w) || normName.includes(w));
+    
+    if (hasSpecAct && !hasSpecS) {
+      return false; // student is general, but active class is specific
+    }
+    
     if (normId.includes(normS) || normS.includes(normId)) return true;
     
     return false;

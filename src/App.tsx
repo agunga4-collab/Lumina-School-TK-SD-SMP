@@ -56,6 +56,7 @@ import WeeklyReview from './pages/Kindergarten/WeeklyReview';
 import WeeklySummary from './pages/Kindergarten/WeeklySummary';
 import HeadDashboardKG from './pages/Kindergarten/HeadDashboard';
 import ParentViewKG from './pages/Kindergarten/ParentView';
+import AttendanceSummaryReport from './pages/Kindergarten/AttendanceSummaryReport';
 import StudentPassport from './pages/Student/StudentPassport';
 import LuminaHome from './pages/Home/LuminaHome';
 import SuperAdminPage from './pages/Admin/SuperAdminPage';
@@ -304,6 +305,7 @@ export default function App() {
             <Route path="observation" element={<ObservationKG />} />
             <Route path="weekly-summary" element={<WeeklySummary />} />
             <Route path="weekly-review" element={<WeeklyReview />} />
+            <Route path="attendance-recap" element={<AttendanceSummaryReport />} />
           </Route>
           <Route path="child">
             <Route path="attendance" element={<ChildAttendance />} />
