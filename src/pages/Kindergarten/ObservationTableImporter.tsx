@@ -1,10 +1,11 @@
 import * as React from 'react';
+import * as XLSX from 'xlsx';
 import { db } from '../../lib/firebase';
 import { collection, doc, setDoc, getDocs } from 'firebase/firestore';
 import { 
   FileSpreadsheet, Sparkles, Calendar, Plus, Trash2, 
   CheckCircle2, AlertCircle, RefreshCw, X, HelpCircle, Save, Info, UserCheck,
-  ArrowLeft, Check, AlertTriangle, Eye
+  ArrowLeft, Check, AlertTriangle, Eye, Upload
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
@@ -208,11 +209,144 @@ const mapStringToGrading = (str: string): KGGrading | null => {
   return null;
 };
 
+// Helper functions for paste parsing/sanitization (shared by handlePaste and SmartPaste modal)
+const sanitizeCell = (input: string | null | undefined): string => {
+  let cellText = (input ?? '').trim();
+  if (cellText === 'null' || cellText === 'undefined') {
+    return '';
+  }
+  if (cellText.startsWith('"') && cellText.endsWith('"') && cellText.length >= 2) {
+    cellText = cellText.substring(1, cellText.length - 1);
+  }
+  cellText = cellText.replace(/""/g, '"');
+  return cellText;
+};
+
+const parseTabularData = (text: string): string[][] => {
+  const rows = text.split(/\r?\n/);
+  return rows.map(row => row.split('\t').map(sanitizeCell));
+};
+
+// Helper to clean and sanitize student names for comparison
+const normalizeSearchName = (str: string): string => {
+  return String(str || '')
+    .toLowerCase()
+    .normalize('NFD')                     // Normalize unicode characters
+    .replace(/[\u0300-\u036f]/g, '')     // Remove diacritics
+    .replace(/\u00a0/g, ' ')             // Convert non-breaking spaces
+    .replace(/[^a-z0-9\s]/g, ' ')        // Convert punctuation/special characters to spaces
+    .replace(/\s+/g, ' ')                // Collapse whitespace
+    .trim();
+};
+
+const robustMatchStudent = (nameVal: string, list: any[]): any | null => {
+  const val = normalizeSearchName(nameVal);
+  if (!val) return null;
+
+  // Avoid matching row headers (like "Sentra", "Domain", etc.) as system students
+  if (val.includes('sentra') || val.includes('domain') || val.includes('perkembangan') || val.includes('activity')) {
+    return null;
+  }
+
+  // 1. Attempt exact normalized name match
+  let matched = list.find(s => normalizeSearchName(s.name) === val || (s.nickName && normalizeSearchName(s.nickName) === val));
+  if (matched) return matched;
+
+  // 2. Attempt contains normalized name match (one fully contains another)
+  matched = list.find(s => {
+    const sName = normalizeSearchName(s.name);
+    const sNick = s.nickName ? normalizeSearchName(s.nickName) : '';
+    return sName.includes(val) || val.includes(sName) || (sNick && (sNick.includes(val) || val.includes(sNick)));
+  });
+  if (matched) return matched;
+
+  // 3. Token-based similarity search (weighted Jaccard index + partial token overlap)
+  let bestMatch: any = null;
+  let highestScore = 0;
+  
+  list.forEach(s => {
+    const sName = normalizeSearchName(s.name);
+    
+    // Split input and student name into word tokens
+    const tokensVal = val.split(' ').filter(t => t.length >= 2);
+    const tokensSBytes = sName.split(' ').filter(t => t.length >= 2);
+    
+    if (tokensVal.length > 0 && tokensSBytes.length > 0) {
+      let matchesCount = 0;
+      tokensVal.forEach(tV => {
+        // Full word or significant start matching
+        if (tokensSBytes.some(tS => tS.includes(tV) || tV.includes(tS))) {
+          matchesCount++;
+        }
+      });
+      
+      const union = new Set([...tokensVal, ...tokensSBytes]).size;
+      const jaccardScore = union > 0 ? (matchesCount / union) : 0;
+      
+      // Calculate ratio against the minimum token count as well to handle name truncations exceptionally well
+      const overlapScore = matchesCount / Math.min(tokensVal.length, tokensSBytes.length);
+      
+      // Combined weighted score favoring solid matches but flexible on extra/minor missing words
+      const combinedScore = (jaccardScore * 0.4) + (overlapScore * 0.6);
+      
+      if (combinedScore > highestScore) {
+        highestScore = combinedScore;
+        bestMatch = s;
+      }
+    }
+  });
+
+  // If score passes a solid threshold, we match it!
+  if (highestScore >= 0.5 && bestMatch) {
+    return bestMatch;
+  }
+
+  return null;
+};
+
+// Transform template format to internal grid data structure
+const transformTemplateToGrid = (matrix: string[][]): string[][] => {
+  if (matrix.length < 4) return matrix;
+
+  const isTemplate = matrix.length >= 4 && (
+    (matrix[0]?.[1] && (matrix[0][1].toLowerCase().includes('day') || matrix[0][1].toLowerCase().includes('hari'))) ||
+    (matrix[1]?.[0] && (matrix[1][0].toLowerCase().includes('sentra') || matrix[1][0].toLowerCase().includes('activity'))) ||
+    (matrix[2]?.[0] && (matrix[2][0].toLowerCase().includes('domain') || matrix[2][0].toLowerCase().includes('perkembangan')))
+  );
+
+  if (!isTemplate) return matrix;
+
+  const reqHeight = Math.max(32, matrix.length - 1);
+  const newGrid: string[][] = Array.from({ length: reqHeight }, () => new Array(21).fill(''));
+  newGrid[0][0] = 'Sentra / Activity';
+  newGrid[1][0] = 'Domain Perkembangan';
+
+  // Map Sentra and Domain rows (Rows 2 and 3 of template -> Rows 0 and 1 of internal grid)
+  for (let c = 1; c < 21; c++) {
+    newGrid[0][c] = matrix[1]?.[c] || '';
+    newGrid[1][c] = matrix[2]?.[c] || '';
+  }
+
+  // Map Student rows from index 3 onward of template -> Row index 2 onward of internal grid
+  for (let r = 3; r < matrix.length; r++) {
+    const gridR = r - 1; // Row index in gridData (3 -> 2 in gridData)
+    newGrid[gridR][0] = matrix[r][0] || '';
+    for (let c = 1; c < 21; c++) {
+      newGrid[gridR][c] = matrix[r][c] || '';
+    }
+  }
+  return newGrid;
+};
+
 export default function ObservationTableImporter({ classes = [], initialClassId = 'ALL', onImportSuccess, onClose }: ObservationTableImporterProps) {
   const systemStudents = React.useMemo(() => getStoredStudents(), []);
-
-  // Selected class state
   const [selectedClassId, setSelectedClassId] = React.useState<string>(initialClassId);
+  
+  // File Upload states and references
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [uploadedFile, setUploadedFile] = React.useState<File | null>(null);
+  const [parsedMatrix, setParsedMatrix] = React.useState<string[][] | null>(null);
+  const [isUploadModalOpen, setIsUploadModalOpen] = React.useState(false);
 
   // Configuration Dates
   const [startDateStr, setStartDateStr] = React.useState<string>(() => {
@@ -383,18 +517,7 @@ export default function ObservationTableImporter({ classes = [], initialClassId 
       return { matches: false, student: null, label: 'Header' };
     }
 
-    // 1. Exact match
-    let student = systemStudents.find(s => s.name.toLowerCase() === val || (s.nickName && s.nickName.toLowerCase() === val));
-    
-    // 2. Contains match
-    if (!student) {
-      student = systemStudents.find(s => s.name.toLowerCase().includes(val) || val.includes(s.name.toLowerCase()));
-    }
-    
-    // 3. Nickname match
-    if (!student) {
-      student = systemStudents.find(s => s.nickName && (s.nickName.toLowerCase().includes(val) || val.includes(s.nickName.toLowerCase())));
-    }
+    const student = robustMatchStudent(nameVal, systemStudents);
 
     if (student) {
       return { matches: true, student, label: student.name };
@@ -408,61 +531,190 @@ export default function ObservationTableImporter({ classes = [], initialClassId 
     const text = e.clipboardData.getData('text');
     if (!text) return;
 
-    // Paste parsing rules:
-    // 1. Read raw clipboard text.
-    // 2. Split rows with .split(/\r?\n/).
-    // 3. Split each row with .split('\t').
-    // 4. Do NOT filter out empty rows or empty columns.
-    const clipboardRows = text.split(/\r?\n/);
-    const clipboardMatrix = clipboardRows.map(row => row.split('\t'));
+    const matrix = parseTabularData(text);
+    
+    // Check if it matches template
+    const isTemplate = matrix.length >= 4 && (
+      (matrix[0]?.[1] && (matrix[0][1].toLowerCase().includes('day') || matrix[0][1].toLowerCase().includes('hari'))) ||
+      (matrix[1]?.[0] && (matrix[1][0].toLowerCase().includes('sentra') || matrix[1][0].toLowerCase().includes('activity'))) ||
+      (matrix[2]?.[0] && (matrix[2][0].toLowerCase().includes('domain') || matrix[2][0].toLowerCase().includes('perkembangan')))
+    );
 
-    // Cell sanitization helper:
-    const sanitizeCell = (input: string | null | undefined): string => {
-      // 1. Trim leading/trailing whitespace.
-      let cellText = (input ?? '').trim();
-      
-      // Convert literal values null and undefined to empty string.
-      if (cellText === 'null' || cellText === 'undefined') {
-        return '';
-      }
-
-      // 2. If the final trimmed text starts and ends with ", remove the outer wrapping quotes only.
-      if (cellText.startsWith('"') && cellText.endsWith('"') && cellText.length >= 2) {
-        cellText = cellText.substring(1, cellText.length - 1);
-      }
-      
-      // 3. Replace doubled quotes "" with single ".
-      cellText = cellText.replace(/""/g, '"');
-      
-      return cellText;
-    };
+    if (isTemplate) {
+      setGridData(transformTemplateToGrid(matrix));
+      toast.success(`Berhasil mengimpor data via template.`);
+      return;
+    }
 
     setGridData(prevGrid => {
       const nextGrid = prevGrid.map(row => [...row]);
-      const reqHeight = startRow + clipboardMatrix.length;
+      const reqHeight = startRow + matrix.length;
 
-      // Ensure grid has enough rows
       while (nextGrid.length < reqHeight) {
         nextGrid.push(new Array(21).fill(''));
       }
 
-      // Write values sequentially, stop at last valid row/col
-      for (let r = 0; r < clipboardMatrix.length; r++) {
+      for (let r = 0; r < matrix.length; r++) {
         const targetR = startRow + r;
-        const lineCells = clipboardMatrix[r];
+        const lineCells = matrix[r];
         for (let c = 0; c < lineCells.length; c++) {
           const targetC = startCol + c;
           if (targetC < 21) {
-            nextGrid[targetR][targetC] = sanitizeCell(lineCells[c]);
+            nextGrid[targetR][targetC] = lineCells[c];
           }
         }
       }
-
       return nextGrid;
     });
 
-    toast.success(`Berhasil menempel tabel data (${clipboardMatrix.length} baris, ${clipboardMatrix[0]?.length || 0} kolom)`);
+    toast.success(`Berhasil menempel tabel data (${matrix.length} baris, ${matrix[0]?.length || 0} kolom)`);
   };
+
+  const parseFileToMatrix = (file: File): Promise<string[][]> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = e.target?.result;
+          const workbook = XLSX.read(data, { type: 'array' });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          const rawJson = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+          
+          // Convert all elements to string and sanitize
+          const matrix: string[][] = rawJson.map((row: any[]) => {
+            return row.map(cell => {
+              if (cell === null || cell === undefined) return '';
+              return sanitizeCell(String(cell));
+            });
+          });
+          resolve(matrix);
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = (err) => reject(err);
+      reader.readAsArrayBuffer(file);
+    });
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadedFile(file);
+    setIsUploadModalOpen(true);
+
+    try {
+      const matrix = await parseFileToMatrix(file);
+      setParsedMatrix(matrix);
+    } catch (err: any) {
+      console.error(err);
+      toast.error(`Gagal membaca file: ${err.message || String(err)}`);
+      setUploadedFile(null);
+      setParsedMatrix(null);
+      setIsUploadModalOpen(false);
+    }
+    
+    // Reset file input value so same file can be uploaded again if needed
+    if (e.target) {
+      e.target.value = '';
+    }
+  };
+
+  const handleImportApply = () => {
+    if (!parsedMatrix) return;
+
+    // Apply the parsed matrix onto the main 2D grid's columns and rows.
+    const transformed = transformTemplateToGrid(parsedMatrix);
+
+    setGridData(transformed);
+    setIsUploadModalOpen(false);
+    setUploadedFile(null);
+    setParsedMatrix(null);
+    toast.success(`Berhasil mengimpor data template ke editor tabel.`);
+  };
+
+  const resolveStudentInfoForClass = React.useCallback((nameVal: string, roster: any[]) => {
+    const student = robustMatchStudent(nameVal, roster);
+    if (student) return { matches: true, student, name: student.name };
+    return { matches: false, student: null, name: '' };
+  }, []);
+
+  const currentClassObj = React.useMemo(() => {
+    return classes.find(c => c.id === selectedClassId);
+  }, [classes, selectedClassId]);
+
+  const targetRoster = React.useMemo(() => {
+    if (selectedClassId === 'ALL') return systemStudents;
+    if (!currentClassObj) return [];
+    return systemStudents.filter(s => isStudentInClass(s.classId || '', currentClassObj));
+  }, [selectedClassId, currentClassObj, systemStudents]);
+
+  const previewStats = React.useMemo(() => {
+    if (!parsedMatrix || parsedMatrix.length < 4) {
+      return {
+        isValidTemplate: false,
+        classNameFromFile: '',
+        studentRowsCount: 0,
+        dayColsCount: 0,
+        unmatchedStudents: [] as string[],
+        matchedStudentsCount: 0,
+        invalidGradesCount: 0,
+        firstThreeRows: [] as string[][],
+      };
+    }
+
+    const firstRow = parsedMatrix[0];
+    const classNameFromFile = firstRow?.[0] || 'Tidak Diketahui';
+
+    // Let's count how many DAY columns we have (Cols B-U)
+    let dayColsCount = 0;
+    for (let c = 1; c < 21; c++) {
+      if (firstRow?.[c]) dayColsCount++;
+    }
+
+    const studentRows = parsedMatrix.slice(3);
+    const studentRowsCount = studentRows.length;
+
+    const unmatchedStudents: string[] = [];
+    let matchedStudentsCount = 0;
+    let invalidGradesCount = 0;
+
+    studentRows.forEach(row => {
+      const nameVal = row[0]?.trim();
+      if (!nameVal) return;
+
+      const resolveRes = resolveStudentInfoForClass(nameVal, targetRoster);
+      if (resolveRes.matches) {
+        matchedStudentsCount++;
+      } else {
+        unmatchedStudents.push(nameVal);
+      }
+
+      // Check remaining columns for invalid grades
+      for (let c = 1; c < 21; c++) {
+        const cellVal = row[c];
+        if (cellVal && cellVal.trim()) {
+          const matchedGrading = mapStringToGrading(cellVal);
+          if (!matchedGrading) {
+            invalidGradesCount++;
+          }
+        }
+      }
+    });
+
+    return {
+      isValidTemplate: true,
+      classNameFromFile,
+      studentRowsCount,
+      dayColsCount,
+      unmatchedStudents,
+      matchedStudentsCount,
+      invalidGradesCount,
+      firstThreeRows: studentRows.slice(0, 3),
+    };
+  }, [parsedMatrix, targetRoster, resolveStudentInfoForClass]);
 
   // Edit cell value
   const updateCellValue = (r: number, c: number, value: string) => {
@@ -577,6 +829,27 @@ export default function ObservationTableImporter({ classes = [], initialClassId 
   const totalMatchedCount = previewItems.filter(item => item.matched && item.entries.length > 0).length;
   const totalWarningsCount = previewItems.filter(item => !item.matched && item.studentName.trim() !== '').length;
   const totalEntriesCount = previewItems.reduce((acc, item) => acc + (item.matched ? item.entries.length : 0), 0);
+
+  const invalidEntriesCount = React.useMemo(() => {
+    let count = 0;
+    for (let r = 2; r < gridData.length; r++) {
+      const row = gridData[r];
+      if (!row[0] || !row[0].trim()) continue;
+      if (isHeaderRow(row)) continue;
+
+      for (let idx = 0; idx < workdays.length; idx++) {
+        const colIndex = idx + 1;
+        const cellVal = row[colIndex];
+        if (!cellVal || !cellVal.trim()) continue;
+
+        const grading = mapStringToGrading(cellVal);
+        if (!grading) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }, [gridData, workdays]);
 
   const getSentraLabel = (id: string) => {
     return activitiesList.find(a => a.id === id)?.label || id;
@@ -794,6 +1067,21 @@ export default function ObservationTableImporter({ classes = [], initialClassId 
 
         {/* StartDate & EndDate configuration */}
         <div className="flex flex-wrap items-center gap-4">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl px-4 py-2.5 text-[10px] font-black uppercase tracking-wider transition active:scale-95 cursor-pointer"
+          >
+            <Upload size={13} className="stroke-[3]" />
+            Upload XLSX/CSV Template
+          </button>
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            accept=".xlsx,.xls,.csv"
+            className="hidden"
+          />
           {classes && classes.length > 0 && (
             <div className="flex items-center gap-2 bg-slate-800/80 border border-slate-705/80 rounded-2xl px-3 py-1.5 focus-within:ring-1 focus-within:ring-emerald-500">
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">KELAS:</span>
@@ -849,11 +1137,167 @@ export default function ObservationTableImporter({ classes = [], initialClassId 
         </div>
       </div>
 
+      {isUploadModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/85 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-2xl p-8 shadow-2xl flex flex-col gap-6 max-h-[90vh] overflow-y-auto border border-gray-100">
+            <div className="flex justify-between items-center pb-2 border-b border-gray-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-600">
+                  <FileSpreadsheet size={20} />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-gray-900 uppercase tracking-tight">Pratinjau Unggah Template</h3>
+                  <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mt-0.5">SINKRONISASI FILE EVALUASI</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => {
+                  setIsUploadModalOpen(false);
+                  setUploadedFile(null);
+                  setParsedMatrix(null);
+                }} 
+                className="text-gray-400 hover:text-gray-900 transition p-1.5 hover:bg-gray-100 rounded-full cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Target vs File Dashboard Comparison */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Target Class & Hours Details */}
+              <div className="bg-slate-50 rounded-2xl p-4 border border-gray-200/60 shadow-sm">
+                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-2">TARGET PERIODE (DARI UI)</span>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-xs font-bold text-gray-700">
+                    <span className="font-semibold text-gray-500">Kelas Target:</span>
+                    <span className="text-slate-900 uppercase font-black">
+                      {classes.find(c => c.id === selectedClassId)?.name || 'Semua Kelas'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs font-bold text-gray-700">
+                    <span className="font-semibold text-gray-500">Bulan & Tahun:</span>
+                    <span className="text-slate-900">
+                      {startDateStr ? format(parseISO(startDateStr), 'MMMM yyyy') : '-'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs font-bold text-gray-700">
+                    <span className="font-semibold text-gray-500">Hari Kerja Aplikasi:</span>
+                    <span className="text-emerald-700 font-extrabold">{workdays.length} Hari Aktif</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Uploaded File Metadata */}
+              <div className="bg-emerald-50/15 rounded-2xl p-4 border border-emerald-100 shadow-sm">
+                <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest block mb-2">DETAIL FILE EXCEL / CSV</span>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-xs font-bold text-gray-700">
+                    <span className="font-semibold text-gray-500">Nama File:</span>
+                    <span className="text-emerald-950 font-extrabold truncate max-w-[180px]" title={uploadedFile?.name}>
+                      {uploadedFile?.name}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs font-bold text-gray-700">
+                    <span className="font-semibold text-gray-500">Kelas di File:</span>
+                    <span className="text-emerald-900 uppercase font-bold">
+                      {previewStats.classNameFromFile || '-'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs font-bold text-gray-700">
+                    <span className="font-semibold text-gray-500">Kolom Terdeteksi:</span>
+                    <span className="text-emerald-900 font-bold">{previewStats.dayColsCount} Kolom Hari (DAY)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Validation Alerts / Analysis */}
+            {parsedMatrix && (
+              <div className="space-y-3.5">
+                <div className="bg-gray-50 rounded-2xl border border-gray-150 p-4.5">
+                  <h4 className="text-[11px] font-black text-gray-800 uppercase tracking-wide mb-2.5 flex items-center gap-1.5">
+                    <span className="w-1.5 h-3 bg-emerald-500 rounded-sm"></span>
+                    Ringkasan Hasil Analisis Data
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3.5">
+                    <div className="bg-white rounded-xl border border-gray-100 p-3 flex flex-col justify-between shadow-sm">
+                      <span className="text-[10px] font-bold text-gray-500">Siswa Roster Cocok</span>
+                      <span className="text-lg font-black text-emerald-600 mt-0.5">
+                        {previewStats.matchedStudentsCount} / {previewStats.studentRowsCount}
+                      </span>
+                    </div>
+                    <div className="bg-white rounded-xl border border-gray-100 p-3 flex flex-col justify-between shadow-sm">
+                      <span className="text-[10px] font-bold text-gray-500">Nilai Tidak Valid</span>
+                      <span className="text-lg font-black text-red-600 mt-0.5">
+                        {previewStats.invalidGradesCount} Sel
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sub-warnings: Unmatched students */}
+                {previewStats.unmatchedStudents.length > 0 && (
+                  <div className="bg-rose-50 rounded-2xl border border-rose-150 p-4 flex gap-3 text-rose-900 items-start">
+                    <AlertTriangle size={16} className="text-rose-600 shrink-0 mt-0.5" />
+                    <div className="text-[11px] text-rose-800 font-semibold w-full">
+                      <span className="font-black text-rose-950 uppercase block mb-1">
+                        Siswa Tidak Cocok Dengan Roster Kelas ({previewStats.unmatchedStudents.length})
+                      </span>
+                      <p className="font-medium text-[10.5px] leading-relaxed text-rose-700">
+                        Nama-nama di bawah ini ada di file tetapi tidak terdaftar di daftar murid kelas pilihan Anda di sistem Lumina. Siswa ini akan diabaikan secara otomatis:
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 mt-2 max-h-24 overflow-y-auto pr-1">
+                        {previewStats.unmatchedStudents.map((name, i) => (
+                          <span key={i} className="bg-rose-100/80 border border-rose-200 text-rose-900 px-2 py-0.5 rounded-lg text-[9.5px] font-extrabold">
+                            {name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Warning and information description */}
+                <div className="bg-sky-50 rounded-2xl border border-sky-150 p-4 flex gap-3 text-sky-900 items-start">
+                  <Info size={16} className="text-sky-600 shrink-0 mt-0.5" />
+                  <div className="text-[10.5px] text-sky-800 font-semibold leading-relaxed">
+                    <span className="font-black text-sky-950 uppercase block mb-0.5">Informasi Pemetaan Kolom:</span>
+                    Sistem akan memetakan data `DAY 1` sampai `DAY 20` dari file ke {workdays.length} rentang hari kerja aktif di aplikasi secara berurutan. Format evaluasi standar (BB, MB, BSH, BSB, Absen) akan otomatis disaring.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex justify-end gap-3 pt-3 border-t border-gray-100">
+              <button 
+                type="button"
+                onClick={() => {
+                  setIsUploadModalOpen(false);
+                  setUploadedFile(null);
+                  setParsedMatrix(null);
+                }}
+                className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-2xl text-xs font-black uppercase tracking-wider transition active:scale-95 cursor-pointer"
+              >
+                Batal
+              </button>
+              <button 
+                type="button"
+                onClick={handleImportApply}
+                disabled={!parsedMatrix}
+                className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 shadow-md shadow-emerald-600/10 transition active:scale-95 cursor-pointer"
+              >
+                <Check size={14} className="stroke-[3]" />
+                Terapkan ke Grid Tabel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {isReviewing ? (
-        /* Preview / Validation View */
         <div className="space-y-6 animate-fade-in">
           {/* Preview Warning & Success Info */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className={cn("grid grid-cols-1 gap-4", invalidEntriesCount > 0 ? "md:grid-cols-4" : "md:grid-cols-3")}>
             <div className="bg-emerald-50 border border-emerald-250 p-4 rounded-2xl flex items-start gap-3">
               <CheckCircle2 className="text-emerald-600 mt-0.5 shrink-0" size={16} />
               <div>
@@ -883,6 +1327,18 @@ export default function ObservationTableImporter({ classes = [], initialClassId 
                 </p>
               </div>
             </div>
+
+            {invalidEntriesCount > 0 && (
+              <div className="bg-rose-50 border border-rose-250 p-4 rounded-2xl flex items-start gap-3">
+                <AlertCircle className="text-rose-600 mt-0.5 shrink-0" size={16} />
+                <div>
+                  <h5 className="text-xs font-black text-rose-900 uppercase">Nilai Tidak Valid</h5>
+                  <p className="text-[11px] text-rose-700 font-bold mt-1">
+                    Terdapat <strong>{invalidEntriesCount}</strong> sel mempunyai format tidak dikenal (dilewati otomatis).
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="bg-teal-50 rounded-2xl border border-teal-200/70 p-4 flex gap-3 text-teal-900 items-start shadow-sm shadow-teal-500/5">
@@ -1032,6 +1488,23 @@ export default function ObservationTableImporter({ classes = [], initialClassId 
               Sistem akan mendistribusikan baris pertama ke baris Sentra, baris kedua ke baris Domain, dan baris-baris siswa ke bawahnya secara instan!
             </div>
           </div>
+
+          {(totalWarningsCount > 0 || invalidEntriesCount > 0) && (
+            <div className="bg-rose-50 rounded-2xl border border-rose-250 p-4.5 flex gap-3 text-rose-900 items-start shadow-sm leading-relaxed animate-fade-in">
+              <AlertTriangle size={16} className="text-rose-700 shrink-0 mt-0.5" />
+              <div className="text-[11px] font-semibold text-rose-800 w-full">
+                <span className="font-extrabold text-rose-950 uppercase block mb-0.5">Peringatan Validasi Data (Validation Warning):</span>
+                <ul className="list-disc list-inside space-y-1 mt-1 font-medium">
+                  {totalWarningsCount > 0 && (
+                    <li>Terdapat <strong className="text-rose-950">{totalWarningsCount}</strong> baris siswa luar sistem (nama tidak cocok dengan daftar murid di database). Baris ini akan otomatis diabaikan saat penyimpanan.</li>
+                  )}
+                  {invalidEntriesCount > 0 && (
+                    <li>Terdapat <strong className="text-rose-950">{invalidEntriesCount}</strong> sel nilai evaluasi dengan format tidak valid (selain BB, MB, BSH, BSB, Absen, dll.). Sel ini tidak akan disimpan ke database.</li>
+                  )}
+                </ul>
+              </div>
+            </div>
+          )}
 
           <div className="bg-white rounded-3xl border border-gray-150 shadow-sm overflow-hidden flex flex-col">
             {/* Table Operations Row */}
