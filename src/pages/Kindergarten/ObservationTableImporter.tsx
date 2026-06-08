@@ -16,6 +16,7 @@ import { motion } from 'motion/react';
 
 interface ObservationTableImporterProps {
   classes?: any[];
+  students?: any[];
   initialClassId?: string;
   onImportSuccess?: () => void;
   onClose?: () => void;
@@ -227,42 +228,70 @@ const parseTabularData = (text: string): string[][] => {
   return rows.map(row => row.split('\t').map(sanitizeCell));
 };
 
+interface MatchResult {
+  student: any | null;
+  isAmbiguous: boolean;
+  candidates: any[];
+}
+
 // Helper to clean and sanitize student names for comparison
 const normalizeSearchName = (str: string): string => {
   return String(str || '')
-    .toLowerCase()
     .normalize('NFD')                     // Normalize unicode characters
     .replace(/[\u0300-\u036f]/g, '')     // Remove diacritics
+    .replace(/[\u200b-\u200d\uFEFF]/g, '') // Remove zero-width characters/invisible spaces
     .replace(/\u00a0/g, ' ')             // Convert non-breaking spaces
+    .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')        // Convert punctuation/special characters to spaces
     .replace(/\s+/g, ' ')                // Collapse whitespace
     .trim();
 };
 
-const robustMatchStudent = (nameVal: string, list: any[]): any | null => {
+const robustMatchStudent = (nameVal: string, list: any[]): MatchResult => {
   const val = normalizeSearchName(nameVal);
-  if (!val) return null;
+  if (!val) {
+    return { student: null, isAmbiguous: false, candidates: [] };
+  }
 
   // Avoid matching row headers (like "Sentra", "Domain", etc.) as system students
   if (val.includes('sentra') || val.includes('domain') || val.includes('perkembangan') || val.includes('activity')) {
-    return null;
+    return { student: null, isAmbiguous: false, candidates: [] };
   }
 
-  // 1. Attempt exact normalized name match
-  let matched = list.find(s => normalizeSearchName(s.name) === val || (s.nickName && normalizeSearchName(s.nickName) === val));
-  if (matched) return matched;
+  // 1. Exact normalized name match (Highest priority)
+  const exactNameMatches = list.filter(s => normalizeSearchName(s.name) === val);
+  if (exactNameMatches.length === 1) {
+    return { student: exactNameMatches[0], isAmbiguous: false, candidates: exactNameMatches };
+  } else if (exactNameMatches.length > 1) {
+    return { student: null, isAmbiguous: true, candidates: exactNameMatches };
+  }
 
-  // 2. Attempt contains normalized name match (one fully contains another)
-  matched = list.find(s => {
+  // 2. Exact nickname match (Priority 2)
+  const exactNickMatches = list.filter(s => s.nickName && normalizeSearchName(s.nickName) === val);
+  if (exactNickMatches.length === 1) {
+    return { student: exactNickMatches[0], isAmbiguous: false, candidates: exactNickMatches };
+  } else if (exactNickMatches.length > 1) {
+    return { student: null, isAmbiguous: true, candidates: exactNickMatches };
+  }
+
+  // 3. Contains-based normalized match (Fallback priority 3)
+  const containsMatches: any[] = [];
+  list.forEach(s => {
     const sName = normalizeSearchName(s.name);
     const sNick = s.nickName ? normalizeSearchName(s.nickName) : '';
-    return sName.includes(val) || val.includes(sName) || (sNick && (sNick.includes(val) || val.includes(sNick)));
+    if (sName.includes(val) || val.includes(sName) || (sNick && (sNick.includes(val) || val.includes(sNick)))) {
+      containsMatches.push(s);
+    }
   });
-  if (matched) return matched;
 
-  // 3. Token-based similarity search (weighted Jaccard index + partial token overlap)
-  let bestMatch: any = null;
-  let highestScore = 0;
+  if (containsMatches.length === 1) {
+    return { student: containsMatches[0], isAmbiguous: false, candidates: containsMatches };
+  } else if (containsMatches.length > 1) {
+    return { student: null, isAmbiguous: true, candidates: containsMatches };
+  }
+
+  // 4. Token-based similarity search (Fallback priority 4)
+  const scoredCandidates: { student: any; score: number }[] = [];
   
   list.forEach(s => {
     const sName = normalizeSearchName(s.name);
@@ -289,19 +318,27 @@ const robustMatchStudent = (nameVal: string, list: any[]): any | null => {
       // Combined weighted score favoring solid matches but flexible on extra/minor missing words
       const combinedScore = (jaccardScore * 0.4) + (overlapScore * 0.6);
       
-      if (combinedScore > highestScore) {
-        highestScore = combinedScore;
-        bestMatch = s;
+      if (combinedScore >= 0.5) {
+        scoredCandidates.push({ student: s, score: combinedScore });
       }
     }
   });
 
-  // If score passes a solid threshold, we match it!
-  if (highestScore >= 0.5 && bestMatch) {
-    return bestMatch;
+  if (scoredCandidates.length > 0) {
+    // Sort descending by score
+    scoredCandidates.sort((a, b) => b.score - a.score);
+    const highestScore = scoredCandidates[0].score;
+    // Collect candidates within 0.05 of the top score to check for close tie/ambiguity
+    const topMatches = scoredCandidates.filter(c => Math.abs(c.score - highestScore) <= 0.05);
+
+    if (topMatches.length === 1) {
+      return { student: topMatches[0].student, isAmbiguous: false, candidates: [topMatches[0].student] };
+    } else {
+      return { student: null, isAmbiguous: true, candidates: topMatches.map(c => c.student) };
+    }
   }
 
-  return null;
+  return { student: null, isAmbiguous: false, candidates: [] };
 };
 
 // Transform template format to internal grid data structure
@@ -338,8 +375,11 @@ const transformTemplateToGrid = (matrix: string[][]): string[][] => {
   return newGrid;
 };
 
-export default function ObservationTableImporter({ classes = [], initialClassId = 'ALL', onImportSuccess, onClose }: ObservationTableImporterProps) {
-  const systemStudents = React.useMemo(() => getStoredStudents(), []);
+export default function ObservationTableImporter({ classes = [], students = [], initialClassId = 'ALL', onImportSuccess, onClose }: ObservationTableImporterProps) {
+  const systemStudents = React.useMemo(() => {
+    if (students && students.length > 0) return students;
+    return getStoredStudents();
+  }, [students]);
   const [selectedClassId, setSelectedClassId] = React.useState<string>(initialClassId);
   
   // File Upload states and references
@@ -517,10 +557,19 @@ export default function ObservationTableImporter({ classes = [], initialClassId 
       return { matches: false, student: null, label: 'Header' };
     }
 
-    const student = robustMatchStudent(nameVal, systemStudents);
+    const matchRes = robustMatchStudent(nameVal, systemStudents);
 
-    if (student) {
-      return { matches: true, student, label: student.name };
+    if (matchRes.isAmbiguous) {
+      return { 
+        matches: false, 
+        student: null, 
+        label: `Ambigus (${matchRes.candidates.map(c => c.name).join(', ')})`,
+        isAmbiguous: true 
+      };
+    }
+
+    if (matchRes.student) {
+      return { matches: true, student: matchRes.student, label: matchRes.student.name };
     }
     return { matches: false, student: null, label: 'Luar Sistem (Dilewati)' };
   };
@@ -636,8 +685,9 @@ export default function ObservationTableImporter({ classes = [], initialClassId 
   };
 
   const resolveStudentInfoForClass = React.useCallback((nameVal: string, roster: any[]) => {
-    const student = robustMatchStudent(nameVal, roster);
-    if (student) return { matches: true, student, name: student.name };
+    const matchRes = robustMatchStudent(nameVal, roster);
+    if (matchRes.isAmbiguous) return { matches: false, student: null, name: 'Ambigus', isAmbiguous: true };
+    if (matchRes.student) return { matches: true, student: matchRes.student, name: matchRes.student.name };
     return { matches: false, student: null, name: '' };
   }, []);
 
@@ -659,6 +709,7 @@ export default function ObservationTableImporter({ classes = [], initialClassId 
         studentRowsCount: 0,
         dayColsCount: 0,
         unmatchedStudents: [] as string[],
+        ambiguousStudents: [] as string[],
         matchedStudentsCount: 0,
         invalidGradesCount: 0,
         firstThreeRows: [] as string[][],
@@ -678,6 +729,7 @@ export default function ObservationTableImporter({ classes = [], initialClassId 
     const studentRowsCount = studentRows.length;
 
     const unmatchedStudents: string[] = [];
+    const ambiguousStudents: string[] = [];
     let matchedStudentsCount = 0;
     let invalidGradesCount = 0;
 
@@ -688,6 +740,8 @@ export default function ObservationTableImporter({ classes = [], initialClassId 
       const resolveRes = resolveStudentInfoForClass(nameVal, targetRoster);
       if (resolveRes.matches) {
         matchedStudentsCount++;
+      } else if (resolveRes.isAmbiguous) {
+        ambiguousStudents.push(nameVal);
       } else {
         unmatchedStudents.push(nameVal);
       }
@@ -710,6 +764,7 @@ export default function ObservationTableImporter({ classes = [], initialClassId 
       studentRowsCount,
       dayColsCount,
       unmatchedStudents,
+      ambiguousStudents,
       matchedStudentsCount,
       invalidGradesCount,
       firstThreeRows: studentRows.slice(0, 3),
@@ -1249,6 +1304,28 @@ export default function ObservationTableImporter({ classes = [], initialClassId 
                       <div className="flex flex-wrap gap-1.5 mt-2 max-h-24 overflow-y-auto pr-1">
                         {previewStats.unmatchedStudents.map((name, i) => (
                           <span key={i} className="bg-rose-100/80 border border-rose-200 text-rose-900 px-2 py-0.5 rounded-lg text-[9.5px] font-extrabold">
+                            {name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Sub-warnings: Ambiguous students */}
+                {previewStats.ambiguousStudents && previewStats.ambiguousStudents.length > 0 && (
+                  <div className="bg-amber-50 rounded-2xl border border-amber-150 p-4 flex gap-3 text-amber-900 items-start">
+                    <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                    <div className="text-[11px] text-amber-800 font-semibold w-full">
+                      <span className="font-black text-amber-950 uppercase block mb-1">
+                        Siswa Ambigus / Banyak Kemungkinan Kecocokan ({previewStats.ambiguousStudents.length})
+                      </span>
+                      <p className="font-medium text-[10.5px] leading-relaxed text-amber-700">
+                        Nama-nama di bawah ini menghasilkan beberapa kemungkinan kecocokan di kelas target Anda. Harap edit nama di baris file agar lebih spesifik:
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 mt-2 max-h-24 overflow-y-auto pr-1">
+                        {previewStats.ambiguousStudents.map((name, i) => (
+                          <span key={i} className="bg-amber-100/80 border border-amber-200 text-amber-900 px-2 py-0.5 rounded-lg text-[9.5px] font-extrabold">
                             {name}
                           </span>
                         ))}

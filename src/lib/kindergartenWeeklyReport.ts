@@ -29,6 +29,7 @@ export interface KGStudent {
   name: string;
   nickName: string;
   ageGroup: 'TK_A' | 'TK_B';
+  classId?: string;
 }
 
 export const getStoredStudents = (): KGStudent[] => {
@@ -73,6 +74,7 @@ export const getStoredStudents = (): KGStudent[] => {
           id: String(item.id || ''),
           name: String(item.name || ''),
           nickName: String(item.nickName || ''),
+          classId: item.classId ? String(item.classId) : undefined,
           ageGroup: (item.ageGroup === 'TK_B' ? 'TK_B' : 'TK_A') as 'TK_A' | 'TK_B'
         }));
       }

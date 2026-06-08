@@ -841,6 +841,7 @@ export default function Observation() {
         </div>
         <ObservationBulkPeriodImport 
           classes={classes}
+          students={students}
           initialClassId={selectedClassId}
           onClose={() => setIsImportOpen(false)}
           onImportSuccess={() => {

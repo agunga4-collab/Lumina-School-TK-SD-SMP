@@ -3,12 +3,13 @@ import ObservationTableImporter from './ObservationTableImporter';
 
 interface ObservationBulkPeriodImportProps {
   classes?: any[];
+  students?: any[];
   initialClassId?: string;
   onImportSuccess?: () => void;
   onClose?: () => void;
 }
 
-export default function ObservationBulkPeriodImport({ classes = [], initialClassId = 'ALL', onImportSuccess, onClose }: ObservationBulkPeriodImportProps) {
+export default function ObservationBulkPeriodImport({ classes = [], students = [], initialClassId = 'ALL', onImportSuccess, onClose }: ObservationBulkPeriodImportProps) {
   return (
     <div className="bg-white rounded-[2.5rem] p-6 border border-gray-150 shadow-sm animate-fade-in text-gray-900">
       <div className="mb-6 pb-4 border-b border-gray-100 flex items-center justify-between">
@@ -22,6 +23,7 @@ export default function ObservationBulkPeriodImport({ classes = [], initialClass
 
       <ObservationTableImporter 
         classes={classes}
+        students={students}
         initialClassId={initialClassId}
         onImportSuccess={onImportSuccess} 
         onClose={onClose} 
