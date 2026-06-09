@@ -506,14 +506,29 @@ export default function AttendanceEmotionalChecklist() {
     const hasPanda = (str: string) => str.includes('panda');
     const hasCaterpillar = (str: string) => str.includes('caterpillar');
     const hasButterfly = (str: string) => str.includes('butterfly');
+    const hasCenderawasih = (str: string) => str.includes('cenderawasih');
+    const hasElang = (str: string) => str.includes('elang');
+    const hasKakatua = (str: string) => str.includes('kakatua');
+    const hasBadak = (str: string) => str.includes('badak');
+    const hasKomodo = (str: string) => str.includes('komodo');
+    const hasTapir = (str: string) => str.includes('tapir');
     
     if (hasKoala(normS) && hasKoala(normName)) return true;
     if (hasPanda(normS) && hasPanda(normName)) return true;
     if (hasCaterpillar(normS) && hasCaterpillar(normName)) return true;
     if (hasButterfly(normS) && hasButterfly(normName)) return true;
+    if (hasCenderawasih(normS) && hasCenderawasih(normName)) return true;
+    if (hasElang(normS) && hasElang(normName)) return true;
+    if (hasKakatua(normS) && hasKakatua(normName)) return true;
+    if (hasBadak(normS) && hasBadak(normName)) return true;
+    if (hasKomodo(normS) && hasKomodo(normName)) return true;
+    if (hasTapir(normS) && hasTapir(normName)) return true;
 
-    // Prevent generic "tka" from loosely matching specific sub-classes like "tkakoala" / "tkapanda"
-    const specificClassWords = ['koala', 'panda', 'caterpillar', 'butterfly'];
+    // Prevent generic "tka" from loosely matching specific sub-classes
+    const specificClassWords = [
+      'koala', 'panda', 'caterpillar', 'butterfly',
+      'cenderawasih', 'elang', 'kakatua', 'badak', 'komodo', 'tapir'
+    ];
     const hasSpecS = specificClassWords.some(w => normS.includes(w));
     const hasSpecAct = specificClassWords.some(w => normId.includes(w) || normName.includes(w));
     

@@ -97,14 +97,29 @@ const isStudentInClass = (studClassId: string, activeClassObj: { id: string; nam
   const hasPanda = (str: string) => str.includes('panda');
   const hasCaterpillar = (str: string) => str.includes('caterpillar');
   const hasButterfly = (str: string) => str.includes('butterfly');
+  const hasCenderawasih = (str: string) => str.includes('cenderawasih');
+  const hasElang = (str: string) => str.includes('elang');
+  const hasKakatua = (str: string) => str.includes('kakatua');
+  const hasBadak = (str: string) => str.includes('badak');
+  const hasKomodo = (str: string) => str.includes('komodo');
+  const hasTapir = (str: string) => str.includes('tapir');
   
   if (hasKoala(normS) && hasKoala(normName)) return true;
   if (hasPanda(normS) && hasPanda(normName)) return true;
   if (hasCaterpillar(normS) && hasCaterpillar(normName)) return true;
   if (hasButterfly(normS) && hasButterfly(normName)) return true;
+  if (hasCenderawasih(normS) && hasCenderawasih(normName)) return true;
+  if (hasElang(normS) && hasElang(normName)) return true;
+  if (hasKakatua(normS) && hasKakatua(normName)) return true;
+  if (hasBadak(normS) && hasBadak(normName)) return true;
+  if (hasKomodo(normS) && hasKomodo(normName)) return true;
+  if (hasTapir(normS) && hasTapir(normName)) return true;
 
-  // Prevent generic "tka" from loosely matching specific sub-classes like "tkakoala" / "tkapanda"
-  const specificClassWords = ['koala', 'panda', 'caterpillar', 'butterfly'];
+  // Prevent generic "tka" from loosely matching specific sub-classes
+  const specificClassWords = [
+    'koala', 'panda', 'caterpillar', 'butterfly',
+    'cenderawasih', 'elang', 'kakatua', 'badak', 'komodo', 'tapir'
+  ];
   const hasSpecS = specificClassWords.some(w => normS.includes(w));
   const hasSpecAct = specificClassWords.some(w => normId.includes(w) || normName.includes(w));
   
@@ -547,33 +562,6 @@ export default function ObservationTableImporter({ classes = [], students = [], 
     );
   };
 
-  // Student name matching resolution helper
-  const resolveStudentInfo = (nameVal: string) => {
-    const val = String(nameVal || '').trim().toLowerCase();
-    if (!val) return { matches: false, student: null, label: 'Kosong' };
-
-    // Avoid matching row headers (like "Sentra", "Domain", etc.) as system students
-    if (val.includes('sentra') || val.includes('domain') || val.includes('perkembangan') || val.includes('activity')) {
-      return { matches: false, student: null, label: 'Header' };
-    }
-
-    const matchRes = robustMatchStudent(nameVal, systemStudents);
-
-    if (matchRes.isAmbiguous) {
-      return { 
-        matches: false, 
-        student: null, 
-        label: `Ambigus (${matchRes.candidates.map(c => c.name).join(', ')})`,
-        isAmbiguous: true 
-      };
-    }
-
-    if (matchRes.student) {
-      return { matches: true, student: matchRes.student, label: matchRes.student.name };
-    }
-    return { matches: false, student: null, label: 'Luar Sistem (Dilewati)' };
-  };
-
   // Paste handler supporting full grid distribution
   const handlePaste = (e: React.ClipboardEvent, startRow: number, startCol: number) => {
     e.preventDefault();
@@ -700,6 +688,33 @@ export default function ObservationTableImporter({ classes = [], students = [], 
     if (!currentClassObj) return [];
     return systemStudents.filter(s => isStudentInClass(s.classId || '', currentClassObj));
   }, [selectedClassId, currentClassObj, systemStudents]);
+
+  // Student name matching resolution helper
+  const resolveStudentInfo = React.useCallback((nameVal: string) => {
+    const val = String(nameVal || '').trim().toLowerCase();
+    if (!val) return { matches: false, student: null, label: 'Kosong' };
+
+    // Avoid matching row headers (like "Sentra", "Domain", etc.) as system students
+    if (val.includes('sentra') || val.includes('domain') || val.includes('perkembangan') || val.includes('activity')) {
+      return { matches: false, student: null, label: 'Header' };
+    }
+
+    const matchRes = robustMatchStudent(nameVal, targetRoster);
+
+    if (matchRes.isAmbiguous) {
+      return { 
+        matches: false, 
+        student: null, 
+        label: `Ambigus (${matchRes.candidates.map(c => c.name).join(', ')})`,
+        isAmbiguous: true 
+      };
+    }
+
+    if (matchRes.student) {
+      return { matches: true, student: matchRes.student, label: matchRes.student.name };
+    }
+    return { matches: false, student: null, label: 'Luar Sistem (Dilewati)' };
+  }, [targetRoster]);
 
   const previewStats = React.useMemo(() => {
     if (!parsedMatrix || parsedMatrix.length < 4) {
