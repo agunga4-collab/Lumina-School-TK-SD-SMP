@@ -1251,7 +1251,7 @@ export default function Observation() {
                       <textarea 
                         rows={2}
                         className="w-full bg-gray-50 border border-gray-100 rounded-xl p-3 text-xs outline-none focus:ring-1 focus:ring-emerald-400 focus:bg-white transition-all text-gray-700 font-medium placeholder:italic"
-                        placeholder={`Tulis momen spesifik mengenai perilaku ${student.name.split(' ')[0]} terkait ${currentDomainObj?.label}...`}
+                        placeholder={`Tulis momen spesifik mengenai perilaku ${((student.name || "Ananda") + "").split(' ')[0]} terkait ${currentDomainObj?.label}...`}
                         value={obs.notes}
                         onChange={(e) => updateStudentField(student.id, 'notes', e.target.value)}
                       />

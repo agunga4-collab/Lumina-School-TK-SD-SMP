@@ -100,7 +100,7 @@ export default function LuminaHome() {
                           : "bg-white/5 text-blue-100 border-white/10 hover:bg-white/10"
                       )}
                     >
-                      {student.name.split(' ')[0]}
+                      {((student.name || student.fullName || student.displayName || "Ananda") + "").split(' ')[0]}
                     </button>
                   ))}
                </div>

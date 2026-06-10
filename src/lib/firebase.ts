@@ -935,7 +935,12 @@ export async function getStudentById(id: string): Promise<Student | null> {
     // 1. Try "students" collection
     const docSnap = await getDoc(doc(db, 'students', id));
     if (docSnap.exists()) {
-      return { id: docSnap.id, ...docSnap.data() } as Student;
+      const rawData = docSnap.data();
+      return { 
+        id: docSnap.id, 
+        ...rawData,
+        name: rawData.name || rawData.fullName || rawData.displayName || "Ananda"
+      } as Student;
     }
 
     // 2. Try "roleInvites" collection (as document ID)

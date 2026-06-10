@@ -111,7 +111,7 @@ export default function ParentDashboard() {
                         : "text-gray-400 hover:text-gray-600"
                     )}
                   >
-                    {student.name.split(' ')[0]}
+                    {((student.name || student.fullName || student.displayName || "Ananda") + "").split(' ')[0]}
                   </button>
                 ))}
              </div>
