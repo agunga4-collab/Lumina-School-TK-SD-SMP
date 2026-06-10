@@ -1187,12 +1187,61 @@ export async function deleteSEActivity(id: string): Promise<void> {
 
 export async function getParentStudentLinks(parentId: string): Promise<ParentStudentLink | null> {
   try {
-    const docSnap = await getDoc(doc(db, 'parentStudentLinks', parentId));
+    const parentIdClean = parentId.toLowerCase().trim();
+    const studentIdsSet = new Set<string>();
+
+    // 1. Try to get parent direct ID link doc in parentStudentLinks
+    const docSnap = await getDoc(doc(db, 'parentStudentLinks', parentIdClean));
     if (docSnap.exists()) {
-      return docSnap.data() as ParentStudentLink;
+      const data = docSnap.data();
+      if (Array.isArray(data.studentIds)) {
+        data.studentIds.forEach(id => studentIdsSet.add(id));
+      }
     }
+
+    // 2. Try to query parentStudentLinks collection for where parentEmail === parentId
+    const linksQuery = query(collection(db, 'parentStudentLinks'), where('parentEmail', '==', parentIdClean));
+    const linksSnap = await getDocs(linksQuery);
+    linksSnap.docs.forEach(d => {
+      const data = d.data();
+      if (data.studentId) studentIdsSet.add(data.studentId);
+      if (Array.isArray(data.studentIds)) {
+        data.studentIds.forEach(id => studentIdsSet.add(id));
+      }
+    });
+
+    // 3. Fallback: Check the parent's user profile in 'users' collection
+    const usersQuery = query(collection(db, 'users'), where('email', '==', parentIdClean), where('role', '==', 'PARENT'));
+    const usersSnap = await getDocs(usersQuery);
+    if (!usersSnap.empty) {
+      const userData = usersSnap.docs[0].data();
+      if (Array.isArray(userData.linkedStudents)) {
+        userData.linkedStudents.forEach(id => studentIdsSet.add(id));
+      }
+    }
+
+    // 4. Fallback: Check roleInvites
+    const invitesQuery = query(collection(db, 'roleInvites'), where('email', '==', parentIdClean), where('role', '==', 'PARENT'));
+    const invitesSnap = await getDocs(invitesQuery);
+    if (!invitesSnap.empty) {
+      const inviteData = invitesSnap.docs[0].data();
+      if (Array.isArray(inviteData.linkedStudents)) {
+        inviteData.linkedStudents.forEach(id => studentIdsSet.add(id));
+      }
+    }
+
+    if (studentIdsSet.size > 0) {
+      return {
+        parentId: parentIdClean,
+        studentIds: Array.from(studentIdsSet),
+        createdBy: 'system_sync_and_fallback',
+        createdAt: Date.now()
+      };
+    }
+
     return null;
   } catch (err: any) {
+    console.error("[getParentStudentLinks] Error retrieving parent-student links for:", parentId, err);
     handleFirestoreError(err, 'get', `parentStudentLinks/${parentId}`);
   }
 }

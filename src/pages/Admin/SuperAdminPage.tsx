@@ -1288,6 +1288,16 @@ export default function SuperAdminPage() {
     );
   }, [invites, classes, pendingUsers]);
 
+  const studentIdToUnitId = React.useMemo(() => {
+    const map: Record<string, string> = {};
+    invites.forEach((i) => {
+      if (i.role === "STUDENT" && i.luminaId) {
+        map[i.luminaId] = i.unitId;
+      }
+    });
+    return map;
+  }, [invites]);
+
   const filteredInvites = invites.filter((i) => {
     const matchesSearch =
       i.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -1295,7 +1305,9 @@ export default function SuperAdminPage() {
       (i.luminaId &&
         i.luminaId.toLowerCase().includes(searchTerm.toLowerCase()));
 
-    const matchesUnit = selectedUnit === "ALL" || i.unitId === selectedUnit;
+    const matchesUnit = selectedUnit === "ALL" || 
+      i.unitId === selectedUnit || 
+      (i.role === "PARENT" && Array.isArray(i.linkedStudents) && i.linkedStudents.some(sid => studentIdToUnitId[sid] === selectedUnit));
 
     if (activeTab === "STAFF") {
       return (
@@ -1308,7 +1320,15 @@ export default function SuperAdminPage() {
           "TEACHER",
           "BK_MENTOR",
           "STAFF",
-        ].includes(i.role)
+          "PROFILE_TEACHER",
+        ].includes(i.role) || (matchesSearch && matchesUnit && [
+          "SUPER_ADMIN",
+          "HEAD_UNIT",
+          "HEAD_JUNIOR",
+          "TEACHER",
+          "BK_MENTOR",
+          "STAFF",
+        ].includes(i.role))
       );
     }
     if (activeTab === "STUDENT") {
@@ -1408,8 +1428,11 @@ export default function SuperAdminPage() {
     ).length,
     PARENT: invites.filter(
       (i) =>
-        (selectedUnit === "ALL" || i.unitId === selectedUnit) &&
-        i.role === "PARENT",
+        i.role === "PARENT" &&
+        (selectedUnit === "ALL" ||
+          i.unitId === selectedUnit ||
+          (Array.isArray(i.linkedStudents) &&
+            i.linkedStudents.some((sid) => studentIdToUnitId[sid] === selectedUnit))),
     ).length,
     CLASSES: classes.filter(
       (c) => selectedUnit === "ALL" || c.unitId === selectedUnit,
@@ -3059,7 +3082,27 @@ export default function SuperAdminPage() {
                         )}
 
                         <td className="px-6 py-6 text-center text-[10px] font-black text-gray-400 uppercase italic">
-                          {invite.unitId}
+                          {invite.role === "PARENT" ? (
+                            <div className="flex flex-col gap-1 items-center justify-center max-w-[120px] mx-auto">
+                              {Array.from(new Set([
+                                invite.unitId,
+                                ...(invite.linkedStudents || []).map(sid => studentIdToUnitId[sid]).filter(Boolean)
+                              ])).map(unit => (
+                                <span key={unit} className={cn(
+                                  "px-1.5 py-0.5 text-[8px] font-black rounded uppercase tracking-tighter leading-none whitespace-nowrap",
+                                  unit === "KINDERGARTEN" 
+                                    ? "bg-teal-50 text-teal-700 border border-teal-100" 
+                                    : unit === "ELEMENTARY" 
+                                      ? "bg-amber-50 text-amber-700 border border-amber-100" 
+                                      : "bg-indigo-50 text-indigo-700 border border-indigo-100"
+                                )}>
+                                  {unit === "KINDERGARTEN" ? "KINDERGARTEN" : unit === "ELEMENTARY" ? "ELEMENTARY" : "JUNIOR HIGH"}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            invite.unitId
+                          )}
                         </td>
                         <td className="px-8 py-6">
                           <span
