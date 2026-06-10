@@ -11,8 +11,13 @@ import {
   DEFAULT_STUDENTS, 
   aggregateKGWeeklyReportForPeriod, 
   formatDateToKey, 
-  getMonday 
+  getMonday,
+  getStoredStudents,
+  saveStoredStudents
 } from '../../lib/kindergartenWeeklyReport';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../../lib/firebase';
+import { useAcademicYear } from '../../context/AcademicYearContext';
 
 // Define draft key generator
 export function getSummaryKey(studentId: string, startDate: string, endDate: string): string {
@@ -21,6 +26,202 @@ export function getSummaryKey(studentId: string, startDate: string, endDate: str
 
 export default function WeeklySummary() {
   const navigate = useNavigate();
+  const { activeYear } = useAcademicYear();
+
+  // Class Selection states
+  const [classes, setClasses] = React.useState<any[]>([]);
+  const [selectedClassId, setSelectedClassId] = React.useState<string>('');
+  const [students, setStudents] = React.useState<any[]>(() => DEFAULT_STUDENTS);
+  const [isLoadingClasses, setIsLoadingClasses] = React.useState(true);
+
+  // Helper mapping helper logic from Observation.tsx
+  const isStudentInClass = (studClassId: string, activeClassObj: { id: string; name: string }) => {
+    const sClass = (studClassId || '').trim().toLowerCase();
+    const actId = (activeClassObj.id || '').trim().toLowerCase();
+    const actName = (activeClassObj.name || '').trim().toLowerCase();
+    
+    if (!sClass) return false;
+    if (sClass === actId || sClass === actName) return true;
+    
+    const norm = (str: string) => str.replace(/[\s\-_]+/g, '').toLowerCase();
+    const normS = norm(sClass);
+    const normId = norm(actId);
+    const normName = norm(actName);
+    
+    if (normS === normName || normS === normId) return true;
+    
+    const hasKoala = (str: string) => str.includes('koala');
+    const hasPanda = (str: string) => str.includes('panda');
+    const hasCaterpillar = (str: string) => str.includes('caterpillar');
+    const hasButterfly = (str: string) => str.includes('butterfly');
+    const hasCenderawasih = (str: string) => str.includes('cenderawasih');
+    const hasElang = (str: string) => str.includes('elang');
+    const hasKakatua = (str: string) => str.includes('kakatua');
+    const hasBadak = (str: string) => str.includes('badak');
+    const hasKomodo = (str: string) => str.includes('komodo');
+    const hasTapir = (str: string) => str.includes('tapir');
+    
+    if (hasKoala(normS) && hasKoala(normName)) return true;
+    if (hasPanda(normS) && hasPanda(normName)) return true;
+    if (hasCaterpillar(normS) && hasCaterpillar(normName)) return true;
+    if (hasButterfly(normS) && hasButterfly(normName)) return true;
+    if (hasCenderawasih(normS) && hasCenderawasih(normName)) return true;
+    if (hasElang(normS) && hasElang(normName)) return true;
+    if (hasKakatua(normS) && hasKakatua(normName)) return true;
+    if (hasBadak(normS) && hasBadak(normName)) return true;
+    if (hasKomodo(normS) && hasKomodo(normName)) return true;
+    if (hasTapir(normS) && hasTapir(normName)) return true;
+
+    const specificClassWords = [
+      'koala', 'panda', 'caterpillar', 'butterfly',
+      'cenderawasih', 'elang', 'kakatua', 'badak', 'komodo', 'tapir'
+    ];
+    const hasSpecS = specificClassWords.some(w => normS.includes(w));
+    const hasSpecAct = specificClassWords.some(w => normId.includes(w) || normName.includes(w));
+    
+    if (hasSpecAct && !hasSpecS) {
+      return false;
+    }
+    
+    if (normId.includes(normS) || normS.includes(normId)) return true;
+    
+    return false;
+  };
+
+  // Load students and classes from Firestore
+  React.useEffect(() => {
+    async function loadKindergartenData() {
+      try {
+        setIsLoadingClasses(true);
+        console.log('Loading Kindergarten data from Firestore for year:', activeYear);
+        
+        const qClasses = query(
+          collection(db, 'classes'),
+          where('unitId', '==', 'KINDERGARTEN'),
+          where('academicYear', '==', activeYear)
+        );
+        const classesSnap = await getDocs(qClasses).catch(e => {
+          console.warn('Classes query failed:', e);
+          return { docs: [] };
+        });
+
+        const fetchedClasses = classesSnap.docs.map(docSnap => {
+          const data = docSnap.data();
+          return {
+            id: docSnap.id,
+            name: data.name,
+            grade: data.grade,
+            unitId: data.unitId,
+            academicYear: data.academicYear
+          };
+        }).sort((a, b) => a.name.localeCompare(b.name));
+
+        setClasses(fetchedClasses);
+        if (fetchedClasses.length > 0) {
+          setSelectedClassId(fetchedClasses[0].id);
+        }
+
+        const qStudents = query(
+          collection(db, 'students'),
+          where('unitId', '==', 'KINDERGARTEN')
+        );
+        
+        const qInvites = query(
+          collection(db, 'roleInvites'),
+          where('role', '==', 'STUDENT'),
+          where('unitId', '==', 'KINDERGARTEN')
+        );
+
+        const qEnrollments = query(
+          collection(db, 'enrollments'),
+          where('unitId', '==', 'KINDERGARTEN'),
+          where('academicYear', '==', activeYear)
+        );
+
+        const [studentsSnap, invitesSnap, enrollmentsSnap] = await Promise.all([
+          getDocs(qStudents).catch(e => { console.warn('Students query failed:', e); return { docs: [] }; }),
+          getDocs(qInvites).catch(e => { console.warn('Invites query failed:', e); return { docs: [] }; }),
+          getDocs(qEnrollments).catch(e => { console.warn('Enrollments query failed:', e); return { docs: [] }; })
+        ]);
+
+        const enrollmentClassMap = new Map<string, string>();
+        enrollmentsSnap.docs.forEach(docSnap => {
+          const data = docSnap.data();
+          if (data.studentId && data.classId) {
+            enrollmentClassMap.set(data.studentId, data.classId);
+          }
+        });
+
+        const map = new Map<string, any>();
+
+        invitesSnap.docs.forEach(docSnap => {
+          const data = docSnap.data();
+          const studentId = data.luminaId || data.id || docSnap.id;
+          const classId = data.classId || data.jobTitle || '';
+          const ageGroup: 'TK_A' | 'TK_B' = (classId.toUpperCase().includes('TK_A') || classId.toUpperCase().includes('CATERPILLAR')) ? 'TK_A' : 'TK_B';
+          
+          if (studentId) {
+            map.set(studentId, {
+              id: studentId,
+              name: data.fullName || data.name || 'Siswa Tanpa Nama',
+              nickName: data.nickname || data.name?.split(' ')[0] || 'Siswa',
+              ageGroup: ageGroup,
+              classId: classId
+            });
+          }
+        });
+
+        studentsSnap.docs.forEach(docSnap => {
+          const data = docSnap.data();
+          
+          if (data.academicYear && data.academicYear !== activeYear) {
+            const isEnrolledInActiveYear = enrollmentsSnap.docs.some(eDoc => eDoc.data().studentId === docSnap.id);
+            if (!isEnrolledInActiveYear) {
+              return;
+            }
+          }
+          const studentId = data.luminaId || docSnap.id;
+          const classId = enrollmentClassMap.get(docSnap.id) || enrollmentClassMap.get(studentId) || enrollmentClassMap.get(data.luminaId || '') || data.classId || '';
+          const ageGroup: 'TK_A' | 'TK_B' = (classId.toUpperCase().includes('TK_A') || classId.toUpperCase().includes('CATERPILLAR')) ? 'TK_A' : 'TK_B';
+
+          const existing = map.get(studentId);
+          if (existing && existing.classId) {
+            map.set(studentId, {
+              ...existing,
+              name: existing.name || data.fullName || data.name || 'Siswa Tanpa Nama',
+              nickName: existing.nickName || data.nickname || data.nickName || data.fullName?.split(' ')[0] || 'Siswa'
+            });
+          } else {
+            map.set(studentId, {
+              id: studentId,
+              name: data.fullName || data.name || 'Siswa Tanpa Nama',
+              nickName: data.nickname || data.nickName || data.fullName?.split(' ')[0] || 'Siswa',
+              ageGroup: ageGroup,
+              classId: classId
+            });
+          }
+        });
+
+        const fetchedStudents = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+
+        if (fetchedStudents.length > 0) {
+          setStudents(fetchedStudents);
+          saveStoredStudents(fetchedStudents);
+        } else {
+          const local = getStoredStudents();
+          if (local && local.length > 0) {
+            setStudents(local);
+          }
+        }
+      } catch (err) {
+        console.error('Error loading Kindergarten students from Firestore:', err);
+      } finally {
+        setIsLoadingClasses(false);
+      }
+    }
+
+    loadKindergartenData();
+  }, [activeYear]);
 
   // 1. Period states - Default to current week Monday to Friday
   const [startDateStr, setStartDateStr] = React.useState<string>(() => {
@@ -33,6 +234,26 @@ export default function WeeklySummary() {
     fri.setDate(mon.getDate() + 4);
     return formatDateToKey(fri);
   });
+
+  const handleStartDateChange = (valStr: string) => {
+    if (!valStr) return;
+    const d = new Date(valStr);
+    const mon = getMonday(d);
+    const fri = new Date(mon);
+    fri.setDate(mon.getDate() + 4);
+    setStartDateStr(formatDateToKey(mon));
+    setEndDateStr(formatDateToKey(fri));
+  };
+
+  const handleEndDateChange = (valStr: string) => {
+    if (!valStr) return;
+    const d = new Date(valStr);
+    const mon = getMonday(d);
+    const fri = new Date(mon);
+    fri.setDate(mon.getDate() + 4);
+    setStartDateStr(formatDateToKey(mon));
+    setEndDateStr(formatDateToKey(fri));
+  };
 
   // Theme of the current period
   const [globalTheme, setGlobalTheme] = React.useState<string>('');
@@ -51,28 +272,48 @@ export default function WeeklySummary() {
   const [generatingSelId, setGeneratingSelId] = React.useState<string | null>(null);
   const [generatingWeeklyId, setGeneratingWeeklyId] = React.useState<string | null>(null);
 
-  // Batch actions loading states
-  const [isBatchDataLoading, setIsBatchDataLoading] = React.useState(false);
-  const [isBatchObsLoading, setIsBatchObsLoading] = React.useState(false);
-  const [isBatchAiSelLoading, setIsBatchAiSelLoading] = React.useState(false);
-  const [isBatchAiWeeklyLoading, setIsBatchAiWeeklyLoading] = React.useState(false);
+  const activeClassObj = classes.find(c => c.id === selectedClassId);
+  const filteredStudents = React.useMemo(() => {
+    if (!selectedClassId || !activeClassObj) {
+      return students;
+    }
+    return students.filter(student => isStudentInClass(student.classId, activeClassObj));
+  }, [students, selectedClassId, activeClassObj]);
 
   // Load drafts for all students on start or when date / reload counter changes
   const loadAllStudentDrafts = React.useCallback(() => {
     const drafts: Record<string, any> = {};
-    DEFAULT_STUDENTS.forEach(s => {
+    students.forEach(s => {
+      // 1. Calculate live properties on the fly from attendance checklists and observations
+      const liveData = aggregateKGWeeklyReportForPeriod(s.id, startDateStr, endDateStr);
+
+      // 2. Load draft/saved info if it exists
       const storageKey = getSummaryKey(s.id, startDateStr, endDateStr);
       const saved = localStorage.getItem(storageKey);
+      
+      let savedParsed = {};
       if (saved) {
         try {
-          drafts[s.id] = JSON.parse(saved);
+          savedParsed = JSON.parse(saved);
         } catch (e) {
           console.error(`Error parsing draft for ${s.name}:`, e);
         }
       }
+
+      // Merge them. The saved comments, custom theme etc, should OVERWRITE the live defaults.
+      // But live data (like attendanceSummary, weeklyObservationItems, groupedObservationSummary) should be fresh!
+      drafts[s.id] = {
+        ...liveData,
+        ...savedParsed,
+        // Make sure we carry forward the latest fresh attendance/observation stats
+        attendanceSummary: liveData.attendanceSummary,
+        weeklyObservationItems: liveData.weeklyObservationItems,
+        groupedObservationSummary: liveData.groupedObservationSummary,
+        dailySnapshots: liveData.dailySnapshots,
+      };
     });
     setStudentDrafts(drafts);
-  }, [startDateStr, endDateStr, reloadCounter]);
+  }, [students, startDateStr, endDateStr, reloadCounter]);
 
   React.useEffect(() => {
     loadAllStudentDrafts();
@@ -240,170 +481,9 @@ export default function WeeklySummary() {
     }
   };
 
-  // ----------------------------------------------------
-  // BATCH ACTIONS (GENERATE ALL DATAS & OBSERVATIONS)
-  // ----------------------------------------------------
-
-  const handleBatchAttendanceData = () => {
-    setIsBatchDataLoading(true);
-    try {
-      DEFAULT_STUDENTS.forEach(student => {
-        // Aggregate actual data in current range
-        const aggregated = aggregateKGWeeklyReportForPeriod(student.id, startDateStr, endDateStr);
-        const existing = studentDrafts[student.id] || {};
-        
-        // Save keeping existing comments
-        const finalPayload = {
-          ...aggregated,
-          theme: existing.theme || globalTheme,
-          attendanceCommentAiDraft: existing.attendanceCommentAiDraft || '',
-          attendanceCommentTeacherEdited: existing.attendanceCommentTeacherEdited || '',
-          observationCommentAiDraft: existing.observationCommentAiDraft || '',
-          observationCommentTeacherEdited: existing.observationCommentTeacherEdited || '',
-          updatedAt: Date.now()
-        };
-
-        localStorage.setItem(getSummaryKey(student.id, startDateStr, endDateStr), JSON.stringify(finalPayload));
-      });
-      
-      setReloadCounter(prev => prev + 1);
-      toast.success('Berhasil merekap matriks Kehadiran & Emosi untuk semua siswa! 📊');
-    } catch (e: any) {
-      toast.error(`Gagal melakukan rekap data: ${e.message}`);
-    } finally {
-      setIsBatchDataLoading(false);
-    }
-  };
-
-  const handleBatchObservationData = () => {
-    setIsBatchObsLoading(true);
-    try {
-      DEFAULT_STUDENTS.forEach(student => {
-        const aggregated = aggregateKGWeeklyReportForPeriod(student.id, startDateStr, endDateStr);
-        const existing = studentDrafts[student.id] || {};
-
-        const finalPayload = {
-          ...aggregated,
-          theme: existing.theme || globalTheme,
-          attendanceCommentAiDraft: existing.attendanceCommentAiDraft || '',
-          attendanceCommentTeacherEdited: existing.attendanceCommentTeacherEdited || '',
-          observationCommentAiDraft: existing.observationCommentAiDraft || '',
-          observationCommentTeacherEdited: existing.observationCommentTeacherEdited || '',
-          updatedAt: Date.now()
-        };
-
-        localStorage.setItem(getSummaryKey(student.id, startDateStr, endDateStr), JSON.stringify(finalPayload));
-      });
-
-      setReloadCounter(prev => prev + 1);
-      toast.success('Berhasil mendata asupan Observasi & Dokumentasi semua siswa! 📸');
-    } catch (e: any) {
-      toast.error(`Gagal merangkum observasi: ${e.message}`);
-    } finally {
-      setIsBatchObsLoading(false);
-    }
-  };
-
-  // Safe Optionals: Batch AI Comment trigger
-  const handleBatchGenerateSelComments = async () => {
-    setIsBatchAiSelLoading(true);
-    toast.info('Memulai batch AI - Sosial Emosional untuk semua siswa...');
-    
-    try {
-      for (const student of DEFAULT_STUDENTS) {
-        let currentDraft = studentDrafts[student.id];
-        if (!currentDraft) {
-          currentDraft = aggregateKGWeeklyReportForPeriod(student.id, startDateStr, endDateStr);
-        }
-
-        try {
-          const response = await fetch('/api/kindergarten/generate-sel-comment', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              studentName: student.name,
-              nickName: student.nickName,
-              ageGroup: currentDraft.ageGroup || 'TK_A',
-              attendanceSummary: currentDraft.attendanceSummary
-            })
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            const text = data.text || '';
-            const key = getSummaryKey(student.id, startDateStr, endDateStr);
-            localStorage.setItem(key, JSON.stringify({
-              ...currentDraft,
-              theme: currentDraft.theme || globalTheme,
-              attendanceCommentAiDraft: text,
-              attendanceCommentTeacherEdited: text,
-              updatedAt: Date.now()
-            }));
-          }
-        } catch (err) {
-          console.error(`Batch AI error for ${student.name}:`, err);
-        }
-      }
-      setReloadCounter(prev => prev + 1);
-      toast.success('Batch AI komentar emosional anak berhasil diselesaikan! 💖');
-    } catch (e: any) {
-      toast.error('Gagal memproses batch komentar SEL');
-    } finally {
-      setIsBatchAiSelLoading(false);
-    }
-  };
-
-  const handleBatchGenerateWeeklyComments = async () => {
-    setIsBatchAiWeeklyLoading(true);
-    toast.info('Memulai batch AI - Laporan Narasi 6 Domain untuk semua siswa...');
-
-    try {
-      for (const student of DEFAULT_STUDENTS) {
-        let currentDraft = studentDrafts[student.id];
-        if (!currentDraft) {
-          currentDraft = aggregateKGWeeklyReportForPeriod(student.id, startDateStr, endDateStr);
-        }
-
-        try {
-          const response = await fetch('/api/kindergarten/generate-weekly-comment', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              studentName: student.name,
-              nickName: student.nickName,
-              ageGroup: currentDraft.ageGroup || 'TK_A',
-              observationSummary: currentDraft.groupedObservationSummary || []
-            })
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            const text = data.text || '';
-            const key = getSummaryKey(student.id, startDateStr, endDateStr);
-            localStorage.setItem(key, JSON.stringify({
-              ...currentDraft,
-              theme: currentDraft.theme || globalTheme,
-              observationCommentAiDraft: text,
-              observationCommentTeacherEdited: text,
-              updatedAt: Date.now()
-            }));
-          }
-        } catch (err) {
-          console.error(`Batch AI error for ${student.name}:`, err);
-        }
-      }
-      setReloadCounter(prev => prev + 1);
-      toast.success('Batch AI deskripsi observasi anak berhasil diselesaikan! 🌸');
-    } catch (e: any) {
-      toast.error('Gagal memproses batch laporan narasi');
-    } finally {
-      setIsBatchAiWeeklyLoading(false);
-    }
-  };
-
   const handleClearAllPeriodDrafts = () => {
     if (window.confirm('Apakah Anda yakin ingin menghapus seluruh draft summary pada periode ini?')) {
-      DEFAULT_STUDENTS.forEach(student => {
+      students.forEach(student => {
         const key = getSummaryKey(student.id, startDateStr, endDateStr);
         localStorage.removeItem(key);
       });
@@ -423,9 +503,6 @@ export default function WeeklySummary() {
             <span className="text-xs text-emerald-100 font-bold">Lumina Kindergarten Workspace</span>
           </div>
           <h1 className="text-2xl font-black tracking-tight">Weekly Summary</h1>
-          <p className="text-sm text-emerald-50 max-w-xl">
-            Tabel rekapitulasi data mingguan guru. Jalankan batch aggregasi data kehadiran / observasi, terbitkan rancangan tulisan AI, dan simpan draf dengan aman.
-          </p>
         </div>
 
         <button 
@@ -447,14 +524,14 @@ export default function WeeklySummary() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 bg-white p-6 rounded-[2rem] border border-gray-150 shadow-sm">
         
         {/* Date Filters */}
-        <div className="lg:col-span-5 space-y-1.5">
+        <div className="lg:col-span-4 space-y-1.5">
           <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Pilih Rentang Tanggal Pengamatan (Periode)</label>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 font-sans">
             <div className="flex-1 relative">
               <input 
                 type="date"
                 value={startDateStr}
-                onChange={(e) => setStartDateStr(e.target.value)}
+                onChange={(e) => handleStartDateChange(e.target.value)}
                 className="w-full bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-1 focus:ring-emerald-400 text-gray-700"
               />
             </div>
@@ -463,15 +540,18 @@ export default function WeeklySummary() {
               <input 
                 type="date"
                 value={endDateStr}
-                onChange={(e) => setEndDateStr(e.target.value)}
+                onChange={(e) => handleEndDateChange(e.target.value)}
                 className="w-full bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-1 focus:ring-emerald-400 text-gray-700"
               />
             </div>
           </div>
+          <span className="text-[10px] text-gray-400 leading-tight block">
+            * Rentang otomatis dikunci Senin s/d Jumat untuk mencegah tabrakan data.
+          </span>
         </div>
 
         {/* Global Monthly Theme */}
-        <div className="lg:col-span-5 space-y-1.5">
+        <div className="lg:col-span-4 space-y-1.5">
           <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Tema Pembelajaran Bulanan</label>
           <input 
             type="text" 
@@ -482,11 +562,38 @@ export default function WeeklySummary() {
           />
         </div>
 
-        {/* Refresh tool / utility */}
-        <div className="lg:col-span-2 flex items-end gap-2">
+        {/* Class Selection Dropdown */}
+        <div className="lg:col-span-4 space-y-1.5">
+          <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Pilih Kelas</label>
+          <div className="relative">
+            <select
+              value={selectedClassId}
+              onChange={(e) => setSelectedClassId(e.target.value)}
+              className="w-full bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-1 focus:ring-emerald-400 text-gray-700 appearance-none cursor-pointer"
+            >
+              {classes.map((cls) => {
+                const classStudentsCount = students.filter(s => isStudentInClass(s.classId, cls)).length;
+                return (
+                  <option key={cls.id} value={cls.id}>
+                    {cls.name} ({classStudentsCount} Siswa)
+                  </option>
+                );
+              })}
+              {classes.length === 0 && (
+                <option value="">{isLoadingClasses ? "Memuat Kelas..." : "Tidak ada kelas aktif"}</option>
+              )}
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-500">
+              <ChevronDown size={14} />
+            </div>
+          </div>
+        </div>
+
+        {/* Utilities block */}
+        <div className="lg:col-span-12 flex justify-end gap-2 pt-3 border-t border-gray-100">
           <button 
             onClick={() => setReloadCounter(p => p + 1)}
-            className="w-full flex justify-center items-center gap-1.5 border border-gray-200 hover:bg-gray-50 text-gray-600 font-bold text-xs py-2.5 rounded-xl transition-all cursor-pointer"
+            className="flex items-center gap-1.5 border border-gray-200 hover:bg-gray-50 text-gray-600 font-bold text-xs py-2 px-4 rounded-xl transition-all cursor-pointer"
             title="Muat ulang matriks dari database log lokal"
           >
             <RefreshCw size={13} />
@@ -494,64 +601,14 @@ export default function WeeklySummary() {
           </button>
           <button 
             onClick={handleClearAllPeriodDrafts}
-            className="p-2.5 text-red-500 hover:bg-red-50 border border-red-100 rounded-xl transition-all cursor-pointer"
+            className="flex items-center gap-1.5 text-red-500 hover:bg-red-50 border border-red-150 font-bold text-xs py-2 px-4 rounded-xl transition-all cursor-pointer"
             title="Reset Draft Periode"
           >
-            <Trash2 size={15} />
+            <Trash2 size={13} />
+            Reset Draf
           </button>
         </div>
 
-      </div>
-
-      {/* 3. BATCH PROCESSORS SECTION */}
-      <div className="bg-emerald-50/40 border border-emerald-100 rounded-[2rem] p-6 space-y-4 shadow-sm">
-        <h2 className="font-extrabold text-sm text-emerald-900 tracking-tight flex items-center gap-2">
-          <Sparkles size={16} className="text-emerald-600" />
-          Proses Batch Laporan Mingguan Siswa
-        </h2>
-        
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          
-          <button
-            onClick={handleBatchAttendanceData}
-            disabled={isBatchDataLoading}
-            className="flex items-center justify-center gap-2 bg-white hover:bg-emerald-50 text-emerald-800 font-black text-xs px-4 py-3 rounded-2xl border border-emerald-150 shadow-sm transition-all disabled:opacity-50 cursor-pointer"
-          >
-            {isBatchDataLoading ? <Loader2 className="animate-spin text-emerald-600" size={14} /> : <Smile className="text-emerald-600" size={14} />}
-            1. Rekap Data Kehadiran / Emosi
-          </button>
-
-          <button
-            onClick={handleBatchObservationData}
-            disabled={isBatchObsLoading}
-            className="flex items-center justify-center gap-2 bg-white hover:bg-emerald-50 text-emerald-800 font-black text-xs px-4 py-3 rounded-2xl border border-emerald-150 shadow-sm transition-all disabled:opacity-50 cursor-pointer"
-          >
-            {isBatchObsLoading ? <Loader2 className="animate-spin text-emerald-600" size={14} /> : <BookOpen className="text-emerald-600" size={14} />}
-            2. Rekap Log Observasi Harian
-          </button>
-
-          <button
-            onClick={handleBatchGenerateSelComments}
-            disabled={isBatchAiSelLoading}
-            className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-black text-xs px-4 py-3 rounded-2xl shadow-sm transition-all disabled:opacity-60 cursor-pointer"
-          >
-            {isBatchAiSelLoading ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
-            3. AI Batch Sosial-Emosional
-          </button>
-
-          <button
-            onClick={handleBatchGenerateWeeklyComments}
-            disabled={isBatchAiWeeklyLoading}
-            className="flex items-center justify-center gap-2 bg-gradient-to-r from-teal-600/90 to-emerald-700 hover:from-teal-700 hover:to-emerald-850 text-white font-black text-xs px-4 py-3 rounded-2xl shadow-sm transition-all disabled:opacity-60 cursor-pointer"
-          >
-            {isBatchAiWeeklyLoading ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
-            4. AI Batch Deskripsi Observasi
-          </button>
-
-        </div>
-        <p className="text-[10px] text-gray-500 font-semibold tracking-wide block uppercase leading-none">
-          *Catatan: Pemicu batch #1 dan #2 akan menghitung dan menyegarkan angka statistik mentah secara instan dari database checklists dan observations.
-        </p>
       </div>
 
       {/* 4. MAIN STUDENTS WORKSPACE TABLE */}
@@ -572,9 +629,24 @@ export default function WeeklySummary() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-150">
-              {DEFAULT_STUDENTS.map((student, index) => {
-                const draft = studentDrafts[student.id];
-                const isExpanded = expandedStudentId === student.id;
+              {filteredStudents.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-12 text-center text-gray-400 font-bold bg-white">
+                    <div className="flex flex-col items-center justify-center gap-2.5">
+                      <AlertCircle className="text-gray-300" size={32} />
+                      <div>
+                        <p className="text-xs font-extrabold text-gray-700 uppercase tracking-wider">Tidak Ada Siswa Terdaftar</p>
+                        <p className="text-[11px] text-gray-400 font-medium mt-1">
+                          Belum ada siswa yang masuk ke dalam kategori kelas ini di kelompok belajar Lumina Kindergarten.
+                        </p>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                filteredStudents.map((student, index) => {
+                  const draft = studentDrafts[student.id];
+                  const isExpanded = expandedStudentId === student.id;
 
                 // Extract or default values
                 const att = draft?.attendanceSummary || { happy: 0, sad: 0, angry: 0, ok: 0, sick: 0, izin: 0, noNews: 0 };
@@ -892,7 +964,7 @@ export default function WeeklySummary() {
 
                   </React.Fragment>
                 );
-              })}
+              }))}
             </tbody>
           </table>
         </div>

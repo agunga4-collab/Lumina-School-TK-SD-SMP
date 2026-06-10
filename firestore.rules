@@ -313,6 +313,11 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow write: if isAdmin();
     }
+
+    match /published_kg_reports/{reportId} {
+      allow read: if isActive();
+      allow write: if isJuniorHighStaff() || isAdmin() || isTeacher();
+    }
   }
 }
 

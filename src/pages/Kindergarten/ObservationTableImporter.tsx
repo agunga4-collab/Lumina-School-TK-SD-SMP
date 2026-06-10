@@ -356,6 +356,19 @@ const robustMatchStudent = (nameVal: string, list: any[]): MatchResult => {
   return { student: null, isAmbiguous: false, candidates: [] };
 };
 
+const isRowConfig = (row: string[]): boolean => {
+  if (!row) return false;
+  for (let c = 1; c < Math.min(21, row.length); c++) {
+    const val = row[c];
+    if (val && val.trim()) {
+      if (findSentraInLine(val) !== '' || findDomainInLine(val) !== '') {
+        return true;
+      }
+    }
+  }
+  return false;
+};
+
 // Transform template format to internal grid data structure
 const transformTemplateToGrid = (matrix: string[][]): string[][] => {
   if (matrix.length < 4) return matrix;
@@ -368,49 +381,61 @@ const transformTemplateToGrid = (matrix: string[][]): string[][] => {
 
   if (!isTemplate) return matrix;
 
-  const firstCellRow2 = String(matrix[2]?.[0] || '').toLowerCase().trim();
-  const hasThreeHeaders = 
-    firstCellRow2.includes('domain') || 
-    firstCellRow2.includes('perkembangan') || 
-    firstCellRow2.includes('sentra') || 
-    firstCellRow2.includes('activity');
+  // Let's identify the config rows
+  const configRowIndices: number[] = [];
+  for (let r = 0; r < Math.min(5, matrix.length); r++) {
+    if (isRowConfig(matrix[r])) {
+      configRowIndices.push(r);
+    }
+  }
 
   const reqHeight = Math.max(32, matrix.length - 1);
   const newGrid: string[][] = Array.from({ length: reqHeight }, () => new Array(21).fill(''));
   newGrid[0][0] = 'Sentra / Activity';
   newGrid[1][0] = 'Domain Perkembangan';
 
-  if (hasThreeHeaders) {
-    // Map Sentra and Domain rows (Rows 1 and 2 of template -> Rows 0 and 1 of internal grid)
+  if (configRowIndices.length >= 2) {
+    // 3-header template (Row at indices configRowIndices[0] and configRowIndices[1] contain configurations)
+    const sentraRowIdx = configRowIndices[0];
+    const domainRowIdx = configRowIndices[1];
+    
     for (let c = 1; c < 21; c++) {
-      newGrid[0][c] = matrix[1]?.[c] || '';
-      newGrid[1][c] = matrix[2]?.[c] || '';
+      newGrid[0][c] = matrix[sentraRowIdx]?.[c] || '';
+      newGrid[1][c] = matrix[domainRowIdx]?.[c] || '';
     }
 
-    // Map Student rows from index 3 onward of template -> Row index 2 onward of internal grid
-    for (let r = 3; r < matrix.length; r++) {
-      const gridR = r - 1; // Row index in gridData (3 -> 2 in gridData)
-      newGrid[gridR][0] = matrix[r][0] || '';
-      for (let c = 1; c < 21; c++) {
-        newGrid[gridR][c] = matrix[r][c] || '';
+    const studentsStartIdx = domainRowIdx + 1;
+    for (let r = studentsStartIdx; r < matrix.length; r++) {
+      const gridR = r - (studentsStartIdx - 2); // Map student rows to start from index 2 in newGrid
+      if (gridR >= 0 && gridR < reqHeight) {
+        newGrid[gridR][0] = matrix[r][0] || '';
+        for (let c = 1; c < 21; c++) {
+          newGrid[gridR][c] = matrix[r][c] || '';
+        }
       }
     }
   } else {
-    // 2-header template (Row 0 is Day, Row 1 is Config, Row 2 is Student 1)
+    // 2-header template (Single config row at configRowIndices[0] if exists, else fallback to 1)
+    const configRowIdx = configRowIndices.length === 1 ? configRowIndices[0] : 1;
+    
     for (let c = 1; c < 21; c++) {
-      const val = matrix[1]?.[c] || '';
+      const val = matrix[configRowIdx]?.[c] || '';
       newGrid[0][c] = val;
       newGrid[1][c] = val;
     }
 
-    // Map Student rows from index 2 of template -> Row index 2 of internal grid
-    for (let r = 2; r < matrix.length; r++) {
-      newGrid[r][0] = matrix[r][0] || '';
-      for (let c = 1; c < 21; c++) {
-        newGrid[r][c] = matrix[r][c] || '';
+    const studentsStartIdx = configRowIdx + 1;
+    for (let r = studentsStartIdx; r < matrix.length; r++) {
+      const gridR = r - (studentsStartIdx - 2);
+      if (gridR >= 0 && gridR < reqHeight) {
+        newGrid[gridR][0] = matrix[r][0] || '';
+        for (let c = 1; c < 21; c++) {
+          newGrid[gridR][c] = matrix[r][c] || '';
+        }
       }
     }
   }
+
   return newGrid;
 };
 
@@ -764,14 +789,15 @@ export default function ObservationTableImporter({ classes = [], students = [], 
       if (firstRow?.[c]) dayColsCount++;
     }
 
-    const firstCellRow2 = String(parsedMatrix[2]?.[0] || '').toLowerCase().trim();
-    const hasThreeHeaders = 
-      firstCellRow2.includes('domain') || 
-      firstCellRow2.includes('perkembangan') || 
-      firstCellRow2.includes('sentra') || 
-      firstCellRow2.includes('activity');
+    // Let's identify the config rows to compute header offset and slicing point
+    const configRowIndices: number[] = [];
+    for (let r = 0; r < Math.min(5, parsedMatrix.length); r++) {
+      if (isRowConfig(parsedMatrix[r])) {
+        configRowIndices.push(r);
+      }
+    }
 
-    const headerOffset = hasThreeHeaders ? 3 : 2;
+    const headerOffset = configRowIndices.length >= 2 ? configRowIndices[1] + 1 : (configRowIndices.length === 1 ? configRowIndices[0] + 1 : 2);
     const studentRows = parsedMatrix.slice(headerOffset);
     const studentRowsCount = studentRows.length;
 

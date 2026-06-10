@@ -16,8 +16,9 @@ import { NotificationBell } from './NotificationBell';
 import { useBehaviorAlerts } from '../hooks/useBehaviorAlerts';
 import LuminaChat from './LuminaChat';
 import { collection, query, where, onSnapshot, doc, getDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, getParentStudentLinks, getStudentById } from '../lib/firebase';
 import { toast } from 'sonner';
+import type { Student } from '../types';
 
 export function Layout() {
   const { profile, signOut } = useAuth();
@@ -89,12 +90,46 @@ export function Layout() {
 
   const currentUser = profile;
 
-  // Use state for activeUnit so Super Admin can switch
+  // Use state for activeUnit so Super Admin and Parents can switch
   const [activeUnit, setActiveUnit] = React.useState<UnitType | null>(null);
+  const [parentAccessibleUnits, setParentAccessibleUnits] = React.useState<UnitType[]>([]);
+  const [parentStudents, setParentStudents] = React.useState<Student[]>([]);
 
-  // Automatically bypass unit selector for students and parents
+  // Fetch linked students to determine accessible units and filter students for parents
   React.useEffect(() => {
-    if (currentUser && (currentUser.role === 'STUDENT' || currentUser.role === 'PARENT')) {
+    if (currentUser && currentUser.role === 'PARENT') {
+      const getParentUnitsAndStudents = async () => {
+        try {
+          const linkData = await getParentStudentLinks(currentUser.email);
+          if (linkData && linkData.studentIds.length > 0) {
+            const studentPromises = linkData.studentIds.map(id => getStudentById(id));
+            const studentData = await Promise.all(studentPromises);
+            const validStudents = studentData.filter(s => s !== null) as Student[];
+            
+            setParentStudents(validStudents);
+            
+            // Extract unique units
+            const units = Array.from(new Set(validStudents.map(s => (s.unitId || s.currentUnit) as UnitType).filter(Boolean)));
+            setParentAccessibleUnits(units);
+          } else {
+            if (currentUser.unitId) {
+              setParentAccessibleUnits([currentUser.unitId as UnitType]);
+            }
+          }
+        } catch (err) {
+          console.error("Error retrieving parent students and units:", err);
+          if (currentUser.unitId) {
+            setParentAccessibleUnits([currentUser.unitId as UnitType]);
+          }
+        }
+      };
+      getParentUnitsAndStudents();
+    }
+  }, [currentUser]);
+
+  // Automatically bypass unit selector ONLY for students
+  React.useEffect(() => {
+    if (currentUser && currentUser.role === 'STUDENT') {
       setActiveUnit((currentUser.unitId as UnitType) || 'JUNIOR_HIGH');
     }
   }, [currentUser]);
@@ -103,6 +138,19 @@ export function Layout() {
   const [selectedStudentId, setSelectedStudentId] = React.useState<string | null>(
     currentUser?.linkedStudents?.[0] || null
   );
+
+  // Automatically select the first student belonging to the selected unit when a parent switches unit
+  React.useEffect(() => {
+    if (currentUser?.role === 'PARENT' && activeUnit && parentStudents.length > 0) {
+      const studentsInUnit = parentStudents.filter(s => (s.unitId || s.currentUnit) === activeUnit);
+      if (studentsInUnit.length > 0) {
+        const currentSelectedInUnit = studentsInUnit.some(s => s.id === selectedStudentId);
+        if (!currentSelectedInUnit) {
+          setSelectedStudentId(studentsInUnit[0].id);
+        }
+      }
+    }
+  }, [activeUnit, parentStudents, currentUser, selectedStudentId]);
 
   if (!currentUser) return null;
 
@@ -137,6 +185,11 @@ export function Layout() {
     if (user.role === 'SUPER_ADMIN') {
       return ['KINDERGARTEN', 'ELEMENTARY', 'JUNIOR_HIGH'];
     }
+    if (user.role === 'PARENT') {
+      return parentAccessibleUnits.length > 0 
+        ? parentAccessibleUnits 
+        : [user.unitId as UnitType || 'JUNIOR_HIGH'];
+    }
     if (Array.isArray(user.assignedUnits) && user.assignedUnits.length > 0) {
       return user.assignedUnits as UnitType[];
     }
@@ -160,8 +213,8 @@ export function Layout() {
     setActiveUnit(selectedUnit);
   };
 
-  // If activeUnit is not chosen yet, show unit selection dashboard for staff users
-  if (!activeUnit && currentUser.role !== 'STUDENT' && currentUser.role !== 'PARENT') {
+  // If activeUnit is not chosen yet, show unit selection dashboard for staff and parents
+  if (!activeUnit && currentUser.role !== 'STUDENT') {
     const accessibleUnits = getAccessibleUnits(currentUser);
 
     return (
@@ -447,7 +500,7 @@ export function Layout() {
                 <p className="text-[10px] lg:text-[11px] font-medium text-gray-500">Beranda Portal Lumina</p>
              </div>
 
-             {currentUser.role !== 'STUDENT' && currentUser.role !== 'PARENT' && (
+             {currentUser.role !== 'STUDENT' && (
                 <div className="ml-4 pl-4 border-l border-gray-100">
                    <button 
                      onClick={() => setActiveUnit(null)}

@@ -3,7 +3,8 @@ import {
   onAuthStateChanged, 
   signInWithPopup, 
   signOut as firebaseSignOut,
-  User 
+  User,
+  GoogleAuthProvider
 } from 'firebase/auth';
 import { auth, googleProvider, getUserProfile, createUserOnboarding } from '../lib/firebase';
 import { User as AppUser } from '../types';
@@ -16,6 +17,8 @@ interface AuthContextType {
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  googleAccessToken: string | null;
+  getGoogleDriveToken: () => Promise<string | null>;
 }
 
 const AuthContext = React.createContext<AuthContextType | undefined>(undefined);
@@ -25,6 +28,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = React.useState<AppUser | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [googleAccessToken, setGoogleAccessToken] = React.useState<string | null>(null);
+
+  const getGoogleDriveToken = async (): Promise<string | null> => {
+    if (googleAccessToken) return googleAccessToken;
+
+    const driveProvider = new GoogleAuthProvider();
+    driveProvider.addScope('https://www.googleapis.com/auth/drive');
+    driveProvider.addScope('https://www.googleapis.com/auth/drive.file');
+
+    try {
+      const result = await signInWithPopup(auth, driveProvider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        setGoogleAccessToken(credential.accessToken);
+        return credential.accessToken;
+      }
+      return null;
+    } catch (err: any) {
+      console.error("Failed to obtain Drive tokens:", err);
+      throw err;
+    }
+  };
 
   const refreshProfile = async () => {
     if (!user) return;
@@ -87,7 +112,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, error, signInWithGoogle, signOut, refreshProfile }}>
+    <AuthContext.Provider value={{ 
+      user, 
+      profile, 
+      loading, 
+      error, 
+      signInWithGoogle, 
+      signOut, 
+      refreshProfile, 
+      googleAccessToken, 
+      getGoogleDriveToken 
+    }}>
       {children}
     </AuthContext.Provider>
   );

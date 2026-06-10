@@ -14,7 +14,7 @@ import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
+import { html2canvasWithModernColors } from '../../lib/html2canvasPatch';
 
 interface StudentAggregatedData {
   id: string;
@@ -506,7 +506,7 @@ export default function AttendanceSummaryReport() {
     
     try {
       // Calculate optimized high density canvas
-      const canvas = await html2canvas(element, {
+      const canvas = await html2canvasWithModernColors(element, {
         scale: 2,
         useCORS: true,
         logging: false,

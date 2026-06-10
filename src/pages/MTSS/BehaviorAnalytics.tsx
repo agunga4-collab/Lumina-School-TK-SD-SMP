@@ -25,7 +25,7 @@ import { getBehaviorAnalyticsData, getTeachers } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { cn, formatDate } from '../../lib/utils';
 import { Link, useNavigate, useOutletContext } from 'react-router-dom';
-import html2canvas from 'html2canvas';
+import { html2canvasWithModernColors } from '../../lib/html2canvasPatch';
 import { jsPDF } from 'jspdf';
 
 // --- Constants ---
@@ -208,7 +208,7 @@ export default function BehaviorAnalytics() {
     const element = document.getElementById('analytics-dashboard-content');
     if (!element) return;
     
-    const canvas = await html2canvas(element, { scale: 1.5 });
+    const canvas = await html2canvasWithModernColors(element, { scale: 1.5 });
     const imgData = canvas.toDataURL('image/png');
     const pdf = new jsPDF('p', 'mm', 'a4');
     const imgProps = pdf.getImageProperties(imgData);

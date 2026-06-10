@@ -148,12 +148,19 @@ function Shortcut({ role, unit }: { role: UserRole; unit: UnitType }) {
   const shortcuts = [];
 
   if (isHead) {
-    shortcuts.push(
-      { label: 'Analisis Unit', icon: <LayoutDashboard size={20} />, to: unit === 'KINDERGARTEN' ? '/dashboard/head-kindy' : '/dashboard/head', color: 'bg-blue-50 text-blue-600' },
-      { label: 'MTSS Summary', icon: <BarChart3 size={20} />, to: '/mtss/cases', color: 'bg-purple-50 text-purple-600' },
-      { label: 'Passport Siswa', icon: <Map size={20} />, to: '/child/passport', color: 'bg-emerald-50 text-emerald-600' },
-      { label: 'Laporan Unit', icon: <BookOpen size={20} />, to: '/', color: 'bg-teal-50 text-teal-600' }
-    );
+    if (unit === 'KINDERGARTEN') {
+      shortcuts.push(
+        { label: 'Analisis Unit', icon: <LayoutDashboard size={20} />, to: '/dashboard/head-kindy', color: 'bg-blue-50 text-blue-600' },
+        { label: 'Passport Siswa', icon: <Map size={20} />, to: '/child/passport', color: 'bg-emerald-50 text-emerald-600' }
+      );
+    } else {
+      shortcuts.push(
+        { label: 'Analisis Unit', icon: <LayoutDashboard size={20} />, to: '/dashboard/head', color: 'bg-blue-50 text-blue-600' },
+        { label: 'MTSS Summary', icon: <BarChart3 size={20} />, to: '/mtss/cases', color: 'bg-purple-50 text-purple-600' },
+        { label: 'Passport Siswa', icon: <Map size={20} />, to: '/child/passport', color: 'bg-emerald-50 text-emerald-600' },
+        { label: 'Laporan Unit', icon: <BookOpen size={20} />, to: '/', color: 'bg-teal-50 text-teal-600' }
+      );
+    }
   } else if (isTeacher) {
     if (unit === 'KINDERGARTEN') {
       shortcuts.push(

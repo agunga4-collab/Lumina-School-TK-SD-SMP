@@ -2,19 +2,245 @@ import * as React from 'react';
 import { motion } from 'motion/react';
 import { 
   Smile, Meh, Frown, Angry, AlertCircle, Calendar, ChevronLeft, ChevronRight, 
-  Printer, BookOpen, Clock, Heart, ShieldAlert, FileText, ArrowRight, Sparkles, ChevronDown
+  Printer, BookOpen, Clock, Heart, ShieldAlert, FileText, ArrowRight, Sparkles, ChevronDown,
+  Loader2, CheckCircle2, FileDown, Trash2
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useNavigate } from 'react-router-dom';
 import { 
   DEFAULT_STUDENTS, 
   getMonday, 
-  formatDateToKey 
+  formatDateToKey,
+  getStoredStudents,
+  saveStoredStudents,
+  aggregateKGWeeklyReportForPeriod
 } from '../../lib/kindergartenWeeklyReport';
+import { collection, query, where, getDocs, addDoc, deleteDoc, doc } from 'firebase/firestore';
+import { db } from '../../lib/firebase';
+import { useAcademicYear } from '../../context/AcademicYearContext';
+import { useAuth } from '../../context/AuthContext';
+import { toast } from 'sonner';
+import { html2canvasWithModernColors } from '../../lib/html2canvasPatch';
+import { jsPDF } from 'jspdf';
 
 export default function WeeklyReview() {
   const navigate = useNavigate();
-  const [selectedStudentId, setSelectedStudentId] = React.useState<string>('K001');
+  const { activeYear } = useAcademicYear();
+  const { getGoogleDriveToken } = useAuth();
+
+  // Class Selection states
+  const [classes, setClasses] = React.useState<any[]>([]);
+  const [selectedClassId, setSelectedClassId] = React.useState<string>('');
+  const [students, setStudents] = React.useState<any[]>(() => DEFAULT_STUDENTS);
+  const [isLoadingClasses, setIsLoadingClasses] = React.useState(true);
+
+  // Helper mapping helper logic from Observation.tsx
+  const isStudentInClass = (studClassId: string, activeClassObj: { id: string; name: string }) => {
+    const sClass = (studClassId || '').trim().toLowerCase();
+    const actId = (activeClassObj.id || '').trim().toLowerCase();
+    const actName = (activeClassObj.name || '').trim().toLowerCase();
+    
+    if (!sClass) return false;
+    if (sClass === actId || sClass === actName) return true;
+    
+    const norm = (str: string) => str.replace(/[\s\-_]+/g, '').toLowerCase();
+    const normS = norm(sClass);
+    const normId = norm(actId);
+    const normName = norm(actName);
+    
+    if (normS === normName || normS === normId) return true;
+    
+    const hasKoala = (str: string) => str.includes('koala');
+    const hasPanda = (str: string) => str.includes('panda');
+    const hasCaterpillar = (str: string) => str.includes('caterpillar');
+    const hasButterfly = (str: string) => str.includes('butterfly');
+    const hasCenderawasih = (str: string) => str.includes('cenderawasih');
+    const hasElang = (str: string) => str.includes('elang');
+    const hasKakatua = (str: string) => str.includes('kakatua');
+    const hasBadak = (str: string) => str.includes('badak');
+    const hasKomodo = (str: string) => str.includes('komodo');
+    const hasTapir = (str: string) => str.includes('tapir');
+    
+    if (hasKoala(normS) && hasKoala(normName)) return true;
+    if (hasPanda(normS) && hasPanda(normName)) return true;
+    if (hasCaterpillar(normS) && hasCaterpillar(normName)) return true;
+    if (hasButterfly(normS) && hasButterfly(normName)) return true;
+    if (hasCenderawasih(normS) && hasCenderawasih(normName)) return true;
+    if (hasElang(normS) && hasElang(normName)) return true;
+    if (hasKakatua(normS) && hasKakatua(normName)) return true;
+    if (hasBadak(normS) && hasBadak(normName)) return true;
+    if (hasKomodo(normS) && hasKomodo(normName)) return true;
+    if (hasTapir(normS) && hasTapir(normName)) return true;
+
+    const specificClassWords = [
+      'koala', 'panda', 'caterpillar', 'butterfly',
+      'cenderawasih', 'elang', 'kakatua', 'badak', 'komodo', 'tapir'
+    ];
+    const hasSpecS = specificClassWords.some(w => normS.includes(w));
+    const hasSpecAct = specificClassWords.some(w => normId.includes(w) || normName.includes(w));
+    
+    if (hasSpecAct && !hasSpecS) {
+      return false;
+    }
+    
+    if (normId.includes(normS) || normS.includes(normId)) return true;
+    
+    return false;
+  };
+
+  // Load students and classes from Firestore
+  React.useEffect(() => {
+    async function loadKindergartenData() {
+      try {
+        setIsLoadingClasses(true);
+        console.log('Loading Kindergarten data from Firestore for year:', activeYear);
+        
+        const qClasses = query(
+          collection(db, 'classes'),
+          where('unitId', '==', 'KINDERGARTEN'),
+          where('academicYear', '==', activeYear)
+        );
+        const classesSnap = await getDocs(qClasses).catch(e => {
+          console.warn('Classes query failed:', e);
+          return { docs: [] };
+        });
+
+        const fetchedClasses = classesSnap.docs.map(docSnap => {
+          const data = docSnap.data();
+          return {
+            id: docSnap.id,
+            name: data.name,
+            grade: data.grade,
+            unitId: data.unitId,
+            academicYear: data.academicYear
+          };
+        }).sort((a, b) => a.name.localeCompare(b.name));
+
+        setClasses(fetchedClasses);
+        if (fetchedClasses.length > 0) {
+          setSelectedClassId(fetchedClasses[0].id);
+        }
+
+        const qStudents = query(
+          collection(db, 'students'),
+          where('unitId', '==', 'KINDERGARTEN')
+        );
+        
+        const qInvites = query(
+          collection(db, 'roleInvites'),
+          where('role', '==', 'STUDENT'),
+          where('unitId', '==', 'KINDERGARTEN')
+        );
+
+        const qEnrollments = query(
+          collection(db, 'enrollments'),
+          where('unitId', '==', 'KINDERGARTEN'),
+          where('academicYear', '==', activeYear)
+        );
+
+        const [studentsSnap, invitesSnap, enrollmentsSnap] = await Promise.all([
+          getDocs(qStudents).catch(e => { console.warn('Students query failed:', e); return { docs: [] }; }),
+          getDocs(qInvites).catch(e => { console.warn('Invites query failed:', e); return { docs: [] }; }),
+          getDocs(qEnrollments).catch(e => { console.warn('Enrollments query failed:', e); return { docs: [] }; })
+        ]);
+
+        const enrollmentClassMap = new Map<string, string>();
+        enrollmentsSnap.docs.forEach(docSnap => {
+          const data = docSnap.data();
+          if (data.studentId && data.classId) {
+            enrollmentClassMap.set(data.studentId, data.classId);
+          }
+        });
+
+        const map = new Map<string, any>();
+
+        invitesSnap.docs.forEach(docSnap => {
+          const data = docSnap.data();
+          const studentId = data.luminaId || data.id || docSnap.id;
+          const classId = data.classId || data.jobTitle || '';
+          const ageGroup: 'TK_A' | 'TK_B' = (classId.toUpperCase().includes('TK_A') || classId.toUpperCase().includes('CATERPILLAR')) ? 'TK_A' : 'TK_B';
+          
+          if (studentId) {
+            map.set(studentId, {
+              id: studentId,
+              name: data.fullName || data.name || 'Siswa Tanpa Nama',
+              nickName: data.nickname || data.name?.split(' ')[0] || 'Siswa',
+              ageGroup: ageGroup,
+              classId: classId
+            });
+          }
+        });
+
+        studentsSnap.docs.forEach(docSnap => {
+          const data = docSnap.data();
+          
+          if (data.academicYear && data.academicYear !== activeYear) {
+            const isEnrolledInActiveYear = enrollmentsSnap.docs.some(eDoc => eDoc.data().studentId === docSnap.id);
+            if (!isEnrolledInActiveYear) {
+              return;
+            }
+          }
+          const studentId = data.luminaId || docSnap.id;
+          const classId = enrollmentClassMap.get(docSnap.id) || enrollmentClassMap.get(studentId) || enrollmentClassMap.get(data.luminaId || '') || data.classId || '';
+          const ageGroup: 'TK_A' | 'TK_B' = (classId.toUpperCase().includes('TK_A') || classId.toUpperCase().includes('CATERPILLAR')) ? 'TK_A' : 'TK_B';
+
+          const existing = map.get(studentId);
+          if (existing && existing.classId) {
+            map.set(studentId, {
+              ...existing,
+              name: existing.name || data.fullName || data.name || 'Siswa Tanpa Nama',
+              nickName: existing.nickName || data.nickname || data.nickName || data.fullName?.split(' ')[0] || 'Siswa'
+            });
+          } else {
+            map.set(studentId, {
+              id: studentId,
+              name: data.fullName || data.name || 'Siswa Tanpa Nama',
+              nickName: data.nickname || data.nickName || data.fullName?.split(' ')[0] || 'Siswa',
+              ageGroup: ageGroup,
+              classId: classId
+            });
+          }
+        });
+
+        const fetchedStudents = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+
+        if (fetchedStudents.length > 0) {
+          setStudents(fetchedStudents);
+          saveStoredStudents(fetchedStudents);
+        } else {
+          const local = getStoredStudents();
+          if (local && local.length > 0) {
+            setStudents(local);
+          }
+        }
+      } catch (err) {
+        console.error('Error loading Kindergarten students from Firestore:', err);
+      } finally {
+        setIsLoadingClasses(false);
+      }
+    }
+
+    loadKindergartenData();
+  }, [activeYear]);
+
+  const activeClassObj = classes.find(c => c.id === selectedClassId);
+  const filteredStudents = React.useMemo(() => {
+    if (!selectedClassId || !activeClassObj) {
+      return students;
+    }
+    return students.filter(student => isStudentInClass(student.classId, activeClassObj));
+  }, [students, selectedClassId, activeClassObj]);
+
+  const [selectedStudentId, setSelectedStudentId] = React.useState<string>('');
+
+  React.useEffect(() => {
+    if (filteredStudents.length > 0) {
+      const exists = filteredStudents.some(s => s.id === selectedStudentId);
+      if (!exists) {
+        setSelectedStudentId(filteredStudents[0].id);
+      }
+    }
+  }, [filteredStudents, selectedStudentId]);
 
   // Load start and end date from sessionStorage or use current week's Mon-Fri
   const [startDateStr, setStartDateStr] = React.useState<string>(() => {
@@ -41,6 +267,26 @@ export default function WeeklyReview() {
     return localStorage.getItem('kg_teacher_nip') || '';
   });
 
+  const handleStartDateChange = (valStr: string) => {
+    if (!valStr) return;
+    const d = new Date(valStr);
+    const mon = getMonday(d);
+    const fri = new Date(mon);
+    fri.setDate(mon.getDate() + 4);
+    setStartDateStr(formatDateToKey(mon));
+    setEndDateStr(formatDateToKey(fri));
+  };
+
+  const handleEndDateChange = (valStr: string) => {
+    if (!valStr) return;
+    const d = new Date(valStr);
+    const mon = getMonday(d);
+    const fri = new Date(mon);
+    fri.setDate(mon.getDate() + 4);
+    setStartDateStr(formatDateToKey(mon));
+    setEndDateStr(formatDateToKey(fri));
+  };
+
   // Sync date ranges to sessionStorage when changed
   React.useEffect(() => {
     sessionStorage.setItem('kindy_report_start', startDateStr);
@@ -49,49 +295,100 @@ export default function WeeklyReview() {
 
   // Load the draft based on selected student and custom period
   React.useEffect(() => {
+    if (!selectedStudentId) {
+      setLoadedDraft(null);
+      return;
+    }
+
     // 1. Try to fetch from the standard dynamic date-range summary store
     const summaryKey = `kg_weekly_summary_${selectedStudentId}_${startDateStr}_${endDateStr}`;
     const savedSummary = localStorage.getItem(summaryKey);
 
+    let savedParsed: any = null;
     if (savedSummary) {
       try {
-        setLoadedDraft(JSON.parse(savedSummary));
-        return;
+        savedParsed = JSON.parse(savedSummary);
       } catch (e) {
         console.error('Error parsing loaded summary draft:', e);
       }
-    }
+    } else {
+      // 2. Backwards compatibility fallback strategy (using standard weekKey)
+      const mon = new Date(startDateStr);
+      const startMon = getMonday(mon);
+      const firstDay = new Date(startMon.getFullYear(), startMon.getMonth(), 1);
+      const firstMon = getMonday(firstDay);
+      const weekDiff = Math.floor((startMon.getTime() - firstMon.getTime()) / (7 * 24 * 60 * 60 * 1000));
+      const weekNumber = Math.max(1, weekDiff + 1);
+      const weekKey = `${startMon.getFullYear()}_W${weekNumber}`;
+      const legacyKey = `kg_weekly_report_${selectedStudentId}_${weekKey}`;
+      const savedLegacy = localStorage.getItem(legacyKey);
 
-    // 2. Backwards compatibility fallback strategy (using standard weekKey)
-    const mon = new Date(startDateStr);
-    const startMon = getMonday(mon);
-    const firstDay = new Date(startMon.getFullYear(), startMon.getMonth(), 1);
-    const firstMon = getMonday(firstDay);
-    const weekDiff = Math.floor((startMon.getTime() - firstMon.getTime()) / (7 * 24 * 60 * 60 * 1000));
-    const weekNumber = Math.max(1, weekDiff + 1);
-    const weekKey = `${startMon.getFullYear()}_W${weekNumber}`;
-    const legacyKey = `kg_weekly_report_${selectedStudentId}_${weekKey}`;
-    const savedLegacy = localStorage.getItem(legacyKey);
-
-    if (savedLegacy) {
-      try {
-        setLoadedDraft(JSON.parse(savedLegacy));
-        return;
-      } catch (e) {
-        console.error('Error parsing legacy draft:', e);
+      if (savedLegacy) {
+        try {
+          savedParsed = JSON.parse(savedLegacy);
+        } catch (e) {
+          console.error('Error parsing legacy draft:', e);
+        }
       }
     }
 
-    // No draft found
-    setLoadedDraft(null);
-  }, [selectedStudentId, startDateStr, endDateStr]);
+    // Always fetch latest real-time checklist and observation telemetry and merge
+    try {
+      const liveData = aggregateKGWeeklyReportForPeriod(selectedStudentId, startDateStr, endDateStr);
+      const studentObj = students.find(s => s.id === selectedStudentId);
+      
+      const merged = {
+        ...liveData,
+        ...savedParsed,
+        studentName: studentObj ? studentObj.name : (savedParsed?.studentName || liveData.studentName || 'Siswa'),
+        classGroup: activeClassObj ? activeClassObj.name : (savedParsed?.classGroup || liveData.classGroup || ''),
+        // Ensure live-aggregated statistics are always dynamically updated
+        attendanceSummary: liveData.attendanceSummary,
+        weeklyObservationItems: liveData.weeklyObservationItems,
+        groupedObservationSummary: liveData.groupedObservationSummary,
+        dailySnapshots: liveData.dailySnapshots,
+      };
+
+      setLoadedDraft(merged);
+    } catch (err) {
+      console.error("Error aggregating live data during render:", err);
+      if (savedParsed) {
+        setLoadedDraft(savedParsed);
+      } else {
+        setLoadedDraft(null);
+      }
+    }
+  }, [selectedStudentId, startDateStr, endDateStr, students, activeClassObj]);
+
+  const [publishedReports, setPublishedReports] = React.useState<any[]>([]);
+  const [isPublishing, setIsPublishing] = React.useState(false);
+
+  const fetchPublishedReports = React.useCallback(async () => {
+    try {
+      const q = query(
+        collection(db, 'published_kg_reports'),
+        where('academicYear', '==', activeYear)
+      );
+      const snap = await getDocs(q);
+      const list = snap.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...docSnap.data()
+      })).sort((a: any, b: any) => b.publishedAt - a.publishedAt);
+      setPublishedReports(list);
+    } catch (err) {
+      console.error("Error fetching published reports:", err);
+    }
+  }, [activeYear]);
+
+  React.useEffect(() => {
+    fetchPublishedReports();
+  }, [fetchPublishedReports]);
 
   const handlePrint = () => {
     window.print();
   };
 
   const handlePrevWeek = () => {
-    // Move both dates back by 7 days
     try {
       const s = new Date(startDateStr);
       const e = new Date(endDateStr);
@@ -105,7 +402,6 @@ export default function WeeklyReview() {
   };
 
   const handleNextWeek = () => {
-    // Move both dates forward by 7 days
     try {
       const s = new Date(startDateStr);
       const e = new Date(endDateStr);
@@ -118,10 +414,182 @@ export default function WeeklyReview() {
     }
   };
 
+  const handlePublish = async () => {
+    if (!loadedDraft) {
+      toast.error("Laporan mingguan siswa belum siap.");
+      return;
+    }
+    
+    setIsPublishing(true);
+    try {
+      // 1. Authorize list (opens Google Drive permissions popup if not loaded yet)
+      toast.loading("Menghubungkan ke Google Drive...", { id: "publish-kg" });
+      const token = await getGoogleDriveToken();
+      if (!token) {
+        toast.dismiss("publish-kg");
+        toast.error("Gagal mendapatkan akses Google Drive.");
+        setIsPublishing(false);
+        return;
+      }
+
+      // 2. Locate report container
+      toast.loading("Membuat file PDF dari laporan...", { id: "publish-kg" });
+      const element = document.getElementById("formal-weekly-report");
+      if (!element) {
+        toast.dismiss("publish-kg");
+        toast.error("Elemen laporan (#formal-weekly-report) tidak ditemukan.");
+        setIsPublishing(false);
+        return;
+      }
+
+      // 3. Render container to Canvas & PDF
+      const canvas = await html2canvasWithModernColors(element, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        onclone: (clonedDoc, clonedElement) => {
+          if (clonedElement) {
+            clonedElement.style.fontFamily = '"Inter", sans-serif';
+          }
+        }
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+      
+      const imgProps = pdf.getImageProperties(imgData);
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      const pdfBlob = pdf.output('blob');
+
+      // 4. Transform blob to base64
+      const getBase64 = (blob: Blob): Promise<string> => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(blob);
+          reader.onload = () => {
+            const base64String = (reader.result as string).split(',')[1];
+            resolve(base64String);
+          };
+          reader.onerror = error => reject(error);
+        });
+      };
+
+      const base64Data = await getBase64(pdfBlob);
+
+      // 5. Config Name: Periode - Nama Siswa - Nama Kelas - Weekly Report
+      const filename = `${startDateStr} s.d ${endDateStr} - ${loadedDraft.studentName} - ${activeClassObj?.name || 'Class'} - Weekly Report.pdf`;
+
+      toast.loading("Mengunggah PDF ke Shared Drive Sekolah...", { id: "publish-kg" });
+
+      const boundary = 'foo_bar_boundary';
+      const delimiter = `\r\n--${boundary}\r\n`;
+      const close_delim = `\r\n--${boundary}--`;
+
+      const metadata = {
+        name: filename,
+        mimeType: 'application/pdf',
+        parents: ['1IBy2Ly_h72v3znKod3rXLLgx1IaeoGqO'],
+      };
+
+      const multipartRequestBody =
+        delimiter +
+        'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+        JSON.stringify(metadata) +
+        delimiter +
+        'Content-Type: application/pdf\r\n' +
+        'Content-Transfer-Encoding: base64\r\n\r\n' +
+        base64Data +
+        close_delim;
+
+      // Make direct Google Drive multipart/related file creation call (supportsAllDrives is critical for Shared Drives)
+      const driveResponse = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': `multipart/related; boundary=${boundary}`,
+          },
+          body: multipartRequestBody,
+        }
+      );
+
+      if (!driveResponse.ok) {
+        const errText = await driveResponse.text();
+        throw new Error(`Google Drive API returned status ${driveResponse.status}: ${errText}`);
+      }
+
+      const driveData = await driveResponse.json();
+      const driveFileId = driveData.id || '';
+      const driveFileUrl = driveFileId ? `https://drive.google.com/file/d/${driveFileId}/view` : '';
+
+      toast.loading("Menyimpan arsip publikasi...", { id: "publish-kg" });
+
+      const reportPayload = {
+        classId: selectedClassId,
+        className: activeClassObj?.name || 'Unknown Class',
+        academicYear: activeYear,
+        studentId: selectedStudentId,
+        studentName: loadedDraft.studentName,
+        startDate: startDateStr,
+        endDate: endDateStr,
+        theme: finalTheme,
+        weeklyComments: finalWeeklyComments,
+        socialEmotional: finalSocialEmotional,
+        publishedAt: Date.now(),
+        driveFileId,
+        driveFileUrl
+      };
+      
+      await addDoc(collection(db, 'published_kg_reports'), reportPayload);
+      toast.success(`Berhasil dipublikasikan & diunggah ke Shared Drive untuk ${loadedDraft.studentName}! 🎉`, { id: "publish-kg" });
+      
+      await fetchPublishedReports();
+      window.print();
+    } catch (err: any) {
+      console.error("Error publishing report:", err);
+      toast.dismiss("publish-kg");
+      toast.error(`Gagal mempublikasikan laporan: ${err.message}`);
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+
+  const handleDeletePublished = async (reportId: string, name: string) => {
+    if (window.confirm(`Apakah Anda yakin ingin menghapus arsip publikasi untuk ${name}?`)) {
+      try {
+        await deleteDoc(doc(db, 'published_kg_reports', reportId));
+        toast.success(`Arsip publikasi untuk ${name} berhasil dihapus.`);
+        fetchPublishedReports();
+      } catch (err: any) {
+        toast.error(`Gagal menghapus arsip: ${err.message}`);
+      }
+    }
+  };
+
+  const handleViewAndPrintPublished = (report: any) => {
+    setSelectedClassId(report.classId);
+    setStartDateStr(report.startDate);
+    setEndDateStr(report.endDate);
+    setSelectedStudentId(report.studentId);
+    
+    toast.info(`Memuat laporan untuk ${report.studentName}...`);
+    setTimeout(() => {
+      window.print();
+    }, 500);
+  };
+
   // Safe checks and extracted properties
   const hasDraft = !!loadedDraft;
-  const finalWeeklyComments = loadedDraft?.teacherEditedWeeklyComments || loadedDraft?.aiWeeklyCommentsDraft || '';
-  const finalSocialEmotional = loadedDraft?.teacherEditedSocialEmotional || loadedDraft?.aiSocialEmotionalDraft || '';
+  const finalWeeklyComments = loadedDraft?.observationCommentTeacherEdited || loadedDraft?.observationCommentAiDraft || loadedDraft?.teacherEditedWeeklyComments || loadedDraft?.aiWeeklyCommentsDraft || '';
+  const finalSocialEmotional = loadedDraft?.attendanceCommentTeacherEdited || loadedDraft?.attendanceCommentAiDraft || loadedDraft?.teacherEditedSocialEmotional || loadedDraft?.aiSocialEmotionalDraft || '';
   const finalTheme = (loadedDraft?.theme && loadedDraft.theme.trim() !== '') ? loadedDraft.theme : 'Tema Belum Ditentukan';
   const finalSnapshots = loadedDraft?.dailySnapshots || [];
   const finalAttendance = loadedDraft?.attendanceSummary || { happy: 0, sad: 0, angry: 0, ok: 0, noNews: 0, sick: 0, izin: 0, earlyLeave: 0 };
@@ -187,12 +655,12 @@ export default function WeeklyReview() {
   const renderSnapshotCard = (dayKey: string, snap: any) => {
     return (
       <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col h-full">
-        <div className="bg-[#109E58] text-white text-center py-1.5 font-extrabold text-[11px] tracking-wider uppercase">
+        <div className="bg-[#109E58] text-white text-center py-1 font-extrabold text-[10.5px] tracking-wider uppercase">
           SNAPSHOT - {dayKey}
         </div>
-        <div className="p-2 flex-1 flex flex-col justify-between bg-white min-h-[145px]">
+        <div className="p-1.5 flex-1 flex flex-col justify-between bg-white min-h-[125px]">
           {snap?.photoUrl ? (
-            <div className="w-full h-[125px] overflow-hidden rounded-sm border border-gray-100">
+            <div className="w-full h-[110px] overflow-hidden rounded-sm border border-gray-100">
               <img 
                 src={snap.photoUrl} 
                 alt={`Snapshot ${dayKey}`} 
@@ -201,11 +669,11 @@ export default function WeeklyReview() {
               />
             </div>
           ) : (
-            <div className="w-full h-[125px] bg-[#fdfdfd] border border-dashed border-gray-200 flex items-center justify-center p-3 text-center">
+            <div className="w-full h-[110px] bg-[#fdfdfd] border border-dashed border-gray-200 flex items-center justify-center p-2 text-center">
               <span className="text-[9px] text-gray-400 font-bold italic leading-tight">No Documentation</span>
             </div>
           )}
-          <div className="text-[9px] text-gray-500 font-semibold italic text-left mt-1 px-0.5 line-clamp-1">
+          <div className="text-[8.5px] text-gray-500 font-semibold italic text-left mt-0.5 px-0.5 line-clamp-1">
             {snap?.photoUrl ? "Dokumentasi Terlampir" : (snap?.fallbackText || "Belum ada dokumen")}
           </div>
         </div>
@@ -224,70 +692,120 @@ export default function WeeklyReview() {
             <span className="text-xs text-gray-400 font-bold">Pratinjau Rapor Laporan Mingguan</span>
           </div>
           <h1 className="text-2xl font-black text-gray-900 tracking-tight">Weekly Report Final View</h1>
-          <p className="text-sm text-gray-500">
-            Halaman cetak mandiri untuk orang tua siswa. Hanya menampilkan data matang yang sudah diselamatkan drafnya di halaman kerja ringkasan guru.
-          </p>
         </div>
 
         {hasDraft && (
-          <button 
-            onClick={handlePrint}
-            className="flex items-center gap-2 bg-[#109E58] hover:bg-emerald-700 text-white font-extrabold text-xs px-6 py-3.5 rounded-2xl shadow-lg transition-all active:scale-95 cursor-pointer shrink-0"
-          >
-            <Printer size={14} />
-            Cetak Laporan / Simpan PDF
-          </button>
+          <div className="flex flex-wrap gap-2.5 shrink-0 w-full md:w-auto">
+            <button 
+              onClick={handlePrint}
+              className="flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-extrabold text-xs px-5 py-3.5 rounded-2xl transition-all active:scale-95 cursor-pointer flex-1 md:flex-initial"
+            >
+              <Printer size={14} />
+              Cetak Langsung
+            </button>
+            <button 
+              onClick={handlePublish}
+              disabled={isPublishing}
+              className="flex items-center justify-center gap-2 bg-[#109E58] hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-3.5 rounded-2xl shadow-lg transition-all active:scale-95 cursor-pointer flex-1 md:flex-initial disabled:opacity-50"
+            >
+              {isPublishing ? (
+                <>
+                  <Loader2 size={13} className="animate-spin" />
+                  Memproses...
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 size={13} />
+                  Publish & Cetak PDF
+                </>
+              )}
+            </button>
+          </div>
         )}
       </header>
 
       {/* 2. FILTER & SELECTIONS (Hidden in Print) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 bg-white p-6 rounded-[2rem] border border-gray-150 shadow-sm print:hidden">
         
-        {/* Student pick */}
-        <div className="lg:col-span-6 space-y-2">
-          <label className="text-[10px] font-black text-emerald-700 uppercase tracking-wider block">Pilih Siswa</label>
-          <div className="flex flex-wrap gap-1.5">
-            {DEFAULT_STUDENTS.map(s => {
-              const isSelected = s.id === selectedStudentId;
-              return (
-                <button
-                  key={s.id}
-                  onClick={() => setSelectedStudentId(s.id)}
-                  className={cn(
-                    "px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer",
-                    isSelected 
-                      ? "bg-[#109E58] text-white border-transparent shadow shadow-emerald-600/20"
-                      : "bg-gray-50 text-gray-600 border-gray-100 hover:bg-gray-100"
-                  )}
-                >
-                  {s.name}
-                </button>
-              );
-            })}
+        {/* Class and Student Selection Block */}
+        <div className="lg:col-span-7 space-y-4">
+          
+          {/* A. Class selection dropdown */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-emerald-700 uppercase tracking-wider block">Pilih Kelas</label>
+            <div className="relative">
+              <select
+                value={selectedClassId}
+                onChange={(e) => setSelectedClassId(e.target.value)}
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-xs font-bold outline-none text-gray-700 appearance-none pr-8 cursor-pointer hover:bg-gray-100/50"
+              >
+                {isLoadingClasses ? (
+                  <option value="">Memuat kelas...</option>
+                ) : classes.length === 0 ? (
+                  <option value="">Belum ada kelas</option>
+                ) : (
+                  classes.map(cls => (
+                    <option key={cls.id} value={cls.id}>
+                      {cls.name} ({cls.grade || 'K'})
+                    </option>
+                  ))
+                )}
+              </select>
+              <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            </div>
           </div>
+
+          {/* B. Filtered Students buttons */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-emerald-700 uppercase tracking-wider block">Pilih Siswa</label>
+            <div className="flex flex-wrap gap-1.5 max-h-[140px] overflow-y-auto p-2 border border-dashed border-gray-200 rounded-xl bg-gray-50/50">
+              {filteredStudents.length === 0 ? (
+                <span className="text-xs text-gray-400 italic p-1">Tidak ada siswa terdaftar di kelas ini</span>
+              ) : (
+                filteredStudents.map(s => {
+                  const isSelected = s.id === selectedStudentId;
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => setSelectedStudentId(s.id)}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer",
+                        isSelected 
+                          ? "bg-[#109E58] text-white border-transparent shadow shadow-emerald-600/20"
+                          : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
+                      )}
+                    >
+                      {s.name}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
         </div>
 
         {/* Date / Period Controls */}
-        <div className="lg:col-span-6 space-y-2 flex flex-col justify-between">
+        <div className="lg:col-span-5 space-y-2 flex flex-col justify-between">
           <div>
             <label className="text-[10px] font-black text-emerald-700 uppercase tracking-wider block">Periode Tanggal Evaluasi</label>
-            <div className="grid grid-cols-2 gap-2 mt-1">
+            <div className="grid grid-cols-2 gap-2 mt-1.5">
               <input 
                 type="date"
                 value={startDateStr}
-                onChange={(e) => setStartDateStr(e.target.value)}
-                className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none text-gray-700"
+                onChange={(e) => handleStartDateChange(e.target.value)}
+                className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none text-gray-700 cursor-pointer"
               />
               <input 
                 type="date"
                 value={endDateStr}
-                onChange={(e) => setEndDateStr(e.target.value)}
-                className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none text-gray-700"
+                onChange={(e) => handleEndDateChange(e.target.value)}
+                className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none text-gray-700 cursor-pointer"
               />
             </div>
           </div>
 
-          <div className="flex items-center gap-2 bg-gray-50 border border-gray-150 rounded-xl p-1 mt-2">
+          <div className="flex items-center gap-2 bg-gray-50 border border-gray-150 rounded-xl p-1 mt-2.5">
             <button
               onClick={handlePrevWeek}
               className="p-1 px-2 hover:bg-white rounded-lg text-gray-500 hover:text-emerald-800 transition-all cursor-pointer"
@@ -335,7 +853,7 @@ export default function WeeklyReview() {
         </div>
       ) : (
         /* 4. FORMAL REPORT DOCUMENT PRINTABLE VIEW */
-        <div className="bg-white p-8 md:p-12 shadow-sm border border-gray-200 text-gray-950 mx-auto w-full max-w-[800px] font-sans flex flex-col gap-5 print:border-none print:shadow-none print:p-0" id="formal-weekly-report">
+        <div className="bg-white px-8 py-4 md:px-12 md:py-6 shadow-sm border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-between gap-3.5 print:border-none print:shadow-none print:p-0 print:m-0" id="formal-weekly-report">
           
           <style dangerouslySetInnerHTML={{__html: `
             @media print {
@@ -358,34 +876,34 @@ export default function WeeklyReview() {
               }
               @page {
                 size: A4 portrait;
-                margin: 0.8cm 1cm 0.8cm 1cm;
+                margin: 0.4cm 1cm 0.4cm 1cm;
               }
             }
           `}} />
 
-          {/* Lazuardi school design banner */}
-          <div className="bg-[#109E58] p-5 text-white relative flex flex-col justify-between rounded-sm">
+          {/* Lazuardi school design banner (Height reduced to 75% of original) */}
+          <div className="bg-[#109E58] py-3.5 px-4 text-white relative flex flex-col justify-between rounded-sm">
             {/* Top row with Logo and Title */}
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-white/20 pb-4 mb-4 gap-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-white/20 pb-2.5 mb-2.5 gap-2">
               
               {/* Left Column: Logo & Name */}
-              <div className="flex items-center gap-3">
-                <div className="bg-white/10 p-2 rounded-xl">
-                  <svg className="w-10 h-10 text-white" viewBox="0 0 100 100" fill="currentColor">
+              <div className="flex items-center gap-2.5">
+                <div className="bg-white/10 p-1.5 rounded-lg shrink-0">
+                  <svg className="w-8 h-8 text-white" viewBox="0 0 100 100" fill="currentColor">
                     <path d="M50 10 C42 35 25 45 10 50 C25 55 42 65 50 90 C58 65 75 55 90 50 C75 45 58 35 50 10 Z" />
                     <path d="M50 25 C45 40 35 48 25 50 C35 52 45 60 50 75 C55 60 65 52 75 50 C65 48 55 40 50 25 Z" fill="#109E58" />
                   </svg>
                 </div>
                 <div className="text-left leading-none">
-                  <span className="block font-sans text-lg font-black tracking-widest text-white m-0">Lazuardi</span>
-                  <span className="block font-sans text-[10px] font-bold tracking-[0.25em] text-emerald-100 m-0 uppercase leading-none mt-0.5">KINDERGARTEN</span>
-                  <span className="block font-sans text-[7.5px] text-emerald-200 mt-1 uppercase tracking-wider leading-none font-semibold">Global Compassionate School</span>
+                  <span className="block font-sans text-base font-black tracking-widest text-white m-0">Lazuardi</span>
+                  <span className="block font-sans text-[9px] font-bold tracking-[0.25em] text-emerald-100 m-0 uppercase leading-none mt-0.5">KINDERGARTEN</span>
+                  <span className="block font-sans text-[6.5px] text-emerald-200 mt-0.5 uppercase tracking-wider leading-none font-semibold">Global Compassionate School</span>
                 </div>
               </div>
 
               {/* Right Column: Large report title */}
               <div className="text-right sm:text-right w-full sm:w-auto">
-                <h1 className="text-lg sm:text-xl font-sans font-black tracking-wider text-white uppercase leading-none">
+                <h1 className="text-base sm:text-lg font-sans font-black tracking-wider text-white uppercase leading-none">
                   STUDENT'S WEEKLY REPORT
                 </h1>
               </div>
@@ -393,12 +911,12 @@ export default function WeeklyReview() {
             </div>
 
             {/* Bottom row: Student Metadata details grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-12 text-[11px] font-sans">
-              <div className="space-y-1.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-1.5 gap-x-12 text-[10px] font-sans">
+              <div className="space-y-1">
                 <div className="grid grid-cols-12 leading-none">
                   <span className="col-span-4 font-bold text-emerald-100">Student's name</span>
                   <span className="col-span-1 text-emerald-100/70 text-center">:</span>
-                  <span className="col-span-7 font-extrabold text-white text-xs -mt-0.5">{loadedDraft.studentName}</span>
+                  <span className="col-span-7 font-extrabold text-white text-[11px] -mt-0.5">{loadedDraft.studentName}</span>
                 </div>
                 <div className="grid grid-cols-12 leading-none">
                   <span className="col-span-4 font-bold text-emerald-100">Class</span>
@@ -414,7 +932,7 @@ export default function WeeklyReview() {
                 </div>
               </div>
 
-              <div className="space-y-1.5 sm:pl-8">
+              <div className="space-y-1 sm:pl-8">
                 <div className="grid grid-cols-12 leading-none">
                   <span className="col-span-3 font-bold text-emerald-100">Month</span>
                   <span className="col-span-1 text-emerald-100/70 text-center">:</span>
@@ -436,11 +954,11 @@ export default function WeeklyReview() {
           </div>
 
           {/* SECTION I: WEEKLY COMMENTS */}
-          <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white min-h-[224px] flex flex-col">
-            <div className="bg-[#109E58] text-white text-center py-1.5 font-extrabold text-[11px] tracking-wider uppercase">
+          <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white min-h-[168px] flex flex-col">
+            <div className="bg-[#109E58] text-white text-center py-1 font-extrabold text-[10.5px] tracking-wider uppercase">
               WEEKLY COMMENTS
             </div>
-            <div className="p-4 text-[11.5px] leading-relaxed text-left text-gray-800 bg-white flex-1">
+            <div className="p-3.5 text-[11px] leading-relaxed text-left text-gray-800 bg-white flex-1">
               {finalWeeklyComments || (
                 <span className="text-gray-400 italic">Komentar perkembangan mingguan belum diisi oleh guru.</span>
               )}
@@ -464,18 +982,18 @@ export default function WeeklyReview() {
             </div>
           </div>
 
-          {/* SECTION III & IV: COHESIVE LOWER GRID (UNEVEN 3:2 COLUMNS FOR 1.5X PROPORTION) */}
-          <div className="grid grid-cols-5 gap-3 items-stretch">
+          {/* SECTION III & IV: COHESIVE LOWER GRID (Uneven 8:4 of 12 col grid for wider Social-Emotional and narrowed Signature) */}
+          <div className="grid grid-cols-12 gap-3 items-stretch">
             
-            {/* Column A (Left): Social Emotional progress (col-span-3) */}
-            <div className="col-span-3 flex flex-col">
-              {/* SOCIAL-EMOTIONAL LEARNING DEVELOPMENT */}
-              <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col flex-1 min-h-[140px] md:min-h-[150px]">
-                <div className="bg-[#109E58] text-white text-center py-1.5 font-extrabold text-[11px] tracking-wider uppercase">
+            {/* Column A (Left): Social Emotional progress (col-span-8, widened) */}
+            <div className="col-span-8 flex flex-col">
+              {/* SOCIAL-EMOTIONAL LEARNING DEVELOPMENT (Height reduced to 75%) */}
+              <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col flex-1 min-h-[105px] md:min-h-[112px]">
+                <div className="bg-[#109E58] text-white text-center py-1 font-extrabold text-[10.5px] tracking-wider uppercase">
                   SOCIAL-EMOTIONAL LEARNING DEVELOPMENT
                 </div>
-                <div className="p-3 bg-white flex-1 flex flex-col justify-start">
-                  <p className="text-[11px] leading-relaxed text-left text-gray-800 font-sans whitespace-pre-wrap">
+                <div className="p-2.5 bg-white flex-1 flex flex-col justify-start">
+                  <p className="text-[10.5px] leading-normal text-left text-gray-800 font-sans whitespace-pre-wrap">
                     {finalSocialEmotional || (
                       <span className="text-gray-400 italic block">Komentar sosial emosional belum diisi oleh guru.</span>
                     )}
@@ -484,27 +1002,27 @@ export default function WeeklyReview() {
               </div>
             </div>
 
-            {/* Column B (Right): Teacher Signature area (col-span-2) */}
-            <div className="col-span-2 flex flex-col">
-              {/* Signature block with date */}
-              <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col flex-1 min-h-[140px] md:min-h-[150px]">
-                <div className="bg-[#109E58] text-white text-center py-1.5 font-extrabold text-[11px] tracking-wider uppercase">
+            {/* Column B (Right): Teacher Signature area (col-span-4, narrowed) */}
+            <div className="col-span-4 flex flex-col">
+              {/* Signature block with date (Height reduced to 75%) */}
+              <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col flex-1 min-h-[105px] md:min-h-[112px]">
+                <div className="bg-[#109E58] text-white text-center py-1 font-extrabold text-[10.5px] tracking-wider uppercase">
                   {formattedSignDate}
                 </div>
-                <div className="p-3 bg-white flex-1 flex flex-col items-center justify-center min-h-[100px] py-1.5">
-                  <div className="h-10 flex items-center justify-center">
+                <div className="p-2 bg-white flex-1 flex flex-col items-center justify-center min-h-[75px] py-1">
+                  <div className="h-7.5 flex items-center justify-center">
                     {teacherName ? (
-                      <svg className="w-16 h-8 text-emerald-800/60 opacity-80" viewBox="0 0 120 60" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <svg className="w-14 h-7 text-emerald-800/60 opacity-80" viewBox="0 0 120 60" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M15 42 Q 35 20, 45 45 T 75 18 T 105 32" />
                         <path d="M25 38 C 20 22, 50 12, 42 42" />
                         <path d="M48 35 L 72 35" />
                         <path d="M68 25 C 75 15, 82 45, 78 40" />
                       </svg>
                     ) : (
-                      <span className="text-[10px] text-gray-300 italic font-bold select-none py-2 block print:hidden">Tanda Tangan Guru</span>
+                      <span className="text-[9px] text-gray-300 italic font-bold select-none py-1 block print:hidden">Tanda Tangan Guru</span>
                     )}
                   </div>
-                  <div className="text-center font-sans mt-2 flex flex-col items-center gap-1 w-full">
+                  <div className="text-center font-sans mt-1 flex flex-col items-center gap-0.5 w-full">
                     <input 
                       type="text"
                       value={teacherName}
@@ -514,7 +1032,7 @@ export default function WeeklyReview() {
                         localStorage.setItem('kg_teacher_name', val);
                       }}
                       placeholder="NAMA GURU"
-                      className="text-center font-extrabold text-[11px] text-gray-900 border-b border-dotted border-gray-300 w-36 pb-0.5 mx-auto uppercase focus:border-solid focus:border-emerald-500 outline-none print:border-none print:p-0 print:m-0"
+                      className="text-center font-extrabold text-[10px] text-gray-900 border-b border-dotted border-gray-300 w-32 pb-0.5 mx-auto uppercase focus:border-solid focus:border-emerald-500 outline-none print:border-none print:p-0 print:m-0"
                     />
                     <input 
                       type="text"
@@ -525,7 +1043,7 @@ export default function WeeklyReview() {
                         localStorage.setItem('kg_teacher_nip', val);
                       }}
                       placeholder="NIP / No Registrasi"
-                      className="text-center text-[9px] text-gray-500 font-bold uppercase w-36 outline-none border-b border-dotted border-gray-200 focus:border-solid focus:border-emerald-500 print:border-none print:p-0 print:m-0"
+                      className="text-center text-[8.5px] text-gray-500 font-bold uppercase w-32 outline-none border-b border-dotted border-gray-200 focus:border-solid focus:border-emerald-500 print:border-none print:p-0 print:m-0"
                     />
                   </div>
                 </div>
@@ -542,6 +1060,87 @@ export default function WeeklyReview() {
 
         </div>
       )}
+
+      {/* 5. PUBLISHED WEEKLY REPORTS PANEL */}
+      <section className="bg-white p-6 rounded-[2rem] border border-gray-150 shadow-sm print:hidden space-y-4">
+        <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+          <div className="space-y-0.5">
+            <h2 className="text-lg font-black text-gray-900 tracking-tight flex items-center gap-2">
+              <FileText className="text-[#109E58]" size={18} />
+              Published Weekly Reports
+            </h2>
+            <p className="text-xs text-gray-500">Daftar laporan mingguan yang berhasil dipublikasikan dan dicetak oleh guru</p>
+          </div>
+          <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 text-[10px] font-black uppercase">
+            {publishedReports.length} Terpublikasi
+          </span>
+        </div>
+
+        {publishedReports.length === 0 ? (
+          <div className="text-center py-8 text-gray-400 text-xs italic">
+            Belum ada laporan mingguan yang dipublikasikan dalam tahun ajaran ini.
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-gray-150">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-150 font-black text-gray-600 uppercase tracking-wider">
+                  <th className="p-3.5">Kelas</th>
+                  <th className="p-3.5">Periode</th>
+                  <th className="p-3.5">Nama Siswa</th>
+                  <th className="p-3.5 text-right">File PDF / Tindakan</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 font-bold text-gray-700">
+                {publishedReports.map((report) => (
+                  <tr key={report.id} className="hover:bg-gray-50/50 transition-colors">
+                    <td className="p-3.5 text-emerald-800 font-black">
+                      {report.className}
+                    </td>
+                    <td className="p-3.5 text-gray-500 font-medium whitespace-nowrap">
+                      {report.startDate} s/d {report.endDate}
+                    </td>
+                    <td className="p-3.5 font-extrabold text-gray-900">
+                      {report.studentName}
+                    </td>
+                    <td className="p-3.5 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        {report.driveFileUrl && (
+                          <a
+                            href={report.driveFileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 px-2.5 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer"
+                            title="Buka dokumen di Google Drive"
+                          >
+                            <FileText size={12} className="text-blue-500" />
+                            Drive
+                          </a>
+                        )}
+                        <button
+                          onClick={() => handleViewAndPrintPublished(report)}
+                          className="inline-flex items-center gap-1.5 bg-[#109E58]/10 hover:bg-[#109E58]/25 text-[#109E58] px-3 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer"
+                          title="Buka kembali laporan dan jalankan cetak PDF"
+                        >
+                          <FileDown size={12} />
+                          Cetak
+                        </button>
+                        <button
+                          onClick={() => handleDeletePublished(report.id, report.studentName)}
+                          className="p-1.5 hover:bg-red-50 text-red-500 hover:text-red-700 rounded-lg transition-all cursor-pointer"
+                          title="Hapus Publikasi"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
     </div>
   );

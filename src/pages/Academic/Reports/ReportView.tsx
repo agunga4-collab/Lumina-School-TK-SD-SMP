@@ -9,7 +9,7 @@ import { useOutletContext, useNavigate, useParams } from 'react-router-dom';
 import { getReportCardById, updateReportCard, getReportConfig } from '../../../lib/firebase';
 import { ReportCard, StudentReport, User as AppUser, ReportConfig } from '../../../types';
 import { cn } from '../../../lib/utils';
-import html2canvas from 'html2canvas';
+import { html2canvasWithModernColors } from '../../../lib/html2canvasPatch';
 import jsPDF from 'jspdf';
 
 export default function ReportView() {
@@ -51,7 +51,7 @@ export default function ReportView() {
     setGenerating(true);
     try {
       const student = report.studentReports[selectedStudentIndex];
-      const canvas = await html2canvas(reportRef.current, {
+      const canvas = await html2canvasWithModernColors(reportRef.current, {
         scale: 2,
         useCORS: true,
         logging: false
