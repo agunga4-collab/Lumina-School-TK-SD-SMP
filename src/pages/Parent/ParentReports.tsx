@@ -22,9 +22,9 @@ import {
 import { cn } from '../../lib/utils';
 
 export default function ParentReports() {
-  const { currentUser } = useOutletContext<{ currentUser: AppUser }>();
+  const { currentUser, selectedStudentId } = useOutletContext<{ currentUser: AppUser; selectedStudentId?: string | null }>();
   const [searchParams] = useSearchParams();
-  const studentId = searchParams.get('studentId');
+  const studentId = searchParams.get('studentId') || selectedStudentId;
   
   const [student, setStudent] = React.useState<Student | null>(null);
   const [reports, setReports] = React.useState<ReportCard[]>([]);

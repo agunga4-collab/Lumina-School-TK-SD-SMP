@@ -932,13 +932,92 @@ export async function updateReportConfig(unitId: string, config: ReportConfig): 
 
 export async function getStudentById(id: string): Promise<Student | null> {
   try {
+    // 1. Try "students" collection
     const docSnap = await getDoc(doc(db, 'students', id));
     if (docSnap.exists()) {
       return { id: docSnap.id, ...docSnap.data() } as Student;
     }
+
+    // 2. Try "roleInvites" collection (as document ID)
+    const inviteRef = doc(db, 'roleInvites', id);
+    const inviteSnap = await getDoc(inviteRef);
+    if (inviteSnap.exists()) {
+      const inviteData = inviteSnap.data();
+      if (inviteData.role === 'STUDENT') {
+        return {
+          id: id,
+          luminaId: inviteData.luminaId || id,
+          name: inviteData.name,
+          email: inviteData.email,
+          classId: inviteData.classId || inviteData.jobTitle || 'TBD',
+          unitId: inviteData.unitId,
+          academicYear: inviteData.academicYear || '2025/2026',
+          parentEmail: inviteData.parentEmail || '',
+          status: inviteData.status || 'ready'
+        } as unknown as Student;
+      }
+    }
+
+    // 3. Try "roleInvites" collection by luminaId search
+    const qInvite = query(collection(db, 'roleInvites'), where('luminaId', '==', id), where('role', '==', 'STUDENT'));
+    const qInviteSnap = await getDocs(qInvite);
+    if (!qInviteSnap.empty) {
+      const inviteData = qInviteSnap.docs[0].data();
+      return {
+        id: qInviteSnap.docs[0].id,
+        luminaId: inviteData.luminaId || id,
+        name: inviteData.name,
+        email: inviteData.email,
+        classId: inviteData.classId || inviteData.jobTitle || 'TBD',
+        unitId: inviteData.unitId,
+        academicYear: inviteData.academicYear || '2025/2026',
+        parentEmail: inviteData.parentEmail || '',
+        status: inviteData.status || 'ready'
+      } as unknown as Student;
+    }
+
+    // 4. Try "users" collection (as document ID)
+    const userRef = doc(db, 'users', id);
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists()) {
+      const uData = userSnap.data();
+      if (uData.role === 'STUDENT') {
+        return {
+          id: id,
+          luminaId: uData.luminaId || id,
+          name: uData.displayName,
+          email: uData.email,
+          classId: uData.classId || 'TBD',
+          unitId: uData.unitId,
+          academicYear: uData.academicYear || '2025/2026',
+          parentEmail: uData.parentEmail || '',
+          status: uData.status
+        } as unknown as Student;
+      }
+    }
+
+    // 5. Try "users" collection by luminaId search
+    const qUser = query(collection(db, 'users'), where('luminaId', '==', id), where('role', '==', 'STUDENT'));
+    const qUserSnap = await getDocs(qUser);
+    if (!qUserSnap.empty) {
+      const uData = qUserSnap.docs[0].data();
+      return {
+        id: qUserSnap.docs[0].id,
+        luminaId: uData.luminaId || id,
+        name: uData.displayName,
+        email: uData.email,
+        classId: uData.classId || 'TBD',
+        unitId: uData.unitId,
+        academicYear: uData.academicYear || '2025/2026',
+        parentEmail: uData.parentEmail || '',
+        status: uData.status
+      } as unknown as Student;
+    }
+
     return null;
   } catch (err: any) {
-    handleFirestoreError(err, 'get', `students/${id}`);
+    console.warn("[getStudentById] Fallback failed for student id:", id, err);
+    return null;
   }
 }
 
@@ -1228,6 +1307,36 @@ export async function getParentStudentLinks(parentId: string): Promise<ParentStu
       if (Array.isArray(inviteData.linkedStudents)) {
         inviteData.linkedStudents.forEach(id => studentIdsSet.add(id));
       }
+    }
+
+    // 5. Fallback: Query "students" collection directly where parentEmail matches parent id
+    try {
+      const studentsEmailQuery = query(collection(db, 'students'), where('parentEmail', '==', parentIdClean));
+      const studentsEmailSnap = await getDocs(studentsEmailQuery);
+      studentsEmailSnap.docs.forEach(d => {
+        studentIdsSet.add(d.id);
+        const sData = d.data();
+        if (sData.luminaId) {
+          studentIdsSet.add(sData.luminaId);
+        }
+      });
+    } catch (stdErr) {
+      console.warn("[getParentStudentLinks] Failed direct students query:", stdErr);
+    }
+
+    // 6. Fallback: Query "roleInvites" collection directly where role === 'STUDENT' and parentEmail matches
+    try {
+      const invitesEmailQuery = query(collection(db, 'roleInvites'), where('role', '==', 'STUDENT'), where('parentEmail', '==', parentIdClean));
+      const invitesEmailSnap = await getDocs(invitesEmailQuery);
+      invitesEmailSnap.docs.forEach(d => {
+        studentIdsSet.add(d.id);
+        const inviteData = d.data();
+        if (inviteData.luminaId) {
+          studentIdsSet.add(inviteData.luminaId);
+        }
+      });
+    } catch (invErr) {
+      console.warn("[getParentStudentLinks] Failed direct roleInvites query:", invErr);
     }
 
     if (studentIdsSet.size > 0) {

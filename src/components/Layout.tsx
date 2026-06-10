@@ -534,7 +534,8 @@ export function Layout() {
             currentUser, 
             activeUnit: currentUnit, 
             selectedStudentId, 
-            setSelectedStudentId 
+            setSelectedStudentId,
+            parentStudents
           }} />
         </div>
       </main>

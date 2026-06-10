@@ -4,11 +4,13 @@ import {
   CheckCircle2, Clock, AlertCircle, UserX, Calendar, 
   ChevronRight, TrendingUp, Bell, Heart, BookOpen, Loader2
 } from 'lucide-react';
+import { useOutletContext } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { auth, db } from '../../lib/firebase';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 
 export default function ChildAttendance() {
+  const { selectedStudentId, currentUser } = useOutletContext<{ selectedStudentId?: string | null; currentUser: any }>() || {};
   const [loading, setLoading] = React.useState(true);
   const [studentData, setStudentData] = React.useState<any>(null);
   const [attendanceStats, setAttendanceStats] = React.useState({
@@ -27,11 +29,17 @@ export default function ChildAttendance() {
         const user = auth.currentUser;
         if (!user) return;
 
-        // 1. Get Parent Profile to find linked students
-        const parentSnap = await getDoc(doc(db, 'users', user.uid));
-        if (!parentSnap.exists()) return;
-        const parentData = parentSnap.data();
-        const studentId = parentData.linkedStudents?.[0];
+        let studentId = selectedStudentId;
+        if (!studentId && currentUser) {
+          studentId = currentUser.linkedStudents?.[0];
+        }
+        if (!studentId) {
+          const parentSnap = await getDoc(doc(db, 'users', user.uid));
+          if (parentSnap.exists()) {
+            const parentData = parentSnap.data();
+            studentId = parentData.linkedStudents?.[0];
+          }
+        }
 
         if (studentId) {
           // 2. Get Student Data
@@ -67,6 +75,8 @@ export default function ChildAttendance() {
           );
           const notifSnap = await getDocs(notifQ);
           setNotifications(notifSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        } else {
+          setStudentData(null);
         }
       } catch (err) {
         console.error('Error fetching parent attendance data:', err);
@@ -76,7 +86,7 @@ export default function ChildAttendance() {
     };
 
     fetchData();
-  }, []);
+  }, [selectedStudentId, currentUser, auth.currentUser]);
 
   if (loading) {
     return (

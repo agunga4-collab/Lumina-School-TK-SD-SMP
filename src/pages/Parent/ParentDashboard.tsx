@@ -18,7 +18,7 @@ import {
 import { cn } from '../../lib/utils';
 
 export default function ParentDashboard() {
-  const { currentUser } = useOutletContext<{ currentUser: AppUser }>();
+  const { currentUser, activeUnit } = useOutletContext<{ currentUser: AppUser; activeUnit: string }>();
   const navigate = useNavigate();
   const [links, setLinks] = React.useState<ParentStudentLink | null>(null);
   const [students, setStudents] = React.useState<Student[]>([]);
@@ -37,10 +37,6 @@ export default function ParentDashboard() {
           const studentData = await Promise.all(studentPromises);
           const validStudents = studentData.filter(s => s !== null) as Student[];
           setStudents(validStudents);
-          
-          if (validStudents.length > 0) {
-            setSelectedStudentId(validStudents[0].id);
-          }
         }
       } catch (err) {
         console.error(err);
@@ -50,6 +46,26 @@ export default function ParentDashboard() {
     };
     fetchLinks();
   }, [currentUser]);
+
+  const studentsInUnit = React.useMemo(() => {
+    if (!activeUnit) return students;
+    return students.filter(s => (s.unitId || s.currentUnit) === activeUnit);
+  }, [students, activeUnit]);
+
+  // Handle auto-selecting student in unit
+  React.useEffect(() => {
+    if (students.length > 0 && activeUnit) {
+      const filtered = students.filter(s => (s.unitId || s.currentUnit) === activeUnit);
+      if (filtered.length > 0) {
+        const isCurrentSelectedInUnit = filtered.some(s => s.id === selectedStudentId);
+        if (!isCurrentSelectedInUnit) {
+          setSelectedStudentId(filtered[0].id);
+        }
+      } else {
+        setSelectedStudentId(null);
+      }
+    }
+  }, [activeUnit, students, selectedStudentId]);
 
   const selectedStudent = students.find(s => s.id === selectedStudentId);
 
@@ -80,11 +96,11 @@ export default function ParentDashboard() {
           <p className="text-gray-400 font-bold">Pantau perkembangan belajar ananda di Lazuardi Lumina.</p>
         </div>
 
-        {students.length > 1 && (
+        {studentsInUnit.length > 1 && (
           <div className="relative w-full md:w-auto">
              <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2 block">Pilih Ananda:</label>
              <div className="flex gap-2 p-2 bg-gray-50 rounded-3xl">
-                {students.map(student => (
+                {studentsInUnit.map(student => (
                   <button
                     key={student.id}
                     onClick={() => setSelectedStudentId(student.id)}

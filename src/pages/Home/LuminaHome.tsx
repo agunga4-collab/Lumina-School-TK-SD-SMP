@@ -15,12 +15,14 @@ export default function LuminaHome() {
     currentUser, 
     activeUnit, 
     selectedStudentId, 
-    setSelectedStudentId 
+    setSelectedStudentId,
+    parentStudents
   } = useOutletContext<{ 
     currentUser: User; 
     activeUnit: UnitType;
     selectedStudentId?: string;
     setSelectedStudentId?: (id: string) => void;
+    parentStudents?: any[];
   }>();
   
   const navigate = useNavigate();
@@ -28,7 +30,18 @@ export default function LuminaHome() {
   const userRole = currentUser.role;
 
   const isParent = userRole === 'PARENT';
-  const hasMultipleKids = isParent && (currentUser.linkedStudents?.length || 0) > 1;
+  
+  const studentsInUnit = React.useMemo(() => {
+    if (!parentStudents) return [];
+    return parentStudents.filter(s => (s.unitId || s.currentUnit) === activeUnit);
+  }, [parentStudents, activeUnit]);
+
+  const hasMultipleKids = isParent && studentsInUnit.length > 1;
+
+  const currentSelectedStudentName = React.useMemo(() => {
+    const student = studentsInUnit.find(s => s.id === selectedStudentId);
+    return student ? student.name : '';
+  }, [studentsInUnit, selectedStudentId]);
 
   const getUnitDisplayName = (unit: UnitType) => {
     switch(unit) {
@@ -53,8 +66,19 @@ export default function LuminaHome() {
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
             </div>
             <h1 className="text-4xl font-black tracking-tight leading-none italic">Halo, {userName}!</h1>
-            <p className="text-blue-100 font-medium text-sm flex items-center gap-2">
-               <Calendar size={16} /> {new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())} • Unit {getUnitDisplayName(activeUnit)}
+            <p className="text-blue-100 font-medium text-sm flex flex-wrap items-center gap-2">
+               <Calendar size={16} /> 
+               <span>{new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())}</span>
+               <span>•</span>
+               <span>Unit {getUnitDisplayName(activeUnit)}</span>
+               {currentSelectedStudentName && (
+                 <>
+                   <span>•</span>
+                   <span className="bg-white/10 px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider backdrop-blur-sm">
+                      Ananda: {currentSelectedStudentName}
+                   </span>
+                 </>
+               )}
             </p>
           </div>
 
@@ -65,18 +89,18 @@ export default function LuminaHome() {
                   <span className="text-[10px] font-black uppercase tracking-widest text-blue-100">Pilih Data Anak</span>
                </div>
                <div className="flex flex-wrap gap-2">
-                  {currentUser.linkedStudents?.map(id => (
+                  {studentsInUnit.map(student => (
                     <button 
-                      key={id}
-                      onClick={() => setSelectedStudentId?.(id)}
+                      key={student.id}
+                      onClick={() => setSelectedStudentId?.(student.id)}
                       className={cn(
                         "px-4 py-2 rounded-xl text-[10px] font-black transition-all border",
-                        selectedStudentId === id 
+                        selectedStudentId === student.id 
                           ? "bg-white text-blue-600 border-white shadow-lg" 
                           : "bg-white/5 text-blue-100 border-white/10 hover:bg-white/10"
                       )}
                     >
-                      {id}
+                      {student.name.split(' ')[0]}
                     </button>
                   ))}
                </div>
