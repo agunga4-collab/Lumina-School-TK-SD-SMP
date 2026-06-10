@@ -368,23 +368,47 @@ const transformTemplateToGrid = (matrix: string[][]): string[][] => {
 
   if (!isTemplate) return matrix;
 
+  const firstCellRow2 = String(matrix[2]?.[0] || '').toLowerCase().trim();
+  const hasThreeHeaders = 
+    firstCellRow2.includes('domain') || 
+    firstCellRow2.includes('perkembangan') || 
+    firstCellRow2.includes('sentra') || 
+    firstCellRow2.includes('activity');
+
   const reqHeight = Math.max(32, matrix.length - 1);
   const newGrid: string[][] = Array.from({ length: reqHeight }, () => new Array(21).fill(''));
   newGrid[0][0] = 'Sentra / Activity';
   newGrid[1][0] = 'Domain Perkembangan';
 
-  // Map Sentra and Domain rows (Rows 2 and 3 of template -> Rows 0 and 1 of internal grid)
-  for (let c = 1; c < 21; c++) {
-    newGrid[0][c] = matrix[1]?.[c] || '';
-    newGrid[1][c] = matrix[2]?.[c] || '';
-  }
-
-  // Map Student rows from index 3 onward of template -> Row index 2 onward of internal grid
-  for (let r = 3; r < matrix.length; r++) {
-    const gridR = r - 1; // Row index in gridData (3 -> 2 in gridData)
-    newGrid[gridR][0] = matrix[r][0] || '';
+  if (hasThreeHeaders) {
+    // Map Sentra and Domain rows (Rows 1 and 2 of template -> Rows 0 and 1 of internal grid)
     for (let c = 1; c < 21; c++) {
-      newGrid[gridR][c] = matrix[r][c] || '';
+      newGrid[0][c] = matrix[1]?.[c] || '';
+      newGrid[1][c] = matrix[2]?.[c] || '';
+    }
+
+    // Map Student rows from index 3 onward of template -> Row index 2 onward of internal grid
+    for (let r = 3; r < matrix.length; r++) {
+      const gridR = r - 1; // Row index in gridData (3 -> 2 in gridData)
+      newGrid[gridR][0] = matrix[r][0] || '';
+      for (let c = 1; c < 21; c++) {
+        newGrid[gridR][c] = matrix[r][c] || '';
+      }
+    }
+  } else {
+    // 2-header template (Row 0 is Day, Row 1 is Config, Row 2 is Student 1)
+    for (let c = 1; c < 21; c++) {
+      const val = matrix[1]?.[c] || '';
+      newGrid[0][c] = val;
+      newGrid[1][c] = val;
+    }
+
+    // Map Student rows from index 2 of template -> Row index 2 of internal grid
+    for (let r = 2; r < matrix.length; r++) {
+      newGrid[r][0] = matrix[r][0] || '';
+      for (let c = 1; c < 21; c++) {
+        newGrid[r][c] = matrix[r][c] || '';
+      }
     }
   }
   return newGrid;
@@ -740,7 +764,15 @@ export default function ObservationTableImporter({ classes = [], students = [], 
       if (firstRow?.[c]) dayColsCount++;
     }
 
-    const studentRows = parsedMatrix.slice(3);
+    const firstCellRow2 = String(parsedMatrix[2]?.[0] || '').toLowerCase().trim();
+    const hasThreeHeaders = 
+      firstCellRow2.includes('domain') || 
+      firstCellRow2.includes('perkembangan') || 
+      firstCellRow2.includes('sentra') || 
+      firstCellRow2.includes('activity');
+
+    const headerOffset = hasThreeHeaders ? 3 : 2;
+    const studentRows = parsedMatrix.slice(headerOffset);
     const studentRowsCount = studentRows.length;
 
     const unmatchedStudents: string[] = [];
@@ -867,8 +899,52 @@ export default function ObservationTableImporter({ classes = [], students = [], 
         const rawSentraVal = gridData[0][colIndex] || '';
         const rawDomainVal = gridData[1][colIndex] || '';
 
-        const activity = findSentraInLine(rawSentraVal);
-        const domain = findDomainInLine(rawDomainVal);
+        let activity = findSentraInLine(rawSentraVal);
+        let domain = findDomainInLine(rawDomainVal);
+
+        // Advanced adaptive mapping logic for 2-header and single-config files
+        if (!domain && rawDomainVal) {
+          domain = findDomainInLine(rawDomainVal);
+        }
+        if (!domain && rawSentraVal) {
+          domain = findDomainInLine(rawSentraVal);
+        }
+
+        if (!activity && rawSentraVal) {
+          activity = findSentraInLine(rawSentraVal);
+        }
+        if (!activity && rawDomainVal) {
+          activity = findSentraInLine(rawDomainVal);
+        }
+
+        // Apply smart defaults to backfill empty properties cleanly
+        if (domain && !activity) {
+          switch (domain) {
+            case 'AGAMA_BUDI_PEKERTI': activity = 'ISLAMIC_AWARENESS'; break;
+            case 'SOSIAL_EMOSIONAL': activity = 'MAKE_BELIEVE'; break;
+            case 'BAHASA': activity = 'LIBRARY_LITERACY'; break;
+            case 'KOGNITIF': activity = 'DISCOVERY'; break;
+            case 'FISIK_MOTORIK': activity = 'MORNING_MOVEMENT'; break;
+            case 'SENI': activity = 'ART_EXPLORATIONS'; break;
+            default: activity = 'SPECIAL_PROGRAM'; break;
+          }
+        }
+
+        if (activity && !domain) {
+          switch (activity) {
+            case 'ISLAMIC_AWARENESS': domain = 'AGAMA_BUDI_PEKERTI'; break;
+            case 'MAKE_BELIEVE': domain = 'SOSIAL_EMOSIONAL'; break;
+            case 'LIBRARY_LITERACY':
+            case 'ENGLISH': domain = 'BAHASA'; break;
+            case 'DISCOVERY':
+            case 'BLOCKS_BUILDING': domain = 'KOGNITIF'; break;
+            case 'OUTSIDE':
+            case 'MORNING_MOVEMENT': domain = 'FISIK_MOTORIK'; break;
+            case 'ART_EXPLORATIONS':
+            case 'MUSIC': domain = 'SENI'; break;
+            default: domain = 'KOGNITIF'; break;
+          }
+        }
 
         if (!activity || !domain) continue;
 
@@ -959,13 +1035,26 @@ export default function ObservationTableImporter({ classes = [], students = [], 
       return;
     }
 
-    // Check if at least one workday column is fully mapped with a Sentra and Domain
+    // Check if at least one workday column is fully mapped with a Sentra and Domain (including fallback mappings)
     let hasConfig = false;
     for (let idx = 0; idx < workdays.length; idx++) {
       const colIndex = idx + 1;
       const rawSentra = gridData[0][colIndex] || '';
       const rawDomain = gridData[1][colIndex] || '';
-      if (findSentraInLine(rawSentra) && findDomainInLine(rawDomain)) {
+      
+      let activity = findSentraInLine(rawSentra);
+      let domain = findDomainInLine(rawDomain);
+      
+      if (!domain && rawDomain) domain = findDomainInLine(rawDomain);
+      if (!domain && rawSentra) domain = findDomainInLine(rawSentra);
+      
+      if (!activity && rawSentra) activity = findSentraInLine(rawSentra);
+      if (!activity && rawDomain) activity = findSentraInLine(rawDomain);
+      
+      if (domain && !activity) activity = 'SPECIAL_PROGRAM';
+      if (activity && !domain) domain = 'KOGNITIF';
+
+      if (activity && domain) {
         hasConfig = true;
         break;
       }
@@ -1648,7 +1737,10 @@ export default function ObservationTableImporter({ classes = [], students = [], 
                       
                       const rawSentra = gridData[0][idx + 1] || '';
                       const rawDomain = gridData[1][idx + 1] || '';
-                      const isConfigured = findSentraInLine(rawSentra) && findDomainInLine(rawDomain);
+
+                      const act = findSentraInLine(rawSentra) || findSentraInLine(rawDomain);
+                      const dom = findDomainInLine(rawDomain) || findDomainInLine(rawSentra);
+                      const isConfigured = act || dom;
 
                       return (
                         <th 
@@ -1742,8 +1834,41 @@ export default function ObservationTableImporter({ classes = [], students = [], 
                           }
 
                           const cellVal = row[colNum];
-                          const parsedSentraId = rIdx === 0 ? findSentraInLine(cellVal) : null;
-                          const parsedDomainId = rIdx === 1 ? findDomainInLine(cellVal) : null;
+                          
+                          let parsedSentraId = rIdx === 0 ? findSentraInLine(cellVal) : null;
+                          if (rIdx === 0 && !parsedSentraId && cellVal) {
+                            const foundDom = findDomainInLine(cellVal);
+                            if (foundDom) {
+                              switch (foundDom) {
+                                case 'AGAMA_BUDI_PEKERTI': parsedSentraId = 'ISLAMIC_AWARENESS'; break;
+                                case 'SOSIAL_EMOSIONAL': parsedSentraId = 'MAKE_BELIEVE'; break;
+                                case 'BAHASA': parsedSentraId = 'LIBRARY_LITERACY'; break;
+                                case 'KOGNITIF': parsedSentraId = 'DISCOVERY'; break;
+                                case 'FISIK_MOTORIK': parsedSentraId = 'MORNING_MOVEMENT'; break;
+                                case 'SENI': parsedSentraId = 'ART_EXPLORATIONS'; break;
+                              }
+                            }
+                          }
+
+                          let parsedDomainId = rIdx === 1 ? findDomainInLine(cellVal) : null;
+                          if (rIdx === 1 && !parsedDomainId && cellVal) {
+                            const foundAct = findSentraInLine(cellVal);
+                            if (foundAct) {
+                              switch (foundAct) {
+                                case 'ISLAMIC_AWARENESS': parsedDomainId = 'AGAMA_BUDI_PEKERTI'; break;
+                                case 'MAKE_BELIEVE': parsedDomainId = 'SOSIAL_EMOSIONAL'; break;
+                                case 'LIBRARY_LITERACY':
+                                case 'ENGLISH': parsedDomainId = 'BAHASA'; break;
+                                case 'DISCOVERY':
+                                case 'BLOCKS_BUILDING': parsedDomainId = 'KOGNITIF'; break;
+                                case 'OUTSIDE':
+                                case 'MORNING_MOVEMENT': parsedDomainId = 'FISIK_MOTORIK'; break;
+                                case 'ART_EXPLORATIONS':
+                                case 'MUSIC': parsedDomainId = 'SENI'; break;
+                              }
+                            }
+                          }
+
                           const mappedGrade = rIdx >= 2 ? mapStringToGrading(cellVal) : null;
 
                           return (
