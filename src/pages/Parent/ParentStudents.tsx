@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import { 
-  Users, UserPlus, Search, CheckCircle, 
+  Users, UserPlus, CheckCircle, 
   Trash2, AlertTriangle, ChevronRight, School,
-  Sparkles, Loader2, RefreshCw, GraduationCap
+  Sparkles, Loader2, RefreshCw, GraduationCap, Info, HelpCircle
 } from 'lucide-react';
 import { useOutletContext, Link, useNavigate } from 'react-router-dom';
 import { 
@@ -18,12 +18,9 @@ import {
 } from '../../lib/firebase';
 import { 
   collection, 
-  getDocs, 
   doc, 
   setDoc, 
-  updateDoc, 
-  query, 
-  where 
+  updateDoc 
 } from 'firebase/firestore';
 import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
@@ -37,15 +34,8 @@ export default function ParentStudents() {
   const [linkingInProgress, setLinkingInProgress] = React.useState(false);
   const [refreshTrigger, setRefreshTrigger] = React.useState(0);
 
-  // Search directory state
-  const [searchQuery, setSearchQuery] = React.useState('');
-  const [searchUnit, setSearchUnit] = React.useState<string>('ALL');
-  const [directoryStudents, setDirectoryStudents] = React.useState<Student[]>([]);
-  const [loadingDirectory, setLoadingDirectory] = React.useState(false);
-
   // Link child via manual form
   const [manualId, setManualId] = React.useState('');
-  const [showManualForm, setShowManualForm] = React.useState(false);
 
   // Fetch current parent linkages (fully synchronized)
   React.useEffect(() => {
@@ -92,40 +82,8 @@ export default function ParentStudents() {
     fetchLinkedStudents();
   }, [currentUser, refreshTrigger]);
 
-  // Fetch Directory of Students to allow direct search & connect
-  React.useEffect(() => {
-    const fetchDirectory = async () => {
-      setLoadingDirectory(true);
-      try {
-        const q = query(collection(db, 'students'));
-        const snap = await getDocs(q);
-        const list = snap.docs.map(doc => {
-          const data = doc.data();
-          const sid = data.luminaId || doc.id;
-          return {
-            ...data,
-            id: sid,
-            luminaId: sid
-          } as unknown as Student;
-        });
-        
-        // Sort by name
-        list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-        setDirectoryStudents(list);
-      } catch (err) {
-        console.error("Gagal memuat direktori siswa:", err);
-      } finally {
-        setLoadingDirectory(false);
-      }
-    };
-    fetchDirectory();
-  }, [refreshTrigger]);
-
   // Function to attach student link to parent account
   const handleConnectStudent = async (student: Student) => {
-    if (linkingInProgress) return;
-    setLinkingInProgress(true);
-
     const targetStudentId = (student as any).luminaId || student.id;
 
     try {
@@ -149,12 +107,11 @@ export default function ParentStudents() {
           linkedStudents: Array.from(new Set([...(currentUser.linkedStudents || []), targetStudentId]))
         });
       } catch (userErr) {
-        console.warn("Could not write inside /users profile directly, fallback to parentStudentLinks is secure:", userErr);
+        console.warn("Could not write inside /users profile directly:", userErr);
       }
 
       toast.success(`Selamat! Akun Anda berhasil terhubung dengan ${student.name || 'Ananda'}! 🎉`);
       setManualId('');
-      setShowManualForm(false);
       setRefreshTrigger(prev => prev + 1);
       
       // Dispatch layout event to notify layout context to reload
@@ -162,8 +119,6 @@ export default function ParentStudents() {
     } catch (err: any) {
       console.error("Gagal menghubungkan siswa:", err);
       toast.error(`Koneksi gagal: ${err.message}`);
-    } finally {
-      setLinkingInProgress(false);
     }
   };
 
@@ -206,41 +161,35 @@ export default function ParentStudents() {
     }
   };
 
-  // Manual link submit
-  const handleManualSubmit = (e: React.FormEvent) => {
+  // Manual link submit via Direct ID Lookup
+  const handleManualSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!manualId.trim()) return;
+    const cleanId = manualId.trim();
+    if (!cleanId) return;
 
-    const matched = directoryStudents.find(s => 
-      s.id.toLowerCase() === manualId.trim().toLowerCase() || 
-      (s as any).luminaId?.toLowerCase() === manualId.trim().toLowerCase()
-    );
+    setLinkingInProgress(true);
+    try {
+      const student = await getStudentById(cleanId);
+      if (student) {
+        // Double check if already linked
+        const isAlreadyLinked = linkedStudents.some(s => s.id === student.id || (s as any).luminaId === student.id);
+        if (isAlreadyLinked) {
+          toast.info(`Ananda ${student.name || 'Siswa'} sudah terhubung dengan akun Anda.`);
+          setManualId('');
+          return;
+        }
 
-    if (matched) {
-      handleConnectStudent(matched);
-    } else {
-      toast.error(`NIS/Lumina ID "${manualId}" tidak ditemukan dalam sistem. Pastikan ID sudah benar.`);
+        await handleConnectStudent(student);
+      } else {
+        toast.error(`Siswa dengan NIS/Lumina ID "${cleanId}" tidak ditemukan. Pastikan karakter, format, dan tanda hubung sudah sesuai.`);
+      }
+    } catch (err: any) {
+      console.error("Error looking up student:", err);
+      toast.error("Terjadi kesalahan saat memverifikasi NIS siswa.");
+    } finally {
+      setLinkingInProgress(false);
     }
   };
-
-  const filteredDirectory = React.useMemo(() => {
-    return directoryStudents.filter(student => {
-      const parentMatched = linkedStudents.some(linked => linked.id === student.id);
-      if (parentMatched) return false; // Hide currently connected children to prevent duplicates list
-
-      const matchesSearch = (student.name || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
-                            student.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                            (student.classId || '').toLowerCase().includes(searchQuery.toLowerCase());
-      
-      const unitVal = (student.unitId || student.currentUnit || '').toUpperCase();
-      const matchesUnit = searchUnit === 'ALL' || 
-                          (searchUnit === 'TK' && unitVal.includes('KINDERGARTEN')) ||
-                          (searchUnit === 'SD' && unitVal.includes('ELEMENTARY')) ||
-                          (searchUnit === 'SMP' && unitVal.includes('JUNIOR_HIGH'));
-
-      return matchesSearch && matchesUnit;
-    });
-  }, [directoryStudents, linkedStudents, searchQuery, searchUnit]);
 
   return (
     <div className="max-w-6xl mx-auto space-y-12 pb-24 animate-in fade-in duration-500">
@@ -260,14 +209,14 @@ export default function ParentStudents() {
             DATA SISWA & <span className="text-emerald-600 uppercase italic">KONEKSI ORTU</span>
           </h1>
           <p className="text-gray-400 font-bold max-w-xl">
-            Menu asisten mandiri orang tua untuk memantau, memverifikasi, dan menghubungkan akun Anda langsung dengan data siswa ananda secara real-time.
+            Sistem mandiri orang tua untuk memantau, memverifikasi, dan menghubungkan akun Anda langsung dengan data siswa ananda secara real-time.
           </p>
         </div>
 
         <button
           onClick={() => {
             setRefreshTrigger(p => p + 1);
-            toast.success("Data berhasil disinkronkan langsung dari server!");
+            toast.success("Daftar terhubung disinkronkan langsung!");
           }}
           className="flex items-center gap-2 px-6 py-3.5 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-2xl text-xs font-black uppercase tracking-widest transition-all"
         >
@@ -356,24 +305,30 @@ export default function ParentStudents() {
             </div>
           ) : (
             <div className="p-16 bg-amber-50/50 border border-amber-100 rounded-[3rem] text-center space-y-6">
-              <div className="w-20 h-20 bg-amber-100/60 rounded-[2rem] flex items-center justify-center mx-auto text-amber-600">
+              <div className="w-20 h-20 bg-amber-100/60 rounded-[2rem] flex items-center justify-center mx-auto text-amber-600 animate-bounce">
                 <AlertTriangle size={36} />
               </div>
-              <div className="space-y-2">
-                <h3 className="text-xl font-bold text-amber-900 uppercase tracking-wide">Belum Ada Siswa Terkoneksi</h3>
+              <div className="space-y-4">
+                <h3 className="text-xl font-black text-amber-900 uppercase tracking-wide">Belum Ada Siswa Terkoneksi</h3>
                 <p className="text-amber-700/80 font-bold max-w-md mx-auto leading-relaxed text-sm">
-                  Akun email Anda ({currentUser.email}) belum terdaftar pada data murid mana pun. Silakan cari anak Anda pada modul pencarian direktori di sebelah kanan, atau masukkan kode identitas siswa.
+                  Akun email Anda ({currentUser.email}) belum memiliki data murid yang terhubung di sistem mandiri.
                 </p>
+                <div className="p-5 bg-white border border-amber-200 rounded-2xl text-xs text-amber-800 font-medium max-w-md mx-auto space-y-1">
+                  <p className="font-bold">👉 Cara menyambungkan akun:</p>
+                  <p>Masukkan Nomor Induk Siswa (NIS / ID) ananda pada kolom "Hubungkan dengan NIS" di panel sebelah kanan.</p>
+                </div>
               </div>
             </div>
           )}
         </div>
 
-        {/* Right Column: Search Directory & Add Link */}
+        {/* Right Column: Connection Form & Privacy Instructions */}
         <div className="lg:col-span-5 space-y-8">
           
           {/* Quick Connect Manual ID Option */}
-          <div className="bg-white border border-gray-100 p-8 rounded-[2.5rem] shadow-sm space-y-6">
+          <div className="bg-white border border-gray-100 p-8 rounded-[3rem] shadow-sm space-y-6 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-full blur-2xl pointer-events-none" />
+            
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center">
                 <Sparkles size={18} />
@@ -385,19 +340,21 @@ export default function ParentStudents() {
             </div>
 
             <form onSubmit={handleManualSubmit} className="space-y-4">
-              <div className="relative">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">Nomor Induk Siswa (NIS/ID)</label>
                 <input
                   type="text"
-                  placeholder="Masukkan Nomor Induk Siswa (NIS / ID)"
+                  placeholder="Contoh: LMN-1780736085523-000"
                   value={manualId}
                   onChange={(e) => setManualId(e.target.value)}
                   className="w-full px-5 py-4 bg-gray-50 border border-gray-100 focus:bg-white focus:ring-2 focus:ring-emerald-500 rounded-2xl text-sm font-medium outline-none transition-all placeholder:text-gray-400"
+                  required
                 />
               </div>
               <button
                 type="submit"
                 disabled={linkingInProgress || !manualId.trim()}
-                className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-black uppercase tracking-widest transition-all disabled:opacity-50"
+                className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-black uppercase tracking-widest transition-all disabled:opacity-50 shadow-md shadow-emerald-600/10"
               >
                 {linkingInProgress ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -409,93 +366,34 @@ export default function ParentStudents() {
             </form>
           </div>
 
-          {/* Directory Search Section */}
+          {/* Secure & Privacy Infobox */}
           <div className="bg-white border border-gray-100 p-8 rounded-[3rem] shadow-sm space-y-6">
-            <div className="space-y-1">
-              <h3 className="text-xl font-black uppercase italic tracking-tighter text-gray-900">
-                Pencarian Direktori Siswa
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gray-50 text-emerald-600 rounded-2xl flex items-center justify-center">
+                <Info size={18} />
+              </div>
+              <h3 className="text-md font-black uppercase tracking-tight text-gray-900">
+                Kebijakan Privasi
               </h3>
-              <p className="text-xs text-gray-400 font-bold">
-                Nama ananda tidak muncul? Cari nama mereka di sekolah dan sambungkan akun.
+            </div>
+
+            <div className="space-y-4 text-xs font-medium text-gray-500 leading-relaxed">
+              <p>
+                Untuk alasan **keamanan dan perlindungan privasi data murid**, sistem kami melarang pencarian publik atau daftar direktori bebas data siswa di portal orang tua.
               </p>
-            </div>
-
-            {/* Quick Filters */}
-            <div className="space-y-4">
-              <div className="relative">
-                <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Cari nama atau kelas siswa..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-11 pr-5 py-3.5 bg-gray-50 border border-gray-100 focus:ring-2 focus:ring-emerald-500 rounded-2xl text-xs font-medium outline-none transition-all"
-                />
+              <div className="p-4 bg-gray-50 rounded-2xl space-y-2 text-[11px]">
+                <p className="font-extrabold text-gray-700 flex items-center gap-1">
+                  <HelpCircle size={14} className="text-emerald-600" /> Di mana menemukan NIS/Lumina ID?
+                </p>
+                <ul className="list-disc pl-4 space-y-1 text-gray-500 font-medium">
+                  <li>Dicetak pada lembar sampul/identitas **Rapor Cetak** ananda.</li>
+                  <li>Tercantum pada kartu pelajar atau invoice pembayaran sekolah.</li>
+                  <li>Dapat ditanyakan langsung secara privat ke **Wali Kelas** atau tata usaha sekolah.</li>
+                </ul>
               </div>
-
-              {/* Units Selection Row */}
-              <div className="flex flex-wrap gap-1.5">
-                {['ALL', 'TK', 'SD', 'SMP'].map((unit) => (
-                  <button
-                    key={unit}
-                    onClick={() => setSearchUnit(unit)}
-                    className={cn(
-                      "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all",
-                      searchUnit === unit
-                        ? "bg-emerald-500 text-white shadow-sm"
-                        : "bg-gray-50 text-gray-500 hover:bg-gray-100"
-                    )}
-                  >
-                    {unit === 'ALL' ? 'Semua Unit' : unit}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Directory Results Container */}
-            <div className="max-h-[380px] overflow-y-auto pr-1 space-y-4 scrollbar-thin">
-              {loadingDirectory ? (
-                <div className="p-8 text-center text-gray-400 text-xs font-bold space-y-2">
-                  <Loader2 className="w-6 h-6 text-gray-300 animate-spin mx-auto" />
-                  <p>Mencari database sekolah...</p>
-                </div>
-              ) : filteredDirectory.length > 0 ? (
-                <div className="space-y-3">
-                  {filteredDirectory.map((student) => (
-                    <div 
-                      key={student.id}
-                      className="p-4 bg-gray-50/50 hover:bg-emerald-50/40 border border-gray-100 rounded-2xl transition-all flex items-center justify-between gap-4 group"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                           <GraduationCap size={14} className="text-emerald-600 flex-shrink-0" />
-                           <h4 className="font-extrabold text-xs text-gray-800 truncate uppercase">
-                             {student.name || (student as any).fullName}
-                           </h4>
-                        </div>
-                        <div className="flex flex-wrap gap-1.5 items-center mt-1 text-[10px] font-bold text-gray-400">
-                          <span>NIS {student.id}</span>
-                          <span className="text-gray-300">•</span>
-                          <span className="text-emerald-600">{student.classId || "No Class"}</span>
-                        </div>
-                      </div>
-
-                      <button
-                        disabled={linkingInProgress}
-                        onClick={() => handleConnectStudent(student)}
-                        className="p-2.5 bg-white group-hover:bg-emerald-600 border border-gray-100 group-hover:border-emerald-600 text-emerald-600 group-hover:text-white rounded-xl transition-all shadow-sm hover:shadow"
-                        title="Hubungkan anak ini"
-                      >
-                        <UserPlus size={14} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="p-8 text-center bg-gray-50 rounded-2xl text-xs text-gray-400 font-bold">
-                  {searchQuery ? "Tidak ada siswa yang cocok." : "Ketik nama anak Anda untuk memulai pencarian."}
-                </div>
-              )}
+              <p className="text-[10px] text-gray-400 border-t border-gray-50 pt-3">
+                Keamanan data siswa adalah prioritas utama kami. Terima kasih atas pengertian dan kolaborasi Anda.
+              </p>
             </div>
           </div>
 
