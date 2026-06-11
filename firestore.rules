@@ -112,7 +112,7 @@ service cloud.firestore {
     }
 
     match /systemConfig/{configId} {
-      allow read: if isSignedIn();
+      allow read: if true;
       allow write: if isAdmin();
     }
 

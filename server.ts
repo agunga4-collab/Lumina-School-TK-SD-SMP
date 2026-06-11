@@ -1971,7 +1971,7 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
     
     // First, seed with role invites
     roleInviteStudents.forEach(s => {
-      const parentEmail = (s.parentEmail || "").trim().toLowerCase();
+      const parentEmail = String(s.parentEmail || "").trim().toLowerCase();
       const luminaId = String(s.luminaId || s.id || "").trim();
       if (luminaId && parentEmail) {
         allStudentsMap.set(luminaId, {
@@ -1986,7 +1986,7 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
 
     // Overwrite/Add with active students collection (more up-to-date and covers all school levels like Kindergarten)
     studentsCollList.forEach(s => {
-      const parentEmail = (s.parentEmail || "").trim().toLowerCase();
+      const parentEmail = String(s.parentEmail || "").trim().toLowerCase();
       const luminaId = String(s.luminaId || s.id || "").trim();
       if (luminaId && parentEmail) {
         allStudentsMap.set(luminaId, {
@@ -2015,7 +2015,7 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
           parentMap[parentEmail] = {
             name: defaultName,
             linkedStudents: [],
-            unitId: s.unitId
+            unitId: s.unitId || "KINDERGARTEN"
           };
         }
         if (!parentMap[parentEmail].linkedStudents.includes(luminaId)) {
@@ -2054,10 +2054,10 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
       } else {
         const parentDoc = parentSnap.docs[0];
         const currentData = parentDoc.data();
-        const currentLinked = currentData.linkedStudents || [];
+        const currentLinked = Array.isArray(currentData.linkedStudents) ? currentData.linkedStudents : [];
         const newLinked = Array.from(new Set([...currentLinked, ...info.linkedStudents].map(id => String(id))));
         
-        if (newLinked.length !== currentLinked.length || parentDoc.data().name !== info.name) {
+        if (newLinked.length !== currentLinked.length || currentData.name !== info.name) {
           await parentDoc.ref.update({
             linkedStudents: newLinked,
             name: currentData.name || info.name,
@@ -2076,7 +2076,7 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
       if (!userSnap.empty) {
         for (const userDoc of userSnap.docs) {
           const userData = userDoc.data();
-          const currentLinked = userData.linkedStudents || [];
+          const currentLinked = Array.isArray(userData.linkedStudents) ? userData.linkedStudents : [];
           const newLinked = Array.from(new Set([...currentLinked, ...info.linkedStudents].map(id => String(id))));
           
           if (newLinked.length !== currentLinked.length) {
