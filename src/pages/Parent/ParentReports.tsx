@@ -53,6 +53,8 @@ export default function ParentReports() {
           const studentIdsToSearch = Array.from(new Set([
             studentData.id,
             (studentData as any).luminaId,
+            (studentData as any).docId,
+            (studentData as any).firebaseId,
             studentId
           ].filter(Boolean) as string[]));
 

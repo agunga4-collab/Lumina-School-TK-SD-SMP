@@ -36,6 +36,11 @@ export function Layout() {
     JUNIOR_HIGH: { rectangular: "", square: "" },
   });
 
+  const schoolLogo = React.useMemo(() => {
+    return logos?.KINDERGARTEN?.square || logos?.ELEMENTARY?.square || logos?.JUNIOR_HIGH?.square ||
+           logos?.KINDERGARTEN?.rectangular || logos?.ELEMENTARY?.rectangular || logos?.JUNIOR_HIGH?.rectangular || "";
+  }, [logos]);
+
   React.useEffect(() => {
     const fetchLogos = async () => {
       try {
@@ -252,7 +257,16 @@ export function Layout() {
         <div className="max-w-4xl w-full space-y-8">
            <div className="text-center space-y-2">
               <div className="inline-flex items-center gap-3 mb-4">
-                 <LuminaLogo size="lg" />
+                 {schoolLogo ? (
+                   <img 
+                     src={schoolLogo} 
+                     alt="Logo Sekolah" 
+                     className="h-16 object-contain rounded-2xl"
+                     referrerPolicy="no-referrer"
+                   />
+                 ) : (
+                   <LuminaLogo size="lg" />
+                 )}
                  <h1 className="text-3xl font-black text-gray-900 tracking-tight text-blue-600">LUMINA</h1>
               </div>
               <h2 className="text-xl font-bold text-gray-800">Pilih Unit Pendidikan</h2>
@@ -355,11 +369,27 @@ export function Layout() {
       )}>
         <div className="p-6 flex items-center justify-between">
           <div>
-            <div className="flex items-center gap-2 mb-1">
-              <LuminaLogo size="sm" />
-              <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight">LUMINA</h1>
-            </div>
-            <p className={cn("text-[10px] font-black uppercase tracking-[0.2em] px-2 py-0.5 rounded-full border w-fit mt-2", getUnitColor(currentUnit))}>
+             <div className="flex items-center gap-2 mb-1">
+               {currentUnit && logos[currentUnit]?.square ? (
+                 <img 
+                   src={logos[currentUnit].square} 
+                   alt={`${getUnitName(currentUnit)} Logo`} 
+                   className="w-10 h-10 object-contain rounded-lg"
+                   referrerPolicy="no-referrer"
+                 />
+               ) : currentUnit && logos[currentUnit]?.rectangular ? (
+                 <img 
+                   src={logos[currentUnit].rectangular} 
+                   alt={`${getUnitName(currentUnit)} Logo`} 
+                   className="h-10 object-contain rounded-lg"
+                   referrerPolicy="no-referrer"
+                 />
+               ) : (
+                 <LuminaLogo size="sm" />
+               )}
+               <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight">LUMINA</h1>
+             </div>
+             <p className={cn("text-[10px] font-black uppercase tracking-[0.2em] px-2 py-0.5 rounded-full border w-fit mt-2", getUnitColor(currentUnit))}>
               {getUnitName(currentUnit)}
             </p>
           </div>

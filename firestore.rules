@@ -299,6 +299,11 @@ service cloud.firestore {
       allow read, write: if isSignedIn() && (isAdmin() || viewId.split('_')[0] == request.auth.token.email);
     }
 
+    match /settings/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
     match /clubs/{clubId} {
       allow read: if isSignedIn();
       allow write: if isJuniorHighStaff();

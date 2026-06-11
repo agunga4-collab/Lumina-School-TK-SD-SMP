@@ -938,9 +938,27 @@ export async function getStudentById(id: string): Promise<Student | null> {
       const rawData = docSnap.data();
       return { 
         id: rawData.luminaId || docSnap.id, 
+        luminaId: rawData.luminaId || docSnap.id,
+        docId: docSnap.id,
+        firebaseId: docSnap.id,
         ...rawData,
         name: rawData.name || rawData.fullName || rawData.displayName || "Ananda"
-      } as Student;
+      } as unknown as Student;
+    }
+
+    // 1b. Try "students" collection by luminaId search
+    const qStudent = query(collection(db, 'students'), where('luminaId', '==', id));
+    const qStudentSnap = await getDocs(qStudent);
+    if (!qStudentSnap.empty) {
+      const rawData = qStudentSnap.docs[0].data();
+      return {
+        id: rawData.luminaId || qStudentSnap.docs[0].id,
+        luminaId: rawData.luminaId || qStudentSnap.docs[0].id,
+        docId: qStudentSnap.docs[0].id,
+        firebaseId: qStudentSnap.docs[0].id,
+        ...rawData,
+        name: rawData.name || rawData.fullName || rawData.displayName || "Ananda"
+      } as unknown as Student;
     }
 
     // 2. Try "roleInvites" collection (as document ID)
