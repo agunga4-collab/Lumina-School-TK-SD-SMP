@@ -932,13 +932,23 @@ export async function updateReportConfig(unitId: string, config: ReportConfig): 
 
 export async function getStudentById(id: string): Promise<Student | null> {
   try {
+    const cleanId = String(id).trim();
+    if (!cleanId) return null;
+
+    const isNumeric = /^\d+$/.test(cleanId);
+    const queryVals: any[] = [cleanId];
+    if (isNumeric) {
+      queryVals.push(parseInt(cleanId, 10));
+    }
+    const uniqueQueryVals = Array.from(new Set(queryVals));
+
     // 1. Try "students" collection
-    const docSnap = await getDoc(doc(db, 'students', id));
+    const docSnap = await getDoc(doc(db, 'students', cleanId));
     if (docSnap.exists()) {
       const rawData = docSnap.data();
       return { 
-        id: rawData.luminaId || docSnap.id, 
-        luminaId: rawData.luminaId || docSnap.id,
+        id: String(rawData.luminaId || docSnap.id), 
+        luminaId: String(rawData.luminaId || docSnap.id),
         docId: docSnap.id,
         firebaseId: docSnap.id,
         ...rawData,
@@ -947,13 +957,13 @@ export async function getStudentById(id: string): Promise<Student | null> {
     }
 
     // 1b. Try "students" collection by luminaId search
-    const qStudent = query(collection(db, 'students'), where('luminaId', '==', id));
+    const qStudent = query(collection(db, 'students'), where('luminaId', 'in', uniqueQueryVals));
     const qStudentSnap = await getDocs(qStudent);
     if (!qStudentSnap.empty) {
       const rawData = qStudentSnap.docs[0].data();
       return {
-        id: rawData.luminaId || qStudentSnap.docs[0].id,
-        luminaId: rawData.luminaId || qStudentSnap.docs[0].id,
+        id: String(rawData.luminaId || qStudentSnap.docs[0].id),
+        luminaId: String(rawData.luminaId || qStudentSnap.docs[0].id),
         docId: qStudentSnap.docs[0].id,
         firebaseId: qStudentSnap.docs[0].id,
         ...rawData,
@@ -962,14 +972,14 @@ export async function getStudentById(id: string): Promise<Student | null> {
     }
 
     // 2. Try "roleInvites" collection (as document ID)
-    const inviteRef = doc(db, 'roleInvites', id);
+    const inviteRef = doc(db, 'roleInvites', cleanId);
     const inviteSnap = await getDoc(inviteRef);
     if (inviteSnap.exists()) {
       const inviteData = inviteSnap.data();
       if (inviteData.role === 'STUDENT') {
         return {
-          id: id,
-          luminaId: inviteData.luminaId || id,
+          id: cleanId,
+          luminaId: String(inviteData.luminaId || cleanId),
           name: inviteData.name,
           email: inviteData.email,
           classId: inviteData.classId || inviteData.jobTitle || 'TBD',
@@ -982,13 +992,13 @@ export async function getStudentById(id: string): Promise<Student | null> {
     }
 
     // 3. Try "roleInvites" collection by luminaId search
-    const qInvite = query(collection(db, 'roleInvites'), where('luminaId', '==', id), where('role', '==', 'STUDENT'));
+    const qInvite = query(collection(db, 'roleInvites'), where('luminaId', 'in', uniqueQueryVals), where('role', '==', 'STUDENT'));
     const qInviteSnap = await getDocs(qInvite);
     if (!qInviteSnap.empty) {
       const inviteData = qInviteSnap.docs[0].data();
       return {
         id: qInviteSnap.docs[0].id,
-        luminaId: inviteData.luminaId || id,
+        luminaId: String(inviteData.luminaId || cleanId),
         name: inviteData.name,
         email: inviteData.email,
         classId: inviteData.classId || inviteData.jobTitle || 'TBD',
@@ -1000,14 +1010,14 @@ export async function getStudentById(id: string): Promise<Student | null> {
     }
 
     // 4. Try "users" collection (as document ID)
-    const userRef = doc(db, 'users', id);
+    const userRef = doc(db, 'users', cleanId);
     const userSnap = await getDoc(userRef);
     if (userSnap.exists()) {
       const uData = userSnap.data();
       if (uData.role === 'STUDENT') {
         return {
-          id: id,
-          luminaId: uData.luminaId || id,
+          id: cleanId,
+          luminaId: String(uData.luminaId || cleanId),
           name: uData.displayName,
           email: uData.email,
           classId: uData.classId || 'TBD',
@@ -1020,13 +1030,13 @@ export async function getStudentById(id: string): Promise<Student | null> {
     }
 
     // 5. Try "users" collection by luminaId search
-    const qUser = query(collection(db, 'users'), where('luminaId', '==', id), where('role', '==', 'STUDENT'));
+    const qUser = query(collection(db, 'users'), where('luminaId', 'in', uniqueQueryVals), where('role', '==', 'STUDENT'));
     const qUserSnap = await getDocs(qUser);
     if (!qUserSnap.empty) {
       const uData = qUserSnap.docs[0].data();
       return {
         id: qUserSnap.docs[0].id,
-        luminaId: uData.luminaId || id,
+        luminaId: String(uData.luminaId || cleanId),
         name: uData.displayName,
         email: uData.email,
         classId: uData.classId || 'TBD',

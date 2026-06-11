@@ -69,13 +69,19 @@ export default function ParentDashboard() {
 
   const studentsInUnit = React.useMemo(() => {
     if (!activeUnit) return students;
-    return students.filter(s => (s.unitId || s.currentUnit) === activeUnit);
+    return students.filter(s => {
+      const u = s.unitId || s.currentUnit || '';
+      return u.toUpperCase() === activeUnit.toUpperCase();
+    });
   }, [students, activeUnit]);
 
   // Handle auto-selecting student in unit
   React.useEffect(() => {
     if (students.length > 0 && activeUnit) {
-      const filtered = students.filter(s => (s.unitId || s.currentUnit) === activeUnit);
+      const filtered = students.filter(s => {
+        const u = s.unitId || s.currentUnit || '';
+        return u.toUpperCase() === activeUnit.toUpperCase();
+      });
       if (filtered.length > 0) {
         const isCurrentSelectedInUnit = filtered.some(s => s.id === selectedStudentId);
         if (!isCurrentSelectedInUnit) {

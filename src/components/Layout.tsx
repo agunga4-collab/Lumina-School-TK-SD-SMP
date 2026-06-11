@@ -136,7 +136,10 @@ export function Layout() {
             setParentStudents(deduplicatedStudents);
             
             // Extract unique units
-            const units = Array.from(new Set(deduplicatedStudents.map((s: any) => (s.unitId || s.currentUnit) as UnitType).filter(Boolean)));
+            const units = Array.from(new Set(deduplicatedStudents.map((s: any) => {
+              const u = s.unitId || s.currentUnit || '';
+              return u.toUpperCase() as UnitType;
+            }).filter(Boolean)));
             setParentAccessibleUnits(units);
           } else {
             setParentStudents([]);
@@ -172,7 +175,10 @@ export function Layout() {
   // Automatically select the first student belonging to the selected unit when a parent switches unit
   React.useEffect(() => {
     if (currentUser?.role === 'PARENT' && activeUnit && parentStudents.length > 0) {
-      const studentsInUnit = parentStudents.filter(s => (s.unitId || s.currentUnit) === activeUnit);
+      const studentsInUnit = parentStudents.filter(s => {
+        const u = s.unitId || s.currentUnit || '';
+        return u.toUpperCase() === activeUnit.toUpperCase();
+      });
       if (studentsInUnit.length > 0) {
         const currentSelectedInUnit = studentsInUnit.some(s => s.id === selectedStudentId);
         if (!currentSelectedInUnit) {

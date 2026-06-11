@@ -34,9 +34,6 @@ export default function ParentStudents() {
   const [linkingInProgress, setLinkingInProgress] = React.useState(false);
   const [refreshTrigger, setRefreshTrigger] = React.useState(0);
 
-  // Link child via manual form
-  const [manualId, setManualId] = React.useState('');
-
   // Fetch current parent linkages (fully synchronized)
   React.useEffect(() => {
     const fetchLinkedStudents = async () => {
@@ -183,36 +180,6 @@ export default function ParentStudents() {
     }
   };
 
-  // Manual link submit via Direct ID Lookup
-  const handleManualSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanId = manualId.trim();
-    if (!cleanId) return;
-
-    setLinkingInProgress(true);
-    try {
-      const student = await getStudentById(cleanId);
-      if (student) {
-        // Double check if already linked
-        const isAlreadyLinked = linkedStudents.some(s => s.id === student.id || (s as any).luminaId === student.id);
-        if (isAlreadyLinked) {
-          toast.info(`Ananda ${student.name || 'Siswa'} sudah terhubung dengan akun Anda.`);
-          setManualId('');
-          return;
-        }
-
-        await handleConnectStudent(student);
-      } else {
-        toast.error(`Siswa dengan NIS/Lumina ID "${cleanId}" tidak ditemukan. Pastikan karakter, format, dan tanda hubung sudah sesuai.`);
-      }
-    } catch (err: any) {
-      console.error("Error looking up student:", err);
-      toast.error("Terjadi kesalahan saat memverifikasi NIS siswa.");
-    } finally {
-      setLinkingInProgress(false);
-    }
-  };
-
   return (
     <div className="max-w-6xl mx-auto space-y-12 pb-24 animate-in fade-in duration-500">
       
@@ -247,10 +214,10 @@ export default function ParentStudents() {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <div className="max-w-4xl mx-auto space-y-8">
         
-        {/* Left Column: Linked Students (List) */}
-        <div className="lg:col-span-7 space-y-8">
+        {/* Linked Students (List) */}
+        <div className="space-y-8">
           <div className="flex justify-between items-center">
             <h2 className="text-2xl font-black text-gray-900 uppercase italic tracking-tighter">
               Ananda Yang Terhubung ({linkedStudents.length})
@@ -335,93 +302,16 @@ export default function ParentStudents() {
                 <p className="text-amber-700/80 font-bold max-w-md mx-auto leading-relaxed text-sm">
                   Akun email Anda ({currentUser?.email || 'N/A'}) belum memiliki data murid yang terhubung di sistem mandiri.
                 </p>
-                <div className="p-5 bg-white border border-amber-200 rounded-2xl text-xs text-amber-800 font-medium max-w-md mx-auto space-y-1">
-                  <p className="font-bold">👉 Cara menyambungkan akun:</p>
-                  <p>Masukkan Nomor Induk Siswa (NIS / ID) ananda pada kolom "Hubungkan dengan NIS" di panel sebelah kanan.</p>
+                <div className="p-5 bg-white border border-amber-200 rounded-2xl text-xs text-amber-800 font-medium max-w-md mx-auto space-y-2 leading-relaxed">
+                  <p className="font-bold">👉 Informasi Akses & Hubungan Akun:</p>
+                  <p>Pastikan Anda masuk menggunakan email yang terdaftar sebagai orang tua di sistem Lazuardi LUMINA.</p>
+                  <p>Jika email Anda sudah terdaftar tetapi data ananda belum muncul, silakan hubungi <strong>Wali Kelas</strong> atau <strong>Tata Usaha</strong> sekolah untuk mengaktifkan koneksi otomatis.</p>
                 </div>
               </div>
             </div>
           )}
         </div>
-
-        {/* Right Column: Connection Form & Privacy Instructions */}
-        <div className="lg:col-span-5 space-y-8">
-          
-          {/* Quick Connect Manual ID Option */}
-          <div className="bg-white border border-gray-100 p-8 rounded-[3rem] shadow-sm space-y-6 relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-full blur-2xl pointer-events-none" />
-            
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center">
-                <Sparkles size={18} />
-              </div>
-              <div>
-                <h3 className="text-lg font-black uppercase tracking-tight text-gray-900 leading-none">Hubungkan dengan NIS</h3>
-                <p className="text-xs text-gray-400 font-bold mt-1">Gunakan Nomor Induk Siswa langsung</p>
-              </div>
-            </div>
-
-            <form onSubmit={handleManualSubmit} className="space-y-4">
-              <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">Nomor Induk Siswa (NIS/ID)</label>
-                <input
-                  type="text"
-                  placeholder="Contoh: LMN-1780736085523-000"
-                  value={manualId}
-                  onChange={(e) => setManualId(e.target.value)}
-                  className="w-full px-5 py-4 bg-gray-50 border border-gray-100 focus:bg-white focus:ring-2 focus:ring-emerald-500 rounded-2xl text-sm font-medium outline-none transition-all placeholder:text-gray-400"
-                  required
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={linkingInProgress || !manualId.trim()}
-                className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-black uppercase tracking-widest transition-all disabled:opacity-50 shadow-md shadow-emerald-600/10"
-              >
-                {linkingInProgress ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <UserPlus size={16} />
-                )}
-                Hubungkan Sekarang
-              </button>
-            </form>
-          </div>
-
-          {/* Secure & Privacy Infobox */}
-          <div className="bg-white border border-gray-100 p-8 rounded-[3rem] shadow-sm space-y-6">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gray-50 text-emerald-600 rounded-2xl flex items-center justify-center">
-                <Info size={18} />
-              </div>
-              <h3 className="text-md font-black uppercase tracking-tight text-gray-900">
-                Kebijakan Privasi
-              </h3>
-            </div>
-
-            <div className="space-y-4 text-xs font-medium text-gray-500 leading-relaxed">
-              <p>
-                Untuk alasan **keamanan dan perlindungan privasi data murid**, sistem kami melarang pencarian publik atau daftar direktori bebas data siswa di portal orang tua.
-              </p>
-              <div className="p-4 bg-gray-50 rounded-2xl space-y-2 text-[11px]">
-                <p className="font-extrabold text-gray-700 flex items-center gap-1">
-                  <HelpCircle size={14} className="text-emerald-600" /> Di mana menemukan NIS/Lumina ID?
-                </p>
-                <ul className="list-disc pl-4 space-y-1 text-gray-500 font-medium">
-                  <li>Dicetak pada lembar sampul/identitas **Rapor Cetak** ananda.</li>
-                  <li>Tercantum pada kartu pelajar atau invoice pembayaran sekolah.</li>
-                  <li>Dapat ditanyakan langsung secara privat ke **Wali Kelas** atau tata usaha sekolah.</li>
-                </ul>
-              </div>
-              <p className="text-[10px] text-gray-400 border-t border-gray-50 pt-3">
-                Keamanan data siswa adalah prioritas utama kami. Terima kasih atas pengertian dan kolaborasi Anda.
-              </p>
-            </div>
-          </div>
-
-        </div>
       </div>
-
     </div>
   );
 }
