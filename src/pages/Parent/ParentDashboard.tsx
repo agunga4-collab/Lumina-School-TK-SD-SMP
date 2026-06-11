@@ -18,7 +18,11 @@ import {
 import { cn } from '../../lib/utils';
 
 export default function ParentDashboard() {
-  const { currentUser, activeUnit } = useOutletContext<{ currentUser: AppUser; activeUnit: string }>();
+  const { currentUser, activeUnit, parentStudents } = useOutletContext<{ 
+    currentUser: AppUser; 
+    activeUnit: string;
+    parentStudents?: Student[];
+  }>();
   const navigate = useNavigate();
   const [links, setLinks] = React.useState<ParentStudentLink | null>(null);
   const [students, setStudents] = React.useState<Student[]>([]);
@@ -26,6 +30,12 @@ export default function ParentDashboard() {
   const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
+    if (parentStudents && parentStudents.length > 0) {
+      setStudents(parentStudents);
+      setLoading(false);
+      return;
+    }
+
     const fetchLinks = async () => {
       setLoading(true);
       try {
@@ -36,7 +46,17 @@ export default function ParentDashboard() {
           const studentPromises = linkData.studentIds.map(id => getStudentById(id));
           const studentData = await Promise.all(studentPromises);
           const validStudents = studentData.filter(s => s !== null) as Student[];
-          setStudents(validStudents);
+          
+          // Deduplicate students by normalized id (preferring luminaId/NIS)
+          const uniqueStudentsMap = new Map<string, Student>();
+          validStudents.forEach(s => {
+            const studentId = (s as any).luminaId || s.id;
+            if (!uniqueStudentsMap.has(studentId)) {
+              uniqueStudentsMap.set(studentId, { ...s, id: studentId });
+            }
+          });
+          const deduplicatedStudents = Array.from(uniqueStudentsMap.values()) as Student[];
+          setStudents(deduplicatedStudents);
         }
       } catch (err) {
         console.error(err);
@@ -45,7 +65,7 @@ export default function ParentDashboard() {
       }
     };
     fetchLinks();
-  }, [currentUser]);
+  }, [currentUser, parentStudents]);
 
   const studentsInUnit = React.useMemo(() => {
     if (!activeUnit) return students;

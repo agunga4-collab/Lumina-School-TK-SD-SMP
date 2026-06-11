@@ -1272,57 +1272,80 @@ export async function deleteSEActivity(id: string): Promise<void> {
 export async function getParentStudentLinks(parentId: string): Promise<ParentStudentLink | null> {
   try {
     const parentIdClean = parentId.toLowerCase().trim();
+    const parentIdOriginal = parentId.trim();
     const studentIdsSet = new Set<string>();
 
+    const searchEmails = Array.from(new Set([
+      parentIdClean,
+      parentIdOriginal,
+      parentIdOriginal.toLowerCase(),
+      parentIdOriginal.toUpperCase()
+    ].filter(Boolean)));
+
     // 1. Try to get parent direct ID link doc in parentStudentLinks
-    const docSnap = await getDoc(doc(db, 'parentStudentLinks', parentIdClean));
-    if (docSnap.exists()) {
-      const data = docSnap.data();
-      if (Array.isArray(data.studentIds)) {
-        data.studentIds.forEach(id => studentIdsSet.add(id));
+    for (const email of [parentIdClean, parentIdOriginal]) {
+      const docSnap = await getDoc(doc(db, 'parentStudentLinks', email));
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (Array.isArray(data.studentIds)) {
+          data.studentIds.forEach(id => {
+            if (id) studentIdsSet.add(id);
+          });
+        }
       }
     }
 
     // 2. Try to query parentStudentLinks collection for where parentEmail === parentId
-    const linksQuery = query(collection(db, 'parentStudentLinks'), where('parentEmail', '==', parentIdClean));
+    const linksQuery = query(collection(db, 'parentStudentLinks'), where('parentEmail', 'in', searchEmails));
     const linksSnap = await getDocs(linksQuery);
     linksSnap.docs.forEach(d => {
       const data = d.data();
       if (data.studentId) studentIdsSet.add(data.studentId);
       if (Array.isArray(data.studentIds)) {
-        data.studentIds.forEach(id => studentIdsSet.add(id));
+        data.studentIds.forEach(id => {
+          if (id) studentIdsSet.add(id);
+        });
       }
     });
 
     // 3. Fallback: Check the parent's user profile in 'users' collection
-    const usersQuery = query(collection(db, 'users'), where('email', '==', parentIdClean), where('role', '==', 'PARENT'));
+    const usersQuery = query(collection(db, 'users'), where('email', 'in', searchEmails), where('role', '==', 'PARENT'));
     const usersSnap = await getDocs(usersQuery);
     if (!usersSnap.empty) {
-      const userData = usersSnap.docs[0].data();
-      if (Array.isArray(userData.linkedStudents)) {
-        userData.linkedStudents.forEach(id => studentIdsSet.add(id));
-      }
+      usersSnap.docs.forEach(uDoc => {
+        const userData = uDoc.data();
+        if (Array.isArray(userData.linkedStudents)) {
+          userData.linkedStudents.forEach(id => {
+            if (id) studentIdsSet.add(id);
+          });
+        }
+      });
     }
 
     // 4. Fallback: Check roleInvites
-    const invitesQuery = query(collection(db, 'roleInvites'), where('email', '==', parentIdClean), where('role', '==', 'PARENT'));
+    const invitesQuery = query(collection(db, 'roleInvites'), where('email', 'in', searchEmails), where('role', '==', 'PARENT'));
     const invitesSnap = await getDocs(invitesQuery);
     if (!invitesSnap.empty) {
-      const inviteData = invitesSnap.docs[0].data();
-      if (Array.isArray(inviteData.linkedStudents)) {
-        inviteData.linkedStudents.forEach(id => studentIdsSet.add(id));
-      }
+      invitesSnap.docs.forEach(iDoc => {
+        const inviteData = iDoc.data();
+        if (Array.isArray(inviteData.linkedStudents)) {
+          inviteData.linkedStudents.forEach(id => {
+            if (id) studentIdsSet.add(id);
+          });
+        }
+      });
     }
 
     // 5. Fallback: Query "students" collection directly where parentEmail matches parent id
     try {
-      const studentsEmailQuery = query(collection(db, 'students'), where('parentEmail', '==', parentIdClean));
+      const studentsEmailQuery = query(collection(db, 'students'), where('parentEmail', 'in', searchEmails));
       const studentsEmailSnap = await getDocs(studentsEmailQuery);
       studentsEmailSnap.docs.forEach(d => {
-        studentIdsSet.add(d.id);
         const sData = d.data();
         if (sData.luminaId) {
           studentIdsSet.add(sData.luminaId);
+        } else {
+          studentIdsSet.add(d.id);
         }
       });
     } catch (stdErr) {
@@ -1331,13 +1354,14 @@ export async function getParentStudentLinks(parentId: string): Promise<ParentStu
 
     // 6. Fallback: Query "roleInvites" collection directly where role === 'STUDENT' and parentEmail matches
     try {
-      const invitesEmailQuery = query(collection(db, 'roleInvites'), where('role', '==', 'STUDENT'), where('parentEmail', '==', parentIdClean));
+      const invitesEmailQuery = query(collection(db, 'roleInvites'), where('role', '==', 'STUDENT'), where('parentEmail', 'in', searchEmails));
       const invitesEmailSnap = await getDocs(invitesEmailQuery);
       invitesEmailSnap.docs.forEach(d => {
-        studentIdsSet.add(d.id);
         const inviteData = d.data();
         if (inviteData.luminaId) {
           studentIdsSet.add(inviteData.luminaId);
+        } else {
+          studentIdsSet.add(d.id);
         }
       });
     } catch (invErr) {

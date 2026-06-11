@@ -50,6 +50,12 @@ export default function ParentReports() {
         setViewedReports(new Set(viewsData.map(v => v.reportId)));
 
         if (studentData) {
+          const studentIdsToSearch = Array.from(new Set([
+            studentData.id,
+            (studentData as any).luminaId,
+            studentId
+          ].filter(Boolean) as string[]));
+
           const allReports = await getReportCards({
              unitId: studentData.unitId as any,
              academicYear: '2025/2026',
@@ -57,7 +63,7 @@ export default function ParentReports() {
           });
           
           const filtered = allReports.filter(rc => 
-            rc.studentReports.some(sr => sr.studentId === studentData.id)
+            rc.studentReports.some(sr => studentIdsToSearch.includes(sr.studentId))
           );
           
           setReports(filtered.sort((a, b) => b.createdAt - a.createdAt));
@@ -66,7 +72,7 @@ export default function ParentReports() {
           try {
             const qWeekly = query(
               collection(db, 'published_kg_reports'),
-              where('studentId', '==', studentData.id),
+              where('studentId', 'in', studentIdsToSearch),
               where('sentToParent', '==', true)
             );
             const weeklySnap = await getDocs(qWeekly);
