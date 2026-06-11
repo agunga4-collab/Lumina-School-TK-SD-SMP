@@ -20,6 +20,8 @@ import {
   markReportAsViewed
 } from '../../lib/firebase';
 import { cn } from '../../lib/utils';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../../lib/firebase';
 
 export default function ParentReports() {
   const { currentUser, selectedStudentId } = useOutletContext<{ currentUser: AppUser; selectedStudentId?: string | null }>();
@@ -30,6 +32,9 @@ export default function ParentReports() {
   const [reports, setReports] = React.useState<ReportCard[]>([]);
   const [viewedReports, setViewedReports] = React.useState<Set<string>>(new Set());
   const [loading, setLoading] = React.useState(true);
+  
+  const [weeklyReports, setWeeklyReports] = React.useState<any[]>([]);
+  const [activeTab, setActiveTab] = React.useState<'ACADEMIC' | 'WEEKLY'>('ACADEMIC');
 
   React.useEffect(() => {
     const fetchData = async () => {
@@ -56,6 +61,30 @@ export default function ParentReports() {
           );
           
           setReports(filtered.sort((a, b) => b.createdAt - a.createdAt));
+
+          // Fetch published weekly report cards (Kindergarten)
+          try {
+            const qWeekly = query(
+              collection(db, 'published_kg_reports'),
+              where('studentId', '==', studentData.id),
+              where('sentToParent', '==', true)
+            );
+            const weeklySnap = await getDocs(qWeekly);
+            const fetchedWeekly = weeklySnap.docs.map(docSnap => ({
+              id: docSnap.id,
+              ...docSnap.data()
+            })).sort((a: any, b: any) => b.publishedAt - a.publishedAt);
+            setWeeklyReports(fetchedWeekly);
+
+            // Default to 'WEEKLY' if there are weekly reports
+            if (fetchedWeekly.length > 0) {
+              setActiveTab('WEEKLY');
+            } else {
+              setActiveTab('ACADEMIC');
+            }
+          } catch (weeklyErr) {
+            console.error("Error fetching weekly reports for parent view:", weeklyErr);
+          }
         }
       } catch (err) {
         console.error(err);
@@ -114,94 +143,173 @@ export default function ParentReports() {
         </div>
       </div>
 
-      {reports.length === 0 ? (
-        <div className="bg-gray-50 border-2 border-dashed border-gray-200 p-20 rounded-[4rem] text-center space-y-4">
-          <div className="w-20 h-20 bg-gray-100 rounded-[2rem] flex items-center justify-center mx-auto">
-            <FileText className="text-gray-300" size={40} />
+      {activeTab === 'ACADEMIC' ? (
+        reports.length === 0 ? (
+          <div className="bg-gray-50 border-2 border-dashed border-gray-200 p-20 rounded-[4rem] text-center space-y-4">
+            <div className="w-20 h-20 bg-gray-100 rounded-[2rem] flex items-center justify-center mx-auto">
+              <FileText className="text-gray-300" size={40} />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-xl font-black text-gray-900 uppercase italic tracking-tighter">Tidak Ada Rapor</h3>
+              <p className="text-sm text-gray-400 font-bold max-w-xs mx-auto leading-relaxed">Saat ini belum ada rapor yang dipublikasikan untuk periode ini.</p>
+            </div>
           </div>
-          <div className="space-y-2">
-            <h3 className="text-xl font-black text-gray-900 uppercase italic tracking-tighter">Tidak Ada Rapor</h3>
-            <p className="text-sm text-gray-400 font-bold max-w-xs mx-auto leading-relaxed">Saat ini belum ada rapor yang dipublikasikan untuk periode ini.</p>
-          </div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {reports.map((report, idx) => {
-            const isNew = !viewedReports.has(report.id);
-            return (
-              <motion.div
-                key={report.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: idx * 0.1 }}
-                className={cn(
-                  "group relative bg-white p-8 rounded-[3.5rem] border transition-all flex flex-col justify-between aspect-square",
-                  isNew 
-                    ? "border-emerald-200 shadow-xl shadow-emerald-50 ring-4 ring-emerald-50" 
-                    : "border-gray-100 shadow-sm hover:shadow-xl hover:border-emerald-100"
-                )}
-              >
-                {isNew && (
-                  <div className="absolute -top-3 -right-3 bg-emerald-600 text-white px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-[0.2em] shadow-lg animate-bounce">
-                    Baru
-                  </div>
-                )}
-
-                <div className="space-y-6">
-                  <div className="flex justify-between items-start">
-                    <div className={cn(
-                      "w-14 h-14 rounded-[1.5rem] flex items-center justify-center group-hover:-rotate-6 transition-all duration-500",
-                      isNew ? "bg-emerald-600 text-white" : "bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white"
-                    )}>
-                      <FileText size={28} />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {reports.map((report, idx) => {
+              const isNew = !viewedReports.has(report.id);
+              return (
+                <motion.div
+                  key={report.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: idx * 0.1 }}
+                  className={cn(
+                    "group relative bg-white p-8 rounded-[3.5rem] border transition-all flex flex-col justify-between aspect-square",
+                    isNew 
+                      ? "border-emerald-200 shadow-xl shadow-emerald-50 ring-4 ring-emerald-50" 
+                      : "border-gray-100 shadow-sm hover:shadow-xl hover:border-emerald-100"
+                  )}
+                >
+                  {isNew && (
+                    <div className="absolute -top-3 -right-3 bg-emerald-600 text-white px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-[0.2em] shadow-lg animate-bounce">
+                      Baru
                     </div>
-                    <div className="text-right">
-                       <div className="px-4 py-2 bg-gray-950 text-white rounded-2xl text-[9px] font-black uppercase tracking-widest inline-block">
-                          {report.type.split('_')[0]}
-                       </div>
-                       <p className="text-[10px] font-bold text-gray-400 mt-2">
-                          Published: {new Date(report.publishedAt || 0).toLocaleDateString()}
-                       </p>
+                  )}
+
+                  <div className="space-y-6">
+                    <div className="flex justify-between items-start">
+                      <div className={cn(
+                        "w-14 h-14 rounded-[1.5rem] flex items-center justify-center group-hover:-rotate-6 transition-all duration-500",
+                        isNew ? "bg-emerald-600 text-white" : "bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white"
+                      )}>
+                        <FileText size={28} />
+                      </div>
+                      <div className="text-right">
+                         <div className="px-4 py-2 bg-gray-955 text-white rounded-2xl text-[9px] font-black uppercase tracking-widest inline-block">
+                            {report.type.split('_')[0]}
+                         </div>
+                         <p className="text-[10px] font-bold text-gray-400 mt-2">
+                            Published: {new Date(report.publishedAt || 0).toLocaleDateString()}
+                         </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <h3 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900 group-hover:text-emerald-600 transition-colors leading-tight">
+                        {report.period}
+                      </h3>
+                      <div className="flex items-center gap-3 text-xs font-bold text-gray-400">
+                        <span className="flex items-center gap-1"><Calendar size={12} /> Semester {report.semester}</span>
+                        {viewedReports.has(report.id) && (
+                          <span className="flex items-center gap-1 text-emerald-500 opacity-60"><CheckCircle2 size={12} /> Sudah Dibaca</span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
                   <div className="space-y-3">
-                    <h3 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900 group-hover:text-emerald-600 transition-colors leading-tight">
-                      {report.period}
-                    </h3>
-                    <div className="flex items-center gap-3 text-xs font-bold text-gray-400">
-                      <span className="flex items-center gap-1"><Calendar size={12} /> Semester {report.semester}</span>
-                      {viewedReports.has(report.id) && (
-                        <span className="flex items-center gap-1 text-emerald-500 opacity-60"><CheckCircle2 size={12} /> Sudah Dibaca</span>
-                      )}
+                    <Link 
+                      to={`/academic/rapor/${report.id}?view=parent`} 
+                      onClick={() => handleOpenReport(report.id)}
+                      className="w-full flex items-center justify-center gap-2 py-4 bg-gray-900 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-emerald-600 transition-all transform active:scale-95 shadow-xl"
+                    >
+                      <Eye size={14} /> Buka Laporan
+                    </Link>
+                    
+                    <div className="flex gap-2">
+                       <button className="flex-1 flex items-center justify-center gap-2 py-4 border-2 border-gray-100 text-gray-400 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:border-emerald-600 hover:text-emerald-600 transition-all">
+                          <Download size={14} /> PDF
+                       </button>
+                       {report.isEndTerm && (
+                         <button className="flex-1 flex items-center justify-center gap-2 py-4 border-2 border-gray-100 text-gray-400 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:border-blue-600 hover:text-blue-600 transition-all">
+                            <Award size={14} /> Diploma
+                         </button>
+                       )}
                     </div>
                   </div>
-                </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        )
+      ) : (
+        weeklyReports.length === 0 ? (
+          <div className="bg-gray-50 border-2 border-dashed border-gray-200 p-20 rounded-[4rem] text-center space-y-4">
+            <div className="w-20 h-20 bg-gray-100 rounded-[2rem] flex items-center justify-center mx-auto">
+              <Calendar className="text-emerald-600" size={40} />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-xl font-black text-gray-900 uppercase italic tracking-tighter">Tidak Ada Laporan Mingguan</h3>
+              <p className="text-sm text-gray-400 font-bold max-w-xs mx-auto leading-relaxed">Saat ini belum ada laporan mingguan yang dipublikasikan untuk periode ini.</p>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {weeklyReports.map((report, idx) => {
+              return (
+                <motion.div
+                  key={report.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: idx * 0.1 }}
+                  className="group relative bg-white p-8 rounded-[3.5rem] border border-gray-100 shadow-sm hover:shadow-xl hover:border-emerald-100 transition-all flex flex-col justify-between aspect-square"
+                >
+                  <div className="space-y-6">
+                    <div className="flex justify-between items-start">
+                      <div className="w-14 h-14 rounded-[1.5rem] bg-emerald-50 text-emerald-600 group-hover:bg-[#109E58] group-hover:text-white flex items-center justify-center group-hover:-rotate-6 transition-all duration-500">
+                        <Calendar size={28} />
+                      </div>
+                      <div className="text-right">
+                         <div className="px-4 py-2 bg-[#109E58] text-white rounded-2xl text-[9px] font-black uppercase tracking-widest inline-block">
+                            Weekly
+                         </div>
+                         <p className="text-[10px] font-bold text-gray-400 mt-2">
+                            {new Date(report.publishedAt || 0).toLocaleDateString('id-ID')}
+                         </p>
+                      </div>
+                    </div>
 
-                <div className="space-y-3">
-                  <Link 
-                    to={`/academic/rapor/${report.id}?view=parent`} 
-                    onClick={() => handleOpenReport(report.id)}
-                    className="w-full flex items-center justify-center gap-2 py-4 bg-gray-900 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-emerald-600 transition-all transform active:scale-95 shadow-xl"
-                  >
-                    <Eye size={14} /> Buka Laporan
-                  </Link>
-                  
-                  <div className="flex gap-2">
-                     <button className="flex-1 flex items-center justify-center gap-2 py-4 border-2 border-gray-100 text-gray-400 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:border-emerald-600 hover:text-emerald-600 transition-all">
-                        <Download size={14} /> PDF
-                     </button>
-                     {report.isEndTerm && (
-                       <button className="flex-1 flex items-center justify-center gap-2 py-4 border-2 border-gray-100 text-gray-400 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:border-blue-600 hover:text-blue-600 transition-all">
-                          <Award size={14} /> Diploma
-                       </button>
-                     )}
+                    <div className="space-y-3">
+                      <h3 className="text-xl font-black uppercase italic tracking-tighter text-gray-900 group-hover:text-[#109E58] transition-colors leading-tight line-clamp-2">
+                         Pekan: {report.startDate} - {report.endDate}
+                      </h3>
+                      <div className="space-y-2 mt-1">
+                         {report.theme && (
+                           <span className="inline-block px-3 py-1 bg-gray-50 border border-gray-150 rounded-xl text-[10px] text-gray-600 font-extrabold uppercase">
+                              Tema: {report.theme}
+                           </span>
+                         )}
+                         {report.className && (
+                           <div className="text-[10px] text-emerald-700 font-extrabold uppercase tracking-widest block">
+                              Kelas: {report.className}
+                           </div>
+                         )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </motion.div>
-            );
-          })}
-        </div>
+
+                  <div className="space-y-3 pt-6">
+                    {report.driveFileUrl ? (
+                      <a 
+                        href={report.driveFileUrl}
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="w-full flex items-center justify-center gap-2 py-4 bg-gray-900 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-[#109E58] transition-all transform active:scale-95 shadow-xl cursor-pointer"
+                      >
+                        <Eye size={14} /> Buka Laporan di Drive
+                      </a>
+                    ) : (
+                      <div className="w-full py-4 bg-gray-100 text-gray-400 rounded-2xl font-black uppercase text-[10px] tracking-widest text-center italic">
+                         Laporan PDF belum diunggah
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        )
       )}
 
       {/* Parental Notice */}

@@ -937,7 +937,7 @@ export async function getStudentById(id: string): Promise<Student | null> {
     if (docSnap.exists()) {
       const rawData = docSnap.data();
       return { 
-        id: docSnap.id, 
+        id: rawData.luminaId || docSnap.id, 
         ...rawData,
         name: rawData.name || rawData.fullName || rawData.displayName || "Ananda"
       } as Student;

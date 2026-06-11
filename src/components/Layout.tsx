@@ -106,10 +106,20 @@ export function Layout() {
             const studentData = await Promise.all(studentPromises);
             const validStudents = studentData.filter(s => s !== null) as Student[];
             
-            setParentStudents(validStudents);
+            // Deduplicate students by normalized id (preferring luminaId/NIS)
+            const uniqueStudentsMap = new Map<string, Student>();
+            validStudents.forEach(s => {
+              const studentId = (s as any).luminaId || s.id;
+              if (!uniqueStudentsMap.has(studentId)) {
+                uniqueStudentsMap.set(studentId, { ...s, id: studentId });
+              }
+            });
+            const deduplicatedStudents = Array.from(uniqueStudentsMap.values()) as Student[];
+            
+            setParentStudents(deduplicatedStudents);
             
             // Extract unique units
-            const units = Array.from(new Set(validStudents.map(s => (s.unitId || s.currentUnit) as UnitType).filter(Boolean)));
+            const units = Array.from(new Set(deduplicatedStudents.map((s: any) => (s.unitId || s.currentUnit) as UnitType).filter(Boolean)));
             setParentAccessibleUnits(units);
           } else {
             if (currentUser.unitId) {

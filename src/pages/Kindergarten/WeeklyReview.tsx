@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { 
   Smile, Meh, Frown, Angry, AlertCircle, Calendar, ChevronLeft, ChevronRight, 
   Printer, BookOpen, Clock, Heart, ShieldAlert, FileText, ArrowRight, Sparkles, ChevronDown,
-  Loader2, CheckCircle2, FileDown, Trash2
+  Loader2, CheckCircle2, FileDown, Trash2, Send
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useNavigate } from 'react-router-dom';
@@ -15,7 +15,7 @@ import {
   saveStoredStudents,
   aggregateKGWeeklyReportForPeriod
 } from '../../lib/kindergartenWeeklyReport';
-import { collection, query, where, getDocs, addDoc, deleteDoc, doc } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { useAuth } from '../../context/AuthContext';
@@ -574,6 +574,22 @@ export default function WeeklyReview() {
     }
   };
 
+  const handleSendToParent = async (reportId: string, currentStatus: boolean) => {
+    if (currentStatus) return;
+    const toastId = toast.loading("Mengirim laporan ke akun orang tua...");
+    try {
+      await updateDoc(doc(db, 'published_kg_reports', reportId), {
+        sentToParent: true,
+        sentAt: Date.now()
+      });
+      toast.success("Laporan berhasil dikirim ke akun orang tua! 🎉", { id: toastId });
+      fetchPublishedReports();
+    } catch (err: any) {
+      console.error("Error sending to parent:", err);
+      toast.error(`Gagal mengirim laporan: ${err.message}`, { id: toastId });
+    }
+  };
+
   const handleViewAndPrintPublished = (report: any) => {
     setSelectedClassId(report.classId);
     setStartDateStr(report.startDate);
@@ -1069,7 +1085,6 @@ export default function WeeklyReview() {
               <FileText className="text-[#109E58]" size={18} />
               Published Weekly Reports
             </h2>
-            <p className="text-xs text-gray-500">Daftar laporan mingguan yang berhasil dipublikasikan dan dicetak oleh guru</p>
           </div>
           <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 text-[10px] font-black uppercase">
             {publishedReports.length} Terpublikasi
@@ -1106,25 +1121,33 @@ export default function WeeklyReview() {
                     <td className="p-3.5 text-right">
                       <div className="flex items-center justify-end gap-2">
                         {report.driveFileUrl && (
-                          <a
-                            href={report.driveFileUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 px-2.5 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer"
-                            title="Buka dokumen di Google Drive"
-                          >
-                            <FileText size={12} className="text-blue-500" />
-                            Drive
-                          </a>
+                          <>
+                            <a
+                              href={report.driveFileUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 px-2.5 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer"
+                              title="Buka dokumen di Google Drive"
+                            >
+                              <FileText size={12} className="text-blue-500" />
+                              Drive
+                            </a>
+                            <button
+                              onClick={() => handleSendToParent(report.id, report.sentToParent || false)}
+                              disabled={report.sentToParent || false}
+                              className={cn(
+                                "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer",
+                                report.sentToParent
+                                  ? "bg-emerald-50 text-emerald-700 opacity-80 cursor-default"
+                                  : "bg-orange-50 hover:bg-orange-100 text-orange-700"
+                              )}
+                              title={report.sentToParent ? "Laporan sudah dikirim ke orang tua" : "Kirim link laporan ini ke akun orang tua"}
+                            >
+                              <Send size={12} className={report.sentToParent ? "text-emerald-500" : "text-orange-500"} />
+                              {report.sentToParent ? "Terkirim" : "Kirim ke Orang Tua"}
+                            </button>
+                          </>
                         )}
-                        <button
-                          onClick={() => handleViewAndPrintPublished(report)}
-                          className="inline-flex items-center gap-1.5 bg-[#109E58]/10 hover:bg-[#109E58]/25 text-[#109E58] px-3 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer"
-                          title="Buka kembali laporan dan jalankan cetak PDF"
-                        >
-                          <FileDown size={12} />
-                          Cetak
-                        </button>
                         <button
                           onClick={() => handleDeletePublished(report.id, report.studentName)}
                           className="p-1.5 hover:bg-red-50 text-red-500 hover:text-red-700 rounded-lg transition-all cursor-pointer"
