@@ -40,6 +40,10 @@ export default function ParentStudents() {
   // Fetch current parent linkages (fully synchronized)
   React.useEffect(() => {
     const fetchLinkedStudents = async () => {
+      if (!currentUser?.email) {
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       try {
         const linkData = await getParentStudentLinks(currentUser.email);
@@ -84,6 +88,10 @@ export default function ParentStudents() {
 
   // Function to attach student link to parent account
   const handleConnectStudent = async (student: Student) => {
+    if (!currentUser?.email) {
+      toast.error("Format email pengguna tidak valid.");
+      return;
+    }
     const targetStudentId = (student as any).luminaId || student.id;
 
     try {
@@ -92,9 +100,17 @@ export default function ParentStudents() {
       const currentIds = linkData?.studentIds || [];
       const updatedIds = Array.from(new Set([...currentIds, targetStudentId]));
 
+      const isAlreadyLinked = linkedStudents.some(s => s.id === targetStudentId || (s as any).luminaId === targetStudentId);
+      if (isAlreadyLinked) {
+        toast.info(`Ananda ${student.name || 'Siswa'} sudah terhubung.`);
+        return;
+      }
+
+      const emailKey = currentUser.email.toLowerCase().trim();
+
       // 2. Save/Update parentStudentLinks document
-      await setDoc(doc(db, 'parentStudentLinks', currentUser.email.toLowerCase().trim()), {
-        parentId: currentUser.email.toLowerCase().trim(),
+      await setDoc(doc(db, 'parentStudentLinks', emailKey), {
+        parentId: emailKey,
         studentIds: updatedIds,
         createdAt: Date.now(),
         createdBy: 'parent_self_service_link'
@@ -124,6 +140,10 @@ export default function ParentStudents() {
 
   // Function to disconnect/remove a student link
   const handleDisconnectStudent = async (studentId: string, studentName: string) => {
+    if (!currentUser?.email) {
+      toast.error("Format email pengguna tidak valid.");
+      return;
+    }
     if (window.confirm(`Apakah Anda yakin ingin melepas sambungan dengan ${studentName}?`)) {
       setLinkingInProgress(true);
       try {
@@ -131,9 +151,11 @@ export default function ParentStudents() {
         const currentIds = linkData?.studentIds || [];
         const updatedIds = currentIds.filter(id => id !== studentId);
 
+        const emailKey = currentUser.email.toLowerCase().trim();
+
         // Update parentStudentLinks
-        await setDoc(doc(db, 'parentStudentLinks', currentUser.email.toLowerCase().trim()), {
-          parentId: currentUser.email.toLowerCase().trim(),
+        await setDoc(doc(db, 'parentStudentLinks', emailKey), {
+          parentId: emailKey,
           studentIds: updatedIds,
           createdAt: Date.now(),
           createdBy: 'parent_self_service_unlink'
@@ -311,7 +333,7 @@ export default function ParentStudents() {
               <div className="space-y-4">
                 <h3 className="text-xl font-black text-amber-900 uppercase tracking-wide">Belum Ada Siswa Terkoneksi</h3>
                 <p className="text-amber-700/80 font-bold max-w-md mx-auto leading-relaxed text-sm">
-                  Akun email Anda ({currentUser.email}) belum memiliki data murid yang terhubung di sistem mandiri.
+                  Akun email Anda ({currentUser?.email || 'N/A'}) belum memiliki data murid yang terhubung di sistem mandiri.
                 </p>
                 <div className="p-5 bg-white border border-amber-200 rounded-2xl text-xs text-amber-800 font-medium max-w-md mx-auto space-y-1">
                   <p className="font-bold">👉 Cara menyambungkan akun:</p>

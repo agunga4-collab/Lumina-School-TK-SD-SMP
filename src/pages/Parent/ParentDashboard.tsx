@@ -39,7 +39,7 @@ export default function ParentDashboard() {
     const fetchLinks = async () => {
       setLoading(true);
       try {
-        const linkData = await getParentStudentLinks(currentUser.email);
+        const linkData = await getParentStudentLinks(currentUser?.email);
         setLinks(linkData);
 
         if (linkData && linkData.studentIds.length > 0) {

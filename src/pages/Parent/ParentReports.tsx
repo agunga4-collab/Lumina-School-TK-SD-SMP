@@ -43,7 +43,7 @@ export default function ParentReports() {
       try {
         const [studentData, viewsData] = await Promise.all([
           getStudentById(studentId),
-          getParentReportViews(currentUser.email)
+          getParentReportViews(currentUser?.email || '')
         ]);
 
         setStudent(studentData);
@@ -105,7 +105,7 @@ export default function ParentReports() {
   const handleOpenReport = async (reportId: string) => {
     if (!viewedReports.has(reportId)) {
       try {
-        await markReportAsViewed(currentUser.email, reportId, studentId!);
+        await markReportAsViewed(currentUser?.email || '', reportId, studentId!);
         setViewedReports(prev => new Set([...prev, reportId]));
       } catch (err) {
         console.error("Error marking as viewed:", err);

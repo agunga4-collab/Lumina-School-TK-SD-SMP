@@ -117,7 +117,7 @@ export function Layout() {
     if (currentUser && currentUser.role === 'PARENT') {
       const getParentUnitsAndStudents = async () => {
         try {
-          const linkData = await getParentStudentLinks(currentUser.email);
+          const linkData = await getParentStudentLinks(currentUser?.email);
           if (linkData && linkData.studentIds.length > 0) {
             const studentPromises = linkData.studentIds.map(id => getStudentById(id));
             const studentData = await Promise.all(studentPromises);
