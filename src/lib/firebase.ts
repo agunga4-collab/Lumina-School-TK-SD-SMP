@@ -1269,7 +1269,10 @@ export async function deleteSEActivity(id: string): Promise<void> {
 
 // --- Parent Section ---
 
-export async function getParentStudentLinks(parentId: string): Promise<ParentStudentLink | null> {
+export async function getParentStudentLinks(parentId?: string | null): Promise<ParentStudentLink | null> {
+  if (!parentId || typeof parentId !== 'string') {
+    return null;
+  }
   try {
     const parentIdClean = parentId.toLowerCase().trim();
     const parentIdOriginal = parentId.trim();
