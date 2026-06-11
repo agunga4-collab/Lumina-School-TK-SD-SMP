@@ -1948,47 +1948,72 @@ app.post("/api/admin/bulk-import-paste", async (req, res) => {
   }
 });
 
-// API: Sync Parents Data (ensure roleInvites has PARENT roles for all student parentEmail)
+// API: Sync Parents Data (ensure roleInvites & users have PARENT roles for all student parentEmail)
 app.post("/api/admin/sync-parents-data", async (req, res) => {
   try {
     const db = getAdminDb();
     if (!db) return res.status(503).json({ error: "Firebase not initialized" });
 
-    console.log("[SyncParents] Starting synchronization...");
+    console.log("[SyncParents] Starting comprehensive synchronization...");
 
-    // 1. Get all students from roleInvites (or students collection)
-    // We'll use roleInvites as it's the primary list for the admin dashboard
+    // 1. Get all student placeholders from roleInvites
     const studentsSnap = await db.collection("roleInvites")
       .where("role", "==", "STUDENT")
       .get();
+    const roleInviteStudents = studentsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
 
-    const students = studentsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+    // 2. Get all students directly from students collection
+    const studentsCollSnap = await db.collection("students").get();
+    const studentsCollList = studentsCollSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+
+    // Combine lists, preferring students collection since it's the core system of record
+    const allStudentsMap = new Map<string, any>();
     
-    // 2. Map parentEmail to list of student luminaIds
+    // First, seed with role invites
+    roleInviteStudents.forEach(s => {
+      const parentEmail = (s.parentEmail || "").trim().toLowerCase();
+      const luminaId = String(s.luminaId || s.id || "").trim();
+      if (luminaId && parentEmail) {
+        allStudentsMap.set(luminaId, {
+          id: s.id,
+          luminaId,
+          parentEmail,
+          name: s.name || "Siswa",
+          unitId: s.unitId || "JUNIOR_HIGH"
+        });
+      }
+    });
+
+    // Overwrite/Add with active students collection (more up-to-date and covers all school levels like Kindergarten)
+    studentsCollList.forEach(s => {
+      const parentEmail = (s.parentEmail || "").trim().toLowerCase();
+      const luminaId = String(s.luminaId || s.id || "").trim();
+      if (luminaId && parentEmail) {
+        allStudentsMap.set(luminaId, {
+          id: s.id,
+          luminaId,
+          parentEmail,
+          name: s.name || s.fullName || "Siswa",
+          unitId: s.unitId || "KINDERGARTEN",
+          fatherName: s.fatherName || "",
+          motherName: s.motherName || ""
+        });
+      }
+    });
+
+    // 3. Map parentEmail to list of student luminaIds
     const parentMap: Record<string, { name: string; linkedStudents: string[]; unitId: string }> = {};
 
-    for (const s of students) {
-      // Find parentEmail. In roleInvites it might be missing, so we check students collection too if needed.
-      // But let's assume we use the one attached to the student role invite if possible, 
-      // or we fetch the "students" collection which has better data.
-      
-      let parentEmail = s.parentEmail;
-      let luminaId = s.luminaId;
-
-      if (!parentEmail || !luminaId) {
-        // Try getting from students collection
-        const sCollSnap = await db.collection("students").doc(s.luminaId || s.id).get();
-        if (sCollSnap.exists) {
-          const sd = sCollSnap.data();
-          parentEmail = sd?.parentEmail;
-          luminaId = sd?.luminaId;
-        }
-      }
-
+    for (const [luminaId, s] of allStudentsMap.entries()) {
+      const parentEmail = s.parentEmail;
       if (parentEmail && luminaId) {
         if (!parentMap[parentEmail]) {
+          let defaultName = `Wali ${s.name}`;
+          if (s.fatherName) defaultName = s.fatherName;
+          else if (s.motherName) defaultName = s.motherName;
+
           parentMap[parentEmail] = {
-            name: `Wali ${s.name}`, // Default name if not found
+            name: defaultName,
             linkedStudents: [],
             unitId: s.unitId
           };
@@ -1996,30 +2021,28 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
         if (!parentMap[parentEmail].linkedStudents.includes(luminaId)) {
           parentMap[parentEmail].linkedStudents.push(luminaId);
         }
-        // Try to get a better name from fatherName or motherName
-        const sCollSnap = await db.collection("students").doc(luminaId).get();
-        if (sCollSnap.exists) {
-            const sd = sCollSnap.data();
-            if (sd?.fatherName) parentMap[parentEmail].name = sd.fatherName;
-            else if (sd?.motherName) parentMap[parentEmail].name = sd.motherName;
-        }
       }
     }
 
-    let created = 0;
-    let updated = 0;
+    let createdInvites = 0;
+    let updatedInvites = 0;
+    let updatedUsers = 0;
+    let syncedLinks = 0;
 
     for (const [email, info] of Object.entries(parentMap)) {
+      const emailClean = email.toLowerCase().trim();
+      if (!emailClean) continue;
+
+      // A. Sync roleInvites for PARENT role
       const parentSnap = await db.collection("roleInvites")
-        .where("email", "==", email)
+        .where("email", "==", emailClean)
         .where("role", "==", "PARENT")
         .limit(1)
         .get();
 
       if (parentSnap.empty) {
-        // CREATE
         await db.collection("roleInvites").add({
-          email,
+          email: emailClean,
           name: info.name,
           role: "PARENT",
           unitId: info.unitId,
@@ -2027,27 +2050,77 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
           status: "ready",
           createdAt: FieldValue.serverTimestamp()
         });
-        created++;
+        createdInvites++;
       } else {
-        // UPDATE
         const parentDoc = parentSnap.docs[0];
         const currentData = parentDoc.data();
-        
-        // Merge linked students
         const currentLinked = currentData.linkedStudents || [];
-        const newLinked = Array.from(new Set([...currentLinked, ...info.linkedStudents]));
+        const newLinked = Array.from(new Set([...currentLinked, ...info.linkedStudents].map(id => String(id))));
         
-        if (newLinked.length !== currentLinked.length) {
+        if (newLinked.length !== currentLinked.length || parentDoc.data().name !== info.name) {
           await parentDoc.ref.update({
             linkedStudents: newLinked,
+            name: currentData.name || info.name,
             updatedAt: FieldValue.serverTimestamp()
           });
-          updated++;
+          updatedInvites++;
         }
+      }
+
+      // B. Sync users collection for active registered parent profiles
+      const userSnap = await db.collection("users")
+        .where("email", "==", emailClean)
+        .where("role", "==", "PARENT")
+        .get();
+
+      if (!userSnap.empty) {
+        for (const userDoc of userSnap.docs) {
+          const userData = userDoc.data();
+          const currentLinked = userData.linkedStudents || [];
+          const newLinked = Array.from(new Set([...currentLinked, ...info.linkedStudents].map(id => String(id))));
+          
+          if (newLinked.length !== currentLinked.length) {
+            await userDoc.ref.update({
+              linkedStudents: newLinked,
+              updatedAt: FieldValue.serverTimestamp()
+            });
+            updatedUsers++;
+          }
+        }
+      }
+
+      // C. Update/Replace parentStudentLinks document (docId = parentEmail)
+      const linkDocRef = db.collection("parentStudentLinks").doc(emailClean);
+      await linkDocRef.set({
+        parentId: emailClean,
+        parentEmail: emailClean,
+        studentIds: info.linkedStudents,
+        createdAt: FieldValue.serverTimestamp(),
+        createdBy: "system_admin_sync"
+      }, { merge: true });
+
+      // D. Update sub parentStudentLinks documents (docId = `${parentEmail}_${luminaId}`)
+      for (const luminaId of info.linkedStudents) {
+        const individualLinkId = `${emailClean}_${luminaId}`;
+        await db.collection("parentStudentLinks").doc(individualLinkId).set({
+          parentEmail: emailClean,
+          studentId: luminaId,
+          unitId: info.unitId,
+          status: "active",
+          updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+        syncedLinks++;
       }
     }
 
-    res.json({ success: true, created, updated, totalParents: Object.keys(parentMap).length });
+    res.json({
+      success: true,
+      createdInvites,
+      updatedInvites,
+      updatedUsers,
+      syncedLinks,
+      totalParents: Object.keys(parentMap).length
+    });
   } catch (error: any) {
     console.error("[SyncParents] Error:", error);
     res.status(500).json({ error: error.message });

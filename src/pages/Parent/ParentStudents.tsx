@@ -124,7 +124,6 @@ export default function ParentStudents() {
       }
 
       toast.success(`Selamat! Akun Anda berhasil terhubung dengan ${student.name || 'Ananda'}! 🎉`);
-      setManualId('');
       setRefreshTrigger(prev => prev + 1);
       
       // Dispatch layout event to notify layout context to reload
