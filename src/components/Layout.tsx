@@ -196,9 +196,29 @@ export function Layout() {
       return ['KINDERGARTEN', 'ELEMENTARY', 'JUNIOR_HIGH'];
     }
     if (user.role === 'PARENT') {
-      return parentAccessibleUnits.length > 0 
-        ? parentAccessibleUnits 
-        : [user.unitId as UnitType || 'JUNIOR_HIGH'];
+      const unitsSet = new Set<UnitType>();
+      
+      // 1. Units from linked students
+      parentAccessibleUnits.forEach(u => {
+        if (u) unitsSet.add(u);
+      });
+      
+      // 2. Units from parent's assignedUnits field
+      if (Array.isArray(user.assignedUnits)) {
+        user.assignedUnits.forEach((u: any) => {
+          if (u) unitsSet.add(u as UnitType);
+        });
+      }
+      
+      // 3. Unit from parent's main unitId field
+      if (user.unitId) {
+        unitsSet.add(user.unitId as UnitType);
+      }
+      
+      if (unitsSet.size > 0) {
+        return Array.from(unitsSet);
+      }
+      return ['JUNIOR_HIGH'];
     }
     if (Array.isArray(user.assignedUnits) && user.assignedUnits.length > 0) {
       return user.assignedUnits as UnitType[];
