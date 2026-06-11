@@ -74,8 +74,7 @@ export default function ParentReports() {
           try {
             const qWeekly = query(
               collection(db, 'published_kg_reports'),
-              where('studentId', 'in', studentIdsToSearch),
-              where('sentToParent', '==', true)
+              where('studentId', 'in', studentIdsToSearch)
             );
             const weeklySnap = await getDocs(qWeekly);
             const fetchedWeekly = weeklySnap.docs.map(docSnap => ({

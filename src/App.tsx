@@ -89,6 +89,7 @@ import StudentDashboard from './pages/Student/StudentDashboard';
 import StudentReports from './pages/Student/StudentReports';
 import ParentDashboard from './pages/Parent/ParentDashboard';
 import ParentReports from './pages/Parent/ParentReports';
+import ParentStudents from './pages/Parent/ParentStudents';
 import ReportConfigPage from './pages/Settings/ReportConfig';
 
 // High-level wrapper for Admin-only access
@@ -423,6 +424,14 @@ export default function App() {
                 element={
                   <RoleGuard roles={['PARENT', 'SUPER_ADMIN']}>
                     <ParentReports />
+                  </RoleGuard>
+                } 
+             />
+             <Route 
+                path="students" 
+                element={
+                  <RoleGuard roles={['PARENT', 'SUPER_ADMIN']}>
+                    <ParentStudents />
                   </RoleGuard>
                 } 
              />

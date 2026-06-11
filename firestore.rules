@@ -92,7 +92,7 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       allow create: if isSignedIn() && userId == request.auth.uid && isValidUser(incoming());
-      allow update: if (isAdmin() || (userId == request.auth.uid && incoming().role == existing().role && incoming().status == existing().status )) && isValidUser(incoming());
+      allow update: if isAdmin() || (isSignedIn() && userId == request.auth.uid && incoming().role == existing().role && incoming().status == existing().status && isValidUser(incoming()));
     }
 
     match /roleInvites/{inviteId} {
@@ -291,8 +291,8 @@ service cloud.firestore {
     }
 
     match /parentStudentLinks/{linkId} {
-      allow read: if isSignedIn() && (isAdmin() || linkId.split('_')[0] == request.auth.token.email);
-      allow write: if isAdmin();
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || (isSignedIn() && linkId.lower() == request.auth.token.email.lower());
     }
 
     match /parentReportViews/{viewId} {
@@ -300,7 +300,7 @@ service cloud.firestore {
     }
 
     match /settings/{docId} {
-      allow read: if isSignedIn();
+      allow read: if true;
       allow write: if isAdmin();
     }
 

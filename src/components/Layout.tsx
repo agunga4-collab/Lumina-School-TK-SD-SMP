@@ -3,7 +3,7 @@ import {
   Home, Bell, Grid, LogOut, ChevronRight, LayoutDashboard, 
   Map, Smile, Camera, History, Heart, CheckSquare, BookOpen, 
   Eye, Clock, ShieldAlert, ShieldCheck, ClipboardList, Target, Mail, RefreshCw,
-  Baby, TrendingUp, Folder, BarChart3, FileText, Sparkles, Settings, GraduationCap, User,
+  Baby, TrendingUp, Folder, BarChart3, FileText, Sparkles, Settings, GraduationCap, User, Users,
   Menu, X
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, Navigate, useNavigate } from 'react-router-dom';
@@ -99,6 +99,18 @@ export function Layout() {
   const [activeUnit, setActiveUnit] = React.useState<UnitType | null>(null);
   const [parentAccessibleUnits, setParentAccessibleUnits] = React.useState<UnitType[]>([]);
   const [parentStudents, setParentStudents] = React.useState<Student[]>([]);
+  const [parentCheckTrigger, setParentCheckTrigger] = React.useState(0);
+
+  // Listen to parent student linkage edits
+  React.useEffect(() => {
+    const handleRefetch = () => {
+      setParentCheckTrigger(prev => prev + 1);
+    };
+    window.addEventListener('parent_student_linked_changed', handleRefetch);
+    return () => {
+      window.removeEventListener('parent_student_linked_changed', handleRefetch);
+    };
+  }, []);
 
   // Fetch linked students to determine accessible units and filter students for parents
   React.useEffect(() => {
@@ -127,8 +139,11 @@ export function Layout() {
             const units = Array.from(new Set(deduplicatedStudents.map((s: any) => (s.unitId || s.currentUnit) as UnitType).filter(Boolean)));
             setParentAccessibleUnits(units);
           } else {
+            setParentStudents([]);
             if (currentUser.unitId) {
               setParentAccessibleUnits([currentUser.unitId as UnitType]);
+            } else {
+              setParentAccessibleUnits([]);
             }
           }
         } catch (err) {
@@ -140,7 +155,7 @@ export function Layout() {
       };
       getParentUnitsAndStudents();
     }
-  }, [currentUser]);
+  }, [currentUser, parentCheckTrigger]);
 
   // Automatically bypass unit selector ONLY for students
   React.useEffect(() => {
@@ -416,6 +431,7 @@ export function Layout() {
                 <>
                   <NavItem to="/parent/dashboard" icon={<Home size={18} />} label="Dashboard Ortu" />
                   <NavItem to="/parent/reports" icon={<FileText size={18} />} label="Rapor Anak" />
+                  <NavItem to="/parent/students" icon={<Users size={18} />} label="Data Siswa" />
                 </>
              ) : (
                 <NavItem to="/" icon={<Home size={18} />} label="Dashboard" />
