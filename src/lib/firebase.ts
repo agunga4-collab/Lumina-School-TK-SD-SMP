@@ -931,18 +931,18 @@ export async function updateReportConfig(unitId: string, config: ReportConfig): 
 }
 
 export async function getStudentById(id: string): Promise<Student | null> {
+  const cleanId = String(id).trim();
+  if (!cleanId) return null;
+
+  const isNumeric = /^\d+$/.test(cleanId);
+  const queryVals: any[] = [cleanId];
+  if (isNumeric) {
+    queryVals.push(parseInt(cleanId, 10));
+  }
+  const uniqueQueryVals = Array.from(new Set(queryVals));
+
+  // 1. Try "students" collection
   try {
-    const cleanId = String(id).trim();
-    if (!cleanId) return null;
-
-    const isNumeric = /^\d+$/.test(cleanId);
-    const queryVals: any[] = [cleanId];
-    if (isNumeric) {
-      queryVals.push(parseInt(cleanId, 10));
-    }
-    const uniqueQueryVals = Array.from(new Set(queryVals));
-
-    // 1. Try "students" collection
     const docSnap = await getDoc(doc(db, 'students', cleanId));
     if (docSnap.exists()) {
       const rawData = docSnap.data();
@@ -955,8 +955,12 @@ export async function getStudentById(id: string): Promise<Student | null> {
         name: rawData.name || rawData.fullName || rawData.displayName || "Ananda"
       } as unknown as Student;
     }
+  } catch (err: any) {
+    console.warn("[getStudentById] Direct students document lookup failed:", err.message);
+  }
 
-    // 1b. Try "students" collection by luminaId search
+  // 1b. Try "students" collection by luminaId search
+  try {
     const qStudent = query(collection(db, 'students'), where('luminaId', 'in', uniqueQueryVals));
     const qStudentSnap = await getDocs(qStudent);
     if (!qStudentSnap.empty) {
@@ -970,8 +974,12 @@ export async function getStudentById(id: string): Promise<Student | null> {
         name: rawData.name || rawData.fullName || rawData.displayName || "Ananda"
       } as unknown as Student;
     }
+  } catch (err: any) {
+    console.warn("[getStudentById] Students collection search failed:", err.message);
+  }
 
-    // 2. Try "roleInvites" collection (as document ID)
+  // 2. Try "roleInvites" collection (as document ID)
+  try {
     const inviteRef = doc(db, 'roleInvites', cleanId);
     const inviteSnap = await getDoc(inviteRef);
     if (inviteSnap.exists()) {
@@ -990,8 +998,13 @@ export async function getStudentById(id: string): Promise<Student | null> {
         } as unknown as Student;
       }
     }
+  } catch (err: any) {
+    // Suppress verbose error logging for parent profiles
+    console.debug("[getStudentById] Direct roleInvites lookup bypass:", err.message);
+  }
 
-    // 3. Try "roleInvites" collection by luminaId search
+  // 3. Try "roleInvites" collection by luminaId search
+  try {
     const qInvite = query(collection(db, 'roleInvites'), where('luminaId', 'in', uniqueQueryVals), where('role', '==', 'STUDENT'));
     const qInviteSnap = await getDocs(qInvite);
     if (!qInviteSnap.empty) {
@@ -1008,8 +1021,12 @@ export async function getStudentById(id: string): Promise<Student | null> {
         status: inviteData.status || 'ready'
       } as unknown as Student;
     }
+  } catch (err: any) {
+    console.debug("[getStudentById] RoleInvites search query bypass:", err.message);
+  }
 
-    // 4. Try "users" collection (as document ID)
+  // 4. Try "users" collection (as document ID)
+  try {
     const userRef = doc(db, 'users', cleanId);
     const userSnap = await getDoc(userRef);
     if (userSnap.exists()) {
@@ -1028,8 +1045,12 @@ export async function getStudentById(id: string): Promise<Student | null> {
         } as unknown as Student;
       }
     }
+  } catch (err: any) {
+    console.debug("[getStudentById] Direct users lookup bypass:", err.message);
+  }
 
-    // 5. Try "users" collection by luminaId search
+  // 5. Try "users" collection by luminaId search
+  try {
     const qUser = query(collection(db, 'users'), where('luminaId', 'in', uniqueQueryVals), where('role', '==', 'STUDENT'));
     const qUserSnap = await getDocs(qUser);
     if (!qUserSnap.empty) {
@@ -1046,12 +1067,11 @@ export async function getStudentById(id: string): Promise<Student | null> {
         status: uData.status
       } as unknown as Student;
     }
-
-    return null;
   } catch (err: any) {
-    console.warn("[getStudentById] Fallback failed for student id:", id, err);
-    return null;
+    console.debug("[getStudentById] Users search query bypass:", err.message);
   }
+
+  return null;
 }
 
 // --- Self Exploration Section ---

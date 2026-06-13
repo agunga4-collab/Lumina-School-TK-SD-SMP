@@ -90,13 +90,34 @@ service cloud.firestore {
     // --- Collection Rules ---
 
     match /users/{userId} {
-      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow get: if isSignedIn() && (
+        request.auth.uid == userId 
+        || isAdmin() 
+        || isJuniorHighStaff() 
+        || isTeacher()
+        || (isParent() && resource.data.role == 'STUDENT')
+      );
+      allow list: if isSignedIn() && (
+        isAdmin() 
+        || isJuniorHighStaff() 
+        || isTeacher() 
+        || resource.data.email.lower() == request.auth.token.email.lower()
+        || (isParent() && resource.data.role == 'STUDENT')
+      );
       allow create: if isSignedIn() && userId == request.auth.uid && isValidUser(incoming());
       allow update: if isAdmin() || (isSignedIn() && userId == request.auth.uid && incoming().role == existing().role && incoming().status == existing().status && isValidUser(incoming()));
     }
 
     match /roleInvites/{inviteId} {
-      allow read: if isSignedIn() && (isAdmin() || (resource != null && resource.data.email.lower() == request.auth.token.email.lower()));
+      allow read: if isSignedIn() && (
+        isAdmin() 
+        || isJuniorHighStaff() 
+        || isTeacher() 
+        || (resource != null && (
+             resource.data.email.lower() == request.auth.token.email.lower() 
+             || (resource.data.parentEmail != null && resource.data.parentEmail.lower() == request.auth.token.email.lower())
+           ))
+      );
       allow write: if isAdmin();
       allow update: if (isSignedIn() && incoming().status == 'used' && existing().status == 'ready' && incoming().email.lower() == request.auth.token.email.lower());
     }
@@ -296,7 +317,23 @@ service cloud.firestore {
     }
 
     match /parentReportViews/{viewId} {
-      allow read, write: if isSignedIn() && (isAdmin() || viewId.split('_')[0] == request.auth.token.email);
+      allow get: if isSignedIn() && (
+        isAdmin() 
+        || viewId.split('_')[0].lower() == request.auth.token.email.lower() 
+        || (resource != null && resource.data.parentId.lower() == request.auth.token.email.lower())
+      );
+      allow list: if isSignedIn() && (
+        isAdmin() 
+        || resource.data.parentId.lower() == request.auth.token.email.lower()
+      );
+      allow create: if isSignedIn() && (
+        isAdmin() 
+        || incoming().parentId.lower() == request.auth.token.email.lower()
+      );
+      allow update, delete: if isSignedIn() && (
+        isAdmin() 
+        || existing().parentId.lower() == request.auth.token.email.lower()
+      );
     }
 
     match /settings/{docId} {

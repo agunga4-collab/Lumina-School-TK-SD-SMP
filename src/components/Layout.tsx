@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { 
   Home, Bell, Grid, LogOut, ChevronRight, LayoutDashboard, 
-  Map, Smile, Camera, History, Heart, CheckSquare, BookOpen, 
+  Map as MapIcon, Smile, Camera, History, Heart, CheckSquare, BookOpen, 
   Eye, Clock, ShieldAlert, ShieldCheck, ClipboardList, Target, Mail, RefreshCw,
   Baby, TrendingUp, Folder, BarChart3, FileText, Sparkles, Settings, GraduationCap, User, Users,
   Menu, X
@@ -450,7 +450,7 @@ export function Layout() {
                     icon={<LayoutDashboard size={18} />} 
                     label="Analisis Unit" 
                   />
-                  <NavItem to="/child/passport" icon={<Map size={18} />} label="Passport Siswa" />
+                  <NavItem to="/child/passport" icon={<MapIcon size={18} />} label="Passport Siswa" />
                 </>
              )}
           </div>
