@@ -1121,7 +1121,7 @@ export default function ObservationTableImporter({ classes = [], students = [], 
         activity: KGActivity;
         domain: KGDomain;
         date: string;
-        observations: Record<string, { grading: KGGrading; notes: string; photo: string | null }>;
+        observations: Record<string, { grading: KGGrading; notes: string; photo: string | null; studentName?: string }>;
       }> = {};
 
       let validObservationsCount = 0;
@@ -1151,7 +1151,8 @@ export default function ObservationTableImporter({ classes = [], students = [], 
           batchCommits[key].observations[student.id] = {
             grading: entry.grading,
             notes: `Observation imported via smart period bulk paste. [${format(entry.date, 'dd MMM yyyy')}]`,
-            photo: null // bypassed photo validation per specs
+            photo: null, // bypassed photo validation per specs
+            studentName: student.name
           };
           validObservationsCount++;
         }

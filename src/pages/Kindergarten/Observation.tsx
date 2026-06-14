@@ -729,7 +729,7 @@ export default function Observation() {
     }
   };
 
-  const handleSaveAll = () => {
+  const handleSaveAll = async () => {
     // 1. Mandatory check: general photo MUST escape empty or null values
     if (!generalPhoto) {
       toast.error('Gagal menyimpan! Foto General (kegiatan utama) wajib diisi.', {
@@ -739,24 +739,66 @@ export default function Observation() {
     }
 
     setIsSaving(true);
-    setTimeout(() => {
-      setIsSaving(false);
+    try {
+      const todayStr = new Date().toISOString().split('T')[0];
       
-      // Save permanently for this combo key
+      // Enrich with student's names
+      const enrichedObservations = { ...observations };
+      students.forEach(student => {
+        if (enrichedObservations[student.id]) {
+          enrichedObservations[student.id] = {
+            ...enrichedObservations[student.id],
+            studentName: student.name
+          };
+        } else if (student.oldLuminaId && enrichedObservations[student.oldLuminaId]) {
+          enrichedObservations[student.oldLuminaId] = {
+            ...enrichedObservations[student.oldLuminaId],
+            studentName: student.name
+          };
+        } else if (student.nis && enrichedObservations[student.nis]) {
+          enrichedObservations[student.nis] = {
+            ...enrichedObservations[student.nis],
+            studentName: student.name
+          };
+        }
+      });
+
+      // Save permanently for this combo key in LocalStorage
       const comboKey = `kg_obs_hist_${selectedActivity}_${selectedDomain}`;
       const payload = {
         selectedActivity,
         selectedDomain,
         generalPhoto,
-        observations,
+        observations: enrichedObservations,
+        date: todayStr,
         timestamp: Date.now()
       };
       localStorage.setItem(comboKey, JSON.stringify(payload));
+
+      // Save permanently to Firestore 'observations' collection
+      const docId = `${selectedActivity}_${selectedDomain}_${todayStr}`;
+      const docRef = doc(db, 'observations', docId);
       
-      toast.success('Observation Data berhasil disimpan ke sistem! ✨', {
+      await setDoc(docRef, {
+        id: docId,
+        activity: selectedActivity,
+        domain: selectedDomain,
+        date: todayStr,
+        generalPhotoUrl: generalPhoto,
+        observations: enrichedObservations,
+        timestamp: Date.now(),
+        updatedAt: Date.now()
+      }, { merge: true });
+
+      toast.success('Observation Data berhasil disimpan ke sistem & Firestore! ✨', {
         description: `Sentra: ${activities.find(a => a.id === selectedActivity)?.label}, Domain: ${domains.find(d => d.id === selectedDomain)?.label}`
       });
-    }, 1500);
+    } catch (err: any) {
+      console.error("Gagal menyimpan ke Firestore:", err);
+      toast.error(`Gagal menyimpan data ke Firestore: ${err.message || String(err)}`);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const clearGeneralPhoto = () => {
