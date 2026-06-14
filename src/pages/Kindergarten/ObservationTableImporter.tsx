@@ -139,38 +139,20 @@ const mapStringToGrading = (str: string): KGGrading | null => {
   // Normalize string for exact Indonesian words ignoring multiple whitespaces
   const normalized = s.replace(/\s+/g, ' ');
 
-  if (
-    normalized === 'BELUM BERKEMBANG' || 
-    normalized === 'BELUM' || 
-    normalized === 'BB'
-  ) {
+  // Direct short-codes or exact match
+  if (normalized === 'BB' || normalized === 'BELUM BERKEMBANG' || normalized === 'BELUM') {
     return 'BB';
   }
-  
-  if (
-    normalized === 'BERKEMBANG SANGAT BAIK' || 
-    normalized === 'SANGAT BAIK' || 
-    normalized === 'BSB'
-  ) {
-    return 'BSB';
-  }
-  
-  if (
-    normalized === 'BERKEMBANG SESUAI HARAPAN' || 
-    normalized === 'SESUAI HARAPAN' || 
-    normalized === 'BSH'
-  ) {
-    return 'BSH';
-  }
-  
-  if (
-    normalized === 'MULAI BERKEMBANG' || 
-    normalized === 'MULAI' || 
-    normalized === 'MB'
-  ) {
+  if (normalized === 'MB' || normalized === 'MULAI BERKEMBANG' || normalized === 'MULAI') {
     return 'MB';
   }
-  
+  if (normalized === 'BSH' || normalized === 'BERKEMBANG SESUAI HARAPAN' || normalized === 'SESUAI HARAPAN') {
+    return 'BSH';
+  }
+  if (normalized === 'BSB' || normalized === 'BERKEMBANG SANGAT BAIK' || normalized === 'SANGAT BAIK') {
+    return 'BSB';
+  }
+
   if (
     normalized === 'TIDAK MASUK' || 
     normalized === 'TIDAK HADIR' || 
@@ -193,6 +175,12 @@ const mapStringToGrading = (str: string): KGGrading | null => {
   ) {
     return 'NOT_PARTICIPATING';
   }
+
+  // Bracket and parentheses extractions (e.g., matching "Belum Berkembang (BB)" or "BSH - Berkembang...")
+  if (s.includes('(BB)') || s.includes('[BB]') || s.includes(' BB ') || s.endsWith(' BB')) return 'BB';
+  if (s.includes('(MB)') || s.includes('[MB]') || s.includes(' MB ') || s.endsWith(' MB')) return 'MB';
+  if (s.includes('(BSH)') || s.includes('[BSH]') || s.includes(' BSH ') || s.endsWith(' BSH')) return 'BSH';
+  if (s.includes('(BSB)') || s.includes('[BSB]') || s.includes(' BSB ') || s.endsWith(' BSB')) return 'BSB';
 
   // Fallbacks with cleaned/contains matching for robust Excel spreadsheet pastes
   const cleaned = s.replace(/[^A-Z]/g, '');
@@ -446,6 +434,16 @@ export default function ObservationTableImporter({ classes = [], students = [], 
   }, [students]);
   const [selectedClassId, setSelectedClassId] = React.useState<string>(initialClassId);
   
+  const currentClassObj = React.useMemo(() => {
+    return classes.find(c => c.id === selectedClassId);
+  }, [classes, selectedClassId]);
+
+  const targetRoster = React.useMemo(() => {
+    if (selectedClassId === 'ALL') return systemStudents;
+    if (!currentClassObj) return [];
+    return systemStudents.filter(s => isStudentInClass(s.classId || '', currentClassObj));
+  }, [selectedClassId, currentClassObj, systemStudents]);
+  
   // File Upload states and references
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [uploadedFile, setUploadedFile] = React.useState<File | null>(null);
@@ -593,15 +591,33 @@ export default function ObservationTableImporter({ classes = [], students = [], 
     }
   };
 
-  // Check if a row is a pasted header row (contains metadata keywords)
-  const isHeaderRow = (row: string[]): boolean => {
+  // Check if a row is a pasted header row (contains metadata keywords and doesn't match standard student names)
+  const isHeaderRow = React.useCallback((row: string[]): boolean => {
     const firstCell = String(row[0] || '').toLowerCase().trim();
     if (!firstCell) return false;
+
+    // Strict safety check: If it matches an active registered system student in roster, it is 100% NOT a header row!
+    const matchRes = robustMatchStudent(row[0], targetRoster);
+    if (matchRes.student) return false;
+
+    // Exact or strict prefix matching of header words to prevent loose matches on names
+    const isStrictHeaderWord = 
+      firstCell === 'no' ||
+      firstCell === 'no.' ||
+      firstCell === 'nama' || 
+      firstCell === 'nama siswa' || 
+      firstCell === 'siswa' || 
+      firstCell === 'student' || 
+      firstCell === 'student name' || 
+      firstCell === 'day' ||
+      firstCell.startsWith('day ') ||
+      firstCell.startsWith('hari ') ||
+      firstCell.includes('day /') ||
+      firstCell.includes('hari /') ||
+      /^day\s*\d+/i.test(firstCell);
+
     return (
-      firstCell.includes('nama') || 
-      firstCell.includes('siswa') || 
-      firstCell.includes('student') || 
-      firstCell.includes('day') ||
+      isStrictHeaderWord ||
       firstCell.includes('sentra') ||
       firstCell.includes('activity') ||
       firstCell.includes('domain') ||
@@ -609,7 +625,7 @@ export default function ObservationTableImporter({ classes = [], students = [], 
       findSentraInLine(row[0]) !== '' ||
       findDomainInLine(row[0]) !== ''
     );
-  };
+  }, [targetRoster]);
 
   // Paste handler supporting full grid distribution
   const handlePaste = (e: React.ClipboardEvent, startRow: number, startCol: number) => {
@@ -727,16 +743,6 @@ export default function ObservationTableImporter({ classes = [], students = [], 
     if (matchRes.student) return { matches: true, student: matchRes.student, name: matchRes.student.name };
     return { matches: false, student: null, name: '' };
   }, []);
-
-  const currentClassObj = React.useMemo(() => {
-    return classes.find(c => c.id === selectedClassId);
-  }, [classes, selectedClassId]);
-
-  const targetRoster = React.useMemo(() => {
-    if (selectedClassId === 'ALL') return systemStudents;
-    if (!currentClassObj) return [];
-    return systemStudents.filter(s => isStudentInClass(s.classId || '', currentClassObj));
-  }, [selectedClassId, currentClassObj, systemStudents]);
 
   // Student name matching resolution helper
   const resolveStudentInfo = React.useCallback((nameVal: string) => {
@@ -904,6 +910,9 @@ export default function ObservationTableImporter({ classes = [], students = [], 
       const nameVal = row[0].trim();
       const res = resolveStudentInfo(nameVal);
 
+      // Audit Log: student matched
+      console.log(`[Import Audit] student matched: Roster Name in spreadsheet="${nameVal}" | System Search Result: matched=${res.matches}, label="${res.label}", ambiguous=${!!res.isAmbiguous}`);
+
       const entries: {
         dayNum: number;
         date: Date;
@@ -918,8 +927,19 @@ export default function ObservationTableImporter({ classes = [], students = [], 
         const cellVal = row[colIndex];
         if (!cellVal || !cellVal.trim()) continue;
 
+        // Audit Log: raw cell value read
+        console.log(`[Import Audit] raw cell value read: Student="${nameVal}" | Day ${idx + 1} Col ${colIndex} | Value="${cellVal}"`);
+
         const matchedGrading = mapStringToGrading(cellVal);
-        if (!matchedGrading) continue;
+        
+        // Audit Log: normalized value
+        console.log(`[Import Audit] normalized value: Student="${nameVal}" | Day ${idx + 1} | Raw="${cellVal}" -> Mapped to enum="${matchedGrading || 'FAILED'}"`);
+
+        if (!matchedGrading) {
+          // Audit Log: rejected by validator (grading)
+          console.warn(`[Import Audit] rejected by validator: Student="${nameVal}" | Day ${idx + 1} | Grading not valid for input="${cellVal}"`);
+          continue;
+        }
 
         // Obtain parsed configurations from Row 0 and Row 1
         const rawSentraVal = gridData[0][colIndex] || '';
@@ -972,7 +992,14 @@ export default function ObservationTableImporter({ classes = [], students = [], 
           }
         }
 
-        if (!activity || !domain) continue;
+        if (!activity || !domain) {
+          // Audit Log: rejected by validator (unconfigured column)
+          console.warn(`[Import Audit] rejected by validator: Student="${nameVal}" | Day ${idx + 1} Col ${colIndex} | Missing activity or domain header config. Sentra headers in spreadsheet Row 1="${rawSentraVal}", Domain header Row 2="${rawDomainVal}"`);
+          continue;
+        }
+
+        // Audit Log: accepted by validator
+        console.log(`[Import Audit] accepted by validator: Student="${nameVal}" | Day ${idx + 1} Col ${colIndex} | Verified as valid entry (Date=${format(workdays[idx], 'yyyy-MM-dd')}, Activity=${activity}, Domain=${domain}, Grading=${matchedGrading})`);
 
         entries.push({
           dayNum: idx + 1,
@@ -995,8 +1022,12 @@ export default function ObservationTableImporter({ classes = [], students = [], 
       }
     }
 
+    // Audit Log: total valid entries for preview
+    const totalEntriesCounted = items.reduce((acc, item) => acc + (item.matched ? item.entries.length : 0), 0);
+    console.log(`[Import Audit] total valid entries for preview: Students with matches=${items.filter(i => i.matched).length}, Total valid grading cells ready for preview=${totalEntriesCounted}`);
+
     return items;
-  }, [gridData, workdays]);
+  }, [gridData, workdays, isHeaderRow, resolveStudentInfo]);
 
   const totalMatchedCount = previewItems.filter(item => item.matched && item.entries.length > 0).length;
   const totalWarningsCount = previewItems.filter(item => !item.matched && item.studentName.trim() !== '').length;
