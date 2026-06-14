@@ -1602,7 +1602,7 @@ export default function Observation() {
                       <table className="w-full text-left border-collapse min-w-[900px]">
                         <thead>
                           <tr className="bg-gray-50/70 text-[10px] font-black text-gray-500 uppercase tracking-wider border-b border-gray-100">
-                            <th className="p-4 pl-6 w-56">Siswa</th>
+                            <th className="p-4 pl-6 w-72 min-w-[288px]">Siswa</th>
                             {domains.map(dom => (
                               <th key={dom.id} className="p-4 text-center text-[9px] w-40" title={dom.desc}>
                                 {dom.label}
@@ -1787,7 +1787,7 @@ export default function Observation() {
                       <table className="w-full border-collapse text-left text-xs min-w-[1000px]">
                         <thead>
                           <tr className="bg-gray-50/70 text-[10px] font-black text-gray-500 uppercase tracking-wider border-b border-gray-100">
-                            <th className="p-4 pl-6 sticky left-0 bg-gray-50 border-r border-gray-100/80 w-52 z-10">Siswa</th>
+                            <th className="p-4 pl-6 sticky left-0 bg-gray-50 border-r border-gray-100/80 w-72 min-w-[288px] z-10">Siswa</th>
                             {Array.from({ length: daysInMonth }).map((_, idx) => {
                               const day = idx + 1;
                               const weekend = isWeekendDay(day);
@@ -1817,7 +1817,7 @@ export default function Observation() {
                               return (
                                 <tr key={student.id} className="hover:bg-gray-50/20 transition duration-150">
                                   {/* Student Name */}
-                                  <td className="p-4 pl-6 font-bold text-gray-800 sticky left-0 bg-white border-r border-gray-100/80 z-10 shadow-[2px_0_5px_rgba(0,0,0,0.02)] max-w-[208px] truncate">
+                                  <td className="p-4 pl-6 font-bold text-gray-800 sticky left-0 bg-white border-r border-gray-100/80 z-10 shadow-[2px_0_5px_rgba(0,0,0,0.02)] min-w-[288px] max-w-[320px] truncate">
                                     <div className="flex items-center gap-2">
                                       <div className="w-6 h-6 rounded bg-emerald-500 text-white font-black text-[10px] flex items-center justify-center shrink-0">
                                         {student.name.charAt(0)}
