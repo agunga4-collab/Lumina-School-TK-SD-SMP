@@ -78,7 +78,7 @@ export default function SuperAdminPage() {
     "STAFF" | "STUDENT" | "PARENT" | "CLASSES" | "LOGO" | "PROMPTS" | "KNOWLEDGE_BASE" | "PENDING"
   >("STAFF");
   const [activeMenu, setActiveMenu] = React.useState<
-    "overview" | "user-undangan" | "user-pending" | "kelas" | "ai-prompts" | "ai-knowledge" | "ai-logo" | "import-massal" | "import-sync" | "sistem-reset" | "academic-year"
+    "overview" | "user-undangan" | "user-pending" | "kelas" | "ai-prompts" | "ai-knowledge" | "ai-logo" | "import-massal" | "import-sync" | "sistem-reset" | "academic-year" | "reconcile-siswa" | "conflict-siswa"
   >("overview");
   const [collapsedGroups, setCollapsedGroups] = React.useState<Record<string, boolean>>({
     USER: false,
@@ -244,6 +244,11 @@ export default function SuperAdminPage() {
     errors: string[];
   } | null>(null);
   const [resetLoading, setResetLoading] = React.useState(false);
+
+  // States for student reference reconciliation
+  const [reconcileUnit, setReconcileUnit] = React.useState<string>("KINDERGARTEN");
+  const [isReconciling, setIsReconciling] = React.useState(false);
+  const [reconciliationResult, setReconciliationResult] = React.useState<any | null>(null);
 
   // States for Prompt templates
   const [promptTemplates, setPromptTemplates] = React.useState<PromptTemplate[]>([]);
@@ -831,6 +836,7 @@ export default function SuperAdminPage() {
       jobTitle: "",
       status: "ready",
       luminaId: "",
+      oldLuminaId: "",
       nisn: "",
       nickname: "",
       gender: "",
@@ -958,6 +964,94 @@ export default function SuperAdminPage() {
     }
   };
 
+  const handleReconcileStudentRefs = async (dryRun: boolean) => {
+    if (!dryRun) {
+      const confirmFirst = window.confirm(
+        "⚠️ PERINGATAN LIVE UPDATE!\n\nAnda akan melakukan sinkronisasi referensi ID siswa di database produksi secara langsung.\nTindakan ini akan memodifikasi field referensi di collections observations, published_kg_reports, users, dll.\n\nApakah Anda sungguh yakin ingin melanjutkan?"
+      );
+      if (!confirmFirst) return;
+    }
+
+    setIsReconciling(true);
+    setReconciliationResult(null);
+
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) throw new Error("Sesi login Anda tidak valid. Silakan masuk kembali.");
+
+      const response = await fetch("/api/admin/reconcile-student-refs", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          dryRun,
+          unitId: reconcileUnit,
+        }),
+      });
+
+      const resData = await response.json();
+      if (!response.ok || !resData.success) {
+        throw new Error(resData.error || "Gagal menghubungi backend server.");
+      }
+
+      setReconciliationResult(resData);
+      if (dryRun) {
+        alert("Simulasi Rekonsiliasi selesai! Silakan periksa hasil analisis di bawah sebelum melakukan Live Run. ✨");
+      } else {
+        alert("Selamat! Rekonsiliasi & Sinkronisasi DB Live berhasil diselesaikan! 🚀");
+        fetchData();
+      }
+    } catch (err: any) {
+      console.error("[ReconcileUI] Error:", err);
+      alert("Proses Rekonsiliasi Gagal: " + err.message);
+    } finally {
+      setIsReconciling(false);
+    }
+  };
+
+  // Identity Conflict scan states
+  const [conflictUnit, setConflictUnit] = React.useState<string>("KINDERGARTEN");
+  const [isScanningConflicts, setIsScanningConflicts] = React.useState<boolean>(false);
+  const [conflictResult, setConflictResult] = React.useState<any>(null);
+  const [conflictFilter, setConflictFilter] = React.useState<"ALL" | "HIGH" | "STANDARD" | "REVIEW">("ALL");
+  const [expandedConflictId, setExpandedConflictId] = React.useState<string | null>(null);
+
+  const handleScanIdentityConflicts = async () => {
+    setIsScanningConflicts(true);
+    setConflictResult(null);
+    setExpandedConflictId(null);
+
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) throw new Error("Sesi login Anda tidak valid. Silakan masuk kembali.");
+
+      const response = await fetch("/api/admin/scan-identity-conflicts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          unitId: conflictUnit,
+        }),
+      });
+
+      const resData = await response.json();
+      if (!response.ok || !resData.success) {
+        throw new Error(resData.error || "Gagal menghubungi backend server.");
+      }
+
+      setConflictResult(resData);
+    } catch (err: any) {
+      console.error("[ConflictUI] Error scanning:", err);
+      alert("Proses Pemindaian Konflik Gagal: " + err.message);
+    } finally {
+      setIsScanningConflicts(false);
+    }
+  };
+
   React.useEffect(() => {
     fetchData();
   }, []);
@@ -1069,8 +1163,81 @@ export default function SuperAdminPage() {
     setFormLoading(true);
     try {
       if (editingId) {
-        await updateInvite(editingId, formData);
+        // Fetch invite before updating to find previous values for student detection
+        const originalInviteSnap = await getDoc(doc(db, "roleInvites", editingId));
+        let previousLuminaId = "";
+        let previousOldLuminaId = "";
+        if (originalInviteSnap.exists()) {
+          const origData = originalInviteSnap.data();
+          previousLuminaId = origData.luminaId || "";
+          previousOldLuminaId = origData.oldLuminaId || "";
+        }
+
+        // Auto-detect Old Lumina ID (NIS) rename
+        let finalOldLuminaId = formData.oldLuminaId || previousOldLuminaId;
+        if (formData.role === "STUDENT" && previousLuminaId && formData.luminaId && previousLuminaId !== formData.luminaId) {
+          if (!finalOldLuminaId || finalOldLuminaId === formData.luminaId) {
+            finalOldLuminaId = previousLuminaId;
+          }
+        }
+
+        const updatedFormData = { ...formData, oldLuminaId: finalOldLuminaId };
+        await updateInvite(editingId, updatedFormData);
         
+        // Propagate the change to active student and enrollment records
+        if (formData.role === "STUDENT" && formData.luminaId && formData.classId && formData.academicYear) {
+          try {
+            const batch = writeBatch(db);
+            
+            // Delete old student & enrollment records if NIS changed
+            if (previousLuminaId && previousLuminaId !== formData.luminaId) {
+              const oldStudentRef = doc(db, "students", previousLuminaId);
+              batch.delete(oldStudentRef);
+              
+              const oldEnrollmentId = `${previousLuminaId}_${formData.academicYear.replace(/\//g, "-")}`;
+              batch.delete(doc(db, "enrollments", oldEnrollmentId));
+            }
+
+            // Create/Update student record
+            const studentRef = doc(db, "students", formData.luminaId);
+            batch.set(studentRef, {
+              id: formData.luminaId,
+              luminaId: formData.luminaId,
+              oldLuminaId: finalOldLuminaId,
+              name: formData.name,
+              email: formData.email,
+              classId: formData.classId,
+              unitId: formData.unitId,
+              academicYear: formData.academicYear,
+              nisn: formData.nisn || "",
+              nickname: formData.nickname || "",
+              gender: formData.gender || "",
+              parentEmail: formData.parentEmail || "",
+              status: "active",
+              updatedAt: Date.now(),
+              createdAt: Date.now()
+            }, { merge: true });
+
+            // Create/Update enrollment record
+            const enrollmentId = `${formData.luminaId}_${formData.academicYear.replace(/\//g, "-")}`;
+            const enrollmentRef = doc(db, "enrollments", enrollmentId);
+            batch.set(enrollmentRef, {
+              id: enrollmentId,
+              studentId: formData.luminaId,
+              classId: formData.classId,
+              unitId: formData.unitId,
+              academicYear: formData.academicYear,
+              status: "active",
+              updatedAt: Date.now()
+            }, { merge: true });
+
+            await batch.commit();
+            console.log("[SuperAdmin] Edited Student and Enrollment updated/propagated successfully.");
+          } catch (studentErr) {
+            console.error("[SuperAdmin] Failed to update/delete student/enrollment records on edit:", studentErr);
+          }
+        }
+
         // Propagate the change to the active user profile if it exists
         try {
           const qUser = query(collection(db, "users"), where("email", "==", formData.email.toLowerCase().trim()));
@@ -1083,6 +1250,7 @@ export default function SuperAdminPage() {
                 unitId: formData.unitId,
                 jobTitle: formData.jobTitle || null,
                 luminaId: formData.luminaId || null,
+                oldLuminaId: finalOldLuminaId || null,
                 nickname: formData.nickname || null,
                 linkedStudents: formData.linkedStudents || [],
                 classId: formData.classId || null,
@@ -1110,6 +1278,7 @@ export default function SuperAdminPage() {
             batch.set(studentRef, {
               id: formData.luminaId,
               luminaId: formData.luminaId,
+              oldLuminaId: formData.oldLuminaId || "",
               name: formData.name,
               email: formData.email,
               classId: formData.classId,
@@ -1198,6 +1367,7 @@ export default function SuperAdminPage() {
         jobTitle: "",
         status: "ready",
         luminaId: "",
+        oldLuminaId: "",
         nisn: "",
         nickname: "",
         gender: "",
@@ -1765,6 +1935,40 @@ export default function SuperAdminPage() {
                 <span>Konfigurasi Tahun Ajaran</span>
               </div>
             </button>
+            <button
+              onClick={() => {
+                setActiveMenu("reconcile-siswa");
+                setIsMobileSidebarOpen(false);
+              }}
+              className={cn(
+                "w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-left flex items-center justify-between transition-all",
+                activeMenu === "reconcile-siswa"
+                  ? "bg-slate-900 text-white font-bold border border-slate-800"
+                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200"
+              )}
+            >
+              <div className="flex items-center gap-2.5 flex-1 select-none">
+                <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                <span>Rekonsiliasi ID Siswa</span>
+              </div>
+            </button>
+            <button
+              onClick={() => {
+                setActiveMenu("conflict-siswa");
+                setIsMobileSidebarOpen(false);
+              }}
+              className={cn(
+                "w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-left flex items-center justify-between transition-all",
+                activeMenu === "conflict-siswa"
+                  ? "bg-slate-900 text-white font-bold border border-slate-800"
+                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200"
+              )}
+            >
+              <div className="flex items-center gap-2.5 flex-1 select-none">
+                <div className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+                <span>Deteksi Konflik Identitas</span>
+              </div>
+            </button>
           </div>
         )}
       </div>
@@ -2036,6 +2240,7 @@ export default function SuperAdminPage() {
                             jobTitle: "",
                             status: "ready",
                             luminaId: "",
+                            oldLuminaId: "",
                             classId: "",
                             academicYear: "2025/2026",
                             linkedStudents: [],
@@ -2999,9 +3204,16 @@ export default function SuperAdminPage() {
                               </span>
                             </td>
                             <td className="px-6 py-6">
-                              <span className="text-[11px] font-mono font-bold text-blue-600">
-                                {invite.luminaId || "-"}
-                              </span>
+                              <div className="flex flex-col">
+                                <span className="text-[11px] font-mono font-bold text-blue-600">
+                                  {invite.luminaId || "-"}
+                                </span>
+                                {invite.oldLuminaId && (
+                                  <span className="text-[9px] font-mono font-bold text-gray-400 mt-0.5 leading-none bg-gray-50 border border-gray-100 rounded px-1 py-0.5 max-w-max" title="NIS Lama">
+                                    Lama: {invite.oldLuminaId}
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="px-6 py-6">
                               <span className="text-[11px] font-mono text-gray-400">
@@ -4073,6 +4285,871 @@ export default function SuperAdminPage() {
             </div>
           )}
 
+          {activeMenu === "reconcile-siswa" && (
+            <div className="space-y-8 animate-in fade-in duration-200">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="px-2 py-0.5 text-[9px] font-black bg-orange-100 text-orange-700 rounded-full uppercase tracking-widest">
+                    Super Admin Engine
+                  </span>
+                  <span className="px-2 py-0.5 text-[9px] font-black bg-slate-100 text-slate-700 rounded-full uppercase tracking-widest">
+                    Firestore Integrity
+                  </span>
+                </div>
+                <h2 className="text-2xl font-black text-gray-900 tracking-tight italic uppercase">
+                  Rekonsiliasi & Sinkronisasi ID Siswa
+                </h2>
+                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">
+                  Mendeteksi, memetakan, dan menyinkronkan kembali identifier siswa (LMN ID vs NIS) yang tidak konsisten di berbagai koleksi sekunder Lumina.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                {/* Control Panel Card */}
+                <div className="lg:col-span-1 bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm space-y-6">
+                  <h3 className="text-sm font-black text-gray-800 uppercase tracking-widest border-b border-gray-50 pb-3 flex items-center gap-2">
+                    <Terminal size={16} className="text-orange-500" />
+                    Parameter Eksekusi
+                  </h3>
+
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">
+                        Pilih Unit Target Rekonsiliasi
+                      </label>
+                      <select
+                        value={reconcileUnit}
+                        onChange={(e) => setReconcileUnit(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2.5 text-xs font-semibold text-gray-700 outline-none focus:border-orange-200 transition-all cursor-pointer"
+                      >
+                        <option value="KINDERGARTEN">Kindergarten (TK)</option>
+                        <option value="ELEMENTARY">Elementary (SD)</option>
+                        <option value="JUNIOR_HIGH">Junior High (SMP)</option>
+                        <option value="ALL">Seluruh Unit (ALL LEVEL)</option>
+                      </select>
+                    </div>
+
+                    <div className="p-3.5 bg-amber-50/60 rounded-2xl border border-amber-100/50 space-y-2">
+                      <div className="flex items-center gap-1.5 text-amber-700">
+                        <AlertTriangle size={14} className="shrink-0" />
+                        <h4 className="text-[10px] font-black uppercase tracking-wider">
+                          Informasi Alur Kerja :
+                        </h4>
+                      </div>
+                      <p className="text-[10px] text-gray-500 leading-relaxed font-semibold">
+                        Sistem memetakan link hubungan di <span className="text-amber-800 font-bold">roleInvites</span> ke siswa master di <span className="text-amber-800 font-bold">students</span>, lalu menulis kembali ID internal yang stabil ke collections: observations, published_kg_reports, users, attendance, lateness_records, & parentStudentLinks.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 pt-2">
+                    <button
+                      onClick={() => handleReconcileStudentRefs(true)}
+                      disabled={isReconciling}
+                      className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all flex items-center justify-center gap-2 disabled:opacity-50 select-none shadow-md shadow-slate-100"
+                    >
+                      {isReconciling ? (
+                        <>
+                          <Loader2 size={14} className="animate-spin" />
+                          Menganalisis...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw size={14} />
+                          Simulasikan (Dry Run)
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      onClick={() => handleReconcileStudentRefs(false)}
+                      disabled={isReconciling}
+                      className="w-full py-3.5 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all flex items-center justify-center gap-2 disabled:opacity-50 select-none shadow-md shadow-orange-100"
+                    >
+                      {isReconciling ? (
+                        <>
+                          <Loader2 size={14} className="animate-spin" />
+                          Memproses DB...
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 size={14} />
+                          Terapkan (Live Update)
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Results Screen Card */}
+                <div className="lg:col-span-2 space-y-6">
+                  {isReconciling && (
+                    <div className="bg-white p-12 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col items-center justify-center text-center space-y-4">
+                      <div className="p-4 bg-orange-50 text-orange-600 rounded-full animate-pulse border border-orange-105">
+                        <RefreshCw size={32} className="animate-spin text-orange-500" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-gray-800 uppercase tracking-wider mb-1">
+                          Mesin Rekonsiliasi Sedang Berjalan
+                        </h4>
+                        <p className="text-xs text-gray-450 font-bold max-w-sm mx-auto">
+                          Memindai, menguji integritas, dan memverifikasi keselarasan ID siswa di seluruh koleksi Firestore. Harap tunggu sebentar...
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {!isReconciling && !reconciliationResult && (
+                    <div className="bg-slate-50/40 p-12 rounded-[2rem] border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-center space-y-4">
+                      <div className="p-4 bg-gray-100/80 text-gray-450 rounded-full">
+                        <Terminal size={28} className="text-slate-400" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-gray-500 uppercase tracking-widest mb-1">
+                          Belum Ada Analisis Terbuka
+                        </h4>
+                        <p className="text-[11px] text-gray-450 font-bold max-w-sm mx-auto">
+                          Jalankan simulasi &quot;Dry Run&quot; atau filter unit target di panel kiri untuk me-load hasil pencocokan relasi data siswa.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {!isReconciling && reconciliationResult && (
+                    <div className="space-y-6 animate-in fade-in duration-300">
+                      {/* Diagnostic Summary Bento Layout */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between">
+                          <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">
+                            Mode Eksekusi
+                          </span>
+                          <span className={cn(
+                            "text-xs font-black uppercase tracking-wide mt-1.5 px-2 py-0.5 rounded-md inline-block max-w-max",
+                            reconciliationResult.mode === "DRY-RUN" 
+                              ? "bg-blue-50 text-blue-700 border border-blue-100" 
+                              : "bg-green-50 text-green-700 border border-green-100"
+                          )}>
+                            {reconciliationResult.mode}
+                          </span>
+                        </div>
+
+                        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between">
+                          <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">
+                            Siswa Master
+                          </span>
+                          <span className="text-base font-black text-slate-800 mt-1">
+                            {reconciliationResult.scannedStudentsCount || 0} <span className="text-[9px] text-gray-400 uppercase font-black tracking-normal">Data</span>
+                          </span>
+                        </div>
+
+                        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between">
+                          <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">
+                            Undangan (ST)
+                          </span>
+                          <span className="text-base font-black text-indigo-700 mt-1">
+                            {reconciliationResult.scannedSTUDENTInvitesCount || 0} <span className="text-[9px] text-gray-400 uppercase font-black tracking-normal">Siswa</span>
+                          </span>
+                        </div>
+
+                        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between">
+                          <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">
+                            Sinkron / Total Map
+                          </span>
+                          <span className="font-mono text-base font-bold mt-1 text-orange-600">
+                            {reconciliationResult.mappingCount || 0} <span className="text-[9px] text-gray-400 uppercase font-black tracking-normal font-sans">Kunci</span>
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Detail Mapping Statistics */}
+                      <div className="bg-gradient-to-br from-indigo-50/20 to-orange-50/10 p-5 rounded-3xl border border-slate-100 grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="bg-white/80 p-3.5 rounded-2xl border border-white flex items-center gap-3">
+                          <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
+                            <CheckCircle2 size={16} />
+                          </div>
+                          <div>
+                            <p className="text-[9px] text-gray-400 font-black uppercase">Relasi Terverifikasi</p>
+                            <p className="text-sm font-black text-emerald-700">{reconciliationResult.matchedInvitesCount || 0} Siswa</p>
+                          </div>
+                        </div>
+
+                        <div className="bg-white/80 p-3.5 rounded-2xl border border-white flex items-center gap-3">
+                          <div className="p-2 bg-amber-50 text-amber-600 rounded-lg">
+                            <AlertTriangle size={16} />
+                          </div>
+                          <div>
+                            <p className="text-[9px] text-gray-400 font-black uppercase">Unlinked / Yatim Piatu</p>
+                            <p className="text-sm font-black text-amber-700">{reconciliationResult.unmatchedInvitesCount || 0} Siswa</p>
+                          </div>
+                        </div>
+
+                        <div className="bg-white/80 p-3.5 rounded-2xl border border-white flex items-center gap-3">
+                          <div className="p-2 bg-rose-50 text-rose-600 rounded-lg">
+                            <RefreshCw size={16} />
+                          </div>
+                          <div>
+                            <p className="text-[9px] text-gray-450 font-black uppercase">Perubahan Referensi</p>
+                            <p className="text-sm font-black text-orange-700">{reconciliationResult.changesCount || 0} Dokumen</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Detailed Priority Tier Match Diagnostics */}
+                      <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6 space-y-4">
+                        <div className="border-b border-gray-55 pb-3">
+                          <h4 className="text-xs font-black text-gray-800 uppercase tracking-widest flex items-center gap-2">
+                            <Sparkles size={14} className="text-indigo-500 animate-pulse" />
+                            Statistik Tingkat Pencocokan (5-Tier Alignment Engine)
+                          </h4>
+                          <p className="text-[10px] text-gray-400 font-semibold uppercase mt-0.5 tracking-wider">
+                            Breakdown performa logika pencocokan dari prioritas tertinggi (Doc ID) hingga fallback terlemah (Nama Normalisasi).
+                          </p>
+                        </div>
+
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5 pt-1">
+                          <div className="bg-slate-50/60 border border-slate-100 p-3.5 rounded-2xl flex flex-col justify-between">
+                            <div>
+                              <span className="text-[8px] font-black uppercase text-indigo-500 tracking-wider">Tier 1</span>
+                              <p className="text-[10.5px] font-black text-slate-700 leading-tight mt-0.5">Exact Doc ID</p>
+                            </div>
+                            <div className="mt-3.5 flex items-baseline gap-1">
+                              <span className="text-lg font-extrabold text-slate-800">{reconciliationResult.matchedByDocId || 0}</span>
+                              <span className="text-[9px] text-gray-400 font-bold uppercase">Siswa</span>
+                            </div>
+                          </div>
+
+                          <div className="bg-slate-50/60 border border-slate-100 p-3.5 rounded-2xl flex flex-col justify-between">
+                            <div>
+                              <span className="text-[8px] font-black uppercase text-indigo-500 tracking-wider">Tier 2</span>
+                              <p className="text-[10.5px] font-black text-slate-700 leading-tight mt-0.5">Lumina ID Property</p>
+                            </div>
+                            <div className="mt-3.5 flex items-baseline gap-1">
+                              <span className="text-lg font-extrabold text-slate-800">{reconciliationResult.matchedByLuminaId || 0}</span>
+                              <span className="text-[9px] text-gray-400 font-bold uppercase">Siswa</span>
+                            </div>
+                          </div>
+
+                          <div className="bg-slate-50/60 border border-slate-100 p-3.5 rounded-2xl flex flex-col justify-between">
+                            <div>
+                              <span className="text-[8px] font-black uppercase text-indigo-500 tracking-wider">Tier 3</span>
+                              <p className="text-[10.5px] font-black text-slate-700 leading-tight mt-0.5">NIS / National ID</p>
+                            </div>
+                            <div className="mt-3.5 flex items-baseline gap-1">
+                              <span className="text-lg font-extrabold text-slate-800">{reconciliationResult.matchedByNis || 0}</span>
+                              <span className="text-[9px] text-gray-400 font-bold uppercase">Siswa</span>
+                            </div>
+                          </div>
+
+                          <div className="bg-slate-50/60 border border-slate-100 p-3.5 rounded-2xl flex flex-col justify-between">
+                            <div>
+                              <span className="text-[8px] font-black uppercase text-indigo-500 tracking-wider">Tier 4</span>
+                              <p className="text-[10.5px] font-black text-slate-700 leading-tight mt-0.5">Unique Email</p>
+                            </div>
+                            <div className="mt-3.5 flex items-baseline gap-1">
+                              <span className="text-lg font-extrabold text-slate-800">{reconciliationResult.matchedByEmail || 0}</span>
+                              <span className="text-[9px] text-gray-400 font-bold uppercase">Siswa</span>
+                            </div>
+                          </div>
+
+                          <div className="bg-slate-50/60 border border-slate-100 p-3.5 rounded-2xl flex flex-col justify-between col-span-2 md:col-span-1">
+                            <div>
+                              <span className="text-[8px] font-black uppercase text-orange-600 tracking-wider">Tier 5</span>
+                              <p className="text-[10.5px] font-black text-slate-700 leading-tight mt-0.5">Tolerant Name Fallback</p>
+                            </div>
+                            <div className="mt-3.5 flex items-baseline gap-1">
+                              <span className="text-lg font-extrabold text-orange-600">{reconciliationResult.matchedByName || 0}</span>
+                              <span className="text-[9px] text-gray-400 font-bold uppercase">Siswa</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Ambiguous Duplicate Matches Logs */}
+                      {reconciliationResult.ambiguousMatches && reconciliationResult.ambiguousMatches.length > 0 && (
+                        <div className="bg-amber-50/40 rounded-[2rem] border border-amber-100 p-6 space-y-4">
+                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-amber-100 pb-3">
+                            <div>
+                              <h4 className="text-xs font-black text-amber-850 uppercase tracking-widest flex items-center gap-2">
+                                <AlertTriangle size={15} className="text-amber-600" />
+                                Deteksi Ambiguitas Ganda ({reconciliationResult.ambiguousMatches.length}) - Dilewati Otomatis
+                              </h4>
+                              <p className="text-[10px] text-amber-700/80 font-semibold mt-0.5 uppercase tracking-wider">
+                                Demi integritas data, pencarian di bawah ini diabaikan karena menghasilkan lebih dari 1 kandidat yang sama (seperti nama duplikat / kembar).
+                              </p>
+                            </div>
+                          </div>
+                          <div className="max-h-60 overflow-y-auto space-y-1.5 pr-2">
+                            {reconciliationResult.ambiguousMatches.map((msg: string, idx: number) => (
+                              <div key={idx} className="p-3 bg-white rounded-xl border border-amber-100/60 text-xs text-amber-900 leading-relaxed font-semibold flex items-start gap-2">
+                                <span className="p-1 px-2 bg-amber-50 text-amber-600 rounded text-[9px] font-black shrink-0">AMBIGU</span>
+                                <span>{msg}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Explicit Warning For 0 Mappings */}
+                      {reconciliationResult.mappingCount === 0 && (
+                        <div className="p-6 bg-rose-50/60 rounded-3xl border border-rose-150/60 space-y-3.5">
+                          <div className="flex items-center gap-2.5 text-rose-800">
+                            <AlertCircle size={20} className="shrink-0" />
+                            <h4 className="text-xs font-black uppercase tracking-widest">
+                              Mengapa Hasil Output Mapping Kosong?
+                            </h4>
+                          </div>
+                          <div className="text-xs text-gray-550 leading-relaxed font-semibold space-y-2">
+                            <p>
+                              Mesin sinkronisasi berhasil menganalisis database, tetapi **0 entitas kunci referensi** yang perlu diperbarui karena:
+                            </p>
+                            <ul className="list-disc list-inside space-y-1.5 pl-2">
+                              <li>
+                                <span className="text-slate-800 font-bold">Semua data sudah sinkron</span>: Kolom referensi ID siswa pada records observations dan users Anda sudah mengarah dengan tepat ke master student ID.
+                              </li>
+                              <li>
+                                <span className="text-slate-800 font-bold">Tidak ada roleInvites STUDENT berstatus aktif</span> untuk unit target <span className="font-bold underline text-rose-700">{reconcileUnit}</span>.
+                              </li>
+                              <li>
+                                <span className="text-slate-800 font-bold">Mismatch Nama / Email</span>: Siswa pada tabel undangan roleInvites gagal dicocokkan ke master data students dikarenakan ketidakcocokan literal nama dan email. Silakan periksa daftar siswa unlinked di bagian bawah.
+                              </li>
+                            </ul>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Scanned Collections Table */}
+                      <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden p-6 space-y-4">
+                        <h4 className="text-xs font-black text-gray-800 uppercase tracking-widest flex items-center gap-2">
+                          <ShieldCheck size={14} className="text-green-600" />
+                          Hasil Pemindaian Koleksi
+                        </h4>
+                        <div className="overflow-x-auto border border-slate-100 rounded-2xl">
+                          <table className="w-full border-collapse text-left">
+                            <thead>
+                              <tr className="bg-slate-50 border-b border-gray-100">
+                                <th className="p-3.5 text-[9px] font-black text-slate-500 uppercase tracking-widest">Koleksi Firestore</th>
+                                <th className="p-3.5 text-[9px] font-black text-slate-500 uppercase tracking-widest text-center">Total Dokumen</th>
+                                <th className="p-3.5 text-[9px] font-black text-slate-500 uppercase tracking-widest text-center">Diselaraskan (Disinkron)</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100 text-xs">
+                              {Object.entries(reconciliationResult.scannedCollections || {}).map(([name, stats]: [string, any]) => (
+                                <tr key={name} className="hover:bg-slate-50/50">
+                                  <td className="p-3.5 font-mono font-medium text-slate-600 whitespace-nowrap">{name}</td>
+                                  <td className="p-3.5 text-center font-semibold text-slate-400">{stats.scanned}</td>
+                                  <td className="p-3.5 text-center">
+                                    <span className={cn(
+                                      "px-2.5 py-0.5 rounded-full font-bold font-mono text-[10px]",
+                                      stats.matched > 0 ? "bg-orange-50 text-orange-700 border border-orange-100" : "bg-slate-50 text-slate-400"
+                                    )}>
+                                      {stats.matched}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      {/* Unmatched Samples Table */}
+                      {reconciliationResult.unmatchedSamples && reconciliationResult.unmatchedSamples.length > 0 && (
+                        <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden p-6 space-y-4 animate-in slide-in-from-bottom duration-300">
+                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-gray-50 pb-3">
+                            <div>
+                              <h4 className="text-xs font-black text-gray-800 uppercase tracking-widest flex items-center gap-2">
+                                <AlertTriangle size={15} className="text-amber-500" />
+                                Daftar Undangan Tanpa Relasi Siswa Master ({reconciliationResult.unmatchedInvitesCount})
+                              </h4>
+                              <p className="text-[10px] text-gray-400 font-semibold mt-0.5 uppercase tracking-wider">
+                                Email atau Nama siswa di invitations ini tidak terhubung dengan dokumen mana pun di koleksi Master Students.
+                              </p>
+                            </div>
+                            <span className="text-[9px] font-black text-gray-400 tracking-wider uppercase bg-gray-50 px-2 py-1 rounded-md shrink-0">
+                              Maks. 20 Sampel Teratas
+                            </span>
+                          </div>
+
+                          <div className="overflow-x-auto border border-slate-100 rounded-2xl">
+                            <table className="w-full border-collapse text-left">
+                              <thead>
+                                <tr className="bg-slate-50 border-b border-gray-100">
+                                  <th className="p-3 text-[9px] font-black text-slate-500 uppercase tracking-widest">Nama Undangan</th>
+                                  <th className="p-3 text-[9px] font-black text-slate-500 uppercase tracking-widest">Email Siswa</th>
+                                  <th className="p-3 text-[9px] font-black text-slate-500 uppercase tracking-widest text-center">Unit</th>
+                                  <th className="p-3 text-[9px] font-black text-slate-500 uppercase tracking-widest font-mono">Doc ID Invite</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100 text-xs">
+                                {reconciliationResult.unmatchedSamples.map((item: any) => (
+                                  <tr key={item.id} className="hover:bg-amber-50/20">
+                                    <td className="p-3 font-semibold text-slate-700">{item.name}</td>
+                                    <td className="p-3 text-slate-550">{item.email}</td>
+                                    <td className="p-3 text-center">
+                                      <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-[9.5px] font-black uppercase">{item.unitId}</span>
+                                    </td>
+                                    <td className="p-3 font-mono text-[10px] text-gray-400">{item.id}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Samples Block */}
+                      {reconciliationResult.sampleChanges && reconciliationResult.sampleChanges.length > 0 && (
+                        <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden p-6 space-y-4">
+                          <h4 className="text-xs font-black text-gray-800 uppercase tracking-widest flex items-center justify-between">
+                            <span className="flex items-center gap-2">
+                              <Terminal size={14} className="text-slate-650" />
+                              Sampel Log Perubahan (Siswa / Dokumen)
+                            </span>
+                            <span className="text-[9px] font-black text-gray-400 tracking-wider">
+                              Menampilkan maks. {reconciliationResult.sampleChanges.length} perubahan
+                            </span>
+                          </h4>
+
+                          <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
+                            {reconciliationResult.sampleChanges.map((change: any, index: number) => (
+                              <div key={index} className="flex flex-col md:flex-row md:items-center justify-between p-3.5 bg-slate-50/60 rounded-2xl border border-slate-50 text-[11px] gap-2">
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-1.5 font-bold">
+                                    <span className="px-1.5 py-0.5 font-mono text-[9.5px] bg-indigo-50 text-indigo-700 rounded border border-indigo-100">
+                                      {change.collection}
+                                    </span>
+                                    <span className="text-slate-400 font-normal">ID: {change.docId}</span>
+                                  </div>
+                                  <div className="text-slate-500 font-semibold">
+                                    Field: <span className="font-mono font-bold text-slate-600">{change.field}</span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-100 shrink-0 font-mono text-xs">
+                                  <span className="text-red-500 font-bold line-through">{change.oldValue}</span>
+                                  <ArrowRight size={12} className="text-slate-400 shrink-0" />
+                                  <span className="text-green-600 font-bold">{change.newValue}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Errors or Warnings warnings */}
+                      {reconciliationResult.errorsCount > 0 && (
+                        <div className="bg-red-50/40 rounded-[2rem] border border-red-100 p-6 space-y-3">
+                          <h4 className="text-xs font-black text-red-700 uppercase tracking-widest flex items-center gap-2">
+                            <AlertCircle size={14} />
+                            Log Masalah / Warning Integritas ({reconciliationResult.errorsCount})
+                          </h4>
+                          <div className="max-h-48 overflow-y-auto space-y-1.5 pr-2">
+                            {reconciliationResult.errors.map((errMessage: string, index: number) => (
+                              <div key={index} className="p-2.5 bg-white rounded-xl border border-red-50 text-[10.5px] text-red-650 font-semibold leading-relaxed">
+                                {errMessage}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeMenu === "conflict-siswa" && (
+            <div className="space-y-8 animate-in fade-in duration-200">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="px-2 py-0.5 text-[9px] font-black bg-rose-100 text-rose-700 rounded-full uppercase tracking-widest animate-pulse">
+                    Identity Core Engine
+                  </span>
+                  <span className="px-2 py-0.5 text-[9px] font-black bg-slate-100 text-slate-700 rounded-full uppercase tracking-widest">
+                    Name-Centric Layer
+                  </span>
+                </div>
+                <h2 className="text-2xl font-black text-gray-900 tracking-tight italic uppercase flex items-center gap-2">
+                  Deteksi & Review Konflik Identitas Siswa
+                </h2>
+                <p className="text-xs text-gray-400 font-semibold uppercase tracking-wider">
+                  Mendeteksi, memetakan, dan menganalisis konflik identitas siswa berdasarkan Nama Lengkap sebagai Layer Identitas Utama (Primary Layer).
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+                {/* Control Panel Panel */}
+                <div className="lg:col-span-1 bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm space-y-6 flex flex-col justify-between">
+                  <div className="space-y-6">
+                    <h3 className="text-xs font-black text-gray-800 uppercase tracking-widest border-b border-gray-50 pb-3 flex items-center gap-2">
+                      <Terminal size={14} className="text-rose-500 animate-pulse" />
+                      Parameter Pemindaian
+                    </h3>
+
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">
+                          Unit Target Pemindaian
+                        </label>
+                        <select
+                          value={conflictUnit}
+                          onChange={(e) => setConflictUnit(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2.5 text-xs font-semibold text-gray-700 outline-none focus:border-rose-200 transition-all cursor-pointer"
+                        >
+                          <option value="KINDERGARTEN">Kindergarten (TK)</option>
+                          <option value="ELEMENTARY">Elementary (SD)</option>
+                          <option value="JUNIOR_HIGH">Junior High (SMP)</option>
+                          <option value="ALL">Seluruh Unit (ALL LEVEL)</option>
+                        </select>
+                      </div>
+
+                      <div className="p-4 bg-rose-50/40 rounded-2xl border border-rose-100/50 space-y-2">
+                        <div className="flex items-center gap-1.5 text-rose-700">
+                          <AlertTriangle size={14} className="shrink-0" />
+                          <h4 className="text-[10px] font-black uppercase tracking-wider">
+                            Aturan Deteksi Sistem:
+                          </h4>
+                        </div>
+                        <ul className="text-[10px] text-gray-500 leading-relaxed font-semibold list-disc list-inside space-y-1">
+                          <li><strong className="text-rose-700">High Confidence:</strong> Nama sama persis & detail kelas/ortu/unit selaras.</li>
+                          <li><strong className="text-orange-600">Standard Conflict:</strong> Nama sama persis namun NIS / ID berbeda.</li>
+                          <li><strong className="text-amber-600">Needs Review:</strong> Kemiripan nama tinggi (Levenshtein ≥ 75%).</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-6">
+                    <button
+                      onClick={handleScanIdentityConflicts}
+                      disabled={isScanningConflicts}
+                      className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all flex items-center justify-center gap-2 disabled:opacity-50 select-none shadow-md shadow-slate-150"
+                    >
+                      {isScanningConflicts ? (
+                        <>
+                          <Loader2 size={14} className="animate-spin" />
+                          Memindai...
+                        </>
+                      ) : (
+                        <>
+                          <Search size={14} />
+                          Pindai Core Identitas
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Dashboard & Results View */}
+                <div className="lg:col-span-3 space-y-6">
+                  {isScanningConflicts && (
+                    <div className="bg-white p-16 rounded-[2.5rem] border border-gray-155 shadow-sm flex flex-col items-center justify-center text-center space-y-4">
+                      <div className="p-4 bg-rose-50 text-rose-600 rounded-full animate-pulse border border-rose-100">
+                        <Loader2 size={32} className="animate-spin text-rose-500" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-gray-800 uppercase tracking-wider mb-1">
+                          Menghitung Indeks Kemiripan Nama Siswa
+                        </h4>
+                        <p className="text-xs text-gray-400 font-bold max-w-sm mx-auto leading-relaxed">
+                          Menormalisasi field fullNameNormalized, mengekstraksi record dari koleksi students & roleInvites, dan menjalankan algoritma Levenshtein distance. Harap tunggu sebentar...
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {!isScanningConflicts && !conflictResult && (
+                    <div className="bg-slate-50/50 p-16 rounded-[2.5rem] border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-center space-y-4">
+                      <div className="p-4 bg-gray-100/80 text-gray-400 rounded-full">
+                        <Users size={32} className="text-slate-400" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-gray-500 uppercase tracking-widest mb-1.5">
+                          Pemindaian Identitas Belum Berjalan
+                        </h4>
+                        <p className="text-[11px] text-gray-450 font-bold max-w-md mx-auto leading-relaxed">
+                          Tekan tombol &quot;Pindai Core Identitas&quot; pada panel kiri untuk memetakan siswa dan undangan siswa yang memiliki potensi konflik identitas nama ganda (Duplicate/Conflict) di unit target Lumina GCS.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {!isScanningConflicts && conflictResult && (
+                    <div className="space-y-6">
+                      {/* STATS TILES */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm text-center">
+                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Siswa Dipindai</p>
+                          <p className="text-2xl font-black text-slate-800">{conflictResult.totalScanned}</p>
+                        </div>
+                        <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm text-center">
+                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Nama Unik</p>
+                          <p className="text-2xl font-black text-blue-600">{conflictResult.totalUniqueNames}</p>
+                        </div>
+                        <div className="bg-white p-5 rounded-3xl bg-rose-50/20 border border-rose-100 text-center">
+                          <p className="text-[9px] font-black text-rose-500 uppercase tracking-widest mb-1">Konflik Identitas</p>
+                          <p className="text-2xl font-black text-rose-600">{conflictResult.totalConflicts}</p>
+                        </div>
+                        <div className="bg-white p-5 rounded-3xl bg-amber-50/20 border border-amber-100 text-center">
+                          <p className="text-[9px] font-black text-amber-500 uppercase tracking-widest mb-1">Needs Review</p>
+                          <p className="text-2xl font-black text-amber-600">{conflictResult.totalNeedsReview}</p>
+                        </div>
+                      </div>
+
+                      {/* FILTER BUTTONS */}
+                      <div className="flex border-b border-gray-100 pb-3 gap-2 overflow-x-auto">
+                        <button
+                          onClick={() => setConflictFilter("ALL")}
+                          className={cn(
+                            "px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer",
+                            conflictFilter === "ALL"
+                              ? "bg-slate-900 text-white font-extrabold"
+                              : "text-gray-400 hover:text-gray-700 bg-slate-100/50"
+                          )}
+                        >
+                          Semua Kelompok ({conflictResult.groups?.length || 0})
+                        </button>
+                        <button
+                          onClick={() => setConflictFilter("HIGH")}
+                          className={cn(
+                            "px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer",
+                            conflictFilter === "HIGH"
+                              ? "bg-rose-600 text-white font-extrabold"
+                              : "text-rose-500 bg-rose-50 hover:bg-rose-100/50"
+                          )}
+                        >
+                          High Confidence ({conflictResult.groups?.filter((g: any) => g.status === "HIGH CONFIDENCE CONFLICT").length || 0})
+                        </button>
+                        <button
+                          onClick={() => setConflictFilter("STANDARD")}
+                          className={cn(
+                            "px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer",
+                            conflictFilter === "STANDARD"
+                              ? "bg-orange-600 text-white font-extrabold"
+                              : "text-orange-600 bg-orange-50 hover:bg-orange-100/50"
+                          )}
+                        >
+                          Standard Conflict ({conflictResult.groups?.filter((g: any) => g.status === "CONFLICT").length || 0})
+                        </button>
+                        <button
+                          onClick={() => setConflictFilter("REVIEW")}
+                          className={cn(
+                            "px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer",
+                            conflictFilter === "REVIEW"
+                              ? "bg-amber-600 text-white font-extrabold"
+                              : "text-amber-600 bg-amber-50 hover:bg-amber-100/50"
+                          )}
+                        >
+                          Needs Review ({conflictResult.groups?.filter((g: any) => g.status === "NEEDS REVIEW").length || 0})
+                        </button>
+                      </div>
+
+                      {/* CONFLICT LIST GROUPS */}
+                      <div className="space-y-4">
+                        {conflictResult.groups?.filter((grp: any) => {
+                          if (conflictFilter === "ALL") return true;
+                          if (conflictFilter === "HIGH") return grp.status === "HIGH CONFIDENCE CONFLICT";
+                          if (conflictFilter === "STANDARD") return grp.status === "CONFLICT";
+                          if (conflictFilter === "REVIEW") return grp.status === "NEEDS REVIEW";
+                          return true;
+                        }).length === 0 ? (
+                          <div className="p-12 bg-white text-center rounded-[2.5rem] border border-gray-100 shadow-sm">
+                            <CheckCircle2 size={32} className="text-emerald-500 mx-auto mb-3" />
+                            <h4 className="text-xs font-black text-emerald-800 uppercase tracking-wider mb-1">Database Bersih</h4>
+                            <p className="text-[11px] text-gray-400 font-semibold max-w-sm mx-auto leading-relaxed">
+                              Tidak ditemukan record konflik atau nama mirip pada filter unit & status terpilih saat ini. Siswa terstruktur dengan baik.
+                            </p>
+                          </div>
+                        ) : (
+                          conflictResult.groups?.filter((grp: any) => {
+                            if (conflictFilter === "ALL") return true;
+                            if (conflictFilter === "HIGH") return grp.status === "HIGH CONFIDENCE CONFLICT";
+                            if (conflictFilter === "STANDARD") return grp.status === "CONFLICT";
+                            if (conflictFilter === "REVIEW") return grp.status === "NEEDS REVIEW";
+                            return true;
+                          }).map((grp: any) => {
+                            const isExpanded = expandedConflictId === grp.id;
+                            
+                            return (
+                              <div
+                                key={grp.id}
+                                className={cn(
+                                  "bg-white rounded-[2rem] border overflow-hidden transition-all shadow-sm",
+                                  grp.status === "HIGH CONFIDENCE CONFLICT" ? "border-rose-100 hover:border-rose-200" :
+                                  grp.status === "CONFLICT" ? "border-orange-100 hover:border-orange-200" :
+                                  "border-amber-100 hover:border-amber-200"
+                                )}
+                              >
+                                {/* Group Header Wrapper */}
+                                <div
+                                  onClick={() => setExpandedConflictId(isExpanded ? null : grp.id)}
+                                  className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer hover:bg-slate-50/40 select-none"
+                                >
+                                  <div className="space-y-1.5 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <h3 className="text-sm font-black text-gray-900 tracking-tight">
+                                        {grp.primaryName}
+                                      </h3>
+                                      <span className={cn(
+                                        "px-2.5 py-0.5 rounded-full text-[8.5px] font-black uppercase tracking-wider",
+                                        grp.status === "HIGH CONFIDENCE CONFLICT" ? "bg-rose-100 text-rose-700" :
+                                        grp.status === "CONFLICT" ? "bg-orange-100 text-orange-700" :
+                                        "bg-amber-100 text-amber-700"
+                                      )}>
+                                        {grp.status === "HIGH CONFIDENCE CONFLICT" ? "High Confidence" :
+                                         grp.status === "CONFLICT" ? "Standard Conflict" : "Needs Review"}
+                                      </span>
+                                    </div>
+                                    <p className="text-[11px] text-gray-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                                      <AlertCircle size={12} className={cn(
+                                        grp.status === "HIGH CONFIDENCE CONFLICT" ? "text-rose-500" :
+                                        grp.status === "CONFLICT" ? "text-orange-500" : "text-amber-500"
+                                      )} />
+                                      {grp.reason}
+                                    </p>
+                                  </div>
+
+                                  <div className="flex items-center gap-3 self-end md:self-auto">
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest bg-slate-50 px-2.5 py-1 rounded-xl">
+                                      {grp.records?.length || 0} Record Terkait
+                                    </span>
+                                    <button className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors">
+                                      {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Class detail breakdown rows */}
+                                {isExpanded && (
+                                  <div className="border-t border-gray-55/65 bg-slate-50/20 p-5 space-y-5 animate-in slide-in-from-top-2 duration-200">
+                                    {/* Comparative Grid Table */}
+                                    <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
+                                      <div className="overflow-x-auto">
+                                        <table className="w-full text-left text-xs border-collapse">
+                                          <thead>
+                                            <tr className="border-b border-gray-150/70 text-[10px] font-black text-gray-400 uppercase tracking-wider bg-slate-50/50">
+                                              <th className="px-4 py-3">Sumber Record</th>
+                                              <th className="px-4 py-3">NIS (Primary ID)</th>
+                                              <th className="px-4 py-3">Nama Lengkap</th>
+                                              <th className="px-4 py-3">Panggilan</th>
+                                              <th className="px-4 py-3">NISN</th>
+                                              <th className="px-4 py-3">JK</th>
+                                              <th className="px-4 py-3">Kelas</th>
+                                              <th className="px-4 py-3">Wali / Ortu</th>
+                                              <th className="px-4 py-3">Unit</th>
+                                              <th className="px-4 py-3">Status</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody className="divide-y divide-gray-50">
+                                            {grp.records?.map((rec: any, idx: number) => (
+                                              <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
+                                                <td className="px-4 py-3.5">
+                                                  <span className={cn(
+                                                    "px-2.5 py-1 rounded-full text-[9px] font-extrabold tracking-wider uppercase inline-flex items-center gap-1.5",
+                                                    rec.source === "students" 
+                                                      ? "bg-cyan-50 text-cyan-700 border border-cyan-100" 
+                                                      : "bg-indigo-50 text-indigo-700 border border-indigo-100"
+                                                  )}>
+                                                    {rec.source === "students" ? "Siswa Aktif" : "Undangan"}
+                                                  </span>
+                                                </td>
+                                                <td className="px-4 py-3.5 font-mono font-bold text-gray-800">
+                                                  {rec.nis || <span className="text-gray-300 italic">-</span>}
+                                                </td>
+                                                <td className="px-4 py-3.5 font-extrabold text-gray-900">
+                                                  {rec.name}
+                                                </td>
+                                                <td className="px-4 py-3.5 text-gray-500 font-semibold">
+                                                  {rec.nickname || "-"}
+                                                </td>
+                                                <td className="px-4 py-3.5 text-gray-500 font-mono text-[10.5px]">
+                                                  {rec.nisn || "-"}
+                                                </td>
+                                                <td className="px-4 py-3.5 text-gray-500 font-bold text-center">
+                                                  {rec.gender === "L" || rec.gender === "LAKI_LAKI" || rec.gender === "MALE" || rec.gender === "Laki-laki" ? "L" : rec.gender === "P" || rec.gender === "PEREMPUAN" || rec.gender === "FEMALE" || rec.gender === "Perempuan" ? "P" : "-"}
+                                                </td>
+                                                <td className="px-4 py-3.5 font-semibold text-gray-600">
+                                                  {rec.classId || <span className="text-gray-300 italic">belum diatur</span>}
+                                                </td>
+                                                <td className="px-4 py-3.5 text-xs text-gray-500 font-medium">
+                                                  <div className="max-w-[170px] truncate" title={rec.parentEmail || rec.fatherName || rec.motherName}>
+                                                    {rec.parentEmail || rec.fatherName || rec.motherName ? (
+                                                      <span>{rec.parentEmail || `${rec.fatherName || ""}/${rec.motherName || ""}`}</span>
+                                                    ) : (
+                                                      <span className="text-gray-300 italic">-</span>
+                                                    )}
+                                                  </div>
+                                                </td>
+                                                <td className="px-4 py-3.5">
+                                                  <span className="px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider bg-slate-100 text-slate-700">
+                                                    {rec.unitId}
+                                                  </span>
+                                                </td>
+                                                <td className="px-4 py-3.5">
+                                                  <span className={cn(
+                                                    "px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider",
+                                                    rec.status === "active" ? "bg-emerald-50 text-emerald-700" :
+                                                    rec.status === "ready" ? "bg-blue-50 text-blue-700" :
+                                                    rec.status === "used" ? "bg-slate-100 text-slate-500" : "bg-amber-50 text-amber-700"
+                                                  )}>
+                                                    {rec.status}
+                                                  </span>
+                                                </td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    </div>
+
+                                    {/* Actionable Analytic Diagnosis */}
+                                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 text-[11px] text-gray-600 space-y-2 leading-relaxed">
+                                      <h4 className="font-black uppercase tracking-wider text-[10px] text-slate-800 flex items-center gap-1">
+                                        <Terminal size={12} className="text-slate-500" />
+                                        Analisa Diagnostik Konflik Identitas:
+                                      </h4>
+                                      <div className="space-y-1 font-semibold text-gray-500">
+                                        <p>
+                                          1. <strong className="text-slate-700">Divergensi Identifier (Secondary Layers):</strong> {grp.records.filter((r: any) => r.nis).length > 0 ? (
+                                            <span>
+                                              Ditemukan nomor induk berbeda (NIS: {Array.from(new Set(grp.records.map((r: any) => r.nis).filter(Boolean))).join(", ") || "tidak diisi"}).
+                                            </span>
+                                          ) : (
+                                            <span>Semua record dalam kelompok ini memiliki nomor NIS kosong.</span>
+                                          )}
+                                        </p>
+                                        <p>
+                                          2. <strong className="text-slate-700">Keselarasan Wali & Ortu (Family Linkage):</strong> {new Set(grp.records.map((r: any) => r.parentEmail?.toLowerCase().trim()).filter(Boolean)).size === 1 ? (
+                                            <span className="text-emerald-600">Terindentifikasi wali orang tua yang sama ({grp.records.map((r: any) => r.parentEmail).filter(Boolean)[0]}), mengonfirmasi ini adalah anak yang sama pada collection students vs roleInvites.</span>
+                                          ) : (
+                                            <span>Email Wali tidak selaras atau belum terdaftar pada salah satu record.</span>
+                                          )}
+                                        </p>
+                                        <p>
+                                          3. <strong className="text-slate-700">Rekomendasi Tindakan Admin:</strong> {grp.status === "HIGH CONFIDENCE CONFLICT" ? (
+                                            <span>Gunakan tab &quot;Rekonsiliasi ID Siswa&quot; untuk menyelaraskan ID internal pada record anak ini agar data masa lalu (Observation, Attendance) dapat menyatu secara utuh.</span>
+                                          ) : grp.status === "CONFLICT" ? (
+                                            <span>Verifikasi ke bagian administrasi sekolah apakah anak ini terdaftar ganda (misal akibat mutasi unit atau kesalahan entri internal sekolah).</span>
+                                          ) : (
+                                            <span>Grup ini memiliki kemiripan nama yang tinggi. Periksa secara manual apakah ada kesalahan penulisan nama ketikan (typo) atau memang dua anak yang berbeda.</span>
+                                          )}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeMenu === "academic-year" && (
             <div className="space-y-8 animate-in fade-in duration-200">
               <div>
@@ -4371,6 +5448,22 @@ export default function SuperAdminPage() {
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                        NIS Lama (Old Lumina ID) / Opsional
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.oldLuminaId || ""}
+                        onChange={(e) =>
+                          setFormData({ ...formData, oldLuminaId: e.target.value })
+                        }
+                        className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm italic font-medium focus:ring-2 focus:ring-blue-100"
+                        placeholder="e.g. LMN-178..."
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
                         NISN
                       </label>
                       <input
@@ -4383,8 +5476,6 @@ export default function SuperAdminPage() {
                         placeholder="e.g. 0123456789"
                       />
                     </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-6">
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
                         Nama Panggilan
@@ -4399,6 +5490,8 @@ export default function SuperAdminPage() {
                         placeholder="Panggilan"
                       />
                     </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-6">
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
                         Jenis Kelamin
@@ -4414,6 +5507,9 @@ export default function SuperAdminPage() {
                         <option value="L">LAKI-LAKI (L)</option>
                         <option value="P">PEREMPUAN (P)</option>
                       </select>
+                    </div>
+                    <div className="space-y-2 opacity-0 select-none">
+                      {/* Spacer to keep beautiful alignment */}
                     </div>
                   </div>
                   <div className="space-y-2">

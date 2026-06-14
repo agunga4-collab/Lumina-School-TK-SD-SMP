@@ -718,6 +718,7 @@ export interface Student {
   classId: string;
   unitId?: string;
   nis?: string;
+  oldLuminaId?: string; // Old NIS/Lumina ID
   grade?: number;
   academicYear?: string;
 }
@@ -1249,6 +1250,7 @@ export interface RoleInvite {
   role: UserRole;
   unitId: UnitType;
   luminaId?: string; // For Students (NIS)
+  oldLuminaId?: string; // For Students (Old NIS)
   nisn?: string;
   nickname?: string;
   gender?: string;

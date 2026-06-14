@@ -15,6 +15,23 @@ import {
 import { collection, query, where, getDocs, doc, setDoc, getDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
+import { normalizeStudentName, buildStudentNameIndex, resolveAttendanceStudent } from '../../lib/namecentricResolver';
+import { getKindergartenClasses, getKindergartenStudents, logFirestoreRead } from '../../lib/kindergartenMetadataCache';
+
+const getMonthlyStudentCell = (monthlyMap: any, student: any, dateStr: string) => {
+  if (!monthlyMap) return undefined;
+  let rec = monthlyMap[student.id]?.[dateStr];
+  if (!rec && student.oldLuminaId) rec = monthlyMap[student.oldLuminaId]?.[dateStr];
+  if (!rec && student.nis) rec = monthlyMap[student.nis]?.[dateStr];
+  if (!rec && student.name) {
+    const normStudentName = normalizeStudentName(student.name);
+    const matchingKey = Object.keys(monthlyMap).find(k => {
+      return normalizeStudentName(k) === normStudentName;
+    });
+    if (matchingKey) rec = monthlyMap[matchingKey]?.[dateStr];
+  }
+  return rec;
+};
 
 export default function AttendanceEmotionalChecklist() {
   const { activeYear } = useAcademicYear();
@@ -67,131 +84,23 @@ export default function AttendanceEmotionalChecklist() {
   } | null>(null);
   const [isImporting, setIsImporting] = React.useState(false);
 
-  // Load students and classes from Firestore
+  // Load students and classes from cache-enhanced Firestore service
   React.useEffect(() => {
     async function loadKindergartenData() {
       try {
-        console.log('Loading Kindergarten data from Firestore for year:', activeYear);
+        console.log('[Checklist Page] Requesting cached Kindergarten data for year:', activeYear);
         
-        // Query classes collection where unitId === 'KINDERGARTEN' and academicYear === activeYear
-        const qClasses = query(
-          collection(db, 'classes'),
-          where('unitId', '==', 'KINDERGARTEN'),
-          where('academicYear', '==', activeYear)
-        );
-        const classesSnap = await getDocs(qClasses).catch(e => {
-          console.warn('Classes query failed:', e);
-          return { docs: [] };
-        });
-
-        const fetchedClasses = classesSnap.docs.map(docSnap => {
-          const data = docSnap.data();
-          return {
-            id: docSnap.id,
-            name: data.name,
-            grade: data.grade,
-            unitId: data.unitId,
-            academicYear: data.academicYear
-          };
-        }).sort((a, b) => a.name.localeCompare(b.name));
-
+        // 1. Fetch classes through the deduplicating caching system
+        const fetchedClasses = await getKindergartenClasses(activeYear || '2025/2026');
         setClasses(fetchedClasses);
+        
         if (fetchedClasses.length > 0) {
           setSelectedClassId(fetchedClasses[0].id);
         }
 
-        // Query students collection with unitId === 'KINDERGARTEN'
-        const qStudents = query(
-          collection(db, 'students'),
-          where('unitId', '==', 'KINDERGARTEN')
-        );
+        // 2. Fetch joined student list through caching system
+        const fetchedStudents = await getKindergartenStudents(activeYear || '2025/2026');
         
-        // Fallback query on roleInvites where role === 'STUDENT' and unitId === 'KINDERGARTEN'
-        const qInvites = query(
-          collection(db, 'roleInvites'),
-          where('role', '==', 'STUDENT'),
-          where('unitId', '==', 'KINDERGARTEN')
-        );
-
-        // Query enrollments where unitId === 'KINDERGARTEN' and academicYear === activeYear
-        const qEnrollments = query(
-          collection(db, 'enrollments'),
-          where('unitId', '==', 'KINDERGARTEN'),
-          where('academicYear', '==', activeYear)
-        );
-
-        const [studentsSnap, invitesSnap, enrollmentsSnap] = await Promise.all([
-          getDocs(qStudents).catch(e => { console.warn('Students query failed:', e); return { docs: [] }; }),
-          getDocs(qInvites).catch(e => { console.warn('Invites query failed:', e); return { docs: [] }; }),
-          getDocs(qEnrollments).catch(e => { console.warn('Enrollments query failed:', e); return { docs: [] }; })
-        ]);
-
-        console.log(`Firestore response counts - students: ${studentsSnap.docs.length}, invites: ${invitesSnap.docs.length}, enrollments: ${enrollmentsSnap.docs.length}`);
-
-        const enrollmentClassMap = new Map<string, string>();
-        enrollmentsSnap.docs.forEach(docSnap => {
-          const data = docSnap.data();
-          if (data.studentId && data.classId) {
-            enrollmentClassMap.set(data.studentId, data.classId);
-          }
-        });
-
-        const map = new Map<string, any>();
-
-        // Merge roleInvites first (fallback)
-        invitesSnap.docs.forEach(docSnap => {
-          const data = docSnap.data();
-          const studentId = data.luminaId || data.id || docSnap.id;
-          const classId = data.classId || data.jobTitle || '';
-          const ageGroup: 'TK_A' | 'TK_B' = (classId.toUpperCase().includes('TK_A') || classId.toUpperCase().includes('CATERPILLAR')) ? 'TK_A' : 'TK_B';
-          
-          if (studentId) {
-            map.set(studentId, {
-              id: studentId,
-              name: data.fullName || data.name || 'Siswa Tanpa Nama',
-              nickName: data.nickname || data.name?.split(' ')[0] || 'Siswa',
-              ageGroup: ageGroup,
-              classId: classId
-            });
-          }
-        });
-
-        // Merge students from the main table, preserving the updated classId from roleInvites
-        studentsSnap.docs.forEach(docSnap => {
-          const data = docSnap.data();
-          
-          if (data.academicYear && data.academicYear !== activeYear) {
-            const isEnrolledInActiveYear = enrollmentsSnap.docs.some(eDoc => eDoc.data().studentId === docSnap.id);
-            if (!isEnrolledInActiveYear) {
-              return; // Skip if different year and no matching enrollment
-            }
-          }
-          const studentId = data.luminaId || docSnap.id;
-          const classId = enrollmentClassMap.get(docSnap.id) || enrollmentClassMap.get(studentId) || enrollmentClassMap.get(data.luminaId || '') || data.classId || '';
-          const ageGroup: 'TK_A' | 'TK_B' = (classId.toUpperCase().includes('TK_A') || classId.toUpperCase().includes('CATERPILLAR')) ? 'TK_A' : 'TK_B';
-
-          const existing = map.get(studentId);
-          if (existing && existing.classId) {
-            map.set(studentId, {
-              ...existing,
-              name: existing.name || data.fullName || data.name || 'Siswa Tanpa Nama',
-              nickName: existing.nickName || data.nickname || data.nickName || data.fullName?.split(' ')[0] || 'Siswa'
-            });
-          } else {
-            map.set(studentId, {
-              id: studentId,
-              name: data.fullName || data.name || 'Siswa Tanpa Nama',
-              nickName: data.nickname || data.nickName || data.fullName?.split(' ')[0] || 'Siswa',
-              ageGroup: ageGroup,
-              classId: classId
-            });
-          }
-        });
-
-        const fetchedStudents = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-        
-        console.log('Students query result (loaded):', fetchedStudents);
-
         if (fetchedStudents.length > 0) {
           setStudents(fetchedStudents);
           saveStoredStudents(fetchedStudents);
@@ -233,22 +142,27 @@ export default function AttendanceEmotionalChecklist() {
     return {};
   });
 
-  // Automatic clean up of misplaced June 2026 data
+  // Automatic clean up of misplaced June 2026 data — optimized to filter by date and run only once per session
   React.useEffect(() => {
     const runAutomaticJune2026Cleanup = async () => {
+      // Prevent running multiple times in the same session
+      if (sessionStorage.getItem('kg_june_2026_cleaned')) return;
+      sessionStorage.setItem('kg_june_2026_cleaned', 'true');
+
       try {
-        console.log('[Cleanup] Running automatic check and cleanup for wrongfully imported June 2026 data...');
-        const q = query(collection(db, 'attendance'));
+        console.log('[Cleanup] Running highly-optimized date-filtered check for misplaced June 2026 data...');
+        const q = query(
+          collection(db, 'attendance'),
+          where('date', '>=', '2026-06-01'),
+          where('date', '<=', '2026-06-30')
+        );
         const querySnap = await getDocs(q);
         const batch = writeBatch(db);
         let count = 0;
         
         querySnap.docs.forEach(docSnap => {
-          const dData = docSnap.data();
-          if (dData.date && dData.date.startsWith('2026-06-')) {
-            batch.delete(docSnap.ref);
-            count++;
-          }
+          batch.delete(docSnap.ref);
+          count++;
         });
         
         if (count > 0) {
@@ -266,14 +180,14 @@ export default function AttendanceEmotionalChecklist() {
             return updated;
           });
           setRefreshKey(prev => prev + 1);
-          toast.success(`Sistem otomatis mendeteksi dan membersihkan ${count} laporan salah rekam di Juni 2026!`);
+          toast.success(`Sistem otomatis mendeteksi dan membersihkan ${count} laporan salah rekam di Juni 2026! 🧹`);
         }
       } catch (err) {
         console.error('[Cleanup Error] Failed to auto delete June 2026 data:', err);
       }
     };
     runAutomaticJune2026Cleanup();
-  }, [selectedClassId]);
+  }, []);
 
   const mapValToSystem = (status: string): { attendance: KGAttendanceStatus | null; emotion: KGEmotionStatus | null } => {
     switch (status) {
@@ -353,6 +267,9 @@ export default function AttendanceEmotionalChecklist() {
         const docRef = doc(db, 'attendance', docId);
         const docSnap = await getDoc(docRef);
         
+        // Audit log: 1 document read
+        logFirestoreRead('attendanceReports', 1);
+        
         if (docSnap.exists()) {
           const data = docSnap.data();
           const studentsList = data.students || [];
@@ -393,18 +310,28 @@ export default function AttendanceEmotionalChecklist() {
         
         const q = query(
           collection(db, 'attendance'),
-          where('classId', '==', selectedClassId)
+          where('classId', '==', 'KINDERGARTEN_DUMMY_NONE_YET') // We can query by classId and date range directly to save read operations!
         );
         
-        const querySnap = await getDocs(q);
-        const docs = querySnap.docs
-          .map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          }))
-          .filter((docData: any) => {
-            return docData.date && docData.date >= startOfRange && docData.date <= endOfRange;
-          });
+        // Wait, why are we querying ALL docs of classId and filtering client-side?
+        // Let's optimize this too! We should query only documents of that classId starting with date range to save reads!
+        const qOptimized = query(
+          collection(db, 'attendance'),
+          where('classId', '==', selectedClassId),
+          where('date', '>=', startOfRange),
+          where('date', '<=', endOfRange)
+        );
+        
+        const querySnap = await getDocs(qOptimized);
+        const docCount = querySnap.docs.length;
+        
+        // Audit log: Count actual documents returned
+        logFirestoreRead('attendanceReports', docCount || 1);
+        
+        const docs = querySnap.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
         setMonthlyRecords(docs);
       } catch (err) {
         console.error('Error loading monthly attendance:', err);
@@ -422,11 +349,25 @@ export default function AttendanceEmotionalChecklist() {
 
   // Build reactive students visible list
   const studentsWithStatus = students.map(s => {
-    const status = dateRecords[s.id] || { attendance: null, emotion: null };
+    let status = dateRecords[s.id];
+    if (!status && s.oldLuminaId && dateRecords[s.oldLuminaId]) {
+      status = dateRecords[s.oldLuminaId];
+    }
+    if (!status && s.nis && dateRecords[s.nis]) {
+      status = dateRecords[s.nis];
+    }
+    if (!status && s.name) {
+      const normSName = normalizeStudentName(s.name);
+      const matchNameKey = Object.keys(dateRecords).find(k => normalizeStudentName(k) === normSName);
+      if (matchNameKey) {
+        status = dateRecords[matchNameKey];
+      }
+    }
+    const finalStatus = status || { attendance: null, emotion: null };
     return {
       ...s,
-      attendance: status.attendance,
-      emotion: status.emotion
+      attendance: finalStatus.attendance,
+      emotion: finalStatus.emotion
     };
   });
 
@@ -903,14 +844,17 @@ export default function AttendanceEmotionalChecklist() {
         const startD = parsedDates.reduce((a, b) => a < b ? a : b);
         const endD = parsedDates.reduce((a, b) => a > b ? a : b);
         
-        const q = query(
+        const qOptimized = query(
           collection(db, 'attendance'),
-          where('classId', '==', selectedClassId)
+          where('classId', '==', selectedClassId),
+          where('date', '>=', startD),
+          where('date', '<=', endD)
         );
-        const qSnap = await getDocs(q);
+        const qSnap = await getDocs(qOptimized);
+        logFirestoreRead('attendanceReports', qSnap.docs.length || 1);
+        
         const existingDates = qSnap.docs
           .map(doc => doc.data())
-          .filter((data: any) => data.date && data.date >= startD && data.date <= endD)
           .map((data: any) => data.date);
         
         setConflictDates(existingDates);
@@ -1113,21 +1057,21 @@ Tindakan ini tidak dapat dibatalkan.`;
       const startOfRange = `${monthlySelectedYear}-${monthStr}-01`;
       const endOfRange = `${monthlySelectedYear}-${monthStr}-31`;
       
-      const q = query(
+      const qOptimized = query(
         collection(db, 'attendance'),
-        where('classId', '==', selectedClassId)
+        where('classId', '==', selectedClassId),
+        where('date', '>=', startOfRange),
+        where('date', '<=', endOfRange)
       );
       
-      const querySnap = await getDocs(q);
+      const querySnap = await getDocs(qOptimized);
+      logFirestoreRead('attendanceReports', querySnap.docs.length || 1);
       const batch = writeBatch(db);
       let deleteCount = 0;
       
       querySnap.docs.forEach(docSnap => {
-        const dData = docSnap.data();
-        if (dData.date && dData.date >= startOfRange && dData.date <= endOfRange) {
-          batch.delete(docSnap.ref);
-          deleteCount++;
-        }
+        batch.delete(docSnap.ref);
+        deleteCount++;
       });
       
       if (deleteCount > 0) {
@@ -1179,19 +1123,31 @@ Tindakan ini tidak dapat dibatalkan.`;
 
   const monthlyDataMap = React.useMemo(() => {
     const map: Record<string, Record<string, { emotion: string; status: string }>> = {};
+    const nameIndex = buildStudentNameIndex(filteredClassStudents);
     
     // 1. Load from database records
     monthlyRecords.forEach((docData) => {
       const dStr = docData.date; 
       const studentsList = docData.students || [];
       studentsList.forEach((s: any) => {
-        if (!map[s.studentId]) {
-          map[s.studentId] = {};
+        // Resolve student name/ID dynamically matching existing records to master identity
+        const resolved = resolveAttendanceStudent({
+          originalStudentId: s.studentId || '',
+          originalStudentName: s.studentName || s.name || '',
+          activeStudents: filteredClassStudents,
+          nameIndex: nameIndex
+        });
+
+        const keyId = resolved.resolvedStudentId || s.studentId;
+        if (keyId) {
+          if (!map[keyId]) {
+            map[keyId] = {};
+          }
+          map[keyId][dStr] = {
+            emotion: s.emotion || '',
+            status: s.status || ''
+          };
         }
-        map[s.studentId][dStr] = {
-          emotion: s.emotion || '',
-          status: s.status || ''
-        };
       });
     });
 
@@ -1217,16 +1173,25 @@ Tindakan ini tidak dapat dibatalkan.`;
         
         if (year === monthlySelectedYear && monthIndex === monthlySelectedMonth) {
           Object.entries(studentMap).forEach(([studentId, rec]) => {
-            if (!map[studentId]) {
-              map[studentId] = {};
+            // Local edits are keyed by studentId; resolve them dynamically
+            const resolved = resolveAttendanceStudent({
+              originalStudentId: studentId,
+              originalStudentName: '',
+              activeStudents: filteredClassStudents,
+              nameIndex: nameIndex
+            });
+            const keyId = resolved.resolvedStudentId || studentId;
+
+            if (!map[keyId]) {
+              map[keyId] = {};
             }
             
             const cellVal = mapSystemToMonthlyCell(rec);
             if (cellVal) {
-              map[studentId][dStr] = cellVal;
+              map[keyId][dStr] = cellVal;
             } else {
               // Deleted / cleared via trash button
-              delete map[studentId][dStr];
+              delete map[keyId][dStr];
             }
           });
         }
@@ -1234,7 +1199,7 @@ Tindakan ini tidak dapat dibatalkan.`;
     });
 
     return map;
-  }, [monthlyRecords, recordsByDate, monthlySelectedMonth, monthlySelectedYear]);
+  }, [monthlyRecords, recordsByDate, monthlySelectedMonth, monthlySelectedYear, filteredClassStudents]);
 
   const totalHadirPerTanggal = React.useMemo(() => {
     const totals: Record<number, number> = {};
@@ -1247,7 +1212,7 @@ Tindakan ini tidak dapat dibatalkan.`;
       
       let count = 0;
       filteredClassStudents.forEach(student => {
-        const record = monthlyDataMap[student.id]?.[dateStr];
+        const record = getMonthlyStudentCell(monthlyDataMap, student, dateStr);
         const isStudentHadir = record && (record.status === 'hadir' || ['happy', 'sad', 'ok', 'angry', 'earlyLeave'].includes(record.emotion));
         if (isStudentHadir) {
           count++;
@@ -1273,7 +1238,7 @@ Tindakan ini tidak dapat dibatalkan.`;
         const dayStr = String(day).padStart(2, '0');
         const dateStr = `${yearNum}-${monthStr}-${dayStr}`;
         
-        const record = monthlyDataMap[student.id]?.[dateStr];
+        const record = getMonthlyStudentCell(monthlyDataMap, student, dateStr);
         if (record) {
           const isStudentHadir = record.status === 'hadir' || ['happy', 'sad', 'ok', 'angry', 'earlyLeave'].includes(record.emotion);
           if (isStudentHadir) {
@@ -1828,7 +1793,7 @@ Tindakan ini tidak dapat dibatalkan.`;
                               const monthStr = String(monthlySelectedMonth + 1).padStart(2, '0');
                               const dateStr = `${monthlySelectedYear}-${monthStr}-${dayStr}`;
                               
-                              const record = monthlyDataMap[student.id]?.[dateStr];
+                              const record = getMonthlyStudentCell(monthlyDataMap, student, dateStr);
                               const emojiData = record ? getEmojiForStatus(record.emotion, record.status) : null;
                               const weekend = isWeekend(day, parseInt(monthlySelectedYear, 10), monthlySelectedMonth);
                               

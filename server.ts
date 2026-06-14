@@ -2127,6 +2127,206 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
   }
 });
 
+// API: Reconcile Student References (Super Admin Only)
+app.post("/api/admin/reconcile-student-refs", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    
+    let decodedToken;
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    const db = getAdminDb();
+    if (!db) {
+      return res.status(500).json({ error: "Firestore is not online." });
+    }
+
+    const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+    const userRole = userDoc.exists ? userDoc.data()?.role : null;
+    const isSuperAdmin = userRole === "SUPER_ADMIN" || decodedToken.email === "agunga4@gmail.com";
+
+    if (!isSuperAdmin) {
+      return res.status(403).json({ error: "Access denied. Active Super Admin permission required." });
+    }
+
+    const { dryRun, unitId } = req.body;
+    const { runReconciliation } = await import("./src/services/reconciliationService");
+    
+    console.log(`[ReconciliationAPI] Starting student reconciliation with parameters: dryRun=${!!dryRun}, unitId=${unitId || "ALL"}`);
+    
+    const result = await runReconciliation(db, {
+      dryRun: !!dryRun,
+      unitId: unitId || "ALL"
+    });
+
+    console.log(`[ReconciliationAPI] Completed runReconciliation. Mapping count: ${result.mappingCount}, Changes count: ${result.changes.length}, Errors count: ${result.errors.length}`);
+
+    res.json({
+      success: true,
+      status: "ok",
+      mode: dryRun ? "DRY-RUN" : "LIVE",
+      mappingCount: result.mappingCount,
+      changesCount: result.changes.length,
+      scannedCollections: result.scannedCollections,
+      sampleChanges: result.changes.slice(0, 30), // return up to 30 for safe UI preview instead of 10
+      scannedStudentsCount: result.scannedStudentsCount,
+      scannedSTUDENTInvitesCount: result.scannedSTUDENTInvitesCount,
+      matchedInvitesCount: result.matchedInvitesCount,
+      unmatchedInvitesCount: result.unmatchedInvitesCount,
+      unmatchedSamples: result.unmatchedSamples,
+      matchedByDocId: result.matchedByDocId,
+      matchedByLuminaId: result.matchedByLuminaId,
+      matchedByNis: result.matchedByNis,
+      matchedByEmail: result.matchedByEmail,
+      matchedByName: result.matchedByName,
+      ambiguousMatches: result.ambiguousMatches,
+      errorsCount: result.errors.length,
+      errors: result.errors,
+      timestamp: result.timestamp
+    });
+  } catch (error: any) {
+    console.error("[ReconciliationAPI] Error:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// API: Scan Identity Conflicts based on Name-centric Primary layer (Super Admin Only)
+app.post("/api/admin/scan-identity-conflicts", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    
+    let decodedToken;
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    const db = getAdminDb();
+    if (!db) {
+      return res.status(500).json({ error: "Firestore is not online." });
+    }
+
+    const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+    const userRole = userDoc.exists ? userDoc.data()?.role : null;
+    const isSuperAdmin = userRole === "SUPER_ADMIN" || 
+                         decodedToken.email === "agunga4@gmail.com" || 
+                         decodedToken.email === "agunga4@lazuardi.sch.id";
+
+    if (!isSuperAdmin) {
+      return res.status(403).json({ error: "Access denied. Active Super Admin permission required." });
+    }
+
+    const { unitId } = req.body; // e.g. "ALL", "KINDERGARTEN", "ELEMENTARY", "JUNIOR_HIGH"
+    const targetUnit = unitId || "ALL";
+
+    console.log(`[ConflictAPI] Scanning student identity conflicts under target unit: ${targetUnit}`);
+
+    // Fetch master students
+    let studentsRef = db.collection("students");
+    let studentsSnap;
+    if (targetUnit !== "ALL") {
+      studentsSnap = await studentsRef.where("currentUnit", "==", targetUnit).get();
+    } else {
+      studentsSnap = await studentsRef.get();
+    }
+
+    // Fetch student invitations
+    let invitesRef = db.collection("roleInvites").where("role", "==", "STUDENT");
+    let invitesSnap;
+    if (targetUnit !== "ALL") {
+      invitesSnap = await invitesRef.where("unitId", "==", targetUnit).get();
+    } else {
+      invitesSnap = await invitesRef.get();
+    }
+
+    const { detectIdentityConflicts, normalizeFullName } = await import("./src/services/identityConflictService");
+    const records: any[] = [];
+
+    studentsSnap.forEach((doc) => {
+      const data = doc.data();
+      const rawName = data.name || "";
+      const norm = normalizeFullName(rawName);
+
+      records.push({
+        id: doc.id,
+        name: rawName,
+        normalizedName: norm,
+        nis: data.luminaId || data.nis || doc.id || "",
+        oldLuminaId: data.oldLuminaId || "",
+        nisn: data.nisn || "",
+        nickname: data.nickname || "",
+        gender: data.gender || "",
+        classId: data.classId || "",
+        unitId: data.currentUnit || data.unitId || "",
+        parentEmail: data.parentEmail || "",
+        fatherName: data.fatherName || "",
+        motherName: data.motherName || "",
+        email: data.email || "",
+        status: data.status || "active",
+        source: 'students'
+      });
+    });
+
+    invitesSnap.forEach((doc) => {
+      const data = doc.data();
+      const rawName = data.name || "";
+      const norm = normalizeFullName(rawName);
+
+      records.push({
+        id: doc.id,
+        name: rawName,
+        normalizedName: norm,
+        nis: data.luminaId || "",
+        oldLuminaId: data.oldLuminaId || "",
+        nisn: data.nisn || "",
+        nickname: data.nickname || "",
+        gender: data.gender || "",
+        classId: data.classId || "",
+        unitId: data.unitId || "",
+        parentEmail: data.parentEmail || "",
+        fatherName: data.fatherName || "",
+        motherName: data.motherName || "",
+        email: data.email || "",
+        status: data.status || "pending",
+        source: 'roleInvites'
+      });
+    });
+
+    // Run the detection module
+    const result = detectIdentityConflicts(records);
+
+    res.json({
+      success: true,
+      status: "ok",
+      targetUnit,
+      totalScanned: result.totalScanned,
+      totalUniqueNames: result.totalUniqueNames,
+      totalConflicts: result.totalConflicts,
+      totalNeedsReview: result.totalNeedsReview,
+      groups: result.groups,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error: any) {
+    console.error("[ConflictAPI] Error scanning conflicts:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Helper: Replace prompt variables
 function replacePromptVariables(promptText: string, variables: Record<string, string> = {}) {
   let result = promptText;

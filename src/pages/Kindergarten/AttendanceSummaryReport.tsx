@@ -15,6 +15,8 @@ import { useAcademicYear } from '../../context/AcademicYearContext';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import { html2canvasWithModernColors } from '../../lib/html2canvasPatch';
+import { buildStudentNameIndex, resolveAttendanceStudent } from '../../lib/namecentricResolver';
+import { getKindergartenClasses, getKindergartenStudents, logFirestoreRead } from '../../lib/kindergartenMetadataCache';
 
 interface StudentAggregatedData {
   id: string;
@@ -92,82 +94,22 @@ export default function AttendanceSummaryReport() {
     return [activeYear, '2025', '2026', '2027'].filter((v, i, a) => a.indexOf(v) === i);
   }, [activeYear]);
 
-  // Load Classes and Students (just once or when activeYear changes)
+  // Load Classes and Students (just once or when activeYear changes) using cache layer
   React.useEffect(() => {
     async function loadKindergartenData() {
       if (!activeYear) return;
       setIsLoading(true);
       try {
-        // 1. Fetch Kindergarten classes
-        const qClasses = query(
-          collection(db, 'classes'),
-          where('unitId', '==', 'KINDERGARTEN'),
-          where('academicYear', '==', activeYear)
-        );
-        const classesSnap = await getDocs(qClasses);
-        const fetchedClasses = classesSnap.docs.map(docSnap => {
-          const data = docSnap.data();
-          return {
-            id: docSnap.id,
-            name: data.name || '',
-            grade: data.grade || '',
-            unitId: data.unitId || '',
-            academicYear: data.academicYear || ''
-          };
-        }).sort((a, b) => a.name.localeCompare(b.name));
-
+        // 1. Fetch Kindergarten classes from Cache
+        const fetchedClasses = await getKindergartenClasses(activeYear);
         setClasses(fetchedClasses);
+        
         if (fetchedClasses.length > 0) {
           setSelectedClassId(fetchedClasses[0].id);
         }
 
-        // 2. Fetch Kindergarten Students & Enrollments
-        const qStudents = query(
-          collection(db, 'students'),
-          where('unitId', '==', 'KINDERGARTEN')
-        );
-        const qEnrollments = query(
-          collection(db, 'enrollments'),
-          where('unitId', '==', 'KINDERGARTEN'),
-          where('academicYear', '==', activeYear)
-        );
-
-        const [studentsSnap, enrollmentsSnap] = await Promise.all([
-          getDocs(qStudents),
-          getDocs(qEnrollments)
-        ]);
-
-        const enrollmentClassMap = new Map<string, string>();
-        enrollmentsSnap.docs.forEach(docSnap => {
-          const data = docSnap.data();
-          if (data.studentId && data.classId) {
-            enrollmentClassMap.set(data.studentId, data.classId);
-          }
-        });
-
-        const studentsMap = new Map<string, any>();
-        studentsSnap.docs.forEach(docSnap => {
-          const data = docSnap.data();
-          
-          if (data.academicYear && data.academicYear !== activeYear) {
-            const isEnrolledInActiveYear = enrollmentsSnap.docs.some(eDoc => eDoc.data().studentId === docSnap.id);
-            if (!isEnrolledInActiveYear) {
-              return; // Skip student registered in different year
-            }
-          }
-
-          const studentId = data.luminaId || docSnap.id;
-          const classId = enrollmentClassMap.get(docSnap.id) || enrollmentClassMap.get(studentId) || enrollmentClassMap.get(data.luminaId || '') || data.classId || '';
-          
-          studentsMap.set(studentId, {
-            id: studentId,
-            name: data.fullName || data.name || 'Siswa Tanpa Nama',
-            nickName: data.nickname || data.nickName || data.name?.split(' ')[0] || 'Siswa',
-            classId: classId
-          });
-        });
-
-        const fetchedStudents = Array.from(studentsMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+        // 2. Fetch Kindergarten Students from Cache
+        const fetchedStudents = await getKindergartenStudents(activeYear);
         setStudents(fetchedStudents);
       } catch (err) {
         console.error('Error loading Kindergarten data for report:', err);
@@ -208,22 +150,22 @@ export default function AttendanceSummaryReport() {
         endOfRange = customEndDate || `${selectedYear}-12-31`;
       }
 
-      console.log(`[Report Fetch] Loading attendance for class: ${selectedClassId}, range: ${startOfRange} to: ${endOfRange}`);
+      console.log(`[Report Fetch] Loading attendance with highly optimized date filters for class: ${selectedClassId}, range: ${startOfRange} to: ${endOfRange}`);
 
-      const q = query(
+      const qOptimized = query(
         collection(db, 'attendance'),
-        where('classId', '==', selectedClassId)
+        where('classId', '==', selectedClassId),
+        where('date', '>=', startOfRange),
+        where('date', '<=', endOfRange)
       );
 
-      const querySnap = await getDocs(q);
-      const docs = querySnap.docs
-        .map(docSnap => ({
-          id: docSnap.id,
-          ...docSnap.data()
-        }))
-        .filter((docData: any) => {
-          return docData.date && docData.date >= startOfRange && docData.date <= endOfRange;
-        });
+      const querySnap = await getDocs(qOptimized);
+      logFirestoreRead('attendanceReports', querySnap.docs.length || 1);
+      
+      const docs = querySnap.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...docSnap.data()
+      }));
 
       setAttendanceDocs(docs);
     } catch (err) {
@@ -347,9 +289,13 @@ export default function AttendanceSummaryReport() {
     return null;
   }, []);
 
-  // Compute aggregated stats for each student in class
-  const aggregatedDataList = React.useMemo<StudentAggregatedData[]>(() => {
-    if (classStudents.length === 0) return [];
+  // Compute aggregated stats for each student in class with Name-Centric Resolution
+  const { aggregatedDataList, resolutionWarnings } = React.useMemo(() => {
+    if (classStudents.length === 0) return { aggregatedDataList: [], resolutionWarnings: [] };
+
+    // Build the lookup index for active students
+    const classNameIndex = buildStudentNameIndex(classStudents);
+    const warningsSet = new Set<string>();
 
     // Initialize map of stats per student
     const statsMap: Record<string, { H: number; S: number; I: number; A: number }> = {};
@@ -361,18 +307,29 @@ export default function AttendanceSummaryReport() {
     attendanceDocs.forEach((docData: any) => {
       const studentListInDoc = docData.students || [];
       studentListInDoc.forEach((sVal: any) => {
-        const sId = sVal.studentId;
-        if (sId && statsMap[sId]) {
+        // Resolve student name / ID dynamically
+        const result = resolveAttendanceStudent({
+          originalStudentId: sVal.studentId || '',
+          originalStudentName: sVal.studentName || sVal.name || '',
+          activeStudents: classStudents,
+          nameIndex: classNameIndex
+        });
+
+        if (result.resolvedStudentId && statsMap[result.resolvedStudentId]) {
           const category = mapStatusToHSIA(sVal.emotion, sVal.status);
           if (category) {
-            statsMap[sId][category] += 1;
+            statsMap[result.resolvedStudentId][category] += 1;
           }
+        }
+
+        if (result.warningMessage) {
+          warningsSet.add(result.warningMessage);
         }
       });
     });
 
     // Structure with student profile and percentage calculations
-    return classStudents.map(s => {
+    const list = classStudents.map(s => {
       const { H, S, I, A } = statsMap[s.id] || { H: 0, S: 0, I: 0, A: 0 };
       const totalLogged = H + S + I + A;
       const attendancePercentage = totalLogged > 0 ? Math.round((H / totalLogged) * 100) : 100;
@@ -390,6 +347,11 @@ export default function AttendanceSummaryReport() {
         attendancePercentage
       };
     }).sort((a, b) => a.name.localeCompare(b.name));
+
+    return {
+      aggregatedDataList: list,
+      resolutionWarnings: Array.from(warningsSet)
+    };
   }, [classStudents, attendanceDocs, mapStatusToHSIA]);
 
   // Derived filter based on query search
@@ -907,13 +869,38 @@ export default function AttendanceSummaryReport() {
             </motion.div>
           ) : (
             /* Report content rendering */
-            <motion.div
-              key="table-content animate"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="bg-white border border-emerald-100 rounded-[2rem] shadow-lg overflow-hidden"
-            >
+            <>
+              {resolutionWarnings.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mb-6 p-5 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-3xl"
+                >
+                  <div className="flex items-center gap-2.5 text-amber-800 font-extrabold text-sm tracking-wide mb-1.5">
+                    <AlertTriangle size={18} className="text-amber-600 shrink-0" />
+                    Penyelarasan Identitas Siswa Berbasis Nama Terdeteksi
+                  </div>
+                  <p className="text-xs text-amber-700 leading-relaxed mb-3">
+                    Beberapa berkas kehadiran lawas dideteksi memiliki nomor ID/NIS yang berbeda dibandingkan master data aktif saat ini. Lumina telah menyelaraskan berkas-berkas tersebut menggunakan nama lengkap sebagai lapisan identitas utama yang stabil. Detektor kami menemukan konflik berikut yang berhasil diselesaikan secara otomatis:
+                  </p>
+                  <div className="max-h-32 overflow-y-auto divide-y divide-amber-100/50 bg-white/80 rounded-2xl p-3 border border-amber-100">
+                    {resolutionWarnings.map((warning, idx) => (
+                      <div key={idx} className="py-2 text-[11px] text-amber-800 font-semibold flex items-start gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1.5 shrink-0" />
+                        <p>{warning}</p>
+                      </div>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+
+              <motion.div
+                key="table-content animate"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="bg-white border border-emerald-100 rounded-[2rem] shadow-lg overflow-hidden"
+              >
               
               {/* Visual print packaging capture wrapper */}
               <div id="attendance-report-pdf-capture" className="p-8">
@@ -1050,7 +1037,8 @@ export default function AttendanceSummaryReport() {
 
               </div>
 
-            </motion.div>
+              </motion.div>
+            </>
           )}
         </AnimatePresence>
       </div>

@@ -15,6 +15,23 @@ import ObservationBulkPeriodImport from './ObservationBulkPeriodImport';
 import { collection, query, where, getDocs, writeBatch, deleteDoc, doc, setDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
+import { normalizeStudentName } from '../../lib/namecentricResolver';
+import { getKindergartenClasses, getKindergartenStudents, logFirestoreRead } from '../../lib/kindergartenMetadataCache';
+
+const getStudentObs = (obsSource: Record<string, StudentObservation> | undefined, student: any): StudentObservation => {
+  if (!obsSource) return { grading: null, notes: '', photo: null };
+  if (obsSource[student.id]) return obsSource[student.id];
+  if (student.oldLuminaId && obsSource[student.oldLuminaId]) return obsSource[student.oldLuminaId];
+  if (student.nis && obsSource[student.nis]) return obsSource[student.nis];
+  if (student.name) {
+    const normStudentName = normalizeStudentName(student.name);
+    const keyMatch = Object.keys(obsSource).find(k => {
+      return normalizeStudentName(k) === normStudentName;
+    });
+    if (keyMatch) return obsSource[keyMatch];
+  }
+  return { grading: null, notes: '', photo: null };
+};
 
 interface StudentObservation {
   grading: KGGrading | null;
@@ -173,128 +190,24 @@ export default function Observation() {
     return false;
   };
 
-  // Load students and classes from Firestore
+  // Load students and classes from Unified Cache-equipped Firestore handlers
   React.useEffect(() => {
     async function loadKindergartenData() {
       try {
         setIsLoadingClasses(true);
-        console.log('Loading Kindergarten data from Firestore for year:', activeYear);
+        console.log('[Observation Page] Requesting cached Kindergarten data for year:', activeYear);
         
-        // Query classes collection where unitId === 'KINDERGARTEN' and academicYear === activeYear
-        const qClasses = query(
-          collection(db, 'classes'),
-          where('unitId', '==', 'KINDERGARTEN'),
-          where('academicYear', '==', activeYear)
-        );
-        const classesSnap = await getDocs(qClasses).catch(e => {
-          console.warn('Classes query failed:', e);
-          return { docs: [] };
-        });
-
-        const fetchedClasses = classesSnap.docs.map(docSnap => {
-          const data = docSnap.data();
-          return {
-            id: docSnap.id,
-            name: data.name,
-            grade: data.grade,
-            unitId: data.unitId,
-            academicYear: data.academicYear
-          };
-        }).sort((a, b) => a.name.localeCompare(b.name));
-
+        // 1. Fetch Kindergarten classes from Cache
+        const fetchedClasses = await getKindergartenClasses(activeYear || '2025/2026');
         setClasses(fetchedClasses);
+        
         if (fetchedClasses.length > 0) {
           setSelectedClassId(fetchedClasses[0].id);
         }
 
-        // Query students collection with unitId === 'KINDERGARTEN'
-        const qStudents = query(
-          collection(db, 'students'),
-          where('unitId', '==', 'KINDERGARTEN')
-        );
+        // 2. Fetch Kindergarten Students from Cache
+        const fetchedStudents = await getKindergartenStudents(activeYear || '2025/2026');
         
-        // Fallback query on roleInvites where role === 'STUDENT' and unitId === 'KINDERGARTEN'
-        const qInvites = query(
-          collection(db, 'roleInvites'),
-          where('role', '==', 'STUDENT'),
-          where('unitId', '==', 'KINDERGARTEN')
-        );
-
-        // Query enrollments where unitId === 'KINDERGARTEN' and academicYear === activeYear
-        const qEnrollments = query(
-          collection(db, 'enrollments'),
-          where('unitId', '==', 'KINDERGARTEN'),
-          where('academicYear', '==', activeYear)
-        );
-
-        const [studentsSnap, invitesSnap, enrollmentsSnap] = await Promise.all([
-          getDocs(qStudents).catch(e => { console.warn('Students query failed:', e); return { docs: [] }; }),
-          getDocs(qInvites).catch(e => { console.warn('Invites query failed:', e); return { docs: [] }; }),
-          getDocs(qEnrollments).catch(e => { console.warn('Enrollments query failed:', e); return { docs: [] }; })
-        ]);
-
-        const enrollmentClassMap = new Map<string, string>();
-        enrollmentsSnap.docs.forEach(docSnap => {
-          const data = docSnap.data();
-          if (data.studentId && data.classId) {
-            enrollmentClassMap.set(data.studentId, data.classId);
-          }
-        });
-
-        const map = new Map<string, any>();
-
-        // Merge roleInvites first (fallback)
-        invitesSnap.docs.forEach(docSnap => {
-          const data = docSnap.data();
-          const studentId = data.luminaId || data.id || docSnap.id;
-          const classId = data.classId || data.jobTitle || '';
-          const ageGroup: 'TK_A' | 'TK_B' = (classId.toUpperCase().includes('TK_A') || classId.toUpperCase().includes('CATERPILLAR')) ? 'TK_A' : 'TK_B';
-          
-          if (studentId) {
-            map.set(studentId, {
-              id: studentId,
-              name: data.fullName || data.name || 'Siswa Tanpa Nama',
-              nickName: data.nickname || data.name?.split(' ')[0] || 'Siswa',
-              ageGroup: ageGroup,
-              classId: classId
-            });
-          }
-        });
-
-        // Merge students from the main table, preserving the updated classId from roleInvites
-        studentsSnap.docs.forEach(docSnap => {
-          const data = docSnap.data();
-          
-          if (data.academicYear && data.academicYear !== activeYear) {
-            const isEnrolledInActiveYear = enrollmentsSnap.docs.some(eDoc => eDoc.data().studentId === docSnap.id);
-            if (!isEnrolledInActiveYear) {
-              return; // Skip if different year and no matching enrollment
-            }
-          }
-          const studentId = data.luminaId || docSnap.id;
-          const classId = enrollmentClassMap.get(docSnap.id) || enrollmentClassMap.get(studentId) || enrollmentClassMap.get(data.luminaId || '') || data.classId || '';
-          const ageGroup: 'TK_A' | 'TK_B' = (classId.toUpperCase().includes('TK_A') || classId.toUpperCase().includes('CATERPILLAR')) ? 'TK_A' : 'TK_B';
-
-          const existing = map.get(studentId);
-          if (existing && existing.classId) {
-            map.set(studentId, {
-              ...existing,
-              name: existing.name || data.fullName || data.name || 'Siswa Tanpa Nama',
-              nickName: existing.nickName || data.nickname || data.nickName || data.fullName?.split(' ')[0] || 'Siswa'
-            });
-          } else {
-            map.set(studentId, {
-              id: studentId,
-              name: data.fullName || data.name || 'Siswa Tanpa Nama',
-              nickName: data.nickname || data.nickName || data.fullName?.split(' ')[0] || 'Siswa',
-              ageGroup: ageGroup,
-              classId: classId
-            });
-          }
-        });
-
-        const fetchedStudents = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-
         if (fetchedStudents.length > 0) {
           setStudents(fetchedStudents);
           saveStoredStudents(fetchedStudents);
@@ -314,18 +227,30 @@ export default function Observation() {
     loadKindergartenData();
   }, [activeYear]);
 
-  // Unified monthly observation aggregator for Rekap Bulanan
+  // Unified monthly observation aggregator for Rekap Bulanan — optimized to load on-demand by month and year
   const loadRecapData = async () => {
     try {
       setIsBgFetching(true);
-      console.log("[Recap] Loading observation documents for merging...");
+      console.log(`[Recap] Loading observation documents for month: ${recapMonth}, year: ${recapYear}...`);
       
-      // 1. Fetch from Firestore
-      const qObs = query(collection(db, 'observations'));
+      const monthStr = String(recapMonth).padStart(2, '0');
+      const startOfRange = `${recapYear}-${monthStr}-01`;
+      const endOfRange = `${recapYear}-${monthStr}-31`;
+
+      // 1. Fetch from Firestore using date range filter
+      const qObs = query(
+        collection(db, 'observations'),
+        where('date', '>=', startOfRange),
+        where('date', '<=', endOfRange)
+      );
+      
       const qSnap = await getDocs(qObs).catch(e => {
         console.warn("[Recap] Error querying firestore:", e);
         return { docs: [] };
       });
+      
+      // Audit log reads
+      logFirestoreRead('observations', qSnap.docs.length || 1);
       
       const firestoreItems = qSnap.docs.map(docSnap => {
         const d = docSnap.data();
@@ -727,7 +652,7 @@ export default function Observation() {
     if (activeTab === 'recap') {
       loadRecapData();
     }
-  }, [activeTab, selectedClassId]);
+  }, [activeTab, selectedClassId, recapMonth, recapYear]);
 
   // Triggered when selected Sentra + Domain combo changes: load / initialize specific data
   React.useEffect(() => {
@@ -1182,7 +1107,7 @@ export default function Observation() {
               }
 
               return filteredStudents.map((student) => {
-                const obs = observations[student.id] || { grading: null, notes: '', photo: null };
+                const obs = getStudentObs(observations, student);
                 const resolvedPhoto = obs.photo || generalPhoto;
                 const hasSpecificPhoto = !!obs.photo;
 
@@ -1536,14 +1461,14 @@ export default function Observation() {
 
               // Filter to show sessions only if they contain at least one evaluation for the current class's students
               return classStudents.some(student => {
-                const obs = item.observations?.[student.id];
+                const obs = getStudentObs(item.observations, student);
                 return obs && obs.grading;
               });
             });
 
             const assessedStudentsCount = classStudents.filter(student => {
               return filteredRecapSessions.some(session => {
-                const obs = session.observations[student.id];
+                const obs = getStudentObs(session.observations, student);
                 return obs && obs.grading;
               });
             }).length;
@@ -1551,7 +1476,7 @@ export default function Observation() {
             const gradingCounts = { BB: 0, MB: 0, BSH: 0, BSB: 0 };
             filteredRecapSessions.forEach(session => {
               classStudents.forEach(student => {
-                const obs = session.observations[student.id];
+                const obs = getStudentObs(session.observations, student);
                 if (obs && obs.grading && obs.grading in gradingCounts) {
                   gradingCounts[obs.grading as keyof typeof gradingCounts]++;
                 }
@@ -1662,7 +1587,7 @@ export default function Observation() {
                                 const entries: any[] = [];
                                 filteredRecapSessions.forEach(session => {
                                   if (session.domain === dom.id) {
-                                    const studentObs = session.observations[student.id];
+                                    const studentObs = getStudentObs(session.observations, student);
                                     if (studentObs && studentObs.grading) {
                                       entries.push({
                                         date: session.date,
@@ -2089,7 +2014,7 @@ export default function Observation() {
                     return (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {classStudents.map(student => {
-                          const obs = selectedDetailSession.observations[student.id] || { grading: null, notes: '', photo: null };
+                          const obs = getStudentObs(selectedDetailSession.observations, student);
                           const studentPhoto = obs.photo || selectedDetailSession.generalPhoto;
                           const grConfig = grades.find(g => g.id === obs.grading);
                           

@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { 
   Smile, Meh, Frown, Angry, AlertCircle, Calendar, ChevronLeft, ChevronRight, 
   Printer, BookOpen, Clock, Heart, ShieldAlert, FileText, ArrowRight, Sparkles, ChevronDown,
-  Loader2, CheckCircle2, FileDown, Trash2, Send
+  Loader2, CheckCircle2, FileDown, Trash2, Send, RefreshCw
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useNavigate } from 'react-router-dom';
@@ -19,6 +19,7 @@ import { collection, query, where, getDocs, addDoc, deleteDoc, doc, updateDoc } 
 import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { useAuth } from '../../context/AuthContext';
+import { logFirestoreRead } from '../../lib/kindergartenMetadataCache';
 import { toast } from 'sonner';
 import { html2canvasWithModernColors } from '../../lib/html2canvasPatch';
 import { jsPDF } from 'jspdf';
@@ -202,7 +203,23 @@ export default function WeeklyReview() {
           }
         });
 
-        const fetchedStudents = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+        const uniqueStudentsMap = new Map<string, any>();
+        Array.from(map.values()).forEach(stud => {
+          const normName = stud.name.trim().toLowerCase();
+          const existing = uniqueStudentsMap.get(normName);
+          if (!existing) {
+            uniqueStudentsMap.set(normName, stud);
+          } else {
+            // Prefer registered/official students over invites if both exist
+            const existingIsInvite = existing.id && (existing.id.startsWith('INVITE_') || existing.id.includes('_') || existing.id.length > 15);
+            const currentIsInvite = stud.id && (stud.id.startsWith('INVITE_') || stud.id.includes('_') || stud.id.length > 15);
+            if (existingIsInvite && !currentIsInvite) {
+              uniqueStudentsMap.set(normName, stud);
+            }
+          }
+        });
+
+        const fetchedStudents = Array.from(uniqueStudentsMap.values()).sort((a, b) => a.name.localeCompare(b.name));
 
         if (fetchedStudents.length > 0) {
           setStudents(fetchedStudents);
@@ -257,6 +274,69 @@ export default function WeeklyReview() {
     fri.setDate(mon.getDate() + 4);
     return formatDateToKey(fri);
   });
+
+  // States to hold Firestore Attendance and Observations for the active date range
+  const [firestoreAttendance, setFirestoreAttendance] = React.useState<any[]>([]);
+  const [firestoreObservations, setFirestoreObservations] = React.useState<any[]>([]);
+  const [isFetchingFirestore, setIsFetchingFirestore] = React.useState(false);
+
+  // Automatically fetch attendance and observations from Firestore when selection changes
+  React.useEffect(() => {
+    if (!selectedClassId) return;
+
+    let active = true;
+    async function loadData() {
+      try {
+        setIsFetchingFirestore(true);
+        console.log(`[WeeklyReview Firestore Sync] Fetching for class ${selectedClassId} from ${startDateStr} to ${endDateStr}`);
+
+        // 1. Fetch attendance reports
+        const qAtt = query(
+          collection(db, 'attendance'),
+          where('classId', '==', selectedClassId),
+          where('date', '>=', startDateStr),
+          where('date', '<=', endDateStr)
+        );
+        const snapAtt = await getDocs(qAtt);
+        logFirestoreRead('attendanceReports', snapAtt.docs.length || 1);
+        const fetchedAtt = snapAtt.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+
+        // 2. Fetch Observations
+        const qObs = query(
+          collection(db, 'observations'),
+          where('date', '>=', startDateStr),
+          where('date', '<=', endDateStr)
+        );
+        const snapObs = await getDocs(qObs);
+        logFirestoreRead('observations', snapObs.docs.length || 1);
+        const fetchedObs = snapObs.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+
+        if (active) {
+          setFirestoreAttendance(fetchedAtt);
+          setFirestoreObservations(fetchedObs);
+          console.log(`[WeeklyReview Firestore Sync] Set ${fetchedAtt.length} attendance docs and ${fetchedObs.length} observations`);
+        }
+      } catch (err) {
+        console.error('Error fetching range data from Firestore:', err);
+      } finally {
+        if (active) {
+          setIsFetchingFirestore(false);
+        }
+      }
+    }
+
+    loadData();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedClassId, startDateStr, endDateStr]);
 
   const [loadedDraft, setLoadedDraft] = React.useState<any | null>(null);
 
@@ -334,7 +414,14 @@ export default function WeeklyReview() {
 
     // Always fetch latest real-time checklist and observation telemetry and merge
     try {
-      const liveData = aggregateKGWeeklyReportForPeriod(selectedStudentId, startDateStr, endDateStr);
+      const liveData = aggregateKGWeeklyReportForPeriod(
+        selectedStudentId, 
+        startDateStr, 
+        endDateStr,
+        firestoreAttendance,
+        firestoreObservations,
+        students
+      );
       const studentObj = students.find(s => s.id === selectedStudentId);
       
       const merged = {
@@ -358,7 +445,7 @@ export default function WeeklyReview() {
         setLoadedDraft(null);
       }
     }
-  }, [selectedStudentId, startDateStr, endDateStr, students, activeClassObj]);
+  }, [selectedStudentId, startDateStr, endDateStr, students, activeClassObj, firestoreAttendance, firestoreObservations]);
 
   const [publishedReports, setPublishedReports] = React.useState<any[]>([]);
   const [isPublishing, setIsPublishing] = React.useState(false);
@@ -740,6 +827,21 @@ export default function WeeklyReview() {
         )}
       </header>
 
+      {isFetchingFirestore && (
+        <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-100 text-emerald-955 rounded-3xl p-5 flex items-center justify-between shadow-sm print:hidden">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-emerald-500 rounded-full animate-pulse text-white">
+              <RefreshCw className="animate-spin" size={14} />
+            </div>
+            <div className="text-xs">
+              <p className="font-extrabold text-emerald-900 uppercase tracking-widest text-[9px]">Sinkronisasi Aktif</p>
+              <p className="text-emerald-700 mt-0.5 font-bold">Lumina Guru AI sedang mengimpor presensi & observasi teranyar dari server Firestore...</p>
+            </div>
+          </div>
+          <span className="text-[10px] bg-emerald-100 text-emerald-800 font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider block">Real-time</span>
+        </div>
+      )}
+
       {/* 2. FILTER & SELECTIONS (Hidden in Print) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 bg-white p-6 rounded-[2rem] border border-gray-150 shadow-sm print:hidden">
         
@@ -771,31 +873,58 @@ export default function WeeklyReview() {
             </div>
           </div>
 
-          {/* B. Filtered Students buttons */}
+          {/* B. Filtered Students dropdown and navigation */}
           <div className="space-y-1.5">
             <label className="text-[10px] font-black text-emerald-700 uppercase tracking-wider block">Pilih Siswa</label>
-            <div className="flex flex-wrap gap-1.5 max-h-[140px] overflow-y-auto p-2 border border-dashed border-gray-200 rounded-xl bg-gray-50/50">
-              {filteredStudents.length === 0 ? (
-                <span className="text-xs text-gray-400 italic p-1">Tidak ada siswa terdaftar di kelas ini</span>
-              ) : (
-                filteredStudents.map(s => {
-                  const isSelected = s.id === selectedStudentId;
-                  return (
-                    <button
-                      key={s.id}
-                      onClick={() => setSelectedStudentId(s.id)}
-                      className={cn(
-                        "px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer",
-                        isSelected 
-                          ? "bg-[#109E58] text-white border-transparent shadow shadow-emerald-600/20"
-                          : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
-                      )}
-                    >
-                      {s.name}
-                    </button>
-                  );
-                })
-              )}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const currentIndex = filteredStudents.findIndex(s => s.id === selectedStudentId);
+                  if (currentIndex > 0) {
+                    setSelectedStudentId(filteredStudents[currentIndex - 1].id);
+                  }
+                }}
+                disabled={filteredStudents.length <= 1 || filteredStudents.findIndex(s => s.id === selectedStudentId) <= 0}
+                className="flex items-center justify-center p-2.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 hover:text-[#109E58] disabled:opacity-40 disabled:hover:bg-white disabled:hover:text-gray-600 transition-all cursor-pointer shrink-0"
+                title="Siswa Sebelumnya"
+              >
+                <ChevronLeft size={16} />
+              </button>
+
+              <div className="relative flex-1">
+                <select
+                  value={selectedStudentId}
+                  onChange={(e) => setSelectedStudentId(e.target.value)}
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-xs font-bold outline-none text-gray-750 appearance-none pr-8 cursor-pointer hover:bg-gray-100/50"
+                >
+                  {filteredStudents.length === 0 ? (
+                    <option value="">Tidak ada siswa terdaftar di kelas ini</option>
+                  ) : (
+                    filteredStudents.map(s => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+                <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const currentIndex = filteredStudents.findIndex(s => s.id === selectedStudentId);
+                  if (currentIndex !== -1 && currentIndex < filteredStudents.length - 1) {
+                    setSelectedStudentId(filteredStudents[currentIndex + 1].id);
+                  }
+                }}
+                disabled={filteredStudents.length <= 1 || filteredStudents.findIndex(s => s.id === selectedStudentId) === -1 || filteredStudents.findIndex(s => s.id === selectedStudentId) >= filteredStudents.length - 1}
+                className="flex items-center justify-center p-2.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 hover:text-[#109E58] disabled:opacity-40 disabled:hover:bg-white disabled:hover:text-gray-600 transition-all cursor-pointer shrink-0"
+                title="Siswa Berikutnya"
+              >
+                <ChevronRight size={16} />
+              </button>
             </div>
           </div>
 

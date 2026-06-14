@@ -1,4 +1,5 @@
 import { KGWeeklyReportDraft, KGDomain, KGActivity } from '../types';
+import { buildStudentNameIndex, resolveAttendanceStudent } from './namecentricResolver';
 
 export const DOMAIN_LABEL_MAP: Record<string, string> = {
   AGAMA_BUDI_PEKERTI: 'Nilai Agama & Budi Pekerti',
@@ -131,7 +132,10 @@ export function getMonday(d: Date): Date {
 // Main Aggregator function
 export function aggregateKGWeeklyReport(
   studentId: string,
-  selectedDate: Date
+  selectedDate: Date,
+  firestoreAttendanceDocs?: any[],
+  firestoreObservationDocs?: any[],
+  activeStudents?: any[]
 ): KGWeeklyReportDraft {
   const student = DEFAULT_STUDENTS.find(s => s.id === studentId) || {
     id: studentId,
@@ -186,72 +190,153 @@ export function aggregateKGWeeklyReport(
     earlyLeave: 0
   };
 
-  const checklistSaved = localStorage.getItem('kg_checklist_records');
-  if (checklistSaved) {
-    try {
-      const records = JSON.parse(checklistSaved);
-      dateKeys.forEach(dk => {
-        const dayData = records[dk.dateKey];
-        const studentStatus = dayData?.[studentId];
-        if (studentStatus) {
-          const att = studentStatus.attendance;
-          const emo = studentStatus.emotion;
+  if (firestoreAttendanceDocs && firestoreAttendanceDocs.length > 0) {
+    const nameIndex = activeStudents ? buildStudentNameIndex(activeStudents) : {};
+    firestoreAttendanceDocs.forEach(docData => {
+      const dStr = docData.date;
+      const matchedDay = dateKeys.find(dk => dk.dateKey === dStr);
+      if (matchedDay) {
+        const studentsList = docData.students || [];
+        studentsList.forEach((s: any) => {
+          const resolved = activeStudents ? resolveAttendanceStudent({
+            originalStudentId: s.studentId || '',
+            originalStudentName: s.studentName || s.name || '',
+            activeStudents,
+            nameIndex
+          }) : { resolvedStudentId: s.studentId };
 
-          if (att === 'PRESENT') {
-            if (emo === 'HAPPY') attendanceSummary.happy++;
-            else if (emo === 'SAD') attendanceSummary.sad++;
-            else if (emo === 'ANGRY') attendanceSummary.angry++;
-            else if (emo === 'OK') attendanceSummary.ok++;
-            else attendanceSummary.ok++;
-          } else if (att === 'SICK') {
-            attendanceSummary.sick++;
-          } else if (att === 'PERMISSION') {
-            attendanceSummary.izin++;
-          } else if (att === 'NO_NEWS') {
-            attendanceSummary.noNews++;
+          const resolvedId = resolved.resolvedStudentId || s.studentId;
+          if (resolvedId === studentId) {
+            const statusVal = String(s.status || '').toLowerCase();
+            const emoVal = String(s.emotion || '').toUpperCase();
+
+            if (statusVal === 'hadir') {
+              if (emoVal === 'HAPPY') attendanceSummary.happy++;
+              else if (emoVal === 'SAD') attendanceSummary.sad++;
+              else if (emoVal === 'ANGRY') attendanceSummary.angry++;
+              else attendanceSummary.ok++;
+            } else if (statusVal === 'sakit') {
+              attendanceSummary.sick++;
+            } else if (statusVal === 'izin') {
+              attendanceSummary.izin++;
+            } else if (statusVal === 'tanpa_kabar') {
+              attendanceSummary.noNews++;
+            }
           }
-        }
-      });
-    } catch (e) {
-      console.error('[Aggregator] Error parsing checklist records:', e);
+        });
+      }
+    });
+  } else {
+    const checklistSaved = localStorage.getItem('kg_checklist_records');
+    if (checklistSaved) {
+      try {
+        const records = JSON.parse(checklistSaved);
+        dateKeys.forEach(dk => {
+          const dayData = records[dk.dateKey];
+          const studentStatus = dayData?.[studentId];
+          if (studentStatus) {
+            const att = studentStatus.attendance;
+            const emo = studentStatus.emotion;
+
+            if (att === 'PRESENT') {
+              if (emo === 'HAPPY') attendanceSummary.happy++;
+              else if (emo === 'SAD') attendanceSummary.sad++;
+              else if (emo === 'ANGRY') attendanceSummary.angry++;
+              else if (emo === 'OK') attendanceSummary.ok++;
+              else attendanceSummary.ok++;
+            } else if (att === 'SICK') {
+              attendanceSummary.sick++;
+            } else if (att === 'PERMISSION') {
+              attendanceSummary.izin++;
+            } else if (att === 'NO_NEWS') {
+              attendanceSummary.noNews++;
+            }
+          }
+        });
+      } catch (e) {
+        console.error('[Aggregator] Error parsing checklist records:', e);
+      }
     }
   }
 
   // 2. Fetch all Observation historical logs & match with the week's date keys
   const weeklyObservationItems: KGWeeklyReportDraft['weeklyObservationItems'] = [];
   
-  // Scan through localStorage for keys starting with kg_obs_hist_
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith('kg_obs_hist_')) {
-      try {
-        const raw = localStorage.getItem(key);
-        if (raw) {
-          const payload = JSON.parse(raw);
-          const obsTimestamp = payload.timestamp || Date.now();
-          const obsDateStr = formatDateToKey(new Date(obsTimestamp));
+  if (firestoreObservationDocs && firestoreObservationDocs.length > 0) {
+    const nameIndex = activeStudents ? buildStudentNameIndex(activeStudents) : {};
+    firestoreObservationDocs.forEach(payload => {
+      const obsTimestamp = payload.timestamp || Date.now();
+      const obsDateStr = payload.date || formatDateToKey(new Date(obsTimestamp));
 
-          // Check if this falls in our active week dates
-          const matchedDay = dateKeys.find(dk => dk.dateKey === obsDateStr);
-          if (matchedDay) {
-            const studentObs = payload.observations?.[studentId];
-            if (studentObs && (studentObs.grading || studentObs.notes || studentObs.photo)) {
-              weeklyObservationItems.push({
-                dayLabel: matchedDay.dayLabel,
-                dateKey: matchedDay.dateKey,
-                activity: ACTIVITY_LABEL_MAP[payload.selectedActivity] || payload.selectedActivity,
-                domain: DOMAIN_LABEL_MAP[payload.selectedDomain] || payload.selectedDomain,
-                objective: ACTIVITY_LABEL_MAP[payload.selectedActivity] || 'Aktivitas Kelas',
-                grade: studentObs.grading || 'Belum Berkembang',
-                notes: studentObs.notes || '',
-                photoUrl: studentObs.photo || null,
-                generalPhotoUrl: payload.generalPhoto || null
-              });
+      const matchedDay = dateKeys.find(dk => dk.dateKey === obsDateStr);
+      if (matchedDay) {
+        let studentObs = payload.observations?.[studentId];
+        
+        if (!studentObs && activeStudents) {
+          const obsKeys = Object.keys(payload.observations || {});
+          for (const key of obsKeys) {
+            const resolved = resolveAttendanceStudent({
+              originalStudentId: key,
+              originalStudentName: payload.observations[key]?.studentName || '',
+              activeStudents,
+              nameIndex
+            });
+            if (resolved.resolvedStudentId === studentId) {
+              studentObs = payload.observations[key];
+              break;
             }
           }
         }
-      } catch (e) {
-        console.error('[Aggregator] Error processing key:', key, e);
+
+        if (studentObs && (studentObs.grading || studentObs.notes || studentObs.photo)) {
+          weeklyObservationItems.push({
+            dayLabel: matchedDay.dayLabel,
+            dateKey: matchedDay.dateKey,
+            activity: ACTIVITY_LABEL_MAP[payload.activity] || payload.activity,
+            domain: DOMAIN_LABEL_MAP[payload.domain] || payload.domain,
+            objective: ACTIVITY_LABEL_MAP[payload.activity] || 'Aktivitas Kelas',
+            grade: studentObs.grading || 'Belum Berkembang',
+            notes: studentObs.notes || '',
+            photoUrl: studentObs.photo || null,
+            generalPhotoUrl: payload.generalPhoto || null
+          });
+        }
+      }
+    });
+  } else {
+    // Scan through localStorage for keys starting with kg_obs_hist_
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('kg_obs_hist_')) {
+        try {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const payload = JSON.parse(raw);
+            const obsTimestamp = payload.timestamp || Date.now();
+            const obsDateStr = formatDateToKey(new Date(obsTimestamp));
+
+            // Check if this falls in our active week dates
+            const matchedDay = dateKeys.find(dk => dk.dateKey === obsDateStr);
+            if (matchedDay) {
+              const studentObs = payload.observations?.[studentId];
+              if (studentObs && (studentObs.grading || studentObs.notes || studentObs.photo)) {
+                weeklyObservationItems.push({
+                  dayLabel: matchedDay.dayLabel,
+                  dateKey: matchedDay.dateKey,
+                  activity: ACTIVITY_LABEL_MAP[payload.selectedActivity] || payload.selectedActivity,
+                  domain: DOMAIN_LABEL_MAP[payload.selectedDomain] || payload.selectedDomain,
+                  objective: ACTIVITY_LABEL_MAP[payload.selectedActivity] || 'Aktivitas Kelas',
+                  grade: studentObs.grading || 'Belum Berkembang',
+                  notes: studentObs.notes || '',
+                  photoUrl: studentObs.photo || null,
+                  generalPhotoUrl: payload.generalPhoto || null
+                });
+              }
+            }
+          }
+        } catch (e) {
+          console.error('[Aggregator] Error processing key:', key, e);
+        }
       }
     }
   }
@@ -383,7 +468,10 @@ export function getDatesInRange(start: Date, end: Date): Date[] {
 export function aggregateKGWeeklyReportForPeriod(
   studentId: string,
   startDateStr: string,
-  endDateStr: string
+  endDateStr: string,
+  firestoreAttendanceDocs?: any[],
+  firestoreObservationDocs?: any[],
+  activeStudents?: any[]
 ) {
   const student = DEFAULT_STUDENTS.find(s => s.id === studentId) || {
     id: studentId,
@@ -423,34 +511,72 @@ export function aggregateKGWeeklyReportForPeriod(
     earlyLeave: 0
   };
 
-  const checklistSaved = localStorage.getItem('kg_checklist_records');
-  if (checklistSaved) {
-    try {
-      const records = JSON.parse(checklistSaved);
-      dateKeys.forEach(dk => {
-        const dayData = records[dk.dateKey];
-        const studentStatus = dayData?.[studentId];
-        if (studentStatus) {
-          const att = studentStatus.attendance;
-          const emo = studentStatus.emotion;
+  if (firestoreAttendanceDocs && firestoreAttendanceDocs.length > 0) {
+    const nameIndex = activeStudents ? buildStudentNameIndex(activeStudents) : {};
+    firestoreAttendanceDocs.forEach(docData => {
+      const dStr = docData.date;
+      const matchedDay = dateKeys.find(dk => dk.dateKey === dStr);
+      if (matchedDay) {
+        const studentsList = docData.students || [];
+        studentsList.forEach((s: any) => {
+          const resolved = activeStudents ? resolveAttendanceStudent({
+            originalStudentId: s.studentId || '',
+            originalStudentName: s.studentName || s.name || '',
+            activeStudents,
+            nameIndex
+          }) : { resolvedStudentId: s.studentId };
 
-          if (att === 'PRESENT') {
-            if (emo === 'HAPPY') attendanceSummary.happy++;
-            else if (emo === 'SAD') attendanceSummary.sad++;
-            else if (emo === 'ANGRY') attendanceSummary.angry++;
-            else if (emo === 'OK') attendanceSummary.ok++;
-            else attendanceSummary.ok++;
-          } else if (att === 'SICK') {
-            attendanceSummary.sick++;
-          } else if (att === 'PERMISSION') {
-            attendanceSummary.izin++;
-          } else if (att === 'NO_NEWS') {
-            attendanceSummary.noNews++;
+          const resolvedId = resolved.resolvedStudentId || s.studentId;
+          if (resolvedId === studentId) {
+            const statusVal = String(s.status || '').toLowerCase();
+            const emoVal = String(s.emotion || '').toUpperCase();
+
+            if (statusVal === 'hadir') {
+              if (emoVal === 'HAPPY') attendanceSummary.happy++;
+              else if (emoVal === 'SAD') attendanceSummary.sad++;
+              else if (emoVal === 'ANGRY') attendanceSummary.angry++;
+              else attendanceSummary.ok++;
+            } else if (statusVal === 'sakit') {
+              attendanceSummary.sick++;
+            } else if (statusVal === 'izin') {
+              attendanceSummary.izin++;
+            } else if (statusVal === 'tanpa_kabar') {
+              attendanceSummary.noNews++;
+            }
           }
-        }
-      });
-    } catch (e) {
-      console.error('[Period Aggregator] Error parsing checklist records:', e);
+        });
+      }
+    });
+  } else {
+    const checklistSaved = localStorage.getItem('kg_checklist_records');
+    if (checklistSaved) {
+      try {
+        const records = JSON.parse(checklistSaved);
+        dateKeys.forEach(dk => {
+          const dayData = records[dk.dateKey];
+          const studentStatus = dayData?.[studentId];
+          if (studentStatus) {
+            const att = studentStatus.attendance;
+            const emo = studentStatus.emotion;
+
+            if (att === 'PRESENT') {
+              if (emo === 'HAPPY') attendanceSummary.happy++;
+              else if (emo === 'SAD') attendanceSummary.sad++;
+              else if (emo === 'ANGRY') attendanceSummary.angry++;
+              else if (emo === 'OK') attendanceSummary.ok++;
+              else attendanceSummary.ok++;
+            } else if (att === 'SICK') {
+              attendanceSummary.sick++;
+            } else if (att === 'PERMISSION') {
+              attendanceSummary.izin++;
+            } else if (att === 'NO_NEWS') {
+              attendanceSummary.noNews++;
+            }
+          }
+        });
+      } catch (e) {
+        console.error('[Period Aggregator] Error parsing checklist records:', e);
+      }
     }
   }
 
@@ -467,36 +593,79 @@ export function aggregateKGWeeklyReportForPeriod(
     generalPhotoUrl?: string | null;
   }> = [];
 
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith('kg_obs_hist_')) {
-      try {
-        const raw = localStorage.getItem(key);
-        if (raw) {
-          const payload = JSON.parse(raw);
-          const obsTimestamp = payload.timestamp || Date.now();
-          const obsDateStr = formatDateToKey(new Date(obsTimestamp));
+  if (firestoreObservationDocs && firestoreObservationDocs.length > 0) {
+    const nameIndex = activeStudents ? buildStudentNameIndex(activeStudents) : {};
+    firestoreObservationDocs.forEach(payload => {
+      const obsTimestamp = payload.timestamp || Date.now();
+      const obsDateStr = payload.date || formatDateToKey(new Date(obsTimestamp));
 
-          const matchedDay = dateKeys.find(dk => dk.dateKey === obsDateStr);
-          if (matchedDay) {
-            const studentObs = payload.observations?.[studentId];
-            if (studentObs && (studentObs.grading || studentObs.notes || studentObs.photo)) {
-              weeklyObservationItems.push({
-                dayLabel: matchedDay.dayLabel,
-                dateKey: matchedDay.dateKey,
-                activity: ACTIVITY_LABEL_MAP[payload.selectedActivity] || payload.selectedActivity,
-                domain: DOMAIN_LABEL_MAP[payload.selectedDomain] || payload.selectedDomain,
-                objective: ACTIVITY_LABEL_MAP[payload.selectedActivity] || 'Aktivitas Kelas',
-                grade: studentObs.grading || 'Belum Berkembang',
-                notes: studentObs.notes || '',
-                photoUrl: studentObs.photo || null,
-                generalPhotoUrl: payload.generalPhoto || null
-              });
+      const matchedDay = dateKeys.find(dk => dk.dateKey === obsDateStr);
+      if (matchedDay) {
+        let studentObs = payload.observations?.[studentId];
+        
+        if (!studentObs && activeStudents) {
+          const obsKeys = Object.keys(payload.observations || {});
+          for (const key of obsKeys) {
+            const resolved = resolveAttendanceStudent({
+              originalStudentId: key,
+              originalStudentName: payload.observations[key]?.studentName || '',
+              activeStudents,
+              nameIndex
+            });
+            if (resolved.resolvedStudentId === studentId) {
+              studentObs = payload.observations[key];
+              break;
             }
           }
         }
-      } catch (e) {
-        console.error('[Period Aggregator] Error processing key:', key, e);
+
+        if (studentObs && (studentObs.grading || studentObs.notes || studentObs.photo)) {
+          weeklyObservationItems.push({
+            dayLabel: matchedDay.dayLabel,
+            dateKey: matchedDay.dateKey,
+            activity: ACTIVITY_LABEL_MAP[payload.activity] || payload.activity,
+            domain: DOMAIN_LABEL_MAP[payload.domain] || payload.domain,
+            objective: ACTIVITY_LABEL_MAP[payload.activity] || 'Aktivitas Kelas',
+            grade: studentObs.grading || 'Belum Berkembang',
+            notes: studentObs.notes || '',
+            photoUrl: studentObs.photo || null,
+            generalPhotoUrl: payload.generalPhoto || null
+          });
+        }
+      }
+    });
+  } else {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('kg_obs_hist_')) {
+        try {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const payload = JSON.parse(raw);
+            const obsTimestamp = payload.timestamp || Date.now();
+            const obsDateStr = formatDateToKey(new Date(obsTimestamp));
+
+            const matchedDay = dateKeys.find(dk => dk.dateKey === obsDateStr);
+            if (matchedDay) {
+              const studentObs = payload.observations?.[studentId];
+              if (studentObs && (studentObs.grading || studentObs.notes || studentObs.photo)) {
+                weeklyObservationItems.push({
+                  dayLabel: matchedDay.dayLabel,
+                  dateKey: matchedDay.dateKey,
+                  activity: ACTIVITY_LABEL_MAP[payload.selectedActivity] || payload.selectedActivity,
+                  domain: DOMAIN_LABEL_MAP[payload.selectedDomain] || payload.selectedDomain,
+                  objective: ACTIVITY_LABEL_MAP[payload.selectedActivity] || 'Aktivitas Kelas',
+                  grade: studentObs.grading || 'Belum Berkembang',
+                  notes: studentObs.notes || '',
+                  photoUrl: studentObs.photo || null,
+                  generalPhotoUrl: payload.generalPhoto || null
+                });
+              }
+            }
+          }
+        } catch (e) {
+          console.error('[Period Aggregator] Error processing key:', key, e);
+        }
       }
     }
   }
