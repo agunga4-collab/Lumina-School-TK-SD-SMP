@@ -61,9 +61,19 @@ service cloud.firestore {
     }
 
     function isLinkedStudent(studentId) {
-      return isParent()
-        && ('linkedStudents' in currentUser())
-        && (studentId in currentUser().linkedStudents);
+      return isParent() && (
+        (('linkedStudents' in currentUser()) && (
+          studentId in currentUser().linkedStudents ||
+          studentId.lower() in currentUser().linkedStudents ||
+          studentId.upper() in currentUser().linkedStudents
+        ))
+        || (exists(/databases/$(database)/documents/parentStudentLinks/$(request.auth.token.email.lower()))
+            && (
+              studentId in get(/databases/$(database)/documents/parentStudentLinks/$(request.auth.token.email.lower())).data.studentIds ||
+              studentId.lower() in get(/databases/$(database)/documents/parentStudentLinks/$(request.auth.token.email.lower())).data.studentIds ||
+              studentId.upper() in get(/databases/$(database)/documents/parentStudentLinks/$(request.auth.token.email.lower())).data.studentIds
+            ))
+      );
     }
 
     function incoming() {

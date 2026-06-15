@@ -50,13 +50,19 @@ export default function ParentReports() {
         setViewedReports(new Set(viewsData.map(v => v.reportId)));
 
         if (studentData) {
-          const studentIdsToSearch = Array.from(new Set([
+          const baseIds = [
             studentData.id,
             (studentData as any).luminaId,
             (studentData as any).docId,
             (studentData as any).firebaseId,
             studentId
-          ].filter(Boolean) as string[]));
+          ].filter(Boolean) as string[];
+
+          const studentIdsToSearch = Array.from(new Set([
+            ...baseIds,
+            ...baseIds.map(id => id.toUpperCase()),
+            ...baseIds.map(id => id.toLowerCase())
+          ]));
 
           const allReports = await getReportCards({
              unitId: studentData.unitId as any,
