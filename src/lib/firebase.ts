@@ -1356,51 +1356,24 @@ export async function getParentStudentLinks(parentId?: string | null): Promise<P
   }
   try {
     const parentIdClean = parentId.toLowerCase().trim();
-    const parentIdOriginal = parentId.trim();
     const studentIdsSet = new Set<string>();
 
-    const searchEmails = Array.from(new Set([
-      parentIdClean,
-      parentIdOriginal,
-      parentIdOriginal.toLowerCase(),
-      parentIdOriginal.toUpperCase()
-    ].filter(Boolean)));
-
-    // 1. Try to get parent direct ID link doc in parentStudentLinks (highly allowed)
-    for (const email of [parentIdClean, parentIdOriginal]) {
-      try {
-        const docSnap = await getDoc(doc(db, 'parentStudentLinks', email));
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          if (Array.isArray(data.studentIds)) {
-            data.studentIds.forEach(id => {
-              if (id) studentIdsSet.add(id);
-            });
-          }
-        }
-      } catch (err) {
-        console.warn("[getParentStudentLinks] Step 1 direct parentStudentLinks getDoc failed:", err);
-      }
-    }
-
-    // 2. Try to query parentStudentLinks collection for where parentEmail === parentId
+    // 1. Dapatkan relasi langsung dari dokumen parentStudentLinks/{parentEmailNormalized} (getDoc yang aman)
     try {
-      const linksQuery = query(collection(db, 'parentStudentLinks'), where('parentEmail', 'in', searchEmails));
-      const linksSnap = await getDocs(linksQuery);
-      linksSnap.docs.forEach(d => {
-        const data = d.data();
-        if (data.studentId) studentIdsSet.add(data.studentId);
+      const docSnap = await getDoc(doc(db, 'parentStudentLinks', parentIdClean));
+      if (docSnap.exists()) {
+        const data = docSnap.data();
         if (Array.isArray(data.studentIds)) {
           data.studentIds.forEach(id => {
-            if (id) studentIdsSet.add(id);
+            if (id) studentIdsSet.add(String(id));
           });
         }
-      });
-    } catch (linksErr) {
-      console.warn("[getParentStudentLinks] Step 2 query on parentStudentLinks failed:", linksErr);
+      }
+    } catch (err) {
+      console.warn("[getParentStudentLinks] Step 1 direct parentStudentLinks getDoc failed:", err);
     }
 
-    // 3. Fallback: Check the parent's user profile in 'users' collection (direct fetch with current UID is highly reliable)
+    // 2. Dapatkan relasi dari profil user itu sendiri (users/{uid}) jika sedang login (getDoc yang aman)
     if (auth.currentUser?.uid) {
       try {
         const userDocSnap = await getDoc(doc(db, 'users', auth.currentUser.uid));
@@ -1408,88 +1381,20 @@ export async function getParentStudentLinks(parentId?: string | null): Promise<P
           const userData = userDocSnap.data();
           if (Array.isArray(userData?.linkedStudents)) {
             userData.linkedStudents.forEach(id => {
-              if (id) studentIdsSet.add(id);
+              if (id) studentIdsSet.add(String(id));
             });
           }
         }
       } catch (directUserErr) {
-        console.warn("[getParentStudentLinks] Step 3 direct current user fetch failed:", directUserErr);
+        console.warn("[getParentStudentLinks] Step 2 direct current user fetch failed:", directUserErr);
       }
-    }
-
-    // 3b. Query 'users' collection by email (may require admin, but wrapped safely)
-    try {
-      const usersQuery = query(collection(db, 'users'), where('email', 'in', searchEmails), where('role', '==', 'PARENT'));
-      const usersSnap = await getDocs(usersQuery);
-      if (!usersSnap.empty) {
-        usersSnap.docs.forEach(uDoc => {
-          const userData = uDoc.data();
-          if (Array.isArray(userData.linkedStudents)) {
-            userData.linkedStudents.forEach(id => {
-              if (id) studentIdsSet.add(id);
-            });
-          }
-        });
-      }
-    } catch (usersErr) {
-      console.warn("[getParentStudentLinks] Step 3b email query on users failed:", usersErr);
-    }
-
-    // 4. Fallback: Check roleInvites
-    try {
-      const invitesQuery = query(collection(db, 'roleInvites'), where('email', 'in', searchEmails), where('role', '==', 'PARENT'));
-      const invitesSnap = await getDocs(invitesQuery);
-      if (!invitesSnap.empty) {
-        invitesSnap.docs.forEach(iDoc => {
-          const inviteData = iDoc.data();
-          if (Array.isArray(inviteData.linkedStudents)) {
-            inviteData.linkedStudents.forEach(id => {
-              if (id) studentIdsSet.add(id);
-            });
-          }
-        });
-      }
-    } catch (invitesErr) {
-      console.warn("[getParentStudentLinks] Step 4 query on roleInvites failed:", invitesErr);
-    }
-
-    // 5. Fallback: Query "students" collection directly where parentEmail matches parent id
-    try {
-      const studentsEmailQuery = query(collection(db, 'students'), where('parentEmail', 'in', searchEmails));
-      const studentsEmailSnap = await getDocs(studentsEmailQuery);
-      studentsEmailSnap.docs.forEach(d => {
-        const sData = d.data();
-        if (sData.luminaId) {
-          studentIdsSet.add(sData.luminaId);
-        } else {
-          studentIdsSet.add(d.id);
-        }
-      });
-    } catch (stdErr) {
-      console.warn("[getParentStudentLinks] Step 5 direct students query failed:", stdErr);
-    }
-
-    // 6. Fallback: Query "roleInvites" collection directly where role === 'STUDENT' and parentEmail matches
-    try {
-      const invitesEmailQuery = query(collection(db, 'roleInvites'), where('role', '==', 'STUDENT'), where('parentEmail', 'in', searchEmails));
-      const invitesEmailSnap = await getDocs(invitesEmailQuery);
-      invitesEmailSnap.docs.forEach(d => {
-        const inviteData = d.data();
-        if (inviteData.luminaId) {
-          studentIdsSet.add(inviteData.luminaId);
-        } else {
-          studentIdsSet.add(d.id);
-        }
-      });
-    } catch (invErr) {
-      console.warn("[getParentStudentLinks] Step 6 direct roleInvites query failed:", invErr);
     }
 
     if (studentIdsSet.size > 0) {
       return {
         parentId: parentIdClean,
         studentIds: Array.from(studentIdsSet),
-        createdBy: 'system_sync_and_fallback',
+        createdBy: 'system_secure_direct_get',
         createdAt: Date.now()
       };
     }
@@ -1497,7 +1402,6 @@ export async function getParentStudentLinks(parentId?: string | null): Promise<P
     return null;
   } catch (err: any) {
     console.error("[getParentStudentLinks] Error retrieving parent-student links for:", parentId, err);
-    // Return empty fallback instead of throwing error to keep the dashboard stable
     return null;
   }
 }

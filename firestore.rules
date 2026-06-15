@@ -54,6 +54,12 @@ service cloud.firestore {
       return isActive() && userRole() == 'STUDENT';
     }
 
+    function isLinkedStudent(studentId) {
+      return isParent()
+        && ('linkedStudents' in currentUser())
+        && (studentId in currentUser().linkedStudents);
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -142,7 +148,7 @@ service cloud.firestore {
 
     match /behaviorCases/{caseId} {
       allow read: if isActive() &&
-        (isJuniorHighStaff() || (isParent() && existing().studentId in currentUser().linkedStudents));
+        (isJuniorHighStaff() || isLinkedStudent(existing().studentId));
       allow create: if isJuniorHighStaff() && incoming().keys().hasAll(['studentId', 'status', 'tier']);
       allow update: if isAdmin() || isJuniorHighStaff();
       allow delete: if isAdmin();
@@ -156,7 +162,7 @@ service cloud.firestore {
 
     match /juniorhigh_mtss_academic_cases/{caseId} {
       allow read: if isActive() &&
-        (isJuniorHighStaff() || (isParent() && existing().studentId in currentUser().linkedStudents));
+        (isJuniorHighStaff() || isLinkedStudent(existing().studentId));
       allow create: if isJuniorHighStaff() && isValidMTSSAcademicCase(incoming());
       allow update: if isAdmin() || isJuniorHighStaff();
       allow delete: if isAdmin();
@@ -167,7 +173,7 @@ service cloud.firestore {
 
       match /sessions/{sessionId} {
         allow read: if isJuniorHighStaff()
-          || (isParent() && get(/databases/$(database)/documents/juniorhigh_mtss_academic_cases/$(caseId)).data.studentId in currentUser().linkedStudents);
+          || isLinkedStudent(get(/databases/$(database)/documents/juniorhigh_mtss_academic_cases/$(caseId)).data.studentId);
         allow write: if isJuniorHighStaff();
       }
 
@@ -181,13 +187,13 @@ service cloud.firestore {
 
       match /evaluations/{evaluationId} {
         allow read: if isJuniorHighStaff()
-          || (isParent() && get(/databases/$(database)/documents/juniorhigh_mtss_academic_cases/$(caseId)).data.studentId in currentUser().linkedStudents);
+          || isLinkedStudent(get(/databases/$(database)/documents/juniorhigh_mtss_academic_cases/$(caseId)).data.studentId);
         allow write: if isJuniorHighStaff();
       }
 
       match /parentDocuments/{docId} {
         allow read: if isJuniorHighStaff()
-          || (isParent() && get(/databases/$(database)/documents/juniorhigh_mtss_academic_cases/$(caseId)).data.studentId in currentUser().linkedStudents);
+          || isLinkedStudent(get(/databases/$(database)/documents/juniorhigh_mtss_academic_cases/$(caseId)).data.studentId);
         allow write: if isJuniorHighStaff();
       }
 
@@ -217,7 +223,7 @@ service cloud.firestore {
 
     match /cicoSessions/{sessionId} {
       allow read: if isActive() &&
-        (isJuniorHighStaff() || (isParent() && existing().studentId in currentUser().linkedStudents));
+        (isJuniorHighStaff() || isLinkedStudent(existing().studentId));
       allow write: if isJuniorHighStaff();
     }
 
@@ -232,34 +238,34 @@ service cloud.firestore {
 
     match /reflections/{reflectionId} {
       allow read: if isActive() &&
-        ((isStudent() && existing().studentId == request.auth.uid) || isJuniorHighStaff());
+        ((isStudent() && existing().studentId == request.auth.uid) || isJuniorHighStaff() || isLinkedStudent(existing().studentId));
       allow create: if isStudent() || isJuniorHighStaff();
       allow update: if isAdmin() || (isStudent() && existing().studentId == request.auth.uid);
     }
 
     match /literacyProgress/{progressId} {
-      allow read: if isActive();
+      allow read: if isActive() && (isJuniorHighStaff() || isLinkedStudent(existing().studentId));
       allow write: if isJuniorHighStaff();
     }
 
     match /elementary_literacy_numeracy/{recordId} {
-      allow read: if isActive();
+      allow read: if isActive() && (isTeacher() || isAdmin() || isJuniorHighStaff() || isLinkedStudent(existing().studentId));
       allow write: if isTeacher() || isAdmin() || isJuniorHighStaff();
     }
 
     match /selfExploration/{studentId} {
       allow read: if isActive() &&
-        ((isStudent() && studentId == request.auth.uid) || isJuniorHighStaff());
+        ((isStudent() && studentId == request.auth.uid) || isJuniorHighStaff() || isLinkedStudent(studentId));
       allow write: if isAdmin() || (isStudent() && studentId == request.auth.uid);
     }
 
     match /attendance/{attendanceId} {
-      allow read: if isActive();
+      allow read: if isActive() && (isJuniorHighStaff() || isLinkedStudent(existing().studentId));
       allow write: if isJuniorHighStaff();
     }
 
     match /observations/{observationId} {
-      allow read: if isActive();
+      allow read: if isActive() && (isJuniorHighStaff() || isLinkedStudent(existing().studentId));
       allow write: if isJuniorHighStaff();
     }
 
@@ -277,7 +283,7 @@ service cloud.firestore {
 
     match /reportCards/{reportId} {
       allow read: if isSignedIn() &&
-        (isJuniorHighStaff() || (isParent() && existing().status == "PUBLISHED"));
+        (isJuniorHighStaff() || (isLinkedStudent(existing().studentId) && existing().status == "PUBLISHED"));
       allow write: if isJuniorHighStaff();
     }
 
@@ -340,7 +346,7 @@ service cloud.firestore {
     }
 
     match /published_kg_reports/{reportId} {
-      allow read: if isActive();
+      allow read: if isActive() && (isJuniorHighStaff() || isTeacher() || isLinkedStudent(existing().studentId));
       allow write: if isJuniorHighStaff() || isAdmin() || isTeacher();
     }
   }
