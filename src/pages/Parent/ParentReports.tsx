@@ -70,21 +70,42 @@ export default function ParentReports() {
           
           setReports(filtered.sort((a, b) => b.createdAt - a.createdAt));
 
-          // Fetch published weekly report cards (Kindergarten)
+          // Fetch published weekly report cards (Kindergarten) individually to respect security rules mapping, then merge and filter
           try {
-            const qWeekly = query(
-              collection(db, 'published_kg_reports'),
-              where('studentId', 'in', studentIdsToSearch)
-            );
-            const weeklySnap = await getDocs(qWeekly);
-            const fetchedWeekly = weeklySnap.docs.map(docSnap => ({
-              id: docSnap.id,
-              ...docSnap.data()
-            })).sort((a: any, b: any) => b.publishedAt - a.publishedAt);
-            setWeeklyReports(fetchedWeekly);
+            const fetchedWeekly: any[] = [];
+            const seenIds = new Set<string>();
 
-            // Default to 'WEEKLY' if there are weekly reports
-            if (fetchedWeekly.length > 0) {
+            // Query each studentId variant individually to avoid security rule broad-match rejections
+            for (const sid of studentIdsToSearch) {
+              try {
+                const qWeekly = query(
+                  collection(db, 'published_kg_reports'),
+                  where('studentId', '==', sid)
+                );
+                const weeklySnap = await getDocs(qWeekly);
+                weeklySnap.docs.forEach(docSnap => {
+                  if (!seenIds.has(docSnap.id)) {
+                    seenIds.add(docSnap.id);
+                    fetchedWeekly.push({
+                      id: docSnap.id,
+                      ...docSnap.data()
+                    });
+                  }
+                });
+              } catch (subErr) {
+                console.warn(`Query for studentId ${sid} failed under security rules:`, subErr);
+              }
+            }
+
+            // Only show reports that have been explicitly sent/published to parent
+            const sentWeekly = fetchedWeekly
+              .filter((report: any) => report.sentToParent === true)
+              .sort((a: any, b: any) => (b.publishedAt || 0) - (a.publishedAt || 0));
+
+            setWeeklyReports(sentWeekly);
+
+            // Turn on appropriate initial tab
+            if (sentWeekly.length > 0) {
               setActiveTab('WEEKLY');
             } else {
               setActiveTab('ACADEMIC');
@@ -148,6 +169,34 @@ export default function ParentReports() {
               Unread: {reports.filter(r => !viewedReports.has(r.id)).length}
            </div>
         </div>
+      </div>
+
+      {/* Modern, High-Contrast Tab Switcher */}
+      <div className="flex flex-col sm:flex-row gap-2 border-b border-gray-100 pb-1">
+        <button
+          id="tab-btn-academic"
+          onClick={() => setActiveTab('ACADEMIC')}
+          className={cn(
+            "px-6 py-3 font-black uppercase text-xs tracking-widest transition-all border-b-2 -mb-[2px] text-left sm:text-center",
+            activeTab === 'ACADEMIC'
+              ? "border-emerald-600 text-emerald-600 font-extrabold"
+              : "border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200"
+          )}
+        >
+          Rapor Akhir Semester & Academic
+        </button>
+        <button
+          id="tab-btn-weekly"
+          onClick={() => setActiveTab('WEEKLY')}
+          className={cn(
+            "px-6 py-3 font-black uppercase text-xs tracking-widest transition-all border-b-2 -mb-[2px] text-left sm:text-center",
+            activeTab === 'WEEKLY'
+              ? "border-emerald-600 text-emerald-600 font-extrabold"
+              : "border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200"
+          )}
+        >
+          Laporan Mingguan (Weekly Report)
+        </button>
       </div>
 
       {activeTab === 'ACADEMIC' ? (

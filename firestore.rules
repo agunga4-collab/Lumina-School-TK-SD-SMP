@@ -10,21 +10,27 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function currentUserExists() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
     function currentUser() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
     function userRole() {
-      return currentUser().role;
+      return currentUserExists() ? currentUser().role : 'GUEST';
     }
 
     function isActive() {
-      return isSignedIn() && currentUser().status == 'active';
+      return isSignedIn() && currentUserExists() && currentUser().status == 'active';
     }
 
     function isAdmin() {
-      return isSignedIn() &&
-        (userRole() == 'SUPER_ADMIN' || request.auth.token.email == 'agunga4@gmail.com');
+      return isSignedIn() && (
+        request.auth.token.email in ['agunga4@gmail.com', 'agunga4@lazuardi.sch.id'] ||
+        (currentUserExists() && userRole() == 'SUPER_ADMIN')
+      );
     }
 
     function isTeacher() {
@@ -114,15 +120,19 @@ service cloud.firestore {
 
     match /roleInvites/{inviteId} {
       allow get: if isSignedIn() &&
-        (isAdmin() || existing().email.lower() == request.auth.token.email.lower());
+        (isAdmin() || ('email' in existing() && existing().email.lower() == request.auth.token.email.lower()));
 
-      allow list: if isAdmin();
+      allow list: if isSignedIn() &&
+        (isAdmin() || ('email' in existing() && existing().email.lower() == request.auth.token.email.lower()));
 
       allow create: if isAdmin();
-      allow update: if isSignedIn()
-        && existing().status == 'ready'
-        && incoming().status == 'used'
-        && existing().email.lower() == request.auth.token.email.lower();
+      allow update: if isSignedIn() &&
+        (isAdmin() || (
+          existing().status == 'ready'
+          && incoming().status == 'used'
+          && 'email' in existing()
+          && existing().email.lower() == request.auth.token.email.lower()
+        ));
       allow delete: if isAdmin();
     }
 
