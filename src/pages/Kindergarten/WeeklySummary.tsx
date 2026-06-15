@@ -471,22 +471,12 @@ export default function WeeklySummary() {
 
   const handleStartDateChange = (valStr: string) => {
     if (!valStr) return;
-    const d = new Date(valStr);
-    const mon = getMonday(d);
-    const fri = new Date(mon);
-    fri.setDate(mon.getDate() + 4);
-    setStartDateStr(formatDateToKey(mon));
-    setEndDateStr(formatDateToKey(fri));
+    setStartDateStr(valStr);
   };
 
   const handleEndDateChange = (valStr: string) => {
     if (!valStr) return;
-    const d = new Date(valStr);
-    const mon = getMonday(d);
-    const fri = new Date(mon);
-    fri.setDate(mon.getDate() + 4);
-    setStartDateStr(formatDateToKey(mon));
-    setEndDateStr(formatDateToKey(fri));
+    setEndDateStr(valStr);
   };
 
   // Theme of the current period
@@ -939,13 +929,13 @@ export default function WeeklySummary() {
             </div>
           </div>
           <span className="text-[10px] text-gray-400 leading-tight block">
-            * Rentang otomatis dikunci Senin s/d Jumat untuk mencegah tabrakan data.
+            * Atur tanggal awal dan akhir periode pengamatan (bisa 1 minggu atau beberapa minggu).
           </span>
         </div>
 
         {/* Global Monthly Theme */}
         <div className="lg:col-span-4 space-y-1.5">
-          <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Tema Pembelajaran Bulanan</label>
+          <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Tema Pembelajaran</label>
           <input 
             type="text" 
             value={globalTheme} 

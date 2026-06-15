@@ -349,22 +349,12 @@ export default function WeeklyReview() {
 
   const handleStartDateChange = (valStr: string) => {
     if (!valStr) return;
-    const d = new Date(valStr);
-    const mon = getMonday(d);
-    const fri = new Date(mon);
-    fri.setDate(mon.getDate() + 4);
-    setStartDateStr(formatDateToKey(mon));
-    setEndDateStr(formatDateToKey(fri));
+    setStartDateStr(valStr);
   };
 
   const handleEndDateChange = (valStr: string) => {
     if (!valStr) return;
-    const d = new Date(valStr);
-    const mon = getMonday(d);
-    const fri = new Date(mon);
-    fri.setDate(mon.getDate() + 4);
-    setStartDateStr(formatDateToKey(mon));
-    setEndDateStr(formatDateToKey(fri));
+    setEndDateStr(valStr);
   };
 
   // Sync date ranges to sessionStorage when changed
