@@ -2,12 +2,10 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 0. Global Safety Net - Default Deny
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // --- Helpers ---
     function isSignedIn() {
       return request.auth != null;
     }
@@ -25,7 +23,8 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isSignedIn() && (userRole() == 'SUPER_ADMIN' || request.auth.token.email == 'agunga4@gmail.com');
+      return isSignedIn() &&
+        (userRole() == 'SUPER_ADMIN' || request.auth.token.email == 'agunga4@gmail.com');
     }
 
     function isTeacher() {
@@ -34,7 +33,7 @@ service cloud.firestore {
 
     function isJuniorHighStaff() {
       return isActive() && userRole() in [
-        'TEACHER', 'HEAD_JUNIOR', 'BK_MENTOR', 
+        'TEACHER', 'HEAD_JUNIOR', 'BK_MENTOR',
         'MTSS_ACADEMIC_PJ', 'SUPER_ADMIN', 'HEAD_UNIT',
         'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR',
         'HOMEROOM_TEACHER', 'COUNSELOR'
@@ -42,7 +41,9 @@ service cloud.firestore {
     }
 
     function isMTSSAcademicManager() {
-      return isActive() && (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR', 'MTSS_ACADEMIC_PJ', 'SUPER_ADMIN']);
+      return isActive() && (userRole() in [
+        'HEAD_UNIT', 'HEAD_JUNIOR', 'MTSS_ACADEMIC_PJ', 'SUPER_ADMIN'
+      ]);
     }
 
     function isParent() {
@@ -61,13 +62,16 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // --- Validation Blueprints ---
-
     function isValidUser(data) {
-      return data.keys().hasAll(['uid', 'email', 'role', 'status']) 
-        && data.uid == request.auth.uid 
+      return data.keys().hasAll(['uid', 'email', 'role', 'status'])
+        && data.uid == request.auth.uid
         && data.email == request.auth.token.email
-        && data.role in ['TEACHER', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'PARENT', 'STUDENT', 'SUPER_ADMIN', 'GUEST', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR', 'HOMEROOM_TEACHER', 'COUNSELOR']
+        && data.role in [
+          'TEACHER', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR',
+          'PARENT', 'STUDENT', 'SUPER_ADMIN', 'GUEST',
+          'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL',
+          'COORDINATOR', 'HOMEROOM_TEACHER', 'COUNSELOR'
+        ]
         && data.status in ['active', 'pending', 'disabled'];
     }
 
@@ -75,7 +79,10 @@ service cloud.firestore {
       return data.keys().hasAll(['id', 'studentId', 'status', 'currentTier', 'primaryConcern'])
         && data.id is string
         && data.studentId is string
-        && data.status in ['SCREENING', 'INITIAL_MEETING', 'ACTIVE', 'UNDER_REVIEW', 'ESCALATED', 'CLOSED']
+        && data.status in [
+          'SCREENING', 'INITIAL_MEETING', 'ACTIVE',
+          'UNDER_REVIEW', 'ESCALATED', 'CLOSED'
+        ]
         && data.currentTier in ['Tier 1', 'Tier 2', 'Tier 3'];
     }
 
@@ -87,27 +94,39 @@ service cloud.firestore {
         && data.status in ['OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'DISMISSED', 'ARCHIVED'];
     }
 
-    // --- Collection Rules ---
-
     match /users/{userId} {
-      allow read: if isSignedIn();
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
       allow create: if isSignedIn() && userId == request.auth.uid && isValidUser(incoming());
-      allow update: if isAdmin() || (isSignedIn() && userId == request.auth.uid && incoming().role == existing().role && incoming().status == existing().status && isValidUser(incoming()));
+      allow update: if isAdmin()
+        || (isSignedIn()
+          && userId == request.auth.uid
+          && incoming().role == existing().role
+          && incoming().status == existing().status
+          && isValidUser(incoming()));
     }
 
     match /roleInvites/{inviteId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin();
-      allow update: if (isSignedIn() && incoming().status == 'used' && existing().status == 'ready' && incoming().email.lower() == request.auth.token.email.lower());
+      allow get: if isSignedIn() &&
+        (isAdmin() || existing().email.lower() == request.auth.token.email.lower());
+
+      allow list: if isAdmin();
+
+      allow create: if isAdmin();
+      allow update: if isSignedIn()
+        && existing().status == 'ready'
+        && incoming().status == 'used'
+        && existing().email.lower() == request.auth.token.email.lower();
+      allow delete: if isAdmin();
     }
 
     match /students/{studentId} {
-      allow read: if isSignedIn();
+      allow read: if isActive();
       allow write: if isAdmin() || isJuniorHighStaff();
     }
 
     match /classes/{classId} {
-      allow read: if isSignedIn();
+      allow read: if isActive();
       allow write: if isAdmin() || isMTSSAcademicManager();
     }
 
@@ -117,13 +136,13 @@ service cloud.firestore {
     }
 
     match /enrollments/{enrollmentId} {
-      allow read: if isSignedIn();
+      allow read: if isActive();
       allow write: if isAdmin() || isMTSSAcademicManager();
     }
 
-    // MTSS Behavioral
     match /behaviorCases/{caseId} {
-      allow read: if isActive() && (isJuniorHighStaff() || (isParent() && existing().studentId in currentUser().linkedStudents));
+      allow read: if isActive() &&
+        (isJuniorHighStaff() || (isParent() && existing().studentId in currentUser().linkedStudents));
       allow create: if isJuniorHighStaff() && incoming().keys().hasAll(['studentId', 'status', 'tier']);
       allow update: if isAdmin() || isJuniorHighStaff();
       allow delete: if isAdmin();
@@ -135,46 +154,45 @@ service cloud.firestore {
       }
     }
 
-    // MTSS Academic
     match /juniorhigh_mtss_academic_cases/{caseId} {
-      allow read: if isActive() && (isJuniorHighStaff() || (isParent() && existing().studentId in currentUser().linkedStudents));
+      allow read: if isActive() &&
+        (isJuniorHighStaff() || (isParent() && existing().studentId in currentUser().linkedStudents));
       allow create: if isJuniorHighStaff() && isValidMTSSAcademicCase(incoming());
       allow update: if isAdmin() || isJuniorHighStaff();
       allow delete: if isAdmin();
 
       match /goals/{goalId} {
-        allow read: if isJuniorHighStaff();
-        allow write: if isJuniorHighStaff();
+        allow read, write: if isJuniorHighStaff();
       }
 
       match /sessions/{sessionId} {
-        allow read: if isJuniorHighStaff() || (isParent() && get(/databases/$(database)/documents/juniorhigh_mtss_academic_cases/$(caseId)).data.studentId in currentUser().linkedStudents);
+        allow read: if isJuniorHighStaff()
+          || (isParent() && get(/databases/$(database)/documents/juniorhigh_mtss_academic_cases/$(caseId)).data.studentId in currentUser().linkedStudents);
         allow write: if isJuniorHighStaff();
       }
 
       match /meetings/{meetingId} {
-        allow read: if isJuniorHighStaff();
-        allow write: if isJuniorHighStaff();
+        allow read, write: if isJuniorHighStaff();
       }
 
       match /plans/{planId} {
-        allow read: if isJuniorHighStaff();
-        allow write: if isJuniorHighStaff();
+        allow read, write: if isJuniorHighStaff();
       }
 
       match /evaluations/{evaluationId} {
-        allow read: if isJuniorHighStaff() || (isParent() && get(/databases/$(database)/documents/juniorhigh_mtss_academic_cases/$(caseId)).data.studentId in currentUser().linkedStudents);
+        allow read: if isJuniorHighStaff()
+          || (isParent() && get(/databases/$(database)/documents/juniorhigh_mtss_academic_cases/$(caseId)).data.studentId in currentUser().linkedStudents);
         allow write: if isJuniorHighStaff();
       }
 
       match /parentDocuments/{docId} {
-        allow read: if isJuniorHighStaff() || (isParent() && get(/databases/$(database)/documents/juniorhigh_mtss_academic_cases/$(caseId)).data.studentId in currentUser().linkedStudents);
+        allow read: if isJuniorHighStaff()
+          || (isParent() && get(/databases/$(database)/documents/juniorhigh_mtss_academic_cases/$(caseId)).data.studentId in currentUser().linkedStudents);
         allow write: if isJuniorHighStaff();
       }
 
       match /audits/{auditId} {
-        allow read: if isJuniorHighStaff();
-        allow create: if isJuniorHighStaff();
+        allow read, create: if isJuniorHighStaff();
       }
     }
 
@@ -189,8 +207,7 @@ service cloud.firestore {
     }
 
     match /juniorhigh_mtss_academic_documents/{docId} {
-      allow read: if isJuniorHighStaff();
-      allow write: if isJuniorHighStaff();
+      allow read, write: if isJuniorHighStaff();
     }
 
     match /juniorhigh_mtss_academic_backup_config/{configId} {
@@ -199,24 +216,23 @@ service cloud.firestore {
     }
 
     match /cicoSessions/{sessionId} {
-      allow read: if isActive() && (isJuniorHighStaff() || (isParent() && existing().studentId in currentUser().linkedStudents));
+      allow read: if isActive() &&
+        (isJuniorHighStaff() || (isParent() && existing().studentId in currentUser().linkedStudents));
       allow write: if isJuniorHighStaff();
     }
 
     match /cicoGoalConfigs/{caseId} {
-      allow read: if isActive() && isJuniorHighStaff();
-      allow write: if isJuniorHighStaff();
+      allow read, write: if isActive() && isJuniorHighStaff();
     }
 
     match /bipPlans/{planId} {
-      allow read: if isActive() && (isJuniorHighStaff() && (userRole() in ['BK_MENTOR', 'HEAD_JUNIOR', 'SUPER_ADMIN']));
+      allow read: if isActive() && isJuniorHighStaff() && (userRole() in ['BK_MENTOR', 'HEAD_JUNIOR', 'SUPER_ADMIN']);
       allow write: if isAdmin() || (isActive() && userRole() in ['BK_MENTOR', 'HEAD_JUNIOR']);
     }
 
     match /reflections/{reflectionId} {
-      allow read: if isActive() && (
-        (isStudent() && existing().studentId == request.auth.uid) || isJuniorHighStaff()
-      );
+      allow read: if isActive() &&
+        ((isStudent() && existing().studentId == request.auth.uid) || isJuniorHighStaff());
       allow create: if isStudent() || isJuniorHighStaff();
       allow update: if isAdmin() || (isStudent() && existing().studentId == request.auth.uid);
     }
@@ -232,9 +248,8 @@ service cloud.firestore {
     }
 
     match /selfExploration/{studentId} {
-      allow read: if isActive() && (
-        (isStudent() && studentId == request.auth.uid) || isJuniorHighStaff()
-      );
+      allow read: if isActive() &&
+        ((isStudent() && studentId == request.auth.uid) || isJuniorHighStaff());
       allow write: if isAdmin() || (isStudent() && studentId == request.auth.uid);
     }
 
@@ -249,24 +264,20 @@ service cloud.firestore {
     }
 
     match /learning_goals/{goalId} {
-      allow read: if isJuniorHighStaff();
-      allow write: if isJuniorHighStaff();
+      allow read, write: if isJuniorHighStaff();
     }
 
     match /lxd/{lxdId} {
-      allow read: if isJuniorHighStaff();
-      allow write: if isJuniorHighStaff();
+      allow read, write: if isJuniorHighStaff();
     }
 
     match /assessments/{assessmentId} {
-      allow read: if isJuniorHighStaff();
-      allow write: if isJuniorHighStaff();
+      allow read, write: if isJuniorHighStaff();
     }
 
     match /reportCards/{reportId} {
-      allow read: if isSignedIn() && (
-        isJuniorHighStaff() || (isParent() && existing().status == "PUBLISHED")
-      );
+      allow read: if isSignedIn() &&
+        (isJuniorHighStaff() || (isParent() && existing().status == "PUBLISHED"));
       allow write: if isJuniorHighStaff();
     }
 
@@ -277,26 +288,35 @@ service cloud.firestore {
 
     match /notifications/{notifId} {
       allow read: if isSignedIn() && (existing().userId == request.auth.token.email || isAdmin());
-      allow update: if isSignedIn() && existing().userId == request.auth.token.email && incoming().diff(existing()).affectedKeys().hasOnly(['isRead']);
+      allow update: if isSignedIn()
+        && existing().userId == request.auth.token.email
+        && incoming().diff(existing()).affectedKeys().hasOnly(['isRead']);
       allow create: if isSignedIn();
     }
 
     match /behavior_notifications/{notifId} {
       allow read: if isSignedIn() && (request.auth.uid in existing().targetUserIds || isAdmin());
       allow create: if isSignedIn();
-      allow update: if isSignedIn() && (
-        (request.auth.uid in existing().targetUserIds && incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'isDismissed']))
-        || isAdmin()
-      );
+      allow update: if isSignedIn() &&
+        ((request.auth.uid in existing().targetUserIds
+          && incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'isDismissed']))
+          || isAdmin());
     }
 
     match /parentStudentLinks/{linkId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin() || (isSignedIn() && linkId.lower() == request.auth.token.email.lower());
+      allow get: if isSignedIn() &&
+        (isAdmin() || linkId.lower() == request.auth.token.email.lower());
+      allow list: if isAdmin();
+      allow create, update: if isAdmin()
+        || (isSignedIn() && linkId.lower() == request.auth.token.email.lower());
+      allow delete: if isAdmin();
     }
 
     match /parentReportViews/{viewId} {
-      allow read, write: if isSignedIn();
+      allow get: if isSignedIn() && (isAdmin() || viewId.split('_')[0] == request.auth.token.email);
+      allow list: if isAdmin();
+      allow create, update: if isSignedIn() && (isAdmin() || viewId.split('_')[0] == request.auth.token.email);
+      allow delete: if isAdmin();
     }
 
     match /settings/{docId} {
@@ -325,4 +345,3 @@ service cloud.firestore {
     }
   }
 }
-
