@@ -11,7 +11,8 @@ service cloud.firestore {
     }
 
     function currentUserExists() {
-      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid));
     }
 
     function currentUser() {
@@ -23,7 +24,9 @@ service cloud.firestore {
     }
 
     function isActive() {
-      return isSignedIn() && currentUserExists() && currentUser().status == 'active';
+      return isSignedIn() &&
+        currentUserExists() &&
+        currentUser().status == 'active';
     }
 
     function isAdmin() {
@@ -34,7 +37,8 @@ service cloud.firestore {
     }
 
     function isTeacher() {
-      return isActive() && (userRole() == 'TEACHER' || userRole() == 'HOMEROOM_TEACHER');
+      return isActive() &&
+        (userRole() == 'TEACHER' || userRole() == 'HOMEROOM_TEACHER');
     }
 
     function isJuniorHighStaff() {
@@ -47,9 +51,9 @@ service cloud.firestore {
     }
 
     function isMTSSAcademicManager() {
-      return isActive() && (userRole() in [
+      return isActive() && userRole() in [
         'HEAD_UNIT', 'HEAD_JUNIOR', 'MTSS_ACADEMIC_PJ', 'SUPER_ADMIN'
-      ]);
+      ];
     }
 
     function isParent() {
@@ -60,19 +64,35 @@ service cloud.firestore {
       return isActive() && userRole() == 'STUDENT';
     }
 
+    function hasLinkedStudentsField() {
+      return currentUserExists() && ('linkedStudents' in currentUser());
+    }
+
+    function parentLinkDocExists() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/parentStudentLinks/$(request.auth.token.email.lower()));
+    }
+
+    function parentLinkDoc() {
+      return get(/databases/$(database)/documents/parentStudentLinks/$(request.auth.token.email.lower())).data;
+    }
+
     function isLinkedStudent(studentId) {
-      return isParent() && (
-        (('linkedStudents' in currentUser()) && (
-          studentId in currentUser().linkedStudents ||
-          studentId.lower() in currentUser().linkedStudents ||
-          studentId.upper() in currentUser().linkedStudents
-        ))
-        || (exists(/databases/$(database)/documents/parentStudentLinks/$(request.auth.token.email.lower()))
-            && (
-              studentId in get(/databases/$(database)/documents/parentStudentLinks/$(request.auth.token.email.lower())).data.studentIds ||
-              studentId.lower() in get(/databases/$(database)/documents/parentStudentLinks/$(request.auth.token.email.lower())).data.studentIds ||
-              studentId.upper() in get(/databases/$(database)/documents/parentStudentLinks/$(request.auth.token.email.lower())).data.studentIds
-            ))
+      return isParent() && studentId is string && (
+        (
+          hasLinkedStudentsField() && (
+            studentId in currentUser().linkedStudents ||
+            studentId.lower() in currentUser().linkedStudents ||
+            studentId.upper() in currentUser().linkedStudents
+          )
+        ) || (
+          parentLinkDocExists() &&
+          ('studentIds' in parentLinkDoc()) && (
+            studentId in parentLinkDoc().studentIds ||
+            studentId.lower() in parentLinkDoc().studentIds ||
+            studentId.upper() in parentLinkDoc().studentIds
+          )
+        )
       );
     }
 
@@ -132,10 +152,10 @@ service cloud.firestore {
       allow get: if isSignedIn() &&
         (isAdmin() || ('email' in existing() && existing().email.lower() == request.auth.token.email.lower()));
 
-      allow list: if isSignedIn() &&
-        (isAdmin() || ('email' in existing() && existing().email.lower() == request.auth.token.email.lower()));
+      allow list: if isAdmin();
 
       allow create: if isAdmin();
+
       allow update: if isSignedIn() &&
         (isAdmin() || (
           existing().status == 'ready'
@@ -143,6 +163,7 @@ service cloud.firestore {
           && 'email' in existing()
           && existing().email.lower() == request.auth.token.email.lower()
         ));
+
       allow delete: if isAdmin();
     }
 
@@ -302,8 +323,11 @@ service cloud.firestore {
     }
 
     match /reportCards/{reportId} {
-      allow read: if isSignedIn() &&
+      allow get: if isSignedIn() &&
         (isJuniorHighStaff() || (isLinkedStudent(existing().studentId) && existing().status == "PUBLISHED"));
+
+      allow list: if isJuniorHighStaff();
+
       allow write: if isJuniorHighStaff();
     }
 
@@ -339,9 +363,32 @@ service cloud.firestore {
     }
 
     match /parentReportViews/{viewId} {
-      allow get: if isSignedIn() && (isAdmin() || viewId.split('_')[0] == request.auth.token.email);
+      allow get: if isSignedIn() && (
+        isAdmin() ||
+        (
+          'ownerEmail' in existing() &&
+          existing().ownerEmail == request.auth.token.email
+        )
+      );
+
       allow list: if isAdmin();
-      allow create, update: if isSignedIn() && (isAdmin() || viewId.split('_')[0] == request.auth.token.email);
+
+      allow create: if isSignedIn() && (
+        isAdmin() ||
+        (
+          'ownerEmail' in incoming() &&
+          incoming().ownerEmail == request.auth.token.email
+        )
+      );
+
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        (
+          'ownerEmail' in existing() &&
+          existing().ownerEmail == request.auth.token.email
+        )
+      );
+
       allow delete: if isAdmin();
     }
 
@@ -366,7 +413,8 @@ service cloud.firestore {
     }
 
     match /published_kg_reports/{reportId} {
-      allow read: if isActive() && (isJuniorHighStaff() || isTeacher() || isLinkedStudent(existing().studentId));
+      allow read: if isActive() &&
+        (isJuniorHighStaff() || isTeacher() || isLinkedStudent(existing().studentId));
       allow write: if isJuniorHighStaff() || isAdmin() || isTeacher();
     }
   }
