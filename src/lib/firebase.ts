@@ -213,26 +213,59 @@ export async function createUserOnboarding(user: any): Promise<AppUser> {
       handleFirestoreError(err, 'write', `onboarding/${user.uid}`);
     }
   } else {
-    // If no invite found, but profile exists without status, update it to pending
-    // If profile doesn't exist, create it as pending
-    const profile: AppUser = {
-      uid: user.uid,
-      email: email,
-      displayName: user.displayName || 'User',
-      photoURL: user.photoURL || null,
-      role: existingProfile?.role || 'GUEST',
-      unitId: existingProfile?.unitId || 'JUNIOR_HIGH',
-      classId: existingProfile?.classId ?? null,
-      academicYear: existingProfile?.academicYear ?? null,
-      status: 'pending',
-      createdAt: existingProfile?.createdAt || Date.now()
-    };
-
+    // Also check if they are linked via parentStudentLinks directly!
+    let directLink: any = null;
     try {
-      await setDoc(doc(db, 'users', user.uid), profile);
-      return profile;
-    } catch (err: any) {
-      handleFirestoreError(err, 'create', `users/${user.uid}`);
+      const linkSnap = await getDoc(doc(db, 'parentStudentLinks', email));
+      if (linkSnap.exists()) {
+        directLink = linkSnap.data();
+      }
+    } catch (linkErr) {
+      console.warn("[Onboarding] Failed to check direct parent student links:", linkErr);
+    }
+
+    if (directLink && Array.isArray(directLink.studentIds) && directLink.studentIds.length > 0) {
+      const profile: AppUser = {
+        uid: user.uid,
+        email: email,
+        displayName: user.displayName || 'User',
+        photoURL: user.photoURL || null,
+        role: 'PARENT',
+        unitId: 'JUNIOR_HIGH',
+        classId: null,
+        academicYear: '2025/2026',
+        linkedStudents: directLink.studentIds,
+        status: 'active',
+        createdAt: existingProfile?.createdAt || Date.now()
+      };
+      try {
+        await setDoc(doc(db, 'users', user.uid), profile);
+        return profile;
+      } catch (err: any) {
+        handleFirestoreError(err, 'create', `users/${user.uid}`);
+      }
+    } else {
+      // If no invite found, but profile exists without status, update it to pending
+      // If profile doesn't exist, create it as pending
+      const profile: AppUser = {
+        uid: user.uid,
+        email: email,
+        displayName: user.displayName || 'User',
+        photoURL: user.photoURL || null,
+        role: existingProfile?.role || 'GUEST',
+        unitId: existingProfile?.unitId || 'JUNIOR_HIGH',
+        classId: existingProfile?.classId ?? null,
+        academicYear: existingProfile?.academicYear ?? null,
+        status: 'pending',
+        createdAt: existingProfile?.createdAt || Date.now()
+      };
+
+      try {
+        await setDoc(doc(db, 'users', user.uid), profile);
+        return profile;
+      } catch (err: any) {
+        handleFirestoreError(err, 'create', `users/${user.uid}`);
+      }
     }
   }
 }
@@ -1483,12 +1516,16 @@ export async function addParentStudentLink(parentId: string, studentIds: string[
 }
 
 export async function getParentReportViews(parentId: string): Promise<ParentReportView[]> {
+  if (!parentId) {
+    return [];
+  }
   try {
     const q = query(collection(db, 'parentReportViews'), where('parentId', '==', parentId));
     const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => doc.data() as ParentReportView);
   } catch (err: any) {
-    handleFirestoreError(err, 'list', 'parentReportViews');
+    console.warn("[getParentReportViews] Failed to retrieve parent report views (benign fallback used):", err);
+    return [];
   }
 }
 

@@ -2067,10 +2067,9 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
         }
       }
 
-      // B. Sync users collection for active registered parent profiles
+      // B. Sync users collection for active registered parent profiles (also update GUEST/pending to PARENT/active)
       const userSnap = await db.collection("users")
         .where("email", "==", emailClean)
-        .where("role", "==", "PARENT")
         .get();
 
       if (!userSnap.empty) {
@@ -2079,8 +2078,17 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
           const currentLinked = Array.isArray(userData.linkedStudents) ? userData.linkedStudents : [];
           const newLinked = Array.from(new Set([...currentLinked, ...info.linkedStudents].map(id => String(id))));
           
-          if (newLinked.length !== currentLinked.length) {
+          const updates: any = {};
+          if (userData.role === 'GUEST') {
+            updates.role = 'PARENT';
+          }
+          if (userData.status === 'pending') {
+            updates.status = 'active';
+          }
+          
+          if (newLinked.length !== currentLinked.length || updates.role || updates.status) {
             await userDoc.ref.update({
+              ...updates,
               linkedStudents: newLinked,
               updatedAt: FieldValue.serverTimestamp()
             });
