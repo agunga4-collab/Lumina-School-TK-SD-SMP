@@ -471,12 +471,24 @@ export default function WeeklySummary() {
 
   const handleStartDateChange = (valStr: string) => {
     if (!valStr) return;
-    setStartDateStr(valStr);
+    const [yr, mo, dy] = valStr.split('-').map(Number);
+    const chosenDate = new Date(yr, mo - 1, dy);
+    const mon = getMonday(chosenDate);
+    const fri = new Date(mon);
+    fri.setDate(mon.getDate() + 4);
+    setStartDateStr(formatDateToKey(mon));
+    setEndDateStr(formatDateToKey(fri));
   };
 
   const handleEndDateChange = (valStr: string) => {
     if (!valStr) return;
-    setEndDateStr(valStr);
+    const [yr, mo, dy] = valStr.split('-').map(Number);
+    const chosenDate = new Date(yr, mo - 1, dy);
+    const mon = getMonday(chosenDate);
+    const fri = new Date(mon);
+    fri.setDate(mon.getDate() + 4);
+    setStartDateStr(formatDateToKey(mon));
+    setEndDateStr(formatDateToKey(fri));
   };
 
   // Theme of the current period
