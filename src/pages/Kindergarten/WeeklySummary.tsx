@@ -15,10 +15,11 @@ import {
   getStoredStudents,
   saveStoredStudents
 } from '../../lib/kindergartenWeeklyReport';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, setDoc, getDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { logFirestoreRead } from '../../lib/kindergartenMetadataCache';
+import { useOutletContext } from 'react-router-dom';
 
 // Define draft key generator
 export function getSummaryKey(studentId: string, startDate: string, endDate: string): string {
@@ -28,6 +29,7 @@ export function getSummaryKey(studentId: string, startDate: string, endDate: str
 export default function WeeklySummary() {
   const navigate = useNavigate();
   const { activeYear } = useAcademicYear();
+  const { currentUser } = useOutletContext<{ currentUser: any }>() || {};
 
   // Class Selection states
   const [classes, setClasses] = React.useState<any[]>([]);
@@ -500,6 +502,8 @@ export default function WeeklySummary() {
   // States to keep track of loaded student drafts
   // Format: key studentId -> Draft Object
   const [studentDrafts, setStudentDrafts] = React.useState<Record<string, any>>({});
+  const [dbDrafts, setDbDrafts] = React.useState<Record<string, any>>({});
+  const [savingStatus, setSavingStatus] = React.useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({});
 
   // States to hold Firestore Attendance and Observations for the active date range
   const [firestoreAttendance, setFirestoreAttendance] = React.useState<any[]>([]);
@@ -543,10 +547,31 @@ export default function WeeklySummary() {
           ...doc.data()
         }));
 
+        // 3. Fetch weekly summary drafts from Firestore
+        const qDrafts = query(
+          collection(db, 'weekly_summary_drafts'),
+          where('startDate', '==', startDateStr),
+          where('endDate', '==', endDateStr)
+        );
+        const snapDrafts = await getDocs(qDrafts);
+        logFirestoreRead('attendanceReports', snapDrafts.docs.length || 1);
+        const fetchedDraftsMap: Record<string, any> = {};
+        snapDrafts.docs.forEach(docSnap => {
+          const data = docSnap.data();
+          fetchedDraftsMap[data.studentId] = {
+            id: docSnap.id,
+            ...data,
+            // Map the custom backend fields to standard frontend state fields
+            attendanceCommentTeacherEdited: data.socialEmotional || data.attendanceCommentTeacherEdited || '',
+            observationCommentTeacherEdited: data.weeklyComments || data.observationCommentTeacherEdited || ''
+          };
+        });
+
         if (active) {
           setFirestoreAttendance(fetchedAtt);
           setFirestoreObservations(fetchedObs);
-          console.log(`[WeeklySummary Firestore Sync] Set ${fetchedAtt.length} attendance docs and ${fetchedObs.length} observations`);
+          setDbDrafts(fetchedDraftsMap);
+          console.log(`[WeeklySummary Firestore Sync] Set ${fetchedAtt.length} attendance, ${fetchedObs.length} observations, and ${snapDrafts.docs.length} drafts`);
         }
       } catch (err) {
         console.error('Error fetching range data from Firestore:', err);
@@ -597,13 +622,25 @@ export default function WeeklySummary() {
       const storageKey = getSummaryKey(s.id, startDateStr, endDateStr);
       const saved = localStorage.getItem(storageKey);
       
-      let savedParsed = {};
+      let savedParsed: any = {};
       if (saved) {
         try {
           savedParsed = JSON.parse(saved);
         } catch (e) {
           console.error(`Error parsing draft for ${s.name}:`, e);
         }
+      }
+
+      // Merge with Firestore draft (primary) if it exists
+      const dbDraft = dbDrafts[s.id];
+      if (dbDraft) {
+        savedParsed = {
+          ...savedParsed,
+          ...dbDraft,
+          attendanceCommentTeacherEdited: dbDraft.socialEmotional || dbDraft.attendanceCommentTeacherEdited || savedParsed.attendanceCommentTeacherEdited || '',
+          observationCommentTeacherEdited: dbDraft.weeklyComments || dbDraft.observationCommentTeacherEdited || savedParsed.observationCommentTeacherEdited || '',
+          theme: dbDraft.theme || savedParsed.theme || '',
+        };
       }
 
       // Merge them. The saved comments, custom theme etc, should OVERWRITE the live defaults.
@@ -619,7 +656,7 @@ export default function WeeklySummary() {
       };
     });
     setStudentDrafts(drafts);
-  }, [students, startDateStr, endDateStr, reloadCounter, firestoreAttendance, firestoreObservations]);
+  }, [students, startDateStr, endDateStr, reloadCounter, firestoreAttendance, firestoreObservations, dbDrafts]);
 
   React.useEffect(() => {
     loadAllStudentDrafts();
@@ -640,7 +677,59 @@ export default function WeeklySummary() {
   // INDIVIDUAL SAVE & GENERATE PROCESSORS
   // ----------------------------------------------------
 
-  const saveIndividualStudentDraft = (studentId: string, updatedPayload: any) => {
+  const saveWeeklyComments = async (studentId: string, updatedPayload: any) => {
+    setSavingStatus(prev => ({ ...prev, [studentId]: 'saving' }));
+    try {
+      const studentObj = students.find(s => s.id === studentId);
+      const key = getSummaryKey(studentId, startDateStr, endDateStr);
+      const existing = studentDrafts[studentId] || {};
+      
+      const mergedDraft = {
+        ...existing,
+        ...updatedPayload,
+      };
+
+      const docId = `${studentId}_${startDateStr}_${endDateStr}`;
+      const docRef = doc(db, 'weekly_summary_drafts', docId);
+
+      const dbPayload = {
+        studentId,
+        studentName: studentObj?.name || mergedDraft.studentName || 'Siswa',
+        classId: selectedClassId,
+        className: activeClassObj?.name || mergedDraft.className || mergedDraft.classGroup || '',
+        academicYear: activeYear || '2025/2026',
+        startDate: startDateStr,
+        endDate: endDateStr,
+        theme: mergedDraft.theme || '',
+        socialEmotional: mergedDraft.attendanceCommentTeacherEdited || mergedDraft.socialEmotional || '',
+        weeklyComments: mergedDraft.observationCommentTeacherEdited || mergedDraft.weeklyComments || '',
+        attendanceCommentAiDraft: mergedDraft.attendanceCommentAiDraft || '',
+        attendanceCommentTeacherEdited: mergedDraft.attendanceCommentTeacherEdited || '',
+        observationCommentAiDraft: mergedDraft.observationCommentAiDraft || '',
+        observationCommentTeacherEdited: mergedDraft.observationCommentTeacherEdited || '',
+        updatedAt: Date.now(),
+        updatedBy: currentUser?.email || 'Teacher'
+      };
+
+      await setDoc(docRef, dbPayload, { merge: true });
+
+      setSavingStatus(prev => ({ ...prev, [studentId]: 'saved' }));
+      setTimeout(() => {
+        setSavingStatus(prev => ({ ...prev, [studentId]: 'idle' }));
+      }, 3000);
+
+      // Trigger re-fetch of Firestore drafts so that dbDrafts is updated and synchronized!
+      setReloadCounter(prev => prev + 1);
+      return true;
+    } catch (error) {
+      console.error(`[WeeklySummary Firestore Save] Error saving draft for student ${studentId}:`, error);
+      setSavingStatus(prev => ({ ...prev, [studentId]: 'error' }));
+      toast.error('Gagal menyimpan draf ke database. Silakan coba lagi.');
+      return false;
+    }
+  };
+
+  const saveIndividualStudentDraft = async (studentId: string, updatedPayload: any) => {
     const key = getSummaryKey(studentId, startDateStr, endDateStr);
     const existing = studentDrafts[studentId] || {};
     const finalPayload = {
@@ -653,7 +742,9 @@ export default function WeeklySummary() {
     };
     
     localStorage.setItem(key, JSON.stringify(finalPayload));
-    setReloadCounter(prev => prev + 1);
+    
+    // Asynchronously save to firestore
+    await saveWeeklyComments(studentId, updatedPayload);
   };
 
   const handleManualSave = (studentId: string, customTheme?: string) => {
@@ -808,18 +899,27 @@ export default function WeeklySummary() {
     }
   };
 
-  const handleClearAllPeriodDrafts = () => {
-    if (window.confirm('Apakah Anda yakin ingin menghapus seluruh draft summary pada periode ini?')) {
-      students.forEach(student => {
-        const key = getSummaryKey(student.id, startDateStr, endDateStr);
-        localStorage.removeItem(key);
-      });
-      setReloadCounter(prev => prev + 1);
-      toast.success('Pembersihan data periode selesai.');
+  const handleClearAllPeriodDrafts = async () => {
+    if (window.confirm('Apakah Anda yakin ingin menghapus seluruh draft summary pada periode ini dari lokal & database?')) {
+      const toastId = toast.loading('Menghapus seluruh draf dari database...');
+      try {
+        for (const student of students) {
+          const key = getSummaryKey(student.id, startDateStr, endDateStr);
+          localStorage.removeItem(key);
+
+          const docId = `${student.id}_${startDateStr}_${endDateStr}`;
+          await deleteDoc(doc(db, 'weekly_summary_drafts', docId));
+        }
+        toast.success('Pembersihan data periode selesai.', { id: toastId });
+        setReloadCounter(prev => prev + 1);
+      } catch (err: any) {
+        console.error('[WeeklySummary Clear Drafts] Error:', err);
+        toast.error(`Gagal menghapus draf di database: ${err.message}`, { id: toastId });
+      }
     }
   };
 
-  const handleSaveImport = () => {
+  const handleSaveImport = async () => {
     const successRows = parsedImportRows.filter(r => r.status === 'success');
     if (successRows.length === 0) {
       toast.error('Tidak ada baris data valid yang siap diimpor!');
@@ -827,45 +927,77 @@ export default function WeeklySummary() {
     }
 
     let saveCount = 0;
-    successRows.forEach(row => {
-      if (!row.matchedStudentId) return;
+    const toastId = toast.loading('Mengimpor draf komentar ke database Firestore...');
+    try {
+      for (const row of successRows) {
+        if (!row.matchedStudentId) continue;
 
-      const studentId = row.matchedStudentId;
-      const key = getSummaryKey(studentId, startDateStr, endDateStr);
-      const existing = studentDrafts[studentId] || {};
+        const studentId = row.matchedStudentId;
+        const key = getSummaryKey(studentId, startDateStr, endDateStr);
+        const existing = studentDrafts[studentId] || {};
 
-      let payload: any = {};
-      
-      if (importType === 'SEL') {
-        payload = {
-          attendanceCommentTeacherEdited: row.pastedComment,
-          attendanceCommentAiDraft: existing.attendanceCommentAiDraft || row.pastedComment
+        let payload: any = {};
+        
+        if (importType === 'SEL') {
+          payload = {
+            attendanceCommentTeacherEdited: row.pastedComment,
+            attendanceCommentAiDraft: existing.attendanceCommentAiDraft || row.pastedComment
+          };
+        } else {
+          payload = {
+            observationCommentTeacherEdited: row.pastedComment,
+            observationCommentAiDraft: existing.observationCommentAiDraft || row.pastedComment
+          };
+        }
+
+        const finalPayload = {
+          ...existing,
+          ...payload,
+          theme: existing.theme || globalTheme,
+          studentId,
+          startDate: startDateStr,
+          endDate: endDateStr,
+          updatedAt: Date.now()
         };
-      } else {
-        payload = {
-          observationCommentTeacherEdited: row.pastedComment,
-          observationCommentAiDraft: existing.observationCommentAiDraft || row.pastedComment
+
+        // 1. Fallback to localStorage
+        localStorage.setItem(key, JSON.stringify(finalPayload));
+
+        // 2. Direct write to Firestore Doc
+        const docId = `${studentId}_${startDateStr}_${endDateStr}`;
+        const docRef = doc(db, 'weekly_summary_drafts', docId);
+
+        const dbPayload = {
+          studentId,
+          studentName: existing.studentName || students.find(s => s.id === studentId)?.name || 'Siswa',
+          classId: selectedClassId,
+          className: activeClassObj?.name || existing.className || existing.classGroup || '',
+          academicYear: activeYear || '2025/2026',
+          startDate: startDateStr,
+          endDate: endDateStr,
+          theme: finalPayload.theme || '',
+          socialEmotional: finalPayload.attendanceCommentTeacherEdited || '',
+          weeklyComments: finalPayload.observationCommentTeacherEdited || '',
+          attendanceCommentAiDraft: finalPayload.attendanceCommentAiDraft || '',
+          attendanceCommentTeacherEdited: finalPayload.attendanceCommentTeacherEdited || '',
+          observationCommentAiDraft: finalPayload.observationCommentAiDraft || '',
+          observationCommentTeacherEdited: finalPayload.observationCommentTeacherEdited || '',
+          updatedAt: Date.now(),
+          updatedBy: currentUser?.email || 'Teacher'
         };
+
+        await setDoc(docRef, dbPayload, { merge: true });
+        saveCount++;
       }
 
-      const finalPayload = {
-        ...existing,
-        ...payload,
-        theme: existing.theme || globalTheme,
-        studentId,
-        startDate: startDateStr,
-        endDate: endDateStr,
-        updatedAt: Date.now()
-      };
-
-      localStorage.setItem(key, JSON.stringify(finalPayload));
-      saveCount++;
-    });
-
-    setReloadCounter(p => p + 1);
-    toast.success(`Berhasil mengimpor ${saveCount} komentar ${importType === 'SEL' ? 'Social-Emotional' : 'Observation Progress'}! 💾`);
-    setIsImportOpen(false);
-    setPastedText('');
+      toast.success(`Berhasil mengimpor ${saveCount} komentar ${importType === 'SEL' ? 'Social-Emotional' : 'Observation Progress'}! 💾`, { id: toastId });
+      setReloadCounter(p => p + 1);
+      setIsImportOpen(false);
+      setPastedText('');
+    } catch (err: any) {
+      console.error('[WeeklySummary Import Firestore] Error saving imported drafts:', err);
+      toast.error(`Gagal menyimpan beberapa komentar ke Firestore: ${err.message}`, { id: toastId });
+    }
   };
 
   return (
@@ -1249,10 +1381,36 @@ export default function WeeklySummary() {
 
                                 <button
                                   onClick={() => handleManualSave(student.id)}
-                                  className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[10px] px-4 py-2 rounded-xl transition-all shadow-md shadow-emerald-55/3 hover:shadow-emerald-55 hover:scale-102 cursor-pointer"
+                                  disabled={savingStatus[student.id] === 'saving'}
+                                  className={cn(
+                                    "flex items-center gap-1.5 text-white font-extrabold text-[10px] px-4 py-2 rounded-xl transition-all shadow-md cursor-pointer",
+                                    savingStatus[student.id] === 'saving' && "bg-amber-500 hover:bg-amber-500 cursor-not-allowed",
+                                    savingStatus[student.id] === 'saved' && "bg-emerald-700 hover:bg-emerald-700",
+                                    savingStatus[student.id] === 'error' && "bg-rose-650 hover:bg-rose-700",
+                                    (!savingStatus[student.id] || savingStatus[student.id] === 'idle') && "bg-emerald-600 hover:bg-emerald-700 hover:scale-102"
+                                  )}
                                 >
-                                  <Save size={12} />
-                                  Simpan Draf Siswa
+                                  {savingStatus[student.id] === 'saving' ? (
+                                    <>
+                                      <Loader2 className="animate-spin" size={12} />
+                                      Menyimpan...
+                                    </>
+                                  ) : savingStatus[student.id] === 'saved' ? (
+                                    <>
+                                      <CheckCircle2 size={12} className="text-white" />
+                                      Tersimpan! 💾
+                                    </>
+                                  ) : savingStatus[student.id] === 'error' ? (
+                                    <>
+                                      <AlertCircle size={12} />
+                                      Gagal Menyimpan
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Save size={12} />
+                                      Simpan Draf Siswa
+                                    </>
+                                  )}
                                 </button>
                               </div>
                             </div>

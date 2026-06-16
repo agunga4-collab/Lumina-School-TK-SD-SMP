@@ -417,5 +417,10 @@ service cloud.firestore {
         (isJuniorHighStaff() || isTeacher() || isLinkedStudent(existing().studentId));
       allow write: if isJuniorHighStaff() || isAdmin() || isTeacher();
     }
+
+    match /weekly_summary_drafts/{draftId} {
+      allow read, write: if isActive() &&
+        (isJuniorHighStaff() || isTeacher() || isAdmin());
+    }
   }
 }

@@ -15,7 +15,7 @@ import {
   saveStoredStudents,
   aggregateKGWeeklyReportForPeriod
 } from '../../lib/kindergartenWeeklyReport';
-import { collection, query, where, getDocs, addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, deleteDoc, doc, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { useAuth } from '../../context/AuthContext';
@@ -339,6 +339,7 @@ export default function WeeklyReview() {
   }, [selectedClassId, startDateStr, endDateStr]);
 
   const [loadedDraft, setLoadedDraft] = React.useState<any | null>(null);
+  const [isFetchingDraft, setIsFetchingDraft] = React.useState(false);
 
   const [teacherName, setTeacherName] = React.useState<string>(() => {
     return localStorage.getItem('kg_teacher_name') || '';
@@ -382,71 +383,99 @@ export default function WeeklyReview() {
       return;
     }
 
-    // 1. Try to fetch from the standard dynamic date-range summary store
-    const summaryKey = `kg_weekly_summary_${selectedStudentId}_${startDateStr}_${endDateStr}`;
-    const savedSummary = localStorage.getItem(summaryKey);
+    let active = true;
 
-    let savedParsed: any = null;
-    if (savedSummary) {
+    async function loadStudentDraft() {
+      setIsFetchingDraft(true);
       try {
-        savedParsed = JSON.parse(savedSummary);
-      } catch (e) {
-        console.error('Error parsing loaded summary draft:', e);
-      }
-    } else {
-      // 2. Backwards compatibility fallback strategy (using standard weekKey)
-      const mon = new Date(startDateStr);
-      const startMon = getMonday(mon);
-      const firstDay = new Date(startMon.getFullYear(), startMon.getMonth(), 1);
-      const firstMon = getMonday(firstDay);
-      const weekDiff = Math.floor((startMon.getTime() - firstMon.getTime()) / (7 * 24 * 60 * 60 * 1000));
-      const weekNumber = Math.max(1, weekDiff + 1);
-      const weekKey = `${startMon.getFullYear()}_W${weekNumber}`;
-      const legacyKey = `kg_weekly_report_${selectedStudentId}_${weekKey}`;
-      const savedLegacy = localStorage.getItem(legacyKey);
+        let savedParsed: any = null;
 
-      if (savedLegacy) {
-        try {
-          savedParsed = JSON.parse(savedLegacy);
-        } catch (e) {
-          console.error('Error parsing legacy draft:', e);
+        // A. Primary: Try to fetch from Firestore weekly_summary_drafts
+        const docId = `${selectedStudentId}_${startDateStr}_${endDateStr}`;
+        const docRef = doc(db, 'weekly_summary_drafts', docId);
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists() && active) {
+          const data = docSnap.data();
+          savedParsed = {
+            ...data,
+            attendanceCommentTeacherEdited: data.socialEmotional || data.attendanceCommentTeacherEdited || '',
+            observationCommentTeacherEdited: data.weeklyComments || data.observationCommentTeacherEdited || ''
+          };
+          console.log('[WeeklyReview Firestore Sync] Successfully loaded draft from Firestore database!');
+        } else {
+          // B. Secondary (Fallback): Try local storage
+          const summaryKey = `kg_weekly_summary_${selectedStudentId}_${startDateStr}_${endDateStr}`;
+          const savedSummary = localStorage.getItem(summaryKey);
+
+          if (savedSummary) {
+            try {
+              savedParsed = JSON.parse(savedSummary);
+            } catch (e) {
+              console.error('Error parsing loaded summary draft:', e);
+            }
+          } else {
+            // C. Tertiary (Fallback): Backwards compatibility fallback strategy (using standard weekKey)
+            const mon = new Date(startDateStr);
+            const startMon = getMonday(mon);
+            const firstDay = new Date(startMon.getFullYear(), startMon.getMonth(), 1);
+            const firstMon = getMonday(firstDay);
+            const weekDiff = Math.floor((startMon.getTime() - firstMon.getTime()) / (7 * 24 * 60 * 60 * 1000));
+            const weekNumber = Math.max(1, weekDiff + 1);
+            const weekKey = `${startMon.getFullYear()}_W${weekNumber}`;
+            const legacyKey = `kg_weekly_report_${selectedStudentId}_${weekKey}`;
+            const savedLegacy = localStorage.getItem(legacyKey);
+
+            if (savedLegacy) {
+              try {
+                savedParsed = JSON.parse(savedLegacy);
+              } catch (e) {
+                console.error('Error parsing legacy draft:', e);
+              }
+            }
+          }
+        }
+
+        // Always fetch latest real-time checklist and observation telemetry and merge
+        const liveData = aggregateKGWeeklyReportForPeriod(
+          selectedStudentId, 
+          startDateStr, 
+          endDateStr,
+          firestoreAttendance,
+          firestoreObservations,
+          students
+        );
+        const studentObj = students.find(s => s.id === selectedStudentId);
+        
+        const merged = {
+          ...liveData,
+          ...savedParsed,
+          studentName: studentObj ? studentObj.name : (savedParsed?.studentName || liveData.studentName || 'Siswa'),
+          classGroup: activeClassObj ? activeClassObj.name : (savedParsed?.classGroup || liveData.classGroup || ''),
+          // Ensure live-aggregated statistics are always dynamically updated
+          attendanceSummary: liveData.attendanceSummary,
+          weeklyObservationItems: liveData.weeklyObservationItems,
+          groupedObservationSummary: liveData.groupedObservationSummary,
+          dailySnapshots: liveData.dailySnapshots,
+        };
+
+        if (active) {
+          setLoadedDraft(merged);
+        }
+      } catch (err) {
+        console.error("Error loading/aggregating draft for period:", err);
+      } finally {
+        if (active) {
+          setIsFetchingDraft(false);
         }
       }
     }
 
-    // Always fetch latest real-time checklist and observation telemetry and merge
-    try {
-      const liveData = aggregateKGWeeklyReportForPeriod(
-        selectedStudentId, 
-        startDateStr, 
-        endDateStr,
-        firestoreAttendance,
-        firestoreObservations,
-        students
-      );
-      const studentObj = students.find(s => s.id === selectedStudentId);
-      
-      const merged = {
-        ...liveData,
-        ...savedParsed,
-        studentName: studentObj ? studentObj.name : (savedParsed?.studentName || liveData.studentName || 'Siswa'),
-        classGroup: activeClassObj ? activeClassObj.name : (savedParsed?.classGroup || liveData.classGroup || ''),
-        // Ensure live-aggregated statistics are always dynamically updated
-        attendanceSummary: liveData.attendanceSummary,
-        weeklyObservationItems: liveData.weeklyObservationItems,
-        groupedObservationSummary: liveData.groupedObservationSummary,
-        dailySnapshots: liveData.dailySnapshots,
-      };
+    loadStudentDraft();
 
-      setLoadedDraft(merged);
-    } catch (err) {
-      console.error("Error aggregating live data during render:", err);
-      if (savedParsed) {
-        setLoadedDraft(savedParsed);
-      } else {
-        setLoadedDraft(null);
-      }
-    }
+    return () => {
+      active = false;
+    };
   }, [selectedStudentId, startDateStr, endDateStr, students, activeClassObj, firestoreAttendance, firestoreObservations]);
 
   const [publishedReports, setPublishedReports] = React.useState<any[]>([]);
