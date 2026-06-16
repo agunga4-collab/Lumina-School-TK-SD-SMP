@@ -291,31 +291,73 @@ export default function WeeklyReview() {
         console.log(`[WeeklyReview Firestore Sync] Fetching for class ${selectedClassId} from ${startDateStr} to ${endDateStr}`);
 
         // 1. Fetch attendance reports
-        const qAtt = query(
-          collection(db, 'attendance'),
-          where('classId', '==', selectedClassId),
-          where('date', '>=', startDateStr),
-          where('date', '<=', endDateStr)
-        );
-        const snapAtt = await getDocs(qAtt);
-        logFirestoreRead('attendanceReports', snapAtt.docs.length || 1);
-        const fetchedAtt = snapAtt.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
+        let fetchedAtt: any[] = [];
+        try {
+          const qAtt = query(
+            collection(db, 'attendance'),
+            where('classId', '==', selectedClassId),
+            where('date', '>=', startDateStr),
+            where('date', '<=', endDateStr)
+          );
+          const snapAtt = await getDocs(qAtt);
+          logFirestoreRead('attendanceReports', snapAtt.docs.length || 1);
+          fetchedAtt = snapAtt.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+        } catch (err: any) {
+          console.warn("[WeeklyReview] Attendance query list permission denied or failed, trying getDoc fallback.", err);
+          const datesList: string[] = [];
+          try {
+            let start = new Date(startDateStr + 'T00:00:00');
+            const end = new Date(endDateStr + 'T00:00:00');
+            while (start <= end) {
+              const yyyy = start.getFullYear();
+              const mm = String(start.getMonth() + 1).padStart(2, '0');
+              const dd = String(start.getDate()).padStart(2, '0');
+              datesList.push(`${yyyy}-${mm}-${dd}`);
+              start.setDate(start.getDate() + 1);
+            }
+          } catch (e) {
+            console.error("[WeeklyReview] Error calculating dates in range:", e);
+          }
+
+          if (datesList.length > 0) {
+            const attDocs = await Promise.all(
+              datesList.map(async (dStr) => {
+                try {
+                  const docId = `${selectedClassId}_${dStr}`;
+                  const docSnap = await getDoc(doc(db, 'attendance', docId));
+                  if (docSnap.exists()) {
+                    return { id: docSnap.id, ...docSnap.data() };
+                  }
+                } catch (e) {
+                  // ignore individual read failures
+                }
+                return null;
+              })
+            );
+            fetchedAtt = attDocs.filter(Boolean) as any[];
+          }
+        }
 
         // 2. Fetch Observations
-        const qObs = query(
-          collection(db, 'observations'),
-          where('date', '>=', startDateStr),
-          where('date', '<=', endDateStr)
-        );
-        const snapObs = await getDocs(qObs);
-        logFirestoreRead('observations', snapObs.docs.length || 1);
-        const fetchedObs = snapObs.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
+        let fetchedObs: any[] = [];
+        try {
+          const qObs = query(
+            collection(db, 'observations'),
+            where('date', '>=', startDateStr),
+            where('date', '<=', endDateStr)
+          );
+          const snapObs = await getDocs(qObs);
+          logFirestoreRead('observations', snapObs.docs.length || 1);
+          fetchedObs = snapObs.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+        } catch (err: any) {
+          console.warn("[WeeklyReview] Observations list query fell back to empty due to potential rules limits/permissions:", err);
+        }
 
         if (active) {
           setFirestoreAttendance(fetchedAtt);

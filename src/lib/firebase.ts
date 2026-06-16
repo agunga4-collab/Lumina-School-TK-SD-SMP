@@ -849,6 +849,75 @@ export async function getReportCards(filters?: {
     const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ReportCard));
   } catch (err: any) {
+    const isPermissionError = err.message && (
+      err.message.includes('permission') || 
+      err.message.includes('Permission') || 
+      err.message.includes('PERMISSION_DENIED') ||
+      err.code === 'permission-denied'
+    );
+    if (isPermissionError) {
+      console.warn("[getReportCards] Query list permission denied, falling back to direct getDoc of specifically allowed/notified reports.");
+      try {
+        const allowedReportIds = new Set<string>();
+        
+        // 1. Get IDs from parentReportViews
+        const userEmail = auth.currentUser?.email;
+        if (userEmail) {
+          const views = await getParentReportViews(userEmail).catch(() => []);
+          for (const v of views) {
+            if (v.reportId) allowedReportIds.add(v.reportId);
+            if (Array.isArray(v.reportIds)) {
+              v.reportIds.forEach((id: string) => id && allowedReportIds.add(id));
+            }
+            if (Array.isArray((v as any).items)) {
+              (v as any).items.forEach((item: any) => {
+                if (item && item.reportId) allowedReportIds.add(item.reportId);
+              });
+            }
+          }
+        }
+        
+        // 2. Scan notifications
+        const userId = auth.currentUser?.email || auth.currentUser?.uid;
+        if (userId) {
+          const notifications = await getNotifications(userId).catch(() => []);
+          if (notifications) {
+            for (const n of notifications) {
+              if (n.link) {
+                const match = n.link.match(/\/academic\/rapor\/([a-zA-Z0-9_\-]+)/);
+                if (match && match[1]) {
+                  allowedReportIds.add(match[1]);
+                }
+              }
+            }
+          }
+        }
+        
+        if (allowedReportIds.size > 0) {
+          const docSnaps = await Promise.all(
+            Array.from(allowedReportIds).map(id => getDoc(doc(db, 'reportCards', id)).catch(() => null))
+          );
+          const reports = docSnaps
+            .filter(s => s && s.exists())
+            .map(s => ({ id: s!.id, ...s!.data() } as ReportCard));
+            
+          return reports.filter(rc => {
+            if (!rc) return false;
+            if (rc.status !== 'PUBLISHED') return false;
+            if (filters) {
+              if (filters.unitId && rc.unitId !== filters.unitId) return false;
+              if (filters.classId && rc.classId !== filters.classId) return false;
+              if (filters.academicYear && rc.academicYear !== filters.academicYear) return false;
+              if (filters.semester && rc.semester !== filters.semester) return false;
+            }
+            return true;
+          });
+        }
+      } catch (fallbackErr) {
+        console.warn("[getReportCards] Fallback direct getDoc lookup error:", fallbackErr);
+      }
+      return [];
+    }
     handleFirestoreError(err, 'list', 'reportCards');
   }
 }
@@ -1423,10 +1492,87 @@ export async function getParentReportViews(parentId: string): Promise<ParentRepo
   if (!parentId) {
     return [];
   }
+  const parentIdClean = parentId.toLowerCase().trim();
   try {
-    const q = query(collection(db, 'parentReportViews'), where('parentId', '==', parentId));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => doc.data() as ParentReportView);
+    const candDocIds = new Set<string>();
+    candDocIds.add(parentIdClean);
+    
+    // Get linked student ids and fetch views for student or parent_student
+    try {
+      const linksInstance = await getParentStudentLinks(parentIdClean);
+      if (linksInstance && Array.isArray(linksInstance.studentIds)) {
+        for (const sid of linksInstance.studentIds) {
+          if (sid) {
+            candDocIds.add(sid);
+            candDocIds.add(`${parentIdClean}_${sid}`);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[getParentReportViews] Failed to load direct student links:", e);
+    }
+    
+    // Scan notifications for report URLs
+    try {
+      const notifications = await getNotifications(parentIdClean).catch(() => []);
+      if (notifications) {
+        for (const n of notifications) {
+          if (n.link) {
+            const match = n.link.match(/\/academic\/rapor\/([a-zA-Z0-9_\-]+)/);
+            if (match && match[1]) {
+              candDocIds.add(`${parentIdClean}_${match[1]}`);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[getParentReportViews] Failed to scan notifications for report card IDs:", e);
+    }
+    
+    // Fetch all candidates with getDoc (allowed under the get security rule)
+    const viewDocs = await Promise.all(
+      Array.from(candDocIds).map(async (docId) => {
+        try {
+          const docRef = doc(db, 'parentReportViews', docId);
+          const snap = await getDoc(docRef);
+          if (snap.exists()) {
+            return { id: snap.id, ...snap.data() } as unknown as ParentReportView;
+          }
+        } catch (e) {
+          // ignore individual lookup failures
+        }
+        return null;
+      })
+    );
+    
+    const results = viewDocs.filter(Boolean) as ParentReportView[];
+    
+    // Safety fallback: manufacture default view objects for notified report card IDs
+    try {
+      const notifications = await getNotifications(parentIdClean).catch(() => []);
+      if (notifications) {
+        for (const n of notifications) {
+          if (n.link) {
+            const match = n.link.match(/\/academic\/rapor\/([a-zA-Z0-9_\-]+)/);
+            if (match && match[1]) {
+              const repId = match[1];
+              const exists = results.some(r => r.reportId === repId || (Array.isArray((r as any).reportIds) && (r as any).reportIds.includes(repId)));
+              if (!exists) {
+                results.push({
+                  id: `${parentIdClean}_${repId}`,
+                  parentId: parentIdClean,
+                  reportId: repId
+                } as any);
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    return results;
   } catch (err: any) {
     console.warn("[getParentReportViews] Failed to retrieve parent report views (benign fallback used):", err);
     return [];

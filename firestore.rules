@@ -301,13 +301,13 @@ service cloud.firestore {
     }
 
     match /attendance/{attendanceId} {
-      allow read: if isActive() && (isJuniorHighStaff() || isLinkedStudent(existing().studentId));
-      allow write: if isJuniorHighStaff();
+      allow read: if (isActive() && (isTeacher() || isJuniorHighStaff() || isLinkedStudent(existing().studentId))) || isAdmin();
+      allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
     }
 
     match /observations/{observationId} {
-      allow read: if isActive() && (isJuniorHighStaff() || isLinkedStudent(existing().studentId));
-      allow write: if isJuniorHighStaff();
+      allow read: if (isActive() && (isTeacher() || isJuniorHighStaff() || isLinkedStudent(existing().studentId))) || isAdmin();
+      allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
     }
 
     match /learning_goals/{goalId} {
@@ -419,8 +419,7 @@ service cloud.firestore {
     }
 
     match /weekly_summary_drafts/{draftId} {
-      allow read, write: if isActive() &&
-        (isJuniorHighStaff() || isTeacher() || isAdmin());
+      allow read, write: if (isActive() && (isJuniorHighStaff() || isTeacher())) || isAdmin();
     }
   }
 }
