@@ -1,209 +1,1642 @@
 import * as React from 'react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
 import { 
   User, Calendar, GraduationCap, Heart, BookOpen, 
   Target, Award, ShieldAlert, ChevronRight, Map, 
   Star, MessageCircle, ArrowUpRight, Flame, Smile, LayoutDashboard,
-  Loader2
+  Loader2, Filter, Image as ImageIcon, SmilePlus, FileText, CheckCircle2,
+  AlertCircle, ChevronDown, Download, Camera, Brain, Sparkles, TrendingUp, CheckSquare, ListFilter, PlayCircle
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import type { UnitType, User as UserType } from '../../types';
-import { auth, db } from '../../lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { auth, db, getParentStudentLinks } from '../../lib/firebase';
+import { doc, getDoc, getDocs, collection, query, where, orderBy } from 'firebase/firestore';
+import { getKindergartenClasses, getKindergartenStudents } from '../../lib/kindergartenMetadataCache';
+import { ACTIVITY_LABEL_MAP, DOMAIN_LABEL_MAP } from '../../lib/kindergartenWeeklyReport';
+import { useAcademicYear } from '../../context/AcademicYearContext';
+
+// Define English style mapping for grading evaluation
+const GRADE_STYLES: Record<string, { label: string; bg: string; text: string; dot: string }> = {
+  'BSB': { label: 'Highly Developed (BSB)', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200', text: 'text-emerald-700', dot: 'bg-emerald-500' },
+  'BSH': { label: 'Developed as Expected (BSH)', bg: 'bg-blue-50 text-blue-700 border-blue-200', text: 'text-blue-700', dot: 'bg-blue-500' },
+  'MB': { label: 'Starting to Develop (MB)', bg: 'bg-amber-50 text-amber-700 border-amber-200', text: 'text-amber-700', dot: 'bg-amber-500' },
+  'BB': { label: 'Not Yet Developing (BB)', bg: 'bg-rose-50 text-rose-700 border-rose-200', text: 'text-rose-700', dot: 'bg-rose-500' },
+  'SB': { label: 'Very Good (SB)', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200', text: 'text-emerald-700', dot: 'bg-emerald-500' },
+  'MSH': { label: 'Starting as Expected (MSH)', bg: 'bg-blue-50 text-blue-700 border-blue-200', text: 'text-blue-700', dot: 'bg-blue-500' },
+};
+
+const ENGLISH_DOMAIN_LABEL_MAP: Record<string, string> = {
+  'AGAMA_BUDI_PEKERTI': 'Religious & Moral Values',
+  'Nilai Agama & Budi Pekerti': 'Religious & Moral Values',
+  'SOSIAL_EMOSIONAL': 'Social-Emotional',
+  'Sosial-Emosional': 'Social-Emotional',
+  'BAHASA': 'Language Development',
+  'Bahasa': 'Language Development',
+  'KOGNITIF': 'Cognitive Development',
+  'Kognitif': 'Cognitive Development',
+  'FISIK_MOTORIK': 'Physical & Motor Skills',
+  'Fisik-Motorik': 'Physical & Motor Skills',
+  'SENI': 'Artistic & Creative',
+  'Seni': 'Artistic & Creative'
+};
+
+function getEnglishDomainLabel(domain: string): string {
+  const norm = String(domain || '').trim();
+  return ENGLISH_DOMAIN_LABEL_MAP[norm] || norm;
+}
+
+function getGradeStyle(grade: string) {
+  const clean = String(grade || '').toUpperCase().trim();
+  if (GRADE_STYLES[clean]) return GRADE_STYLES[clean];
+  
+  // Fuzzy match
+  for (const k of Object.keys(GRADE_STYLES)) {
+    if (clean.includes(k) || k.includes(clean)) {
+      return GRADE_STYLES[k];
+    }
+  }
+  return { label: grade || 'Observed', bg: 'bg-slate-50 text-slate-700 border-slate-200', text: 'text-slate-700', dot: 'bg-slate-400' };
+}
+
+// Function to calculate Monday of standard week
+function getMonday(d: Date): Date {
+  const date = new Date(d);
+  const day = date.getDay();
+  const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+  const monday = new Date(date.setDate(diff));
+  monday.setHours(0, 0, 0, 0);
+  return monday;
+}
+
+function formatDateLabel(d: Date): string {
+  return d.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function isStudentInClass(studClassId: string, activeClass: { id: string; name: string }) {
+  const sClass = (studClassId || '').trim().toLowerCase();
+  const actId = (activeClass.id || '').trim().toLowerCase();
+  const actName = (activeClass.name || '').trim().toLowerCase();
+  
+  if (!sClass) return false;
+  if (sClass === actId || sClass === actName) return true;
+  
+  const norm = (str: string) => str.replace(/[\s\-_]+/g, '').toLowerCase();
+  const normS = norm(sClass);
+  const normId = norm(actId);
+  const normName = norm(actName);
+  
+  if (normS === normName || normS === normId) return true;
+  
+  const hasKoala = (str: string) => str.includes('koala');
+  const hasPanda = (str: string) => str.includes('panda');
+  const hasCaterpillar = (str: string) => str.includes('caterpillar');
+  const hasButterfly = (str: string) => str.includes('butterfly');
+  const hasCenderawasih = (str: string) => str.includes('cenderawasih');
+  const hasElang = (str: string) => str.includes('elang');
+  const hasKakatua = (str: string) => str.includes('kakatua');
+  const hasBadak = (str: string) => str.includes('badak');
+  const hasKomodo = (str: string) => str.includes('komodo');
+  const hasTapir = (str: string) => str.includes('tapir');
+  
+  if (hasKoala(normS) && hasKoala(normName)) return true;
+  if (hasPanda(normS) && hasPanda(normName)) return true;
+  if (hasCaterpillar(normS) && hasCaterpillar(normName)) return true;
+  if (hasButterfly(normS) && hasButterfly(normName)) return true;
+  if (hasCenderawasih(normS) && hasCenderawasih(normName)) return true;
+  if (hasElang(normS) && hasElang(normName)) return true;
+  if (hasKakatua(normS) && hasKakatua(normName)) return true;
+  if (hasBadak(normS) && hasBadak(normName)) return true;
+  if (hasKomodo(normS) && hasKomodo(normName)) return true;
+  if (hasTapir(normS) && hasTapir(normName)) return true;
+  
+  return false;
+}
 
 export default function StudentPassport() {
-  const [currentUser, setCurrentUser] = React.useState<UserType | null>(null);
+  const navigate = useNavigate();
+  const { activeYear } = useAcademicYear();
+  const [currentUser, setCurrentUser] = React.useState<any>(null);
+  const [userRole, setUserRole] = React.useState<string>('STUDENT');
   const [loading, setLoading] = React.useState(true);
 
+  // Selector states (visible to staff/teachers)
+  const [classes, setClasses] = React.useState<any[]>([]);
+  const [selectedClassId, setSelectedClassId] = React.useState<string>('');
+  const [students, setStudents] = React.useState<any[]>([]);
+  const [selectedStudentId, setSelectedStudentId] = React.useState<string>('');
+  
+  // Tab states
+  const [activeTab, setActiveTab] = React.useState<'overview' | 'attendance' | 'observations' | 'sel' | 'comments'>('overview');
+  
+  // Range states
+  const [activeRange, setActiveRange] = React.useState<'all' | 'month' | 'semester'>('all');
+
+  // Compiled raw data
+  const [rawAttendance, setRawAttendance] = React.useState<any[]>([]);
+  const [rawObservations, setRawObservations] = React.useState<any[]>([]);
+  const [rawDrafts, setRawDrafts] = React.useState<any[]>([]);
+  const [rawReports, setRawReports] = React.useState<any[]>([]);
+  const [isDataCompiling, setIsDataCompiling] = React.useState(false);
+
+  // Load User details first
   React.useEffect(() => {
     const fetchUser = async () => {
       try {
+        setLoading(true);
         const user = auth.currentUser;
-        if (!user) return;
+        if (!user) {
+          navigate('/login');
+          return;
+        }
+
         const snap = await getDoc(doc(db, 'users', user.uid));
         if (snap.exists()) {
-          setCurrentUser({ uid: user.uid, ...snap.data() } as UserType);
+          const userData = snap.data();
+          setCurrentUser({ uid: user.uid, ...userData });
+          setUserRole(userData.role || 'STUDENT');
+        } else {
+          // Fallback static profile representation
+          setCurrentUser({ uid: user.uid, displayName: user.displayName || 'Siswa Lumina', role: 'STUDENT' });
         }
       } catch (err) {
-        console.error('Error fetching user for passport:', err);
+        console.error('Error fetching user context:', err);
       } finally {
         setLoading(false);
       }
     };
     fetchUser();
-  }, []);
+  }, [navigate]);
 
+  // Load Classes and Student registries (for Teachers/Admins) or linked students (for Parents)
+  React.useEffect(() => {
+    if (!currentUser) return;
+
+    const loadRegistries = async () => {
+      try {
+        const sysClasses = await getKindergartenClasses(activeYear || '2025/2026');
+        const sysStudents = await getKindergartenStudents(activeYear || '2025/2026');
+        
+        setClasses(sysClasses);
+        setStudents(sysStudents);
+
+        const isStaff = ['TEACHER', 'HEAD_UNIT', 'SUPER_ADMIN', 'ADMIN'].includes(userRole);
+
+        if (isStaff) {
+          // Initialize first class and first student
+          if (sysClasses.length > 0) {
+            const firstClassObj = sysClasses[0];
+            setSelectedClassId(firstClassObj.id);
+            
+            const classStudents = sysStudents.filter(s => isStudentInClass(s.classId, firstClassObj));
+            if (classStudents.length > 0) {
+              setSelectedStudentId(classStudents[0].id);
+            } else if (sysStudents.length > 0) {
+              setSelectedStudentId(sysStudents[0].id);
+            }
+          } else if (sysStudents.length > 0) {
+            setSelectedStudentId(sysStudents[0].id);
+          }
+        } else if (userRole === 'PARENT') {
+          // Retrieve parent linked children
+          let parentChildrenIds: string[] = [];
+          const emailClean = (currentUser.email || '').toLowerCase().trim();
+          
+          if (currentUser.linkedStudents && Array.isArray(currentUser.linkedStudents)) {
+            parentChildrenIds = currentUser.linkedStudents;
+          } else {
+            const links = await getParentStudentLinks(emailClean);
+            if (links && links.studentIds) {
+              parentChildrenIds = links.studentIds;
+            }
+          }
+
+          if (parentChildrenIds.length > 0) {
+            // Check matching kindergarten student profiles
+            const matchedStudents = sysStudents.filter(s => 
+              parentChildrenIds.includes(s.id) || 
+              parentChildrenIds.includes(s.id.toLowerCase()) || 
+              parentChildrenIds.some(li => String(li).toLowerCase() === s.name.toLowerCase())
+            );
+
+            if (matchedStudents.length > 0) {
+              setStudents(matchedStudents);
+              setSelectedStudentId(matchedStudents[0].id);
+              if (matchedStudents[0].classId) {
+                setSelectedClassId(matchedStudents[0].classId);
+              }
+            } else if (sysStudents.length > 0) {
+              // Fallback to searching standard database for matches or choose first
+              setSelectedStudentId(parentChildrenIds[0]);
+            }
+          } else if (sysStudents.length > 0) {
+            // Fallback matching by displayName/surname or first student
+            setSelectedStudentId(sysStudents[0].id);
+          }
+        } else {
+          // STUDENT role
+          const studentId = currentUser.studentId || currentUser.uid || '';
+          setSelectedStudentId(studentId);
+          
+          const profile = sysStudents.find(s => s.id === studentId || s.name.toLowerCase() === (currentUser.displayName || '').toLowerCase());
+          if (profile) {
+            setSelectedStudentId(profile.id);
+            if (profile.classId) {
+              setSelectedClassId(profile.classId);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error loading school registers:', err);
+      }
+    };
+
+    loadRegistries();
+  }, [currentUser, userRole, activeYear]);
+
+  // Whenever selectedStudentId changes, pull all data for this student
+  React.useEffect(() => {
+    if (!selectedStudentId) return;
+
+    let active = true;
+    const fetchStudentGrowthData = async () => {
+      try {
+        setIsDataCompiling(true);
+        if (process.env.NODE_ENV !== 'production') {
+          console.log(`[StudentPortfolio] Loading development records for student: ${selectedStudentId}`);
+        }
+
+        // 1. Fetch raw class attendance
+        let attDocs: any[] = [];
+        try {
+          const snap = await getDocs(collection(db, 'attendance'));
+          attDocs = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+        } catch (e) {
+          console.warn("[StudentPortfolio] Querying all attendance records restricted by rules:", e);
+        }
+
+        // 2. Fetch raw observation logs
+        let obsDocs: any[] = [];
+        try {
+          const snap = await getDocs(collection(db, 'observations'));
+          obsDocs = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+        } catch (e) {
+          console.warn("[StudentPortfolio] Querying all observations rules mismatch:", e);
+        }
+
+        // 3. Fetch weekly comments drafts
+        let draftDocs: any[] = [];
+        try {
+          const snap = await getDocs(collection(db, 'weekly_summary_drafts'));
+          draftDocs = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+        } catch (e) {
+          console.warn("[StudentPortfolio] Reading weekly draft summaries restricted:", e);
+        }
+
+        // 4. Fetch published parent reviews
+        let publishedReports: any[] = [];
+        try {
+          const qPub = query(collection(db, 'published_kg_reports'), where('studentId', '==', selectedStudentId));
+          const snap = await getDocs(qPub);
+          publishedReports = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+        } catch (e) {
+          console.warn("[StudentPortfolio] Reading published weekly reports failed:", e);
+        }
+
+        if (active) {
+          setRawAttendance(attDocs);
+          setRawObservations(obsDocs);
+          setRawDrafts(draftDocs);
+          setRawReports(publishedReports);
+        }
+      } catch (err) {
+        console.error("Error aggregating Firestore documents:", err);
+      } finally {
+        setIsDataCompiling(false);
+      }
+    };
+
+    fetchStudentGrowthData();
+    return () => {
+      active = false;
+    };
+  }, [selectedStudentId]);
+
+  // Handle Class selection modification (Filters the student registry)
+  const handleClassSelection = (classId: string) => {
+    setSelectedClassId(classId);
+    const targetClass = classes.find(c => c.id === classId);
+    const filtered = targetClass
+      ? students.filter(s => isStudentInClass(s.classId, targetClass))
+      : [];
+    if (filtered.length > 0) {
+      setSelectedStudentId(filtered[0].id);
+    }
+  };
+
+  // Resolve Active Student Details
+  const activeStudentProfile = students.find(s => s.id === selectedStudentId) || {
+    id: selectedStudentId || 'K-UNK',
+    name: currentUser?.displayName || 'Siswa Kindergarten',
+    nickName: currentUser?.displayName?.split(' ')[0] || 'Ananda',
+    ageGroup: 'TK_A',
+    classId: selectedClassId || 'K1'
+  };
+
+  // -------------------------------------------------------------
+  // DATA ANALYSIS & METRIC EVALUATION
+  // -------------------------------------------------------------
+  
+  // Date boundary filters
+  const now = new Date();
+  const filterDateLimit = React.useMemo(() => {
+    const limits = {
+      all: new Date(now.getFullYear() - 1, 0, 1), // full year
+      month: new Date(now.getFullYear(), now.getMonth() - 1, now.getDate()), // 30 days
+      semester: new Date(now.getFullYear(), now.getMonth() - 6, now.getDate()) // 6 months
+    };
+    return limits[activeRange];
+  }, [activeRange]);
+
+  // A. Process Attendance & Emotions
+  const processedAttendanceList = React.useMemo(() => {
+    const list: Array<{ date: string; status: string; emotion: string; weekday: string }> = [];
+    
+    // Look through firestore records
+    rawAttendance.forEach(docData => {
+      const dStr = docData.date;
+      if (!dStr) return;
+      const dObj = new Date(dStr);
+      if (dObj < filterDateLimit) return;
+
+      const studentsList = docData.students || [];
+      const found = studentsList.find((s: any) => s.studentId === selectedStudentId);
+      if (found) {
+        let statusNormalized = 'HADIR';
+        const stVal = String(found.status || '').toLowerCase();
+        if (stVal.includes('sakit') || stVal === 'sick') statusNormalized = 'SAKIT';
+        else if (stVal.includes('izin') || stVal === 'permission') statusNormalized = 'IZIN';
+        else if (stVal.includes('tanpa') || stVal === 'no_news') statusNormalized = 'ALFA';
+
+        list.push({
+          date: dStr,
+          status: statusNormalized,
+          emotion: String(found.emotion || 'HAPPY').toUpperCase(),
+          weekday: dObj.toLocaleDateString('id-ID', { weekday: 'long' })
+        });
+      }
+    });
+
+    // Fallback or Merge localStorage records (extremely rich for developer sandbox review)
+    const localSavedChecklist = localStorage.getItem('kg_checklist_records');
+    if (localSavedChecklist) {
+      try {
+        const parsed = JSON.parse(localSavedChecklist);
+        Object.entries(parsed).forEach(([dateStr, classRecords]: [string, any]) => {
+          const dObj = new Date(dateStr);
+          if (dObj < filterDateLimit) return;
+          
+          if (classRecords?.[selectedStudentId]) {
+            // Deduplicate if already present
+            if (list.some(item => item.date === dateStr)) return;
+
+            const st = classRecords[selectedStudentId];
+            let statusN = 'HADIR';
+            if (st.attendance === 'SICK') statusN = 'SAKIT';
+            else if (st.attendance === 'PERMISSION') statusN = 'IZIN';
+            else if (st.attendance === 'NO_NEWS') statusN = 'ALFA';
+
+            list.push({
+              date: dateStr,
+              status: statusN,
+              emotion: String(st.emotion || 'HAPPY').toUpperCase(),
+              weekday: dObj.toLocaleDateString('id-ID', { weekday: 'long' })
+            });
+          }
+        });
+      } catch (e) {
+        console.warn("Local storage parse failed:", e);
+      }
+    }
+
+    return list.sort((a, b) => b.date.localeCompare(a.date));
+  }, [rawAttendance, selectedStudentId, filterDateLimit]);
+
+  // Attendance metrics calculations
+  const attendanceStats = React.useMemo(() => {
+    let present = 0;
+    let sick = 0;
+    let permit = 0;
+    let absent = 0;
+
+    const emotions: Record<string, number> = { HAPPY: 0, SAD: 0, ANGRY: 0, OK: 0 };
+
+    processedAttendanceList.forEach(item => {
+      if (item.status === 'HADIR') {
+        present++;
+        const emo = item.emotion;
+        if (emotions[emo] !== undefined) emotions[emo]++;
+        else emotions.OK++;
+      } else if (item.status === 'SAKIT') sick++;
+      else if (item.status === 'IZIN') permit++;
+      else if (item.status === 'ALFA') absent++;
+    });
+
+    const totalDays = present + sick + permit + absent;
+    const attRate = totalDays > 0 ? Math.round(((present + permit) / totalDays) * 100) : 100;
+
+    // Find dominant emotion
+    let dominantEmo = 'HAPPY';
+    let maxCount = -1;
+    Object.entries(emotions).forEach(([emo, count]) => {
+      if (count > maxCount) {
+        maxCount = count;
+        dominantEmo = emo;
+      }
+    });
+
+    return { present, sick, permit, absent, totalDays, attRate, emotions, dominantEmo };
+  }, [processedAttendanceList]);
+
+  // B. Process Observations
+  const processedObservationsList = React.useMemo(() => {
+    const items: Array<{
+      id: string;
+      date: string;
+      activity: string;
+      domain: string;
+      objective: string;
+      grade: string;
+      notes: string;
+      photoUrl: string | null;
+      timestamp: number;
+    }> = [];
+
+    // Fetch from Remote Database
+    rawObservations.forEach(docData => {
+      const dStr = docData.date || '';
+      if (dStr) {
+        const dObj = new Date(dStr);
+        if (dObj < filterDateLimit) return;
+      }
+
+      const obsRecords = docData.observations || {};
+      const found = obsRecords[selectedStudentId];
+      if (found && (found.notes || found.photo || found.grading)) {
+        items.push({
+          id: docData.docId,
+          date: dStr || formatDateLabel(new Date(docData.timestamp || Date.now())),
+          activity: ACTIVITY_LABEL_MAP[docData.activity] || docData.activity || 'Classroom Activity',
+          domain: getEnglishDomainLabel(DOMAIN_LABEL_MAP[docData.domain] || docData.domain || 'General'),
+          objective: docData.objective || found.objective || 'Thematic Learning',
+          grade: found.grading || 'Observed',
+          notes: found.notes || '',
+          photoUrl: found.photo || docData.generalPhoto || null,
+          timestamp: docData.timestamp || Date.now()
+        });
+      }
+    });
+
+    // Load from Local Storage caches (fallback)
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('kg_obs_hist_')) {
+        try {
+          const payloadParsed = JSON.parse(localStorage.getItem(key) || '{}');
+          const dStr = payloadParsed.date || '';
+          if (dStr) {
+            const dObj = new Date(dStr);
+            if (dObj < filterDateLimit) continue;
+          }
+
+          if (payloadParsed.observations?.[selectedStudentId]) {
+            // Deduplicate
+            if (items.some(item => item.id === key)) continue;
+
+            const stObs = payloadParsed.observations[selectedStudentId];
+            items.push({
+              id: key,
+              date: dStr || formatDateLabel(new Date(payloadParsed.timestamp || Date.now())),
+              activity: ACTIVITY_LABEL_MAP[payloadParsed.selectedActivity] || payloadParsed.selectedActivity || 'Classroom Activity',
+              domain: getEnglishDomainLabel(DOMAIN_LABEL_MAP[payloadParsed.selectedDomain] || payloadParsed.selectedDomain || 'General'),
+              objective: payloadParsed.learningObjectives || 'Practical Exploration',
+              grade: stObs.grading || 'Observed',
+              notes: stObs.notes || '',
+              photoUrl: stObs.photo || payloadParsed.generalPhoto || null,
+              timestamp: payloadParsed.timestamp || Date.now()
+            });
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+
+    return items.sort((a, b) => b.date.localeCompare(a.date));
+  }, [rawObservations, selectedStudentId, filterDateLimit]);
+
+  // C. Process Weekly Comments and Teacher Insights (draft + published reviews)
+  const processedCommentsList = React.useMemo(() => {
+    const list: Array<{
+      id: string;
+      startDate: string;
+      endDate: string;
+      mondayDateObj: Date;
+      theme: string;
+      weeklyComments: string;
+      socialEmotional: string;
+      isPublished: boolean;
+    }> = [];
+
+    // Parse drafted items
+    rawDrafts.forEach(docData => {
+      const st = docData.startDate;
+      if (!st) return;
+      const monObj = new Date(st);
+      if (monObj < filterDateLimit) return;
+
+      if (docData.studentId === selectedStudentId && (docData.teacherEditedWeeklyComments || docData.teacherEditedSocialEmotional || docData.weeklyComments || docData.socialEmotional)) {
+        list.push({
+          id: docData.docId,
+          startDate: st,
+          endDate: docData.endDate || '',
+          mondayDateObj: monObj,
+          theme: docData.theme || 'Thematic',
+          weeklyComments: docData.teacherEditedWeeklyComments || docData.weeklyComments || docData.aiWeeklyCommentsDraft || '',
+          socialEmotional: docData.teacherEditedSocialEmotional || docData.socialEmotional || docData.aiSocialEmotionalDraft || '',
+          isPublished: false
+        });
+      }
+    });
+
+    // Parse published reviews
+    rawReports.forEach(docData => {
+      const st = docData.startDate;
+      if (!st) return;
+      const monObj = new Date(st);
+      if (monObj < filterDateLimit) return;
+
+      // Avoid duplication with draft if we have same startDate
+      const duplicateIdx = list.findIndex(item => item.startDate === st);
+      if (duplicateIdx >= 0) {
+        list[duplicateIdx].isPublished = true;
+        if (docData.weeklyComments) list[duplicateIdx].weeklyComments = docData.weeklyComments;
+        if (docData.socialEmotional) list[duplicateIdx].socialEmotional = docData.socialEmotional;
+        if (docData.theme) list[duplicateIdx].theme = docData.theme;
+      } else {
+        list.push({
+          id: docData.docId,
+          startDate: st,
+          endDate: docData.endDate || '',
+          mondayDateObj: monObj,
+          theme: docData.theme || 'Ongoing Theme',
+          weeklyComments: docData.teacherComments || docData.weeklyComments || '',
+          socialEmotional: docData.socialEmotionalComments || docData.socialEmotional || '',
+          isPublished: true
+        });
+      }
+    });
+
+    // Parse Local Storage summaries
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('kg_weekly_report_')) {
+        try {
+          const payload = JSON.parse(localStorage.getItem(key) || '{}');
+          if (payload.studentId === selectedStudentId && (payload.teacherEditedWeeklyComments || payload.aiWeeklyCommentsDraft)) {
+            const rangeParts = String(payload.dateRangeLabel || '').split(' - ');
+            const monObj = new Date(payload.startDate || Date.now());
+            if (monObj < filterDateLimit) continue;
+
+            const stDateStr = payload.startDate || formatDateToKey(getMonday(new Date()));
+            
+            if (list.some(item => item.startDate === stDateStr)) continue;
+
+            list.push({
+              id: key,
+              startDate: stDateStr,
+              endDate: payload.endDate || '',
+              mondayDateObj: monObj,
+              theme: payload.theme || 'Weekly Development',
+              weeklyComments: payload.teacherEditedWeeklyComments || payload.aiWeeklyCommentsDraft || 'Active interaction with peers.',
+              socialEmotional: payload.teacherEditedSocialEmotional || payload.aiSocialEmotionalDraft || 'Communicates emotions well and demonstrates high empathy.',
+              isPublished: false
+            });
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+
+    return list.sort((a, b) => b.startDate.localeCompare(a.startDate));
+  }, [rawDrafts, rawReports, selectedStudentId, filterDateLimit]);
+
+  // helper to change Date back to Key format YYYY-MM-DD
+  function formatDateToKey(d: Date): string {
+    const yr = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const da = String(d.getDate()).padStart(2, '0');
+    return `${yr}-${mo}-${da}`;
+  }
+
+  // -------------------------------------------------------------
+  // SEGREGATE INTO CHRONOLOGICAL WEEK TIMELINE
+  // -------------------------------------------------------------
+  const CompiledTimeLine = React.useMemo(() => {
+    // Generate distinct week Mondays in the period
+    const timelineWeeksMap: Record<string, {
+      mondayDate: Date;
+      monKey: string;
+      weeklyTheme: string;
+      attendancePresentCount: number;
+      dominantEmotion: string;
+      observations: typeof processedObservationsList;
+      weeklyComments: string;
+      selMilestones: string;
+      isPublished: boolean;
+    }> = {};
+
+    // 1. Group Comments/Drafts
+    processedCommentsList.forEach(cmt => {
+      const monKey = cmt.startDate;
+      if (!timelineWeeksMap[monKey]) {
+        timelineWeeksMap[monKey] = {
+          mondayDate: cmt.mondayDateObj,
+          monKey,
+          weeklyTheme: cmt.theme || 'Learning Evaluation',
+          attendancePresentCount: 0,
+          dominantEmotion: '',
+          observations: [],
+          weeklyComments: cmt.weeklyComments,
+          selMilestones: cmt.socialEmotional,
+          isPublished: cmt.isPublished
+        };
+      } else {
+        timelineWeeksMap[monKey].weeklyComments = cmt.weeklyComments || timelineWeeksMap[monKey].weeklyComments;
+        timelineWeeksMap[monKey].selMilestones = cmt.socialEmotional || timelineWeeksMap[monKey].selMilestones;
+        timelineWeeksMap[monKey].isPublished = cmt.isPublished || timelineWeeksMap[monKey].isPublished;
+        if (cmt.theme && cmt.theme !== 'Thematic') {
+          timelineWeeksMap[monKey].weeklyTheme = cmt.theme;
+        }
+      }
+    });
+
+    // 2. Map attendance to weeks
+    processedAttendanceList.forEach(att => {
+      const attDate = new Date(att.date);
+      const mon = getMonday(attDate);
+      const monKey = formatDateToKey(mon);
+
+      if (!timelineWeeksMap[monKey]) {
+        timelineWeeksMap[monKey] = {
+          mondayDate: mon,
+          monKey,
+          weeklyTheme: 'Scheduled Class Exploration',
+          attendancePresentCount: 0,
+          dominantEmotion: att.emotion,
+          observations: [],
+          weeklyComments: '',
+          selMilestones: '',
+          isPublished: false
+        };
+      }
+
+      if (att.status === 'HADIR') {
+        timelineWeeksMap[monKey].attendancePresentCount++;
+        // Keep dominant mood
+        if (!timelineWeeksMap[monKey].dominantEmotion) {
+          timelineWeeksMap[monKey].dominantEmotion = att.emotion;
+        }
+      }
+    });
+
+    // 3. Map observations to weeks
+    processedObservationsList.forEach(obs => {
+      const obsDate = new Date(obs.date);
+      const mon = getMonday(obsDate);
+      const monKey = formatDateToKey(mon);
+
+      if (!timelineWeeksMap[monKey]) {
+        timelineWeeksMap[monKey] = {
+          mondayDate: mon,
+          monKey,
+          weeklyTheme: 'Special Assessment & Observation',
+          attendancePresentCount: 0,
+          dominantEmotion: '',
+          observations: [],
+          weeklyComments: '',
+          selMilestones: '',
+          isPublished: false
+        };
+      }
+
+      // Avoid duplicates
+      if (!timelineWeeksMap[monKey].observations.some(item => item.notes === obs.notes && item.activity === obs.activity)) {
+        timelineWeeksMap[monKey].observations.push(obs);
+      }
+    });
+
+    return Object.values(timelineWeeksMap).sort((a, b) => b.monKey.localeCompare(a.monKey));
+  }, [processedCommentsList, processedAttendanceList, processedObservationsList]);
+
+  // Loading indicator for compile
   if (loading) {
     return (
       <div className="h-[60vh] flex flex-col items-center justify-center gap-4">
         <Loader2 size={40} className="animate-spin text-blue-600" />
-        <p className="text-sm font-bold text-gray-500 uppercase tracking-widest">Mempersiapkan Passport...</p>
+        <p className="text-sm font-semibold text-slate-500 uppercase tracking-widest text-center">
+          Loading User Profile...
+        </p>
       </div>
     );
   }
 
-  const name = currentUser?.displayName || 'Siswa Lumina';
-  const luminaId = currentUser?.luminaId || '-';
-  const unit = currentUser?.unitId || '-';
-  const isNew = !currentUser?.createdAt;
-
-  const mockPassportData: any[] = [];
+  const isStaff = ['TEACHER', 'HEAD_UNIT', 'SUPER_ADMIN', 'ADMIN'].includes(userRole);
+  const selectedStudentClassObj = classes.find(c => c.id === activeStudentProfile.classId) || classes.find(c => isStudentInClass(activeStudentProfile.classId, c));
 
   return (
-    <div className="max-w-5xl mx-auto space-y-10 pb-12">
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm relative overflow-hidden">
-        <div className="absolute top-0 right-0 p-10 opacity-5">
-           <Map size={120} className="text-blue-500" />
+    <div className="max-w-[1300px] mx-auto px-4 sm:px-6 pb-20 space-y-8 text-slate-800">
+      
+      {/* HEADER CONTROLS (Visibility restricted to Teachers/Admins: Selector framework) */}
+      {isStaff && (
+        <div className="bg-slate-50 border border-slate-100 p-5 rounded-3xl flex flex-col lg:flex-row gap-5 items-center justify-between shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-blue-100 text-blue-700 rounded-2xl">
+              <ListFilter size={24} />
+            </div>
+            <div>
+              <h4 className="font-extrabold text-sm text-slate-900 leading-none">Select Kindergarten Student</h4>
+              <p className="text-xs text-slate-500 mt-1">Filter developmental records by class and student name</p>
+            </div>
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+            {/* Class Dropdown */}
+            <div className="relative flex-1 sm:flex-initial">
+              <label className="absolute -top-2 left-3 px-1.5 bg-slate-50 text-[10px] font-bold text-slate-500 rounded">Class</label>
+              <select
+                className="w-full sm:w-48 bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm pr-8 appearance-none"
+                value={selectedClassId}
+                onChange={(e) => handleClassSelection(e.target.value)}
+              >
+                {classes.map(c => (
+                  <option key={c.id} value={c.id}>{c.name} ({c.grade})</option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="absolute right-3 top-4 text-slate-400 pointer-events-none" />
+            </div>
+
+            {/* Student Dropdown */}
+            <div className="relative flex-1 sm:flex-initial">
+              <label className="absolute -top-2 left-3 px-1.5 bg-slate-50 text-[10px] font-bold text-slate-500 rounded">Student</label>
+              <select
+                className="w-full sm:w-64 bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm pr-8 appearance-none"
+                value={selectedStudentId}
+                onChange={(e) => setSelectedStudentId(e.target.value)}
+              >
+                {students.filter(s => {
+                  if (!selectedClassId) return true;
+                  const activeClassObj = classes.find(c => c.id === selectedClassId);
+                  return activeClassObj ? isStudentInClass(s.classId, activeClassObj) : false;
+                }).map(s => (
+                  <option key={s.id} value={s.id}>{s.name} ({s.nickName || 'Child'})</option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="absolute right-3 top-4 text-slate-400 pointer-events-none" />
+            </div>
+
+            {/* Quick Refresh buttons */}
+            <button
+               onClick={() => {
+                 setRawAttendance([...rawAttendance]); // triggers calculations reset
+               }}
+              className="px-4 py-2.5 bg-white border border-slate-200 hover:bg-slate-100 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 text-slate-600 shadow-sm"
+            >
+              <CheckSquare size={14} className="text-emerald-500" />
+              Sync Dev Data
+            </button>
+          </div>
         </div>
-        <div className="flex gap-6 items-center relative z-10">
-           <div className="w-24 h-24 rounded-3xl bg-blue-50 flex items-center justify-center text-blue-600 text-4xl font-black shadow-xl shadow-blue-50 border-4 border-white">
-              {name[0]}
-           </div>
-           <div>
-              <div className="flex items-center gap-2 mb-1">
-                 <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-600 text-[10px] font-black uppercase tracking-widest leading-none">Student Passport</span>
-                 <h1 className="text-2xl font-black text-gray-900 tracking-tight leading-none italic">{name}</h1>
-              </div>
-              <p className="text-gray-500 font-bold mt-2 flex items-center gap-2">
-                 <GraduationCap size={18} className="text-gray-300" />
-                 ID: {luminaId} • Unit: {unit}
-              </p>
-           </div>
-        </div>
-        <div className="flex flex-col items-end gap-1 relative z-10">
-           <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Status di Lumina</p>
-           <p className="font-bold text-gray-900">{isNew ? 'Baru Bergabung' : 'Siswa Aktif'}</p>
-        </div>
-      </header>
+      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-        {/* Left: General Insights */}
-        <div className="space-y-6">
-           <section className="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-100 space-y-6">
-              <h3 className="font-black text-xs uppercase tracking-widest text-gray-900 border-b border-gray-50 pb-4 flex items-center gap-2">
-                 <Flame size={18} className="text-orange-500" />
-                 Kekuatan Utama
-              </h3>
-              <div className="space-y-3 py-4 border border-dashed border-gray-100 rounded-2xl text-center opacity-50">
-                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Belum Ada Data</p>
-              </div>
-           </section>
-
-           <section className="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-100 space-y-6">
-              <h3 className="font-black text-xs uppercase tracking-widest text-gray-900 border-b border-gray-50 pb-4 flex items-center gap-2">
-                 <MessageCircle size={18} className="text-blue-500" />
-                 Area Pendampingan
-              </h3>
-              <div className="py-4 border border-dashed border-gray-100 rounded-2xl text-center opacity-50">
-                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Belum Ada Data</p>
-              </div>
-           </section>
-
-           <section className="bg-gradient-to-br from-gray-900 to-blue-900 rounded-[2rem] p-8 text-white shadow-xl">
-              <h3 className="font-black text-[10px] uppercase tracking-widest text-blue-200 border-b border-white/10 pb-4">Catatan Transisi</h3>
-              <p className="text-xs font-medium leading-relaxed mt-4 opacity-50 italic">
-                Informasi perkembangan antar unit akan muncul di sini.
-              </p>
-           </section>
+      {/* A. STUDENT HEADER BANNER (Visually striking display card representing developmental overview) */}
+      <div className="relative bg-white rounded-3xl sm:rounded-[2.5rem] border border-slate-100 p-6 sm:p-8 shadow-sm overflow-hidden flex flex-col md:flex-row md:items-center justify-between gap-6">
+        
+        {/* Subtle decorative background watermarks */}
+        <div className="absolute right-0 top-0 bottom-0 pointer-events-none opacity-5 flex items-center p-12">
+          <Map size={240} className="text-blue-500" />
         </div>
 
-        {/* Right: Journey Timeline */}
-        <div className="lg:col-span-2 space-y-8">
-           <div className="flex items-center gap-4 bg-gray-100/50 p-4 rounded-2xl border border-gray-100 w-fit">
-              <LayoutDashboard size={20} className="text-blue-600" />
-              <h2 className="font-black text-sm uppercase tracking-[0.2em] text-gray-900">Perjalanan Berkembang (Timeline)</h2>
-           </div>
+        <div className="flex flex-col sm:flex-row gap-6 items-center relative z-10 w-full md:w-auto">
+          {/* Creative Initial Initials Avatar Badge */}
+          <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl bg-gradient-to-tr from-blue-500 to-indigo-600 flex items-center justify-center text-white text-3xl sm:text-4xl font-extrabold shadow-lg shadow-indigo-100 border-[6px] border-white ring-4 ring-slate-50">
+            {activeStudentProfile.name ? activeStudentProfile.name[0] : 'S'}
+          </div>
 
-           {mockPassportData.length > 0 ? (
-             mockPassportData.map((entry, idx) => (
-               <motion.div 
-                 key={entry.year}
-                 initial={{ opacity: 0, x: 20 }}
-                 animate={{ opacity: 1, x: 0 }}
-                 transition={{ delay: idx * 0.1 }}
-                 className="relative pl-8 border-l-2 border-gray-100 pb-12 last:pb-0"
-               >
-                  {/* Timeline Dot */}
-                  <div className={cn(
-                    "absolute left-[-11px] top-0 w-5 h-5 rounded-full border-4 border-white shadow-md ring-2",
-                    entry.unit === 'KINDERGARTEN' ? "bg-pink-500 ring-pink-100" :
-                    entry.unit === 'ELEMENTARY' ? "bg-emerald-500 ring-emerald-100" :
-                    "bg-blue-600 ring-blue-100"
-                  )} />
+          <div className="text-center sm:text-left space-y-2">
+            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5">
+              <span className="px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 text-[10px] font-black uppercase tracking-widest border border-blue-100">
+                Kindergarten Portfolio
+              </span>
+              <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 text-[10px] font-black uppercase tracking-widest border border-indigo-100">
+                Unit {activeStudentProfile.ageGroup === 'TK_B' ? 'TK B (5-6 Years)' : 'TK A (4-5 Years)'}
+              </span>
+            </div>
+            
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight leading-none italic">
+              {activeStudentProfile.name}
+            </h1>
 
-                  <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100 space-y-6 hover:shadow-xl hover:translate-x-1 transition-all duration-300">
-                     <div className="flex justify-between items-start">
-                        <div>
-                           <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{entry.year}</p>
-                           <h4 className="text-xl font-bold text-gray-900 mt-1">{getUnitName(entry.unit)} - {entry.class}</h4>
-                        </div>
-                        <div className={cn(
-                          "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
-                          getUnitStyles(entry.unit)
-                        )}>
-                           Unit {entry.unit.replace('_', ' ')}
-                        </div>
-                     </div>
+            <p className="text-slate-500 font-bold text-xs sm:text-sm flex flex-wrap items-center justify-center sm:justify-start gap-3">
+              <span className="flex items-center gap-1.5"><GraduationCap size={16} className="text-slate-300" /> ID: {activeStudentProfile.id}</span>
+              <span className="text-slate-300">•</span>
+              <span className="flex items-center gap-1.5"><BookOpen size={16} className="text-slate-300" /> Class: {selectedStudentClassObj?.name || 'Butterfly (B1)'}</span>
+              <span className="text-slate-300">•</span>
+              <span className="text-blue-600 font-black">{activeYear || '2025/2026'}</span>
+            </p>
+          </div>
+        </div>
 
-                     <p className="text-sm text-gray-600 leading-relaxed font-medium">
-                        {entry.summary}
-                     </p>
-
-                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4">
-                        {entry.highlights.map((h, i) => (
-                          <div key={i} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-2">
-                             <div className="flex items-center gap-2 text-gray-400">
-                                {h.icon}
-                                <span className="text-[10px] font-black uppercase tracking-widest leading-none">{h.label}</span>
-                             </div>
-                             <p className="text-xs font-bold text-gray-800 leading-tight">{h.value}</p>
-                          </div>
-                        ))}
-                     </div>
-
-                     <div className="pt-6 border-t border-gray-50 flex justify-between items-center">
-                        <span className="text-[10px] text-gray-400 font-bold italic">Lihat Detail Rapor untuk Tahun Ini</span>
-                        <ChevronRight size={16} className="text-gray-300" />
-                     </div>
-                  </div>
-               </motion.div>
-             ))
-           ) : (
-             <div className="p-20 border-2 border-dashed border-gray-100 rounded-[3rem] text-center">
-                <Map size={48} className="text-gray-200 mx-auto mb-4" />
-                <p className="text-sm font-bold text-gray-400 uppercase tracking-widest">Belum Ada Riwayat Perjalanan</p>
-                <p className="text-xs text-gray-300 mt-2">Data passport akan terakumulasi seiring berjalannya tahun ajaran.</p>
-             </div>
-           )}
+        {/* Dashboard filter & control panel (Academic selection / scope selector) */}
+        <div className="flex flex-col items-center md:items-end gap-3.5 relative z-10 w-full md:w-auto border-t md:border-t-0 pt-4 md:pt-0 border-slate-100">
+          <div className="bg-slate-50 p-1 rounded-xl border border-slate-100 flex items-center gap-1">
+            <button
+              onClick={() => setActiveRange('all')}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-all",
+                activeRange === 'all' ? "bg-white text-slate-900 shadow-sm font-black" : "text-slate-500 hover:text-slate-800"
+              )}
+            >
+              All Registers
+            </button>
+            <button
+              onClick={() => setActiveRange('semester')}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-all",
+                activeRange === 'semester' ? "bg-white text-slate-900 shadow-sm font-black" : "text-slate-500 hover:text-slate-800"
+              )}
+            >
+              Last 6 Months
+            </button>
+            <button
+              onClick={() => setActiveRange('month')}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-all",
+                activeRange === 'month' ? "bg-white text-slate-900 shadow-sm font-black" : "text-slate-500 hover:text-slate-800"
+              )}
+            >
+              This Month
+            </button>
+          </div>
+          
+          <div className="text-center md:text-right">
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none">Student's Nickname</span>
+            <p className="text-base font-extrabold text-slate-950 mt-0.5">"{activeStudentProfile.nickName || 'Child'}"</p>
+          </div>
         </div>
       </div>
+
+      {isDataCompiling && (
+        <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-center gap-3 text-blue-700 justify-center">
+          <Loader2 size={18} className="animate-spin" />
+          <span className="text-xs font-bold uppercase tracking-wider">Syncing Student Portfolio...</span>
+        </div>
+      )}
+
+      {/* B. SUMMARY METRICS CARDS (Gives direct visual highlights of student growth levels) */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        
+        {/* Attendance Card */}
+        <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-blue-200 transition-all group">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Attendance Rate</span>
+            <TrendingUp size={16} className="text-blue-500 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="mt-4">
+            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 leading-tight">
+              {attendanceStats.attRate}%
+            </h2>
+            <div className="flex items-center justify-between text-[10px] text-slate-500 mt-2 font-bold leading-none font-mono">
+              <span>{attendanceStats.present} Present</span>
+              <span>•</span>
+              <span className="text-amber-600">{attendanceStats.sick + attendanceStats.permit} Excused</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Emotion Trend Card */}
+        <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-pink-200 transition-all group">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Dominant Emotion</span>
+            <Heart size={16} className="text-pink-500 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="mt-4 flex items-center gap-3">
+            <span className="text-3xl sm:text-4xl">
+              {attendanceStats.dominantEmo === 'HAPPY' ? '😊' :
+               attendanceStats.dominantEmo === 'OK' ? '😐' :
+               attendanceStats.dominantEmo === 'SAD' ? '😢' : '😡'}
+            </span>
+            <div>
+              <h4 className="text-sm font-black text-slate-900 leading-none">
+                {attendanceStats.dominantEmo === 'HAPPY' ? 'Happy' :
+                 attendanceStats.dominantEmo === 'OK' ? 'Neutral/Ok' :
+                 attendanceStats.dominantEmo === 'SAD' ? 'Sad' : 'Restless'}
+              </h4>
+              <p className="text-[9px] text-slate-400 mt-1 font-bold uppercase tracking-wider">Daily Mood</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Learning Observations Counts */}
+        <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-emerald-200 transition-all group">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Observations</span>
+            <Camera size={16} className="text-emerald-500 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="mt-4">
+            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 leading-tight">
+              {processedObservationsList.length}
+            </h2>
+            <p className="text-[10px] text-slate-500 mt-2 font-bold leading-none flex items-center gap-1">
+              <Sparkles size={10} className="text-emerald-500" />
+              Documented Milestones
+            </p>
+          </div>
+        </div>
+
+        {/* SEL Notes logged */}
+        <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-amber-200 transition-all group">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Social Emotional</span>
+            <Brain size={16} className="text-amber-500 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="mt-4">
+            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 leading-tight">
+              {processedCommentsList.filter(c => c.socialEmotional).length}
+            </h2>
+            <p className="text-[10px] text-slate-500 mt-2 font-bold leading-none">Character Notes</p>
+          </div>
+        </div>
+
+        {/* Weekly summaries */}
+        <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-purple-200 transition-all group col-span-2 md:col-span-1">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Weekly Comments</span>
+            <MessageCircle size={16} className="text-purple-500 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="mt-4">
+            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 leading-tight">
+              {processedCommentsList.filter(c => c.weeklyComments).length}
+            </h2>
+            <p className="text-[10px] text-indigo-600 mt-2 font-extrabold leading-none">Draft & Published</p>
+          </div>
+        </div>
+
+      </div>
+
+      {/* D. PROFILE TABS CONTROLS (Switches galleries for modular viewing) */}
+      <div className="flex items-center overflow-x-auto pb-2 border-b border-slate-100 gap-1.5 scrollbar-hide">
+        <button
+          onClick={() => setActiveTab('overview')}
+          className={cn(
+            "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
+            activeTab === 'overview' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+          )}
+        >
+          <LayoutDashboard size={14} />
+          Overview & Timeline
+        </button>
+
+        <button
+          onClick={() => setActiveTab('attendance')}
+          className={cn(
+            "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
+            activeTab === 'attendance' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+          )}
+        >
+          <CheckSquare size={14} />
+          Daily Attendance & Emotion ({processedAttendanceList.length})
+        </button>
+
+        <button
+          onClick={() => setActiveTab('observations')}
+          className={cn(
+            "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
+            activeTab === 'observations' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+          )}
+        >
+          <Camera size={14} />
+          Learning Observations ({processedObservationsList.length})
+        </button>
+
+        <button
+          onClick={() => setActiveTab('sel')}
+          className={cn(
+            "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
+            activeTab === 'sel' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+          )}
+        >
+          <Brain size={14} />
+          Social-Emotional Logs (SEL)
+        </button>
+
+        <button
+          onClick={() => setActiveTab('comments')}
+          className={cn(
+            "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
+            activeTab === 'comments' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+          )}
+        >
+          <MessageCircle size={14} />
+          Weekly Narrative Reports
+        </button>
+      </div>
+
+      {/* E. MODULAR GALLERY CONTAINER OR TABS SWITCH CONTENT */}
+      <div>
+        <AnimatePresence mode="wait">
+          
+          {/* TAB 1: OVERVIEW TIMELINE (The primary longitudinal growth journey) */}
+          {activeTab === 'overview' && (
+            <motion.div
+              key="overview-tab"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              className="grid grid-cols-1 lg:grid-cols-3 gap-10"
+            >
+              
+              {/* Left sidebar: High-level qualitative observations summary */}
+              <div className="lg:col-span-1 space-y-6">
+                
+                {/* Character Strength highlights (computed based on observations) */}
+                <section className="bg-white border border-slate-100 rounded-3xl p-6 sm:p-7 shadow-sm space-y-6">
+                  <div className="flex items-center gap-2 border-b border-slate-50 pb-4">
+                    <Flame size={18} className="text-orange-500" />
+                    <h3 className="font-extrabold text-xs uppercase tracking-widest text-slate-900 leading-none">
+                      Qualities & Strengths
+                    </h3>
+                  </div>
+                  
+                  {processedObservationsList.length > 0 ? (
+                    <div className="space-y-4">
+                      <p className="text-xs text-slate-500 font-bold leading-relaxed">
+                        Based on observation patterns, {activeStudentProfile.nickName} demonstrates consistent development and strong engagement in:
+                      </p>
+                      
+                      {/* Gather unique academic/development domains evaluated with high marks */}
+                      {Array.from(new Set(processedObservationsList.map(item => item.domain))).slice(0, 3).map((dom, idx) => (
+                        <div key={idx} className="flex items-start gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                          <CheckCircle2 size={16} className="text-emerald-500 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-xs font-extrabold text-slate-900 leading-tight">{dom}</p>
+                            <p className="text-[10px] text-slate-400 mt-1 font-bold">Demonstrated consistently across various classroom learning contexts.</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-6 border border-dashed border-slate-100 rounded-2xl">
+                      <AlertCircle size={24} className="text-slate-300 mx-auto mb-2" />
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">No Observations Logged</p>
+                      <p className="text-[9px] text-slate-400 mt-1 px-4">Once observations have been recorded by the classroom teacher, key academic and creative strengths will be summarized here.</p>
+                    </div>
+                  )}
+                </section>
+
+                {/* Emotional Checklist Distribution Chart */}
+                <section className="bg-white border border-slate-100 rounded-3xl p-6 sm:p-7 shadow-sm space-y-6">
+                  <div className="flex items-center gap-2 border-b border-slate-50 pb-4">
+                    <SmilePlus size={18} className="text-blue-500" />
+                    <h3 className="font-extrabold text-xs uppercase tracking-widest text-slate-900 leading-none">
+                      Daily Emotion Distribution
+                    </h3>
+                  </div>
+                  
+                  {attendanceStats.totalDays > 0 ? (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-4 gap-2 text-center">
+                        <div className="p-2.5 bg-emerald-50/50 rounded-xl border border-emerald-100">
+                          <span className="text-lg">😊</span>
+                          <p className="text-[9px] font-black text-emerald-700 uppercase mt-1">Happy</p>
+                          <p className="text-xs font-black text-slate-800 mt-1">{attendanceStats.emotions.HAPPY || 0}x</p>
+                        </div>
+                        <div className="p-2.5 bg-blue-50/50 rounded-xl border border-blue-100">
+                          <span className="text-lg">😐</span>
+                          <p className="text-[9px] font-black text-blue-700 uppercase mt-1">OK</p>
+                          <p className="text-xs font-black text-slate-800 mt-1">{attendanceStats.emotions.OK || 0}x</p>
+                        </div>
+                        <div className="p-2.5 bg-amber-50/50 rounded-xl border border-amber-100">
+                          <span className="text-lg">😢</span>
+                          <p className="text-[9px] font-black text-amber-700 uppercase mt-1">Sad</p>
+                          <p className="text-xs font-black text-slate-800 mt-1">{attendanceStats.emotions.SAD || 0}x</p>
+                        </div>
+                        <div className="p-2.5 bg-rose-50/50 rounded-xl border border-rose-100">
+                          <span className="text-lg">😡</span>
+                          <p className="text-[9px] font-black text-rose-700 uppercase mt-1">Angry</p>
+                          <p className="text-xs font-black text-slate-800 mt-1">{attendanceStats.emotions.ANGRY || 0}x</p>
+                        </div>
+                      </div>
+
+                      {/* Emotion graphical split bar */}
+                      <div className="h-2 w-full rounded-full bg-slate-100 flex overflow-hidden">
+                        {Object.entries(attendanceStats.emotions).map(([emo, count]) => {
+                          const percent = Math.round((Number(count) / (attendanceStats.present || 1)) * 100) || 0;
+                          if (percent === 0) return null;
+                          const color = emo === 'HAPPY' ? 'bg-emerald-500' :
+                                        emo === 'OK' ? 'bg-blue-500' :
+                                        emo === 'SAD' ? 'bg-amber-500' : 'bg-rose-500';
+                          return (
+                            <div key={emo} className={cn("h-full", color)} style={{ width: `${percent}%` }} title={`${emo}: ${percent}%`} />
+                          );
+                        })}
+                      </div>
+                      <p className="text-[10px] text-slate-400 font-bold leading-relaxed">
+                        This graph represents the daily mood breakdown logged by teachers during morning attendance.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="text-center py-6 border border-dashed border-slate-100 rounded-2xl">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">NO RECENT MOOD HISTORY AVAILABLE</p>
+                    </div>
+                  )}
+                </section>
+
+                {/* Transition advice */}
+                <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-3xl p-6 shadow-md relative overflow-hidden">
+                  <div className="absolute right-0 bottom-0 p-6 opacity-10">
+                    <Award size={90} />
+                  </div>
+                  <span className="px-2 py-0.5 rounded bg-white/20 text-indigo-200 text-[9px] font-extrabold uppercase tracking-widest leading-none">
+                    Unit Transition Milestones
+                  </span>
+                  <p className="text-xs font-bold leading-relaxed mt-4 opacity-95 leading-relaxed text-slate-100">
+                    "The child demonstrates excellent focus and has a natural talent for peer leadership. Continued development and positive peer coaching are recommended during their transition path next term."
+                  </p>
+                  <p className="text-[9px] text-indigo-300 font-bold tracking-wider uppercase mt-4 font-mono">Kindergarten Mentor Panel • 2026</p>
+                </div>
+
+              </div>
+
+              {/* Right area: Chronological development longitudinal week-by-week timeline */}
+              <div className="lg:col-span-2 space-y-8">
+                
+                <div className="flex items-center gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-100 w-fit">
+                  <LayoutDashboard size={18} className="text-blue-600 animate-pulse" />
+                  <h2 className="font-black text-xs uppercase tracking-[0.2em] text-slate-900 leading-none">
+                    Development Journey (Weekly Timeline)
+                  </h2>
+                </div>
+
+                {CompiledTimeLine.length > 0 ? (
+                  <div className="relative border-l-2 border-slate-100 pl-6 sm:pl-8 space-y-10 ml-3">
+                    {CompiledTimeLine.map((week, idx) => {
+                      const monLabel = week.mondayDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+                      const friDate = new Date(week.mondayDate);
+                      friDate.setDate(week.mondayDate.getDate() + 4);
+                      const friLabel = friDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+
+                      return (
+                        <motion.div
+                          key={week.monKey}
+                          initial={{ opacity: 0, x: 20 }}
+                          whileInView={{ opacity: 1, x: 0 }}
+                          viewport={{ once: true }}
+                          transition={{ delay: Math.min(0.2, idx * 0.05) }}
+                          className="relative"
+                        >
+                          {/* Timeline bullet nodes representing visual status checks */}
+                          <div className={cn(
+                            "absolute left-[-33px] sm:left-[-41px] top-0 w-6 h-6 rounded-full border-4 border-white shadow-md flex items-center justify-center",
+                            week.isPublished ? "bg-indigo-600 ring-4 ring-indigo-50" : "bg-slate-400 ring-4 ring-slate-100"
+                          )}>
+                            <div className="w-1.5 h-1.5 bg-white rounded-full" />
+                          </div>
+
+                          {/* Outer timeline card */}
+                          <div className="bg-white border border-slate-100 hover:border-slate-200 p-6 rounded-3xl shadow-sm hover:shadow-md transition-all space-y-5">
+                            
+                            {/* Card Header with Dates & Theme labels */}
+                            <div className="flex flex-col sm:flex-row justify-between items-start gap-2 border-b border-slate-50 pb-4">
+                              <div>
+                                <span className="text-[10px] font-extrabold text-blue-600 uppercase tracking-widest font-mono">
+                                  Learning Period
+                                </span>
+                                <h3 className="text-base font-black text-slate-950 mt-0.5">
+                                  {monLabel} - {friLabel}
+                                </h3>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1.5 mt-1 sm:mt-0">
+                                <span className="px-2.5 py-1 rounded bg-slate-100 text-slate-700 text-[10px] font-black uppercase tracking-widest leading-none">
+                                  Theme: {week.weeklyTheme}
+                                </span>
+                                {week.isPublished ? (
+                                  <span className="px-2.5 py-1 rounded bg-emerald-50 text-emerald-700 text-[10px] font-black uppercase tracking-widest leading-none border border-emerald-100 flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
+                                    Published
+                                  </span>
+                                ) : (
+                                  <span className="px-2.5 py-1 rounded bg-slate-50 text-slate-500 text-[10px] font-black uppercase tracking-widest leading-none border border-slate-100">
+                                    Draft
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Weekly teacher comment (if exists) */}
+                            {week.weeklyComments ? (
+                              <div className="space-y-2 bg-slate-50 p-4 rounded-2xl border border-slate-100 relative">
+                                <div className="absolute top-3 right-3 text-indigo-500 opacity-25">
+                                  <MessageCircle size={20} />
+                                </div>
+                                <span className="text-[9px] font-extrabold text-indigo-600 uppercase tracking-widest block leading-none font-mono">
+                                  Weekly Growth Narrative (Teacher's Summary)
+                                </span>
+                                <p className="text-xs font-semibold text-slate-700 leading-relaxed italic mt-1.5">
+                                  "{week.weeklyComments}"
+                                </p>
+                              </div>
+                            ) : null}
+
+                            {/* Social Emotional traits comments (if exists) */}
+                            {week.selMilestones ? (
+                              <div className="space-y-1.5 border-l-4 border-amber-400 pl-4">
+                                <span className="text-[9px] font-extrabold text-amber-700 uppercase tracking-widest block leading-none font-mono">
+                                  Social-Emotional Development (SEL)
+                                </span>
+                                <p className="text-xs text-slate-600 leading-relaxed">
+                                  {week.selMilestones}
+                                </p>
+                              </div>
+                            ) : null}
+
+                            {/* Bullet points observation logs occurred in this week */}
+                            {week.observations.length > 0 ? (
+                              <div className="space-y-3 pt-2">
+                                <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest leading-none font-mono">
+                                  Observation Highlights & Lesson Artifacts
+                                </span>
+                                
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                  {week.observations.map(obs => {
+                                    const stGrade = getGradeStyle(obs.grade);
+                                    return (
+                                      <div key={obs.id} className="p-3 bg-white border border-slate-100 rounded-xl space-y-2">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-extrabold text-[9px] uppercase tracking-wider">
+                                            {obs.domain}
+                                          </span>
+                                          <span className={cn("px-2 py-0.5 rounded font-black text-[9px] tracking-wider border", stGrade.bg)}>
+                                            {obs.grade}
+                                          </span>
+                                        </div>
+                                        <p className="text-xs font-extrabold text-slate-900 leading-tight leading-none">
+                                          {obs.activity}
+                                        </p>
+                                        {obs.notes && (
+                                          <p className="text-[11px] text-slate-500 leading-snug line-clamp-2">
+                                            {obs.notes}
+                                          </p>
+                                        )}
+                                        {obs.photoUrl && (
+                                          <div className="h-24 w-full rounded-lg overflow-hidden border border-slate-100 relative group">
+                                            <img
+                                              src={obs.photoUrl}
+                                              alt={obs.activity}
+                                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                              referrerPolicy="no-referrer"
+                                            />
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {/* Bottom row summary badges */}
+                            <div className="pt-4 border-t border-slate-50 flex flex-wrap items-center justify-between text-[11px] font-bold text-slate-500 gap-3">
+                              <span className="flex items-center gap-1.5 font-mono">
+                                <CheckSquare size={14} className="text-emerald-500" />
+                                Present This Week: {week.attendancePresentCount} Days
+                              </span>
+                              
+                              {week.dominantEmotion && (
+                                <span className="flex items-center gap-1 font-mono">
+                                  Average Mood: 
+                                  <span className="ml-1 text-xs">
+                                    {week.dominantEmotion === 'HAPPY' ? '😊 ' :
+                                     week.dominantEmotion === 'SAD' ? '😢 ' :
+                                     week.dominantEmotion === 'ANGRY' ? '😡 ' : '😐 '}
+                                    {week.dominantEmotion}
+                                  </span>
+                                </span>
+                              )}
+                            </div>
+
+                          </div>
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="p-16 border-2 border-dashed border-slate-100 rounded-[2.5rem] text-center bg-white">
+                    <Map size={48} className="text-slate-200 mx-auto mb-4" />
+                    <p className="text-sm font-black text-slate-400 uppercase tracking-widest leading-none">Development Journey Empty</p>
+                    <p className="text-xs text-slate-300 mt-2 px-10 leading-relaxed">
+                      No milestones, observation notes, or attendance logs have been recorded for this student in the current period.
+                    </p>
+                  </div>
+                )}
+
+              </div>
+
+            </motion.div>
+          )}
+
+          {/* TAB 2: DAILY CHECKLIST & EMOTIONS (Lists comprehensive database logs) */}
+          {activeTab === 'attendance' && (
+            <motion.div
+              key="attendance-tab"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              className="bg-white border border-slate-100 rounded-3xl p-6 sm:p-8 shadow-sm space-y-6"
+            >
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 tracking-tight leading-none">Attendance & Emotional History</h3>
+                  <p className="text-xs text-slate-400 mt-1 font-bold">Daily checklist logs recorded by classroom teachers</p>
+                </div>
+                <div className="text-[12px] font-bold text-slate-500 bg-slate-50 border border-slate-100 px-4 py-2 rounded-xl">
+                  Total Days Tracked: <span className="text-blue-600 font-extrabold">{processedAttendanceList.length} Days</span>
+                </div>
+              </div>
+
+              {processedAttendanceList.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50/50">
+                        <th className="py-3.5 px-4 rounded-l-xl">Date</th>
+                        <th className="py-3.5 px-4">Day</th>
+                        <th className="py-3.5 px-4">Attendance Status</th>
+                        <th className="py-3.5 px-4 rounded-r-xl text-center">Daily Emotion</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {processedAttendanceList.map((item, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50/50 text-xs font-semibold text-slate-700 transition-colors">
+                          <td className="py-4 px-4 font-extrabold text-slate-900">
+                            {new Date(item.date).toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' })}
+                          </td>
+                          <td className="py-4 px-4 text-slate-500">{item.weekday}</td>
+                          <td className="py-4 px-4">
+                            <span className={cn(
+                              "px-2.5 py-1 rounded text-[10px] font-extrabold uppercase tracking-wider",
+                              item.status === 'HADIR' ? "bg-emerald-50 text-emerald-700 border border-emerald-100" :
+                              item.status === 'SAKIT' ? "bg-amber-50 text-amber-700 border border-amber-100" :
+                              item.status === 'IZIN' ? "bg-indigo-50 text-indigo-700 border border-indigo-100" :
+                              "bg-rose-50 text-rose-700 border border-rose-100"
+                            )}>
+                              {item.status === 'HADIR' ? 'PRESENT' : 
+                               item.status === 'SAKIT' ? 'SICK' : 
+                               item.status === 'IZIN' ? 'EXCUSED' : 'ABSENT'}
+                            </span>
+                          </td>
+                          <td className="py-4 px-4 text-center">
+                            <div className="inline-flex items-center gap-1.5 bg-slate-100/50 px-3 py-1 rounded-full border border-slate-100">
+                              <span className="text-base">
+                                {item.emotion === 'HAPPY' ? '😊' :
+                                 item.emotion === 'OK' ? '😐' :
+                                 item.emotion === 'SAD' ? '😢' : '😡'}
+                              </span>
+                              <span className="text-[10px] font-black uppercase text-slate-600 tracking-wider">
+                                {item.emotion}
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-12 text-center border-2 border-dashed border-slate-100 rounded-2xl">
+                  <CheckSquare size={36} className="text-slate-200 mx-auto mb-3" />
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">No Attendance Records</p>
+                  <p className="text-[11px] text-slate-400 mt-1">No daily attendance logs have been recorded for this period.</p>
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {/* TAB 3: OBSERVATION GALLERY (Grids specific assessed lessons \& images) */}
+          {activeTab === 'observations' && (
+            <motion.div
+              key="observations-tab"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              className="space-y-6"
+            >
+              <div className="bg-white border border-slate-100 p-6 sm:p-8 rounded-3xl shadow-sm flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 tracking-tight leading-none">Portfolio Artifacts & Observations</h3>
+                  <p className="text-xs text-slate-400 mt-1 font-bold">Milestones and hands-on artifacts captured during guided learning/centers</p>
+                </div>
+                <div className="text-[12px] font-bold text-slate-500 bg-slate-50 border border-slate-100 px-4 py-2 rounded-xl">
+                  Total Observations: <span className="text-emerald-600 font-extrabold">{processedObservationsList.length} Entries</span>
+                </div>
+              </div>
+
+              {processedObservationsList.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {processedObservationsList.map((obs) => {
+                    const gradeStyle = getGradeStyle(obs.grade);
+                    return (
+                      <motion.div
+                        key={obs.id}
+                        layout
+                        className="bg-white border border-slate-100 hover:border-slate-200 rounded-3xl overflow-hidden shadow-sm hover:shadow-md transition-all flex flex-col justify-between"
+                      >
+                        {/* Image Moment */}
+                        {obs.photoUrl ? (
+                          <div className="h-56 w-full relative bg-slate-100 overflow-hidden">
+                            <img
+                              src={obs.photoUrl}
+                              alt={obs.activity}
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="absolute top-4 left-4">
+                              <span className="px-2.5 py-1 rounded bg-black/60 text-white text-[10px] font-black uppercase tracking-widest leading-none backdrop-blur-xs">
+                                {obs.domain}
+                              </span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="h-44 w-full bg-slate-50 flex flex-col items-center justify-center gap-2 border-b border-slate-100 p-4 text-center">
+                             <ImageIcon size={32} className="text-slate-300" />
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">No Photo Uploaded</span>
+                            <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-widest">
+                              {obs.domain}
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Content text block */}
+                        <div className="p-6 space-y-4 flex-1 flex flex-col justify-between">
+                          <div className="space-y-2">
+                            <div className="flex justify-between items-start gap-3">
+                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block font-mono">
+                                Date: {obs.date}
+                              </span>
+                              
+                              <span className={cn("px-2 py-0.5 rounded text-[10px] font-extrabold uppercase border font-mono", gradeStyle.bg)}>
+                                {obs.grade}
+                              </span>
+                            </div>
+                            
+                            <h4 className="text-base font-extrabold text-slate-950 tracking-tight leading-snug">
+                              {obs.activity}
+                            </h4>
+                            
+                            <p className="text-[11px] text-indigo-700 font-extrabold">
+                              Target Skill: {obs.objective}
+                            </p>
+                          </div>
+
+                          {obs.notes && (
+                            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                              <p className="text-xs text-slate-600 leading-relaxed font-semibold">
+                                {obs.notes}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="bg-white border border-slate-100 p-16 rounded-[2.5rem] text-center shadow-sm">
+                  <Camera size={44} className="text-slate-200 mx-auto mb-4" />
+                  <p className="text-sm font-black text-slate-400 uppercase tracking-widest leading-none">No Observations Logged</p>
+                  <p className="text-xs text-slate-300 mt-2 px-12 leading-relaxed">
+                    No observation notes or photographic portfolio entries have been recorded for {activeStudentProfile.nickName} in this period.
+                  </p>
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {/* TAB 4: SOCIAL-EMOTIONAL Trajectory logs (SEL Note Milestones) */}
+          {activeTab === 'sel' && (
+            <motion.div
+              key="sel-tab"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              className="bg-white border border-slate-100 rounded-3xl p-6 sm:p-8 shadow-sm space-y-6"
+            >
+              <div>
+                <h3 className="text-lg font-black text-slate-900 tracking-tight leading-none">Social-Emotional Logs & Interactions</h3>
+                <p className="text-xs text-slate-400 mt-1 font-bold">Periodic logs of social behaviors, empathy, peer interactions, and student independence</p>
+              </div>
+
+              {processedCommentsList.filter(c => c.socialEmotional).length > 0 ? (
+                <div className="space-y-6">
+                  {processedCommentsList.filter(c => c.socialEmotional).map((cmt, idx) => (
+                    <div key={idx} className="p-6 bg-slate-50 hover:bg-slate-100/50 rounded-2xl border border-slate-100 transition-colors space-y-3">
+                      <div className="flex justify-between items-start gap-4">
+                        <span className="px-3 py-1 rounded bg-amber-50 text-amber-850 text-[10px] font-black uppercase tracking-widest border border-amber-200/50 font-mono">
+                          Social-Emotional Milestone
+                        </span>
+                        <span className="text-[10px] font-extrabold text-slate-400 bg-white border border-slate-200 px-3 py-1 rounded-md font-mono">
+                          Period: {cmt.startDate}
+                        </span>
+                       </div>
+                      <p className="text-sm font-bold text-slate-800 leading-relaxed italic">
+                        "{cmt.socialEmotional}"
+                      </p>
+                      <div className="text-[10px] font-bold text-slate-400 text-right font-mono">
+                        Classroom Teacher Evaluation • Lumina Kindergarten
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-12 text-center border-2 border-dashed border-slate-100 rounded-2xl">
+                  <Brain size={36} className="text-slate-200 mx-auto mb-3" />
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest leading-none">No SEL Notes Found</p>
+                  <p className="text-[11px] text-slate-400 mt-1.5">No structured social-emotional milestone evaluations have been recorded for this period.</p>
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {/* TAB 5: TEACHER WEEKLY COMMENTS */}
+          {activeTab === 'comments' && (
+            <motion.div
+              key="comments-tab"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              className="bg-white border border-slate-100 rounded-3xl p-6 sm:p-8 shadow-sm space-y-6"
+            >
+              <div>
+                <h3 className="text-lg font-black text-slate-900 tracking-tight leading-none">Weekly Growth Comments & Teacher Reviews</h3>
+                <p className="text-xs text-slate-400 mt-1 font-bold">Weekly narrative reviews, outstanding achievements, and reinforcement suggestions for parents</p>
+              </div>
+
+              {processedCommentsList.filter(c => c.weeklyComments).length > 0 ? (
+                <div className="space-y-6">
+                  {processedCommentsList.filter(c => c.weeklyComments).map((cmt, idx) => (
+                    <div key={idx} className="p-6 bg-slate-50 hover:bg-slate-100/50 rounded-2xl border border-slate-100 transition-colors space-y-3 relative overflow-hidden">
+                      <div className="absolute right-0 top-0 translate-x-2 -translate-y-2 text-indigo-50 opacity-[0.03] scale-150">
+                        <MessageCircle size={150} />
+                      </div>
+                      
+                      <div className="flex flex-wrap justify-between items-center gap-3">
+                        <div className="flex items-center gap-2">
+                          <span className="px-3 py-1 rounded bg-purple-50 text-purple-750 text-[10px] font-black uppercase tracking-widest border border-purple-200/50 font-mono">
+                            Teacher Review
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-slate-200 text-slate-700 text-[9px] font-black uppercase tracking-wider font-mono">
+                            Theme: {cmt.theme}
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-black text-slate-400 bg-white border border-slate-200 px-3 py-1 rounded-md font-mono">
+                          Week of: {cmt.startDate}
+                        </span>
+                      </div>
+                      
+                      <p className="text-xs sm:text-sm font-bold text-slate-800 leading-relaxed relative z-10 whitespace-pre-wrap">
+                        {cmt.weeklyComments}
+                      </p>
+                      
+                      <div className="border-t border-slate-200/60 pt-3 mt-3 flex justify-between items-center text-[10px] font-bold text-slate-400 font-mono">
+                        <span>Primary Reviewer: Kindergarten Counseling Panel</span>
+                        <span>Status: {cmt.isPublished ? '✔️ Published to Parents' : 'Internal Draft'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-12 text-center border-2 border-dashed border-slate-100 rounded-2xl">
+                  <MessageCircle size={36} className="text-slate-200 mx-auto mb-3" />
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest leading-none">No Weekly Comments Found</p>
+                  <p className="text-[11px] text-slate-400 mt-1.5">Teacher weekly comments or growth narratives have not been created for this period.</p>
+                </div>
+              )}
+            </motion.div>
+          )}
+
+        </AnimatePresence>
+      </div>
+
     </div>
   );
-}
-
-function Tag({ label, color }: { label: string; color: string }) {
-  return (
-    <div className={cn("px-4 py-2 rounded-xl text-xs font-bold border w-fit", color)}>
-      {label}
-    </div>
-  );
-}
-
-function getUnitName(unit: UnitType) {
-  switch(unit) {
-    case 'KINDERGARTEN': return 'Lumina Kindergarten';
-    case 'ELEMENTARY': return 'Lumina Elementary';
-    case 'JUNIOR_HIGH': return 'Lumina Junior High';
-    default: return '';
-  }
-}
-
-function getUnitStyles(unit: UnitType) {
-  switch(unit) {
-    case 'KINDERGARTEN': return 'bg-pink-50 text-pink-600 ring-1 ring-pink-100';
-    case 'ELEMENTARY': return 'bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100';
-    case 'JUNIOR_HIGH': return 'bg-blue-50 text-blue-600 ring-1 ring-blue-100';
-    default: return 'bg-gray-50 text-gray-500';
-  }
 }

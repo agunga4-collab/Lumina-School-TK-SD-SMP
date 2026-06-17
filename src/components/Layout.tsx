@@ -450,7 +450,7 @@ export function Layout() {
                     icon={<LayoutDashboard size={18} />} 
                     label="Analisis Unit" 
                   />
-                  <NavItem to="/child/passport" icon={<MapIcon size={18} />} label="Passport Siswa" />
+                  <NavItem to="/child/passport" icon={<MapIcon size={18} />} label="Student Portfolio" />
                 </>
              )}
           </div>

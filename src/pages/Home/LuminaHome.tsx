@@ -175,13 +175,13 @@ function Shortcut({ role, unit }: { role: UserRole; unit: UnitType }) {
     if (unit === 'KINDERGARTEN') {
       shortcuts.push(
         { label: 'Analisis Unit', icon: <LayoutDashboard size={20} />, to: '/dashboard/head-kindy', color: 'bg-blue-50 text-blue-600' },
-        { label: 'Passport Siswa', icon: <Map size={20} />, to: '/child/passport', color: 'bg-emerald-50 text-emerald-600' }
+        { label: 'Student Portfolio', icon: <Map size={20} />, to: '/child/passport', color: 'bg-emerald-50 text-emerald-600' }
       );
     } else {
       shortcuts.push(
         { label: 'Analisis Unit', icon: <LayoutDashboard size={20} />, to: '/dashboard/head', color: 'bg-blue-50 text-blue-600' },
         { label: 'MTSS Summary', icon: <BarChart3 size={20} />, to: '/mtss/cases', color: 'bg-purple-50 text-purple-600' },
-        { label: 'Passport Siswa', icon: <Map size={20} />, to: '/child/passport', color: 'bg-emerald-50 text-emerald-600' },
+        { label: 'Student Portfolio', icon: <Map size={20} />, to: '/child/passport', color: 'bg-emerald-50 text-emerald-600' },
         { label: 'Laporan Unit', icon: <BookOpen size={20} />, to: '/', color: 'bg-teal-50 text-teal-600' }
       );
     }
@@ -192,7 +192,7 @@ function Shortcut({ role, unit }: { role: UserRole; unit: UnitType }) {
         { label: 'Observation Data', icon: <Camera size={20} />, to: '/kindy/observation', color: 'bg-emerald-50 text-emerald-700' },
         { label: 'Weekly Summary & AI', icon: <Sparkles size={20} />, to: '/kindy/weekly-summary', color: 'bg-emerald-50 text-emerald-600' },
         { label: 'Weekly Report (Final)', icon: <History size={20} />, to: '/kindy/weekly-review', color: 'bg-emerald-50 text-emerald-600' },
-        { label: 'Passport', icon: <Map size={20} />, to: '/child/passport', color: 'bg-orange-50 text-orange-600' }
+        { label: 'Student Portfolio', icon: <Map size={20} />, to: '/child/passport', color: 'bg-orange-50 text-orange-600' }
       );
     } else {
       shortcuts.push(
@@ -207,11 +207,11 @@ function Shortcut({ role, unit }: { role: UserRole; unit: UnitType }) {
       { label: 'MTSS Behavior', icon: <ShieldAlert size={20} />, to: '/mtss/cases', color: 'bg-orange-50 text-orange-600' },
       { label: 'Intervensi', icon: <ClipboardList size={20} />, to: '/', color: 'bg-blue-50 text-blue-600' },
       { label: 'Exploration', icon: <Target size={20} />, to: '/exploration/mentor', color: 'bg-purple-50 text-purple-600' },
-      { label: 'Passport', icon: <Map size={20} />, to: '/child/passport', color: 'bg-emerald-50 text-emerald-600' }
+      { label: 'Student Portfolio', icon: <Map size={20} />, to: '/child/passport', color: 'bg-emerald-50 text-emerald-600' }
     );
   } else if (isParent) {
     shortcuts.push(
-      { label: 'Passport Anak', icon: <Map size={20} />, to: '/child/passport', color: 'bg-blue-50 text-blue-600' },
+      { label: 'Student Portfolio', icon: <Map size={20} />, to: '/child/passport', color: 'bg-blue-50 text-blue-600' },
       { label: 'Progress Belajar', icon: <TrendingUp size={20} />, to: '/child/progress', color: 'bg-emerald-50 text-emerald-600' },
       { label: 'Kehadiran', icon: <CheckSquare size={20} />, to: '/child/attendance', color: 'bg-orange-50 text-orange-600' },
       { label: 'Pesan', icon: <Mail size={20} />, to: '/messages', color: 'bg-indigo-50 text-indigo-600' }
@@ -219,7 +219,7 @@ function Shortcut({ role, unit }: { role: UserRole; unit: UnitType }) {
   } else if (isStudent) {
     shortcuts.push(
       { label: 'Halaman Saya', icon: <UserIcon size={20} />, to: '/', color: 'bg-blue-50 text-blue-600' },
-      { label: 'Passport Saya', icon: <Map size={20} />, to: '/child/passport', color: 'bg-emerald-50 text-emerald-600' },
+      { label: 'Student Portfolio', icon: <Map size={20} />, to: '/child/passport', color: 'bg-emerald-50 text-emerald-600' },
       { label: 'Refleksi Diri', icon: <ClipboardList size={20} />, to: '/exploration/reflection', color: 'bg-purple-50 text-purple-600' },
       { label: 'Portofolio', icon: <Folder size={20} />, to: '/', color: 'bg-orange-50 text-orange-600' }
     );
