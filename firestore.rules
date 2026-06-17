@@ -152,14 +152,14 @@ service cloud.firestore {
       allow get: if isSignedIn() && (
         isAdmin() || (
           'email' in resource.data &&
-          resource.data.email.lower() == request.auth.token.email.lower()
+          resource.data.email == request.auth.token.email.lower()
         )
       );
 
       allow list: if isSignedIn() && (
         isAdmin() || (
           'email' in resource.data &&
-          resource.data.email.lower() == request.auth.token.email.lower()
+          resource.data.email == request.auth.token.email.lower()
         )
       );
 
@@ -170,7 +170,7 @@ service cloud.firestore {
           resource.data.status == 'ready' &&
           request.resource.data.status == 'used' &&
           'email' in resource.data &&
-          resource.data.email.lower() == request.auth.token.email.lower()
+          resource.data.email == request.auth.token.email.lower()
         )
       );
 
