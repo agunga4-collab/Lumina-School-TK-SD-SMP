@@ -149,20 +149,25 @@ service cloud.firestore {
     }
 
     match /roleInvites/{inviteId} {
-      allow get: if isSignedIn() &&
-        (isAdmin() || ('email' in existing() && existing().email.lower() == request.auth.token.email.lower()));
+      allow get: if isSignedIn() && (
+        isAdmin() || (
+          'email' in resource.data &&
+          resource.data.email.lower() == request.auth.token.email.lower()
+        )
+      );
 
       allow list: if isAdmin();
 
       allow create: if isAdmin();
 
-      allow update: if isSignedIn() &&
-        (isAdmin() || (
-          existing().status == 'ready'
-          && incoming().status == 'used'
-          && 'email' in existing()
-          && existing().email.lower() == request.auth.token.email.lower()
-        ));
+      allow update: if isSignedIn() && (
+        isAdmin() || (
+          resource.data.status == 'ready' &&
+          request.resource.data.status == 'used' &&
+          'email' in resource.data &&
+          resource.data.email.lower() == request.auth.token.email.lower()
+        )
+      );
 
       allow delete: if isAdmin();
     }
