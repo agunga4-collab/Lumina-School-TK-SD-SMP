@@ -156,7 +156,12 @@ service cloud.firestore {
         )
       );
 
-      allow list: if isAdmin();
+      allow list: if isSignedIn() && (
+        isAdmin() || (
+          'email' in resource.data &&
+          resource.data.email.lower() == request.auth.token.email.lower()
+        )
+      );
 
       allow create: if isAdmin();
 
