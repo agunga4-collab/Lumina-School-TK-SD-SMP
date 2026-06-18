@@ -1451,7 +1451,7 @@ export default function WeeklySummary() {
                                         <span className="block text-[10px] font-black text-gray-700 mb-1 border-b border-gray-200 pb-0.5 font-sans">{snap.dayKey}</span>
                                         {snap.photoUrl ? (
                                           <div className="w-12 h-12 rounded bg-white border border-gray-250 mx-auto overflow-hidden">
-                                            <img src={snap.photoUrl} alt="work piece" className="w-full h-full object-cover" referrerpolicy="no-referrer" />
+                                            <img src={snap.photoUrl} alt="work piece" className="w-full h-full object-cover" referrerpolicy="no-referrer" crossOrigin="anonymous" />
                                           </div>
                                         ) : (
                                           <div className="w-12 h-12 bg-white/50 border border-dashed border-gray-200 flex items-center justify-center mx-auto text-[7.5px] text-gray-400 p-0.5 font-sans">

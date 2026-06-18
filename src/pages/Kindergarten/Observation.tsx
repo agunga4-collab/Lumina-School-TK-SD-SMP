@@ -33,6 +33,29 @@ const getStudentObs = (obsSource: Record<string, StudentObservation> | undefined
   return { grading: null, notes: '', photo: null };
 };
 
+const cleanFirestoreData = (obj: any): any => {
+  if (obj === null || obj === undefined) return null;
+  if (Array.isArray(obj)) {
+    return obj.map(cleanFirestoreData);
+  }
+  if (typeof obj === 'object') {
+    const clean: Record<string, any> = {};
+    for (const key of Object.keys(obj)) {
+      const val = obj[key];
+      if (val === undefined) continue;
+      if (val instanceof Map) {
+        clean[key] = cleanFirestoreData(Object.fromEntries(val));
+      } else if (val instanceof Set) {
+        clean[key] = Array.from(val).map(cleanFirestoreData);
+      } else {
+        clean[key] = cleanFirestoreData(val);
+      }
+    }
+    return clean;
+  }
+  return obj;
+};
+
 interface StudentObservation {
   grading: KGGrading | null;
   notes: string;
@@ -501,7 +524,7 @@ export default function Observation() {
         setSelectedDetailSession(null);
         toast.success(`Seluruh observasi kosong. Sesi ${selectedDetailSession.date} dihapus penuh.`);
       } else {
-        await setDoc(docRef, { ...selectedDetailSession, observations: updatedObservations });
+        await setDoc(docRef, cleanFirestoreData({ ...selectedDetailSession, observations: updatedObservations }));
         setSelectedDetailSession({
           ...selectedDetailSession,
           observations: updatedObservations
@@ -692,41 +715,124 @@ export default function Observation() {
   };
 
   // Real uploader for general activity photo
-  const handleGeneralPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleGeneralPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setIsUploadingGeneral(true);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setGeneralPhoto(reader.result as string);
-        setIsUploadingGeneral(false);
-        toast.success('Foto Kegiatan Utama berhasil diunggah! ✨');
-      };
-      reader.onerror = () => {
-        setIsUploadingGeneral(false);
-        toast.error('Gagal membaca fail foto.');
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    if (!selectedClassId) {
+      toast.error('Silakan pilih Kelas terlebih dahulu sebelum mengunggah foto.');
+      return;
     }
+
+    const activeClassObj = classes.find(c => c.id === selectedClassId);
+    const className = activeClassObj ? activeClassObj.name : 'General';
+    const academicYear = activeYear || 'Unknown';
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    setIsUploadingGeneral(true);
+    toast.loading('Mengunggah foto kegiatan utama ke Google Drive...', { id: 'upload-general' });
+
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      try {
+        const response = await fetch('/api/observations/upload-photo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            base64: reader.result as string,
+            type: 'general',
+            academicYear,
+            className,
+            observationDate: todayStr,
+            uploadedBy: 'Lumina Teacher'
+          })
+        });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || 'Server error uploading file');
+        }
+
+        const resData = await response.json();
+        const previewUrl = resData.metadata.previewUrl;
+
+        setGeneralPhoto(previewUrl);
+        toast.success('Foto Kegiatan Utama berhasil disinkronisasi ke Google Drive! ✨', { id: 'upload-general' });
+      } catch (err: any) {
+        console.error('[UploadGeneral] Failed:', err);
+        toast.error(`Gagal mengunggah foto ke Google Drive: ${err.message || String(err)}`, { id: 'upload-general' });
+      } finally {
+        setIsUploadingGeneral(false);
+      }
+    };
+    reader.onerror = () => {
+      setIsUploadingGeneral(false);
+      toast.error('Gagal membaca berkas foto.', { id: 'upload-general' });
+    };
+    reader.readAsDataURL(file);
   };
 
   // Real uploader for specific student photo
-  const handleStudentPhotoUpload = (studentId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleStudentPhotoUpload = async (studentId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setUploadProgress(prev => ({ ...prev, [studentId]: true }));
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        updateStudentField(studentId, 'photo', reader.result as string);
-        setUploadProgress(prev => ({ ...prev, [studentId]: false }));
-        toast.success('Foto khusus siswa berhasil diunggah! 📸');
-      };
-      reader.onerror = () => {
-        setUploadProgress(prev => ({ ...prev, [studentId]: false }));
-        toast.error('Gagal membaca fail foto.');
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    if (!selectedClassId) {
+      toast.error('Silakan pilih Kelas terlebih dahulu sebelum mengunggah foto.');
+      return;
     }
+
+    const activeClassObj = classes.find(c => c.id === selectedClassId);
+    const className = activeClassObj ? activeClassObj.name : 'General';
+    const academicYear = activeYear || 'Unknown';
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    const student = students.find(s => s.id === studentId);
+    const studentName = student ? student.name : 'Siswa';
+
+    setUploadProgress(prev => ({ ...prev, [studentId]: true }));
+    toast.loading(`Mengunggah foto ${studentName} ke Google Drive...`, { id: `upload-${studentId}` });
+
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      try {
+        const response = await fetch('/api/observations/upload-photo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            base64: reader.result as string,
+            type: 'student',
+            academicYear,
+            className,
+            studentId,
+            studentName,
+            observationDate: todayStr,
+            uploadedBy: 'Lumina Teacher'
+          })
+        });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || 'Server error uploading file');
+        }
+
+        const resData = await response.json();
+        const previewUrl = resData.metadata.previewUrl;
+
+        updateStudentField(studentId, 'photo', previewUrl);
+        toast.success(`Foto khusus ${studentName} berhasil disinkronisasi ke Google Drive! 📸`, { id: `upload-${studentId}` });
+      } catch (err: any) {
+        console.error(`[UploadStudent-${studentId}] Failed:`, err);
+        toast.error(`Gagal mengunggah foto ke Google Drive: ${err.message || String(err)}`, { id: `upload-${studentId}` });
+      } finally {
+        setUploadProgress(prev => ({ ...prev, [studentId]: false }));
+      }
+    };
+    reader.onerror = () => {
+      setUploadProgress(prev => ({ ...prev, [studentId]: false }));
+      toast.error('Gagal membaca berkas foto.', { id: `upload-${studentId}` });
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSaveAll = async () => {
@@ -779,7 +885,7 @@ export default function Observation() {
       const docId = `${selectedActivity}_${selectedDomain}_${todayStr}`;
       const docRef = doc(db, 'observations', docId);
       
-      await setDoc(docRef, {
+      await setDoc(docRef, cleanFirestoreData({
         id: docId,
         activity: selectedActivity,
         domain: selectedDomain,
@@ -788,7 +894,7 @@ export default function Observation() {
         observations: enrichedObservations,
         timestamp: Date.now(),
         updatedAt: Date.now()
-      }, { merge: true });
+      }), { merge: true });
 
       toast.success('Observation Data berhasil disimpan ke sistem & Firestore! ✨', {
         description: `Sentra: ${activities.find(a => a.id === selectedActivity)?.label}, Domain: ${domains.find(d => d.id === selectedDomain)?.label}`
@@ -1010,7 +1116,7 @@ export default function Observation() {
                   className="space-y-3"
                 >
                   <div className="relative aspect-video rounded-2xl overflow-hidden group bg-gray-100 border border-gray-100 shadow-inner">
-                    <img src={generalPhoto} alt="General Activity" className="w-full h-full object-cover transition-transform group-hover:scale-105" />
+                    <img src={generalPhoto} alt="General Activity" className="w-full h-full object-cover transition-transform group-hover:scale-105" crossOrigin="anonymous" referrerPolicy="no-referrer" />
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                       <label className="p-2.5 bg-white/90 hover:bg-white text-gray-800 rounded-xl font-bold text-xs transition-transform hover:scale-105 flex items-center gap-1.5 shadow-md cursor-pointer">
                         <RefreshCw size={14} className="text-emerald-600" /> Ganti
@@ -1236,7 +1342,7 @@ export default function Observation() {
                       <div className="relative aspect-video md:aspect-square md:w-full rounded-2xl overflow-hidden bg-gray-50 border border-gray-100 flex items-center justify-center group shadow-inner">
                         {resolvedPhoto ? (
                           <>
-                            <img src={resolvedPhoto} alt={student.name} className="w-full h-full object-cover" />
+                            <img src={resolvedPhoto} alt={student.name} className="w-full h-full object-cover" crossOrigin="anonymous" referrerPolicy="no-referrer" />
                             {hasSpecificPhoto ? (
                               <button
                                 onClick={() => updateStudentField(student.id, 'photo', null)}

@@ -7,10 +7,12 @@ import axios from "axios";
 import { parse } from "csv-parse/sync";
 import fs from "fs";
 import { google } from "googleapis";
+import { Readable } from "stream";
 import type { LGBackupStatus, LGBackupSummary, LGBackupLog } from "./src/types";
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // --- Firebase Admin Initialization ---
 try {
@@ -167,6 +169,196 @@ async function uploadJsonToDrive(folderId: string, fileName: string, data: any, 
     return response.data.id!;
   }
 }
+
+
+// Helper to find or create folders, escaping single quotes in query
+async function findOrCreateObsFolder(name: string, parentId: string) {
+  // Drive API query escaping is backslash single-quote
+  const escapedName = name.replace(/'/g, "\\'");
+  const q = `name = '${escapedName}' and '${parentId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  
+  try {
+    const response = await drive.files.list({
+      q,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+      fields: 'files(id, name)',
+    });
+
+    if (response.data.files && response.data.files.length > 0) {
+      return response.data.files[0].id!;
+    }
+  } catch (error) {
+    console.error(`[findOrCreateObsFolder] Search failed for ${name}:`, error);
+  }
+
+  // Create folder if not found
+  const folder = await drive.files.create({
+    requestBody: {
+      name,
+      mimeType: 'application/vnd.google-apps.folder',
+      parents: [parentId]
+    },
+    supportsAllDrives: true,
+    fields: 'id',
+  });
+
+  return folder.data.id!;
+}
+
+// Recursively ensure all folders in the array exist
+async function ensureObsFolderPath(pathArray: string[], rootFolderId: string): Promise<string> {
+  let parentId = rootFolderId;
+  for (const part of pathArray) {
+    if (!part) continue;
+    parentId = await findOrCreateObsFolder(part.trim(), parentId);
+  }
+  return parentId;
+}
+
+// API: Upload Kindergarten Observation Photo to Google Drive
+app.post("/api/observations/upload-photo", async (req, res) => {
+  try {
+    const {
+      base64,
+      type,
+      academicYear,
+      className,
+      studentId,
+      studentName,
+      observationDate,
+      uploadedBy
+    } = req.body;
+
+    if (!base64) {
+      return res.status(400).json({ error: "Missing physical image file data (base64)" });
+    }
+    if (!type || !['general', 'student'].includes(type)) {
+      return res.status(400).json({ error: "Invalid or missing upload type ('general' or 'student')" });
+    }
+
+    // 1. Convert base64 to buffer
+    let base64Data = base64;
+    let mimeType = "image/jpeg";
+    if (base64.includes(";base64,")) {
+      const parts = base64.split(";base64,");
+      const match = parts[0].match(/data:(.*)/);
+      if (match) {
+        mimeType = match[1];
+      }
+      base64Data = parts[1];
+    }
+    const buffer = Buffer.from(base64Data, "base64");
+
+    // 2. Setup path structural components
+    const cleanClassName = className ? className.replace(/\//g, "-").trim() : "General";
+    const cleanAcademicYear = academicYear ? academicYear.replace(/\//g, "-").trim() : "Unknown";
+    const cleanDate = observationDate ? observationDate.replace(/-/g, "") : new Date().toISOString().split("T")[0].replace(/-/g, "");
+
+    let folderPathArray: string[] = [];
+    let fileName = "";
+
+    if (type === "general") {
+      folderPathArray = [
+        "Observation Photos",
+        "Kindergarten",
+        "General",
+        cleanAcademicYear,
+        cleanClassName,
+        observationDate
+      ];
+      // general-{className}-{yyyyMMdd}-{timestamp}.jpg
+      const cleanClassNameSlug = cleanClassName.toLowerCase().replace(/[^a-z0-9_\-]/g, "_");
+      fileName = `general-${cleanClassNameSlug}-${cleanDate}-${Date.now()}.jpg`;
+    } else {
+      // student-{studentId}-{yyyyMMdd}-{timestamp}.jpg
+      const studentIdentifier = studentName && studentId ? `${studentName}_${studentId}` : (studentId || "unknown_student");
+      folderPathArray = [
+        "Observation Photos",
+        "Kindergarten",
+        "Students",
+        cleanAcademicYear,
+        cleanClassName,
+        studentIdentifier,
+        observationDate
+      ];
+      const cleanId = studentId ? studentId.toLowerCase().replace(/[^a-z0-9_\-]/g, "_") : "unknown";
+      fileName = `student-${cleanId}-${cleanDate}-${Date.now()}.jpg`;
+    }
+
+    // 3. Resolve the exact Google Drive parent folder ID
+    const rootId = "1mEDcuWvzEqIObEUGDPm46EaVqW94mtJP";
+    console.log(`[PhotoUpload] Resolving Drive structure under root folder ${rootId} for path: /${folderPathArray.join('/')}`);
+    const parentFolderId = await ensureObsFolderPath(folderPathArray, rootId);
+
+    // 4. Upload file to Google Drive
+    const mediaStream = Readable.from(buffer);
+    const driveResponse = await drive.files.create({
+      requestBody: {
+        name: fileName,
+        parents: [parentFolderId],
+        mimeType: mimeType
+      },
+      media: {
+        mimeType: mimeType,
+        body: mediaStream
+      },
+      supportsAllDrives: true,
+      fields: "id"
+    });
+
+    const fileId = driveResponse.data.id!;
+    console.log(`[PhotoUpload] Success! Created file ${fileName} with ID ${fileId}`);
+
+    // 5. Grant anyone reader permission so it can be previewed/embedded in report canvases
+    try {
+      await drive.permissions.create({
+        fileId: fileId,
+        requestBody: {
+          role: "reader",
+          type: "anyone"
+        },
+        supportsAllDrives: true
+      });
+      console.log(`[PhotoUpload] Access permission to 'anyone/reader' granted successfully for file ${fileId}`);
+    } catch (permError: any) {
+      console.warn(`[PhotoUpload] Warning: failed to grant permissions: ${permError.message}`);
+    }
+
+    // 6. Build final metadata payload
+    const metadata = {
+      driveFileId: fileId,
+      fileName: fileName,
+      mimeType: mimeType,
+      previewUrl: `https://lh3.googleusercontent.com/d/${fileId}`,
+      rootFolderId: rootId,
+      folderPath: "/" + folderPathArray.join("/"),
+      academicYear: academicYear || "Unknown",
+      className: className || "Unknown",
+      studentId: studentId || null,
+      observationDate: observationDate,
+      uploadedAt: Date.now(),
+      uploadedBy: uploadedBy || "Lumina Teacher"
+    };
+
+    // 7. Save metadata permanently to Firestore separate collection for logs
+    await adminDb.collection("kg_observation_photos").doc(fileId).set(metadata);
+
+    // 8. Return response
+    return res.json({
+      success: true,
+      message: "Photo successfully synchronized with Google Drive and logged in Firestore.",
+      metadata
+    });
+
+  } catch (error: any) {
+    console.error("[PhotoUpload] Critical failures occurred:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || "An expected error occurred during Google Drive file synchronization."
+    });
+  }
+});
 
 
 // API: Verify Folder Access

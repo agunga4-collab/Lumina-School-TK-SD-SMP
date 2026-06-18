@@ -14,6 +14,29 @@ import type { KGActivity, KGDomain, KGGrading } from '../../types';
 import { format, addDays, isWeekend, parseISO } from 'date-fns';
 import { motion } from 'motion/react';
 
+const cleanFirestoreData = (obj: any): any => {
+  if (obj === null || obj === undefined) return null;
+  if (Array.isArray(obj)) {
+    return obj.map(cleanFirestoreData);
+  }
+  if (typeof obj === 'object') {
+    const clean: Record<string, any> = {};
+    for (const key of Object.keys(obj)) {
+      const val = obj[key];
+      if (val === undefined) continue;
+      if (val instanceof Map) {
+        clean[key] = cleanFirestoreData(Object.fromEntries(val));
+      } else if (val instanceof Set) {
+        clean[key] = Array.from(val).map(cleanFirestoreData);
+      } else {
+        clean[key] = cleanFirestoreData(val);
+      }
+    }
+    return clean;
+  }
+  return obj;
+};
+
 interface ObservationTableImporterProps {
   classes?: any[];
   students?: any[];
@@ -1201,7 +1224,7 @@ export default function ObservationTableImporter({ classes = [], students = [], 
         const item = batchCommits[key];
         const docRef = doc(db, 'observations', key);
 
-        await setDoc(docRef, {
+        await setDoc(docRef, cleanFirestoreData({
           id: key,
           activity: item.activity,
           domain: item.domain,
@@ -1210,7 +1233,7 @@ export default function ObservationTableImporter({ classes = [], students = [], 
           observations: item.observations,
           timestamp: new Date(item.date).getTime(),
           importedAt: Date.now()
-        }, { merge: true });
+        }), { merge: true });
       }
 
       toast.success(`Berhasil menyimpan ${validObservationsCount} data penilaian harian siswa dari ${matchedCount} murid ke database.`);

@@ -61,6 +61,7 @@ export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
   host: 'firestore.googleapis.com',
   ssl: true,
+  ignoreUndefinedProperties: true,
 }, dbId && dbId !== '(default)' ? dbId : undefined);
 export const auth = getAuth(app);
 export { analytics };
