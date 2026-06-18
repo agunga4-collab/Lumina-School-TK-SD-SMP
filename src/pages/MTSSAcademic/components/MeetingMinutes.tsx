@@ -255,7 +255,8 @@ function MeetingCard({
 }
 
 function AddMeetingModal({ caseId, onClose, onSuccess }: { caseId: string; onClose: () => void; onSuccess: () => void }) {
-  const { currentUser, user: fullUser } = useAuth();
+  const { user: currentUser } = useAuth();
+  const fullUser = currentUser;
   const [loading, setLoading] = useState(false);
   const [draftStatus, setDraftStatus] = useState<'IDLE' | 'SAVING' | 'SAVED' | 'FAILED'>('IDLE');
   const [formData, setFormData] = useState({

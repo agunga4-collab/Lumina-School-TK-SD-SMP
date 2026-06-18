@@ -90,7 +90,8 @@ export default function StudentSearch({ onSelect, placeholder = "Cari siswa...",
         const uniqueStudents = Array.from(uniqueStudentsMap.values());
 
         const filtered = uniqueStudents.filter(s => {
-          const lowerName = s.name.toLowerCase();
+          const nameStr = s.name || '';
+          const lowerName = nameStr.toLowerCase();
           // Stricter filtering for class placeholders and mock accounts
           const isClassPlaceholder = 
             lowerName === 'gc smp' || 
@@ -100,7 +101,7 @@ export default function StudentSearch({ onSelect, placeholder = "Cari siswa...",
             lowerName.includes('placeholder') ||
             lowerName.includes('test student');
             
-          return !isClassPlaceholder && s.name.length > 2 && (
+          return !isClassPlaceholder && nameStr.length > 2 && (
             lowerName.includes(searchTerm.toLowerCase()) || 
             (s.nickname && s.nickname.toLowerCase().includes(searchTerm.toLowerCase()))
           );

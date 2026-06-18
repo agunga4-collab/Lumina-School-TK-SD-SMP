@@ -740,9 +740,22 @@ export async function deleteAssessment(id: string): Promise<void> {
 
 export async function getEnrollmentsByClass(classId: string, academicYear: string): Promise<Enrollment[]> {
   try {
+    const classNames = [classId];
+    try {
+      const classDoc = await getDoc(doc(db, 'classes', classId));
+      if (classDoc.exists()) {
+        const cData = classDoc.data();
+        if (cData && cData.name && !classNames.includes(cData.name)) {
+          classNames.push(cData.name);
+        }
+      }
+    } catch (e) {
+      console.warn("Could not fetch class doc or resolve name", e);
+    }
+
     const q = query(
       collection(db, 'enrollments'),
-      where('classId', '==', classId),
+      where('classId', 'in', classNames),
       where('academicYear', '==', academicYear)
     );
     const snap = await getDocs(q);
@@ -2405,6 +2418,46 @@ export async function resolveMTSSAcademicAlert(alertId: string) {
     });
   } catch (err: any) {
     handleFirestoreError(err, 'write', `juniorhigh_mtss_academic_alerts/${alertId}`);
+  }
+}
+
+// --- MTSS Academic Tier 1 Assessments ---
+
+export async function getTier1Assessments(academicYear: string, semester: string): Promise<any[]> {
+  try {
+    const q = query(
+      collection(db, 'juniorhigh_mtss_tier1_assessments'),
+      where('academicYear', '==', academicYear),
+      where('semester', '==', semester)
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (err: any) {
+    handleFirestoreError(err, 'list', 'juniorhigh_mtss_tier1_assessments');
+    return [];
+  }
+}
+
+export async function saveTier1Assessment(id: string, data: any): Promise<void> {
+  try {
+    const docRef = doc(db, 'juniorhigh_mtss_tier1_assessments', id);
+    const existing = await getDoc(docRef);
+    if (existing.exists()) {
+      await updateDoc(docRef, {
+        ...data,
+        updatedAt: Date.now()
+      });
+    } else {
+      await setDoc(docRef, {
+        ...data,
+        id,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      });
+    }
+  } catch (err: any) {
+    handleFirestoreError(err, 'write', `juniorhigh_mtss_tier1_assessments/${id}`);
+    throw err;
   }
 }
 

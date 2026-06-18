@@ -345,7 +345,7 @@ export default function App() {
                 <MTSSAcademicLayout />
               </RoleGuard>
             }>
-              <Route index element={<Navigate to="overview" replace />} />
+              <Route index element={<Navigate to="screening" replace />} />
               <Route path="overview" element={<MTSSAcademicOverview />} />
               <Route path="cases" element={<MTSSAcademicCases />} />
               <Route path="cases/:id" element={<MTSSAcademicCaseDetail />} />

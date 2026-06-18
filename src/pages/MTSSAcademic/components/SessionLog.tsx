@@ -209,7 +209,8 @@ function SessionCard({ session, isLatest }: { session: MTSSAcademicSession; isLa
 }
 
 function AddSessionModal({ caseId, domains, nextSessionNo, onClose, onSuccess }: { caseId: string; domains: MTSSAcademicDomain[]; nextSessionNo: number; onClose: () => void; onSuccess: () => void }) {
-  const { currentUser, user: fullUser } = useAuth();
+  const { user: currentUser } = useAuth();
+  const fullUser = currentUser;
   const [loading, setLoading] = useState(false);
   const [draftStatus, setDraftStatus] = useState<'IDLE' | 'SAVING' | 'SAVED' | 'FAILED'>('IDLE');
   const [formData, setFormData] = useState({

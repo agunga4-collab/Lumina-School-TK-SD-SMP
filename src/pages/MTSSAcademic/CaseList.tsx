@@ -14,7 +14,7 @@ import {
   FilterX
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { 
   getMTSSAcademicCases, 
@@ -57,8 +57,9 @@ const STATUS_CONFIG: Record<MTSSAcademicStatus, { label: string; color: string; 
 };
 
 export default function CaseList() {
-  const { currentUser } = useAuth();
+  const { user: currentUser } = useAuth();
   const navigate = useNavigate();
+  const { filters } = useOutletContext<{ filters: any }>();
   const [cases, setCases] = useState<MTSSAcademicCase[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [classes, setClasses] = useState<Class[]>([]);
@@ -75,7 +76,7 @@ export default function CaseList() {
 
   useEffect(() => {
     fetchData();
-  }, [currentUser]);
+  }, [currentUser, filters.academicYear, filters.semester]);
 
   const fetchData = async () => {
     if (!currentUser) return;
@@ -84,7 +85,8 @@ export default function CaseList() {
       const [casesData, studentsData, classesData] = await Promise.all([
         getMTSSAcademicCases({
           schoolUnit: 'JUNIOR_HIGH',
-          academicYear: '2023/2024' // Should be dynamic
+          academicYear: filters.academicYear,
+          semester: filters.semester
         }),
         getStudents(),
         getClasses()
@@ -136,11 +138,11 @@ export default function CaseList() {
             <Download size={18} />
           </button>
           <button 
-            onClick={() => setIsCreateModalOpen(true)}
-            className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 font-bold text-xs uppercase tracking-widest"
+            onClick={() => navigate('/junior-high/academic/mtss/screening')}
+            className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 font-bold text-xs uppercase tracking-widest whitespace-nowrap"
+            title="Go to Tier 1 Class Table to Route Students"
           >
-            <Plus size={16} />
-            <span>New Academic Case</span>
+            <span>Assess Tier 1 to Route</span>
           </button>
         </div>
       </div>
@@ -410,7 +412,8 @@ function StatCard({ label, value, icon, color }: { label: string; value: number;
 }
 
 function CreateCaseModal({ onClose, students, onSuccess }: { onClose: () => void; students: Student[]; onSuccess: () => void }) {
-  const { currentUser } = useAuth();
+  const { user: currentUser } = useAuth();
+  const { filters } = useOutletContext<{ filters: any }>();
   const [loading, setLoading] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [formData, setFormData] = useState({
@@ -440,8 +443,8 @@ function CreateCaseModal({ onClose, students, onSuccess }: { onClose: () => void
 
       const newCaseId = await addMTSSAcademicCase({
         schoolUnit: 'JUNIOR_HIGH',
-        academicYear: '2023/2024',
-        semester: '1',
+        academicYear: filters.academicYear,
+        semester: filters.semester,
         studentId: student.id,
         studentName: student.name,
         classId: classIdVal,

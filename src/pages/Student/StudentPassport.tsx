@@ -213,9 +213,9 @@ export default function StudentPassport() {
           if (parentChildrenIds.length > 0) {
             // Check matching kindergarten student profiles
             const matchedStudents = sysStudents.filter(s => 
-              parentChildrenIds.includes(s.id) || 
-              parentChildrenIds.includes(s.id.toLowerCase()) || 
-              parentChildrenIds.some(li => String(li).toLowerCase() === s.name.toLowerCase())
+              (s.id && parentChildrenIds.includes(s.id)) || 
+              (s.id && parentChildrenIds.includes(s.id.toLowerCase())) || 
+              parentChildrenIds.some(li => String(li).toLowerCase() === (s.name || '').toLowerCase())
             );
 
             if (matchedStudents.length > 0) {
@@ -237,7 +237,7 @@ export default function StudentPassport() {
           const studentId = currentUser.studentId || currentUser.uid || '';
           setSelectedStudentId(studentId);
           
-          const profile = sysStudents.find(s => s.id === studentId || s.name.toLowerCase() === (currentUser.displayName || '').toLowerCase());
+          const profile = sysStudents.find(s => s.id === studentId || (s.name || '').toLowerCase() === (currentUser.displayName || '').toLowerCase());
           if (profile) {
             setSelectedStudentId(profile.id);
             if (profile.classId) {

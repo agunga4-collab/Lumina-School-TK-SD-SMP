@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate, useOutletContext } from 'react-router-dom';
 import { 
   LayoutDashboard, 
   TrendingUp, 
@@ -15,18 +15,18 @@ import { motion } from 'motion/react';
 import { useAuth } from '../../context/AuthContext';
 
 const TABS = [
+  { id: 'screening', label: 'Tier 1: AAP & Test Out', icon: Eye, path: '/junior-high/academic/mtss/screening' },
+  { id: 'cases', label: 'Tier 2: Interventions', icon: TrendingUp, path: '/junior-high/academic/mtss/cases' },
   { id: 'overview', label: 'Overview', icon: LayoutDashboard, path: '/junior-high/academic/mtss/overview' },
-  { id: 'cases', label: 'Cases', icon: TrendingUp, path: '/junior-high/academic/mtss/cases' },
-  { id: 'screening', label: 'Screening', icon: Eye, path: '/junior-high/academic/mtss/screening' },
-  { id: 'analytics', label: 'Analytics', icon: BarChart3, path: '/junior-high/academic/mtss/analytics' },
 ];
 
 export default function MTSSAcademicLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const { profile } = useAuth();
+  const outerContext = useOutletContext<any>();
   const [filters, setFilters] = useState({
-    academicYear: '2023/2024',
+    academicYear: '2025/2026',
     semester: '2'
   });
 
@@ -64,8 +64,10 @@ export default function MTSSAcademicLayout() {
               value={filters.academicYear}
               onChange={(e) => setFilters(prev => ({ ...prev, academicYear: e.target.value }))}
             >
-              <option value="2023/2024">2023/2024</option>
-              <option value="2024/2025">2024/2025</option>
+              <option value="2025/2026">2025/2026</option>
+              <option value="2026/2027">2026/2027</option>
+              <option value="2027/2028">2027/2028</option>
+              <option value="2028/2029">2028/2029</option>
             </select>
           </div>
 
@@ -145,7 +147,7 @@ export default function MTSSAcademicLayout() {
 
       {/* Inner Route Content */}
       <div className="mt-6">
-        <Outlet context={{ filters, setFilters }} />
+        <Outlet context={{ ...outerContext, filters, setFilters }} />
       </div>
     </div>
   );
