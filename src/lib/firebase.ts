@@ -1,7 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAnalytics } from 'firebase/analytics';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { initializeFirestore, doc, getDoc, setDoc, updateDoc, getDocFromServer, collection, query, where, getDocs, limit, writeBatch, deleteDoc, orderBy } from 'firebase/firestore';
+import { initializeFirestore, doc, getDoc, setDoc, updateDoc, getDocFromServer, collection, query, where, getDocs, limit, writeBatch, deleteDoc, orderBy, documentId } from 'firebase/firestore';
 export { doc, writeBatch };
 import { mtssSnapshotTriggerService } from '../services/mtssSnapshotTriggerService.ts';
 import firebaseConfig from '../../firebase-applet-config.json' with { type: 'json' };
@@ -779,9 +779,16 @@ export async function getStudentsByClass(classId: string, academicYear: string):
     }
 
     for (const chunk of chunks) {
-      const q = query(collection(db, 'students'), where('id', 'in', chunk));
+      const q = query(collection(db, 'students'), where(documentId(), 'in', chunk));
       const snap = await getDocs(q);
-      students.push(...snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student)));
+      students.push(...snap.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          name: data.name || data.fullName || 'Siswa Tanpa Nama',
+          ...data
+        } as Student;
+      }));
     }
 
     return students.sort((a, b) => a.name.localeCompare(b.name));
@@ -792,16 +799,49 @@ export async function getStudentsByClass(classId: string, academicYear: string):
 
 export async function getActiveStudents(classId: string, activeYear: string): Promise<Student[]> {
   try {
-    let q = query(
-      collection(db, 'enrollments'),
-      where('academicYear', '==', activeYear),
-      where('status', '==', 'active')
-    );
+    let enrollments: Enrollment[] = [];
     if (classId && classId !== 'ALL' && classId !== 'all') {
-      q = query(q, where('classId', '==', classId));
+      const classKeys = [classId];
+      try {
+        const classSnap = await getDoc(doc(db, 'classes', classId));
+        if (classSnap.exists()) {
+          const clsData = classSnap.data();
+          if (clsData.name && !classKeys.includes(clsData.name)) classKeys.push(clsData.name);
+          if (clsData.classId && !classKeys.includes(clsData.classId)) classKeys.push(clsData.classId);
+        }
+      } catch (e) {
+        console.warn("Could not fetch class doc in active students query:", e);
+      }
+
+      // Query enrollments for all potential classId keys (UUIDs or Name strings)
+      const queries = classKeys.map(key => 
+        query(
+          collection(db, 'enrollments'),
+          where('academicYear', '==', activeYear),
+          where('status', '==', 'active'),
+          where('classId', '==', key)
+        )
+      );
+
+      const snaps = await Promise.all(queries.map(q => getDocs(q)));
+      snaps.forEach(snap => {
+        snap.docs.forEach(d => {
+          const data = d.data() as Enrollment;
+          if (!enrollments.some(e => e.studentId === data.studentId)) {
+            enrollments.push(data);
+          }
+        });
+      });
+    } else {
+      const q = query(
+        collection(db, 'enrollments'),
+        where('academicYear', '==', activeYear),
+        where('status', '==', 'active')
+      );
+      const snap = await getDocs(q);
+      enrollments = snap.docs.map(doc => doc.data() as Enrollment);
     }
-    const snap = await getDocs(q);
-    const enrollments = snap.docs.map(doc => doc.data() as Enrollment);
+
     if (enrollments.length === 0) return [];
 
     const studentIds = enrollments.map(e => e.studentId);
@@ -812,9 +852,16 @@ export async function getActiveStudents(classId: string, activeYear: string): Pr
     }
 
     for (const chunk of chunks) {
-      const sq = query(collection(db, 'students'), where('id', 'in', chunk));
+      const sq = query(collection(db, 'students'), where(documentId(), 'in', chunk));
       const sSnap = await getDocs(sq);
-      students.push(...sSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student)));
+      students.push(...sSnap.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          name: data.name || data.fullName || 'Siswa Tanpa Nama',
+          ...data
+        } as Student;
+      }));
     }
 
     return students.sort((a, b) => a.name.localeCompare(b.name));

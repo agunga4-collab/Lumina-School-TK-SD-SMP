@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import type { KGActivity, KGDomain, KGGrading } from '../../types';
 import { DEFAULT_STUDENTS, getStoredStudents, saveStoredStudents } from '../../lib/kindergartenWeeklyReport';
 import ObservationBulkPeriodImport from './ObservationBulkPeriodImport';
-import { collection, query, where, getDocs, writeBatch, deleteDoc, doc, setDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, getDoc, writeBatch, deleteDoc, doc, setDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { normalizeStudentName } from '../../lib/namecentricResolver';
@@ -117,6 +117,17 @@ export default function Observation() {
 
   // View States
   const [activeTab, setActiveTab] = React.useState<'input' | 'recap'>('input');
+  
+  // Helper to get local date in YYYY-MM-DD format
+  const formatDateLocal = (date: Date): string => {
+    const yr = date.getFullYear();
+    const mo = String(date.getMonth() + 1).padStart(2, '0');
+    const da = String(date.getDate()).padStart(2, '0');
+    return `${yr}-${mo}-${da}`;
+  };
+
+  // Date State for Observation Input
+  const [observationDate, setObservationDate] = React.useState<string>(() => formatDateLocal(new Date()));
   
   // Monthly Recap Filter States
   const [recapMonth, setRecapMonth] = React.useState<number>(() => new Date().getMonth() + 1);
@@ -305,7 +316,7 @@ export default function Observation() {
                 }
               }
               if (!dateStr && data.timestamp) {
-                dateStr = new Date(data.timestamp).toISOString().split('T')[0];
+                dateStr = formatDateLocal(new Date(data.timestamp));
               }
 
               localItems.push({
@@ -344,7 +355,7 @@ export default function Observation() {
             mergedMap.set(comboKey, item);
           }
         } else if (item.activity && item.domain && !item.date) {
-          const fallbackDate = new Date(item.timestamp).toISOString().split('T')[0];
+          const fallbackDate = formatDateLocal(new Date(item.timestamp));
           const comboKey = `${item.activity}_${item.domain}_${fallbackDate}`;
           if (!mergedMap.has(comboKey)) {
             mergedMap.set(comboKey, { ...item, date: fallbackDate });
@@ -677,27 +688,96 @@ export default function Observation() {
     }
   }, [activeTab, selectedClassId, recapMonth, recapYear]);
 
-  // Triggered when selected Sentra + Domain combo changes: load / initialize specific data
+  // Triggered when selected Sentra + Domain combo or Observation Date changes: load / initialize specific data
   React.useEffect(() => {
-    const key = `kg_obs_hist_${selectedActivity}_${selectedDomain}`;
-    const savedComboData = localStorage.getItem(key);
-    if (savedComboData) {
-      try {
-        const parsed = JSON.parse(savedComboData);
-        if (parsed.observations) setObservations(parsed.observations);
-        if (parsed.generalPhoto) setGeneralPhoto(parsed.generalPhoto);
-      } catch (e) {
-        console.error(e);
+    let active = true;
+    
+    async function fetchComboDoc() {
+      // 1. Try to load from LocalStorage first (with date!)
+      const comboDateKey = `kg_obs_hist_${selectedActivity}_${selectedDomain}_${observationDate}`;
+      const savedComboData = localStorage.getItem(comboDateKey);
+      
+      if (savedComboData) {
+        try {
+          const parsed = JSON.parse(savedComboData);
+          if (!active) return;
+          if (parsed.observations) setObservations(parsed.observations);
+          if (parsed.generalPhoto) {
+            setGeneralPhoto(parsed.generalPhoto);
+          } else {
+            setGeneralPhoto(null);
+          }
+          return; // Found in local, load that first
+        } catch (e) {
+          console.error(e);
+        }
       }
-    } else {
-      // Restore default values if no saved session exist for this combo
-      const cleared = getStoredStudents().reduce((acc, kid) => {
-        acc[kid.id] = { grading: null, notes: '', photo: null };
-        return acc;
-      }, {} as Record<string, StudentObservation>);
-      setObservations(cleared);
+
+      // Let's also check the old key format which didn't have date, but ONLY if the date inside matches observationDate
+      const fallbackKey = `kg_obs_hist_${selectedActivity}_${selectedDomain}`;
+      const legacyComboData = localStorage.getItem(fallbackKey);
+      if (legacyComboData) {
+        try {
+          const parsed = JSON.parse(legacyComboData);
+          if (parsed && parsed.date === observationDate) {
+            if (!active) return;
+            if (parsed.observations) setObservations(parsed.observations);
+            if (parsed.generalPhoto) {
+              setGeneralPhoto(parsed.generalPhoto);
+            } else {
+              setGeneralPhoto(null);
+            }
+            return;
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      // 2. Fetch from Firestore for the specific doc ID
+      const docId = `${selectedActivity}_${selectedDomain}_${observationDate}`;
+      const docRef = doc(db, 'observations', docId);
+      
+      try {
+        const docSnap = await getDoc(docRef);
+        logFirestoreRead('observations', 1);
+        if (!active) return;
+        
+        if (docSnap.exists()) {
+          const d = docSnap.data();
+          if (d.observations) setObservations(d.observations);
+          if (d.generalPhotoUrl) {
+            setGeneralPhoto(d.generalPhotoUrl);
+          } else {
+            setGeneralPhoto(null);
+          }
+        } else {
+          // No entry, initialize empty
+          const cleared = getStoredStudents().reduce((acc, kid) => {
+            acc[kid.id] = { grading: null, notes: '', photo: null };
+            return acc;
+          }, {} as Record<string, StudentObservation>);
+          setObservations(cleared);
+          setGeneralPhoto(null);
+        }
+      } catch (err) {
+        console.error("Error fetching single observation doc:", err);
+        if (!active) return;
+        const cleared = getStoredStudents().reduce((acc, kid) => {
+          acc[kid.id] = { grading: null, notes: '', photo: null };
+          return acc;
+        }, {} as Record<string, StudentObservation>);
+        setObservations(cleared);
+        setGeneralPhoto(null);
+      }
     }
-  }, [selectedActivity, selectedDomain]);
+
+    fetchComboDoc();
+    
+    return () => {
+      active = false;
+    };
+  }, [selectedActivity, selectedDomain, observationDate]);
 
   const updateStudentField = (studentId: string, field: keyof StudentObservation, value: any) => {
     setObservations(prev => {
@@ -727,7 +807,7 @@ export default function Observation() {
     const activeClassObj = classes.find(c => c.id === selectedClassId);
     const className = activeClassObj ? activeClassObj.name : 'General';
     const academicYear = activeYear || 'Unknown';
-    const todayStr = new Date().toISOString().split('T')[0];
+    const targetDate = observationDate;
 
     setIsUploadingGeneral(true);
     toast.loading('Mengunggah foto kegiatan utama ke Google Drive...', { id: 'upload-general' });
@@ -743,7 +823,7 @@ export default function Observation() {
             type: 'general',
             academicYear,
             className,
-            observationDate: todayStr,
+            observationDate: targetDate,
             uploadedBy: 'Lumina Teacher'
           })
         });
@@ -785,7 +865,7 @@ export default function Observation() {
     const activeClassObj = classes.find(c => c.id === selectedClassId);
     const className = activeClassObj ? activeClassObj.name : 'General';
     const academicYear = activeYear || 'Unknown';
-    const todayStr = new Date().toISOString().split('T')[0];
+    const targetDate = observationDate;
 
     const student = students.find(s => s.id === studentId);
     const studentName = student ? student.name : 'Siswa';
@@ -806,7 +886,7 @@ export default function Observation() {
             className,
             studentId,
             studentName,
-            observationDate: todayStr,
+            observationDate: targetDate,
             uploadedBy: 'Lumina Teacher'
           })
         });
@@ -846,7 +926,8 @@ export default function Observation() {
 
     setIsSaving(true);
     try {
-      const todayStr = new Date().toISOString().split('T')[0];
+      const targetDate = observationDate;
+      const todayStr = formatDateLocal(new Date());
       
       // Enrich with student's names
       const enrichedObservations = { ...observations };
@@ -869,27 +950,33 @@ export default function Observation() {
         }
       });
 
-      // Save permanently for this combo key in LocalStorage
-      const comboKey = `kg_obs_hist_${selectedActivity}_${selectedDomain}`;
-      const payload = {
+      // Save permanently with old key format (legacy for today)
+      const comboKeyLegacy = `kg_obs_hist_${selectedActivity}_${selectedDomain}`;
+      const payloadLegacy = {
         selectedActivity,
         selectedDomain,
         generalPhoto,
         observations: enrichedObservations,
-        date: todayStr,
+        date: targetDate,
         timestamp: Date.now()
       };
-      localStorage.setItem(comboKey, JSON.stringify(payload));
+      if (targetDate === todayStr) {
+        localStorage.setItem(comboKeyLegacy, JSON.stringify(payloadLegacy));
+      }
+
+      // Save permanently with new date-specific key format in LocalStorage
+      const comboKeyDateSpecific = `kg_obs_hist_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      localStorage.setItem(comboKeyDateSpecific, JSON.stringify(payloadLegacy));
 
       // Save permanently to Firestore 'observations' collection
-      const docId = `${selectedActivity}_${selectedDomain}_${todayStr}`;
+      const docId = `${selectedActivity}_${selectedDomain}_${targetDate}`;
       const docRef = doc(db, 'observations', docId);
       
       await setDoc(docRef, cleanFirestoreData({
         id: docId,
         activity: selectedActivity,
         domain: selectedDomain,
-        date: todayStr,
+        date: targetDate,
         generalPhotoUrl: generalPhoto,
         observations: enrichedObservations,
         timestamp: Date.now(),
@@ -1197,9 +1284,19 @@ export default function Observation() {
               </div>
             </div>
             
-            <div className="text-left md:text-right flex items-center md:flex-col gap-2 md:gap-0 font-mono">
+            <div className="text-left md:text-right flex flex-col gap-1.5 min-w-[170px]">
               <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest leading-none">Waktu Observasi</span>
-              <span className="text-xs font-bold text-emerald-400 mt-1">Hari Ini (2026-05-21)</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="date"
+                  value={observationDate}
+                  onChange={(e) => setObservationDate(e.target.value)}
+                  className="bg-gray-800 text-emerald-400 text-xs font-bold border border-gray-700 rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer text-center w-full"
+                />
+              </div>
+              <span className="text-[9px] text-gray-400 italic font-sans">
+                {observationDate === formatDateLocal(new Date()) ? '🗓️ Hari Ini (Otomatis)' : '📅 Tanggal Terpilih'}
+              </span>
             </div>
           </div>
 
@@ -1835,7 +1932,7 @@ export default function Observation() {
                             >
                               <div className="w-24 h-24 rounded-2xl overflow-hidden bg-gray-50 border border-gray-100 shrink-0 flex items-center justify-center relative shadow-inner">
                                 {session.generalPhoto ? (
-                                  <img src={session.generalPhoto} alt={session.activity} className="w-full h-full object-cover group-hover:scale-105 transition-all duration-500" />
+                                  <img src={session.generalPhoto} alt={session.activity} className="w-full h-full object-cover group-hover:scale-105 transition-all duration-500" crossOrigin="anonymous" referrerPolicy="no-referrer" />
                                 ) : (
                                   <div className="text-center p-2 flex flex-col items-center justify-center gap-1">
                                     <ImageIcon size={22} className="text-gray-350 animate-pulse" />
@@ -2055,7 +2152,7 @@ export default function Observation() {
                         {/* Photo */}
                         <div className="w-full md:w-32 aspect-video md:aspect-square bg-gray-100 rounded-xl overflow-hidden shrink-0 border border-gray-100 flex items-center justify-center">
                           {entry.photo ? (
-                            <img src={entry.photo} alt={entry.date} className="w-full h-full object-cover" />
+                            <img src={entry.photo} alt={entry.date} className="w-full h-full object-cover" crossOrigin="anonymous" referrerPolicy="no-referrer" />
                           ) : (
                             <div className="text-center p-2 flex flex-col items-center justify-center gap-1">
                               <ImageIcon size={20} className="text-gray-305" />
@@ -2144,7 +2241,7 @@ export default function Observation() {
                   <div className="space-y-2">
                     <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider block">Foto Kegiatan Utama (General)</span>
                     <div className="aspect-video w-full max-h-[160px] rounded-2xl overflow-hidden bg-gray-100 border border-gray-200">
-                      <img src={selectedDetailSession.generalPhoto} alt="General session photo" className="w-full h-full object-cover" />
+                      <img src={selectedDetailSession.generalPhoto} alt="General session photo" className="w-full h-full object-cover" crossOrigin="anonymous" referrerPolicy="no-referrer" />
                     </div>
                   </div>
                 )}
@@ -2176,7 +2273,7 @@ export default function Observation() {
                             <div key={student.id} className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex gap-4">
                               <div className="w-16 h-16 rounded-xl overflow-hidden bg-gray-50 border border-gray-100 shrink-0 flex items-center justify-center">
                                 {studentPhoto ? (
-                                  <img src={studentPhoto} alt={student.name} className="w-full h-full object-cover" />
+                                  <img src={studentPhoto} alt={student.name} className="w-full h-full object-cover" crossOrigin="anonymous" referrerPolicy="no-referrer" />
                                 ) : (
                                   <div className="text-center p-1 font-black text-xs text-gray-300">
                                     {student.name.charAt(0)}

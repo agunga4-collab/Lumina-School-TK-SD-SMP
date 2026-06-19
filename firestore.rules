@@ -303,6 +303,26 @@ service cloud.firestore {
       allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
     }
 
+    match /attendance_records/{recordId} {
+      allow read: if (isActive() && (isTeacher() || isJuniorHighStaff() || isLinkedStudent(existing().studentId))) || isAdmin();
+      allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
+    }
+
+    match /lateness_records/{recordId} {
+      allow read: if (isActive() && (isTeacher() || isJuniorHighStaff() || isLinkedStudent(existing().studentId))) || isAdmin();
+      allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
+    }
+
+    match /system_backup_configs/{configId} {
+      allow read: if isActive() || isAdmin();
+      allow write: if isAdmin() || isJuniorHighStaff();
+    }
+
+    match /attendance_backup_file_maps/{mapId} {
+      allow read: if isActive() || isAdmin();
+      allow write: if isAdmin() || isJuniorHighStaff();
+    }
+
     match /observations/{observationId} {
       allow read: if (isActive() && (isTeacher() || isJuniorHighStaff() || isLinkedStudent(existing().studentId))) || isAdmin();
       allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();

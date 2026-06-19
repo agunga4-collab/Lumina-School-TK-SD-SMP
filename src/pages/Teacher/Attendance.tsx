@@ -72,11 +72,14 @@ export default function Attendance() {
         const snap = await getDocs(q);
         const classList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Class));
         setClasses(classList);
-        if (classList.length > 0 && !selectedClass) {
-          setSelectedClass(classList[0].id); // Use ID instead of Name
+        if (classList.length > 0) {
+          setSelectedClass(classList[0].id); // Always reset & select first class of new unit
+        } else {
+          setSelectedClass('');
         }
       } catch (err) {
         console.error('Error fetching classes:', err);
+        setSelectedClass('');
       } finally {
         setLoadingClasses(false);
       }
@@ -143,15 +146,17 @@ export default function Attendance() {
           const qStudentsId = query(collection(db, 'students'), where('classId', '==', classId));
           const qStudentsName = query(collection(db, 'students'), where('classId', '==', className));
           
-          const [snap1, snap2, snap3, snap4, snap5, snap6, snap7] = await Promise.all([
-            getDocs(qByClassId), 
-            getDocs(qByClassName),
-            getDocs(qByJobTitle),
-            getDocs(qInvitesId),
-            getDocs(qInvitesName),
-            getDocs(qStudentsId),
-            getDocs(qStudentsName)
-          ]);
+          const snapPromises = [
+            getDocs(qByClassId).catch(err => { console.warn("Failed to query users by classId:", err); return { docs: [] }; }),
+            getDocs(qByClassName).catch(err => { console.warn("Failed to query users by className:", err); return { docs: [] }; }),
+            getDocs(qByJobTitle).catch(err => { console.warn("Failed to query users by jobTitle:", err); return { docs: [] }; }),
+            getDocs(qInvitesId).catch(err => { console.warn("Failed to query roleInvites by classId:", err); return { docs: [] }; }),
+            getDocs(qInvitesName).catch(err => { console.warn("Failed to query roleInvites by className:", err); return { docs: [] }; }),
+            getDocs(qStudentsId).catch(err => { console.warn("Failed to query students by classId:", err); return { docs: [] }; }),
+            getDocs(qStudentsName).catch(err => { console.warn("Failed to query students by className:", err); return { docs: [] }; })
+          ];
+          
+          const [snap1, snap2, snap3, snap4, snap5, snap6, snap7] = await Promise.all(snapPromises);
           
           // Merge results and remove duplicates (using ID or luminaId as key)
           const combinedDocs = [...snap1.docs, ...snap2.docs, ...snap3.docs, ...snap4.docs, ...snap5.docs, ...snap6.docs, ...snap7.docs];
@@ -209,7 +214,7 @@ export default function Attendance() {
     };
 
     loadStudents();
-  }, [selectedClass, selectedDate]);
+  }, [selectedClass, selectedDate, classes, activeAcademicYear]);
 
   const handleDeleteOne = async (studentId: string) => {
     if (!window.confirm('Hapus data kehadiran untuk siswa ini?')) return;

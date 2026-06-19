@@ -1355,7 +1355,7 @@ Tindakan ini tidak dapat dibatalkan.`;
                   <Calendar size={16} className="text-emerald-400 shrink-0" />
                   <input 
                     type="date"
-                    value={selectedDate.toISOString().split('T')[0]}
+                    value={getDateKey(selectedDate)}
                     onChange={handleDateChange}
                     className="font-bold text-sm text-gray-700 outline-none cursor-pointer bg-transparent border-none py-1 absolute inset-0 opacity-0 z-10 w-full"
                     title="Pilih Tanggal Bebas"

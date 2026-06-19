@@ -629,7 +629,7 @@ export function aggregateKGWeeklyReportForPeriod(
             grade: studentObs.grading || 'Belum Berkembang',
             notes: studentObs.notes || '',
             photoUrl: studentObs.photo || null,
-            generalPhotoUrl: payload.generalPhoto || null
+            generalPhotoUrl: payload.generalPhotoUrl || payload.generalPhoto || null
           });
         }
       }
@@ -643,7 +643,7 @@ export function aggregateKGWeeklyReportForPeriod(
           if (raw) {
             const payload = JSON.parse(raw);
             const obsTimestamp = payload.timestamp || Date.now();
-            const obsDateStr = formatDateToKey(new Date(obsTimestamp));
+            const obsDateStr = payload.date || formatDateToKey(new Date(obsTimestamp));
 
             const matchedDay = dateKeys.find(dk => dk.dateKey === obsDateStr);
             if (matchedDay) {
@@ -658,7 +658,7 @@ export function aggregateKGWeeklyReportForPeriod(
                   grade: studentObs.grading || 'Belum Berkembang',
                   notes: studentObs.notes || '',
                   photoUrl: studentObs.photo || null,
-                  generalPhotoUrl: payload.generalPhoto || null
+                  generalPhotoUrl: payload.generalPhoto || payload.generalPhotoUrl || null
                 });
               }
             }
@@ -709,21 +709,96 @@ export function aggregateKGWeeklyReportForPeriod(
     let fallbackText = 'Belum ada dokumentasi foto kerja harian atau kegiatan observasi untuk hari ini.';
     
     if (dk) {
-      const dayObs = weeklyObservationItems.filter(item => item.dateKey === dk.dateKey);
-      const individualPhotoItem = dayObs.find(item => item.photoUrl);
+      // 1. Try to find if student has individual photo on this date
+      const dayObsForStudent = weeklyObservationItems.filter(item => item.dateKey === dk.dateKey);
+      const individualPhotoItem = dayObsForStudent.find(item => item.photoUrl);
+      
       if (individualPhotoItem) {
         chosenPhoto = individualPhotoItem.photoUrl;
       } else {
-        const generalPhotoItem = dayObs.find(item => item.generalPhotoUrl);
-        if (generalPhotoItem) {
-          chosenPhoto = generalPhotoItem.generalPhotoUrl;
+        // 2. If no individual photo, check for any general photo on this specific date
+        // A. From Firestore (filtered for class if applicable)
+        if (firestoreObservationDocs && firestoreObservationDocs.length > 0) {
+          const generalDoc = firestoreObservationDocs.find(doc => {
+            const obsTimestamp = doc.timestamp || Date.now();
+            const obsDateStr = doc.date || formatDateToKey(new Date(obsTimestamp));
+            const matchesDate = obsDateStr === dk.dateKey;
+            
+            // Check student's classId compatibility if both exist to ensure we match correct class's photo
+            const matchesClass = !doc.classId || !student.classId || String(doc.classId) === String(student.classId);
+            
+            return matchesDate && matchesClass && (doc.generalPhotoUrl || doc.generalPhoto);
+          });
+          if (generalDoc) {
+            chosenPhoto = generalDoc.generalPhotoUrl || generalDoc.generalPhoto;
+          }
+        }
+        
+        // B. From LocalStorage
+        if (!chosenPhoto) {
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('kg_obs_hist_')) {
+              try {
+                const raw = localStorage.getItem(key);
+                if (raw) {
+                  const payload = JSON.parse(raw);
+                  const obsTimestamp = payload.timestamp || Date.now();
+                  const obsDateStr = payload.date || formatDateToKey(new Date(obsTimestamp));
+                  if (obsDateStr === dk.dateKey && (payload.generalPhoto || payload.generalPhotoUrl)) {
+                    chosenPhoto = payload.generalPhoto || payload.generalPhotoUrl;
+                    break;
+                  }
+                }
+              } catch (e) {
+                // ignore
+              }
+            }
+          }
         }
       }
 
-      if (dayObs.length > 0) {
-        const activitiesObserved = dayObs.map(o => o.activity).filter(Boolean);
+      if (dayObsForStudent.length > 0) {
+        const activitiesObserved = dayObsForStudent.map(o => o.activity).filter(Boolean);
         if (activitiesObserved.length > 0) {
           fallbackText = `Mengikuti aktivitas ${activitiesObserved.join(', ')} secara interaktif.`;
+        }
+      } else {
+        // Check if there was any general activity observed on this day for the class
+        let generalActivityName = '';
+        if (firestoreObservationDocs && firestoreObservationDocs.length > 0) {
+          const generalDocAct = firestoreObservationDocs.find(doc => {
+            const obsTimestamp = doc.timestamp || Date.now();
+            const obsDateStr = doc.date || formatDateToKey(new Date(obsTimestamp));
+            const matchesClass = !doc.classId || !student.classId || String(doc.classId) === String(student.classId);
+            return obsDateStr === dk.dateKey && matchesClass;
+          });
+          if (generalDocAct) {
+            generalActivityName = ACTIVITY_LABEL_MAP[generalDocAct.activity] || generalDocAct.activity || '';
+          }
+        } else {
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('kg_obs_hist_')) {
+              try {
+                const raw = localStorage.getItem(key);
+                if (raw) {
+                  const payload = JSON.parse(raw);
+                  const obsTimestamp = payload.timestamp || Date.now();
+                  const obsDateStr = payload.date || formatDateToKey(new Date(obsTimestamp));
+                  if (obsDateStr === dk.dateKey) {
+                    generalActivityName = ACTIVITY_LABEL_MAP[payload.selectedActivity] || payload.selectedActivity || '';
+                    break;
+                  }
+                }
+              } catch (e) {
+                // ignore
+              }
+            }
+          }
+        }
+        if (generalActivityName) {
+          fallbackText = `Mengikuti aktivitas ${generalActivityName} bersama-sama teman-sekelas.`;
         }
       }
     }
