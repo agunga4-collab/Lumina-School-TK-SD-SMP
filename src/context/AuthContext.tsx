@@ -105,6 +105,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     try {
+      localStorage.removeItem('lumina_active_unit');
+      localStorage.removeItem('lumina_selected_student_id');
       await firebaseSignOut(auth);
     } catch (error) {
       console.error("Logout Error:", error);

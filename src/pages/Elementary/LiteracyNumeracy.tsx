@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   BookOpen, Languages, Heart, Calculator, Search, 
@@ -12,6 +13,7 @@ import { useAcademicYear } from '../../context/AcademicYearContext';
 import { collection, query, where, getDocs, addDoc, doc, updateDoc, orderBy } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { ACADEMIC_YEARS } from '../../constants';
+import ElementaryLiteracyOverview from './components/ElementaryLiteracyOverview';
 
 // Types for local component
 export type AreaType = 'BAHASA' | 'ENGLISH' | 'MENGAJI' | 'MATH';
@@ -79,6 +81,7 @@ const PERIODS = [
 ];
 
 export default function ElementaryLiteracyNumeracy() {
+  const navigate = useNavigate();
   const { profile } = useAuth();
   const { activeYear, activeSemester } = useAcademicYear();
   
@@ -89,6 +92,7 @@ export default function ElementaryLiteracyNumeracy() {
   const [selectedSemester, setSelectedSemester] = React.useState<string>(String(activeSemester || '1'));
   const [selectedPeriod, setSelectedPeriod] = React.useState<string>('july-october');
   const [searchQuery, setSearchQuery] = React.useState<string>('');
+  const [activeView, setActiveView] = React.useState<'input' | 'overview'>('input');
 
   React.useEffect(() => {
     if (activeYear) {
@@ -483,6 +487,14 @@ export default function ElementaryLiteracyNumeracy() {
           </div>
 
           <button 
+            onClick={() => navigate('/elementary/literasi-numerasi/input')}
+            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/10 px-4 py-2.5 rounded-2xl text-xs font-black tracking-wider uppercase transition-all"
+          >
+            <Sliders size={14} />
+            INPUT PER KELAS
+          </button>
+
+          <button 
             onClick={handleOpenHistory}
             className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white shadow-md shadow-slate-900/10 px-4 py-2.5 rounded-2xl text-xs font-black tracking-wider uppercase transition-all"
           >
@@ -492,8 +504,40 @@ export default function ElementaryLiteracyNumeracy() {
         </div>
       </header>
 
-      {/* Main Grid View (3 Panels Layout) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      {/* Tab Selector Switcher */}
+      <div className="flex items-center gap-1.5 bg-white p-1 pb-1 px-1 rounded-2xl w-fit border border-gray-100 shadow-sm">
+        <button
+          onClick={() => setActiveView('input')}
+          className={cn(
+            "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer",
+            activeView === 'input' 
+              ? "bg-slate-900 text-white shadow-md shadow-slate-900/10" 
+              : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
+          )}
+        >
+          Pencatatan Penilaian
+        </button>
+        <button
+          onClick={() => setActiveView('overview')}
+          className={cn(
+            "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer",
+            activeView === 'overview' 
+              ? "bg-slate-900 text-white shadow-md shadow-slate-900/10" 
+              : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
+          )}
+        >
+          Dasbor Ringkasan Analitik
+        </button>
+      </div>
+
+      {activeView === 'overview' ? (
+        <ElementaryLiteracyOverview 
+          schoolYear={selectedYear}
+          period={selectedPeriod === 'november-february' ? 'NOV_FEB' : selectedPeriod === 'march-june' ? 'MAR_JUN' : 'JUL_OCT'}
+        />
+      ) : (
+        /* Main Grid View (3 Panels Layout) */
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
         {/* PANEL KIRI (Pilih Area) */}
         <div className="lg:col-span-3 space-y-4">
@@ -1006,6 +1050,7 @@ export default function ElementaryLiteracyNumeracy() {
         </div>
 
       </div>
+      )}
 
       {/* Class History modal summary table */}
       <AnimatePresence>

@@ -96,7 +96,19 @@ export function Layout() {
   const currentUser = profile;
 
   // Use state for activeUnit so Super Admin and Parents can switch
-  const [activeUnit, setActiveUnit] = React.useState<UnitType | null>(null);
+  const [activeUnit, setActiveUnit] = React.useState<UnitType | null>(() => {
+    const saved = localStorage.getItem('lumina_active_unit');
+    return (saved as UnitType) || null;
+  });
+
+  React.useEffect(() => {
+    if (activeUnit) {
+      localStorage.setItem('lumina_active_unit', activeUnit);
+    } else {
+      localStorage.removeItem('lumina_active_unit');
+    }
+  }, [activeUnit]);
+
   const [parentAccessibleUnits, setParentAccessibleUnits] = React.useState<UnitType[]>([]);
   const [parentStudents, setParentStudents] = React.useState<Student[]>([]);
   const [parentCheckTrigger, setParentCheckTrigger] = React.useState(0);
@@ -168,9 +180,18 @@ export function Layout() {
   }, [currentUser]);
 
   // Student selection for Parents
-  const [selectedStudentId, setSelectedStudentId] = React.useState<string | null>(
-    currentUser?.linkedStudents?.[0] || null
-  );
+  const [selectedStudentId, setSelectedStudentId] = React.useState<string | null>(() => {
+    const saved = localStorage.getItem('lumina_selected_student_id');
+    return saved || currentUser?.linkedStudents?.[0] || null;
+  });
+
+  React.useEffect(() => {
+    if (selectedStudentId) {
+      localStorage.setItem('lumina_selected_student_id', selectedStudentId);
+    } else {
+      localStorage.removeItem('lumina_selected_student_id');
+    }
+  }, [selectedStudentId]);
 
   // Automatically select the first student belonging to the selected unit when a parent switches unit
   React.useEffect(() => {

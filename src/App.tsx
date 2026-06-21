@@ -46,6 +46,7 @@ import ChildAttendance from './pages/Parent/Attendance';
 import LiteracyInput from './pages/LiteracyNumeracy/LiteracyInput';
 import LiteracyRecap from './pages/LiteracyNumeracy/LiteracyRecap';
 import ElementaryLiteracyNumeracy from './pages/Elementary/LiteracyNumeracy';
+import ElementaryLiteracyInputPage from './pages/Elementary/ElementaryLiteracyInputPage';
 import LiteracySummary from './pages/Parent/LiteracySummary';
 import Lateness from './pages/Attendance/Lateness';
 import ElementaryHeadDashboard from './pages/Dashboard/ElementaryHeadDashboard';
@@ -301,6 +302,7 @@ export default function App() {
             <Route path="recap" element={<LiteracyRecap />} />
           </Route>
           <Route path="elementary/literasi-numerasi" element={<ElementaryLiteracyNumeracy />} />
+          <Route path="elementary/literasi-numerasi/input" element={<ElementaryLiteracyInputPage />} />
           <Route path="kindy">
             <Route path="checklist" element={<DailyChecklist />} />
             <Route path="observation" element={<ObservationKG />} />
