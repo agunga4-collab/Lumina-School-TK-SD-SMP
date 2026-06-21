@@ -621,6 +621,10 @@
       "schema": "ElementaryLiteracyNumeracy",
       "description": "Elementary multi-area literacy and numeracy progress records."
     },
+    "elementary_literacy_numeracy_records/{recordId}": {
+      "schema": "ElementaryLiteracyNumeracy",
+      "description": "Elementary multi-area literacy and numeracy progress records."
+    },
     "selfExploration/{studentId}": {
       "schema": "SelfExploration",
       "description": "Student self-exploration profile summaries."

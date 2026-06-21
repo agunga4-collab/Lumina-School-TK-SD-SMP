@@ -39,7 +39,7 @@ export function getReadingSupportStatus(
   grade: number,
   period: ElementaryPeriod,
   wpm: number,
-  comprehensionScore: number
+  comprehensionScore: number | 'N/A' | null
 ): ElementarySupportStatus {
   if (isNaN(grade) || isNaN(wpm) || !period) {
     return 'INCOMPLETE_DATA';
@@ -62,10 +62,13 @@ export function getReadingSupportStatus(
   }
 
   // If comprehension score is poor (less than 70), status index downgrades at most to 'MONITOR'.
-  // If the status is already worse ('NEEDS_SUPPORT'), we keep the worse status.
-  if (comprehensionScore < 70) {
-    if (status === 'ON_TRACK') {
-      status = 'MONITOR';
+  // If comprehension is N/A or null, we do not downgrade.
+  if (comprehensionScore !== 'N/A' && comprehensionScore !== null && comprehensionScore !== undefined) {
+    const compVal = Number(comprehensionScore);
+    if (!isNaN(compVal) && compVal < 70) {
+      if (status === 'ON_TRACK') {
+        status = 'MONITOR';
+      }
     }
   }
 

@@ -25,7 +25,7 @@ export interface BahasaIndonesiaProgress extends ElementaryProgressBase {
   errors: number;
   wpm: number;
   readingLevel: string;
-  comprehensionScore: number;
+  comprehensionScore: number | 'N/A' | null;
   libraryBorrowStatus: 'AKTIF' | 'BELUM_MEMINJAM';
   oneDayOneBookStatus: 'AKTIF' | 'KURANG_AKTIF';
 }
@@ -36,7 +36,7 @@ export interface EnglishReadingProgress extends ElementaryProgressBase {
   errors: number;
   wpm: number;
   readingLevel: string;
-  comprehensionScore: number;
+  comprehensionScore: number | 'N/A' | null;
 }
 
 export interface MengajiProgress extends ElementaryProgressBase {

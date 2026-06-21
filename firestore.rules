@@ -292,6 +292,11 @@ service cloud.firestore {
       allow write: if isTeacher() || isAdmin() || isJuniorHighStaff();
     }
 
+    match /elementary_literacy_numeracy_records/{recordId} {
+      allow read: if isActive() && (isTeacher() || isAdmin() || isJuniorHighStaff() || isLinkedStudent(existing().studentId));
+      allow write: if isTeacher() || isAdmin() || isJuniorHighStaff();
+    }
+
     match /selfExploration/{studentId} {
       allow read: if isActive() &&
         ((isStudent() && studentId == request.auth.uid) || isJuniorHighStaff() || isLinkedStudent(studentId));

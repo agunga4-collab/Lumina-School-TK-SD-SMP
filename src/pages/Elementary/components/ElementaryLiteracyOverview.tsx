@@ -273,8 +273,8 @@ export default function ElementaryLiteracyOverview({ schoolYear, period }: Props
                             {rec.area === 'NUMERACY' ? `${(rec as any).accuracy || 0}% Acc` : ''}
                           </span>
                           {(rec.area === 'BAHASA_INDONESIA' || rec.area === 'ENGLISH_READING') && (
-                            <span className="text-[9px] text-slate-400">
-                              (Comp: {(rec as any).comprehensionScore || 0}%)
+                            <span className="text-[9px] text-slate-400 font-bold">
+                              (Comp: {(rec as any).comprehensionScore === 'N/A' || (rec as any).comprehensionScore === null ? 'N/A' : `${(rec as any).comprehensionScore || 0}%`})
                             </span>
                           )}
                         </div>

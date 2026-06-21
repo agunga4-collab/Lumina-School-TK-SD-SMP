@@ -202,7 +202,9 @@ export default function StudentLiteracyHistoryDrawer({
                                     <div className="bg-white p-2.5 rounded-xl border border-slate-100">
                                       <p className="text-[9px] text-slate-400 uppercase font-black">Comprehension</p>
                                       <div className="flex items-baseline gap-1 mt-0.5">
-                                        <span className="text-sm font-black text-slate-800">{record.comprehensionScore || 0}%</span>
+                                        <span className="text-sm font-black text-slate-800">
+                                          {record.comprehensionScore === 'N/A' || record.comprehensionScore === null ? 'N/A' : `${record.comprehensionScore || 0}%`}
+                                        </span>
                                       </div>
                                       <p className="text-[8px] text-slate-400 truncate font-semibold">
                                         Lv: {record.readingLevel || '-'}

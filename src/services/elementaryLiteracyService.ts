@@ -48,21 +48,28 @@ export const elementaryLiteracyService = {
 
       // Auto-calculate WPM and Support Status for Reading areas if wordsRead & errors are present
       if (
-        (enriched.area === 'BAHASA_INDONESIA' || enriched.area === 'ENGLISH_READING') &&
-        enriched.wordsRead !== undefined &&
-        enriched.errors !== undefined
+        (enriched.area === 'BAHASA_INDONESIA' || enriched.area === 'ENGLISH_READING')
       ) {
-        const wpm = calculateWpm(Number(enriched.wordsRead), Number(enriched.errors));
-        const comprehension = enriched.comprehensionScore !== undefined ? Number(enriched.comprehensionScore) : 0;
-        enriched.wpm = wpm;
-        enriched.supportStatus = getReadingSupportStatus(
-          Number(enriched.gradeLevel),
-          enriched.period,
-          wpm,
-          comprehension
-        );
-      } else if (enriched.area === 'MENGAJI' && enriched.completionStatus) {
-        enriched.supportStatus = getMengajiSupportStatus(enriched.completionStatus);
+        const hasWords = enriched.wordsRead !== undefined && enriched.wordsRead !== null && enriched.wordsRead !== '';
+        const hasErrs = enriched.errors !== undefined && enriched.errors !== null && enriched.errors !== '';
+        
+        if (hasWords && hasErrs) {
+          const wpm = calculateWpm(Number(enriched.wordsRead), Number(enriched.errors));
+          const compRaw = enriched.comprehensionScore;
+          const comprehension = (compRaw === 'N/A' || compRaw === null || compRaw === undefined || compRaw === '') ? 'N/A' : Number(compRaw);
+          enriched.wpm = wpm;
+          enriched.supportStatus = getReadingSupportStatus(
+            Number(enriched.gradeLevel),
+            enriched.period,
+            wpm,
+            compRaw === 'N/A' ? 'N/A' : (compRaw === '' || compRaw === null || compRaw === undefined ? null : Number(compRaw))
+          );
+        } else {
+          enriched.wpm = null;
+          enriched.supportStatus = 'INCOMPLETE_DATA';
+        }
+      } else if (enriched.area === 'MENGAJI') {
+        enriched.supportStatus = getMengajiSupportStatus(enriched.completionStatus || '');
       }
 
       const docId = enriched.id || `${enriched.studentId}_${enriched.period}_${enriched.area}_${enriched.schoolYear.replace(/\//g, '-')}`;
@@ -93,21 +100,28 @@ export const elementaryLiteracyService = {
       const merged = { ...existing, ...payload } as any;
 
       if (
-        (merged.area === 'BAHASA_INDONESIA' || merged.area === 'ENGLISH_READING') &&
-        merged.wordsRead !== undefined &&
-        merged.errors !== undefined
+        (merged.area === 'BAHASA_INDONESIA' || merged.area === 'ENGLISH_READING')
       ) {
-        const wpm = calculateWpm(Number(merged.wordsRead), Number(merged.errors));
-        const comprehension = merged.comprehensionScore !== undefined ? Number(merged.comprehensionScore) : 0;
-        merged.wpm = wpm;
-        merged.supportStatus = getReadingSupportStatus(
-          Number(merged.gradeLevel),
-          merged.period,
-          wpm,
-          comprehension
-        );
-      } else if (merged.area === 'MENGAJI' && merged.completionStatus) {
-        merged.supportStatus = getMengajiSupportStatus(merged.completionStatus);
+        const hasWords = merged.wordsRead !== undefined && merged.wordsRead !== null && merged.wordsRead !== '';
+        const hasErrs = merged.errors !== undefined && merged.errors !== null && merged.errors !== '';
+        
+        if (hasWords && hasErrs) {
+          const wpm = calculateWpm(Number(merged.wordsRead), Number(merged.errors));
+          const compRaw = merged.comprehensionScore;
+          const comprehension = (compRaw === 'N/A' || compRaw === null || compRaw === undefined || compRaw === '') ? 'N/A' : Number(compRaw);
+          merged.wpm = wpm;
+          merged.supportStatus = getReadingSupportStatus(
+            Number(merged.gradeLevel),
+            merged.period,
+            wpm,
+            compRaw === 'N/A' ? 'N/A' : (compRaw === '' || compRaw === null || compRaw === undefined ? null : Number(compRaw))
+          );
+        } else {
+          merged.wpm = null;
+          merged.supportStatus = 'INCOMPLETE_DATA';
+        }
+      } else if (merged.area === 'MENGAJI') {
+        merged.supportStatus = getMengajiSupportStatus(merged.completionStatus || '');
       }
 
       merged.updatedAt = Date.now();
@@ -198,21 +212,28 @@ export const elementaryLiteracyService = {
         const enriched = { ...record } as any;
 
         if (
-          (enriched.area === 'BAHASA_INDONESIA' || enriched.area === 'ENGLISH_READING') &&
-          enriched.wordsRead !== undefined &&
-          enriched.errors !== undefined
+          (enriched.area === 'BAHASA_INDONESIA' || enriched.area === 'ENGLISH_READING')
         ) {
-          const wpm = calculateWpm(Number(enriched.wordsRead), Number(enriched.errors));
-          const comprehension = enriched.comprehensionScore !== undefined ? Number(enriched.comprehensionScore) : 0;
-          enriched.wpm = wpm;
-          enriched.supportStatus = getReadingSupportStatus(
-            Number(enriched.gradeLevel),
-            enriched.period,
-            wpm,
-            comprehension
-          );
-        } else if (enriched.area === 'MENGAJI' && enriched.completionStatus) {
-          enriched.supportStatus = getMengajiSupportStatus(enriched.completionStatus);
+          const hasWords = enriched.wordsRead !== undefined && enriched.wordsRead !== null && enriched.wordsRead !== '';
+          const hasErrs = enriched.errors !== undefined && enriched.errors !== null && enriched.errors !== '';
+          
+          if (hasWords && hasErrs) {
+            const wpm = calculateWpm(Number(enriched.wordsRead), Number(enriched.errors));
+            const compRaw = enriched.comprehensionScore;
+            const comprehension = (compRaw === 'N/A' || compRaw === null || compRaw === undefined || compRaw === '') ? 'N/A' : Number(compRaw);
+            enriched.wpm = wpm;
+            enriched.supportStatus = getReadingSupportStatus(
+              Number(enriched.gradeLevel),
+              enriched.period,
+              wpm,
+              compRaw === 'N/A' ? 'N/A' : (compRaw === '' || compRaw === null || compRaw === undefined ? null : Number(compRaw))
+            );
+          } else {
+            enriched.wpm = null;
+            enriched.supportStatus = 'INCOMPLETE_DATA';
+          }
+        } else if (enriched.area === 'MENGAJI') {
+          enriched.supportStatus = getMengajiSupportStatus(enriched.completionStatus || '');
         }
 
         const docId = enriched.id || `${enriched.studentId}_${enriched.period}_${enriched.area}_${enriched.schoolYear.replace(/\//g, '-')}`;
