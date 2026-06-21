@@ -1864,6 +1864,8 @@ app.post("/api/admin/bulk-import-paste", async (req, res) => {
         let nickname = mapped.nickname || "";
         let gender = (mapped.gender || "").toUpperCase(); // L or P
         let parentEmail = (mapped.parentEmail || "").toLowerCase();
+        let fatherName = mapped.fatherName || "";
+        let motherName = mapped.motherName || "";
         let currentUnitId = mapped.unitId || unitId || "";
         let currentClassId = mapped.classId || classId || "";
         let currentAcademicYear = mapped.academicYear || academicYear || "2025/2026";
@@ -1932,6 +1934,8 @@ app.post("/api/admin/bulk-import-paste", async (req, res) => {
             gender,
             email,
             parentEmail,
+            fatherName,
+            motherName,
             classId: currentClassId,
             unitId: currentUnitId,
             academicYear: currentAcademicYear,
@@ -1967,6 +1971,41 @@ app.post("/api/admin/bulk-import-paste", async (req, res) => {
               status: "active",
               updatedAt: FieldValue.serverTimestamp(),
             }, { merge: true });
+
+            // Automatically create / update parent invitation in roleInvites
+            const parentEmailClean = parentEmail.trim().toLowerCase();
+            if (parentEmailClean) {
+              const parentSnap = await adminDb.collection("roleInvites")
+                .where("email", "==", parentEmailClean)
+                .where("role", "==", "PARENT")
+                .limit(1)
+                .get();
+
+              let defaultParentName = fatherName || motherName || `Wali ${name}`;
+              
+              if (parentSnap.empty) {
+                await adminDb.collection("roleInvites").add({
+                  email: parentEmailClean,
+                  name: defaultParentName,
+                  role: "PARENT",
+                  unitId: currentUnitId,
+                  linkedStudents: [luminaId],
+                  status: "ready",
+                  createdAt: FieldValue.serverTimestamp()
+                });
+              } else {
+                const parentDoc = parentSnap.docs[0];
+                const currentData = parentDoc.data();
+                const currentLinked = Array.isArray(currentData.linkedStudents) ? currentData.linkedStudents : [];
+                const newLinked = Array.from(new Set([...currentLinked, luminaId].map(id => String(id))));
+                
+                await parentDoc.ref.update({
+                  linkedStudents: newLinked,
+                  name: currentData.name || defaultParentName,
+                  updatedAt: FieldValue.serverTimestamp()
+                });
+              }
+            }
           }
 
           // 4. Sync of student invitation inside roleInvites
@@ -1990,6 +2029,8 @@ app.post("/api/admin/bulk-import-paste", async (req, res) => {
             nickname,
             gender,
             parentEmail,
+            fatherName,
+            motherName,
             status: "ready",
           };
 

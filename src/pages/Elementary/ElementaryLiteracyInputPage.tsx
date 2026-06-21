@@ -519,7 +519,7 @@ export default function ElementaryLiteracyInputPage() {
               className="w-full bg-slate-50 border border-slate-100 text-xs font-bold rounded-xl px-3 py-2 text-slate-800 focus:ring-2 focus:ring-slate-900/10 outline-none cursor-pointer"
             >
               {[1, 2, 3, 4, 5, 6].map(num => (
-                <option key={num} value={num}>Grade {num}</option>
+                <option key={num} value={num}>{num}</option>
               ))}
             </select>
           </div>

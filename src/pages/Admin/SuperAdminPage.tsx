@@ -61,7 +61,7 @@ import { cn } from "../../lib/utils";
 
 const getGradeOptions = (unitId: string): string[] => {
   if (unitId === "KINDERGARTEN") return ["Pra TK", "TK A", "TK B"];
-  if (unitId === "ELEMENTARY") return ["Grade 1", "Grade 2", "Grade 3", "Grade 4", "Grade 5", "Grade 6"];
+  if (unitId === "ELEMENTARY") return ["1", "2", "3", "4", "5", "6"];
   return ["7", "8", "9"]; // JUNIOR_HIGH
 };
 
@@ -413,6 +413,14 @@ export default function SuperAdminPage() {
       if (pasteMode === "STUDENT") {
         if (hLower.includes("nama panggilan") || hLower.includes("panggilan") || hLower.includes("nickname")) {
           initialMappings[i] = "nickname";
+        } else if (hLower.includes("nama") && (hLower.includes("ayah") || hLower.includes("bapak") || hLower.includes("father"))) {
+          initialMappings[i] = "fatherName";
+        } else if (hLower.includes("nama") && (hLower.includes("ibu") || hLower.includes("mama") || hLower.includes("mother"))) {
+          initialMappings[i] = "motherName";
+        } else if (hLower.includes("ayah") || hLower.includes("bapak") || hLower.includes("father")) {
+          initialMappings[i] = "fatherName";
+        } else if (hLower.includes("ibu") || hLower.includes("mama") || hLower.includes("mother")) {
+          initialMappings[i] = "motherName";
         } else if (hLower.includes("nama") || hLower.includes("full") || hLower.includes("lengkap")) {
           initialMappings[i] = "fullName";
         } else if (hLower.includes("nisn")) {
@@ -3658,6 +3666,8 @@ export default function SuperAdminPage() {
                                       <option value="nickname">Nama Panggilan</option>
                                       <option value="gender">Jenis Kelamin (L/P)</option>
                                       <option value="parentEmail">Email Orang Tua</option>
+                                      <option value="fatherName">Nama Ayah</option>
+                                      <option value="motherName">Nama Ibu</option>
                                       <option value="classId">Kelas Spesifik</option>
                                       <option value="unitId">Unit Spesifik</option>
                                       <option value="academicYear">Tahun Ajaran Spesifik</option>
@@ -5768,8 +5778,8 @@ export default function SuperAdminPage() {
                     className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
                   >
                     <option value="KINDERGARTEN">KINDERGARTEN (Pra TK, TK A, TK B)</option>
-                    <option value="ELEMENTARY">ELEMENTARY (Grade 1-6)</option>
-                    <option value="JUNIOR_HIGH">JUNIOR_HIGH (Grade 7-9)</option>
+                    <option value="ELEMENTARY">ELEMENTARY (Kelas 1-6)</option>
+                    <option value="JUNIOR_HIGH">JUNIOR_HIGH (Kelas 7-9)</option>
                   </select>
                 </div>
               </div>

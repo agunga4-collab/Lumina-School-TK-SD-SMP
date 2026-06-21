@@ -253,7 +253,7 @@ export default function ElementaryLiteracyOverview({ schoolYear, period }: Props
                     <tr key={rec.id || idx} className="hover:bg-rose-50/10 transition-colors">
                       <td className="py-3.5 px-5 font-bold text-slate-950">
                         {rec.studentName}
-                        <span className="text-[9px] text-slate-400 font-mono block mt-0.5">Grade {rec.gradeLevel}</span>
+                        <span className="text-[9px] text-slate-400 font-mono block mt-0.5">Kelas {rec.gradeLevel}</span>
                       </td>
                       <td className="py-3.5 px-4">
                         <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-lg text-[9px] font-bold uppercase tracking-wider">
