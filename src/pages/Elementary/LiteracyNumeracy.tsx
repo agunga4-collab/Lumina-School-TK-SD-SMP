@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { ACADEMIC_YEARS } from '../../constants';
 import ElementaryLiteracyOverview from './components/ElementaryLiteracyOverview';
 import { elementaryLiteracyService } from '../../services/elementaryLiteracyService';
+import { elementaryMTSSService } from '../../services/elementaryMTSSService';
 import { 
   ElementaryArea, 
   ElementaryPeriod, 
@@ -308,44 +309,12 @@ export default function ElementaryLiteracyNumeracy() {
         if (hasWords && hasErrs) {
           const wpmVal = calculateWpm(Number(wordsRaw), Number(errsRaw));
           updated.wpm = wpmVal;
-          updated.supportStatus = getReadingSupportStatus(
-            selectedGradeLevel,
-            selectedPeriod,
-            wpmVal,
-            comp
-          );
         } else {
           updated.wpm = '';
-          updated.supportStatus = 'INCOMPLETE_DATA';
         }
         updated.wordsRead = wordsRaw;
         updated.errors = errsRaw;
         updated.comprehensionScore = currentComp;
-      } else if (selectedArea === 'MENGAJI') {
-        const statusValue = field === 'completionStatus' ? value : updated.completionStatus;
-        if (statusValue) {
-          updated.supportStatus = getMengajiSupportStatus(statusValue);
-        } else {
-          updated.supportStatus = 'INCOMPLETE_DATA';
-        }
-      } else if (selectedArea === 'NUMERACY') {
-        const accRaw = field === 'accuracy' ? value : updated.accuracy;
-        const hasAcc = accRaw !== '' && accRaw !== undefined && accRaw !== null;
-        
-        if (hasAcc) {
-          const acc = Number(accRaw);
-          if (acc >= 80) {
-            updated.supportStatus = 'ON_TRACK';
-          } else if (acc >= 60) {
-            updated.supportStatus = 'MONITOR';
-          } else if (acc > 0) {
-            updated.supportStatus = 'NEEDS_SUPPORT';
-          } else {
-            updated.supportStatus = 'INCOMPLETE_DATA';
-          }
-        } else {
-          updated.supportStatus = 'INCOMPLETE_DATA';
-        }
       }
 
       return {
@@ -386,10 +355,25 @@ export default function ElementaryLiteracyNumeracy() {
     setBulkMathLevel('');
   };
 
+  const applyBulkTier1 = () => {
+    if (students.length === 0) {
+      toast.error('Tidak ada siswa di kelas ini');
+      return;
+    }
+    students.forEach(st => {
+      handleCellChange(st.id, 'supportStatus', 'ON_TRACK');
+    });
+    toast.success('Berhasil mengisi Tier 1 untuk seluruh siswa secara massal (belum disimpan, silakan simpan bila selesai)');
+  };
+
   // Unify validate & enrich record values before Firestore submission
   const validateAndEnrichRecord = (rawRecord: any) => {
     const rec = { ...rawRecord };
     
+    if (!rec.supportStatus) {
+      rec.supportStatus = 'INCOMPLETE_DATA';
+    }
+
     if (selectedArea === 'BAHASA_INDONESIA' || selectedArea === 'ENGLISH_READING') {
       const hasWords = rec.wordsRead !== '' && rec.wordsRead !== undefined && rec.wordsRead !== null;
       const hasErrs = rec.errors !== '' && rec.errors !== undefined && rec.errors !== null;
@@ -398,19 +382,10 @@ export default function ElementaryLiteracyNumeracy() {
         rec.wordsRead = Number(rec.wordsRead);
         rec.errors = Number(rec.errors);
         rec.wpm = calculateWpm(rec.wordsRead, rec.errors);
-        
-        const compRaw = rec.comprehensionScore;
-        rec.supportStatus = getReadingSupportStatus(
-          selectedGradeLevel,
-          selectedPeriod,
-          rec.wpm,
-          compRaw === 'N/A' ? 'N/A' : (compRaw === '' || compRaw === null || compRaw === undefined ? null : Number(compRaw))
-        );
       } else {
         rec.wordsRead = null;
         rec.errors = null;
         rec.wpm = null;
-        rec.supportStatus = 'INCOMPLETE_DATA';
       }
       
       const compRaw = rec.comprehensionScore;
@@ -425,27 +400,12 @@ export default function ElementaryLiteracyNumeracy() {
       rec.iqroCurrentLevel = (rec.iqroCurrentLevel === '' || rec.iqroCurrentLevel === null || rec.iqroCurrentLevel === undefined) ? null : Number(rec.iqroCurrentLevel);
       rec.targetIqroLevel = (rec.targetIqroLevel === '' || rec.targetIqroLevel === null || rec.targetIqroLevel === undefined) ? null : Number(rec.targetIqroLevel);
       rec.completionStatus = rec.completionStatus || '';
-      rec.supportStatus = getMengajiSupportStatus(rec.completionStatus || '');
     } else if (selectedArea === 'NUMERACY') {
       const hasAcc = rec.accuracy !== '' && rec.accuracy !== undefined && rec.accuracy !== null;
       const hasSpeed = rec.speed !== '' && rec.speed !== undefined && rec.speed !== null;
       
       rec.accuracy = hasAcc ? Number(rec.accuracy) : null;
       rec.speed = hasSpeed ? Number(rec.speed) : null;
-      
-      if (hasAcc && rec.accuracy !== null) {
-        if (rec.accuracy >= 80) {
-          rec.supportStatus = 'ON_TRACK';
-        } else if (rec.accuracy >= 60) {
-          rec.supportStatus = 'MONITOR';
-        } else if (rec.accuracy > 0) {
-          rec.supportStatus = 'NEEDS_SUPPORT';
-        } else {
-          rec.supportStatus = 'INCOMPLETE_DATA';
-        }
-      } else {
-        rec.supportStatus = 'INCOMPLETE_DATA';
-      }
     }
 
     return rec;
@@ -462,6 +422,7 @@ export default function ElementaryLiteracyNumeracy() {
 
       const validated = validateAndEnrichRecord(raw);
       await elementaryLiteracyService.saveProgressRecord(validated);
+      await elementaryMTSSService.syncProgressRecordToMTSS(validated as any);
       
       toast.success(`Berhasil menyimpan penilaian untuk ${validated.studentName}`);
       
@@ -487,6 +448,7 @@ export default function ElementaryLiteracyNumeracy() {
       setIsSaving(true);
       const recordsToSave = Object.values(studentRecords).map(rec => validateAndEnrichRecord(rec));
       await elementaryLiteracyService.bulkUpsertRecords(recordsToSave);
+      await elementaryMTSSService.syncBulkRecordsToMTSS(recordsToSave as any);
       
       toast.success(`Berhasil menyimpan penilaian massal untuk ${recordsToSave.length} siswa!`);
       setModifiedIds(new Set());
@@ -720,13 +682,23 @@ export default function ElementaryLiteracyNumeracy() {
 
             {/* DYNAMIC BULK PREFILL TOOL */}
             <div className="md:col-span-6 bg-slate-50 rounded-3xl p-5 border border-slate-200/50 flex flex-col justify-center gap-3">
-              <div className="flex items-center gap-2 text-slate-800 font-black text-[10px] uppercase tracking-wider">
-                <Sparkles size={12} className="text-indigo-500" />
-                Asisten Entri Data Massal (Bulk Pre-Fill)
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2 text-slate-800 font-black text-[10px] uppercase tracking-wider">
+                  <Sparkles size={12} className="text-indigo-500" />
+                  Asisten Entri Data Massal (Bulk Pre-Fill)
+                </div>
+                <button
+                  type="button"
+                  onClick={applyBulkTier1}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] px-3 py-1.5 rounded-xl font-bold uppercase cursor-pointer transition-colors flex items-center gap-1 shrink-0 shadow-sm"
+                >
+                  <CheckCircle2 size={12} />
+                  Pilih Tier 1 Semua
+                </button>
               </div>
 
               {selectedArea === 'NUMERACY' ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
                   <div className="flex gap-1.5 items-center">
                     <input
                       type="text"
@@ -762,8 +734,8 @@ export default function ElementaryLiteracyNumeracy() {
                   </div>
                 </div>
               ) : (
-                <p className="text-xs text-slate-500 italic">
-                  Bulk Pre-Fill aktif saat memilih area penilaian dengan bidang masukan berulang seperti Matematika.
+                <p className="text-xs text-slate-500 italic mt-1">
+                  Klik <b>Pilih Tier 1 Semua</b> untuk mengisi kolom Intervensi seluruh siswa menjadi Tier 1 secara instan tanpa otomatis menyimpan.
                 </p>
               )}
             </div>
@@ -854,7 +826,19 @@ export default function ElementaryLiteracyNumeracy() {
                         </>
                       )}
 
-                      <th className="py-3 px-4 w-28 text-center">Support Status</th>
+                      <th className="py-3 px-4 w-32 text-center">
+                        <div className="flex flex-col items-center gap-1.5">
+                          <span>Intervensi</span>
+                          <button
+                            type="button"
+                            onClick={applyBulkTier1}
+                            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200/60 px-1.5 py-0.5 rounded-lg text-[8px] font-black tracking-wider uppercase transition-colors cursor-pointer whitespace-nowrap block"
+                            title="Set seluruh siswa menjadi Tier 1"
+                          >
+                            Set Tier 1 Semua
+                          </button>
+                        </div>
+                      </th>
                       <th className="py-3 px-4 w-44 text-center">Catatan Tambahan</th>
                       <th className="py-3 px-4 w-24 text-center">Aksi Save Baris</th>
                     </tr>
@@ -1146,20 +1130,26 @@ export default function ElementaryLiteracyNumeracy() {
                             </>
                           )}
 
-                          {/* SUPPORT STAUS */}
-                          <td className="py-3 px-4 text-center font-bold max-w-[120px] truncate">
-                            <span
+                          {/* INTERVENSI SELECT dropdown */}
+                          <td className="py-3 px-4 text-center font-bold">
+                            <select
+                              value={record.supportStatus || 'INCOMPLETE_DATA'}
+                              onChange={e => handleCellChange(st.id, 'supportStatus', e.target.value)}
                               className={cn(
-                                "px-2.5 py-1 rounded-xl text-[9px] font-black tracking-wider uppercase border inline-block whitespace-nowrap",
-                                record.supportStatus === 'ON_TRACK' && "bg-emerald-50 text-emerald-700 border-emerald-100",
-                                record.supportStatus === 'MONITOR' && "bg-yellow-50 text-yellow-700 border-yellow-100",
-                                record.supportStatus === 'NEEDS_SUPPORT' && "bg-orange-50 text-orange-700 border-orange-100",
-                                record.supportStatus === 'INTERVENTION_RECOMMENDED' && "bg-red-50 text-red-700 border-red-100",
-                                (record.supportStatus === 'INCOMPLETE_DATA' || !record.supportStatus) && "bg-slate-50 text-slate-500 border-slate-100"
+                                "text-[11px] font-black tracking-wider uppercase rounded-xl px-2.5 py-1 text-center outline-none cursor-pointer border w-36 transition-colors",
+                                record.supportStatus === 'ON_TRACK' && "bg-emerald-50 text-emerald-700 border-emerald-200 focus:ring-1 focus:ring-emerald-500",
+                                record.supportStatus === 'MONITOR' && "bg-yellow-50 text-yellow-700 border-yellow-200 focus:ring-1 focus:ring-yellow-500",
+                                record.supportStatus === 'NEEDS_SUPPORT' && "bg-orange-50 text-orange-700 border-orange-200 focus:ring-1 focus:ring-orange-500",
+                                record.supportStatus === 'INTERVENTION_RECOMMENDED' && "bg-purple-50 text-purple-700 border-purple-200 focus:ring-1 focus:ring-purple-500",
+                                (record.supportStatus === 'INCOMPLETE_DATA' || !record.supportStatus) && "bg-slate-50 text-slate-500 border-slate-200 focus:ring-1 focus:ring-slate-400"
                               )}
                             >
-                              {getSupportStatusLabel(record.supportStatus || 'INCOMPLETE_DATA')}
-                            </span>
+                              <option value="INCOMPLETE_DATA">Belum diisi</option>
+                              <option value="ON_TRACK">Tier 1</option>
+                              <option value="MONITOR">Tier 2</option>
+                              <option value="NEEDS_SUPPORT">Tier 3</option>
+                              <option value="INTERVENTION_RECOMMENDED">SN (Special Needs)</option>
+                            </select>
                           </td>
 
                           {/* LOCAL NOTES */}
@@ -1325,7 +1315,7 @@ export default function ElementaryLiteracyNumeracy() {
                             </>
                           )}
 
-                          <th className="py-3 px-4 text-center">Support Status</th>
+                          <th className="py-3 px-4 text-center">Intervensi</th>
                           <th className="py-3 px-4 text-center">Terakhir Update</th>
                         </tr>
                       </thead>

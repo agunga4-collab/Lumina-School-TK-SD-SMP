@@ -154,7 +154,7 @@ export default function ElementaryLiteracyOverview({ schoolYear, period }: Props
               <CheckCircle2 size={18} />
             </div>
             <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">
-              ON TRACK STATUS
+              TIER 1 (ON TRACK)
             </span>
           </div>
           <div className="mt-4">
@@ -162,7 +162,7 @@ export default function ElementaryLiteracyOverview({ schoolYear, period }: Props
               {stats.onTrackCount}
             </h4>
             <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase">
-              MECAPAI TARGET PEMBELAJARAN
+              MENCAPAI TARGET PEMBELAJARAN
             </p>
           </div>
         </div>
@@ -177,7 +177,7 @@ export default function ElementaryLiteracyOverview({ schoolYear, period }: Props
               <AlertTriangle size={18} />
             </div>
             <span className="text-[10px] font-black text-rose-600 uppercase tracking-widest">
-              NEEDS SUPPORT / INTERVASI
+              BUTUH INTERVENSI (TIER 3 & SN)
             </span>
           </div>
           <div className="mt-4">

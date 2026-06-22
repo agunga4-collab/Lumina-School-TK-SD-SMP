@@ -498,6 +498,7 @@ export function Layout() {
                   <NavItem to="/academic/learning-goals" icon={<Target size={18} />} label="Learning Goals" />
                   <NavItem to="/academic/lxd" icon={<BookOpen size={18} />} label="LXD" />
                   <NavItem to="/elementary/literasi-numerasi" icon={<BookOpen size={18} />} label="Literasi & Numerasi" />
+                  <NavItem to="/elementary/mtss-academic" icon={<GraduationCap size={18} />} label="MTSS Academic" />
                   <NavItem to="/observations" icon={<Eye size={18} />} label="Observasi Guru" />
                 </div>
               )}

@@ -134,15 +134,15 @@ export function getAreaLabel(area: ElementaryArea): string {
 export function getSupportStatusLabel(status: ElementarySupportStatus): string {
   switch (status) {
     case 'ON_TRACK':
-      return 'On Track';
+      return 'Tier 1';
     case 'MONITOR':
-      return 'Monitor';
+      return 'Tier 2';
     case 'NEEDS_SUPPORT':
-      return 'Needs Support';
+      return 'Tier 3';
     case 'INTERVENTION_RECOMMENDED':
-      return 'Intervention Recommended';
+      return 'SN (Special Needs)';
     case 'INCOMPLETE_DATA':
-      return 'Incomplete Data';
+      return 'Belum diisi';
     default:
       return status;
   }

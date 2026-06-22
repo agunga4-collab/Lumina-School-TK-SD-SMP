@@ -555,6 +555,38 @@
       },
       "required": ["id", "studentId", "classId", "area", "createdAt"]
     },
+    "ElementaryMTSSCase": {
+      "title": "ElementaryMTSSCase",
+      "description": "MTSS Academic Case for Elementary students.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "classId": { "type": "string" },
+        "subject": { "type": "string", "enum": ["Bahasa Indonesia", "English", "Numeracy", "Mengaji"] },
+        "tier": { "type": "string", "enum": ["Tier 2", "Tier 3", "SN"] },
+        "baselineScore": { "type": "string" },
+        "targetScore": { "type": "string" },
+        "status": { "type": "string", "enum": ["Active", "Achieved"] },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "studentId", "studentName", "subject", "tier", "status"]
+    },
+    "ElementaryCoachingSession": {
+      "title": "ElementaryCoachingSession",
+      "description": "Weekly intervention coaching logs for Elementary MTSS Academic.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "notes": { "type": "string" },
+        "loggedBy": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "date", "notes", "loggedBy"]
+    },
     "WeeklySummaryDraft": {
       "title": "WeeklySummaryDraft",
       "description": "Draft comments and summary information for Kindergarten Weekly Reports.",
@@ -620,6 +652,14 @@
     "elementary_literacy_numeracy/{recordId}": {
       "schema": "ElementaryLiteracyNumeracy",
       "description": "Elementary multi-area literacy and numeracy progress records."
+    },
+    "elementary_mtss_cases/{caseId}": {
+      "schema": "ElementaryMTSSCase",
+      "description": "Main collection for Elementary MTSS Academic cases."
+    },
+    "elementary_mtss_cases/{caseId}/coaching_sessions/{sessionId}": {
+      "schema": "ElementaryCoachingSession",
+      "description": "Sub-collection of coaching sessions for Elementary MTSS cases."
     },
     "elementary_literacy_numeracy_records/{recordId}": {
       "schema": "ElementaryLiteracyNumeracy",

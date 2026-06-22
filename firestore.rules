@@ -287,6 +287,16 @@ service cloud.firestore {
       allow write: if isJuniorHighStaff();
     }
 
+    match /elementary_mtss_cases/{caseId} {
+      allow read: if isActive() && (isTeacher() || isAdmin() || isJuniorHighStaff() || isLinkedStudent(resource.data.studentId));
+      allow write: if isTeacher() || isAdmin() || isJuniorHighStaff();
+
+      match /coaching_sessions/{sessionId} {
+        allow read: if isActive() && (isTeacher() || isAdmin() || isJuniorHighStaff() || isLinkedStudent(get(/databases/$(database)/documents/elementary_mtss_cases/$(caseId)).data.studentId));
+        allow write: if isTeacher() || isAdmin() || isJuniorHighStaff();
+      }
+    }
+
     match /elementary_literacy_numeracy/{recordId} {
       allow read: if isActive() && (isTeacher() || isAdmin() || isJuniorHighStaff() || isLinkedStudent(existing().studentId));
       allow write: if isTeacher() || isAdmin() || isJuniorHighStaff();
