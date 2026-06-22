@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useMTSSCases } from '../../hooks/useMTSSCases';
 import MTSSCaseTable from './components/MTSSCaseTable';
 import CoachingLogDrawer from './components/CoachingLogDrawer';
+import { elementaryMTSSService } from '../../services/elementaryMTSSService';
 import { 
   GraduationCap, 
   Sparkles, 
@@ -24,6 +25,7 @@ export default function MTSSAcademicDashboard() {
   const [subjectFilter, setSubjectFilter] = useState<string>('All');
   const [tierFilter, setTierFilter] = useState<string>('All');
   const [statusFilter, setStatusFilter] = useState<string>('Active'); // Default show Active first
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
   // Drawer states
   const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
@@ -39,6 +41,32 @@ export default function MTSSAcademicDashboard() {
 
   const triggerRefresh = () => {
     setRefreshKey((prev) => prev + 1);
+  };
+
+  // Perform background reconciliation on mount to capture any newly inputted records
+  useEffect(() => {
+    const autoSync = async () => {
+      try {
+        await elementaryMTSSService.reconcileAllMTSSCases();
+      } catch (err) {
+        console.error('Failed to run background auto-reconciliation:', err);
+      }
+    };
+    autoSync();
+  }, []);
+
+  const handleManualSync = async () => {
+    try {
+      setIsSyncing(true);
+      const updatedCount = await elementaryMTSSService.reconcileAllMTSSCases();
+      triggerRefresh();
+      toast.success(`Sinkronisasi berhasil! Menyinkronkan ${updatedCount} data kasus intervensi dari evaluasi Literasi & Numerasi.`);
+    } catch (err) {
+      console.error('Failed to manually reconcile cases:', err);
+      toast.error('Gagal melakukan sinkronisasi data.');
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   const handleOpenCoaching = (caseId: string, studentName: string, subject: string, tier: string) => {
@@ -114,14 +142,12 @@ export default function MTSSAcademicDashboard() {
             </p>
           </div>
           <button
-            onClick={() => {
-              triggerRefresh();
-              toast.success('Melakukan refresh sinkronisasi data kasus');
-            }}
-            className="self-start md:self-auto flex items-center gap-1.5 bg-white/10 hover:bg-white/20 border border-white/10 hover:border-white/20 text-white rounded-2xl px-4 py-2 text-xs font-bold transition-all cursor-pointer shadow-sm shrink-0"
+            onClick={handleManualSync}
+            disabled={isSyncing}
+            className="self-start md:self-auto flex items-center gap-1.5 bg-white/10 hover:bg-white/20 disabled:bg-white/5 border border-white/10 hover:border-white/20 text-white rounded-2xl px-4 py-2 text-xs font-bold transition-all cursor-pointer shadow-sm shrink-0"
           >
-            <RefreshCw size={14} />
-            Refresh Sinkronisasi
+            <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
+            {isSyncing ? "Mensinkronisasikan..." : "Refresh Sinkronisasi"}
           </button>
         </div>
       </div>

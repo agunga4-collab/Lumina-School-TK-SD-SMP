@@ -200,5 +200,79 @@ export const elementaryMTSSService = {
     } catch (error) {
       return handleFirestoreError(error, 'delete', `${CASES_COLLECTION}/${caseId}/coaching_sessions/${sessionId}`);
     }
+  },
+
+  /**
+   * Reconcile/sync all existing records in `elementary_literacy_numeracy_records` with `elementary_mtss_cases`.
+   * This is extremely useful for loading historical data or recovering from desynchronization.
+   */
+  async reconcileAllMTSSCases(): Promise<number> {
+    try {
+      const recordsCol = collection(db, 'elementary_literacy_numeracy_records');
+      const recordsSnap = await getDocs(recordsCol);
+      
+      let syncedCount = 0;
+      
+      for (const recordDoc of recordsSnap.docs) {
+        const record = recordDoc.data() as ElementaryProgressRecord;
+        const tier = mapSupportStatusToTier(record.supportStatus);
+        
+        if (tier) {
+          const caseId = `${record.studentId}_${record.area}`;
+          const caseDocRef = doc(db, CASES_COLLECTION, caseId);
+          const caseSnap = await getDoc(caseDocRef);
+          const subject = mapAreaToSubject(record.area);
+          
+          if (caseSnap.exists()) {
+            const currentData = caseSnap.data() as ElementaryMTSSCase;
+            const updatedCase: ElementaryMTSSCase = {
+              ...currentData,
+              tier,
+              studentName: record.studentName || currentData.studentName,
+              classId: record.classId || currentData.classId,
+              status: currentData.status === 'Achieved' ? 'Active' : currentData.status || 'Active',
+              updatedAt: Date.now()
+            };
+            await setDoc(caseDocRef, updatedCase, { merge: true });
+          } else {
+            const newCase: ElementaryMTSSCase = {
+              id: caseId,
+              studentId: record.studentId,
+              studentName: record.studentName,
+              classId: record.classId,
+              subject,
+              tier,
+              baselineScore: '',
+              targetScore: '',
+              status: 'Active',
+              createdAt: Date.now(),
+              updatedAt: Date.now()
+            };
+            await setDoc(caseDocRef, newCase);
+          }
+          syncedCount++;
+        } else {
+          // If the record exists but supportStatus is ON_TRACK or other non-intervention status,
+          // mark existing active case as 'Achieved' automatically
+          const caseId = `${record.studentId}_${record.area}`;
+          const caseDocRef = doc(db, CASES_COLLECTION, caseId);
+          const caseSnap = await getDoc(caseDocRef);
+          if (caseSnap.exists()) {
+            const currentData = caseSnap.data() as ElementaryMTSSCase;
+            if (currentData.status === 'Active') {
+              await updateDoc(caseDocRef, {
+                status: 'Achieved',
+                updatedAt: Date.now()
+              });
+              syncedCount++;
+            }
+          }
+        }
+      }
+      return syncedCount;
+    } catch (error) {
+      console.error('Error in reconcileAllMTSSCases:', error);
+      throw error;
+    }
   }
 };
