@@ -2439,6 +2439,167 @@ app.post("/api/admin/reconcile-student-refs", async (req, res) => {
   }
 });
 
+// API: Cleanup corrupted oldLuminaId fields (e.g. mistakenly holding Gender inputs like 'Perempuan', 'Laki-laki', etc)
+app.post("/api/admin/cleanup-invalid-ids", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    
+    let decodedToken;
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    const db = getAdminDb();
+    if (!db) {
+      return res.status(500).json({ error: "Firestore is not online." });
+    }
+
+    const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+    const userRole = userDoc.exists ? userDoc.data()?.role : null;
+    const isSuperAdmin = userRole === "SUPER_ADMIN" || decodedToken.email === "agunga4@gmail.com";
+
+    if (!isSuperAdmin) {
+      return res.status(403).json({ error: "Access denied. Active Super Admin permission required." });
+    }
+
+    const { dryRun } = req.body;
+    console.log(`[CleanupAPI] Starting cleanup of invalid oldLuminaId references. dryRun=${!!dryRun}`);
+
+    const invalidPatterns = ["perempuan", "laki-laki", "l", "p", "male", "female", "laki-laki", "laki - laki", "perempuan"];
+    const isInvalid = (val: string) => {
+      const lower = val.trim().toLowerCase();
+      return invalidPatterns.includes(lower);
+    };
+
+    const targetCollections = ["students", "roleInvites", "users"];
+    const report: Record<string, { scanned: number; corrupted: number; updated: number }> = {};
+    const updatedDocs: { collection: string; id: string; name: string; oldValue: string }[] = [];
+
+    for (const collName of targetCollections) {
+      report[collName] = { scanned: 0, corrupted: 0, updated: 0 };
+      const snap = await db.collection(collName).get();
+      report[collName].scanned = snap.size;
+
+      let batch = db.batch();
+      let countInBatch = 0;
+
+      for (const doc of snap.docs) {
+        const data = doc.data();
+        const oldLuminaId = data.oldLuminaId;
+        if (typeof oldLuminaId === "string" && oldLuminaId.trim() !== "" && isInvalid(oldLuminaId)) {
+          report[collName].corrupted++;
+          updatedDocs.push({
+            collection: collName,
+            id: doc.id,
+            name: data.displayName || data.fullName || data.name || data.studentName || "No Name",
+            oldValue: oldLuminaId,
+          });
+
+          if (!dryRun) {
+            batch.update(doc.ref, { oldLuminaId: "" });
+            report[collName].updated++;
+            countInBatch++;
+            if (countInBatch >= 200) {
+              await batch.commit();
+              batch = db.batch();
+              countInBatch = 0;
+            }
+          }
+        }
+      }
+
+      if (!dryRun && countInBatch > 0) {
+        await batch.commit();
+      }
+    }
+
+    res.json({
+      success: true,
+      mode: dryRun ? "DRY-RUN" : "LIVE",
+      report,
+      updatedCount: updatedDocs.length,
+      samples: updatedDocs,
+    });
+  } catch (error: any) {
+    console.error("[CleanupAPI] Error:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// API: Bulk Delete Role Invites (Super Admin Only)
+app.post("/api/admin/delete-invites", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    
+    let decodedToken;
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    const db = getAdminDb();
+    if (!db) {
+      return res.status(500).json({ error: "Firestore is not online." });
+    }
+
+    const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+    const userRole = userDoc.exists ? userDoc.data()?.role : null;
+    const isSuperAdmin = 
+      userRole === "SUPER_ADMIN" || 
+      decodedToken.email === "agunga4@gmail.com" || 
+      decodedToken.email === "agunga4@lazuardi.sch.id";
+
+    if (!isSuperAdmin) {
+      return res.status(403).json({ error: "Access denied. Active Super Admin permission required." });
+    }
+
+    const { inviteIds } = req.body;
+    if (!inviteIds || !Array.isArray(inviteIds) || inviteIds.length === 0) {
+      return res.status(400).json({ success: false, error: "Invalid or empty inviteIds list." });
+    }
+
+    console.log(`[DeleteInvitesAPI] Performing deletion of ${inviteIds.length} invites.`);
+
+    const batchSize = 100;
+    const chunks = [];
+    for (let i = 0; i < inviteIds.length; i += batchSize) {
+      chunks.push(inviteIds.slice(i, i + batchSize));
+    }
+
+    let deletedCount = 0;
+    for (const chunk of chunks) {
+      const batch = db.batch();
+      for (const id of chunk) {
+        const docRef = db.collection("roleInvites").doc(id);
+        batch.delete(docRef);
+      }
+      await batch.commit();
+      deletedCount += chunk.length;
+    }
+
+    res.json({
+      success: true,
+      deletedCount,
+    });
+  } catch (error: any) {
+    console.error("[DeleteInvitesAPI] Error:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // API: Scan Identity Conflicts based on Name-centric Primary layer (Super Admin Only)
 app.post("/api/admin/scan-identity-conflicts", async (req, res) => {
   try {

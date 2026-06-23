@@ -179,6 +179,14 @@ export default function SuperAdminPage() {
   );
   const [pendingUsers, setPendingUsers] = React.useState<User[]>([]);
   const [classes, setClasses] = React.useState<Class[]>([]);
+  const [selectedClassFilter, setSelectedClassFilter] = React.useState<string>("ALL");
+  const [selectedInviteIds, setSelectedInviteIds] = React.useState<string[]>([]);
+  const [isBulkDeleting, setIsBulkDeleting] = React.useState<boolean>(false);
+
+  React.useEffect(() => {
+    setSelectedClassFilter("ALL");
+    setSelectedInviteIds([]);
+  }, [activeTab, selectedUnit, activeMenu]);
   const [teachers, setTeachers] = React.useState<User[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
@@ -1019,6 +1027,53 @@ export default function SuperAdminPage() {
     }
   };
 
+  const [isCleaningUpIds, setIsCleaningUpIds] = React.useState<boolean>(false);
+  const [cleanupResult, setCleanupResult] = React.useState<any>(null);
+
+  const handleCleanupInvalidOldIds = async (dryRun: boolean) => {
+    if (!dryRun) {
+      const confirmFirst = window.confirm(
+        "⚠️ PERINGATAN LIVE CLEANUP!\n\nAnda akan membersihkan oldLuminaId yang korup (berisi data Gender 'Perempuan/Laki-laki') secara langsung.\nTindakan ini aman dan hanya akan mengosongkan NIS lama yang tidak valid.\n\nApakah Anda ingin melanjutkan?"
+      );
+      if (!confirmFirst) return;
+    }
+
+    setIsCleaningUpIds(true);
+    setCleanupResult(null);
+
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) throw new Error("Sesi login Anda tidak valid. Silakan masuk kembali.");
+
+      const response = await fetch("/api/admin/cleanup-invalid-ids", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ dryRun }),
+      });
+
+      const resData = await response.json();
+      if (!response.ok || !resData.success) {
+        throw new Error(resData.error || "Gagal menghubungi backend server.");
+      }
+
+      setCleanupResult(resData);
+      if (dryRun) {
+        alert(`Analisis selesai! Menemukan ${resData.updatedCount} record terinfeksi. Silakan jalankan 'Terapkan Pembersihan' untuk membersihkannya.`);
+      } else {
+        alert(`Sukses! Berhasil membersihkan ${resData.updatedCount} record korup di database! 🎉`);
+        fetchData();
+      }
+    } catch (err: any) {
+      console.error("[CleanupUI] Error:", err);
+      alert("Proses Pembersihan Gagal: " + err.message);
+    } finally {
+      setIsCleaningUpIds(false);
+    }
+  };
+
   // Identity Conflict scan states
   const [conflictUnit, setConflictUnit] = React.useState<string>("KINDERGARTEN");
   const [isScanningConflicts, setIsScanningConflicts] = React.useState<boolean>(false);
@@ -1395,13 +1450,31 @@ export default function SuperAdminPage() {
   const handleDelete = async (id: string) => {
     if (!confirm("Hapus undangan ini?")) return;
     try {
-      await deleteInvite(id);
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) throw new Error("Sesi login Anda tidak valid. Silakan masuk kembali.");
+
+      const response = await fetch("/api/admin/delete-invites", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ inviteIds: [id] }),
+      });
+
+      const resData = await response.json();
+      if (!response.ok || !resData.success) {
+        throw new Error(resData.error || "Gagal menghubungi backend server.");
+      }
+
       fetchData();
     } catch (error: any) {
       console.error("Delete error:", error);
       alert("Gagal menghapus: " + error.message);
     }
   };
+
+
 
   const handleActivate = async (uid: string, email: string) => {
     const invite = invites.find(
@@ -1476,6 +1549,16 @@ export default function SuperAdminPage() {
     return map;
   }, [invites]);
 
+  const studentIdToClassId = React.useMemo(() => {
+    const map: Record<string, string> = {};
+    invites.forEach((i) => {
+      if (i.role === "STUDENT" && i.luminaId && i.classId) {
+        map[i.luminaId] = i.classId;
+      }
+    });
+    return map;
+  }, [invites]);
+
   const filteredInvites = invites.filter((i) => {
     const matchesSearch =
       i.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -1487,10 +1570,35 @@ export default function SuperAdminPage() {
       i.unitId === selectedUnit || 
       (i.role === "PARENT" && Array.isArray(i.linkedStudents) && i.linkedStudents.some(sid => studentIdToUnitId[sid] === selectedUnit));
 
+    let matchesClass = true;
+    if (activeMenu === "user-undangan" && (activeTab === "STUDENT" || activeTab === "PARENT") && selectedClassFilter !== "ALL") {
+      if (selectedClassFilter === "EMPTY") {
+        if (i.role === "STUDENT") {
+          matchesClass = !i.classId;
+        } else if (i.role === "PARENT") {
+          matchesClass = !i.linkedStudents || i.linkedStudents.length === 0 || i.linkedStudents.every(sid => !studentIdToClassId[sid]);
+        }
+      } else {
+        if (i.role === "STUDENT") {
+          matchesClass = i.classId === selectedClassFilter || 
+                         classes.find(c => c.id === selectedClassFilter)?.name === i.classId ||
+                         classes.find(c => c.name === selectedClassFilter)?.id === i.classId;
+        } else if (i.role === "PARENT") {
+          matchesClass = Array.isArray(i.linkedStudents) && i.linkedStudents.some(sid => {
+            const scId = studentIdToClassId[sid];
+            return scId === selectedClassFilter ||
+                   classes.find(c => c.id === selectedClassFilter)?.name === scId ||
+                   classes.find(c => c.name === selectedClassFilter)?.id === scId;
+          });
+        }
+      }
+    }
+
     if (activeTab === "STAFF") {
       return (
         matchesSearch &&
         matchesUnit &&
+        matchesClass && (
         [
           "SUPER_ADMIN",
           "HEAD_UNIT",
@@ -1499,7 +1607,7 @@ export default function SuperAdminPage() {
           "BK_MENTOR",
           "STAFF",
           "PROFILE_TEACHER",
-        ].includes(i.role) || (matchesSearch && matchesUnit && [
+        ].includes(i.role) || [
           "SUPER_ADMIN",
           "HEAD_UNIT",
           "HEAD_JUNIOR",
@@ -1510,13 +1618,17 @@ export default function SuperAdminPage() {
       );
     }
     if (activeTab === "STUDENT") {
-      return matchesSearch && matchesUnit && i.role === "STUDENT";
+      return matchesSearch && matchesUnit && matchesClass && i.role === "STUDENT";
     }
     if (activeTab === "PARENT") {
-      return matchesSearch && matchesUnit && i.role === "PARENT";
+      return matchesSearch && matchesUnit && matchesClass && i.role === "PARENT";
     }
-    return matchesSearch && matchesUnit;
+    return matchesSearch && matchesUnit && matchesClass;
   });
+
+  const classOptions = React.useMemo(() => {
+    return classes.filter(c => selectedUnit === "ALL" || c.unitId === selectedUnit);
+  }, [classes, selectedUnit]);
 
   const studentIdToName = React.useMemo(() => {
     const map: Record<string, string> = {};
@@ -1554,6 +1666,99 @@ export default function SuperAdminPage() {
     }
     return sortableItems;
   }, [filteredInvites, sortConfig, studentIdToName]);
+
+  const isAllSelected = sortedInvites.length > 0 && sortedInvites.every(i => selectedInviteIds.includes(i.id));
+  
+  const handleSelectAll = () => {
+    if (isAllSelected) {
+      const sortedIds = sortedInvites.map(i => i.id);
+      setSelectedInviteIds(prev => prev.filter(id => !sortedIds.includes(id)));
+    } else {
+      const sortedIds = sortedInvites.map(i => i.id);
+      setSelectedInviteIds(prev => Array.from(new Set([...prev, ...sortedIds])));
+    }
+  };
+
+  const handleSelectOne = (id: string) => {
+    setSelectedInviteIds(prev => 
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedInviteIds.length === 0) return;
+    const confirmDelete = window.confirm(
+      `⚠️ Apakah Anda yakin ingin menghapus ${selectedInviteIds.length} undangan terpilih?`
+    );
+    if (!confirmDelete) return;
+
+    setIsBulkDeleting(true);
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) throw new Error("Sesi login Anda tidak valid. Silakan masuk kembali.");
+
+      const response = await fetch("/api/admin/delete-invites", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ inviteIds: selectedInviteIds }),
+      });
+
+      const resData = await response.json();
+      if (!response.ok || !resData.success) {
+        throw new Error(resData.error || "Gagal menghubungi backend server.");
+      }
+
+      alert(`Berhasil menghapus ${selectedInviteIds.length} undangan!`);
+      setSelectedInviteIds([]);
+      fetchData();
+    } catch (error: any) {
+      console.error("Bulk delete error:", error);
+      alert("Gagal menghapus beberapa undangan: " + error.message);
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
+  const handleDeleteAllFiltered = async () => {
+    if (sortedInvites.length === 0) return;
+    const confirmDelete = window.confirm(
+      `⚠️ PERINGATAN BERSKALA BESAR!\n\nApakah Anda yakin ingin menghapus SEMUA (${sortedInvites.length}) undangan yang tampil saat ini?`
+    );
+    if (!confirmDelete) return;
+
+    setIsBulkDeleting(true);
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) throw new Error("Sesi login Anda tidak valid. Silakan masuk kembali.");
+
+      const idsToDelete = sortedInvites.map(i => i.id);
+      const response = await fetch("/api/admin/delete-invites", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ inviteIds: idsToDelete }),
+      });
+
+      const resData = await response.json();
+      if (!response.ok || !resData.success) {
+        throw new Error(resData.error || "Gagal menghubungi backend server.");
+      }
+
+      alert(`Berhasil menghapus semua (${idsToDelete.length}) undangan!`);
+      setSelectedInviteIds([]);
+      fetchData();
+    } catch (error: any) {
+      console.error("Delete all filtered error:", error);
+      alert("Gagal menghapus semua undangan: " + error.message);
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
 
   const sortedClasses = React.useMemo(() => {
     const filtered = classes.filter((c) => {
@@ -2322,6 +2527,26 @@ export default function SuperAdminPage() {
               />
             </div>
             <div className="flex items-center gap-3">
+              {activeMenu === "user-undangan" && (activeTab === "STUDENT" || activeTab === "PARENT") && (
+                <div className="relative" id="class-filter-select-wrapper">
+                  <select
+                    value={selectedClassFilter}
+                    onChange={(e) => setSelectedClassFilter(e.target.value)}
+                    className="appearance-none bg-white border border-gray-100 rounded-2xl pl-5 pr-10 py-3.5 text-[10px] font-black uppercase tracking-wider text-gray-700 shadow-sm focus:ring-4 focus:ring-blue-50 focus:border-blue-200 transition-all cursor-pointer outline-none min-w-[170px] h-[48px]"
+                  >
+                    <option value="ALL">Semua Kelas</option>
+                    <option value="EMPTY">Belum Ada Kelas</option>
+                    {classOptions.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        Kelas {c.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4 text-gray-400">
+                    <Filter size={12} />
+                  </div>
+                </div>
+              )}
               {activeTab === "CLASSES" && (
                 <button
                   onClick={() => {
@@ -2385,6 +2610,55 @@ export default function SuperAdminPage() {
               </button>
             </div>
           </div>
+
+          {/* Selection Actions Toolbar */}
+          {activeMenu === "user-undangan" && ["STAFF", "STUDENT", "PARENT"].includes(activeTab) && (
+            <div className="bg-slate-50 border border-slate-100 rounded-[2rem] p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 select-none mb-4 animate-in fade-in slide-in-from-top-2 duration-200">
+              <div className="flex items-center gap-3.5">
+                <div className="w-11 h-11 bg-slate-900 rounded-2xl flex items-center justify-center text-white shadow-md shadow-slate-200">
+                  <Users size={16} />
+                </div>
+                <div>
+                  <p className="text-xs font-black text-gray-900 uppercase tracking-tight">Atur Pilihan Undangan</p>
+                  <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-0.5">
+                    {selectedInviteIds.length} dari {sortedInvites.length} record dipilih
+                  </p>
+                </div>
+              </div>
+              
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleDeleteSelected}
+                  disabled={selectedInviteIds.length === 0 || isBulkDeleting}
+                  className="px-5 py-3 h-11 bg-red-655 hover:bg-red-700 disabled:opacity-40 text-white rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer disabled:cursor-not-allowed transition-all flex items-center gap-2 border border-red-500/10 shadow-sm font-bold"
+                  id="btn-delete-selected"
+                >
+                  {isBulkDeleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                  HAPUS TERPILIH ({selectedInviteIds.length})
+                </button>
+
+                <button
+                  onClick={handleDeleteAllFiltered}
+                  disabled={sortedInvites.length === 0 || isBulkDeleting}
+                  className="px-5 py-3 h-11 bg-gray-900 hover:bg-red-600 disabled:opacity-40 text-white rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer disabled:cursor-not-allowed transition-all flex items-center gap-2 border border-transparent shadow-sm font-bold"
+                  id="btn-delete-all-filtered"
+                >
+                  {isBulkDeleting ? <Loader2 size={11} className="animate-spin" /> : <AlertTriangle size={11} />}
+                  HAPUS SEMUA ({sortedInvites.length})
+                </button>
+
+                {selectedInviteIds.length > 0 && (
+                  <button
+                    onClick={() => setSelectedInviteIds([])}
+                    className="px-4 py-3 h-11 bg-white border border-gray-200 hover:bg-gray-50 text-gray-400 hover:text-gray-600 rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all font-bold"
+                    id="btn-cancel-selection"
+                  >
+                    Batal Pilihan
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Table/List Area */}
           <div className="bg-white rounded-[3rem] border border-gray-100 shadow-xl shadow-gray-50 overflow-x-auto relative min-h-[400px]">
@@ -3107,6 +3381,16 @@ export default function SuperAdminPage() {
               <table className="w-full text-left min-w-[1200px]">
                 <thead className="bg-gray-50/50">
                   <tr>
+                    {activeMenu === "user-undangan" && (
+                      <th className="px-6 py-6 w-12 border-b border-gray-100 text-center select-none">
+                        <input
+                          type="checkbox"
+                          checked={isAllSelected}
+                          onChange={handleSelectAll}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 bg-white w-4 cursor-pointer"
+                        />
+                      </th>
+                    )}
                     <th 
                       onClick={() => handleSort("name")}
                       className="px-8 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 cursor-pointer hover:bg-gray-100 transition-all"
@@ -3181,7 +3465,7 @@ export default function SuperAdminPage() {
                   {sortedInvites.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={activeTab === "STUDENT" ? 10 : 5}
+                        colSpan={12}
                         className="px-10 py-20 text-center text-gray-400 italic"
                       >
                         No users found match criteria.
@@ -3193,6 +3477,16 @@ export default function SuperAdminPage() {
                         key={invite.id}
                         className="group hover:bg-gray-50/30 transition-all"
                       >
+                        {activeMenu === "user-undangan" && (
+                          <td className="px-6 py-6 text-center w-12 select-none">
+                            <input
+                              type="checkbox"
+                              checked={selectedInviteIds.includes(invite.id)}
+                              onChange={() => handleSelectOne(invite.id)}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 bg-white w-4 cursor-pointer"
+                            />
+                          </td>
+                        )}
                         <td className="px-8 py-6">
                           <div className="flex flex-col">
                             <span className="text-xs font-black text-gray-900 uppercase tracking-tight italic">
@@ -4387,6 +4681,59 @@ export default function SuperAdminPage() {
                           Terapkan (Live Update)
                         </>
                       )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Clean Corrupted oldLuminaId References Card */}
+                <div className="lg:col-span-1 bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm space-y-6 flex flex-col justify-between">
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-black text-gray-800 uppercase tracking-widest border-b border-gray-50 pb-3 flex items-center gap-2">
+                      <AlertCircle size={16} className="text-red-500" />
+                      Integritas Data NIS Lama
+                    </h3>
+                    <p className="text-[10px] text-gray-500 font-semibold leading-relaxed">
+                      Memindai dan membersihkan field <span className="font-bold text-red-600">oldLuminaId</span> (NIS Lama) yang salah isi (berisi data gender seperti &quot;Perempuan&quot; atau &quot;Laki-laki&quot;).
+                    </p>
+
+                    {cleanupResult && (
+                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-[10px] space-y-1.5 font-bold uppercase text-gray-600 leading-snug">
+                        <div className="text-[11px] text-gray-800 tracking-tight mb-1 border-b border-gray-100 pb-1 font-black">
+                          HASIL {cleanupResult.mode}:
+                        </div>
+                        <div>Total Record Korup: <span className="text-red-500 font-black">{cleanupResult.updatedCount}</span></div>
+                        {cleanupResult.samples && cleanupResult.samples.length > 0 && (
+                          <div className="text-[9px] text-gray-400 capitalize normal-case font-medium max-h-24 overflow-y-auto space-y-1 mt-1 border-t border-gray-50 pt-1">
+                            {cleanupResult.samples.map((s: any, idx: number) => (
+                              <div key={idx}>• {s.name} ({s.collection}): &quot;{s.oldValue}&quot;</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-2 pt-2">
+                    <button
+                      onClick={() => handleCleanupInvalidOldIds(true)}
+                      disabled={isCleaningUpIds}
+                      className="w-full py-3 bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-xl text-[9px] font-black uppercase tracking-widest cursor-pointer transition-all flex items-center justify-center gap-2 disabled:opacity-50 select-none border border-slate-200"
+                    >
+                      {isCleaningUpIds ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <RefreshCw size={12} />
+                      )}
+                      Analisis Korup (Dry Run)
+                    </button>
+
+                    <button
+                      onClick={() => handleCleanupInvalidOldIds(false)}
+                      disabled={isCleaningUpIds}
+                      className="w-full py-3 bg-red-600 hover:bg-red-750 text-white rounded-xl text-[9px] font-black uppercase tracking-widest cursor-pointer transition-all flex items-center justify-center gap-2 disabled:opacity-50 select-none shadow-md shadow-red-100"
+                    >
+                      <CheckCircle2 size={12} />
+                      Terapkan Pembersihan (Live)
                     </button>
                   </div>
                 </div>
