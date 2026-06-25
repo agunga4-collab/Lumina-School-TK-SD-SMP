@@ -350,7 +350,7 @@ export default function SuperAdminPage() {
   const [hasDetectedHeaders, setHasDetectedHeaders] = React.useState<boolean>(false);
   const [isParsing, setIsParsing] = React.useState<boolean>(false);
   const [isSavingPaste, setIsSavingPaste] = React.useState<boolean>(false);
-  const [pasteResult, setPasteResult] = React.useState<{ created: number; updated: number; skipped: number; errors: string[] } | null>(null);
+  const [pasteResult, setPasteResult] = React.useState<{ created: number; updated: number; skipped: number; errors: string[]; skippedReasons?: string[] } | null>(null);
 
   React.useEffect(() => {
     // Automatically pre-select first class of selected unit when unit changes
@@ -403,23 +403,50 @@ export default function SuperAdminPage() {
 
     if (isHeaderRow) {
       headers = firstRow.map(cell => cell.trim());
-      dataRows = nonEmptyRows.slice(1);
+      const rawDataRows = nonEmptyRows.slice(1);
+      // Pad rawDataRows to match headers length exactly to prevent column shifting
+      dataRows = rawDataRows.map(row => {
+        const padded = [...row];
+        while (padded.length < headers.length) {
+          padded.push("");
+        }
+        return padded.slice(0, headers.length);
+      });
       setHasDetectedHeaders(true);
     } else {
-      headers = firstRow.map((_, i) => `Kolom ${i + 1}`);
-      dataRows = nonEmptyRows;
+      // Find maximum columns across all rows to prevent shifting/truncation
+      const maxCols = Math.max(...nonEmptyRows.map(row => row.length));
+      headers = Array.from({ length: maxCols }, (_, i) => `Kolom ${i + 1}`);
+      dataRows = nonEmptyRows.map(row => {
+        const padded = [...row];
+        while (padded.length < maxCols) {
+          padded.push("");
+        }
+        return padded.slice(0, maxCols);
+      });
       setHasDetectedHeaders(false);
     }
 
     setParsedRows(dataRows);
     setDetectedHeaders(headers);
 
+    // Helper to inspect if a column contains gender values
+    const isGenderColumn = (colIdx: number) => {
+      const sampleCells = dataRows.slice(0, 10).map(row => (row[colIdx] || "").trim().toLowerCase());
+      const genderKeywords = ["l", "p", "laki-laki", "perempuan", "male", "female", "laki", "wanita", "laki laki", "perempuan/wanita"];
+      return sampleCells.some(cell => cell !== "" && genderKeywords.includes(cell));
+    };
+
     // Initial Best Guess Mappings
     const initialMappings: Record<number, string> = {};
     headers.forEach((header, i) => {
       const hLower = header.toLowerCase();
+      const colIsGender = isGenderColumn(i);
+
       if (pasteMode === "STUDENT") {
-        if (hLower.includes("nama panggilan") || hLower.includes("panggilan") || hLower.includes("nickname")) {
+        if (colIsGender || hLower.includes("gender") || hLower.includes("kelamin") || hLower.includes("jenis") || hLower.includes("kelm")) {
+          initialMappings[i] = "gender";
+        } else if (hLower.includes("nama panggilan") || hLower.includes("panggilan") || hLower.includes("nickname")) {
           initialMappings[i] = "nickname";
         } else if (hLower.includes("nama") && (hLower.includes("ayah") || hLower.includes("bapak") || hLower.includes("father"))) {
           initialMappings[i] = "fatherName";
@@ -433,10 +460,6 @@ export default function SuperAdminPage() {
           initialMappings[i] = "fullName";
         } else if (hLower.includes("nisn")) {
           initialMappings[i] = "nisn";
-        } else if (hLower.includes("nis") || hLower.includes("id") || hLower.includes("lumina")) {
-          initialMappings[i] = "luminaId";
-        } else if (hLower.includes("gender") || hLower.includes("kelamin") || hLower.includes("jenis") || hLower.includes("kelm")) {
-          initialMappings[i] = "gender";
         } else if (hLower.includes("parent email") || hLower.includes("ortu") || hLower.includes("orang tua") || hLower.includes("wali")) {
           initialMappings[i] = "parentEmail";
         } else if (hLower.includes("email") || hLower.includes("mail")) {
@@ -447,6 +470,13 @@ export default function SuperAdminPage() {
           initialMappings[i] = "unitId";
         } else if (hLower.includes("tahun") || hLower.includes("academic") || hLower.includes("ajaran")) {
           initialMappings[i] = "academicYear";
+        } else if (hLower.includes("nis") || hLower.includes("id") || hLower.includes("lumina")) {
+          // If this column is detected as containing gender values, NEVER map it to luminaId
+          if (!colIsGender) {
+            initialMappings[i] = "luminaId";
+          } else {
+            initialMappings[i] = "gender";
+          }
         }
       } else if (pasteMode === "STAFF") {
         if (hLower.includes("nama") || hLower.includes("name") || hLower.includes("lengkap")) {
@@ -456,7 +486,9 @@ export default function SuperAdminPage() {
         } else if (hLower.includes("jabatan") || hLower.includes("title") || hLower.includes("kerja")) {
           initialMappings[i] = "jobTitle";
         } else if (hLower.includes("id") || hLower.includes("lumina") || hLower.includes("nip")) {
-          initialMappings[i] = "luminaId";
+          if (!colIsGender) {
+            initialMappings[i] = "luminaId";
+          }
         } else if (hLower.includes("role")) {
           initialMappings[i] = "role";
         } else if (hLower.includes("unit")) {
@@ -468,9 +500,13 @@ export default function SuperAdminPage() {
         } else if (hLower.includes("email") || hLower.includes("mail")) {
           initialMappings[i] = "email";
         } else if (hLower.includes("anak") || hLower.includes("child") || hLower.includes("siswa") || hLower.includes("student")) {
-          initialMappings[i] = "childId";
+          if (!colIsGender) {
+            initialMappings[i] = "childId";
+          }
         } else if (hLower.includes("id") || hLower.includes("lumina")) {
-          initialMappings[i] = "luminaId";
+          if (!colIsGender) {
+            initialMappings[i] = "luminaId";
+          }
         } else if (hLower.includes("unit")) {
           initialMappings[i] = "unitId";
         }
@@ -482,7 +518,13 @@ export default function SuperAdminPage() {
       if (pasteMode === "STUDENT") {
         const fallbacks = ["luminaId", "nisn", "fullName", "nickname", "gender", "email", "parentEmail", "classId", "unitId", "academicYear"];
         headers.forEach((_, i) => {
-          if (fallbacks[i]) initialMappings[i] = fallbacks[i];
+          if (fallbacks[i]) {
+            if (isGenderColumn(i)) {
+              initialMappings[i] = "gender";
+            } else {
+              initialMappings[i] = fallbacks[i];
+            }
+          }
         });
       } else if (pasteMode === "STAFF") {
         const fallbacks = ["email", "jobTitle", "role", "unitId", "fullName"];
@@ -497,6 +539,18 @@ export default function SuperAdminPage() {
       }
     }
 
+    // Additional validation check on final generated mappings before committing:
+    // If any mapping index maps to luminaId/childId but contains gender values, clear it or remap to gender
+    Object.keys(initialMappings).forEach((idxStr) => {
+      const idx = Number(idxStr);
+      const val = initialMappings[idx];
+      if (val === "luminaId" || val === "childId") {
+        if (isGenderColumn(idx)) {
+          initialMappings[idx] = "gender";
+        }
+      }
+    });
+
     setColumnMappings(initialMappings);
     setIsParsing(false);
   };
@@ -507,11 +561,25 @@ export default function SuperAdminPage() {
       return;
     }
 
-    const hasNameMapping = Object.values(columnMappings).some(val => val === "fullName" || val === "name");
-    const hasEmailMapping = Object.values(columnMappings).some(val => val === "email");
-    if (!hasNameMapping && !hasEmailMapping) {
-      alert("Peringatan: Anda wajib memetakan minimal kolom 'Nama Lengkap' atau 'Email' agar data dapat diproses.");
+    const mappedFields = Object.values(columnMappings);
+    if (mappedFields.length === 0) {
+      alert("Peringatan: Pemetaan kolom tidak boleh kosong. Silakan petakan setidaknya satu kolom.");
       return;
+    }
+
+    const hasNameMapping = mappedFields.includes("fullName") || mappedFields.includes("name");
+    const hasEmailMapping = mappedFields.includes("email");
+
+    if (pasteMode === "STUDENT") {
+      if (!hasNameMapping) {
+        alert("Peringatan: Anda wajib memetakan kolom 'Nama Lengkap' atau 'Nama' untuk impor siswa.");
+        return;
+      }
+    } else if (pasteMode === "STAFF" || pasteMode === "PARENT") {
+      if (!hasNameMapping || !hasEmailMapping) {
+        alert(`Peringatan: Anda wajib memetakan kolom 'Nama Lengkap' dan 'Email' untuk impor ${pasteMode === "STAFF" ? "staff" : "orang tua"}.`);
+        return;
+      }
     }
 
     setIsSavingPaste(true);
@@ -550,6 +618,7 @@ export default function SuperAdminPage() {
         updated: result.updated || 0,
         skipped: result.skipped || 0,
         errors: result.errors || [],
+        skippedReasons: result.skippedReasons || [],
       });
 
       // Clear paste state to prevent duplicate clicks
@@ -4058,7 +4127,7 @@ export default function SuperAdminPage() {
                             </div>
 
                             {pasteResult.errors.length > 0 && (
-                              <div className="pt-2 border-t border-emerald-100/60">
+                              <div className="pt-2 border-t border-emerald-100/60 text-left">
                                 <p className="text-[9px] font-black text-red-600 uppercase tracking-widest">
                                   {pasteResult.errors.length} Kesalahan baris data:
                                 </p>
@@ -4067,6 +4136,22 @@ export default function SuperAdminPage() {
                                     <div key={errIdx} className="flex gap-1.5 items-start">
                                       <span className="text-[8px] font-sans bg-red-50 text-red-500 px-1 rounded">X</span>
                                       <span>{err}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {pasteResult.skippedReasons && pasteResult.skippedReasons.length > 0 && (
+                              <div className="pt-2 border-t border-emerald-100/60 text-left">
+                                <p className="text-[9px] font-black text-amber-650 uppercase tracking-widest">
+                                  {pasteResult.skippedReasons.length} Baris Dilewati:
+                                </p>
+                                <div className="max-h-28 overflow-y-auto text-[9px] font-mono text-amber-700 mt-1.5 space-y-1 bg-white p-3 rounded-lg border border-amber-50/50">
+                                  {pasteResult.skippedReasons.map((reason, reasonIdx) => (
+                                    <div key={reasonIdx} className="flex gap-1.5 items-start">
+                                      <span className="text-[8px] font-sans bg-amber-50 text-amber-500 px-1.5 rounded">i</span>
+                                      <span>{reason}</span>
                                     </div>
                                   ))}
                                 </div>

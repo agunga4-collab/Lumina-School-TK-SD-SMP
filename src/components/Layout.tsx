@@ -101,6 +101,8 @@ export function Layout() {
     return (saved as UnitType) || null;
   });
 
+  const [showChatView, setShowChatView] = React.useState(false);
+
   React.useEffect(() => {
     if (activeUnit) {
       localStorage.setItem('lumina_active_unit', activeUnit);
@@ -294,9 +296,45 @@ export function Layout() {
   if (!activeUnit && currentUser.role !== 'STUDENT') {
     const accessibleUnits = getAccessibleUnits(currentUser);
 
+    if (showChatView) {
+      return (
+        <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6 md:p-12 overflow-y-auto">
+          <div className="max-w-4xl w-full space-y-6 my-auto">
+             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                   <LuminaLogo size="md" />
+                   <div>
+                      <h1 className="text-2xl font-black text-gray-900 tracking-tight">Lumina Chat AI</h1>
+                      <p className="text-xs text-gray-500 font-medium">Asisten AI Resmi Lazuardi GCS</p>
+                   </div>
+                </div>
+                <button 
+                  onClick={() => setShowChatView(false)}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-white border border-gray-200 text-gray-700 text-xs font-black uppercase tracking-widest rounded-xl hover:bg-gray-50 transition-all shadow-sm cursor-pointer"
+                >
+                   ← Kembali ke Portal
+                </button>
+             </div>
+
+             {/* Lumina Grounded AI Chat Assistant */}
+             <LuminaChat userId={currentUser.uid} />
+
+             <div className="text-center pt-4">
+                <button 
+                  onClick={signOut}
+                  className="text-xs font-bold text-gray-400 hover:text-red-500 transition-colors uppercase tracking-widest"
+                >
+                   Keluar & Ganti Akun
+                </button>
+             </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
-      <div className="h-screen bg-gray-50 flex items-center justify-center p-6">
-        <div className="max-w-4xl w-full space-y-8">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6 md:p-12 overflow-y-auto">
+        <div className="max-w-4xl w-full space-y-8 my-auto">
            <div className="text-center space-y-2">
               <div className="inline-flex items-center gap-3 mb-4">
                  {schoolLogo ? (
@@ -315,7 +353,7 @@ export function Layout() {
               <p className="text-gray-500">Pilih unit utama yang ingin Anda gunakan hari ini.</p>
            </div>
 
-           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {ALL_UNITS.map(unitObj => {
                   const unit = unitObj.value;
                   const isAccessible = currentUser.role === 'SUPER_ADMIN' || accessibleUnits.includes(unit);
@@ -376,10 +414,25 @@ export function Layout() {
                       </button>
                   );
               })}
-           </div>
 
-           {/* Lumina Grounded AI Chat Assistant */}
-           <LuminaChat userId={currentUser.uid} />
+              {/* Lumina Chat Portal Card */}
+              <button 
+                onClick={() => setShowChatView(true)}
+                className="group bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm hover:shadow-xl hover:border-blue-200 transition-all text-left flex flex-col justify-between aspect-square relative overflow-hidden cursor-pointer"
+              >
+                 <div className="mb-4">
+                    <LuminaLogo size="md" className="group-hover:scale-105 transition-transform duration-300 shadow-sm" />
+                 </div>
+                 <div>
+                    <h3 className="text-lg font-black text-gray-900 group-hover:text-blue-600 transition-colors">
+                      Lumina Chat AI
+                    </h3>
+                    <p className="text-xs text-gray-400 font-bold mt-1 uppercase tracking-widest leading-loose">
+                      Tanya Asisten AI
+                    </p>
+                 </div>
+              </button>
+           </div>
 
            <div className="text-center">
               <button 

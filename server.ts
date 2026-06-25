@@ -1825,12 +1825,35 @@ app.post("/api/admin/bulk-import-paste", async (req, res) => {
   try {
     const { rows, columnMapping, globalConfig } = req.body;
     if (!rows || !columnMapping || !globalConfig) {
-      return res.status(400).json({ error: "Missing required parameters rows, columnMapping, or globalConfig" });
+      return res.status(400).json({ success: false, error: "Missing required parameters rows, columnMapping, or globalConfig" });
     }
 
     const { mode, unitId, classId, academicYear, semester } = globalConfig;
     if (!mode) {
-      return res.status(400).json({ error: "Missing config mode (STUDENT/STAFF/PARENT)" });
+      return res.status(400).json({ success: false, error: "Missing config mode (STUDENT/STAFF/PARENT)" });
+    }
+
+    // Validate mapping completeness based on selected mode
+    const mappedFields = Object.values(columnMapping);
+    if (mappedFields.length === 0) {
+      return res.status(400).json({ success: false, error: "Pemetaan kolom tidak boleh kosong. Silakan petakan setidaknya satu kolom." });
+    }
+
+    const hasNameMapping = mappedFields.includes("fullName") || mappedFields.includes("name");
+    const hasEmailMapping = mappedFields.includes("email");
+
+    if (mode === "STUDENT") {
+      if (!hasNameMapping) {
+        return res.status(400).json({ success: false, error: "Pemetaan kolom tidak valid: Kolom 'Nama Lengkap' wajib dipetakan untuk impor siswa." });
+      }
+    } else if (mode === "STAFF") {
+      if (!hasNameMapping || !hasEmailMapping) {
+        return res.status(400).json({ success: false, error: "Pemetaan kolom tidak valid: Kolom 'Nama Lengkap' dan 'Email' wajib dipetakan untuk impor staff." });
+      }
+    } else if (mode === "PARENT") {
+      if (!hasNameMapping || !hasEmailMapping) {
+        return res.status(400).json({ success: false, error: "Pemetaan kolom tidak valid: Kolom 'Nama Lengkap' dan 'Email' wajib dipetakan untuk impor orang tua." });
+      }
     }
 
     console.log(`[BulkImportPaste] Mode: ${mode} RowCount: ${rows.length}`);
@@ -1839,6 +1862,7 @@ app.post("/api/admin/bulk-import-paste", async (req, res) => {
     let updated = 0;
     let skipped = 0;
     let errors: string[] = [];
+    let skippedReasons: string[] = [];
 
     const timestamp = Date.now();
 
@@ -1846,8 +1870,11 @@ app.post("/api/admin/bulk-import-paste", async (req, res) => {
       const row = rows[i];
       try {
         const mapped: Record<string, string> = {};
-        row.forEach((cell: any, index: number) => {
-          const field = columnMapping[String(index)];
+        // Preserve empty columns and avoid index shifting by iterating over keys of columnMapping
+        Object.keys(columnMapping).forEach((key) => {
+          const idx = Number(key);
+          const cell = row[idx];
+          const field = columnMapping[key];
           if (field) {
             mapped[field] = String(cell || "").trim();
           }
@@ -1858,11 +1885,11 @@ app.post("/api/admin/bulk-import-paste", async (req, res) => {
         let name = mapped.fullName || mapped.name || "";
         let role = mode;
         let jobTitle = mapped.jobTitle || "";
-        let luminaId = mapped.luminaId || "";
+        let luminaId = (mapped.luminaId || "").trim();
         let linkedStudents: string[] = [];
         let nisn = mapped.nisn || "";
         let nickname = mapped.nickname || "";
-        let gender = (mapped.gender || "").toUpperCase(); // L or P
+        let gender = (mapped.gender || "").trim().toUpperCase(); // L or P
         let parentEmail = (mapped.parentEmail || "").toLowerCase();
         let fatherName = mapped.fatherName || "";
         let motherName = mapped.motherName || "";
@@ -1870,8 +1897,47 @@ app.post("/api/admin/bulk-import-paste", async (req, res) => {
         let currentClassId = mapped.classId || classId || "";
         let currentAcademicYear = mapped.academicYear || academicYear || "2025/2026";
 
-        // Skip completely empty lines
+        // Validate and sanitize luminaId to prevent gender values from leaking in
+        if (luminaId) {
+          const cleanLuminaIdLower = luminaId.toLowerCase();
+          const invalidIdKeywords = ["l", "p", "laki-laki", "perempuan", "male", "female", "laki", "wanita", "laki laki", "perempuan/wanita"];
+          if (invalidIdKeywords.includes(cleanLuminaIdLower)) {
+            // This is actually a gender value that shifted or was wrongly mapped
+            if (!gender) {
+              gender = luminaId;
+            }
+            luminaId = ""; // Force blank so it auto-generates
+          }
+        }
+
+        // Standardize and validate gender
+        if (gender) {
+          const gClean = gender.trim().toUpperCase();
+          if (gClean === "L" || gClean === "LAKI-LAKI" || gClean === "MALE" || gClean === "LAKI" || gClean === "LAKI LAKI") {
+            gender = "L";
+          } else if (gClean === "P" || gClean === "PEREMPUAN" || gClean === "FEMALE" || gClean === "WANITA") {
+            gender = "P";
+          } else {
+            gender = ""; // Reset invalid/polluted values
+          }
+        }
+
+        // Skip completely empty lines, and log details
+        const rowIsEmpty = row.every((cell: any) => !cell || !String(cell).trim());
         if (!name && !email && !luminaId) {
+          const reason = rowIsEmpty 
+            ? "Baris kosong" 
+            : "Baris memiliki data tetapi tidak ada nama lengkap, email, atau luminaId yang berhasil dipetakan";
+          
+          console.log(`[BulkImportSkip] Baris ${i + 1} dilewati. Alasan: ${reason}`, {
+            rowIndex: i,
+            row,
+            columnMapping,
+            mapped,
+            normalized: { name, email, luminaId, gender }
+          });
+
+          skippedReasons.push(`Baris ${i + 1}: ${reason}`);
           skipped++;
           continue;
         }
@@ -1897,7 +1963,7 @@ app.post("/api/admin/bulk-import-paste", async (req, res) => {
 
         // Validate basic email format
         if (!email.includes("@")) {
-          errors.push(`${email || name}: format email tidak valid`);
+          errors.push(`Baris ${i + 1} (${name || email}): format email tidak valid`);
           continue;
         }
 
@@ -1943,7 +2009,24 @@ app.post("/api/admin/bulk-import-paste", async (req, res) => {
             updatedAt: FieldValue.serverTimestamp(),
           };
           
-          if (!studentDoc.exists) {
+          let isNewStudent = !studentDoc.exists;
+          let studentChanged = false;
+          if (!isNewStudent) {
+            const oldData = studentDoc.data() || {};
+            studentChanged = 
+              oldData.fullName !== name ||
+              oldData.nickname !== nickname ||
+              oldData.nisn !== nisn ||
+              oldData.gender !== gender ||
+              oldData.email !== email ||
+              oldData.parentEmail !== parentEmail ||
+              oldData.fatherName !== fatherName ||
+              oldData.motherName !== motherName ||
+              oldData.classId !== currentClassId ||
+              oldData.unitId !== currentUnitId ||
+              oldData.academicYear !== currentAcademicYear;
+          }
+          if (isNewStudent) {
             studentData.createdAt = FieldValue.serverTimestamp();
           }
 
@@ -2051,8 +2134,22 @@ app.post("/api/admin/bulk-import-paste", async (req, res) => {
 
             if (hasChanges) {
               await doc.ref.update(inviteData);
+            }
+
+            if (isNewStudent) {
+              created++;
+            } else if (hasChanges || studentChanged) {
               updated++;
             } else {
+              const reason = "Data siswa dan undangan peran sudah sesuai (tidak ada perubahan)";
+              console.log(`[BulkImportSkip] Baris ${i + 1} (${name}) dilewati. Alasan: ${reason}`, {
+                rowIndex: i,
+                row,
+                columnMapping,
+                mapped,
+                normalized: { name, email, luminaId, gender }
+              });
+              skippedReasons.push(`Baris ${i + 1} (${name}): ${reason}`);
               skipped++;
             }
           }
@@ -2099,6 +2196,15 @@ app.post("/api/admin/bulk-import-paste", async (req, res) => {
               await doc.ref.update(inviteData);
               updated++;
             } else {
+              const reason = "Data staff sudah sesuai (tidak ada perubahan)";
+              console.log(`[BulkImportSkip] Baris ${i + 1} (${name}) dilewati. Alasan: ${reason}`, {
+                rowIndex: i,
+                row,
+                columnMapping,
+                mapped,
+                normalized: { name, email, luminaId, gender }
+              });
+              skippedReasons.push(`Baris ${i + 1} (${name}): ${reason}`);
               skipped++;
             }
           }
@@ -2154,6 +2260,15 @@ app.post("/api/admin/bulk-import-paste", async (req, res) => {
               await doc.ref.update(inviteData);
               updated++;
             } else {
+              const reason = "Data orang tua sudah sesuai (tidak ada perubahan)";
+              console.log(`[BulkImportSkip] Baris ${i + 1} (${name}) dilewati. Alasan: ${reason}`, {
+                rowIndex: i,
+                row,
+                columnMapping,
+                mapped,
+                normalized: { name, email, luminaId, gender }
+              });
+              skippedReasons.push(`Baris ${i + 1} (${name}): ${reason}`);
               skipped++;
             }
           }
@@ -2174,6 +2289,7 @@ app.post("/api/admin/bulk-import-paste", async (req, res) => {
       updated,
       skipped,
       errors,
+      skippedReasons,
     });
   } catch (error: any) {
     console.error("[BulkImportPaste] Fatal Error:", error);
