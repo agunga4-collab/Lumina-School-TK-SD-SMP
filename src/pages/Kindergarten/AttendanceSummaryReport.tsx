@@ -44,6 +44,25 @@ export default function AttendanceSummaryReport() {
     const parts = activeYear.split('/');
     return parts[parts.length - 1] || '2026';
   });
+
+  // Auto-adjust selectedYear based on the selectedMonth and academic year
+  React.useEffect(() => {
+    if (!activeYear) return;
+    const parts = activeYear.split('/');
+    if (parts.length === 2) {
+      const yearStart = parts[0];
+      const yearEnd = parts[1];
+      // Months Jul-Dec (6-11) are in the first year of the academic year, Jan-Jun (0-5) are in the second year
+      if (selectedMonth >= 6) {
+        setSelectedYear(yearStart);
+      } else {
+        setSelectedYear(yearEnd);
+      }
+    } else if (parts.length === 1 && parts[0]) {
+      setSelectedYear(parts[0]);
+    }
+  }, [selectedMonth, activeYear]);
+
   const [searchQuery, setSearchQuery] = React.useState<string>('' );
 
   // Period filter states: 'monthly' | 'semester' | 'yearly' | 'custom'

@@ -67,13 +67,25 @@ export default function AttendanceEmotionalChecklist() {
     return acadYearsList[acadYearsList.length - 1] || '2026';
   });
 
+  // Auto-adjust monthly selected year and selectedYear based on selected month and academic year
   React.useEffect(() => {
-    if (acadYearsList.length > 0) {
-      const fallbackYear = acadYearsList[acadYearsList.length - 1];
-      setSelectedYear(fallbackYear);
-      setMonthlySelectedYear(fallbackYear);
+    if (!activeYear) return;
+    const parts = activeYear.split('/');
+    if (parts.length === 2) {
+      const yearStart = parts[0];
+      const yearEnd = parts[1];
+      if (monthlySelectedMonth >= 6) {
+        setMonthlySelectedYear(yearStart);
+        setSelectedYear(yearStart);
+      } else {
+        setMonthlySelectedYear(yearEnd);
+        setSelectedYear(yearEnd);
+      }
+    } else if (parts.length === 1 && parts[0]) {
+      setMonthlySelectedYear(parts[0]);
+      setSelectedYear(parts[0]);
     }
-  }, [acadYearsList]);
+  }, [monthlySelectedMonth, activeYear]);
 
   const [previewData, setPreviewData] = React.useState<any[] | null>(null);
   const [importResult, setImportResult] = React.useState<{

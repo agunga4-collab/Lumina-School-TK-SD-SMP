@@ -132,6 +132,27 @@ export default function Observation() {
   // Monthly Recap Filter States
   const [recapMonth, setRecapMonth] = React.useState<number>(() => new Date().getMonth() + 1);
   const [recapYear, setRecapYear] = React.useState<number>(() => new Date().getFullYear());
+
+  // Auto-adjust recapYear based on the selected recapMonth and academic year
+  React.useEffect(() => {
+    if (!activeYear) return;
+    const parts = activeYear.split('/');
+    if (parts.length === 2) {
+      const yearStart = parseInt(parts[0], 10);
+      const yearEnd = parseInt(parts[1], 10);
+      // Months Jul-Dec (7-12) are in the first year, Jan-Jun (1-6) are in the second year
+      if (recapMonth >= 7) {
+        setRecapYear(yearStart);
+      } else {
+        setRecapYear(yearEnd);
+      }
+    } else if (parts.length === 1 && parts[0]) {
+      const parsed = parseInt(parts[0], 10);
+      if (!isNaN(parsed)) {
+        setRecapYear(parsed);
+      }
+    }
+  }, [recapMonth, activeYear]);
   const [recapData, setRecapData] = React.useState<any[]>([]);
   const [isBgFetching, setIsBgFetching] = React.useState<boolean>(false);
   const [recapSubView, setRecapSubView] = React.useState<'matrix' | 'sessions' | 'monthly_table'>('matrix');
