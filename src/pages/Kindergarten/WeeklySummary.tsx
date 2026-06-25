@@ -2,7 +2,8 @@ import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Sparkles, Loader2, Save, Smile, Meh, Frown, Angry, AlertCircle, CheckCircle2,
-  Calendar, Edit3, BookOpen, Clock, Heart, ShieldAlert, ArrowRight, Eye, RefreshCw, ChevronDown, ChevronUp, Check, Trash2, ClipboardList
+  Calendar, Edit3, BookOpen, Clock, Heart, ShieldAlert, ArrowRight, Eye, RefreshCw, ChevronDown, ChevronUp, Check, Trash2, ClipboardList,
+  ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
@@ -341,6 +342,90 @@ export default function WeeklySummary() {
     setEndDateStr(formatDateToKey(fri));
   };
 
+  const handlePrevWeek = () => {
+    if (!startDateStr) return;
+    const [yr, mo, dy] = startDateStr.split('-').map(Number);
+    const currentDate = new Date(yr, mo - 1, dy);
+    currentDate.setDate(currentDate.getDate() - 7);
+    
+    const mon = getMonday(currentDate);
+    const fri = new Date(mon);
+    fri.setDate(mon.getDate() + 4);
+    
+    setStartDateStr(formatDateToKey(mon));
+    setEndDateStr(formatDateToKey(fri));
+  };
+
+  const handleNextWeek = () => {
+    if (!startDateStr) return;
+    const [yr, mo, dy] = startDateStr.split('-').map(Number);
+    const currentDate = new Date(yr, mo - 1, dy);
+    currentDate.setDate(currentDate.getDate() + 7);
+    
+    const mon = getMonday(currentDate);
+    const fri = new Date(mon);
+    fri.setDate(mon.getDate() + 4);
+    
+    setStartDateStr(formatDateToKey(mon));
+    setEndDateStr(formatDateToKey(fri));
+  };
+
+  const [isSavingTheme, setIsSavingTheme] = React.useState(false);
+
+  const handleSaveWeeklyTheme = async () => {
+    if (!selectedClassId) {
+      toast.error('Silakan pilih kelas terlebih dahulu.');
+      return;
+    }
+    setIsSavingTheme(true);
+    const themeDocId = `theme_${selectedClassId}_${startDateStr}_${endDateStr}`;
+    const storageKey = `kg_weekly_theme_${selectedClassId}_${startDateStr}_${endDateStr}`;
+    
+    try {
+      localStorage.setItem(storageKey, globalTheme);
+
+      const docRef = doc(db, 'weekly_summary_drafts', themeDocId);
+      await setDoc(docRef, {
+        themeId: themeDocId,
+        classId: selectedClassId,
+        startDate: startDateStr,
+        endDate: endDateStr,
+        theme: globalTheme,
+        type: 'weekly_theme',
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
+      setStudentDrafts(prev => {
+        const updated = { ...prev };
+        Object.keys(updated).forEach(studentId => {
+          updated[studentId] = {
+            ...updated[studentId],
+            theme: globalTheme
+          };
+          const studentKey = getSummaryKey(studentId, startDateStr, endDateStr);
+          const localDraftStr = localStorage.getItem(studentKey);
+          if (localDraftStr) {
+            try {
+              const localDraft = JSON.parse(localDraftStr);
+              localDraft.theme = globalTheme;
+              localStorage.setItem(studentKey, JSON.stringify(localDraft));
+            } catch (e) {
+              // ignore
+            }
+          }
+        });
+        return updated;
+      });
+
+      toast.success('Tema pembelajaran berhasil disimpan.');
+    } catch (err) {
+      console.error('Error saving weekly theme:', err);
+      toast.error('Gagal menyimpan tema pembelajaran.');
+    } finally {
+      setIsSavingTheme(false);
+    }
+  };
+
   // Theme of the current period
   const [globalTheme, setGlobalTheme] = React.useState<string>('');
 
@@ -470,12 +555,37 @@ export default function WeeklySummary() {
           }
         }
 
+        // 4. Fetch the weekly theme for this class and date range
+        let loadedTheme = '';
+        if (selectedClassId) {
+          const themeDocId = `theme_${selectedClassId}_${startDateStr}_${endDateStr}`;
+          try {
+            const themeSnap = await getDoc(doc(db, 'weekly_summary_drafts', themeDocId));
+            if (themeSnap.exists()) {
+              loadedTheme = themeSnap.data().theme || '';
+            }
+          } catch (err) {
+            if (process.env.NODE_ENV !== 'production') {
+              console.warn('[WeeklySummary] Error fetching weekly theme:', err);
+            }
+          }
+
+          // Also check localStorage as a fallback
+          if (!loadedTheme) {
+            const localTheme = localStorage.getItem(`kg_weekly_theme_${selectedClassId}_${startDateStr}_${endDateStr}`);
+            if (localTheme) {
+              loadedTheme = localTheme;
+            }
+          }
+        }
+
         if (active) {
           setFirestoreAttendance(fetchedAtt);
           setFirestoreObservations(fetchedObs);
           setDbDrafts(fetchedDraftsMap);
+          setGlobalTheme(loadedTheme);
           if (process.env.NODE_ENV !== 'production') {
-            console.log(`[WeeklySummary Firestore Sync] Set ${fetchedAtt.length} attendance, ${fetchedObs.length} observations, and ${snapDraftsLen} drafts`);
+            console.log(`[WeeklySummary Firestore Sync] Set ${fetchedAtt.length} attendance, ${fetchedObs.length} observations, ${snapDraftsLen} drafts, and theme "${loadedTheme}"`);
           }
         }
       } catch (err) {
@@ -1014,24 +1124,40 @@ export default function WeeklySummary() {
         {/* Date Filters */}
         <div className="lg:col-span-4 space-y-1.5">
           <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Pilih Rentang Tanggal Pengamatan (Periode)</label>
-          <div className="flex items-center gap-2 font-sans">
-            <div className="flex-1 relative">
+          <div className="flex items-center gap-1.5 font-sans">
+            <button
+              onClick={handlePrevWeek}
+              className="p-2.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 hover:border-emerald-300 hover:text-emerald-700 rounded-xl transition-all cursor-pointer text-gray-500 flex items-center justify-center shrink-0"
+              title="Minggu Sebelumnya"
+            >
+              <ChevronLeft size={15} />
+            </button>
+            
+            <div className="flex-1 min-w-0">
               <input 
                 type="date"
                 value={startDateStr}
                 onChange={(e) => handleStartDateChange(e.target.value)}
-                className="w-full bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-1 focus:ring-emerald-400 text-gray-700 font-sans"
+                className="w-full bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-xl px-2 py-2.5 text-[11px] font-bold outline-none focus:ring-1 focus:ring-emerald-400 text-gray-700 font-sans text-center"
               />
             </div>
-            <span className="text-xs text-gray-400 font-bold">s/d</span>
-            <div className="flex-1 relative">
+            <span className="text-[10px] text-gray-400 font-bold shrink-0">s/d</span>
+            <div className="flex-1 min-w-0">
               <input 
                 type="date"
                 value={endDateStr}
                 onChange={(e) => handleEndDateChange(e.target.value)}
-                className="w-full bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-1 focus:ring-emerald-400 text-gray-700 font-sans"
+                className="w-full bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-xl px-2 py-2.5 text-[11px] font-bold outline-none focus:ring-1 focus:ring-emerald-400 text-gray-700 font-sans text-center"
               />
             </div>
+
+            <button
+              onClick={handleNextWeek}
+              className="p-2.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 hover:border-emerald-300 hover:text-emerald-700 rounded-xl transition-all cursor-pointer text-gray-500 flex items-center justify-center shrink-0"
+              title="Minggu Berikutnya"
+            >
+              <ChevronRight size={15} />
+            </button>
           </div>
           <span className="text-[10px] text-gray-400 leading-tight block">
             * Atur tanggal awal dan akhir periode pengamatan (bisa 1 minggu atau beberapa minggu).
@@ -1041,13 +1167,28 @@ export default function WeeklySummary() {
         {/* Global Monthly Theme */}
         <div className="lg:col-span-4 space-y-1.5">
           <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Tema Pembelajaran</label>
-          <input 
-            type="text" 
-            value={globalTheme} 
-            onChange={(e) => setGlobalTheme(e.target.value)}
-            className="w-full bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-1 focus:ring-emerald-400 text-gray-700"
-            placeholder="Contoh: Aku dan Lingkunganku, Tanaman Sayur, dll"
-          />
+          <div className="flex gap-1.5">
+            <input 
+              type="text" 
+              value={globalTheme} 
+              onChange={(e) => setGlobalTheme(e.target.value)}
+              className="flex-1 bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-1 focus:ring-emerald-400 text-gray-700"
+              placeholder="Contoh: Aku dan Lingkunganku, Tanaman Sayur, dll"
+            />
+            <button
+              onClick={handleSaveWeeklyTheme}
+              disabled={isSavingTheme}
+              className="flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 px-3.5 rounded-xl transition-all cursor-pointer shadow-sm disabled:opacity-50 shrink-0"
+              title="Simpan tema pembelajaran untuk minggu ini"
+            >
+              {isSavingTheme ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <Save size={13} />
+              )}
+              <span>Simpan</span>
+            </button>
+          </div>
         </div>
 
         {/* Class Selection Dropdown */}
