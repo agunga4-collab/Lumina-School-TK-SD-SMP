@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { 
   Smile, Meh, Frown, Angry, AlertCircle, Calendar, ChevronLeft, ChevronRight, 
   Printer, BookOpen, Clock, Heart, ShieldAlert, FileText, ArrowRight, Sparkles, ChevronDown,
-  Loader2, CheckCircle2, FileDown, Trash2, Send, RefreshCw
+  Loader2, CheckCircle2, FileDown, Trash2, Send, RefreshCw, Upload
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useNavigate } from 'react-router-dom';
@@ -28,6 +28,28 @@ export default function WeeklyReview() {
   const navigate = useNavigate();
   const { activeYear } = useAcademicYear();
   const { getGoogleDriveToken } = useAuth();
+
+  const [tkLogoUrl, setTkLogoUrl] = React.useState<string>(() => {
+    return localStorage.getItem("weekly_report_tk_logo") || "";
+  });
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
+        localStorage.setItem("weekly_report_tk_logo", base64String);
+        setTkLogoUrl(base64String);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleLogoReset = () => {
+    localStorage.removeItem("weekly_report_tk_logo");
+    setTkLogoUrl("");
+  };
 
   // Class Selection states
   const [classes, setClasses] = React.useState<any[]>([]);
@@ -872,31 +894,60 @@ export default function WeeklyReview() {
         </div>
 
         {hasDraft && (
-          <div className="flex flex-wrap gap-2.5 shrink-0 w-full md:w-auto">
-            <button 
-              onClick={handlePrint}
-              className="flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-extrabold text-xs px-5 py-3.5 rounded-2xl transition-all active:scale-95 cursor-pointer flex-1 md:flex-initial"
-            >
-              <Printer size={14} />
-              Cetak Langsung
-            </button>
-            <button 
-              onClick={handlePublish}
-              disabled={isPublishing}
-              className="flex items-center justify-center gap-2 bg-[#109E58] hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-3.5 rounded-2xl shadow-lg transition-all active:scale-95 cursor-pointer flex-1 md:flex-initial disabled:opacity-50"
-            >
-              {isPublishing ? (
-                <>
-                  <Loader2 size={13} className="animate-spin" />
-                  Memproses...
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 size={13} />
-                  Publish & Cetak PDF
-                </>
-              )}
-            </button>
+          <div className="flex flex-col gap-2.5 shrink-0 w-full md:w-auto">
+            <div className="flex flex-wrap gap-2.5">
+              <button 
+                onClick={handlePrint}
+                className="flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-extrabold text-xs px-5 py-3.5 rounded-2xl transition-all active:scale-95 cursor-pointer flex-1 md:flex-initial"
+              >
+                <Printer size={14} />
+                Cetak Langsung
+              </button>
+              <button 
+                onClick={handlePublish}
+                disabled={isPublishing}
+                className="flex items-center justify-center gap-2 bg-[#109E58] hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-3.5 rounded-2xl shadow-lg transition-all active:scale-95 cursor-pointer flex-1 md:flex-initial disabled:opacity-50"
+              >
+                {isPublishing ? (
+                  <>
+                    <Loader2 size={13} className="animate-spin" />
+                    Memproses...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 size={13} />
+                    Publish & Cetak PDF
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 bg-emerald-50/50 border border-emerald-100/85 p-2.5 rounded-2xl text-left">
+              <div className="flex-1">
+                <p className="text-[10px] font-black text-emerald-850 uppercase tracking-wider">Logo Rapor TK</p>
+                <p className="text-[9px] text-gray-550 font-medium">Format persegi panjang</p>
+              </div>
+              <div className="flex gap-1.5 shrink-0">
+                <label className="flex items-center gap-1 bg-white hover:bg-gray-50 text-gray-700 font-bold text-[10px] px-2.5 py-1.5 rounded-lg border border-gray-200 cursor-pointer transition-all">
+                  <Upload size={10} className="text-emerald-600" />
+                  Upload Logo
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    onChange={handleLogoUpload} 
+                    className="hidden" 
+                  />
+                </label>
+                {tkLogoUrl && (
+                  <button 
+                    onClick={handleLogoReset}
+                    className="flex items-center gap-1 bg-red-50 hover:bg-red-100 text-red-650 font-bold text-[10px] px-2 py-1.5 rounded-lg border border-red-100 cursor-pointer transition-all"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </header>
@@ -1107,22 +1158,36 @@ export default function WeeklyReview() {
               
               {/* Left Column: Logo & Name */}
               <div className="flex items-center gap-2.5">
-                <div className="bg-white/10 p-1.5 rounded-lg shrink-0">
-                  <svg className="w-8 h-8 text-white" viewBox="0 0 100 100" fill="currentColor">
-                    <path d="M50 10 C42 35 25 45 10 50 C25 55 42 65 50 90 C58 65 75 55 90 50 C75 45 58 35 50 10 Z" />
-                    <path d="M50 25 C45 40 35 48 25 50 C35 52 45 60 50 75 C55 60 65 52 75 50 C65 48 55 40 50 25 Z" fill="#109E58" />
-                  </svg>
-                </div>
-                <div className="text-left leading-none">
-                  <span className="block font-sans text-base font-black tracking-widest text-white m-0">Lazuardi</span>
-                  <span className="block font-sans text-[9px] font-bold tracking-[0.25em] text-emerald-100 m-0 uppercase leading-none mt-0.5">KINDERGARTEN</span>
-                  <span className="block font-sans text-[6.5px] text-emerald-200 mt-0.5 uppercase tracking-wider leading-none font-semibold">Global Compassionate School</span>
-                </div>
+                {tkLogoUrl ? (
+                  <img 
+                    src={tkLogoUrl} 
+                    alt="Logo Rapor" 
+                    className="h-12 w-auto object-contain"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <>
+                    <div className="bg-white/10 p-1.5 rounded-lg shrink-0">
+                      <svg className="w-8 h-8 text-white" viewBox="0 0 100 100" fill="currentColor">
+                        <path d="M50 10 C42 35 25 45 10 50 C25 55 42 65 50 90 C58 65 75 55 90 50 C75 45 58 35 50 10 Z" />
+                        <path d="M50 25 C45 40 35 48 25 50 C35 52 45 60 50 75 C55 60 65 52 75 50 C65 48 55 40 50 25 Z" fill="#109E58" />
+                      </svg>
+                    </div>
+                    <div className="text-left leading-none">
+                      <span className="block font-sans text-base font-black tracking-widest text-white m-0">Lazuardi</span>
+                      <span className="block font-sans text-[9px] font-bold tracking-[0.25em] text-emerald-100 m-0 uppercase leading-none mt-0.5">KINDERGARTEN</span>
+                      <span className="block font-sans text-[6.5px] text-emerald-200 mt-0.5 uppercase tracking-wider leading-none font-semibold">Global Compassionate School</span>
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Right Column: Large report title */}
-              <div className="text-right sm:text-right w-full sm:w-auto">
-                <h1 className="text-base sm:text-lg font-sans font-black tracking-wider text-white uppercase leading-none">
+              <div className="text-right sm:text-right w-full sm:w-auto flex flex-col items-end justify-center">
+                <span className="block text-[10px] font-sans font-black tracking-widest text-emerald-100 uppercase mb-1">
+                  LAZUARDI GCS KINDERGARTEN
+                </span>
+                <h1 className="text-base sm:text-lg font-sans font-black tracking-wider text-white uppercase leading-none mt-1">
                   STUDENT'S WEEKLY REPORT
                 </h1>
               </div>
