@@ -3,7 +3,7 @@ import { cn } from '../lib/utils';
 
 interface LuminaLogoProps {
   className?: string;
-  size?: 'sm' | 'md' | 'lg' | 'xl';
+  size?: 'sm' | 'md' | 'lg' | 'xl' | 'double';
 }
 
 export function LuminaLogo({ className, size = 'md' }: LuminaLogoProps) {
@@ -11,14 +11,16 @@ export function LuminaLogo({ className, size = 'md' }: LuminaLogoProps) {
     sm: 'w-8 h-8 rounded-lg',
     md: 'w-10 h-10 rounded-xl',
     lg: 'w-16 h-16 rounded-[1.5rem]',
-    xl: 'w-24 h-24 rounded-[2.5rem]'
+    xl: 'w-24 h-24 rounded-[2.5rem]',
+    double: 'w-20 h-20 rounded-[1.8rem]'
   };
 
   const iconSizes = {
     sm: '20',
     md: '24',
     lg: '38',
-    xl: '56'
+    xl: '56',
+    double: '48'
   };
 
   return (

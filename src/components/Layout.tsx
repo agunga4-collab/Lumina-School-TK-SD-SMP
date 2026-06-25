@@ -337,16 +337,7 @@ export function Layout() {
         <div className="max-w-4xl w-full space-y-8 my-auto">
            <div className="text-center space-y-2">
               <div className="inline-flex items-center gap-3 mb-4">
-                 {schoolLogo ? (
-                   <img 
-                     src={schoolLogo} 
-                     alt="Logo Sekolah" 
-                     className="h-16 object-contain rounded-2xl"
-                     referrerPolicy="no-referrer"
-                   />
-                 ) : (
-                   <LuminaLogo size="lg" />
-                 )}
+                 <LuminaLogo size="lg" />
                  <h1 className="text-3xl font-black text-gray-900 tracking-tight text-blue-600">LUMINA</h1>
               </div>
               <h2 className="text-xl font-bold text-gray-800">Pilih Unit Pendidikan</h2>
@@ -374,10 +365,10 @@ export function Layout() {
                                <ShieldAlert size={14} />
                             </div>
                          )}
-                         {logos[unit]?.rectangular ? (
-                           <div className="w-full h-16 flex items-center justify-start mb-4 overflow-hidden rounded-xl">
+                         {logos[unit]?.rectangular || logos[unit]?.square ? (
+                           <div className="w-full h-32 flex items-center justify-start mb-4 overflow-hidden rounded-2xl">
                              <img 
-                               src={logos[unit].rectangular} 
+                               src={logos[unit].rectangular || logos[unit].square} 
                                alt={`${getUnitName(unit)} Logo`} 
                                className={cn(
                                  "max-h-full max-w-full object-contain mix-blend-multiply transition-transform group-hover:scale-105 duration-300",
@@ -388,14 +379,14 @@ export function Layout() {
                            </div>
                          ) : (
                            <div className={cn(
-                             "p-4 rounded-2xl w-fit mb-4 group-hover:scale-105 transition-transform", 
+                             "p-8 rounded-[2rem] w-fit mb-4 group-hover:scale-105 transition-transform flex items-center justify-center", 
                              isAccessible 
                                ? getUnitColor(unit).split(' ')[1] 
                                : "text-gray-400 bg-gray-100"
                            )}>
-                              {unit === 'KINDERGARTEN' && <Heart className={isAccessible ? "text-emerald-600" : "text-gray-400"} />}
-                              {unit === 'ELEMENTARY' && <Baby className={isAccessible ? "text-emerald-500" : "text-gray-400"} />}
-                              {unit === 'JUNIOR_HIGH' && <Target className={isAccessible ? "text-blue-500" : "text-gray-400"} />}
+                              {unit === 'KINDERGARTEN' && <Heart size={48} className={isAccessible ? "text-emerald-600" : "text-gray-400"} />}
+                              {unit === 'ELEMENTARY' && <Baby size={48} className={isAccessible ? "text-emerald-500" : "text-gray-400"} />}
+                              {unit === 'JUNIOR_HIGH' && <Target size={48} className={isAccessible ? "text-blue-500" : "text-gray-400"} />}
                            </div>
                          )}
                          <div>
@@ -421,7 +412,7 @@ export function Layout() {
                 className="group bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm hover:shadow-xl hover:border-blue-200 transition-all text-left flex flex-col justify-between aspect-square relative overflow-hidden cursor-pointer"
               >
                  <div className="mb-4">
-                    <LuminaLogo size="md" className="group-hover:scale-105 transition-transform duration-300 shadow-sm" />
+                    <LuminaLogo size="double" className="group-hover:scale-105 transition-transform duration-300 shadow-sm" />
                  </div>
                  <div>
                     <h3 className="text-lg font-black text-gray-900 group-hover:text-blue-600 transition-colors">
