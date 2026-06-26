@@ -2858,26 +2858,32 @@ function replacePromptVariables(promptText: string, variables: Record<string, st
 
 // Helper: Get AI Prompt template dynamically
 export async function getPrompt(key: string, variables?: Record<string, string>): Promise<string> {
+  const defaultTemplates: Record<string, string> = {
+    kindergarten_weekly_report: "Buat sebuah laporan narasi mingguan untuk seorang siswa yang berada di {{ageGroupStageString}}. Gunakan 6 developmental stages (Nilai Agama dan Budi Pekerti, Sosial-Emosional, Bahasa, Kognitif, Fisik-Motorik, Seni) sebagai hal yang menjadi fokus dalam laporan. Mulai dengan 'Minggu ini,' atau '{{nickName}} ...'. Gunakan EYD dengan benar. Jika ada domain atau sentra yang berulang, penjelasan digabung saja dan tidak berulang. Jangan gunakan tanda seru. Buat dalam 1 paragraf utuh/tidak terpisah.\n\nBerikut data observasi mingguan siswa:\n{{observationSummary}}",
+    kindergarten_sel_report: "Saya ingin membuat komentar mingguan untuk laporan perkembangan Sosial Emosional siswa {{ageGroupStageString}}. Berikut adalah data kehadiran dan emosi siswa dalam 1 minggu terakhir:\nHappy: {{happy}}, Sad: {{sad}}, Angry: {{angry}}, OK: {{ok}}, No News: {{noNews}}, Sick: {{sick}}, Izin: {{izin}}, Early Leave: {{earlyLeave}}\nBuatkan saya satu paragraf komentar dalam bahasa Indonesia yang singkat dan positif, cocok untuk laporan mingguan. Komentar harus sesuai dengan tahapan perkembangan sosial emosional anak usia yang sesuai, menggambarkan kemampuan anak mengenali dan mengekspresikan emosi, serta bagaimana ia merespons dukungan orang dewasa.\nGunakan bahasa yang hangat untuk ananda bernama: {{nickName}}"
+  };
+
   try {
     const db = getAdminDb();
-    if (!db) {
-      return `[Prompt belum diisi. Silakan edit melalui Prompt Manager.]`;
+    let rawPromptText = "";
+
+    if (db) {
+      const snap = await db.collection("promptTemplates")
+        .where("key", "==", key)
+        .where("isActive", "==", true)
+        .limit(1)
+        .get();
+
+      if (!snap.empty) {
+        const doc = snap.docs[0];
+        const templateData = doc.data();
+        rawPromptText = templateData.prompt || "";
+      }
     }
 
-    const snap = await db.collection("promptTemplates")
-      .where("key", "==", key)
-      .where("isActive", "==", true)
-      .limit(1)
-      .get();
-
-    if (snap.empty) {
-      console.warn(`[getPrompt] Active prompt template with key "${key}" not found. Using default placeholder.`);
-      return `[Prompt belum diisi. Silakan edit melalui Prompt Manager.]`;
+    if (!rawPromptText) {
+      rawPromptText = defaultTemplates[key] || `[Prompt belum diisi. Silakan edit melalui Prompt Manager.]`;
     }
-
-    const doc = snap.docs[0];
-    const templateData = doc.data();
-    const rawPromptText = templateData.prompt || "";
 
     if (variables) {
       return replacePromptVariables(rawPromptText, variables);
@@ -2885,7 +2891,11 @@ export async function getPrompt(key: string, variables?: Record<string, string>)
     return rawPromptText;
   } catch (error: any) {
     console.error(`[getPrompt] Error fetching prompt key "${key}":`, error);
-    return `[Prompt belum diisi. Silakan edit melalui Prompt Manager.]`;
+    const rawPromptText = defaultTemplates[key] || `[Prompt belum diisi. Silakan edit melalui Prompt Manager.]`;
+    if (variables) {
+      return replacePromptVariables(rawPromptText, variables);
+    }
+    return rawPromptText;
   }
 }
 
@@ -3002,7 +3012,7 @@ app.post("/api/test-prompt", async (req, res) => {
     // Substitute variable placeholders
     finalPromptText = replacePromptVariables(finalPromptText, variables || {});
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
     }
@@ -3017,7 +3027,7 @@ app.post("/api/test-prompt", async (req, res) => {
     });
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-2.5-flash",
       contents: finalPromptText,
     });
 
@@ -3040,7 +3050,7 @@ app.post("/api/kindergarten/generate-weekly-comment", async (req, res) => {
       return res.status(400).json({ error: "Missing studentName" });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
     }
@@ -3074,7 +3084,7 @@ app.post("/api/kindergarten/generate-weekly-comment", async (req, res) => {
     });
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
     });
 
@@ -3093,7 +3103,7 @@ app.post("/api/kindergarten/generate-sel-comment", async (req, res) => {
       return res.status(400).json({ error: "Missing studentName" });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
     }
@@ -3133,7 +3143,7 @@ app.post("/api/kindergarten/generate-sel-comment", async (req, res) => {
     });
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
     });
 
