@@ -854,7 +854,12 @@ export default function WeeklySummary() {
       });
 
       if (!response.ok) {
-        throw new Error('Gagal memanggil API Guru AI Lumina');
+        let errorMessage = 'Gagal memanggil API Guru AI Lumina';
+        try {
+          const errData = await response.json();
+          errorMessage = errData.error || errorMessage;
+        } catch (_) {}
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
@@ -878,7 +883,7 @@ export default function WeeklySummary() {
         attendanceCommentAiDraft: fallbackText,
         attendanceCommentTeacherEdited: fallbackText
       });
-      toast.error(`Gagal menghubungkan Guru AI Lumina. Silakan isi draf secara manual.`);
+      toast.error(e.message || `Gagal menghubungkan Guru AI Lumina. Silakan isi draf secara manual.`);
     } finally {
       setGeneratingSelId(null);
     }
@@ -913,7 +918,12 @@ export default function WeeklySummary() {
       });
 
       if (!response.ok) {
-        throw new Error('Gagal memanggil API Guru AI Lumina');
+        let errorMessage = 'Gagal memanggil API Guru AI Lumina';
+        try {
+          const errData = await response.json();
+          errorMessage = errData.error || errorMessage;
+        } catch (_) {}
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
@@ -942,7 +952,7 @@ export default function WeeklySummary() {
         observationCommentAiDraft: fallbackText,
         observationCommentTeacherEdited: fallbackText
       });
-      toast.error(`Gagal menghubungkan Guru AI Lumina. Silakan isi draf secara manual.`);
+      toast.error(e.message || `Gagal menghubungkan Guru AI Lumina. Silakan isi draf secara manual.`);
     } finally {
       setGeneratingWeeklyId(null);
     }
