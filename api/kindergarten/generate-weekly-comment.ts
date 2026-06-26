@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getApps, initializeApp, cert } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
-import { GoogleGenAI } from "@google/genai";
+import axios from "axios";
 
 // Firebase Admin Initialization
 try {
@@ -146,20 +146,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: "Missing studentName" });
     }
 
-    let apiKey = "";
+    const API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
     let detectedKeyName = "";
 
     if (process.env.GEMINI_API_KEY) {
-      apiKey = process.env.GEMINI_API_KEY;
       detectedKeyName = "GEMINI_API_KEY";
     } else if (process.env.VITE_GEMINI_API_KEY) {
-      apiKey = process.env.VITE_GEMINI_API_KEY;
       detectedKeyName = "VITE_GEMINI_API_KEY";
     }
 
-    if (!apiKey) {
+    if (!API_KEY || API_KEY.trim() === "") {
       console.error("[VercelAPI] Neither GEMINI_API_KEY nor VITE_GEMINI_API_KEY is configured on the server.");
-      return res.status(500).json({ error: "Gemini API key is not configured on the server. Please set GEMINI_API_KEY or VITE_GEMINI_API_KEY in Vercel settings." });
+      return res.status(500).json({ error: "AI API key is not configured on the server. Please set GEMINI_API_KEY or VITE_GEMINI_API_KEY in Vercel settings." });
     }
 
     console.log(`[VercelAPI] Detected API key from environment variable: ${detectedKeyName}`);
@@ -183,21 +181,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       observationSummary: formattedObs,
     });
 
-    const ai = new GoogleGenAI({
-      apiKey: apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
+    const BASE_URL = process.env.VITE_AI_BASE_URL || "https://api.koboillm.com/v1";
+    const MODEL = process.env.VITE_AI_MODEL || "gemini/gemini-2.5-flash-lite";
+
+    const aiResponse = await axios.post(`${BASE_URL}/chat/completions`, {
+      model: MODEL,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.7
+    }, {
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${API_KEY}`,
+      },
+      timeout: 30000
     });
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-    });
-
-    const sanitizedText = sanitizeAiComment(response.text || "");
+    const textResult = aiResponse.data?.choices?.[0]?.message?.content || "";
+    const sanitizedText = sanitizeAiComment(textResult);
     return res.status(200).json({ text: sanitizedText });
   } catch (error: any) {
     console.error("[VercelAPI] Error in generate-weekly-comment:", error);

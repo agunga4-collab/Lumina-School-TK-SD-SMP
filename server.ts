@@ -2,7 +2,6 @@ import express from "express";
 import path from "path";
 import { getApps, initializeApp, cert } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
-import { GoogleGenAI } from "@google/genai";
 import axios from "axios";
 import { parse } from "csv-parse/sync";
 import fs from "fs";
@@ -3066,29 +3065,39 @@ app.post("/api/test-prompt", async (req, res) => {
     // Substitute variable placeholders
     finalPromptText = replacePromptVariables(finalPromptText, variables || {});
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
+    const API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
+    let detectedKeyName = "";
+    if (process.env.GEMINI_API_KEY) {
+      detectedKeyName = "GEMINI_API_KEY";
+    } else if (process.env.VITE_GEMINI_API_KEY) {
+      detectedKeyName = "VITE_GEMINI_API_KEY";
     }
 
-    const ai = new GoogleGenAI({
-      apiKey: apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
+    if (!API_KEY || API_KEY.trim() === "") {
+      return res.status(500).json({ error: "AI API key is not configured on the server." });
+    }
+
+    const BASE_URL = process.env.VITE_AI_BASE_URL || "https://api.koboillm.com/v1";
+    const MODEL = process.env.VITE_AI_MODEL || "gemini/gemini-2.5-flash-lite";
+
+    const aiResponse = await axios.post(`${BASE_URL}/chat/completions`, {
+      model: MODEL,
+      messages: [{ role: "user", content: finalPromptText }],
+      temperature: 0.7
+    }, {
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${API_KEY}`,
+      },
+      timeout: 30000
     });
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: finalPromptText,
-    });
+    const textResult = aiResponse.data?.choices?.[0]?.message?.content || "";
 
     res.json({
       success: true,
       promptSent: finalPromptText,
-      text: response.text || ""
+      text: textResult
     });
   } catch (error: any) {
     console.error("[TestPromptError] Error resolving prompt run:", error);
@@ -3104,10 +3113,19 @@ app.post("/api/kindergarten/generate-weekly-comment", async (req, res) => {
       return res.status(400).json({ error: "Missing studentName" });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
+    const API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
+    let detectedKeyName = "";
+    if (process.env.GEMINI_API_KEY) {
+      detectedKeyName = "GEMINI_API_KEY";
+    } else if (process.env.VITE_GEMINI_API_KEY) {
+      detectedKeyName = "VITE_GEMINI_API_KEY";
     }
+
+    if (!API_KEY || API_KEY.trim() === "") {
+      return res.status(500).json({ error: "AI API key is not configured on the server." });
+    }
+
+    console.log(`[WeeklyCommentsAI] Detected API key from environment variable: ${detectedKeyName}`);
 
     const stageString = ageGroup === 'PRA_TK' ? 'Pra TK (usia 2-4 tahun)' : ageGroup === 'TK_B' ? 'TK B (usia 5-6 tahun)' : 'TK A (usia 4-5 tahun)';
 
@@ -3128,24 +3146,26 @@ app.post("/api/kindergarten/generate-weekly-comment", async (req, res) => {
       observationSummary: formattedObs,
     });
 
-    const ai = new GoogleGenAI({
-      apiKey: apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
+    const BASE_URL = process.env.VITE_AI_BASE_URL || "https://api.koboillm.com/v1";
+    const MODEL = process.env.VITE_AI_MODEL || "gemini/gemini-2.5-flash-lite";
+
+    const aiResponse = await axios.post(`${BASE_URL}/chat/completions`, {
+      model: MODEL,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.7
+    }, {
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${API_KEY}`,
+      },
+      timeout: 30000
     });
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-    });
-
-    const sanitizedText = sanitizeAiComment(response.text || "");
+    const textResult = aiResponse.data?.choices?.[0]?.message?.content || "";
+    const sanitizedText = sanitizeAiComment(textResult);
     res.json({ text: sanitizedText });
   } catch (error: any) {
-    console.error("[WeeklyCommentsAI] Error calling Gemini API:", error);
+    console.error("[WeeklyCommentsAI] Error calling AI API:", error);
     res.status(500).json({ error: error.message || "Gagal mengenerate komentar menggunakan AI." });
   }
 });
@@ -3158,10 +3178,19 @@ app.post("/api/kindergarten/generate-sel-comment", async (req, res) => {
       return res.status(400).json({ error: "Missing studentName" });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
+    const API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
+    let detectedKeyName = "";
+    if (process.env.GEMINI_API_KEY) {
+      detectedKeyName = "GEMINI_API_KEY";
+    } else if (process.env.VITE_GEMINI_API_KEY) {
+      detectedKeyName = "VITE_GEMINI_API_KEY";
     }
+
+    if (!API_KEY || API_KEY.trim() === "") {
+      return res.status(500).json({ error: "AI API key is not configured on the server." });
+    }
+
+    console.log(`[SelCommentsAI] Detected API key from environment variable: ${detectedKeyName}`);
 
     const ageText = ageGroup === 'PRA_TK' ? 'usia 2-4 tahun (Pra TK)' : ageGroup === 'TK_B' ? 'usia 5-6 tahun (TK B)' : 'usia 4-5 tahun (TK A)';
     
@@ -3188,24 +3217,26 @@ app.post("/api/kindergarten/generate-sel-comment", async (req, res) => {
       earlyLeave: String(el),
     });
 
-    const ai = new GoogleGenAI({
-      apiKey: apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
+    const BASE_URL = process.env.VITE_AI_BASE_URL || "https://api.koboillm.com/v1";
+    const MODEL = process.env.VITE_AI_MODEL || "gemini/gemini-2.5-flash-lite";
+
+    const aiResponse = await axios.post(`${BASE_URL}/chat/completions`, {
+      model: MODEL,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.7
+    }, {
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${API_KEY}`,
+      },
+      timeout: 30000
     });
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-    });
-
-    const sanitizedText = sanitizeAiComment(response.text || "");
+    const textResult = aiResponse.data?.choices?.[0]?.message?.content || "";
+    const sanitizedText = sanitizeAiComment(textResult);
     res.json({ text: sanitizedText });
   } catch (error: any) {
-    console.error("[SelCommentsAI] Error calling Gemini API:", error);
+    console.error("[SelCommentsAI] Error calling AI API:", error);
     res.status(500).json({ error: error.message || "Gagal mengenerate komentar SEL menggunakan AI." });
   }
 });
