@@ -2857,10 +2857,64 @@ function replacePromptVariables(promptText: string, variables: Record<string, st
 }
 
 // Helper: Get AI Prompt template dynamically
+export function sanitizeAiComment(text: string): string {
+  if (!text) return "";
+  let cleaned = text.trim();
+
+  // Remove Markdown code block wrappers if any (e.g., ``` or ```text)
+  cleaned = cleaned.replace(/^```[a-zA-Z]*\n?/g, "");
+  cleaned = cleaned.replace(/\n?```$/g, "");
+  cleaned = cleaned.trim();
+
+  // Remove markdown bold/italic formatting
+  cleaned = cleaned.replace(/\*\*|\*|_/g, "");
+
+  // Clean line by line to remove conversational intros
+  let lines = cleaned.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+  if (lines.length > 1) {
+    const firstLine = lines[0].toLowerCase();
+    const isIntro = 
+      firstLine.endsWith(":") || 
+      firstLine.startsWith("tentu") || 
+      firstLine.startsWith("berikut") || 
+      firstLine.startsWith("ini ") || 
+      firstLine.startsWith("halo") || 
+      firstLine.startsWith("baik") ||
+      firstLine.length < 80;
+
+    if (isIntro && !firstLine.includes("minggu ini") && !firstLine.startsWith("ananda") && !firstLine.startsWith("ia ") && !firstLine.startsWith("dia ")) {
+      lines.shift();
+      cleaned = lines.join("\n").trim();
+    }
+  }
+
+  // Repeatedly strip surrounding quotes (single, double, curly quotes)
+  let prev;
+  do {
+    prev = cleaned;
+    cleaned = cleaned.trim();
+    if (
+      (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
+      (cleaned.startsWith("'") && cleaned.endsWith("'")) ||
+      (cleaned.startsWith('“') && cleaned.endsWith('”')) ||
+      (cleaned.startsWith('”') && cleaned.endsWith('”')) ||
+      (cleaned.startsWith('“') && cleaned.endsWith('“')) ||
+      (cleaned.startsWith('‘') && cleaned.endsWith('’'))
+    ) {
+      cleaned = cleaned.substring(1, cleaned.length - 1);
+    }
+  } while (cleaned !== prev);
+
+  // Remove any leftover introductory words at the very beginning of the paragraph
+  cleaned = cleaned.replace(/^(tentu,\s*|tentu saja,\s*|berikut adalah\s+|berikut draf komentar:\s*|ini adalah\s*|berikut\s*:\s*)/i, "");
+
+  return cleaned.trim();
+}
+
 export async function getPrompt(key: string, variables?: Record<string, string>): Promise<string> {
   const defaultTemplates: Record<string, string> = {
-    kindergarten_weekly_report: "Buat sebuah laporan narasi mingguan untuk seorang siswa yang berada di {{ageGroupStageString}}. Gunakan 6 developmental stages (Nilai Agama dan Budi Pekerti, Sosial-Emosional, Bahasa, Kognitif, Fisik-Motorik, Seni) sebagai hal yang menjadi fokus dalam laporan. Mulai dengan 'Minggu ini,' atau '{{nickName}} ...'. Gunakan EYD dengan benar. Jika ada domain atau sentra yang berulang, penjelasan digabung saja dan tidak berulang. Jangan gunakan tanda seru. Buat dalam 1 paragraf utuh/tidak terpisah.\n\nBerikut data observasi mingguan siswa:\n{{observationSummary}}",
-    kindergarten_sel_report: "Saya ingin membuat komentar mingguan untuk laporan perkembangan Sosial Emosional siswa {{ageGroupStageString}}. Berikut adalah data kehadiran dan emosi siswa dalam 1 minggu terakhir:\nHappy: {{happy}}, Sad: {{sad}}, Angry: {{angry}}, OK: {{ok}}, No News: {{noNews}}, Sick: {{sick}}, Izin: {{izin}}, Early Leave: {{earlyLeave}}\nBuatkan saya satu paragraf komentar dalam bahasa Indonesia yang singkat dan positif, cocok untuk laporan mingguan. Komentar harus sesuai dengan tahapan perkembangan sosial emosional anak usia yang sesuai, menggambarkan kemampuan anak mengenali dan mengekspresikan emosi, serta bagaimana ia merespons dukungan orang dewasa.\nGunakan bahasa yang hangat untuk ananda bernama: {{nickName}}"
+    kindergarten_weekly_report: "Buat sebuah laporan narasi mingguan untuk seorang siswa yang berada di {{ageGroupStageString}}. Gunakan 6 developmental stages (Nilai Agama dan Budi Pekerti, Sosial-Emosional, Bahasa, Kognitif, Fisik-Motorik, Seni) sebagai hal yang menjadi fokus dalam laporan. Mulai dengan 'Minggu ini,' atau '{{nickName}} ...'. Gunakan EYD dengan benar. Jika ada domain atau sentra yang berulang, penjelasan digabung saja dan tidak berulang. Jangan gunakan tanda seru. Buat dalam 1 paragraf utuh/tidak terpisah.\n\nPENTING: HANYA berikan teks komentar utama saja. JANGAN gunakan pengantar seperti 'Berikut komentar...', 'Tentu, ini draf...', dll. JANGAN bungkus dalam tanda kutip. JANGAN gunakan format markdown seperti tebal atau miring.\n\nBerikut data observasi mingguan siswa:\n{{observationSummary}}",
+    kindergarten_sel_report: "Saya ingin membuat komentar mingguan untuk laporan perkembangan Sosial Emosional siswa {{ageGroupStageString}}. Berikut adalah data kehadiran dan emosi siswa dalam 1 minggu terakhir:\nHappy: {{happy}}, Sad: {{sad}}, Angry: {{angry}}, OK: {{ok}}, No News: {{noNews}}, Sick: {{sick}}, Izin: {{izin}}, Early Leave: {{earlyLeave}}\nBuatkan saya satu paragraf komentar dalam bahasa Indonesia yang singkat dan positif, cocok untuk laporan mingguan. Komentar harus sesuai dengan tahapan perkembangan sosial emosional anak usia yang sesuai, menggambarkan kemampuan anak mengenali dan mengekspresikan emosi, serta bagaimana ia merespons dukungan orang dewasa.\nGunakan bahasa yang hangat untuk ananda bernama: {{nickName}}\n\nPENTING: HANYA berikan teks komentar utama saja. JANGAN gunakan pengantar seperti 'Berikut komentar...', 'Tentu, ini draf...', dll. JANGAN bungkus dalam tanda kutip. JANGAN gunakan format markdown seperti tebal atau miring."
   };
 
   try {
@@ -3088,7 +3142,8 @@ app.post("/api/kindergarten/generate-weekly-comment", async (req, res) => {
       contents: prompt,
     });
 
-    res.json({ text: response.text || "" });
+    const sanitizedText = sanitizeAiComment(response.text || "");
+    res.json({ text: sanitizedText });
   } catch (error: any) {
     console.error("[WeeklyCommentsAI] Error calling Gemini API:", error);
     res.status(500).json({ error: error.message || "Gagal mengenerate komentar menggunakan AI." });
@@ -3147,7 +3202,8 @@ app.post("/api/kindergarten/generate-sel-comment", async (req, res) => {
       contents: prompt,
     });
 
-    res.json({ text: response.text || "" });
+    const sanitizedText = sanitizeAiComment(response.text || "");
+    res.json({ text: sanitizedText });
   } catch (error: any) {
     console.error("[SelCommentsAI] Error calling Gemini API:", error);
     res.status(500).json({ error: error.message || "Gagal mengenerate komentar SEL menggunakan AI." });
