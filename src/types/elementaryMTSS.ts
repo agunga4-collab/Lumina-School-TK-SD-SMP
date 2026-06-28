@@ -18,4 +18,59 @@ export interface ElementaryCoachingSession {
   notes: string;
   loggedBy: string; // Name or UID of assessor/teacher
   createdAt: number;
+  durationMinutes?: number;
+  interventionMethod?: string;
+  caseId?: string;
+  batchSheetId?: string;
+  blockId?: string;
+}
+
+export interface MTSSBlockConfig {
+  id: string;
+  type: 'MEETING' | 'ASSESSMENT';
+  label: string;
+}
+
+export interface MTSSMeetingValue {
+  date1?: string;
+  date2?: string;
+  status?: string;
+}
+
+export interface MTSSAssessmentValue {
+  result?: string;
+  dateAssessed?: string;
+  note?: string;
+}
+
+export interface MTSSStudentRowData {
+  studentId: string;
+  studentName: string;
+  classId: string;
+  className: string;
+  goal: string;
+  teachers: string;
+  baseline: string;
+  current: string;
+  target: string;
+  blocks: Record<string, any>; // Keyed by block.id -> MTSSMeetingValue or MTSSAssessmentValue
+  dateAssessed?: string;
+  finalDiagnosis?: string;
+  notes?: string;
+}
+
+export interface MTSSBatchSheet {
+  id: string;
+  academicYear: string;
+  semester: string;
+  subject: string;
+  tier: string;
+  classId: string;
+  className: string;
+  teacherName: string;
+  orderedBlocks: MTSSBlockConfig[];
+  studentsData: Record<string, MTSSStudentRowData>;
+  studentIds: string[];
+  createdAt: number;
+  updatedAt: number;
 }

@@ -297,6 +297,10 @@ service cloud.firestore {
       }
     }
 
+    match /elementary_mtss_batch_sheets/{sheetId} {
+      allow read, write: if isActive() && (isTeacher() || isAdmin() || isJuniorHighStaff());
+    }
+
     match /elementary_literacy_numeracy/{recordId} {
       allow read: if isActive() && (isTeacher() || isAdmin() || isJuniorHighStaff() || isLinkedStudent(existing().studentId));
       allow write: if isTeacher() || isAdmin() || isJuniorHighStaff();

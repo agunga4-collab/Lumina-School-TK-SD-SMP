@@ -12,7 +12,7 @@ import {
   deleteDoc
 } from 'firebase/firestore';
 import { db, handleFirestoreError, auth } from '../lib/firebase';
-import { ElementaryMTSSCase, ElementaryCoachingSession } from '../types/elementaryMTSS';
+import { ElementaryMTSSCase, ElementaryCoachingSession, MTSSBatchSheet, MTSSBlockConfig, MTSSStudentRowData, MTSSMeetingValue, MTSSAssessmentValue } from '../types/elementaryMTSS';
 import { ElementaryProgressRecord, ElementaryArea } from '../types/elementaryLiteracyNumeracy';
 
 const CASES_COLLECTION = 'elementary_mtss_cases';
@@ -34,10 +34,9 @@ export function mapAreaToSubject(area: ElementaryArea): 'Bahasa Indonesia' | 'En
 }
 
 // Helper to map support status to MTSS tier
-export function mapSupportStatusToTier(status: string): 'Tier 2' | 'Tier 3' | 'SN' | null {
+export function mapSupportStatusToTier(status: string): 'Tier 2' | 'Tier 3' | null {
   if (status === 'MONITOR') return 'Tier 2';
   if (status === 'NEEDS_SUPPORT') return 'Tier 3';
-  if (status === 'INTERVENTION_RECOMMENDED') return 'SN';
   return null;
 }
 
@@ -273,6 +272,182 @@ export const elementaryMTSSService = {
     } catch (error) {
       console.error('Error in reconcileAllMTSSCases:', error);
       throw error;
+    }
+  },
+
+  /**
+   * Fetch all saved batch sheets, sorted by updatedAt descending.
+   */
+  async fetchBatchSheets(): Promise<MTSSBatchSheet[]> {
+    try {
+      const snap = await getDocs(query(collection(db, 'elementary_mtss_batch_sheets'), orderBy('updatedAt', 'desc')));
+      const sheets: MTSSBatchSheet[] = [];
+      snap.forEach((docSnap) => {
+        sheets.push(docSnap.data() as MTSSBatchSheet);
+      });
+      return sheets;
+    } catch (error) {
+      return handleFirestoreError(error, 'list', 'elementary_mtss_batch_sheets');
+    }
+  },
+
+  /**
+   * Fetch a single batch sheet by its ID.
+   */
+  async fetchBatchSheetById(id: string): Promise<MTSSBatchSheet | null> {
+    try {
+      const snap = await getDoc(doc(db, 'elementary_mtss_batch_sheets', id));
+      return snap.exists() ? (snap.data() as MTSSBatchSheet) : null;
+    } catch (error) {
+      return handleFirestoreError(error, 'get', `elementary_mtss_batch_sheets/${id}`);
+    }
+  },
+
+  /**
+   * Delete a batch sheet by its ID.
+   */
+  async deleteBatchSheet(id: string): Promise<void> {
+    try {
+      await deleteDoc(doc(db, 'elementary_mtss_batch_sheets', id));
+    } catch (error) {
+      return handleFirestoreError(error, 'delete', `elementary_mtss_batch_sheets/${id}`);
+    }
+  },
+
+  /**
+   * Save a batch sheet (create or update).
+   * Automatically updates individual student cases and synchronizes coaching sessions
+   * to maintain history & timeline capability!
+   */
+  async saveBatchSheet(sheet: Omit<MTSSBatchSheet, 'id' | 'createdAt' | 'updatedAt'>, existingId?: string): Promise<string> {
+    try {
+      const colRef = collection(db, 'elementary_mtss_batch_sheets');
+      let docId = existingId;
+      let docRef;
+
+      if (docId) {
+        docRef = doc(colRef, docId);
+      } else {
+        docRef = doc(colRef);
+        docId = docRef.id;
+      }
+
+      const now = Date.now();
+      const existingDoc = existingId ? await getDoc(docRef) : null;
+      const createdAt = existingDoc?.exists() ? ((existingDoc.data() as any)?.createdAt || now) : now;
+
+      const fullSheet: MTSSBatchSheet = {
+        ...sheet,
+        id: docId,
+        createdAt,
+        updatedAt: now
+      };
+
+      // 1. Save the batch sheet document
+      await setDoc(docRef, fullSheet);
+
+      // 2. Map the subject name to area key
+      let area: ElementaryArea = 'NUMERACY';
+      if (sheet.subject === 'Bahasa Indonesia') area = 'BAHASA_INDONESIA';
+      else if (sheet.subject === 'English') area = 'ENGLISH_READING';
+      else if (sheet.subject === 'Mengaji') area = 'MENGAJI';
+
+      // 3. For each student, update their case and sync sessions
+      for (const studentId of sheet.studentIds) {
+        const student = sheet.studentsData[studentId];
+        if (!student) continue;
+
+        const caseId = `${studentId}_${area}`;
+        const caseRef = doc(db, CASES_COLLECTION, caseId);
+        const caseSnap = await getDoc(caseRef);
+
+        const status: 'Active' | 'Achieved' = student.finalDiagnosis === 'Achieved' || student.finalDiagnosis === 'Passed Tier 2' ? 'Achieved' : 'Active';
+
+        // Update or create case
+        if (caseSnap.exists()) {
+          const currentCaseData = caseSnap.data() as ElementaryMTSSCase;
+          await setDoc(caseRef, {
+            ...currentCaseData,
+            baselineScore: student.baseline || currentCaseData.baselineScore,
+            targetScore: student.target || currentCaseData.targetScore,
+            status: status,
+            updatedAt: now
+          }, { merge: true });
+        } else {
+          const newCase: ElementaryMTSSCase = {
+            id: caseId,
+            studentId: studentId,
+            studentName: student.studentName,
+            classId: student.classId,
+            subject: sheet.subject as any,
+            tier: sheet.tier as any,
+            baselineScore: student.baseline,
+            targetScore: student.target,
+            status: status,
+            createdAt: now,
+            updatedAt: now
+          };
+          await setDoc(caseRef, newCase);
+        }
+
+        // Clean up previously synced sessions for this sheet to prevent duplicates
+        const sessionsPath = `${CASES_COLLECTION}/${caseId}/coaching_sessions`;
+        const q = query(collection(db, sessionsPath), where('batchSheetId', '==', docId));
+        const sessionsSnap = await getDocs(q);
+        for (const sDoc of sessionsSnap.docs) {
+          await deleteDoc(sDoc.ref);
+        }
+
+        // Write meetings and assessments as individual coaching sessions
+        for (const block of sheet.orderedBlocks) {
+          const blockVal = student.blocks[block.id];
+          if (!blockVal) continue;
+
+          if (block.type === 'MEETING') {
+            const mVal = blockVal as MTSSMeetingValue;
+            if (mVal.status || mVal.date1 || mVal.date2) {
+              const notes = `Pertemuan: ${block.label}\nStatus/Progres: ${mVal.status || 'Belum diisi'}\nTanggal Sesi 1: ${mVal.date1 || '-'}\nTanggal Sesi 2: ${mVal.date2 || '-'}`;
+              const sessionDate = mVal.date1 || mVal.date2 || new Date().toISOString().split('T')[0];
+              
+              const sColRef = collection(db, sessionsPath);
+              const sDocRef = doc(sColRef);
+              await setDoc(sDocRef, {
+                id: sDocRef.id,
+                date: sessionDate,
+                notes,
+                loggedBy: sheet.teacherName || 'Guru Pengajar',
+                createdAt: now,
+                batchSheetId: docId,
+                blockId: block.id,
+                caseId: caseId
+              });
+            }
+          } else if (block.type === 'ASSESSMENT') {
+            const aVal = blockVal as MTSSAssessmentValue;
+            if (aVal.result || aVal.dateAssessed || aVal.note) {
+              const notes = `Evaluasi: ${block.label}\nHasil/Skor: ${aVal.result || 'Belum diisi'}\nCatatan Singkat: ${aVal.note || '-'}`;
+              const sessionDate = aVal.dateAssessed || new Date().toISOString().split('T')[0];
+
+              const sColRef = collection(db, sessionsPath);
+              const sDocRef = doc(sColRef);
+              await setDoc(sDocRef, {
+                id: sDocRef.id,
+                date: sessionDate,
+                notes,
+                loggedBy: sheet.teacherName || 'Guru Pengajar',
+                createdAt: now,
+                batchSheetId: docId,
+                blockId: block.id,
+                caseId: caseId
+              });
+            }
+          }
+        }
+      }
+
+      return docId;
+    } catch (error) {
+      return handleFirestoreError(error, 'create', 'elementary_mtss_batch_sheets');
     }
   }
 };

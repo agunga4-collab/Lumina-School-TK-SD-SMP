@@ -8,9 +8,10 @@ interface Props {
   cases: ElementaryMTSSCase[];
   onLogCoaching: (caseId: string, studentName: string, subject: string, tier: string) => void;
   onRefresh: () => void;
+  classesList?: any[];
 }
 
-export default function MTSSCaseTable({ cases, onLogCoaching, onRefresh }: Props) {
+export default function MTSSCaseTable({ cases, onLogCoaching, onRefresh, classesList }: Props) {
   // Store local edits for baseline, target, and status
   const [edits, setEdits] = useState<Record<string, { baselineScore: string; targetScore: string; status: 'Active' | 'Achieved' }>>({});
   const [savingRows, setSavingRows] = useState<Record<string, boolean>>({});
@@ -88,6 +89,7 @@ export default function MTSSCaseTable({ cases, onLogCoaching, onRefresh }: Props
           <thead>
             <tr className="bg-slate-900 text-slate-200 uppercase text-[10px] font-black tracking-wider border-b border-slate-800">
               <th className="py-4 px-6">Nama Siswa</th>
+              <th className="py-4 px-4 text-center">Kelas</th>
               <th className="py-4 px-4 text-center">Bidang Studi</th>
               <th className="py-4 px-4 text-center">Intervensi Tier</th>
               <th className="py-4 px-4">Baseline Goal</th>
@@ -99,7 +101,7 @@ export default function MTSSCaseTable({ cases, onLogCoaching, onRefresh }: Props
           <tbody className="divide-y divide-slate-100">
             {cases.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-12 px-6 text-center text-xs text-slate-500 italic">
+                <td colSpan={8} className="py-12 px-6 text-center text-xs text-slate-500 italic">
                   Tidak ada kasus intervensi aktif di tier ini.
                 </td>
               </tr>
@@ -133,6 +135,13 @@ export default function MTSSCaseTable({ cases, onLogCoaching, onRefresh }: Props
                           ID: {caseObj.studentId}
                         </span>
                       </div>
+                    </td>
+
+                    {/* Class */}
+                    <td className="py-3 px-4 text-center whitespace-nowrap">
+                      <span className="text-xs font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-lg">
+                        {classesList?.find((c) => c.id === caseObj.classId)?.name || caseObj.classId || '-'}
+                      </span>
                     </td>
 
                     {/* Subject */}

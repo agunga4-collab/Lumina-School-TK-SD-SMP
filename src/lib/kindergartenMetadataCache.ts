@@ -37,41 +37,43 @@ export function getFirestoreReadAuditSummary() {
 }
 
 // In-memory Cache store
-let cachedClasses: CacheEntry<any[]> | null = null;
-let cachedStudents: CacheEntry<any[]> | null = null;
+// In-memory Cache store
+const cachedUnitClasses: Record<string, CacheEntry<any[]>> = {};
+const cachedUnitStudents: Record<string, CacheEntry<any[]>> = {};
 
 // In-flight Promise storage to bundle duplicate calls happening in the same render loop
-let inflightClassesPromise: Record<string, Promise<any[]>> = {};
-let inflightStudentsPromise: Record<string, Promise<any[]>> = {};
+const inflightUnitClassesPromise: Record<string, Promise<any[]>> = {};
+const inflightUnitStudentsPromise: Record<string, Promise<any[]>> = {};
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 Minutes TTL before automatic background refresh
 
 /**
- * Fetches and resolves kindergarten classes with deduplication and caching
+ * Fetches and resolves classes for a specific unit with deduplication and caching
  */
-export async function getKindergartenClasses(academicYear: string, forceRefresh = false): Promise<any[]> {
-  const cacheKey = academicYear;
+export async function getUnitClasses(unitId: string, academicYear: string, forceRefresh = false): Promise<any[]> {
+  const cacheKey = `${unitId}_${academicYear}`;
   
-  if (!forceRefresh && cachedClasses && cachedClasses.academicYear === academicYear) {
-    const age = Date.now() - cachedClasses.timestamp;
+  if (!forceRefresh && cachedUnitClasses[cacheKey]) {
+    const entry = cachedUnitClasses[cacheKey];
+    const age = Date.now() - entry.timestamp;
     if (age < CACHE_TTL_MS) {
-      console.log(`[Cache Hit] Serving merged Kindergarten classes for active year: ${academicYear} (Age: ${Math.round(age / 1000)}s)`);
-      return cachedClasses.data;
+      console.log(`[Cache Hit] Serving merged ${unitId} classes for active year: ${academicYear} (Age: ${Math.round(age / 1000)}s)`);
+      return entry.data;
     }
   }
 
   // Deduplicate concurrent inflight requests
-  if (inflightClassesPromise[cacheKey]) {
-    console.log(`[In-flight Dedupe] Merging concurrent class fetch for active year: ${academicYear}`);
-    return inflightClassesPromise[cacheKey];
+  if (inflightUnitClassesPromise[cacheKey]) {
+    console.log(`[In-flight Dedupe] Merging concurrent class fetch for active year: ${academicYear} (${unitId})`);
+    return inflightUnitClassesPromise[cacheKey];
   }
 
   const fetchPromise = (async () => {
     try {
-      console.log(`[Firestore Query] Loading classes for academic year: ${academicYear}`);
+      console.log(`[Firestore Query] Loading classes for unit: ${unitId}, academic year: ${academicYear}`);
       const qClasses = query(
         collection(db, 'classes'),
-        where('unitId', '==', 'KINDERGARTEN'),
+        where('unitId', '==', unitId),
         where('academicYear', '==', academicYear)
       );
       
@@ -90,7 +92,7 @@ export async function getKindergartenClasses(academicYear: string, forceRefresh 
         };
       }).sort((a, b) => a.name.localeCompare(b.name));
 
-      cachedClasses = {
+      cachedUnitClasses[cacheKey] = {
         data: classes,
         timestamp: Date.now(),
         academicYear
@@ -98,50 +100,50 @@ export async function getKindergartenClasses(academicYear: string, forceRefresh 
 
       return classes;
     } finally {
-      delete inflightClassesPromise[cacheKey];
+      delete inflightUnitClassesPromise[cacheKey];
     }
   })();
 
-  inflightClassesPromise[cacheKey] = fetchPromise;
+  inflightUnitClassesPromise[cacheKey] = fetchPromise;
   return fetchPromise;
 }
 
 /**
- * Fetches, joins, and resolves the normalized student list (students, enrollments, roleInvites)
- * with strict cache-first deduplication to prevent 300+ reads per page switch.
+ * Fetches, joins, and resolves the normalized student list for a specific unit
  */
-export async function getKindergartenStudents(academicYear: string, forceRefresh = false): Promise<any[]> {
-  const cacheKey = academicYear;
+export async function getUnitStudents(unitId: string, academicYear: string, forceRefresh = false): Promise<any[]> {
+  const cacheKey = `${unitId}_${academicYear}`;
 
-  if (!forceRefresh && cachedStudents && cachedStudents.academicYear === academicYear) {
-    const age = Date.now() - cachedStudents.timestamp;
+  if (!forceRefresh && cachedUnitStudents[cacheKey]) {
+    const entry = cachedUnitStudents[cacheKey];
+    const age = Date.now() - entry.timestamp;
     if (age < CACHE_TTL_MS) {
-      console.log(`[Cache Hit] Serving fully resolved list of Kindergarten students for year: ${academicYear} (Age: ${Math.round(age / 1000)}s)`);
-      return cachedStudents.data;
+      console.log(`[Cache Hit] Serving fully resolved list of ${unitId} students for year: ${academicYear} (Age: ${Math.round(age / 1000)}s)`);
+      return entry.data;
     }
   }
 
-  if (inflightStudentsPromise[cacheKey]) {
-    console.log(`[In-flight Dedupe] Merging concurrent student lookup registry for year: ${academicYear}`);
-    return inflightStudentsPromise[cacheKey];
+  if (inflightUnitStudentsPromise[cacheKey]) {
+    console.log(`[In-flight Dedupe] Merging concurrent student lookup registry for unit: ${unitId}, year: ${academicYear}`);
+    return inflightUnitStudentsPromise[cacheKey];
   }
 
   const fetchPromise = (async () => {
     try {
-      console.log(`[Firestore Query] Compiling master list of active Kindergarten students for academic year: ${academicYear}...`);
+      console.log(`[Firestore Query] Compiling master list of active ${unitId} students for academic year: ${academicYear}...`);
       
       const qStudents = query(
         collection(db, 'students'),
-        where('unitId', '==', 'KINDERGARTEN')
+        where('unitId', '==', unitId)
       );
       const qInvites = query(
         collection(db, 'roleInvites'),
         where('role', '==', 'STUDENT'),
-        where('unitId', '==', 'KINDERGARTEN')
+        where('unitId', '==', unitId)
       );
       const qEnrollments = query(
         collection(db, 'enrollments'),
-        where('unitId', '==', 'KINDERGARTEN'),
+        where('unitId', '==', unitId),
         where('academicYear', '==', academicYear)
       );
 
@@ -160,7 +162,7 @@ export async function getKindergartenStudents(academicYear: string, forceRefresh
       logFirestoreRead('roleInvites', iRead);
       logFirestoreRead('enrollments', eRead);
 
-      console.log(`[Compilation Map] Resolving identity graph. Src counts - raw: ${sRead}, invites: ${iRead}, enrollments: ${eRead}`);
+      console.log(`[Compilation Map] Resolving ${unitId} identity graph. Src counts - raw: ${sRead}, invites: ${iRead}, enrollments: ${eRead}`);
 
       const enrollmentClassMap = new Map<string, string>();
       enrollmentsSnap.docs.forEach(docSnap => {
@@ -179,14 +181,17 @@ export async function getKindergartenStudents(academicYear: string, forceRefresh
         if (!studentId) return;
 
         const classId = data.classId || enrollmentClassMap.get(studentId) || '';
-        const ageGroup = data.classId && String(data.classId).toLowerCase().includes('tkb') ? 'TK_B' : 'TK_A';
+        const ageGroup = unitId === 'KINDERGARTEN'
+          ? (data.classId && String(data.classId).toLowerCase().includes('tkb') ? 'TK_B' : 'TK_A')
+          : 'ELEMENTARY';
 
         map.set(studentId, {
           id: studentId,
           name: data.fullName || data.name || 'Siswa Tanpa Nama',
           nickName: data.nickname || data.nickName || data.fullName?.split(' ')[0] || 'Siswa',
           ageGroup: ageGroup,
-          classId: classId
+          classId: classId,
+          unitId: unitId
         });
       });
 
@@ -195,14 +200,17 @@ export async function getKindergartenStudents(academicYear: string, forceRefresh
         const data = docSnap.data();
         const studentId = docSnap.id;
         const classId = enrollmentClassMap.get(studentId) || data.classId || '';
-        const ageGroup = (data.grade === 'TK_B' || (classId && String(classId).toLowerCase().includes('tkb'))) ? 'TK_B' : 'TK_A';
+        const ageGroup = unitId === 'KINDERGARTEN'
+          ? ((data.grade === 'TK_B' || (classId && String(classId).toLowerCase().includes('tkb'))) ? 'TK_B' : 'TK_A')
+          : 'ELEMENTARY';
 
         const existing = map.get(studentId);
         if (existing && existing.classId) {
           map.set(studentId, {
             ...existing,
             name: existing.name || data.fullName || data.name || 'Siswa Tanpa Nama',
-            nickName: existing.nickName || data.nickname || data.nickName || data.fullName?.split(' ')[0] || 'Siswa'
+            nickName: existing.nickName || data.nickname || data.nickName || data.fullName?.split(' ')[0] || 'Siswa',
+            unitId: unitId
           });
         } else {
           map.set(studentId, {
@@ -210,7 +218,8 @@ export async function getKindergartenStudents(academicYear: string, forceRefresh
             name: data.fullName || data.name || 'Siswa Tanpa Nama',
             nickName: data.nickname || data.nickName || data.fullName?.split(' ')[0] || 'Siswa',
             ageGroup: ageGroup,
-            classId: classId
+            classId: classId,
+            unitId: unitId
           });
         }
       });
@@ -233,7 +242,7 @@ export async function getKindergartenStudents(academicYear: string, forceRefresh
 
       const resolvedList = Array.from(uniqueStudentsMap.values()).sort((a, b) => a.name.localeCompare(b.name));
 
-      cachedStudents = {
+      cachedUnitStudents[cacheKey] = {
         data: resolvedList,
         timestamp: Date.now(),
         academicYear
@@ -241,12 +250,27 @@ export async function getKindergartenStudents(academicYear: string, forceRefresh
 
       return resolvedList;
     } finally {
-      delete inflightStudentsPromise[cacheKey];
+      delete inflightUnitStudentsPromise[cacheKey];
     }
   })();
 
-  inflightStudentsPromise[cacheKey] = fetchPromise;
+  inflightUnitStudentsPromise[cacheKey] = fetchPromise;
   return fetchPromise;
+}
+
+/**
+ * Fetches and resolves kindergarten classes with deduplication and caching
+ */
+export async function getKindergartenClasses(academicYear: string, forceRefresh = false): Promise<any[]> {
+  return getUnitClasses('KINDERGARTEN', academicYear, forceRefresh);
+}
+
+/**
+ * Fetches, joins, and resolves the normalized student list (students, enrollments, roleInvites)
+ * with strict cache-first deduplication to prevent 300+ reads per page switch.
+ */
+export async function getKindergartenStudents(academicYear: string, forceRefresh = false): Promise<any[]> {
+  return getUnitStudents('KINDERGARTEN', academicYear, forceRefresh);
 }
 
 /**
@@ -254,6 +278,10 @@ export async function getKindergartenStudents(academicYear: string, forceRefresh
  */
 export function invalidateKindergartenCache() {
   console.log('[Cache Maintenance] Invalidating all cache store buffers.');
-  cachedClasses = null;
-  cachedStudents = null;
+  for (const k in cachedUnitClasses) {
+    delete cachedUnitClasses[k];
+  }
+  for (const k in cachedUnitStudents) {
+    delete cachedUnitStudents[k];
+  }
 }

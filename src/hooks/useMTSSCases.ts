@@ -19,8 +19,8 @@ export function useMTSSCases() {
         const list: ElementaryMTSSCase[] = [];
         snapshot.forEach((docSnap) => {
           const data = docSnap.data() as ElementaryMTSSCase;
-          // Filter tier 2, tier 3 or SN as specified by user instructions
-          if (data.tier === 'Tier 2' || data.tier === 'Tier 3' || data.tier === 'SN') {
+          // Filter tier 2 or tier 3 as specified by user instructions
+          if (data.tier === 'Tier 2' || data.tier === 'Tier 3') {
             list.push(data);
           }
         });

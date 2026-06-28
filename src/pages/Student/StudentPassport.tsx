@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 import { 
   User, Calendar, GraduationCap, Heart, BookOpen, 
   Target, Award, ShieldAlert, ChevronRight, Map, 
@@ -11,9 +11,10 @@ import {
 import { cn } from '../../lib/utils';
 import { auth, db, getParentStudentLinks } from '../../lib/firebase';
 import { doc, getDoc, getDocs, collection, query, where, orderBy } from 'firebase/firestore';
-import { getKindergartenClasses, getKindergartenStudents } from '../../lib/kindergartenMetadataCache';
+import { getKindergartenClasses, getKindergartenStudents, getUnitClasses, getUnitStudents } from '../../lib/kindergartenMetadataCache';
 import { ACTIVITY_LABEL_MAP, DOMAIN_LABEL_MAP } from '../../lib/kindergartenWeeklyReport';
 import { useAcademicYear } from '../../context/AcademicYearContext';
+import { getPeriodLabel, getAreaLabel, getSupportStatusLabel } from '../../constants/elementaryLiteracyBenchmarks';
 
 // Define English style mapping for grading evaluation
 const GRADE_STYLES: Record<string, { label: string; bg: string; text: string; dot: string }> = {
@@ -115,6 +116,8 @@ function isStudentInClass(studClassId: string, activeClass: { id: string; name: 
 export default function StudentPassport() {
   const navigate = useNavigate();
   const { activeYear } = useAcademicYear();
+  const outletCtx = useOutletContext<any>() || {};
+  const activeUnit = outletCtx.activeUnit || 'KINDERGARTEN';
   const [currentUser, setCurrentUser] = React.useState<any>(null);
   const [userRole, setUserRole] = React.useState<string>('STUDENT');
   const [loading, setLoading] = React.useState(true);
@@ -136,6 +139,9 @@ export default function StudentPassport() {
   const [rawObservations, setRawObservations] = React.useState<any[]>([]);
   const [rawDrafts, setRawDrafts] = React.useState<any[]>([]);
   const [rawReports, setRawReports] = React.useState<any[]>([]);
+  const [elementaryProgress, setElementaryProgress] = React.useState<any[]>([]);
+  const [elementaryMTSSCases, setElementaryMTSSCases] = React.useState<any[]>([]);
+  const [mtssCoachingSessions, setMtssCoachingSessions] = React.useState<Record<string, any[]>>({});
   const [isDataCompiling, setIsDataCompiling] = React.useState(false);
 
   // Load User details first
@@ -173,8 +179,12 @@ export default function StudentPassport() {
 
     const loadRegistries = async () => {
       try {
-        const sysClasses = await getKindergartenClasses(activeYear || '2025/2026');
-        const sysStudents = await getKindergartenStudents(activeYear || '2025/2026');
+        const sysClasses = activeUnit === 'ELEMENTARY'
+          ? await getUnitClasses('ELEMENTARY', activeYear || '2025/2026')
+          : await getKindergartenClasses(activeYear || '2025/2026');
+        const sysStudents = activeUnit === 'ELEMENTARY'
+          ? await getUnitStudents('ELEMENTARY', activeYear || '2025/2026')
+          : await getKindergartenStudents(activeYear || '2025/2026');
         
         setClasses(sysClasses);
         setStudents(sysStudents);
@@ -211,7 +221,7 @@ export default function StudentPassport() {
           }
 
           if (parentChildrenIds.length > 0) {
-            // Check matching kindergarten student profiles
+            // Check matching student profiles
             const matchedStudents = sysStudents.filter(s => 
               (s.id && parentChildrenIds.includes(s.id)) || 
               (s.id && parentChildrenIds.includes(s.id.toLowerCase())) || 
@@ -251,7 +261,7 @@ export default function StudentPassport() {
     };
 
     loadRegistries();
-  }, [currentUser, userRole, activeYear]);
+  }, [currentUser, userRole, activeYear, activeUnit]);
 
   // Whenever selectedStudentId changes, pull all data for this student
   React.useEffect(() => {
@@ -268,17 +278,25 @@ export default function StudentPassport() {
         // 1. Fetch raw class attendance
         let attDocs: any[] = [];
         try {
-          const snap = await getDocs(collection(db, 'attendance'));
-          attDocs = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+          if (activeUnit === 'ELEMENTARY') {
+            const q = query(collection(db, 'attendance_records'), where('studentId', '==', selectedStudentId));
+            const snap = await getDocs(q);
+            attDocs = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+          } else {
+            const snap = await getDocs(collection(db, 'attendance'));
+            attDocs = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+          }
         } catch (e) {
-          console.warn("[StudentPortfolio] Querying all attendance records restricted by rules:", e);
+          console.warn("[StudentPortfolio] Querying attendance records restricted by rules:", e);
         }
 
         // 2. Fetch raw observation logs
         let obsDocs: any[] = [];
         try {
-          const snap = await getDocs(collection(db, 'observations'));
-          obsDocs = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+          if (activeUnit !== 'ELEMENTARY') {
+            const snap = await getDocs(collection(db, 'observations'));
+            obsDocs = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+          }
         } catch (e) {
           console.warn("[StudentPortfolio] Querying all observations rules mismatch:", e);
         }
@@ -286,8 +304,10 @@ export default function StudentPassport() {
         // 3. Fetch weekly comments drafts
         let draftDocs: any[] = [];
         try {
-          const snap = await getDocs(collection(db, 'weekly_summary_drafts'));
-          draftDocs = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+          if (activeUnit !== 'ELEMENTARY') {
+            const snap = await getDocs(collection(db, 'weekly_summary_drafts'));
+            draftDocs = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+          }
         } catch (e) {
           console.warn("[StudentPortfolio] Reading weekly draft summaries restricted:", e);
         }
@@ -295,11 +315,48 @@ export default function StudentPassport() {
         // 4. Fetch published parent reviews
         let publishedReports: any[] = [];
         try {
-          const qPub = query(collection(db, 'published_kg_reports'), where('studentId', '==', selectedStudentId));
-          const snap = await getDocs(qPub);
-          publishedReports = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+          if (activeUnit !== 'ELEMENTARY') {
+            const qPub = query(collection(db, 'published_kg_reports'), where('studentId', '==', selectedStudentId));
+            const snap = await getDocs(qPub);
+            publishedReports = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+          }
         } catch (e) {
           console.warn("[StudentPortfolio] Reading published weekly reports failed:", e);
+        }
+
+        // 5. Fetch Elementary Literacy & Numeracy Progress
+        let litProgress: any[] = [];
+        try {
+          if (activeUnit === 'ELEMENTARY') {
+            const qLit = query(collection(db, 'elementary_literacy_numeracy_records'), where('studentId', '==', selectedStudentId));
+            const snap = await getDocs(qLit);
+            litProgress = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+          }
+        } catch (e) {
+          console.warn("[StudentPortfolio] Reading elementary progress failed:", e);
+        }
+
+        // 6. Fetch Elementary MTSS cases
+        let mtssCases: any[] = [];
+        const sessionsMap: Record<string, any[]> = {};
+        try {
+          if (activeUnit === 'ELEMENTARY') {
+            const qMtss = query(collection(db, 'elementary_mtss_cases'), where('studentId', '==', selectedStudentId));
+            const snap = await getDocs(qMtss);
+            mtssCases = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+
+            for (const c of mtssCases) {
+              try {
+                const qSessions = query(collection(db, `elementary_mtss_cases/${c.docId}/coaching_sessions`), orderBy('createdAt', 'desc'));
+                const sSnap = await getDocs(qSessions);
+                sessionsMap[c.docId] = sSnap.docs.map(d => ({ docId: d.id, ...d.data() }));
+              } catch (err) {
+                console.warn(`[StudentPortfolio] Failed to fetch sessions for case ${c.docId}:`, err);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("[StudentPortfolio] Reading elementary mtss cases failed:", e);
         }
 
         if (active) {
@@ -307,6 +364,9 @@ export default function StudentPassport() {
           setRawObservations(obsDocs);
           setRawDrafts(draftDocs);
           setRawReports(publishedReports);
+          setElementaryProgress(litProgress);
+          setElementaryMTSSCases(mtssCases);
+          setMtssCoachingSessions(sessionsMap);
         }
       } catch (err) {
         console.error("Error aggregating Firestore documents:", err);
@@ -319,7 +379,7 @@ export default function StudentPassport() {
     return () => {
       active = false;
     };
-  }, [selectedStudentId]);
+  }, [selectedStudentId, activeUnit]);
 
   // Handle Class selection modification (Filters the student registry)
   const handleClassSelection = (classId: string) => {
@@ -361,65 +421,169 @@ export default function StudentPassport() {
   const processedAttendanceList = React.useMemo(() => {
     const list: Array<{ date: string; status: string; emotion: string; weekday: string }> = [];
     
-    // Look through firestore records
-    rawAttendance.forEach(docData => {
-      const dStr = docData.date;
-      if (!dStr) return;
-      const dObj = new Date(dStr);
-      if (dObj < filterDateLimit) return;
+    if (activeUnit === 'ELEMENTARY') {
+      rawAttendance.forEach(docData => {
+        const dStr = docData.date;
+        if (!dStr) return;
+        const dObj = new Date(dStr);
+        if (dObj < filterDateLimit) return;
 
-      const studentsList = docData.students || [];
-      const found = studentsList.find((s: any) => s.studentId === selectedStudentId);
-      if (found) {
         let statusNormalized = 'HADIR';
-        const stVal = String(found.status || '').toLowerCase();
-        if (stVal.includes('sakit') || stVal === 'sick') statusNormalized = 'SAKIT';
-        else if (stVal.includes('izin') || stVal === 'permission') statusNormalized = 'IZIN';
-        else if (stVal.includes('tanpa') || stVal === 'no_news') statusNormalized = 'ALFA';
+        const stVal = String(docData.status || '').toUpperCase();
+        if (stVal === 'SAKIT' || stVal === 'SICK') statusNormalized = 'SAKIT';
+        else if (stVal === 'IZIN' || stVal === 'PERMISSION') statusNormalized = 'IZIN';
+        else if (stVal === 'ALPA' || stVal === 'ALFA' || stVal === 'ABSENT' || stVal === 'NO_NEWS') statusNormalized = 'ALFA';
+        else if (stVal === 'HADIR' || stVal === 'PRESENT') statusNormalized = 'HADIR';
+        else statusNormalized = stVal;
 
         list.push({
           date: dStr,
           status: statusNormalized,
-          emotion: String(found.emotion || 'HAPPY').toUpperCase(),
+          emotion: 'HAPPY', // Not applicable for elementary
           weekday: dObj.toLocaleDateString('id-ID', { weekday: 'long' })
         });
-      }
-    });
+      });
+    } else {
+      // Look through firestore records
+      rawAttendance.forEach(docData => {
+        const dStr = docData.date;
+        if (!dStr) return;
+        const dObj = new Date(dStr);
+        if (dObj < filterDateLimit) return;
 
-    // Fallback or Merge localStorage records (extremely rich for developer sandbox review)
-    const localSavedChecklist = localStorage.getItem('kg_checklist_records');
-    if (localSavedChecklist) {
-      try {
-        const parsed = JSON.parse(localSavedChecklist);
-        Object.entries(parsed).forEach(([dateStr, classRecords]: [string, any]) => {
-          const dObj = new Date(dateStr);
-          if (dObj < filterDateLimit) return;
-          
-          if (classRecords?.[selectedStudentId]) {
-            // Deduplicate if already present
-            if (list.some(item => item.date === dateStr)) return;
+        const studentsList = docData.students || [];
+        const found = studentsList.find((s: any) => s.studentId === selectedStudentId);
+        if (found) {
+          let statusNormalized = 'HADIR';
+          const stVal = String(found.status || '').toLowerCase();
+          if (stVal.includes('sakit') || stVal === 'sick') statusNormalized = 'SAKIT';
+          else if (stVal.includes('izin') || stVal === 'permission') statusNormalized = 'IZIN';
+          else if (stVal.includes('tanpa') || stVal === 'no_news') statusNormalized = 'ALFA';
 
-            const st = classRecords[selectedStudentId];
-            let statusN = 'HADIR';
-            if (st.attendance === 'SICK') statusN = 'SAKIT';
-            else if (st.attendance === 'PERMISSION') statusN = 'IZIN';
-            else if (st.attendance === 'NO_NEWS') statusN = 'ALFA';
+          list.push({
+            date: dStr,
+            status: statusNormalized,
+            emotion: String(found.emotion || 'HAPPY').toUpperCase(),
+            weekday: dObj.toLocaleDateString('id-ID', { weekday: 'long' })
+          });
+        }
+      });
 
-            list.push({
-              date: dateStr,
-              status: statusN,
-              emotion: String(st.emotion || 'HAPPY').toUpperCase(),
-              weekday: dObj.toLocaleDateString('id-ID', { weekday: 'long' })
-            });
-          }
-        });
-      } catch (e) {
-        console.warn("Local storage parse failed:", e);
+      // Fallback or Merge localStorage records (extremely rich for developer sandbox review)
+      const localSavedChecklist = localStorage.getItem('kg_checklist_records');
+      if (localSavedChecklist) {
+        try {
+          const parsed = JSON.parse(localSavedChecklist);
+          Object.entries(parsed).forEach(([dateStr, classRecords]: [string, any]) => {
+            const dObj = new Date(dateStr);
+            if (dObj < filterDateLimit) return;
+            
+            if (classRecords?.[selectedStudentId]) {
+              // Deduplicate if already present
+              if (list.some(item => item.date === dateStr)) return;
+
+              const st = classRecords[selectedStudentId];
+              let statusN = 'HADIR';
+              if (st.attendance === 'SICK') statusN = 'SAKIT';
+              else if (st.attendance === 'PERMISSION') statusN = 'IZIN';
+              else if (st.attendance === 'NO_NEWS') statusN = 'ALFA';
+
+              list.push({
+                date: dateStr,
+                status: statusN,
+                emotion: String(st.emotion || 'HAPPY').toUpperCase(),
+                weekday: dObj.toLocaleDateString('id-ID', { weekday: 'long' })
+              });
+            }
+          });
+        } catch (e) {
+          console.warn("Local storage parse failed:", e);
+        }
       }
     }
 
     return list.sort((a, b) => b.date.localeCompare(a.date));
-  }, [rawAttendance, selectedStudentId, filterDateLimit]);
+  }, [rawAttendance, selectedStudentId, filterDateLimit, activeUnit]);
+
+  // Elementary specific calculated values
+  const latestElementaryProgress = React.useMemo(() => {
+    const latest: Record<string, any> = {};
+    
+    elementaryProgress.forEach(record => {
+      const area = record.area;
+      const periodOrder: Record<string, number> = {
+        'JUL_OCT': 1,
+        'NOV_FEB': 2,
+        'MAR_JUN': 3
+      };
+      
+      const existing = latest[area];
+      if (!existing) {
+        latest[area] = record;
+      } else {
+        const existingOrder = periodOrder[existing.period] || 0;
+        const currentOrder = periodOrder[record.period] || 0;
+        if (currentOrder > existingOrder) {
+          latest[area] = record;
+        }
+      }
+    });
+    
+    return latest;
+  }, [elementaryProgress]);
+
+  const elementaryTimeline = React.useMemo(() => {
+    const timelineEvents: Array<{
+      type: 'literacy' | 'coaching_session';
+      date: string;
+      dateObj: Date;
+      title: string;
+      description: string;
+      badge: string;
+      badgeColor: string;
+      meta: any;
+    }> = [];
+
+    elementaryProgress.forEach(rec => {
+      const dateObj = rec.updatedAt ? new Date(rec.updatedAt) : new Date();
+      const dStr = dateObj.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+      timelineEvents.push({
+        type: 'literacy',
+        date: dStr,
+        dateObj,
+        title: `Assessment: ${getAreaLabel(rec.area)}`,
+        description: rec.notes || `Progress assessment for period ${getPeriodLabel(rec.period)}.`,
+        badge: getSupportStatusLabel(rec.supportStatus),
+        badgeColor: rec.supportStatus === 'ON_TRACK' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
+                    rec.supportStatus === 'MONITOR' ? 'bg-yellow-50 text-yellow-700 border-yellow-100' :
+                    rec.supportStatus === 'NEEDS_SUPPORT' ? 'bg-orange-50 text-orange-700 border-orange-100' : 'bg-red-50 text-red-700 border-red-100',
+        meta: rec
+      });
+    });
+
+    Object.entries(mtssCoachingSessions).forEach(([caseId, sessions]) => {
+      const parentCase = elementaryMTSSCases.find(c => c.docId === caseId);
+      if (!parentCase) return;
+
+      (sessions as any[]).forEach(sess => {
+        const dateObj = new Date(sess.date || sess.createdAt || Date.now());
+        const dStr = dateObj.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+        timelineEvents.push({
+          type: 'coaching_session',
+          date: dStr,
+          dateObj,
+          title: `MTSS Coaching Session: ${parentCase.subject}`,
+          description: sess.notes || 'Coaching session logged.',
+          badge: parentCase.tier,
+          badgeColor: parentCase.tier === 'Tier 2' ? 'bg-yellow-50 text-yellow-700 border-yellow-100' :
+                      parentCase.tier === 'Tier 3' ? 'bg-orange-50 text-orange-700 border-orange-100' : 'bg-red-50 text-red-700 border-red-100',
+          meta: { ...sess, parentCase }
+        });
+      });
+    });
+
+    return timelineEvents.sort((a, b) => b.dateObj.getTime() - a.dateObj.getTime());
+  }, [elementaryProgress, mtssCoachingSessions, elementaryMTSSCases]);
 
   // Attendance metrics calculations
   const attendanceStats = React.useMemo(() => {
@@ -836,10 +1000,12 @@ export default function StudentPassport() {
           <div className="text-center sm:text-left space-y-2">
             <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5">
               <span className="px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 text-[10px] font-black uppercase tracking-widest border border-blue-100">
-                Kindergarten Portfolio
+                {activeUnit === 'ELEMENTARY' ? 'Elementary Portfolio' : 'Kindergarten Portfolio'}
               </span>
               <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 text-[10px] font-black uppercase tracking-widest border border-indigo-100">
-                Unit {activeStudentProfile.ageGroup === 'TK_B' ? 'TK B (5-6 Years)' : 'TK A (4-5 Years)'}
+                {activeUnit === 'ELEMENTARY' 
+                  ? `Grade ${selectedStudentClassObj?.grade || 'SD'}` 
+                  : `Unit ${activeStudentProfile.ageGroup === 'TK_B' ? 'TK B (5-6 Years)' : 'TK A (4-5 Years)'}`}
               </span>
             </div>
             
@@ -904,152 +1070,332 @@ export default function StudentPassport() {
       )}
 
       {/* B. SUMMARY METRICS CARDS (Gives direct visual highlights of student growth levels) */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        
-        {/* Attendance Card */}
-        <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-blue-200 transition-all group">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Attendance Rate</span>
-            <TrendingUp size={16} className="text-blue-500 group-hover:scale-110 transition-transform" />
+      {activeUnit === 'ELEMENTARY' ? (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          {/* Attendance Card */}
+          <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-blue-200 transition-all group">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Attendance Rate</span>
+              <TrendingUp size={16} className="text-blue-500 group-hover:scale-110 transition-transform" />
+            </div>
+            <div className="mt-4">
+              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 leading-tight">
+                {attendanceStats.attRate}%
+              </h2>
+              <div className="flex items-center justify-between text-[10px] text-slate-500 mt-2 font-bold leading-none font-mono">
+                <span>{attendanceStats.present} Present</span>
+                <span>•</span>
+                <span className="text-amber-600">{attendanceStats.sick + attendanceStats.permit} Excused</span>
+              </div>
+            </div>
           </div>
-          <div className="mt-4">
-            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 leading-tight">
-              {attendanceStats.attRate}%
-            </h2>
-            <div className="flex items-center justify-between text-[10px] text-slate-500 mt-2 font-bold leading-none font-mono">
-              <span>{attendanceStats.present} Present</span>
-              <span>•</span>
-              <span className="text-amber-600">{attendanceStats.sick + attendanceStats.permit} Excused</span>
+
+          {/* Bahasa Indonesia */}
+          <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-emerald-200 transition-all group">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Bahasa Indonesia</span>
+              <BookOpen size={16} className="text-emerald-500 group-hover:scale-110 transition-transform" />
+            </div>
+            <div className="mt-4">
+              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 leading-tight">
+                {latestElementaryProgress['BAHASA_INDONESIA']?.wpm !== undefined 
+                  ? `${latestElementaryProgress['BAHASA_INDONESIA'].wpm} WPM` 
+                  : 'N/A'}
+              </h2>
+              <p className={cn(
+                "text-[9px] mt-2 font-bold leading-none px-2 py-0.5 rounded-full w-fit border uppercase tracking-wider",
+                latestElementaryProgress['BAHASA_INDONESIA']?.supportStatus === 'ON_TRACK' ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
+                latestElementaryProgress['BAHASA_INDONESIA']?.supportStatus === 'MONITOR' ? "bg-yellow-50 text-yellow-700 border-yellow-100" :
+                latestElementaryProgress['BAHASA_INDONESIA']?.supportStatus === 'NEEDS_SUPPORT' ? "bg-orange-50 text-orange-700 border-orange-100" :
+                latestElementaryProgress['BAHASA_INDONESIA']?.supportStatus === 'INTERVENTION_RECOMMENDED' ? "bg-red-50 text-red-700 border-red-100" :
+                "bg-slate-50 text-slate-500 border-slate-100"
+              )}>
+                {latestElementaryProgress['BAHASA_INDONESIA']?.supportStatus 
+                  ? getSupportStatusLabel(latestElementaryProgress['BAHASA_INDONESIA'].supportStatus) 
+                  : 'Not Assessed'}
+              </p>
+            </div>
+          </div>
+
+          {/* English Reading */}
+          <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-pink-200 transition-all group">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">English Reading</span>
+              <GraduationCap size={16} className="text-pink-500 group-hover:scale-110 transition-transform" />
+            </div>
+            <div className="mt-4">
+              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 leading-tight">
+                {latestElementaryProgress['ENGLISH_READING']?.wpm !== undefined 
+                  ? `${latestElementaryProgress['ENGLISH_READING'].wpm} WPM` 
+                  : 'N/A'}
+              </h2>
+              <p className={cn(
+                "text-[9px] mt-2 font-bold leading-none px-2 py-0.5 rounded-full w-fit border uppercase tracking-wider",
+                latestElementaryProgress['ENGLISH_READING']?.supportStatus === 'ON_TRACK' ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
+                latestElementaryProgress['ENGLISH_READING']?.supportStatus === 'MONITOR' ? "bg-yellow-50 text-yellow-700 border-yellow-100" :
+                latestElementaryProgress['ENGLISH_READING']?.supportStatus === 'NEEDS_SUPPORT' ? "bg-orange-50 text-orange-700 border-orange-100" :
+                latestElementaryProgress['ENGLISH_READING']?.supportStatus === 'INTERVENTION_RECOMMENDED' ? "bg-red-50 text-red-700 border-red-100" :
+                "bg-slate-50 text-slate-500 border-slate-100"
+              )}>
+                {latestElementaryProgress['ENGLISH_READING']?.supportStatus 
+                  ? getSupportStatusLabel(latestElementaryProgress['ENGLISH_READING'].supportStatus) 
+                  : 'Not Assessed'}
+              </p>
+            </div>
+          </div>
+
+          {/* Numeracy */}
+          <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-amber-200 transition-all group">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Numeracy</span>
+              <Target size={16} className="text-amber-500 group-hover:scale-110 transition-transform" />
+            </div>
+            <div className="mt-4">
+              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 leading-tight">
+                {latestElementaryProgress['NUMERACY']?.accuracy !== undefined 
+                  ? `${latestElementaryProgress['NUMERACY'].accuracy}% Acc` 
+                  : 'N/A'}
+              </h2>
+              <p className={cn(
+                "text-[9px] mt-2 font-bold leading-none px-2 py-0.5 rounded-full w-fit border uppercase tracking-wider",
+                latestElementaryProgress['NUMERACY']?.supportStatus === 'ON_TRACK' ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
+                latestElementaryProgress['NUMERACY']?.supportStatus === 'MONITOR' ? "bg-yellow-50 text-yellow-700 border-yellow-100" :
+                latestElementaryProgress['NUMERACY']?.supportStatus === 'NEEDS_SUPPORT' ? "bg-orange-50 text-orange-700 border-orange-100" :
+                latestElementaryProgress['NUMERACY']?.supportStatus === 'INTERVENTION_RECOMMENDED' ? "bg-red-50 text-red-700 border-red-100" :
+                "bg-slate-50 text-slate-500 border-slate-100"
+              )}>
+                {latestElementaryProgress['NUMERACY']?.supportStatus 
+                  ? getSupportStatusLabel(latestElementaryProgress['NUMERACY'].supportStatus) 
+                  : 'Not Assessed'}
+              </p>
+            </div>
+          </div>
+
+          {/* Mengaji */}
+          <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-purple-200 transition-all group">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Mengaji</span>
+              <Award size={16} className="text-purple-500 group-hover:scale-110 transition-transform" />
+            </div>
+            <div className="mt-4">
+              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 leading-tight">
+                {latestElementaryProgress['MENGAJI']?.iqroCurrentLevel !== undefined 
+                  ? `Jilid ${latestElementaryProgress['MENGAJI'].iqroCurrentLevel}` 
+                  : 'N/A'}
+              </h2>
+              <p className={cn(
+                "text-[9px] mt-2 font-bold leading-none px-2 py-0.5 rounded-full w-fit border uppercase tracking-wider",
+                latestElementaryProgress['MENGAJI']?.supportStatus === 'ON_TRACK' ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
+                latestElementaryProgress['MENGAJI']?.supportStatus === 'MONITOR' ? "bg-yellow-50 text-yellow-700 border-yellow-100" :
+                latestElementaryProgress['MENGAJI']?.supportStatus === 'NEEDS_SUPPORT' ? "bg-orange-50 text-orange-700 border-orange-100" :
+                latestElementaryProgress['MENGAJI']?.supportStatus === 'INTERVENTION_RECOMMENDED' ? "bg-red-50 text-red-700 border-red-100" :
+                "bg-slate-50 text-slate-500 border-slate-100"
+              )}>
+                {latestElementaryProgress['MENGAJI']?.supportStatus 
+                  ? getSupportStatusLabel(latestElementaryProgress['MENGAJI'].supportStatus) 
+                  : 'Not Assessed'}
+              </p>
             </div>
           </div>
         </div>
-
-        {/* Emotion Trend Card */}
-        <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-pink-200 transition-all group">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Dominant Emotion</span>
-            <Heart size={16} className="text-pink-500 group-hover:scale-110 transition-transform" />
-          </div>
-          <div className="mt-4 flex items-center gap-3">
-            <span className="text-3xl sm:text-4xl">
-              {attendanceStats.dominantEmo === 'HAPPY' ? '😊' :
-               attendanceStats.dominantEmo === 'OK' ? '😐' :
-               attendanceStats.dominantEmo === 'SAD' ? '😢' : '😡'}
-            </span>
-            <div>
-              <h4 className="text-sm font-black text-slate-900 leading-none">
-                {attendanceStats.dominantEmo === 'HAPPY' ? 'Happy' :
-                 attendanceStats.dominantEmo === 'OK' ? 'Neutral/Ok' :
-                 attendanceStats.dominantEmo === 'SAD' ? 'Sad' : 'Restless'}
-              </h4>
-              <p className="text-[9px] text-slate-400 mt-1 font-bold uppercase tracking-wider">Daily Mood</p>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          
+          {/* Attendance Card */}
+          <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-blue-200 transition-all group">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Attendance Rate</span>
+              <TrendingUp size={16} className="text-blue-500 group-hover:scale-110 transition-transform" />
+            </div>
+            <div className="mt-4">
+              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 leading-tight">
+                {attendanceStats.attRate}%
+              </h2>
+              <div className="flex items-center justify-between text-[10px] text-slate-500 mt-2 font-bold leading-none font-mono">
+                <span>{attendanceStats.present} Present</span>
+                <span>•</span>
+                <span className="text-amber-600">{attendanceStats.sick + attendanceStats.permit} Excused</span>
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Learning Observations Counts */}
-        <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-emerald-200 transition-all group">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Observations</span>
-            <Camera size={16} className="text-emerald-500 group-hover:scale-110 transition-transform" />
+          {/* Emotion Trend Card */}
+          <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-pink-200 transition-all group">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Dominant Emotion</span>
+              <Heart size={16} className="text-pink-500 group-hover:scale-110 transition-transform" />
+            </div>
+            <div className="mt-4 flex items-center gap-3">
+              <span className="text-3xl sm:text-4xl">
+                {attendanceStats.dominantEmo === 'HAPPY' ? '😊' :
+                 attendanceStats.dominantEmo === 'OK' ? '😐' :
+                 attendanceStats.dominantEmo === 'SAD' ? '😢' : '😡'}
+              </span>
+              <div>
+                <h4 className="text-sm font-black text-slate-900 leading-none">
+                  {attendanceStats.dominantEmo === 'HAPPY' ? 'Happy' :
+                   attendanceStats.dominantEmo === 'OK' ? 'Neutral/Ok' :
+                   attendanceStats.dominantEmo === 'SAD' ? 'Sad' : 'Restless'}
+                </h4>
+                <p className="text-[9px] text-slate-400 mt-1 font-bold uppercase tracking-wider">Daily Mood</p>
+              </div>
+            </div>
           </div>
-          <div className="mt-4">
-            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 leading-tight">
-              {processedObservationsList.length}
-            </h2>
-            <p className="text-[10px] text-slate-500 mt-2 font-bold leading-none flex items-center gap-1">
-              <Sparkles size={10} className="text-emerald-500" />
-              Documented Milestones
-            </p>
-          </div>
-        </div>
 
-        {/* SEL Notes logged */}
-        <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-amber-200 transition-all group">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Social Emotional</span>
-            <Brain size={16} className="text-amber-500 group-hover:scale-110 transition-transform" />
+          {/* Learning Observations Counts */}
+          <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-emerald-200 transition-all group">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Observations</span>
+              <Camera size={16} className="text-emerald-500 group-hover:scale-110 transition-transform" />
+            </div>
+            <div className="mt-4">
+              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 leading-tight">
+                {processedObservationsList.length}
+              </h2>
+              <p className="text-[10px] text-slate-500 mt-2 font-bold leading-none flex items-center gap-1">
+                <Sparkles size={10} className="text-emerald-500" />
+                Documented Milestones
+              </p>
+            </div>
           </div>
-          <div className="mt-4">
-            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 leading-tight">
-              {processedCommentsList.filter(c => c.socialEmotional).length}
-            </h2>
-            <p className="text-[10px] text-slate-500 mt-2 font-bold leading-none">Character Notes</p>
-          </div>
-        </div>
 
-        {/* Weekly summaries */}
-        <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-purple-200 transition-all group col-span-2 md:col-span-1">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Weekly Comments</span>
-            <MessageCircle size={16} className="text-purple-500 group-hover:scale-110 transition-transform" />
+          {/* SEL Notes logged */}
+          <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-amber-200 transition-all group">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Social Emotional</span>
+              <Brain size={16} className="text-amber-500 group-hover:scale-110 transition-transform" />
+            </div>
+            <div className="mt-4">
+              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 leading-tight">
+                {processedCommentsList.filter(c => c.socialEmotional).length}
+              </h2>
+              <p className="text-[10px] text-slate-500 mt-2 font-bold leading-none">Character Notes</p>
+            </div>
           </div>
-          <div className="mt-4">
-            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 leading-tight">
-              {processedCommentsList.filter(c => c.weeklyComments).length}
-            </h2>
-            <p className="text-[10px] text-indigo-600 mt-2 font-extrabold leading-none">Draft & Published</p>
-          </div>
-        </div>
 
-      </div>
+          {/* Weekly summaries */}
+          <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm flex flex-col justify-between hover:border-purple-200 transition-all group col-span-2 md:col-span-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Weekly Comments</span>
+              <MessageCircle size={16} className="text-purple-500 group-hover:scale-110 transition-transform" />
+            </div>
+            <div className="mt-4">
+              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 leading-tight">
+                {processedCommentsList.filter(c => c.weeklyComments).length}
+              </h2>
+              <p className="text-[10px] text-indigo-600 mt-2 font-extrabold leading-none">Draft & Published</p>
+            </div>
+          </div>
+
+        </div>
+      )}
 
       {/* D. PROFILE TABS CONTROLS (Switches galleries for modular viewing) */}
       <div className="flex items-center overflow-x-auto pb-2 border-b border-slate-100 gap-1.5 scrollbar-hide">
-        <button
-          onClick={() => setActiveTab('overview')}
-          className={cn(
-            "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
-            activeTab === 'overview' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
-          )}
-        >
-          <LayoutDashboard size={14} />
-          Overview & Timeline
-        </button>
+        {activeUnit === 'ELEMENTARY' ? (
+          <>
+            <button
+              onClick={() => setActiveTab('overview')}
+              className={cn(
+                "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
+                activeTab === 'overview' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+              )}
+            >
+              <LayoutDashboard size={14} />
+              Overview & Timeline
+            </button>
 
-        <button
-          onClick={() => setActiveTab('attendance')}
-          className={cn(
-            "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
-            activeTab === 'attendance' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
-          )}
-        >
-          <CheckSquare size={14} />
-          Daily Attendance & Emotion ({processedAttendanceList.length})
-        </button>
+            <button
+              onClick={() => setActiveTab('attendance')}
+              className={cn(
+                "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
+                activeTab === 'attendance' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+              )}
+            >
+              <CheckSquare size={14} />
+              Daily Attendance ({processedAttendanceList.length})
+            </button>
 
-        <button
-          onClick={() => setActiveTab('observations')}
-          className={cn(
-            "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
-            activeTab === 'observations' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
-          )}
-        >
-          <Camera size={14} />
-          Learning Observations ({processedObservationsList.length})
-        </button>
+            <button
+              onClick={() => setActiveTab('literacy_numeracy')}
+              className={cn(
+                "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
+                activeTab === 'literacy_numeracy' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+              )}
+            >
+              <BookOpen size={14} />
+              Literacy & Numeracy ({elementaryProgress.length})
+            </button>
 
-        <button
-          onClick={() => setActiveTab('sel')}
-          className={cn(
-            "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
-            activeTab === 'sel' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
-          )}
-        >
-          <Brain size={14} />
-          Social-Emotional Logs (SEL)
-        </button>
+            <button
+              onClick={() => setActiveTab('mtss')}
+              className={cn(
+                "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
+                activeTab === 'mtss' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+              )}
+            >
+              <Target size={14} />
+              MTSS Cases & Coaching ({elementaryMTSSCases.length})
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={() => setActiveTab('overview')}
+              className={cn(
+                "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
+                activeTab === 'overview' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+              )}
+            >
+              <LayoutDashboard size={14} />
+              Overview & Timeline
+            </button>
 
-        <button
-          onClick={() => setActiveTab('comments')}
-          className={cn(
-            "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
-            activeTab === 'comments' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
-          )}
-        >
-          <MessageCircle size={14} />
-          Weekly Narrative Reports
-        </button>
+            <button
+              onClick={() => setActiveTab('attendance')}
+              className={cn(
+                "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
+                activeTab === 'attendance' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+              )}
+            >
+              <CheckSquare size={14} />
+              Daily Attendance & Emotion ({processedAttendanceList.length})
+            </button>
+
+            <button
+              onClick={() => setActiveTab('observations')}
+              className={cn(
+                "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
+                activeTab === 'observations' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+              )}
+            >
+              <Camera size={14} />
+              Learning Observations ({processedObservationsList.length})
+            </button>
+
+            <button
+              onClick={() => setActiveTab('sel')}
+              className={cn(
+                "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
+                activeTab === 'sel' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+              )}
+            >
+              <Brain size={14} />
+              Social-Emotional Logs (SEL)
+            </button>
+
+            <button
+              onClick={() => setActiveTab('comments')}
+              className={cn(
+                "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
+                activeTab === 'comments' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+              )}
+            >
+              <MessageCircle size={14} />
+              Weekly Narrative Reports
+            </button>
+          </>
+        )}
       </div>
 
       {/* E. MODULAR GALLERY CONTAINER OR TABS SWITCH CONTENT */}
@@ -1058,13 +1404,200 @@ export default function StudentPassport() {
           
           {/* TAB 1: OVERVIEW TIMELINE (The primary longitudinal growth journey) */}
           {activeTab === 'overview' && (
-            <motion.div
-              key="overview-tab"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-              className="grid grid-cols-1 lg:grid-cols-3 gap-10"
-            >
+            activeUnit === 'ELEMENTARY' ? (
+              <motion.div
+                key="elementary-overview-tab"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                className="grid grid-cols-1 lg:grid-cols-3 gap-10"
+              >
+                {/* Left sidebar: Academic Intervention and Tier summary */}
+                <div className="lg:col-span-1 space-y-6">
+                  {/* Literacy & Numeracy status list */}
+                  <section className="bg-white border border-slate-100 rounded-3xl p-6 sm:p-7 shadow-sm space-y-6">
+                    <div className="flex items-center gap-2 border-b border-slate-50 pb-4">
+                      <GraduationCap size={18} className="text-emerald-500" />
+                      <h3 className="font-extrabold text-xs uppercase tracking-widest text-slate-900 leading-none">
+                        Subject Interventions
+                      </h3>
+                    </div>
+
+                    <div className="space-y-4">
+                      {['BAHASA_INDONESIA', 'ENGLISH_READING', 'NUMERACY', 'MENGAJI'].map((area) => {
+                        const rec = latestElementaryProgress[area];
+                        return (
+                          <div key={area} className="flex items-center justify-between p-3 bg-slate-50 rounded-2xl border border-slate-100/50">
+                            <div>
+                              <p className="text-xs font-extrabold text-slate-900">{getAreaLabel(area as any)}</p>
+                              <p className="text-[10px] text-slate-400 font-bold mt-0.5">
+                                {rec ? `Period: ${getPeriodLabel(rec.period)}` : 'No data recorded'}
+                              </p>
+                            </div>
+                            {rec ? (
+                              <span className={cn(
+                                "px-2.5 py-1 rounded text-[9px] font-black tracking-wider uppercase border",
+                                rec.supportStatus === 'ON_TRACK' ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
+                                rec.supportStatus === 'MONITOR' ? "bg-yellow-50 text-yellow-700 border-yellow-100" :
+                                rec.supportStatus === 'NEEDS_SUPPORT' ? "bg-orange-50 text-orange-700 border-orange-100" :
+                                rec.supportStatus === 'INTERVENTION_RECOMMENDED' ? "bg-red-50 text-red-700 border-red-100" :
+                                "bg-slate-50 text-slate-500 border-slate-100"
+                              )}>
+                                {getSupportStatusLabel(rec.supportStatus)}
+                              </span>
+                            ) : (
+                              <span className="px-2.5 py-1 rounded text-[9px] font-black bg-slate-100 text-slate-400 uppercase tracking-wider border border-slate-200">
+                                Belum ada
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+
+                  {/* MTSS Cases Card */}
+                  <section className="bg-white border border-slate-100 rounded-3xl p-6 sm:p-7 shadow-sm space-y-4">
+                    <div className="flex items-center gap-2 border-b border-slate-50 pb-4">
+                      <Target size={18} className="text-blue-500" />
+                      <h3 className="font-extrabold text-xs uppercase tracking-widest text-slate-900 leading-none">
+                        MTSS Active Support
+                      </h3>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 text-center">
+                      <div className="p-3 bg-amber-50/50 rounded-2xl border border-amber-100">
+                        <p className="text-[10px] font-black text-amber-700 uppercase">Active Interventions</p>
+                        <p className="text-xl font-black text-slate-800 mt-1">
+                          {elementaryMTSSCases.filter(c => c.status === 'ACTIVE').length}
+                        </p>
+                      </div>
+                      <div className="p-3 bg-emerald-50/50 rounded-2xl border border-emerald-100">
+                        <p className="text-[10px] font-black text-emerald-700 uppercase">Goals Achieved</p>
+                        <p className="text-xl font-black text-slate-800 mt-1">
+                          {elementaryMTSSCases.filter(c => c.status === 'ACHIEVED').length}
+                        </p>
+                      </div>
+                    </div>
+
+                    {elementaryMTSSCases.some(c => c.status === 'ACTIVE' && (c.tier === 'Tier 3' || c.tier === 'Special Education')) ? (
+                      <div className="p-3 bg-rose-50 rounded-xl border border-rose-100 flex gap-2.5 items-start mt-2">
+                        <ShieldAlert size={16} className="text-rose-500 shrink-0 mt-0.5" />
+                        <p className="text-[10px] font-bold text-rose-700 leading-normal">
+                          Attention: This student has intensive active support (Tier 3 or Special Needs) requiring collaborative mentor follow-up.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 flex gap-2.5 items-start mt-2">
+                        <Sparkles size={16} className="text-blue-500 shrink-0 mt-0.5" />
+                        <p className="text-[10px] font-bold text-blue-700 leading-normal">
+                          Student is progressing steadily. Remedial pathways are active and actively monitored by support mentors.
+                        </p>
+                      </div>
+                    )}
+                  </section>
+
+                  {/* Elementary Milestone advice */}
+                  <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-3xl p-6 shadow-md relative overflow-hidden">
+                    <div className="absolute right-0 bottom-0 p-6 opacity-10">
+                      <Award size={90} />
+                    </div>
+                    <span className="px-2 py-0.5 rounded bg-white/20 text-indigo-200 text-[9px] font-extrabold uppercase tracking-widest leading-none">
+                      Elementary Support Guidance
+                    </span>
+                    <p className="text-xs font-bold leading-relaxed mt-4 opacity-95 text-slate-100">
+                      "Elementary academic development prioritizes mastery of basic arithmetic operations and fluid reading with comprehension. Interventions are personalized through custom 1-on-1 tutoring sessions."
+                    </p>
+                    <p className="text-[9px] text-indigo-300 font-bold tracking-wider uppercase mt-4 font-mono">Elementary MTSS & Literacy Board</p>
+                  </div>
+                </div>
+
+                {/* Right area: Chronological development longitudinal timeline */}
+                <div className="lg:col-span-2 space-y-8">
+                  <div className="flex items-center gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-100 w-fit">
+                    <LayoutDashboard size={18} className="text-blue-600 animate-pulse" />
+                    <h2 className="font-black text-xs uppercase tracking-[0.2em] text-slate-900 leading-none">
+                      Development Journey (Assessments & Coaching)
+                    </h2>
+                  </div>
+
+                  {elementaryTimeline.length > 0 ? (
+                    <div className="relative border-l-2 border-slate-100 pl-6 sm:pl-8 space-y-10 ml-3">
+                      {elementaryTimeline.map((item, idx) => (
+                        <motion.div
+                          key={idx}
+                          initial={{ opacity: 0, x: 20 }}
+                          whileInView={{ opacity: 1, x: 0 }}
+                          viewport={{ once: true }}
+                          transition={{ delay: Math.min(0.2, idx * 0.05) }}
+                          className="relative"
+                        >
+                          {/* Left bullet node */}
+                          <div className={cn(
+                            "absolute -left-[35px] sm:-left-[43px] top-1.5 w-6 h-6 rounded-full flex items-center justify-center border-2 bg-white shadow-sm text-[10px]",
+                            item.type === 'literacy' ? "text-emerald-500 border-emerald-100" : "text-blue-500 border-blue-100"
+                          )}>
+                            {item.type === 'literacy' ? <BookOpen size={10} /> : <User size={10} />}
+                          </div>
+
+                          {/* Box */}
+                          <div className="bg-white border border-slate-100 rounded-3xl p-5 sm:p-6 shadow-sm hover:border-slate-200 transition-all">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-50 mb-3">
+                              <div>
+                                <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">{item.date}</span>
+                                <h4 className="text-xs sm:text-sm font-black text-slate-900 mt-0.5">{item.title}</h4>
+                              </div>
+                              <span className={cn(
+                                "px-2.5 py-0.5 rounded-full text-[8px] font-black tracking-wider uppercase border w-fit",
+                                item.badgeColor
+                              )}>
+                                {item.badge}
+                              </span>
+                            </div>
+
+                            <p className="text-xs text-slate-600 leading-relaxed font-semibold italic">
+                              "{item.description}"
+                            </p>
+
+                            {item.type === 'coaching_session' && (
+                              <div className="mt-3 pt-3 border-t border-slate-50 flex flex-wrap gap-2 text-[10px] font-bold text-slate-400 font-mono">
+                                <span className="bg-slate-50 px-2 py-0.5 rounded border border-slate-100">Tutor: {item.meta.tutorName}</span>
+                                <span className="bg-slate-50 px-2 py-0.5 rounded border border-slate-100">Method: {item.meta.interventionMethod || 'Personal Tutoring'}</span>
+                                {item.meta.durationMinutes && <span className="bg-slate-50 px-2 py-0.5 rounded border border-slate-100">Duration: {item.meta.durationMinutes} min</span>}
+                              </div>
+                            )}
+
+                            {item.type === 'literacy' && (
+                              <div className="mt-3 pt-3 border-t border-slate-50 flex flex-wrap gap-2 text-[10px] font-bold text-slate-400 font-mono">
+                                {item.meta.wpm !== undefined && <span className="bg-slate-50 px-2 py-0.5 rounded border border-slate-100">WPM: {item.meta.wpm}</span>}
+                                {item.meta.readingLevel && <span className="bg-slate-50 px-2 py-0.5 rounded border border-slate-100">Reading Level: {item.meta.readingLevel}</span>}
+                                {item.meta.accuracy !== undefined && <span className="bg-slate-50 px-2 py-0.5 rounded border border-slate-100">Accuracy: {item.meta.accuracy}%</span>}
+                                {item.meta.iqroCurrentLevel !== undefined && <span className="bg-slate-50 px-2 py-0.5 rounded border border-slate-100">Iqro Level: {item.meta.iqroCurrentLevel}</span>}
+                              </div>
+                            )}
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-16 border-2 border-dashed border-slate-100 rounded-[2.5rem] text-center bg-white">
+                      <Map size={48} className="text-slate-200 mx-auto mb-4" />
+                      <p className="text-sm font-black text-slate-400 uppercase tracking-widest leading-none">No History Recorded</p>
+                      <p className="text-xs text-slate-300 mt-2 px-10 leading-relaxed">
+                        No progress assessments or coaching sessions have been logged for this student yet.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="overview-tab"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                className="grid grid-cols-1 lg:grid-cols-3 gap-10"
+              >
               
               {/* Left sidebar: High-level qualitative observations summary */}
               <div className="lg:col-span-1 space-y-6">
@@ -1353,6 +1886,7 @@ export default function StudentPassport() {
               </div>
 
             </motion.div>
+            )
           )}
 
           {/* TAB 2: DAILY CHECKLIST & EMOTIONS (Lists comprehensive database logs) */}
@@ -1629,6 +2163,225 @@ export default function StudentPassport() {
                   <MessageCircle size={36} className="text-slate-200 mx-auto mb-3" />
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest leading-none">No Weekly Comments Found</p>
                   <p className="text-[11px] text-slate-400 mt-1.5">Teacher weekly comments or growth narratives have not been created for this period.</p>
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {/* TAB 6: LITERACY & NUMERACY (ELEMENTARY ONLY) */}
+          {activeTab === 'literacy_numeracy' && (
+            <motion.div
+              key="literacy-numeracy-tab"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              className="bg-white border border-slate-100 rounded-3xl p-6 sm:p-8 shadow-sm space-y-6"
+            >
+              <div>
+                <h3 className="text-lg font-black text-slate-900 tracking-tight leading-none">Literacy & Numeracy Assessment Records</h3>
+                <p className="text-xs text-slate-400 mt-1 font-bold">Comprehensive records of reading speeds, comprehension levels, and math diagnostics</p>
+              </div>
+
+              {elementaryProgress.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {elementaryProgress.map((record) => (
+                    <div key={record.id} className="p-6 bg-slate-50 hover:bg-slate-100/50 rounded-2xl border border-slate-100 transition-colors space-y-4">
+                      <div className="flex justify-between items-start gap-3 border-b border-slate-100 pb-3">
+                        <div>
+                          <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[9px] font-black uppercase tracking-wider rounded border border-emerald-100">
+                            {getAreaLabel(record.area)}
+                          </span>
+                          <h4 className="text-sm font-black text-slate-900 mt-1">Period: {getPeriodLabel(record.period)}</h4>
+                        </div>
+                        <span className={cn(
+                          "px-2.5 py-1 rounded text-[9px] font-black tracking-wider uppercase border",
+                          record.supportStatus === 'ON_TRACK' ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
+                          record.supportStatus === 'MONITOR' ? "bg-yellow-50 text-yellow-700 border-yellow-100" :
+                          record.supportStatus === 'NEEDS_SUPPORT' ? "bg-orange-50 text-orange-700 border-orange-100" :
+                          record.supportStatus === 'INTERVENTION_RECOMMENDED' ? "bg-red-50 text-red-700 border-red-100" :
+                          "bg-slate-50 text-slate-500 border-slate-100"
+                        )}>
+                          {getSupportStatusLabel(record.supportStatus)}
+                        </span>
+                      </div>
+
+                      {/* Display custom stats fields based on the assessment area */}
+                      <div className="grid grid-cols-3 gap-2 bg-white p-3 rounded-xl border border-slate-100 text-center font-mono">
+                        {record.area === 'BAHASA_INDONESIA' || record.area === 'ENGLISH_READING' ? (
+                          <>
+                            <div>
+                              <p className="text-[8px] text-slate-400 font-bold uppercase">WPM</p>
+                              <p className="text-sm font-black text-slate-800 mt-0.5">{record.wpm !== undefined ? record.wpm : '-'}</p>
+                            </div>
+                            <div>
+                              <p className="text-[8px] text-slate-400 font-bold uppercase">Accuracy</p>
+                              <p className="text-sm font-black text-slate-800 mt-0.5">{record.accuracy !== undefined ? `${record.accuracy}%` : '-'}</p>
+                            </div>
+                            <div>
+                              <p className="text-[8px] text-slate-400 font-bold uppercase">Reading Lvl</p>
+                              <p className="text-sm font-black text-slate-800 mt-0.5 truncate max-w-full" title={record.readingLevel}>{record.readingLevel || '-'}</p>
+                            </div>
+                          </>
+                        ) : record.area === 'NUMERACY' ? (
+                          <>
+                            <div>
+                              <p className="text-[8px] text-slate-400 font-bold uppercase">Grid Score</p>
+                              <p className="text-sm font-black text-slate-800 mt-0.5">{record.gridScore !== undefined ? record.gridScore : '-'}</p>
+                            </div>
+                            <div>
+                              <p className="text-[8px] text-slate-400 font-bold uppercase">Facts Score</p>
+                              <p className="text-sm font-black text-slate-800 mt-0.5">{record.factsScore !== undefined ? record.factsScore : '-'}</p>
+                            </div>
+                            <div>
+                              <p className="text-[8px] text-slate-400 font-bold uppercase">Combined</p>
+                              <p className="text-sm font-black text-slate-800 mt-0.5">
+                                {record.gridScore !== undefined && record.factsScore !== undefined ? record.gridScore + record.factsScore : '-'}
+                              </p>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div>
+                              <p className="text-[8px] text-slate-400 font-bold uppercase">Iqro Level</p>
+                              <p className="text-sm font-black text-slate-800 mt-0.5">{record.iqroCurrentLevel !== undefined ? record.iqroCurrentLevel : '-'}</p>
+                            </div>
+                            <div className="col-span-2">
+                              <p className="text-[8px] text-slate-400 font-bold uppercase">Last Updated</p>
+                              <p className="text-xs font-black text-slate-800 mt-1 truncate">
+                                {record.updatedAt ? new Date(record.updatedAt).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
+                              </p>
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      {record.notes && (
+                        <div className="bg-white p-3.5 rounded-xl border border-slate-100">
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Diagnostic Notes</p>
+                          <p className="text-xs text-slate-600 leading-relaxed font-semibold mt-1">"{record.notes}"</p>
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between text-[9px] font-bold text-slate-400 pt-1 font-mono">
+                        <span>Assessed on: {new Date(record.createdAt).toLocaleDateString()}</span>
+                        <span>BY: {record.teacherId ? 'Classroom Mentor' : 'Academic Admin'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-12 text-center border-2 border-dashed border-slate-100 rounded-2xl bg-slate-50/50">
+                  <BookOpen size={36} className="text-slate-200 mx-auto mb-3" />
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest leading-none">No Literacy or Numeracy Records Found</p>
+                  <p className="text-[11px] text-slate-400 mt-1.5">No formal assessments have been logged for this student in Elementary yet.</p>
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {/* TAB 7: MTSS CASES & INTERVENTIONS (ELEMENTARY ONLY) */}
+          {activeTab === 'mtss' && (
+            <motion.div
+              key="mtss-tab"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              className="bg-white border border-slate-100 rounded-3xl p-6 sm:p-8 shadow-sm space-y-6"
+            >
+              <div>
+                <h3 className="text-lg font-black text-slate-900 tracking-tight leading-none">MTSS Support Cases & Coaching Sessions</h3>
+                <p className="text-xs text-slate-400 mt-1 font-bold">Multi-Tier System of Supports (MTSS) cases, behavioral/academic tier plans, and tutorial timeline</p>
+              </div>
+
+              {elementaryMTSSCases.length > 0 ? (
+                <div className="space-y-6">
+                  {elementaryMTSSCases.map((caseItem) => {
+                    const sessionsForCase = mtssCoachingSessions[caseItem.docId] || [];
+                    return (
+                      <div key={caseItem.id} className="p-6 bg-slate-50 hover:bg-slate-100/50 rounded-2xl border border-slate-100 transition-all space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/60 pb-3">
+                          <div className="flex items-center gap-2">
+                            <span className={cn(
+                              "px-2.5 py-0.5 rounded text-[9px] font-black tracking-wider uppercase border",
+                              caseItem.tier === 'Tier 1' ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
+                              caseItem.tier === 'Tier 2' ? "bg-amber-50 text-amber-700 border-amber-100" :
+                              caseItem.tier === 'Tier 3' ? "bg-red-50 text-red-700 border-red-100" :
+                              "bg-purple-50 text-purple-700 border-purple-100"
+                            )}>
+                              {caseItem.tier}
+                            </span>
+                            <span className="px-2 py-0.5 bg-slate-200/80 text-slate-700 text-[9px] font-black uppercase tracking-wider rounded">
+                              {getAreaLabel(caseItem.area)}
+                            </span>
+                          </div>
+                          
+                          <span className={cn(
+                            "px-2.5 py-0.5 rounded-full text-[9px] font-black tracking-wider uppercase border w-fit",
+                            caseItem.status === 'ACTIVE' ? "bg-amber-100 text-amber-800 border-amber-200 animate-pulse" :
+                            caseItem.status === 'ACHIEVED' ? "bg-emerald-100 text-emerald-800 border-emerald-200" :
+                            caseItem.status === 'MONITOR_ONLY' ? "bg-blue-100 text-blue-800 border-blue-200" :
+                            "bg-slate-250 text-slate-600 border-slate-200"
+                          )}>
+                            Case: {caseItem.status}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="bg-white p-4 rounded-xl border border-slate-100 space-y-2">
+                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Support Plan Goal</p>
+                            <p className="text-xs text-slate-800 font-extrabold leading-relaxed">{caseItem.description}</p>
+                          </div>
+
+                          <div className="bg-white p-4 rounded-xl border border-slate-100 grid grid-cols-2 gap-2 text-center font-mono font-bold">
+                            <div>
+                              <p className="text-[8px] text-slate-400 font-bold uppercase">Opened Date</p>
+                              <p className="text-xs font-black text-slate-800 mt-1">{caseItem.createdAt ? new Date(caseItem.createdAt).toLocaleDateString() : '-'}</p>
+                            </div>
+                            <div>
+                              <p className="text-[8px] text-slate-400 font-bold uppercase">Target Resolution</p>
+                              <p className="text-xs font-black text-slate-800 mt-1">{caseItem.targetResolutionDate || '-'}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Child Coaching Sessions nested list */}
+                        <div className="space-y-2.5 pt-2">
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                            <Target size={12} className="text-blue-500" />
+                            Coaching Sessions & Mentorship Logs ({sessionsForCase.length})
+                          </p>
+
+                          {sessionsForCase.length > 0 ? (
+                            <div className="space-y-2.5 pl-3 border-l-2 border-slate-200">
+                              {sessionsForCase.map((session) => (
+                                <div key={session.id} className="p-4 bg-white hover:bg-slate-50/50 rounded-2xl border border-slate-100 text-xs space-y-2 transition-colors">
+                                  <div className="flex justify-between items-center text-[9px] font-bold text-slate-400 font-mono">
+                                    <span>Date: {session.sessionDate}</span>
+                                    <span>Tutor: {session.tutorName}</span>
+                                  </div>
+                                  <p className="font-semibold text-slate-700 leading-normal italic">
+                                    "{session.notes}"
+                                  </p>
+                                  <div className="flex gap-2 text-[8px] font-black tracking-wider uppercase font-mono">
+                                    {session.durationMinutes && <span className="bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200/60">Duration: {session.durationMinutes} min</span>}
+                                    {session.interventionMethod && <span className="bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200/60">Method: {session.interventionMethod}</span>}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-[10px] text-slate-400 font-semibold italic pl-3">No interactive coaching sessions logged yet for this support case.</p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="p-12 text-center border-2 border-dashed border-slate-100 rounded-2xl bg-slate-50/50">
+                  <Target size={36} className="text-slate-200 mx-auto mb-3" />
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest leading-none">No Active MTSS Cases Found</p>
+                  <p className="text-[11px] text-slate-400 mt-1.5">This student has not been assigned to any remedial tiers or MTSS support plans.</p>
                 </div>
               )}
             </motion.div>
