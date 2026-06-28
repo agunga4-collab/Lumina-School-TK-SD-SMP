@@ -63,7 +63,8 @@ const DIAGNOSIS_OPTIONS = [
   'Refer to SN',
   'Exit MTSS',
   'Beginning',
-  'Developing'
+  'Developing',
+  'Ongoing Tier 2'
 ];
 
 export default function MTSSAcademicDashboard() {
@@ -421,7 +422,7 @@ export default function MTSSAcademicDashboard() {
       // Set empty values for each block
       setupBlocks.forEach(b => {
         if (b.type === 'MEETING') {
-          initialStudentsData[stId].blocks[b.id] = { date: '', status: 'Beginning' };
+          initialStudentsData[stId].blocks[b.id] = { date: '', status: '' };
         } else {
           initialStudentsData[stId].blocks[b.id] = { result: '', dateAssessed: '', note: '' };
         }
@@ -543,7 +544,7 @@ export default function MTSSAcademicDashboard() {
             blocks: {
               ...updated[id].blocks,
               [newBlock.id]: type === 'MEETING' 
-                ? { date: '', status: 'Beginning' }
+                ? { date: '', status: '' }
                 : { result: '', dateAssessed: '', note: '' }
             }
           };
@@ -1518,10 +1519,11 @@ export default function MTSSAcademicDashboard() {
                                     {/* Status dropdown */}
                                     <td className="py-1.5 px-1.5 border-r border-slate-200 bg-blue-50/5 text-center">
                                       <select
-                                        value={mVal.status || 'Beginning'}
+                                        value={mVal.status || ''}
                                         onChange={(e) => handleEditCell(stId, block.id, 'status', e.target.value)}
                                         className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs font-bold focus:outline-none cursor-pointer"
                                       >
+                                        <option value="">Pilih Status</option>
                                         {MEETING_STATUS_OPTIONS.map(opt => (
                                           <option key={opt} value={opt}>{opt}</option>
                                         ))}
