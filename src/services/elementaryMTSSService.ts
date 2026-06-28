@@ -405,9 +405,9 @@ export const elementaryMTSSService = {
 
           if (block.type === 'MEETING') {
             const mVal = blockVal as MTSSMeetingValue;
-            if (mVal.status || mVal.date1 || mVal.date2) {
-              const notes = `Pertemuan: ${block.label}\nStatus/Progres: ${mVal.status || 'Belum diisi'}\nTanggal Sesi 1: ${mVal.date1 || '-'}\nTanggal Sesi 2: ${mVal.date2 || '-'}`;
-              const sessionDate = mVal.date1 || mVal.date2 || new Date().toISOString().split('T')[0];
+            if (mVal.status || mVal.date || mVal.date1 || mVal.date2) {
+              const sessionDate = mVal.date || mVal.date1 || mVal.date2 || new Date().toISOString().split('T')[0];
+              const notes = `Pertemuan: ${block.label}\nStatus/Progres: ${mVal.status || 'Belum diisi'}\nTanggal Pertemuan: ${sessionDate}`;
               
               const sColRef = collection(db, sessionsPath);
               const sDocRef = doc(sColRef);

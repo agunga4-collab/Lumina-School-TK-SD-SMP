@@ -421,7 +421,7 @@ export default function MTSSAcademicDashboard() {
       // Set empty values for each block
       setupBlocks.forEach(b => {
         if (b.type === 'MEETING') {
-          initialStudentsData[stId].blocks[b.id] = { date1: '', date2: '', status: 'Beginning' };
+          initialStudentsData[stId].blocks[b.id] = { date: '', status: 'Beginning' };
         } else {
           initialStudentsData[stId].blocks[b.id] = { result: '', dateAssessed: '', note: '' };
         }
@@ -543,7 +543,7 @@ export default function MTSSAcademicDashboard() {
             blocks: {
               ...updated[id].blocks,
               [newBlock.id]: type === 'MEETING' 
-                ? { date1: '', date2: '', status: 'Beginning' }
+                ? { date: '', status: 'Beginning' }
                 : { result: '', dateAssessed: '', note: '' }
             }
           };
@@ -1355,7 +1355,7 @@ export default function MTSSAcademicDashboard() {
                         {editBlocks.map((block) => (
                           <th
                             key={block.id}
-                            colSpan={3}
+                            colSpan={block.type === 'MEETING' ? 2 : 3}
                             className={`py-2 px-3 text-center border-r border-slate-200 text-white relative ${
                               block.type === 'MEETING' ? 'bg-blue-900' : 'bg-purple-900'
                             }`}
@@ -1399,9 +1399,8 @@ export default function MTSSAcademicDashboard() {
                           <React.Fragment key={`sub-${block.id}`}>
                             {block.type === 'MEETING' ? (
                               <>
-                                <th className="py-2 px-2 border-r border-slate-200 min-w-[90px] bg-blue-50/40 text-blue-900">Sesi 1</th>
-                                <th className="py-2 px-2 border-r border-slate-200 min-w-[90px] bg-blue-50/40 text-blue-900">Sesi 2</th>
-                                <th className="py-2 px-2 border-r border-slate-200 min-w-[110px] bg-blue-50/40 text-blue-900 text-center">Status / Progress</th>
+                                <th className="py-2 px-2 border-r border-slate-200 min-w-[120px] bg-blue-50/40 text-blue-900">Tanggal</th>
+                                <th className="py-2 px-2 border-r border-slate-200 min-w-[120px] bg-blue-50/40 text-blue-900 text-center">Status / Progress</th>
                               </>
                             ) : (
                               <>
@@ -1507,21 +1506,12 @@ export default function MTSSAcademicDashboard() {
                                 const mVal = blockVal as MTSSMeetingValue;
                                 return (
                                   <React.Fragment key={`cell-${stId}-${block.id}`}>
-                                    {/* Date 1 */}
+                                    {/* Date */}
                                     <td className="py-1.5 px-1.5 border-r border-slate-200 bg-blue-50/5">
                                       <input
                                         type="date"
-                                        value={mVal.date1 || ''}
-                                        onChange={(e) => handleEditCell(stId, block.id, 'date1', e.target.value)}
-                                        className="w-full bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-xs font-semibold focus:outline-none focus:bg-white"
-                                      />
-                                    </td>
-                                    {/* Date 2 */}
-                                    <td className="py-1.5 px-1.5 border-r border-slate-200 bg-blue-50/5">
-                                      <input
-                                        type="date"
-                                        value={mVal.date2 || ''}
-                                        onChange={(e) => handleEditCell(stId, block.id, 'date2', e.target.value)}
+                                        value={mVal.date || mVal.date1 || ''}
+                                        onChange={(e) => handleEditCell(stId, block.id, 'date', e.target.value)}
                                         className="w-full bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-xs font-semibold focus:outline-none focus:bg-white"
                                       />
                                     </td>

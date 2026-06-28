@@ -32,9 +32,10 @@ export interface MTSSBlockConfig {
 }
 
 export interface MTSSMeetingValue {
+  date?: string;
+  status?: string;
   date1?: string;
   date2?: string;
-  status?: string;
 }
 
 export interface MTSSAssessmentValue {
