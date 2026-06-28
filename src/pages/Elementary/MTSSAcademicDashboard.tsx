@@ -1137,46 +1137,58 @@ export default function MTSSAcademicDashboard() {
                         <RefreshCw size={14} className="animate-spin mr-1.5" />
                         Memuat siswa kelas...
                       </div>
-                    ) : studentsInClass.length === 0 ? (
-                      <div className="p-8 text-center bg-slate-50 rounded-2xl border border-slate-100 text-xs text-slate-400 italic">
-                        Tidak ada siswa aktif di kelas ini.
+                    ) : studentsInClass.filter(st => cases.some(
+                      c => c.studentId === st.id && 
+                      c.subject === setupSubject && 
+                      c.tier === setupTier &&
+                      c.status !== 'Achieved'
+                    )).length === 0 ? (
+                      <div className="p-8 text-center bg-amber-50/50 border border-amber-100 rounded-2xl text-xs text-amber-700 italic font-medium">
+                        Tidak ada siswa dengan kasus aktif {setupTier} ({setupSubject}) di kelas ini.
                       </div>
                     ) : (
                       <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
-                        {studentsInClass.map((st) => {
-                          const hasActiveCase = cases.some(
+                        {studentsInClass
+                          .filter(st => cases.some(
                             c => c.studentId === st.id && 
                             c.subject === setupSubject && 
                             c.tier === setupTier &&
                             c.status !== 'Achieved'
-                          );
+                          ))
+                          .map((st) => {
+                            const hasActiveCase = cases.some(
+                              c => c.studentId === st.id && 
+                              c.subject === setupSubject && 
+                              c.tier === setupTier &&
+                              c.status !== 'Achieved'
+                            );
 
-                          return (
-                            <label
-                              key={st.id}
-                              className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-colors text-xs font-semibold ${
-                                selectedStudentIds.includes(st.id)
-                                  ? 'bg-emerald-50/50 border-emerald-200 text-emerald-950'
-                                  : 'bg-white border-slate-150 hover:bg-slate-50/50 text-slate-700'
-                              }`}
-                            >
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type="checkbox"
-                                  checked={selectedStudentIds.includes(st.id)}
-                                  onChange={() => handleToggleStudent(st.id)}
-                                  className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer h-3.5 w-3.5"
-                                />
-                                <span>{st.name}</span>
-                              </div>
-                              {hasActiveCase && (
-                                <span className="bg-rose-50 text-rose-700 border border-rose-100 text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded">
-                                  Kasus MTSS
-                                </span>
-                              )}
-                            </label>
-                          );
-                        })}
+                            return (
+                              <label
+                                key={st.id}
+                                className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-colors text-xs font-semibold ${
+                                  selectedStudentIds.includes(st.id)
+                                    ? 'bg-emerald-50/50 border-emerald-200 text-emerald-950'
+                                    : 'bg-white border-slate-150 hover:bg-slate-50/50 text-slate-700'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedStudentIds.includes(st.id)}
+                                    onChange={() => handleToggleStudent(st.id)}
+                                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer h-3.5 w-3.5"
+                                  />
+                                  <span>{st.name}</span>
+                                </div>
+                                {hasActiveCase && (
+                                  <span className="bg-rose-50 text-rose-700 border border-rose-100 text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded">
+                                    Kasus MTSS
+                                  </span>
+                                )}
+                              </label>
+                            );
+                          })}
                       </div>
                     )}
                   </div>

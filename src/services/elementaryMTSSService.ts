@@ -66,7 +66,7 @@ export const elementaryMTSSService = {
             tier,
             studentName: record.studentName,
             classId: record.classId,
-            status: currentData.status === 'Achieved' ? 'Active' : currentData.status || 'Active', // Reactive back to active if update occurs
+            status: 'Active', // Remains active or re-activates if there is active Tier 2/3 progress data
             updatedAt: Date.now()
           };
           await setDoc(docRef, updatedCase, { merge: true });
@@ -88,16 +88,8 @@ export const elementaryMTSSService = {
           await setDoc(docRef, newCase);
         }
       } else {
-        // If they are on track / Tier 1, and an active case already exists, mark it as 'Achieved' or let it be
-        if (caseSnap.exists()) {
-          const currentData = caseSnap.data() as ElementaryMTSSCase;
-          if (currentData.status === 'Active') {
-            await updateDoc(docRef, {
-              status: 'Achieved',
-              updatedAt: Date.now()
-            });
-          }
-        }
+        // Under the new rules, we do NOT change active cases to Achieved automatically when status changes.
+        // It must only change to Achieved via spreadsheet outcomes (e.g. Passed Tier 2).
       }
     } catch (error) {
       console.error('Error syncing progress record to MTSS:', error);
@@ -212,8 +204,38 @@ export const elementaryMTSSService = {
       
       let syncedCount = 0;
       
+      // Helper to normalize record.updatedAt to a number
+      const getRecordTimestamp = (record: any): number => {
+        if (!record || !record.updatedAt) return 0;
+        if (typeof record.updatedAt === 'number') return record.updatedAt;
+        if (record.updatedAt.seconds) return record.updatedAt.seconds * 1000;
+        if (typeof record.updatedAt.toDate === 'function') return record.updatedAt.toDate().getTime();
+        const parsed = Date.parse(record.updatedAt);
+        return isNaN(parsed) ? 0 : parsed;
+      };
+
+      // Group records by studentId_area to only process the latest progress record per student and academic area
+      const latestRecordsMap: Record<string, ElementaryProgressRecord> = {};
+      
       for (const recordDoc of recordsSnap.docs) {
         const record = recordDoc.data() as ElementaryProgressRecord;
+        if (!record.studentId || !record.area) continue;
+        
+        const key = `${record.studentId}_${record.area}`;
+        const existing = latestRecordsMap[key];
+        
+        if (!existing) {
+          latestRecordsMap[key] = record;
+        } else {
+          const existingTime = getRecordTimestamp(existing);
+          const currentTime = getRecordTimestamp(record);
+          if (currentTime > existingTime) {
+            latestRecordsMap[key] = record;
+          }
+        }
+      }
+      
+      for (const record of Object.values(latestRecordsMap)) {
         const tier = mapSupportStatusToTier(record.supportStatus);
         
         if (tier) {
@@ -229,7 +251,7 @@ export const elementaryMTSSService = {
               tier,
               studentName: record.studentName || currentData.studentName,
               classId: record.classId || currentData.classId,
-              status: currentData.status === 'Achieved' ? 'Active' : currentData.status || 'Active',
+              status: 'Active', // Remains active or re-activates if there is active Tier 2/3 progress data
               updatedAt: Date.now()
             };
             await setDoc(caseDocRef, updatedCase, { merge: true });
@@ -251,21 +273,8 @@ export const elementaryMTSSService = {
           }
           syncedCount++;
         } else {
-          // If the record exists but supportStatus is ON_TRACK or other non-intervention status,
-          // mark existing active case as 'Achieved' automatically
-          const caseId = `${record.studentId}_${record.area}`;
-          const caseDocRef = doc(db, CASES_COLLECTION, caseId);
-          const caseSnap = await getDoc(caseDocRef);
-          if (caseSnap.exists()) {
-            const currentData = caseSnap.data() as ElementaryMTSSCase;
-            if (currentData.status === 'Active') {
-              await updateDoc(caseDocRef, {
-                status: 'Achieved',
-                updatedAt: Date.now()
-              });
-              syncedCount++;
-            }
-          }
+          // Under the new rules, we do NOT change active cases to Achieved automatically when status changes.
+          // It must only change to Achieved via spreadsheet outcomes (e.g. Passed Tier 2).
         }
       }
       return syncedCount;
