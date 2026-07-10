@@ -723,6 +723,7 @@ export default function WeeklyReview() {
         startDate: startDateStr,
         endDate: endDateStr,
         theme: finalTheme,
+        week: finalWeek,
         weeklyComments: finalWeeklyComments,
         socialEmotional: finalSocialEmotional,
         publishedAt: Date.now(),
@@ -784,11 +785,24 @@ export default function WeeklyReview() {
     }, 500);
   };
 
+  // Compute week
+  const computedWeek = React.useMemo(() => {
+    try {
+      const s = new Date(startDateStr);
+      const jan1 = new Date(s.getFullYear(), 0, 1);
+      const days = Math.floor((s.getTime() - jan1.getTime()) / (24 * 60 * 60 * 1000));
+      return Math.ceil((days + jan1.getDay() + 1) / 7);
+    } catch {
+      return '18';
+    }
+  }, [startDateStr]);
+
   // Safe checks and extracted properties
   const hasDraft = !!loadedDraft;
   const finalWeeklyComments = loadedDraft?.observationCommentTeacherEdited || loadedDraft?.observationCommentAiDraft || loadedDraft?.teacherEditedWeeklyComments || loadedDraft?.aiWeeklyCommentsDraft || '';
   const finalSocialEmotional = loadedDraft?.attendanceCommentTeacherEdited || loadedDraft?.attendanceCommentAiDraft || loadedDraft?.teacherEditedSocialEmotional || loadedDraft?.aiSocialEmotionalDraft || '';
   const finalTheme = (loadedDraft?.theme && loadedDraft.theme.trim() !== '') ? loadedDraft.theme : 'Tema Belum Ditentukan';
+  const finalWeek = (loadedDraft?.week !== undefined && String(loadedDraft.week).trim() !== '') ? loadedDraft.week : computedWeek;
   const finalSnapshots = loadedDraft?.dailySnapshots || [];
   const finalAttendance = loadedDraft?.attendanceSummary || { happy: 0, sad: 0, angry: 0, ok: 0, noNews: 0, sick: 0, izin: 0, earlyLeave: 0 };
   const finalObsSummary = loadedDraft?.groupedObservationSummary || [];
@@ -820,18 +834,6 @@ export default function WeeklyReview() {
       return '18 - 22 May';
     }
   }, [startDateStr, endDateStr]);
-
-  // Compute week
-  const computedWeek = React.useMemo(() => {
-    try {
-      const s = new Date(startDateStr);
-      const jan1 = new Date(s.getFullYear(), 0, 1);
-      const days = Math.floor((s.getTime() - jan1.getTime()) / (24 * 60 * 60 * 1000));
-      return Math.ceil((days + jan1.getDay() + 1) / 7);
-    } catch {
-      return '18';
-    }
-  }, [startDateStr]);
 
   // Format Signature Date label
   const formattedSignDate = React.useMemo(() => {
@@ -1225,7 +1227,7 @@ export default function WeeklyReview() {
                 <div className="grid grid-cols-12 leading-none">
                   <span className="col-span-3 font-bold text-emerald-100">Week</span>
                   <span className="col-span-1 text-emerald-100/70 text-center">:</span>
-                  <span className="col-span-8 font-bold text-white">{computedWeek}</span>
+                  <span className="col-span-8 font-bold text-white">{finalWeek}</span>
                 </div>
                 <div className="grid grid-cols-12 leading-none">
                   <span className="col-span-3 font-bold text-emerald-100">Date</span>

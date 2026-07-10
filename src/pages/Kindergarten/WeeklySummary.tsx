@@ -380,9 +380,11 @@ export default function WeeklySummary() {
     setIsSavingTheme(true);
     const themeDocId = `theme_${selectedClassId}_${startDateStr}_${endDateStr}`;
     const storageKey = `kg_weekly_theme_${selectedClassId}_${startDateStr}_${endDateStr}`;
+    const weekStorageKey = `kg_weekly_week_${selectedClassId}_${startDateStr}_${endDateStr}`;
     
     try {
       localStorage.setItem(storageKey, globalTheme);
+      localStorage.setItem(weekStorageKey, globalWeek);
 
       const docRef = doc(db, 'weekly_summary_drafts', themeDocId);
       await setDoc(docRef, {
@@ -391,6 +393,7 @@ export default function WeeklySummary() {
         startDate: startDateStr,
         endDate: endDateStr,
         theme: globalTheme,
+        week: globalWeek,
         type: 'weekly_theme',
         updatedAt: new Date().toISOString()
       }, { merge: true });
@@ -400,7 +403,8 @@ export default function WeeklySummary() {
         Object.keys(updated).forEach(studentId => {
           updated[studentId] = {
             ...updated[studentId],
-            theme: globalTheme
+            theme: globalTheme,
+            week: globalWeek
           };
           const studentKey = getSummaryKey(studentId, startDateStr, endDateStr);
           const localDraftStr = localStorage.getItem(studentKey);
@@ -408,6 +412,7 @@ export default function WeeklySummary() {
             try {
               const localDraft = JSON.parse(localDraftStr);
               localDraft.theme = globalTheme;
+              localDraft.week = globalWeek;
               localStorage.setItem(studentKey, JSON.stringify(localDraft));
             } catch (e) {
               // ignore
@@ -417,10 +422,10 @@ export default function WeeklySummary() {
         return updated;
       });
 
-      toast.success('Tema pembelajaran berhasil disimpan.');
+      toast.success('Tema & Pekan pembelajaran berhasil disimpan.');
     } catch (err) {
-      console.error('Error saving weekly theme:', err);
-      toast.error('Gagal menyimpan tema pembelajaran.');
+      console.error('Error saving weekly theme & week:', err);
+      toast.error('Gagal menyimpan tema & pekan pembelajaran.');
     } finally {
       setIsSavingTheme(false);
     }
@@ -428,6 +433,8 @@ export default function WeeklySummary() {
 
   // Theme of the current period
   const [globalTheme, setGlobalTheme] = React.useState<string>('');
+  // Week of the current period (manual week input)
+  const [globalWeek, setGlobalWeek] = React.useState<string>('');
 
   // Trigger recalculation trigger (For manual syncs or wholesale loads)
   const [reloadCounter, setReloadCounter] = React.useState<number>(0);
@@ -557,12 +564,15 @@ export default function WeeklySummary() {
 
         // 4. Fetch the weekly theme for this class and date range
         let loadedTheme = '';
+        let loadedWeek = '';
         if (selectedClassId) {
           const themeDocId = `theme_${selectedClassId}_${startDateStr}_${endDateStr}`;
           try {
             const themeSnap = await getDoc(doc(db, 'weekly_summary_drafts', themeDocId));
             if (themeSnap.exists()) {
-              loadedTheme = themeSnap.data().theme || '';
+              const themeData = themeSnap.data();
+              loadedTheme = themeData.theme || '';
+              loadedWeek = themeData.week || '';
             }
           } catch (err) {
             if (process.env.NODE_ENV !== 'production') {
@@ -577,6 +587,12 @@ export default function WeeklySummary() {
               loadedTheme = localTheme;
             }
           }
+          if (!loadedWeek) {
+            const localWeek = localStorage.getItem(`kg_weekly_week_${selectedClassId}_${startDateStr}_${endDateStr}`);
+            if (localWeek) {
+              loadedWeek = localWeek;
+            }
+          }
         }
 
         if (active) {
@@ -584,8 +600,9 @@ export default function WeeklySummary() {
           setFirestoreObservations(fetchedObs);
           setDbDrafts(fetchedDraftsMap);
           setGlobalTheme(loadedTheme);
+          setGlobalWeek(loadedWeek);
           if (process.env.NODE_ENV !== 'production') {
-            console.log(`[WeeklySummary Firestore Sync] Set ${fetchedAtt.length} attendance, ${fetchedObs.length} observations, ${snapDraftsLen} drafts, and theme "${loadedTheme}"`);
+            console.log(`[WeeklySummary Firestore Sync] Set ${fetchedAtt.length} attendance, ${fetchedObs.length} observations, ${snapDraftsLen} drafts, theme "${loadedTheme}", and week "${loadedWeek}"`);
           }
         }
       } catch (err) {
@@ -670,6 +687,7 @@ export default function WeeklySummary() {
           attendanceCommentTeacherEdited: dbDraft.socialEmotional || dbDraft.attendanceCommentTeacherEdited || savedParsed.attendanceCommentTeacherEdited || '',
           observationCommentTeacherEdited: dbDraft.weeklyComments || dbDraft.observationCommentTeacherEdited || savedParsed.observationCommentTeacherEdited || '',
           theme: dbDraft.theme || savedParsed.theme || '',
+          week: dbDraft.week || savedParsed.week || '',
         };
       }
 
@@ -750,6 +768,7 @@ export default function WeeklySummary() {
         startDate: startDateStr,
         endDate: endDateStr,
         theme: mergedDraft.theme || '',
+        week: mergedDraft.week || globalWeek || '',
         socialEmotional: mergedDraft.attendanceCommentTeacherEdited || mergedDraft.socialEmotional || '',
         weeklyComments: mergedDraft.observationCommentTeacherEdited || mergedDraft.weeklyComments || '',
         attendanceCommentAiDraft: mergedDraft.attendanceCommentAiDraft || '',
@@ -796,9 +815,10 @@ export default function WeeklySummary() {
     await saveWeeklyComments(studentId, updatedPayload);
   };
 
-  const handleManualSave = (studentId: string, customTheme?: string) => {
+  const handleManualSave = (studentId: string, customTheme?: string, customWeek?: string) => {
     const draft = studentDrafts[studentId];
-    const themeToSave = customTheme || draft?.theme || globalTheme;
+    const themeToSave = customTheme !== undefined ? customTheme : (draft?.theme || globalTheme);
+    const weekToSave = customWeek !== undefined ? customWeek : (draft?.week || globalWeek);
     
     if (!draft) {
       // If no aggregated data existing, aggregate first
@@ -813,15 +833,17 @@ export default function WeeklySummary() {
       saveIndividualStudentDraft(studentId, {
         ...rawAggregation,
         theme: themeToSave,
+        week: weekToSave,
         attendanceCommentTeacherEdited: '',
         observationCommentTeacherEdited: ''
       });
     } else {
       saveIndividualStudentDraft(studentId, {
-        theme: themeToSave
+        theme: themeToSave,
+        week: weekToSave
       });
     }
-    toast.success('Komentar & Tema siswa telah berhasil disimpan! 💾');
+    toast.success('Komentar, Tema & Pekan siswa telah berhasil disimpan! 💾');
   };
 
   const handleGenerateSelIndividual = async (studentId: string) => {
@@ -868,6 +890,7 @@ export default function WeeklySummary() {
       await saveIndividualStudentDraft(studentId, {
         ...currentDraft,
         theme: currentDraft.theme || globalTheme,
+        week: currentDraft.week || globalWeek,
         attendanceCommentAiDraft: generatedText,
         attendanceCommentTeacherEdited: generatedText
       });
@@ -880,6 +903,7 @@ export default function WeeklySummary() {
       await saveIndividualStudentDraft(studentId, {
         ...currentDraft,
         theme: currentDraft.theme || globalTheme,
+        week: currentDraft.week || globalWeek,
         attendanceCommentAiDraft: fallbackText,
         attendanceCommentTeacherEdited: fallbackText
       });
@@ -932,6 +956,7 @@ export default function WeeklySummary() {
       await saveIndividualStudentDraft(studentId, {
         ...currentDraft,
         theme: currentDraft.theme || globalTheme,
+        week: currentDraft.week || globalWeek,
         observationCommentAiDraft: generatedText,
         observationCommentTeacherEdited: generatedText
       });
@@ -949,6 +974,7 @@ export default function WeeklySummary() {
       await saveIndividualStudentDraft(studentId, {
         ...currentDraft,
         theme: currentDraft.theme || globalTheme,
+        week: currentDraft.week || globalWeek,
         observationCommentAiDraft: fallbackText,
         observationCommentTeacherEdited: fallbackText
       });
@@ -1020,6 +1046,7 @@ export default function WeeklySummary() {
           ...existing,
           ...payload,
           theme: existing.theme || globalTheme,
+          week: existing.week || globalWeek,
           studentId,
           startDate: startDateStr,
           endDate: endDateStr,
@@ -1042,6 +1069,7 @@ export default function WeeklySummary() {
           startDate: startDateStr,
           endDate: endDateStr,
           theme: finalPayload.theme || '',
+          week: finalPayload.week || '',
           socialEmotional: finalPayload.attendanceCommentTeacherEdited || '',
           weeklyComments: finalPayload.observationCommentTeacherEdited || '',
           attendanceCommentAiDraft: finalPayload.attendanceCommentAiDraft || '',
@@ -1174,30 +1202,43 @@ export default function WeeklySummary() {
           </span>
         </div>
 
-        {/* Global Monthly Theme */}
-        <div className="lg:col-span-4 space-y-1.5">
-          <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Tema Pembelajaran</label>
-          <div className="flex gap-1.5">
+        {/* Global Monthly Theme & Manual Week */}
+        <div className="lg:col-span-4 space-y-3">
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Tema Pembelajaran</label>
             <input 
               type="text" 
               value={globalTheme} 
               onChange={(e) => setGlobalTheme(e.target.value)}
-              className="flex-1 bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-1 focus:ring-emerald-400 text-gray-700"
+              className="w-full bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-1 focus:ring-emerald-400 text-gray-700"
               placeholder="Contoh: Aku dan Lingkunganku, Tanaman Sayur, dll"
             />
-            <button
-              onClick={handleSaveWeeklyTheme}
-              disabled={isSavingTheme}
-              className="flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 px-3.5 rounded-xl transition-all cursor-pointer shadow-sm disabled:opacity-50 shrink-0"
-              title="Simpan tema pembelajaran untuk minggu ini"
-            >
-              {isSavingTheme ? (
-                <Loader2 size={13} className="animate-spin" />
-              ) : (
-                <Save size={13} />
-              )}
-              <span>Simpan</span>
-            </button>
+          </div>
+          
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Pekan Pembelajaran (Week)</label>
+            <div className="flex gap-1.5">
+              <input 
+                type="text" 
+                value={globalWeek} 
+                onChange={(e) => setGlobalWeek(e.target.value)}
+                className="flex-1 bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-1 focus:ring-emerald-400 text-gray-700"
+                placeholder="Contoh: 1, 2, Pekan 3, Week 4, dll"
+              />
+              <button
+                onClick={handleSaveWeeklyTheme}
+                disabled={isSavingTheme}
+                className="flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 px-3.5 rounded-xl transition-all cursor-pointer shadow-sm disabled:opacity-50 shrink-0"
+                title="Simpan tema & pekan pembelajaran untuk minggu ini"
+              >
+                {isSavingTheme ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <Save size={13} />
+                )}
+                <span>Simpan</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1327,11 +1368,18 @@ export default function WeeklySummary() {
                           <div className="text-[10px] text-gray-500 font-bold mt-0.5 uppercase tracking-tight font-sans">
                             Id: {student.id} | Level: {student.ageGroup === 'TK_B' ? 'TK B1 (5-6 Th)' : student.ageGroup === 'TK_A' ? 'TK A1 (4-5 Th)' : 'Pra TK (2-4 Th)'}
                           </div>
-                          {draft?.theme && (
-                            <div className="mt-1 inline-block text-[9px] px-1.5 py-0.5 rounded bg-gray-100 font-bold text-gray-600 line-clamp-1 italic max-w-[140px] font-sans">
-                              Theme: "{draft.theme}"
-                            </div>
-                          )}
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {draft?.theme && (
+                              <div className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-gray-100 font-bold text-gray-600 line-clamp-1 italic max-w-[140px] font-sans">
+                                Theme: "{draft.theme}"
+                              </div>
+                            )}
+                            {draft?.week && (
+                              <div className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-gray-100 font-bold text-gray-600 line-clamp-1 italic max-w-[140px] font-sans">
+                                Week: "{draft.week}"
+                              </div>
+                            )}
+                          </div>
                         </td>
 
                         {/* 3. Attendance raw indicators */}
@@ -1472,7 +1520,7 @@ export default function WeeklySummary() {
                                   <h4 className="text-sm font-black text-gray-800">Menyunting Laporan: {student.name}</h4>
                                 </div>
                                 
-                                <div className="flex items-center gap-3 w-full sm:w-auto">
+                                <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
                                   <div className="flex items-center gap-1.5 text-xs text-gray-500 font-bold bg-white px-3 py-1.5 border border-gray-200 rounded-xl">
                                     <span>Tema Siswa:</span>
                                     <input 
@@ -1482,6 +1530,19 @@ export default function WeeklySummary() {
                                         handleLocalDraftChange(student.id, { theme: e.target.value });
                                       }}
                                       className="bg-transparent border-none outline-none font-extrabold text-emerald-800 text-xs px-1 w-36 hover:bg-gray-55 focus:bg-gray-55"
+                                    />
+                                  </div>
+
+                                  <div className="flex items-center gap-1.5 text-xs text-gray-500 font-bold bg-white px-3 py-1.5 border border-gray-200 rounded-xl">
+                                    <span>Pekan:</span>
+                                    <input 
+                                      type="text"
+                                      value={draft?.week || globalWeek}
+                                      onChange={(e) => {
+                                        handleLocalDraftChange(student.id, { week: e.target.value });
+                                      }}
+                                      className="bg-transparent border-none outline-none font-extrabold text-emerald-800 text-xs px-1 w-16 hover:bg-gray-55 focus:bg-gray-55"
+                                      placeholder="Week"
                                     />
                                   </div>
 

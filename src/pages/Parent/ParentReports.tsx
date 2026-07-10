@@ -164,9 +164,7 @@ export default function ParentReports() {
 
         const studentIdsToSearch = normalizeIds(baseIds);
 
-        // IMPORTANT:
-        // Parent must NOT query/list reportCards collection directly.
-        // We read allowed report IDs from parentReportViews, then getDoc one by one.
+        // IMPORTANT: Allowed report IDs from parentReportViews, then getDoc one by one.
         const reportIds = extractReportIdsFromViews(
           (viewsData || []) as ParentReportView[],
           studentIdsToSearch
@@ -178,7 +176,6 @@ export default function ParentReports() {
           .filter((rc: any) => {
             if (rc.status !== 'PUBLISHED') return false;
 
-            // support both direct studentId and studentReports[]
             if (rc.studentId && studentIdsToSearch.includes(rc.studentId)) return true;
 
             if (Array.isArray(rc.studentReports)) {
@@ -264,54 +261,57 @@ export default function ParentReports() {
   };
 
   if (!studentId) {
-    return <div className="p-12 text-center font-black">Pilih ananda terlebih dahulu dari dashboard.</div>;
+    return <div className="p-8 text-center font-bold text-xs text-gray-400 uppercase tracking-widest">Pilih ananda terlebih dahulu dari dashboard.</div>;
   }
 
   if (loading) {
     return (
-      <div className="h-[60vh] flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-emerald-600 animate-spin" />
+      <div className="h-[50vh] flex items-center justify-center">
+        <Loader2 className="w-6 h-6 text-emerald-600 animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-12 pb-20 animate-in fade-in duration-700">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-        <div className="space-y-4">
+    <div className="max-w-5xl mx-auto space-y-4 pb-12 animate-in fade-in duration-500">
+      
+      {/* Back to Dashboard and Title: Compact Layout */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
+        <div className="space-y-1">
           <Link
             to="/parent/dashboard"
-            className="group flex items-center gap-1 text-xs font-black uppercase tracking-widest text-gray-400 hover:text-emerald-600 transition-colors"
+            className="group inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-emerald-600 transition-colors"
           >
-            <ChevronLeft size={14} className="group-hover:-translate-x-1 transition-transform" /> Dashboard
+            <ChevronLeft size={12} className="group-hover:-translate-x-0.5 transition-transform" /> Dashboard
           </Link>
-          <div className="space-y-1">
-            <h1 className="text-5xl font-black tracking-tighter italic uppercase text-gray-900 leading-none">
+          <div className="space-y-0.5">
+            <h1 className="text-lg font-extrabold uppercase tracking-tight text-gray-900 leading-none">
               Daftar <span className="text-emerald-600">Rapor</span>
             </h1>
-            <p className="text-gray-400 font-bold">Rapor {student?.name} Tahun Akademik 2025/2026</p>
+            <p className="text-xs text-gray-400 font-bold">Rapor {student?.name} • Tahun Akademik 2025/2026</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-4 bg-white p-4 rounded-[2rem] border border-gray-100 shadow-sm">
-          <div className="px-6 py-2 bg-emerald-50 text-emerald-600 rounded-xl text-[10px] font-black uppercase tracking-widest">
+        <div className="flex items-center gap-2">
+          <div className="px-3.5 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg text-[9px] font-black uppercase tracking-wider">
             Total: {reports.length} Laporan
           </div>
-          <div className="px-6 py-2 bg-gray-50 text-gray-400 rounded-xl text-[10px] font-black uppercase tracking-widest">
-            Unread: {reports.filter(r => !viewedReports.has(r.id)).length}
+          <div className="px-3.5 py-1.5 bg-gray-50 text-gray-400 rounded-lg text-[9px] font-black uppercase tracking-wider">
+            Belum Dibaca: {reports.filter(r => !viewedReports.has(r.id)).length}
           </div>
         </div>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-2 border-b border-gray-100 pb-1">
+      {/* Tabs */}
+      <div className="flex gap-2 border-b border-gray-100 pb-1">
         <button
           id="tab-btn-academic"
           onClick={() => setActiveTab('ACADEMIC')}
           className={cn(
-            'px-6 py-3 font-black uppercase text-xs tracking-widest transition-all border-b-2 -mb-[2px] text-left sm:text-center',
+            'px-4 py-2 font-bold uppercase text-[11px] tracking-wider transition-all border-b-2 -mb-[2px] text-left sm:text-center cursor-pointer',
             activeTab === 'ACADEMIC'
-              ? 'border-emerald-600 text-emerald-600 font-extrabold'
-              : 'border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200'
+              ? 'border-emerald-600 text-emerald-600'
+              : 'border-transparent text-gray-400 hover:text-gray-600'
           )}
         >
           Rapor Akhir Semester & Academic
@@ -320,10 +320,10 @@ export default function ParentReports() {
           id="tab-btn-weekly"
           onClick={() => setActiveTab('WEEKLY')}
           className={cn(
-            'px-6 py-3 font-black uppercase text-xs tracking-widest transition-all border-b-2 -mb-[2px] text-left sm:text-center',
+            'px-4 py-2 font-bold uppercase text-[11px] tracking-wider transition-all border-b-2 -mb-[2px] text-left sm:text-center cursor-pointer',
             activeTab === 'WEEKLY'
-              ? 'border-emerald-600 text-emerald-600 font-extrabold'
-              : 'border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200'
+              ? 'border-emerald-600 text-emerald-600'
+              : 'border-transparent text-gray-400 hover:text-gray-600'
           )}
         >
           Laporan Mingguan (Weekly Report)
@@ -332,19 +332,19 @@ export default function ParentReports() {
 
       {activeTab === 'ACADEMIC' ? (
         reports.length === 0 ? (
-          <div className="bg-gray-50 border-2 border-dashed border-gray-200 p-20 rounded-[4rem] text-center space-y-4">
-            <div className="w-20 h-20 bg-gray-100 rounded-[2rem] flex items-center justify-center mx-auto">
-              <FileText className="text-gray-300" size={40} />
+          <div className="bg-gray-50 border border-dashed border-gray-200 p-10 rounded-2xl text-center space-y-3">
+            <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center mx-auto">
+              <FileText className="text-gray-300" size={24} />
             </div>
-            <div className="space-y-2">
-              <h3 className="text-xl font-black text-gray-900 uppercase italic tracking-tighter">Tidak Ada Rapor</h3>
-              <p className="text-sm text-gray-400 font-bold max-w-xs mx-auto leading-relaxed">
-                Saat ini belum ada rapor yang dipublikasikan untuk periode ini.
+            <div className="space-y-1">
+              <h3 className="text-sm font-extrabold text-gray-900 uppercase tracking-tight">Tidak Ada Rapor</h3>
+              <p className="text-xs text-gray-400 font-bold max-w-xs mx-auto leading-relaxed">
+                Saat ini belum ada rapor akademis akhir semester yang dipublikasikan.
               </p>
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {reports.map((report, idx) => {
               const isNew = !viewedReports.has(report.id);
 
@@ -356,79 +356,79 @@ export default function ParentReports() {
               return (
                 <motion.div
                   key={report.id}
-                  initial={{ opacity: 0, y: 20 }}
+                  initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: idx * 0.1 }}
+                  transition={{ delay: idx * 0.05 }}
                   className={cn(
-                    'group relative bg-white p-8 rounded-[3.5rem] border transition-all flex flex-col justify-between aspect-square',
+                    'group relative bg-white p-5 rounded-2xl border transition-all flex flex-col justify-between aspect-square',
                     isNew
-                      ? 'border-emerald-200 shadow-xl shadow-emerald-50 ring-4 ring-emerald-50'
-                      : 'border-gray-100 shadow-sm hover:shadow-xl hover:border-emerald-100'
+                      ? 'border-emerald-200 shadow shadow-emerald-50 ring-2 ring-emerald-50/50'
+                      : 'border-gray-150 shadow-sm hover:shadow hover:border-emerald-200'
                   )}
                 >
                   {isNew && (
-                    <div className="absolute -top-3 -right-3 bg-emerald-600 text-white px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-[0.2em] shadow-lg animate-bounce">
+                    <div className="absolute -top-2.5 -right-2 bg-emerald-600 text-white px-2.5 py-1 rounded-full text-[8px] font-black uppercase tracking-widest shadow shadow-emerald-700/20 animate-bounce">
                       Baru
                     </div>
                   )}
 
-                  <div className="space-y-6">
+                  <div className="space-y-4">
                     <div className="flex justify-between items-start">
                       <div
                         className={cn(
-                          'w-14 h-14 rounded-[1.5rem] flex items-center justify-center group-hover:-rotate-6 transition-all duration-500',
+                          'w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300',
                           isNew
                             ? 'bg-emerald-600 text-white'
                             : 'bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white'
                         )}
                       >
-                        <FileText size={28} />
+                        <FileText size={18} />
                       </div>
 
                       <div className="text-right">
-                        <div className="px-4 py-2 bg-gray-900 text-white rounded-2xl text-[9px] font-black uppercase tracking-widest inline-block">
+                        <div className="px-2.5 py-1 bg-gray-900 text-white rounded-lg text-[8px] font-black uppercase tracking-widest inline-block">
                           {(report as any).type?.split('_')[0] || 'REPORT'}
                         </div>
-                        <p className="text-[10px] font-bold text-gray-400 mt-2">
+                        <p className="text-[9px] font-bold text-gray-400 mt-1">
                           Published: {isNaN(publishedTime.getTime()) ? '-' : publishedTime.toLocaleDateString('id-ID')}
                         </p>
                       </div>
                     </div>
 
-                    <div className="space-y-3">
-                      <h3 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900 group-hover:text-emerald-600 transition-colors leading-tight">
+                    <div className="space-y-1.5">
+                      <h3 className="text-base font-extrabold uppercase tracking-tight text-gray-900 group-hover:text-emerald-600 transition-colors leading-tight line-clamp-2">
                         {(report as any).period || 'Laporan Akademik'}
                       </h3>
-                      <div className="flex items-center gap-3 text-xs font-bold text-gray-400">
+                      <div className="flex items-center gap-2 text-[10px] font-bold text-gray-400">
                         <span className="flex items-center gap-1">
-                          <Calendar size={12} /> Semester {(report as any).semester || '-'}
+                          <Calendar size={10} /> Semester {(report as any).semester || '-'}
                         </span>
                         {viewedReports.has(report.id) && (
-                          <span className="flex items-center gap-1 text-emerald-500 opacity-60">
-                            <CheckCircle2 size={12} /> Sudah Dibaca
+                          <span className="flex items-center gap-0.5 text-emerald-500 opacity-80">
+                            <CheckCircle2 size={10} /> Sudah Dibaca
                           </span>
                         )}
                       </div>
                     </div>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="space-y-2 pt-4">
                     <Link
                       to={`/academic/rapor/${report.id}?view=parent`}
                       onClick={() => handleOpenReport(report.id)}
-                      className="w-full flex items-center justify-center gap-2 py-4 bg-gray-900 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-emerald-600 transition-all transform active:scale-95 shadow-xl"
+                      className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-gray-900 text-white rounded-xl font-extrabold uppercase text-[9px] tracking-widest hover:bg-emerald-600 transition-all shadow-sm"
                     >
-                      <Eye size={14} /> Buka Laporan
+                      <Eye size={12} /> Buka Laporan
                     </Link>
 
-                    <div className="flex gap-2">
-                      <button className="flex-1 flex items-center justify-center gap-2 py-4 border-2 border-gray-100 text-gray-400 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:border-emerald-600 hover:text-emerald-600 transition-all">
-                        <Download size={14} /> PDF
+                    <div className="flex gap-1.5">
+                      <button className="flex-1 flex items-center justify-center gap-1 py-2 border border-gray-100 text-gray-400 rounded-xl font-bold uppercase text-[9px] tracking-wider hover:border-emerald-600 hover:text-emerald-600 transition-all cursor-pointer">
+                        <Download size={12} /> PDF
                       </button>
 
                       {(report as any).isEndTerm && (
-                        <button className="flex-1 flex items-center justify-center gap-2 py-4 border-2 border-gray-100 text-gray-400 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:border-blue-600 hover:text-blue-600 transition-all">
-                          <Award size={14} /> Diploma
+                        <button className="flex-1 flex items-center justify-center gap-1 py-2 border border-gray-100 text-gray-400 rounded-xl font-bold uppercase text-[9px] tracking-wider hover:border-blue-600 hover:text-blue-600 transition-all cursor-pointer">
+                          <Award size={12} /> Diploma
                         </button>
                       )}
                     </div>
@@ -440,55 +440,55 @@ export default function ParentReports() {
         )
       ) : (
         weeklyReports.length === 0 ? (
-          <div className="bg-gray-50 border-2 border-dashed border-gray-200 p-20 rounded-[4rem] text-center space-y-4">
-            <div className="w-20 h-20 bg-gray-100 rounded-[2rem] flex items-center justify-center mx-auto">
-              <Calendar className="text-emerald-600" size={40} />
+          <div className="bg-gray-50 border border-dashed border-gray-200 p-10 rounded-2xl text-center space-y-3">
+            <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center mx-auto">
+              <Calendar className="text-emerald-600" size={24} />
             </div>
-            <div className="space-y-2">
-              <h3 className="text-xl font-black text-gray-900 uppercase italic tracking-tighter">Tidak Ada Laporan Mingguan</h3>
-              <p className="text-sm text-gray-400 font-bold max-w-xs mx-auto leading-relaxed">
+            <div className="space-y-1">
+              <h3 className="text-sm font-extrabold text-gray-900 uppercase tracking-tight">Tidak Ada Laporan Mingguan</h3>
+              <p className="text-xs text-gray-400 font-bold max-w-xs mx-auto leading-relaxed">
                 Saat ini belum ada laporan mingguan yang dipublikasikan untuk periode ini.
               </p>
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {weeklyReports.map((report, idx) => (
               <motion.div
                 key={report.id}
-                initial={{ opacity: 0, y: 20 }}
+                initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: idx * 0.1 }}
-                className="group relative bg-white p-8 rounded-[3.5rem] border border-gray-100 shadow-sm hover:shadow-xl hover:border-emerald-100 transition-all flex flex-col justify-between aspect-square"
+                transition={{ delay: idx * 0.05 }}
+                className="group relative bg-white p-5 rounded-2xl border border-gray-150 shadow-sm hover:shadow hover:border-emerald-200 transition-all flex flex-col justify-between aspect-square"
               >
-                <div className="space-y-6">
+                <div className="space-y-4">
                   <div className="flex justify-between items-start">
-                    <div className="w-14 h-14 rounded-[1.5rem] bg-emerald-50 text-emerald-600 group-hover:bg-[#109E58] group-hover:text-white flex items-center justify-center group-hover:-rotate-6 transition-all duration-500">
-                      <Calendar size={28} />
+                    <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 group-hover:bg-[#109E58] group-hover:text-white flex items-center justify-center transition-all duration-300">
+                      <Calendar size={18} />
                     </div>
 
                     <div className="text-right">
-                      <div className="px-4 py-2 bg-[#109E58] text-white rounded-2xl text-[9px] font-black uppercase tracking-widest inline-block">
+                      <div className="px-2.5 py-1 bg-[#109E58] text-white rounded-lg text-[8px] font-black uppercase tracking-widest inline-block">
                         Weekly
                       </div>
-                      <p className="text-[10px] font-bold text-gray-400 mt-2">
+                      <p className="text-[9px] font-bold text-gray-400 mt-1">
                         {report.publishedAt ? new Date(report.publishedAt).toLocaleDateString('id-ID') : '-'}
                       </p>
                     </div>
                   </div>
 
-                  <div className="space-y-3">
-                    <h3 className="text-xl font-black uppercase italic tracking-tighter text-gray-900 group-hover:text-[#109E58] transition-colors leading-tight line-clamp-2">
+                  <div className="space-y-1.5">
+                    <h3 className="text-base font-extrabold uppercase tracking-tight text-gray-900 group-hover:text-[#109E58] transition-colors leading-tight line-clamp-2">
                       Pekan: {report.startDate} - {report.endDate}
                     </h3>
-                    <div className="space-y-2 mt-1">
+                    <div className="flex flex-wrap gap-1 mt-1">
                       {report.theme && (
-                        <span className="inline-block px-3 py-1 bg-gray-50 border border-gray-150 rounded-xl text-[10px] text-gray-600 font-extrabold uppercase">
+                        <span className="inline-block px-2 py-0.5 bg-gray-50 border border-gray-100 rounded-md text-[9px] text-gray-500 font-bold uppercase">
                           Tema: {report.theme}
                         </span>
                       )}
                       {report.className && (
-                        <div className="text-[10px] text-emerald-700 font-extrabold uppercase tracking-widest block">
+                        <div className="text-[9px] text-emerald-700 font-bold uppercase tracking-wider block bg-emerald-50 px-2 py-0.5 rounded-md">
                           Kelas: {report.className}
                         </div>
                       )}
@@ -496,19 +496,19 @@ export default function ParentReports() {
                   </div>
                 </div>
 
-                <div className="space-y-3 pt-6">
+                <div className="space-y-2 pt-4">
                   {report.driveFileUrl ? (
                     <a
                       href={report.driveFileUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="w-full flex items-center justify-center gap-2 py-4 bg-gray-900 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-[#109E58] transition-all transform active:scale-95 shadow-xl cursor-pointer"
+                      className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-gray-900 text-white rounded-xl font-extrabold uppercase text-[9px] tracking-widest hover:bg-[#109E58] transition-all shadow-sm cursor-pointer"
                     >
-                      <Eye size={14} /> Buka Laporan di Drive
+                      <Eye size={12} /> Buka di Drive
                     </a>
                   ) : (
-                    <div className="w-full py-4 bg-gray-100 text-gray-400 rounded-2xl font-black uppercase text-[10px] tracking-widest text-center italic">
-                      Laporan PDF belum diunggah
+                    <div className="w-full py-2.5 bg-gray-50 text-gray-400 rounded-xl font-bold uppercase text-[9px] tracking-widest text-center italic border border-gray-100">
+                      PDF belum diunggah
                     </div>
                   )}
                 </div>
@@ -518,34 +518,35 @@ export default function ParentReports() {
         )
       )}
 
-      <div className="bg-emerald-900 p-12 rounded-[4rem] text-white overflow-hidden relative">
-        <div className="absolute bottom-0 left-0 w-80 h-80 bg-emerald-400/20 rounded-full blur-[80px] -ml-20 -mb-20" />
-        <div className="relative flex flex-col md:flex-row items-center gap-12">
-          <div className="space-y-6 flex-1">
-            <h2 className="text-4xl font-black uppercase italic tracking-tighter">
-              Masa Depan Cerah Dimulai dari Sini! ✨
+      {/* Brand Foot-banner: Sleeker & Compact */}
+      <div className="bg-emerald-900 p-6 rounded-2xl text-white overflow-hidden relative">
+        <div className="absolute bottom-0 left-0 w-64 h-64 bg-emerald-400/10 rounded-full blur-[64px] -ml-16 -mb-16 pointer-events-none" />
+        <div className="relative flex flex-col md:flex-row items-start md:items-center gap-6 justify-between">
+          <div className="space-y-2 flex-1">
+            <h2 className="text-lg font-extrabold uppercase tracking-tight">
+              Apresiasi Setiap Langkah Kecil Pertumbuhan! ✨
             </h2>
-            <p className="text-emerald-200 font-bold text-lg leading-relaxed">
-              Terima kasih Ayah & Bunda atas kolaborasinya dalam membimbing ananda. Mari kita apresiasi setiap langkah kecil pertumbuhannya.
+            <p className="text-emerald-200 font-medium text-xs leading-relaxed max-w-xl">
+              Terima kasih Ayah & Bunda atas kolaborasinya dalam membimbing ananda. Mari kita rayakan setiap milestone perkembangannya dengan hangat.
             </p>
-            <div className="flex flex-wrap gap-4">
-              <div className="flex items-center gap-3 px-6 py-3 bg-white/10 rounded-2xl">
-                <Award className="text-emerald-400" size={20} />
-                <span className="text-xs font-black uppercase tracking-widest">Growth Mindset</span>
+            <div className="flex flex-wrap gap-2 pt-1.5">
+              <div className="flex items-center gap-1.5 px-3 py-1 bg-white/10 rounded-lg">
+                <Award className="text-emerald-400" size={12} />
+                <span className="text-[9px] font-black uppercase tracking-widest">Growth Mindset</span>
               </div>
-              <div className="flex items-center gap-3 px-6 py-3 bg-white/10 rounded-2xl">
-                <Heart className="text-emerald-400" size={20} />
-                <span className="text-xs font-black uppercase tracking-widest">Well-being</span>
+              <div className="flex items-center gap-1.5 px-3 py-1 bg-white/10 rounded-lg">
+                <Heart className="text-emerald-400" size={12} />
+                <span className="text-[9px] font-black uppercase tracking-widest">Well-being</span>
               </div>
             </div>
           </div>
 
-          <div className="w-full md:w-72 space-y-4">
-            <div className="p-6 bg-white/5 rounded-3xl border border-white/10 space-y-2">
-              <p className="text-[10px] font-black uppercase text-emerald-400 underline decoration-2 underline-offset-4">
+          <div className="w-full md:w-56 shrink-0">
+            <div className="p-4 bg-white/5 rounded-xl border border-white/10 space-y-1">
+              <p className="text-[9px] font-black uppercase text-emerald-400 tracking-wider">
                 Jadwal Konsultasi
               </p>
-              <p className="text-sm font-bold leading-relaxed italic">
+              <p className="text-[11px] font-bold leading-relaxed italic text-emerald-100">
                 "Silakan hubungi wali kelas via Portal ini atau WhatsApp untuk jadwal diskusi rapor."
               </p>
             </div>
