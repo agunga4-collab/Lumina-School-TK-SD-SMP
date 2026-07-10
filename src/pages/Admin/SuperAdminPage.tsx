@@ -1262,7 +1262,7 @@ export default function SuperAdminPage() {
         unitId: classFormData.unitId,
         academicYear: classFormData.academicYear,
         homeroomTeacherId: classFormData.homeroomTeacherId || null,
-        homeroomTeacherName: teacher?.displayName || null,
+        homeroomTeacherName: teacher?.displayName ? teacher.displayName.replace(/^\s*\(UNDANGAN\)\s*/i, "") : null,
         teacherSignatureUrl: classFormData.teacherSignatureUrl || null,
         status: "active" as const,
       };
@@ -2853,7 +2853,7 @@ export default function SuperAdminPage() {
                             </td>
                             <td className="px-10 py-6">
                               <span className="text-xs font-bold text-gray-700">
-                                {cls.homeroomTeacherName || "-"}
+                                {cls.homeroomTeacherName ? cls.homeroomTeacherName.replace(/^\s*\(UNDANGAN\)\s*/i, "") : "-"}
                               </span>
                             </td>
                             <td className="px-10 py-6 text-right">

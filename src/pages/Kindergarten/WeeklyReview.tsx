@@ -135,7 +135,10 @@ export default function WeeklyReview() {
             name: data.name,
             grade: data.grade,
             unitId: data.unitId,
-            academicYear: data.academicYear
+            academicYear: data.academicYear,
+            homeroomTeacherId: data.homeroomTeacherId || null,
+            homeroomTeacherName: data.homeroomTeacherName || null,
+            teacherSignatureUrl: data.teacherSignatureUrl || null
           };
         }).sort((a, b) => a.name.localeCompare(b.name));
 
@@ -1433,7 +1436,7 @@ export default function WeeklyReview() {
                   </div>
                   <div className="text-center font-sans mt-1 flex flex-col items-center gap-0.5 w-full">
                     <span className="text-center font-extrabold text-[10px] text-gray-900 border-b border-solid border-gray-900 w-36 pb-0.5 mx-auto uppercase">
-                      {activeClassObj?.homeroomTeacherName || (
+                      {activeClassObj?.homeroomTeacherName ? activeClassObj.homeroomTeacherName.replace(/^\s*\(UNDANGAN\)\s*/i, "") : (
                         <span className="text-red-550 italic font-bold">Wali Kelas Belum Diatur</span>
                       )}
                     </span>
