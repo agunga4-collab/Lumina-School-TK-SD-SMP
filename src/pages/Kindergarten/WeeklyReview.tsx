@@ -402,6 +402,61 @@ export default function WeeklyReview() {
     };
   }, [selectedClassId, startDateStr, endDateStr]);
 
+  const [classTheme, setClassTheme] = React.useState<string>('');
+  const [classWeek, setClassWeek] = React.useState<string>('');
+
+  React.useEffect(() => {
+    if (!selectedClassId) {
+      setClassTheme('');
+      setClassWeek('');
+      return;
+    }
+
+    let active = true;
+    async function fetchClassThemeAndWeek() {
+      let loadedTheme = '';
+      let loadedWeek = '';
+
+      const themeDocId = `theme_${selectedClassId}_${startDateStr}_${endDateStr}`;
+      try {
+        const themeSnap = await getDoc(doc(db, 'weekly_summary_drafts', themeDocId));
+        if (themeSnap.exists()) {
+          const themeData = themeSnap.data();
+          loadedTheme = themeData.theme || '';
+          loadedWeek = themeData.week || '';
+        }
+      } catch (err) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.error('Error fetching class theme/week:', err);
+        }
+      }
+
+      if (!loadedTheme) {
+        const localTheme = localStorage.getItem(`kg_weekly_theme_${selectedClassId}_${startDateStr}_${endDateStr}`);
+        if (localTheme) {
+          loadedTheme = localTheme;
+        }
+      }
+      if (!loadedWeek) {
+        const localWeek = localStorage.getItem(`kg_weekly_week_${selectedClassId}_${startDateStr}_${endDateStr}`);
+        if (localWeek) {
+          loadedWeek = localWeek;
+        }
+      }
+
+      if (active) {
+        setClassTheme(loadedTheme);
+        setClassWeek(loadedWeek);
+      }
+    }
+
+    fetchClassThemeAndWeek();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedClassId, startDateStr, endDateStr]);
+
   const [loadedDraft, setLoadedDraft] = React.useState<any | null>(null);
   const [isFetchingDraft, setIsFetchingDraft] = React.useState(false);
 
@@ -544,6 +599,71 @@ export default function WeeklyReview() {
 
   const [publishedReports, setPublishedReports] = React.useState<any[]>([]);
   const [isPublishing, setIsPublishing] = React.useState(false);
+
+  const [publishedClassFilter, setPublishedClassFilter] = React.useState<string>('ALL');
+  const [publishedSearchQuery, setPublishedSearchQuery] = React.useState<string>('');
+
+  const getPeriodLabel = React.useCallback((report: any) => {
+    const weekVal = report.week ? String(report.week).trim() : '';
+    const dateRange = `${report.startDate} s/d ${report.endDate}`;
+    if (!weekVal) return dateRange;
+    if (weekVal.toLowerCase().includes('pekan') || weekVal.toLowerCase().includes('week')) {
+      return `${weekVal} (${dateRange})`;
+    }
+    return `Pekan ${weekVal} (${dateRange})`;
+  }, []);
+
+  const uniquePublishedClasses = React.useMemo(() => {
+    const map = new Map<string, string>();
+    publishedReports.forEach(r => {
+      if (r.classId) {
+        map.set(r.classId, r.className || 'Unknown');
+      } else if (r.className) {
+        map.set(r.className, r.className);
+      }
+    });
+    classes.forEach(c => {
+      map.set(c.id, c.name);
+    });
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [publishedReports, classes]);
+
+  const filteredPublishedReports = React.useMemo(() => {
+    return publishedReports.filter(report => {
+      if (publishedClassFilter !== 'ALL' && report.classId !== publishedClassFilter && report.className !== publishedClassFilter) {
+        return false;
+      }
+      if (publishedSearchQuery.trim()) {
+        const q = publishedSearchQuery.toLowerCase();
+        const studentNameMatches = report.studentName?.toLowerCase().includes(q);
+        const classNameMatches = report.className?.toLowerCase().includes(q);
+        const weekMatches = report.week && String(report.week).toLowerCase().includes(q);
+        if (!studentNameMatches && !classNameMatches && !weekMatches) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [publishedReports, publishedClassFilter, publishedSearchQuery]);
+
+  const groupedPublishedReports = React.useMemo(() => {
+    const groups: { [key: string]: { label: string; startDate: string; reports: any[] } } = {};
+    
+    filteredPublishedReports.forEach(report => {
+      const label = getPeriodLabel(report);
+      const key = `${report.startDate}_${report.endDate}_${report.week || ''}`;
+      if (!groups[key]) {
+        groups[key] = {
+          label,
+          startDate: report.startDate || '',
+          reports: []
+        };
+      }
+      groups[key].reports.push(report);
+    });
+    
+    return Object.values(groups).sort((a, b) => b.startDate.localeCompare(a.startDate));
+  }, [filteredPublishedReports, getPeriodLabel]);
 
   const fetchPublishedReports = React.useCallback(async () => {
     try {
@@ -800,8 +920,16 @@ export default function WeeklyReview() {
   const hasDraft = !!loadedDraft;
   const finalWeeklyComments = loadedDraft?.observationCommentTeacherEdited || loadedDraft?.observationCommentAiDraft || loadedDraft?.teacherEditedWeeklyComments || loadedDraft?.aiWeeklyCommentsDraft || '';
   const finalSocialEmotional = loadedDraft?.attendanceCommentTeacherEdited || loadedDraft?.attendanceCommentAiDraft || loadedDraft?.teacherEditedSocialEmotional || loadedDraft?.aiSocialEmotionalDraft || '';
-  const finalTheme = (loadedDraft?.theme && loadedDraft.theme.trim() !== '') ? loadedDraft.theme : 'Tema Belum Ditentukan';
-  const finalWeek = (loadedDraft?.week !== undefined && String(loadedDraft.week).trim() !== '') ? loadedDraft.week : computedWeek;
+  const finalTheme = (loadedDraft?.theme && loadedDraft.theme.trim() !== '') 
+    ? loadedDraft.theme 
+    : (classTheme && classTheme.trim() !== '') 
+      ? classTheme 
+      : 'Tema Belum Ditentukan';
+  const finalWeek = (loadedDraft?.week !== undefined && String(loadedDraft.week).trim() !== '') 
+    ? loadedDraft.week 
+    : (classWeek !== undefined && String(classWeek).trim() !== '') 
+      ? classWeek 
+      : '';
   const finalSnapshots = loadedDraft?.dailySnapshots || [];
   const finalAttendance = loadedDraft?.attendanceSummary || { happy: 0, sad: 0, angry: 0, ok: 0, noNews: 0, sick: 0, izin: 0, earlyLeave: 0 };
   const finalObsSummary = loadedDraft?.groupedObservationSummary || [];
@@ -1344,89 +1472,150 @@ export default function WeeklyReview() {
       )}
 
       {/* 5. PUBLISHED WEEKLY REPORTS PANEL */}
-      <section className="bg-white p-6 rounded-[2rem] border border-gray-150 shadow-sm print:hidden space-y-4">
-        <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-          <div className="space-y-0.5">
+      <section className="bg-white p-6 rounded-[2rem] border border-gray-150 shadow-sm print:hidden space-y-5">
+        <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-gray-100 pb-4 gap-4">
+          <div className="space-y-1">
             <h2 className="text-lg font-black text-gray-900 tracking-tight flex items-center gap-2">
               <FileText className="text-[#109E58]" size={18} />
               Published Weekly Reports
             </h2>
+            <p className="text-[11px] text-gray-500 font-bold">
+              Arsip laporan mingguan terbit yang tersimpan di server Google Drive & Firestore
+            </p>
           </div>
-          <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 text-[10px] font-black uppercase">
+          <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 text-[10px] font-black uppercase shrink-0 self-start md:self-center">
             {publishedReports.length} Terpublikasi
           </span>
         </div>
 
+        {/* Filters and Search Bar */}
+        {publishedReports.length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-gray-50 p-4 rounded-2xl border border-gray-150">
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-emerald-700 uppercase tracking-wider block">Filter Kelas</label>
+              <select
+                value={publishedClassFilter}
+                onChange={(e) => setPublishedClassFilter(e.target.value)}
+                className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none text-gray-700 cursor-pointer hover:bg-gray-50"
+              >
+                <option value="ALL">Semua Kelas ({uniquePublishedClasses.length})</option>
+                {uniquePublishedClasses.map(cls => (
+                  <option key={cls.id} value={cls.id}>
+                    {cls.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-emerald-700 uppercase tracking-wider block">Cari Nama Siswa</label>
+              <input
+                type="text"
+                value={publishedSearchQuery}
+                onChange={(e) => setPublishedSearchQuery(e.target.value)}
+                placeholder="Ketik nama siswa..."
+                className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none text-gray-700 placeholder-gray-400"
+              />
+            </div>
+          </div>
+        )}
+
         {publishedReports.length === 0 ? (
-          <div className="text-center py-8 text-gray-400 text-xs italic">
+          <div className="text-center py-12 text-gray-400 text-xs italic bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
             Belum ada laporan mingguan yang dipublikasikan dalam tahun ajaran ini.
           </div>
+        ) : filteredPublishedReports.length === 0 ? (
+          <div className="text-center py-12 text-gray-400 text-xs italic bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
+            Tidak ada laporan yang cocok dengan filter atau pencarian Anda.
+          </div>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-gray-150">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-150 font-black text-gray-600 uppercase tracking-wider">
-                  <th className="p-3.5">Kelas</th>
-                  <th className="p-3.5">Periode</th>
-                  <th className="p-3.5">Nama Siswa</th>
-                  <th className="p-3.5 text-right">File PDF / Tindakan</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 font-bold text-gray-700">
-                {publishedReports.map((report) => (
-                  <tr key={report.id} className="hover:bg-gray-50/50 transition-colors">
-                    <td className="p-3.5 text-emerald-800 font-black">
-                      {report.className}
-                    </td>
-                    <td className="p-3.5 text-gray-500 font-medium whitespace-nowrap">
-                      {report.startDate} s/d {report.endDate}
-                    </td>
-                    <td className="p-3.5 font-extrabold text-gray-900">
-                      {report.studentName}
-                    </td>
-                    <td className="p-3.5 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        {report.driveFileUrl && (
-                          <>
-                            <a
-                              href={report.driveFileUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 px-2.5 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer"
-                              title="Buka dokumen di Google Drive"
-                            >
-                              <FileText size={12} className="text-blue-500" />
-                              Drive
-                            </a>
-                            <button
-                              onClick={() => handleSendToParent(report.id, report.sentToParent || false)}
-                              disabled={report.sentToParent || false}
-                              className={cn(
-                                "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer",
-                                report.sentToParent
-                                  ? "bg-emerald-50 text-emerald-700 opacity-80 cursor-default"
-                                  : "bg-orange-50 hover:bg-orange-100 text-orange-700"
+          <div className="space-y-6">
+            {groupedPublishedReports.map((group) => (
+              <div key={group.label} className="space-y-3">
+                {/* Section Header for the period/week */}
+                <div className="bg-emerald-50/70 border border-emerald-100/50 text-emerald-900 px-4 py-2.5 rounded-xl flex items-center justify-between font-extrabold text-xs">
+                  <span className="flex items-center gap-2">
+                    <Calendar size={14} className="text-[#109E58]" />
+                    {group.label}
+                  </span>
+                  <span className="text-[10px] bg-white text-emerald-800 font-extrabold px-2.5 py-0.5 rounded-full border border-emerald-100">
+                    {group.reports.length} Laporan
+                  </span>
+                </div>
+                
+                {/* Table for students in this period */}
+                <div className="overflow-x-auto rounded-xl border border-gray-150">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-gray-50/50 border-b border-gray-150 font-black text-gray-500 uppercase tracking-wider text-[10px]">
+                        <th className="p-3.5">Nama Siswa</th>
+                        <th className="p-3.5 text-right">File PDF / Tindakan</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 font-bold text-gray-700">
+                      {group.reports.map((report) => (
+                        <tr key={report.id} className="hover:bg-gray-50/30 transition-colors">
+                          <td className="p-3.5">
+                            <div className="flex flex-col gap-1">
+                              <span className="font-extrabold text-gray-900 text-sm">{report.studentName}</span>
+                              <div className="flex items-center flex-wrap gap-2">
+                                <span className="text-[9px] bg-emerald-100 text-emerald-800 font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                  {report.className}
+                                </span>
+                                {report.publishedAt && (
+                                  <span className="text-[9.5px] text-gray-400 font-medium whitespace-nowrap">
+                                    Dipublish: {new Date(report.publishedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-3.5 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              {report.driveFileUrl && (
+                                <>
+                                  <a
+                                    href={report.driveFileUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 px-2.5 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer"
+                                    title="Buka dokumen di Google Drive"
+                                  >
+                                    <FileText size={12} className="text-blue-500" />
+                                    Drive
+                                  </a>
+                                  <button
+                                    onClick={() => handleSendToParent(report.id, report.sentToParent || false)}
+                                    disabled={report.sentToParent || false}
+                                    className={cn(
+                                      "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer",
+                                      report.sentToParent
+                                        ? "bg-emerald-50 text-emerald-700 opacity-80 cursor-default"
+                                        : "bg-orange-50 hover:bg-orange-100 text-orange-700"
+                                    )}
+                                    title={report.sentToParent ? "Laporan sudah dikirim ke orang tua" : "Kirim link laporan ini ke akun orang tua"}
+                                  >
+                                    <Send size={12} className={report.sentToParent ? "text-emerald-500" : "text-orange-500"} />
+                                    {report.sentToParent ? "Terkirim" : "Kirim ke Orang Tua"}
+                                  </button>
+                                </>
                               )}
-                              title={report.sentToParent ? "Laporan sudah dikirim ke orang tua" : "Kirim link laporan ini ke akun orang tua"}
-                            >
-                              <Send size={12} className={report.sentToParent ? "text-emerald-500" : "text-orange-500"} />
-                              {report.sentToParent ? "Terkirim" : "Kirim ke Orang Tua"}
-                            </button>
-                          </>
-                        )}
-                        <button
-                          onClick={() => handleDeletePublished(report.id, report.studentName)}
-                          className="p-1.5 hover:bg-red-50 text-red-500 hover:text-red-700 rounded-lg transition-all cursor-pointer"
-                          title="Hapus Publikasi"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                              <button
+                                onClick={() => handleDeletePublished(report.id, report.studentName)}
+                                className="p-1.5 hover:bg-red-50 text-red-500 hover:text-red-700 rounded-lg transition-all cursor-pointer"
+                                title="Hapus Publikasi"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </section>
