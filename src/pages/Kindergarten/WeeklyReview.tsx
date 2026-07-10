@@ -735,7 +735,6 @@ export default function WeeklyReview() {
       toast.success(`Berhasil dipublikasikan & diunggah ke Shared Drive untuk ${loadedDraft.studentName}! 🎉`, { id: "publish-kg" });
       
       await fetchPublishedReports();
-      window.print();
     } catch (err: any) {
       console.error("Error publishing report:", err);
       toast.dismiss("publish-kg");
@@ -858,7 +857,7 @@ export default function WeeklyReview() {
         <div className="bg-[#109E58] text-white text-center py-1 font-extrabold text-[10.5px] tracking-wider uppercase">
           SNAPSHOT - {dayKey}
         </div>
-        <div className="p-1.5 flex-1 flex flex-col justify-between bg-white min-h-[125px]">
+        <div className="p-1.5 flex-1 flex flex-col justify-center bg-white min-h-[120px]">
           {snap?.photoUrl ? (
             <div className="w-full h-[110px] overflow-hidden rounded-sm border border-gray-100">
               <img 
@@ -874,9 +873,6 @@ export default function WeeklyReview() {
               <span className="text-[9px] text-gray-400 font-bold italic leading-tight">No Documentation</span>
             </div>
           )}
-          <div className="text-[8.5px] text-gray-500 font-semibold italic text-left mt-0.5 px-0.5 line-clamp-1">
-            {snap?.photoUrl ? "Dokumentasi Terlampir" : (snap?.fallbackText || "Belum ada dokumen")}
-          </div>
         </div>
       </div>
     );
@@ -918,7 +914,7 @@ export default function WeeklyReview() {
                 ) : (
                   <>
                     <CheckCircle2 size={13} />
-                    Publish & Cetak PDF
+                    Publish PDF
                   </>
                 )}
               </button>
