@@ -688,6 +688,7 @@ export interface Class {
   status: 'active' | 'archived';
   createdAt: number;
   updatedAt: number;
+  teacherSignatureUrl?: string | null;
 }
 
 export type UserRole = 

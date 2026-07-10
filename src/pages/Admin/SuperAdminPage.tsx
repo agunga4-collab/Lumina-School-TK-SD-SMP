@@ -941,6 +941,7 @@ export default function SuperAdminPage() {
     academicYear: "2025/2026",
     homeroomTeacherId: "",
     unitId: "JUNIOR_HIGH" as UnitType,
+    teacherSignatureUrl: "",
   });
 
   const fetchData = async () => {
@@ -1262,10 +1263,11 @@ export default function SuperAdminPage() {
         academicYear: classFormData.academicYear,
         homeroomTeacherId: classFormData.homeroomTeacherId || null,
         homeroomTeacherName: teacher?.displayName || null,
+        teacherSignatureUrl: classFormData.teacherSignatureUrl || null,
         status: "active" as const,
       };
 
-      if (editingId && activeTab === "classes") {
+      if (editingId && (activeTab === "classes" || activeTab === "CLASSES")) {
         await updateClass(editingId, classData);
       } else {
         await addClass(classData);
@@ -1279,6 +1281,7 @@ export default function SuperAdminPage() {
         academicYear: "2025/2026",
         homeroomTeacherId: "",
         unitId: "JUNIOR_HIGH",
+        teacherSignatureUrl: "",
       });
       fetchData();
       alert("Kelas berhasil disimpan!");
@@ -2628,6 +2631,7 @@ export default function SuperAdminPage() {
                       academicYear: "2025/2026",
                       homeroomTeacherId: "",
                       unitId: defaultUnit,
+                      teacherSignatureUrl: "",
                     });
                     setIsClassModalOpen(true);
                   }}
@@ -2868,6 +2872,7 @@ export default function SuperAdminPage() {
                                       homeroomTeacherId:
                                         cls.homeroomTeacherId || "",
                                       unitId: cls.unitId,
+                                      teacherSignatureUrl: cls.teacherSignatureUrl || "",
                                     });
                                     setIsClassModalOpen(true);
                                   }}
@@ -6237,6 +6242,111 @@ export default function SuperAdminPage() {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                  Tanda Tangan Digital Guru (Per Kelas)
+                </label>
+                
+                {classFormData.teacherSignatureUrl ? (
+                  <div className="relative border border-gray-150 rounded-2xl p-4 flex flex-col items-center bg-gray-50/50 group/sig">
+                    <img
+                      src={classFormData.teacherSignatureUrl}
+                      alt="Tanda Tangan Guru"
+                      className="max-h-24 object-contain mb-2 mix-blend-multiply bg-white rounded-lg p-2 shadow-sm border border-gray-100"
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="flex gap-2">
+                      <label className="px-3 py-1.5 bg-white text-gray-700 text-[10px] font-bold uppercase tracking-wider rounded-lg shadow-sm border border-gray-200 hover:text-blue-600 hover:border-blue-300 cursor-pointer transition-all">
+                        Ganti TTD
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              if (!file.type.startsWith("image/")) {
+                                alert("Harap pilih file gambar!");
+                                return;
+                              }
+                              const reader = new FileReader();
+                              reader.onload = (re) => {
+                                const img = new Image();
+                                img.onload = () => {
+                                  const canvas = document.createElement("canvas");
+                                  const ctx = canvas.getContext("2d");
+                                  if (ctx) {
+                                    canvas.width = 300;
+                                    canvas.height = 150;
+                                    ctx.fillStyle = "transparent";
+                                    ctx.fillRect(0, 0, 300, 150);
+                                    ctx.drawImage(img, 0, 0, 300, 150);
+                                    const compressed = canvas.toDataURL("image/png");
+                                    setClassFormData(prev => ({ ...prev, teacherSignatureUrl: compressed }));
+                                  }
+                                };
+                                img.src = re.target?.result as string;
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setClassFormData(prev => ({ ...prev, teacherSignatureUrl: "" }))}
+                        className="px-3 py-1.5 bg-white text-red-600 text-[10px] font-bold uppercase tracking-wider rounded-lg shadow-sm border border-gray-200 hover:bg-red-50 hover:text-red-700 hover:border-red-100 transition-all"
+                      >
+                        Hapus TTD
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <label className="border-2 border-dashed border-gray-200 hover:border-blue-400 hover:bg-blue-50/10 rounded-2xl p-6 flex flex-col items-center justify-center cursor-pointer transition-all group/sig">
+                    <Upload size={20} className="text-gray-300 group-hover/sig:text-blue-500 transition-colors mb-2" />
+                    <span className="text-[10px] font-bold text-gray-500 group-hover/sig:text-blue-600 transition-colors">
+                      Klik untuk Unggah Tanda Tangan Guru
+                    </span>
+                    <span className="text-[8px] text-gray-400 font-bold uppercase tracking-widest mt-0.5">
+                      Format landscape (PNG/JPG)
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          if (!file.type.startsWith("image/")) {
+                            alert("Harap pilih file gambar!");
+                            return;
+                          }
+                          const reader = new FileReader();
+                          reader.onload = (re) => {
+                            const img = new Image();
+                            img.onload = () => {
+                              const canvas = document.createElement("canvas");
+                              const ctx = canvas.getContext("2d");
+                              if (ctx) {
+                                canvas.width = 300;
+                                canvas.height = 150;
+                                ctx.fillStyle = "transparent";
+                                ctx.fillRect(0, 0, 300, 150);
+                                ctx.drawImage(img, 0, 0, 300, 150);
+                                const compressed = canvas.toDataURL("image/png");
+                                setClassFormData(prev => ({ ...prev, teacherSignatureUrl: compressed }));
+                              }
+                            };
+                            img.src = re.target?.result as string;
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+                  </label>
+                )}
               </div>
 
               <div className="pt-4 flex gap-3">

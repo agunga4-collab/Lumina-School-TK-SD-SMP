@@ -460,10 +460,7 @@ export default function WeeklyReview() {
   const [loadedDraft, setLoadedDraft] = React.useState<any | null>(null);
   const [isFetchingDraft, setIsFetchingDraft] = React.useState(false);
 
-  const [teacherName, setTeacherName] = React.useState<string>(() => {
-    return localStorage.getItem('kg_teacher_name') || '';
-  });
-  const [teacherNip, setTeacherNip] = React.useState<string>(() => {
+   const [teacherNip, setTeacherNip] = React.useState<string>(() => {
     return localStorage.getItem('kg_teacher_nip') || '';
   });
 
@@ -1420,30 +1417,26 @@ export default function WeeklyReview() {
                   {formattedSignDate}
                 </div>
                 <div className="p-2 bg-white flex-1 flex flex-col items-center justify-center min-h-[75px] py-1">
-                  <div className="h-7.5 flex items-center justify-center">
-                    {teacherName ? (
-                      <svg className="w-14 h-7 text-emerald-800/60 opacity-80" viewBox="0 0 120 60" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M15 42 Q 35 20, 45 45 T 75 18 T 105 32" />
-                        <path d="M25 38 C 20 22, 50 12, 42 42" />
-                        <path d="M48 35 L 72 35" />
-                        <path d="M68 25 C 75 15, 82 45, 78 40" />
-                      </svg>
+                  <div className="h-10 flex items-center justify-center">
+                    {activeClassObj?.teacherSignatureUrl ? (
+                      <img
+                        src={activeClassObj.teacherSignatureUrl}
+                        alt="Tanda Tangan Guru"
+                        className="max-h-10 max-w-[140px] object-contain mix-blend-multiply"
+                        referrerPolicy="no-referrer"
+                      />
                     ) : (
-                      <span className="text-[9px] text-gray-300 italic font-bold select-none py-1 block print:hidden">Tanda Tangan Guru</span>
+                      <span className="text-[8px] text-red-550 italic font-bold select-none py-1 block text-center leading-tight">
+                        Tanda tangan guru belum diunggah
+                      </span>
                     )}
                   </div>
                   <div className="text-center font-sans mt-1 flex flex-col items-center gap-0.5 w-full">
-                    <input 
-                      type="text"
-                      value={teacherName}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setTeacherName(val);
-                        localStorage.setItem('kg_teacher_name', val);
-                      }}
-                      placeholder="NAMA GURU"
-                      className="text-center font-extrabold text-[10px] text-gray-900 border-b border-dotted border-gray-300 w-32 pb-0.5 mx-auto uppercase focus:border-solid focus:border-emerald-500 outline-none print:border-none print:p-0 print:m-0"
-                    />
+                    <span className="text-center font-extrabold text-[10px] text-gray-900 border-b border-solid border-gray-900 w-36 pb-0.5 mx-auto uppercase">
+                      {activeClassObj?.homeroomTeacherName || (
+                        <span className="text-red-550 italic font-bold">Wali Kelas Belum Diatur</span>
+                      )}
+                    </span>
                     <input 
                       type="text"
                       value={teacherNip}
