@@ -9,6 +9,7 @@ import {
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import type { UserRole, UnitType, User } from '../../types';
+import KindergartenHeadDashboard from '../Kindergarten/HeadDashboard';
 
 export default function LuminaHome() {
   const { 
@@ -28,6 +29,10 @@ export default function LuminaHome() {
   const navigate = useNavigate();
   const userName = currentUser.displayName;
   const userRole = currentUser.role;
+
+  if (activeUnit === 'KINDERGARTEN' && (userRole === 'HEAD_UNIT' || userRole === 'SUPER_ADMIN')) {
+    return <KindergartenHeadDashboard />;
+  }
 
   const isParent = userRole === 'PARENT';
   

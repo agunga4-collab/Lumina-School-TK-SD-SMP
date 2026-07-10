@@ -10,9 +10,40 @@ import {
   Smile, Frown, Meh, Angry, BarChart3
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { DEFAULT_STUDENTS } from '../../lib/kindergartenWeeklyReport';
+import { DEFAULT_STUDENTS, getStoredStudents, saveStoredStudents } from '../../lib/kindergartenWeeklyReport';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../../lib/firebase';
+import { useAcademicYear } from '../../context/AcademicYearContext';
+import { getKindergartenStudents } from '../../lib/kindergartenMetadataCache';
 
 export default function KindergartenHeadDashboard() {
+  const { activeYear } = useAcademicYear();
+  const [students, setStudents] = React.useState<any[]>(() => DEFAULT_STUDENTS);
+  const [attendanceDocs, setAttendanceDocs] = React.useState<any[]>([]);
+  const [observationDocs, setObservationDocs] = React.useState<any[]>([]);
+  const [isLoading, setIsLoading] = React.useState<boolean>(false);
+
+  // Load dynamic student list from cache/Firestore
+  React.useEffect(() => {
+    async function loadKindergartenData() {
+      try {
+        const fetchedStudents = await getKindergartenStudents(activeYear || '2025/2026');
+        if (fetchedStudents && fetchedStudents.length > 0) {
+          setStudents(fetchedStudents);
+          saveStoredStudents(fetchedStudents);
+        } else {
+          const local = getStoredStudents();
+          if (local && local.length > 0) {
+            setStudents(local);
+          }
+        }
+      } catch (err) {
+        console.error('Error loading Kindergarten students from Firestore:', err);
+      }
+    }
+    loadKindergartenData();
+  }, [activeYear]);
+
   // Period filter states
   const [periodType, setPeriodType] = React.useState<'monthly' | 'semester' | 'yearly' | 'custom'>('monthly');
   const [selectedMonth, setSelectedMonth] = React.useState<number>(() => new Date().getMonth()); // 0-11
@@ -20,6 +51,82 @@ export default function KindergartenHeadDashboard() {
   const [selectedSemester, setSelectedSemester] = React.useState<'1' | '2'>('2');
   const [customStartDate, setCustomStartDate] = React.useState<string>('2026-01-01');
   const [customEndDate, setCustomEndDate] = React.useState<string>('2026-06-30');
+
+  // Compute start/end date range for Firestore query
+  const dateRange = React.useMemo(() => {
+    let start = '';
+    let end = '';
+    if (periodType === 'monthly') {
+      const monthStr = String(selectedMonth + 1).padStart(2, '0');
+      start = `${selectedYear}-${monthStr}-01`;
+      end = `${selectedYear}-${monthStr}-31`;
+    } else if (periodType === 'semester') {
+      if (selectedSemester === '1') {
+        start = `${selectedYear}-07-01`;
+        end = `${selectedYear}-12-31`;
+      } else {
+        start = `${selectedYear}-01-01`;
+        end = `${selectedYear}-06-30`;
+      }
+    } else if (periodType === 'yearly') {
+      start = `${selectedYear}-01-01`;
+      end = `${selectedYear}-12-31`;
+    } else if (periodType === 'custom') {
+      start = customStartDate;
+      end = customEndDate;
+    }
+    return { start, end };
+  }, [periodType, selectedMonth, selectedYear, selectedSemester, customStartDate, customEndDate]);
+
+  // Fetch from Firestore when date range changes
+  React.useEffect(() => {
+    let active = true;
+    async function fetchData() {
+      setIsLoading(true);
+      try {
+        const { start, end } = dateRange;
+        
+        // 1. Fetch attendance
+        const attendanceQuery = query(
+          collection(db, 'attendance'),
+          where('date', '>=', start),
+          where('date', '<=', end)
+        );
+        const attendanceSnap = await getDocs(attendanceQuery);
+        const attDocs = attendanceSnap.docs.map(d => ({
+          id: d.id,
+          ...d.data()
+        }));
+
+        // 2. Fetch observations
+        const observationsQuery = query(
+          collection(db, 'observations'),
+          where('date', '>=', start),
+          where('date', '<=', end)
+        );
+        const observationsSnap = await getDocs(observationsQuery);
+        const obsDocs = observationsSnap.docs.map(d => ({
+          id: d.id,
+          ...d.data()
+        }));
+
+        if (active) {
+          setAttendanceDocs(attDocs);
+          setObservationDocs(obsDocs);
+        }
+      } catch (err) {
+        console.error('Error fetching HeadDashboard data from Firestore:', err);
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    }
+    fetchData();
+    return () => {
+      active = false;
+    };
+  }, [dateRange]);
 
   const isChecklistDateInPeriod = React.useCallback((dateStr: string) => {
     if (!dateStr) return false;
@@ -41,33 +148,60 @@ export default function KindergartenHeadDashboard() {
     return true;
   }, [periodType, selectedMonth, selectedYear, selectedSemester, customStartDate, customEndDate]);
 
-  const isTimestampInPeriod = React.useCallback((timestamp: number) => {
-    if (!timestamp) return true; // Fallback
-    const dateObj = new Date(timestamp);
-    const year = dateObj.getFullYear();
-    const month = dateObj.getMonth();
-    
-    const yyyy = dateObj.getFullYear();
-    const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
-    const dd = String(dateObj.getDate()).padStart(2, '0');
-    const dateStr = `${yyyy}-${mm}-${dd}`;
-    
-    if (periodType === 'monthly') {
-      return year === parseInt(selectedYear, 10) && month === selectedMonth;
-    } else if (periodType === 'semester') {
-      if (year !== parseInt(selectedYear, 10)) return false;
-      return selectedSemester === '1' ? (month >= 6 && month <= 11) : (month >= 0 && month <= 5);
-    } else if (periodType === 'yearly') {
-      return year === parseInt(selectedYear, 10);
-    } else if (periodType === 'custom') {
-      return dateStr >= customStartDate && dateStr <= customEndDate;
+  const mapFirestoreEmotionToSystem = (emotionStr: string): { attendance: string | null; emotion: string | null } => {
+    const s = emotionStr || 'ok';
+    switch (s) {
+      case 'happy':
+        return { attendance: 'PRESENT', emotion: 'HAPPY' };
+      case 'sad':
+        return { attendance: 'PRESENT', emotion: 'SAD' };
+      case 'ok':
+        return { attendance: 'PRESENT', emotion: 'OK' };
+      case 'angry':
+        return { attendance: 'PRESENT', emotion: 'ANGRY' };
+      case 'noNews':
+        return { attendance: 'NO_NEWS', emotion: null };
+      case 'sick':
+        return { attendance: 'SICK', emotion: null };
+      case 'izin':
+        return { attendance: 'PERMISSION', emotion: null };
+      default:
+        return { attendance: 'PRESENT', emotion: 'OK' };
     }
-    return true;
-  }, [periodType, selectedMonth, selectedYear, selectedSemester, customStartDate, customEndDate]);
+  };
 
   const stats = React.useMemo(() => {
-    // 1. Fetch checklists
+    // 1. Process merged checklists
+    const recordsByDate: Record<string, Record<string, { attendance: string | null; emotion: string | null }>> = {};
+
+    // First load from localStorage to preserve any local edits
     const savedChecklist = localStorage.getItem('kg_checklist_records');
+    if (savedChecklist) {
+      try {
+        const parsed = JSON.parse(savedChecklist);
+        Object.entries(parsed).forEach(([dateStr, studentMap]: [string, any]) => {
+          recordsByDate[dateStr] = { ...studentMap };
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    // Then merge Firestore attendance records (Firestore is the source of truth, so we overwrite or merge)
+    attendanceDocs.forEach(docData => {
+      const dateStr = docData.date;
+      if (!dateStr) return;
+      if (!recordsByDate[dateStr]) {
+        recordsByDate[dateStr] = {};
+      }
+      const studentsList = docData.students || [];
+      studentsList.forEach((s: any) => {
+        if (s.studentId) {
+          recordsByDate[dateStr][s.studentId] = mapFirestoreEmotionToSystem(s.emotion);
+        }
+      });
+    });
+
     let totalChecklistSlots = 0;
     let presentCount = 0;
     let happyCount = 0;
@@ -77,65 +211,60 @@ export default function KindergartenHeadDashboard() {
 
     const alertMap: Record<string, { studentId: string; name: string; reasons: string[]; lastSeen: string }> = {};
 
-    if (savedChecklist) {
-      try {
-        const records = JSON.parse(savedChecklist);
-        
-        // Sort keys descending to get most recent records for alerts
-        const sortedDates = Object.keys(records).sort((a,b) => b.localeCompare(a));
-        const latestDates = sortedDates.slice(0, 5); // check last 5 active checklist days
-        
-        Object.entries(records).forEach(([dateStr, studentMap]: [string, any]) => {
-          if (!isChecklistDateInPeriod(dateStr)) return;
-          Object.entries(studentMap).forEach(([studentId, status]: [string, any]) => {
-            const student = DEFAULT_STUDENTS.find(s => s.id === studentId);
-            if (!student) return;
+    // Get sorted checklist dates inside period for alerts
+    const activeDatesInPeriod = Object.keys(recordsByDate)
+      .filter(isChecklistDateInPeriod)
+      .sort((a, b) => b.localeCompare(a));
+      
+    const latestDates = activeDatesInPeriod.slice(0, 5); // check last 5 active checklist days
 
-            totalChecklistSlots++;
-            if (status.attendance === 'PRESENT') {
-              presentCount++;
-              if (status.emotion === 'HAPPY') {
-                happyCount++;
-              } else if (status.emotion === 'OK') {
-                okCount++;
-              } else if (status.emotion === 'SAD') {
-                sadCount++;
-                if (latestDates.includes(dateStr)) {
-                  if (!alertMap[studentId]) {
-                    alertMap[studentId] = { studentId, name: student.name, reasons: [], lastSeen: dateStr };
-                  }
-                  alertMap[studentId].reasons.push(`Kurang bersemangat (Sedih) pada ${dateStr}`);
-                }
-              } else if (status.emotion === 'ANGRY') {
-                angryCount++;
-                if (latestDates.includes(dateStr)) {
-                  if (!alertMap[studentId]) {
-                    alertMap[studentId] = { studentId, name: student.name, reasons: [], lastSeen: dateStr };
-                  }
-                  alertMap[studentId].reasons.push(`Tampak marah / kesal pada ${dateStr}`);
-                }
+    Object.entries(recordsByDate).forEach(([dateStr, studentMap]: [string, any]) => {
+      if (!isChecklistDateInPeriod(dateStr)) return;
+      Object.entries(studentMap).forEach(([studentId, status]: [string, any]) => {
+        const student = students.find(s => s.id === studentId);
+        if (!student) return;
+
+        totalChecklistSlots++;
+        if (status.attendance === 'PRESENT') {
+          presentCount++;
+          if (status.emotion === 'HAPPY') {
+            happyCount++;
+          } else if (status.emotion === 'OK') {
+            okCount++;
+          } else if (status.emotion === 'SAD') {
+            sadCount++;
+            if (latestDates.includes(dateStr)) {
+              if (!alertMap[studentId]) {
+                alertMap[studentId] = { studentId, name: student.name, reasons: [], lastSeen: dateStr };
               }
-            } else if (status.attendance && ['SICK', 'PERMISSION', 'NO_NEWS'].includes(status.attendance)) {
-              if (latestDates.includes(dateStr)) {
-                if (!alertMap[studentId]) {
-                  alertMap[studentId] = { studentId, name: student.name, reasons: [], lastSeen: dateStr };
-                }
-                const statusLabel = status.attendance === 'SICK' ? 'Sakit' : status.attendance === 'PERMISSION' ? 'Izin' : 'Tanpa Kabar';
-                alertMap[studentId].reasons.push(`Absen (${statusLabel}) pada ${dateStr}`);
-              }
+              alertMap[studentId].reasons.push(`Kurang bersemangat (Sedih) pada ${dateStr}`);
             }
-          });
-        });
-      } catch (e) {
-        console.error(e);
-      }
-    }
+          } else if (status.emotion === 'ANGRY') {
+            angryCount++;
+            if (latestDates.includes(dateStr)) {
+              if (!alertMap[studentId]) {
+                alertMap[studentId] = { studentId, name: student.name, reasons: [], lastSeen: dateStr };
+              }
+              alertMap[studentId].reasons.push(`Tampak marah / kesal pada ${dateStr}`);
+            }
+          }
+        } else if (status.attendance && ['SICK', 'PERMISSION', 'NO_NEWS'].includes(status.attendance)) {
+          if (latestDates.includes(dateStr)) {
+            if (!alertMap[studentId]) {
+              alertMap[studentId] = { studentId, name: student.name, reasons: [], lastSeen: dateStr };
+            }
+            const statusLabel = status.attendance === 'SICK' ? 'Sakit' : status.attendance === 'PERMISSION' ? 'Izin' : 'Tanpa Kabar';
+            alertMap[studentId].reasons.push(`Absen (${statusLabel}) pada ${dateStr}`);
+          }
+        }
+      });
+    });
 
     const attendanceRate = totalChecklistSlots > 0 ? Math.round((presentCount / totalChecklistSlots) * 100) : 0;
     const totalPresentWithEmotions = happyCount + okCount + sadCount + angryCount;
     const happinessIndex = totalPresentWithEmotions > 0 ? Math.round(((happyCount + okCount) / totalPresentWithEmotions) * 100) : 0;
 
-    // 2. Fetch observations
+    // 2. Process observations
     let totalGradingsCount = 0;
     let bshOrBsbCount = 0;
     let totalSentraSessions = 0;
@@ -151,40 +280,85 @@ export default function KindergartenHeadDashboard() {
 
     const sentraCounts: Record<string, number> = {};
 
+    // Merge Firestore and LocalStorage observations
+    const observationsMap = new Map<string, any>();
+
+    // A. Add Firestore observations
+    observationDocs.forEach(docData => {
+      if (docData.activity && docData.domain && docData.date) {
+        const key = `${docData.activity}_${docData.domain}_${docData.date}`;
+        observationsMap.set(key, {
+          activity: docData.activity,
+          domain: docData.domain,
+          date: docData.date,
+          observations: docData.observations || {},
+          timestamp: docData.timestamp || Date.now()
+        });
+      }
+    });
+
+    // B. Add LocalStorage observations
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (key && key.startsWith('kg_obs_hist_')) {
         try {
           const payload = JSON.parse(localStorage.getItem(key) || '{}');
           if (payload && payload.observations) {
-            if (!isTimestampInPeriod(payload.timestamp)) continue;
-            totalSentraSessions++;
-            const domain = payload.selectedDomain || '';
-            const activity = payload.selectedActivity || 'Lainnya';
-            sentraCounts[activity] = (sentraCounts[activity] || 0) + 1;
-            
-            Object.values(payload.observations).forEach((obs: any) => {
-              if (obs && obs.grading && obs.grading !== 'ABSENT' && obs.grading !== 'NOT_PARTICIPATING') {
-                totalGradingsCount++;
-                const isGood = obs.grading === 'BSH' || obs.grading === 'BSB';
-                if (isGood) {
-                  bshOrBsbCount++;
-                }
-
-                if (domainSummary[domain]) {
-                  domainSummary[domain].total++;
-                  if (isGood) {
-                    domainSummary[domain].bshBsb++;
-                  }
-                }
+            const activity = payload.selectedActivity || payload.activity;
+            const domain = payload.selectedDomain || payload.domain;
+            let dateStr = payload.date;
+            if (!dateStr && payload.timestamp) {
+              const d = new Date(payload.timestamp);
+              const yr = d.getFullYear();
+              const mo = String(d.getMonth() + 1).padStart(2, '0');
+              const da = String(d.getDate()).padStart(2, '0');
+              dateStr = `${yr}-${mo}-${da}`;
+            }
+            if (activity && domain && dateStr) {
+              const comboKey = `${activity}_${domain}_${dateStr}`;
+              const existing = observationsMap.get(comboKey);
+              if (!existing || (payload.timestamp && payload.timestamp > (existing.timestamp || 0))) {
+                observationsMap.set(comboKey, {
+                  activity,
+                  domain,
+                  date: dateStr,
+                  observations: payload.observations,
+                  timestamp: payload.timestamp || Date.now()
+                });
               }
-            });
+            }
           }
         } catch (e) {
           console.error(e);
         }
       }
     }
+
+    observationsMap.forEach((session) => {
+      if (!isChecklistDateInPeriod(session.date)) return;
+      
+      totalSentraSessions++;
+      const domain = session.domain || '';
+      const activity = session.activity || 'Lainnya';
+      sentraCounts[activity] = (sentraCounts[activity] || 0) + 1;
+      
+      Object.values(session.observations).forEach((obs: any) => {
+        if (obs && obs.grading && obs.grading !== 'ABSENT' && obs.grading !== 'NOT_PARTICIPATING') {
+          totalGradingsCount++;
+          const isGood = obs.grading === 'BSH' || obs.grading === 'BSB';
+          if (isGood) {
+            bshOrBsbCount++;
+          }
+
+          if (domainSummary[domain]) {
+            domainSummary[domain].total++;
+            if (isGood) {
+              domainSummary[domain].bshBsb++;
+            }
+          }
+        }
+      });
+    });
 
     const progressRate = totalGradingsCount > 0 ? Math.round((bshOrBsbCount / totalGradingsCount) * 100) : 0;
 
@@ -196,13 +370,6 @@ export default function KindergartenHeadDashboard() {
       { name: 'Sad', value: sadCount, percent: totalEmotionRecorded > 0 ? Math.round((sadCount / totalEmotionRecorded) * 100) : 0, color: '#3b82f6' },   // blue
       { name: 'Angry', value: angryCount, percent: totalEmotionRecorded > 0 ? Math.round((angryCount / totalEmotionRecorded) * 100) : 0, color: '#ef4444' } // red
     ].filter(item => item.value > 0);
-
-    const fallbackEmotions = [
-      { name: 'Happy', value: 0, percent: 0, color: '#10b981' },
-      { name: 'OK', value: 0, percent: 0, color: '#f59e0b' },
-      { name: 'Sad', value: 0, percent: 0, color: '#3b82f6' },
-      { name: 'Angry', value: 0, percent: 0, color: '#ef4444' }
-    ];
 
     const displayEmotionsList = totalEmotionRecorded > 0 
       ? [
@@ -267,8 +434,9 @@ export default function KindergartenHeadDashboard() {
       displayEmotionsList
     };
   }, [
+    attendanceDocs, observationDocs, students,
     periodType, selectedMonth, selectedYear, selectedSemester, customStartDate, customEndDate,
-    isChecklistDateInPeriod, isTimestampInPeriod
+    isChecklistDateInPeriod
   ]);
 
   return (
@@ -279,7 +447,13 @@ export default function KindergartenHeadDashboard() {
            <h1 className="text-2xl font-black text-gray-900 tracking-tight italic">Dashboard Kepala TK</h1>
            <p className="text-gray-500 font-medium tracking-tight text-xs">Akses Monitoring Statistik Kehadiran, Emosi, dan Progres Domain Real-Time</p>
         </div>
-        <div className="flex bg-white p-2 rounded-2xl shadow-sm border border-gray-100 items-center">
+        <div className="flex bg-white p-2 rounded-2xl shadow-sm border border-gray-100 items-center gap-2">
+           {isLoading && (
+             <div className="flex items-center gap-1.5 text-[10px] text-emerald-600 font-black uppercase tracking-widest px-2 animate-pulse">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                Sinkronisasi...
+             </div>
+           )}
            <div className="flex items-center gap-2 px-4 py-1.5 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-bold border border-emerald-100">
               <Calendar size={14} />
               {new Intl.DateTimeFormat('id-ID', { month: 'long', year: 'numeric' }).format(new Date())}

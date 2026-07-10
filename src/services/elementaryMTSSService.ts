@@ -66,7 +66,7 @@ export const elementaryMTSSService = {
             tier,
             studentName: record.studentName,
             classId: record.classId,
-            status: 'Active', // Remains active or re-activates if there is active Tier 2/3 progress data
+            status: currentData.status === 'Achieved' ? 'Achieved' : 'Active', // Preserve Achieved status from spreadsheet
             updatedAt: Date.now()
           };
           await setDoc(docRef, updatedCase, { merge: true });
@@ -234,7 +234,38 @@ export const elementaryMTSSService = {
           }
         }
       }
+
+      // Fetch all batch sheets to determine active MTSS participation & explicit graduation
+      const sheetsCol = collection(db, 'elementary_mtss_batch_sheets');
+      const sheetsSnap = await getDocs(sheetsCol);
+      const validAchievedKeys = new Set<string>();
+      const studentsWithMTSSHistory = new Set<string>(); // key: studentId_area
+
+      sheetsSnap.forEach(docSnap => {
+        const sheet = docSnap.data() as MTSSBatchSheet;
+        const subject = sheet.subject;
+        let area: ElementaryArea = 'NUMERACY';
+        if (subject === 'Bahasa Indonesia') area = 'BAHASA_INDONESIA';
+        else if (subject === 'English') area = 'ENGLISH_READING';
+        else if (subject === 'Mengaji') area = 'MENGAJI';
+
+        const studentIds = sheet.studentIds || [];
+        const studentsData = sheet.studentsData || {};
+
+        studentIds.forEach((stId: string) => {
+          const key = `${stId}_${area}`;
+          studentsWithMTSSHistory.add(key);
+
+          const sData = studentsData[stId];
+          if (sData) {
+            if (sData.finalDiagnosis === 'Achieved' || sData.finalDiagnosis === 'Passed Tier 2') {
+              validAchievedKeys.add(key);
+            }
+          }
+        });
+      });
       
+      // 1. Process latest progress records to synchronize Tier 2 / Tier 3 cases
       for (const record of Object.values(latestRecordsMap)) {
         const tier = mapSupportStatusToTier(record.supportStatus);
         
@@ -243,6 +274,7 @@ export const elementaryMTSSService = {
           const caseDocRef = doc(db, CASES_COLLECTION, caseId);
           const caseSnap = await getDoc(caseDocRef);
           const subject = mapAreaToSubject(record.area);
+          const isExplicitlyAchieved = validAchievedKeys.has(caseId);
           
           if (caseSnap.exists()) {
             const currentData = caseSnap.data() as ElementaryMTSSCase;
@@ -251,7 +283,7 @@ export const elementaryMTSSService = {
               tier,
               studentName: record.studentName || currentData.studentName,
               classId: record.classId || currentData.classId,
-              status: 'Active', // Remains active or re-activates if there is active Tier 2/3 progress data
+              status: isExplicitlyAchieved ? 'Achieved' : 'Active', // Preserve Achieved status only if explicitly in batch sheet
               updatedAt: Date.now()
             };
             await setDoc(caseDocRef, updatedCase, { merge: true });
@@ -265,18 +297,54 @@ export const elementaryMTSSService = {
               tier,
               baselineScore: '',
               targetScore: '',
-              status: 'Active',
+              status: isExplicitlyAchieved ? 'Achieved' : 'Active',
               createdAt: Date.now(),
               updatedAt: Date.now()
             };
             await setDoc(caseDocRef, newCase);
           }
           syncedCount++;
-        } else {
-          // Under the new rules, we do NOT change active cases to Achieved automatically when status changes.
-          // It must only change to Achieved via spreadsheet outcomes (e.g. Passed Tier 2).
         }
       }
+
+      // 2. Perform cleanup of old, invalid, or automatically generated cases in the database
+      const casesCol = collection(db, CASES_COLLECTION);
+      const casesSnap = await getDocs(casesCol);
+
+      for (const caseDoc of casesSnap.docs) {
+        const caseId = caseDoc.id;
+        const caseData = caseDoc.data() as ElementaryMTSSCase;
+
+        const currentRecord = latestRecordsMap[caseId];
+        const currentTier = currentRecord ? mapSupportStatusToTier(currentRecord.supportStatus) : null;
+        const hasHistory = studentsWithMTSSHistory.has(caseId);
+        const isExplicitlyAchieved = validAchievedKeys.has(caseId);
+
+        if (caseData.status === 'Achieved') {
+          // If the case is marked as Achieved, but has no MTSS history and wasn't explicitly achieved:
+          if (!isExplicitlyAchieved && !hasHistory) {
+            if (currentTier) {
+              // They are currently Tier 2/3, so they should be Active.
+              await updateDoc(caseDoc.ref, { status: 'Active', updatedAt: Date.now() });
+            } else {
+              // They are currently Tier 1 (ON_TRACK) and have no MTSS coaching history. Delete!
+              await deleteDoc(caseDoc.ref);
+            }
+          } else if (!isExplicitlyAchieved && hasHistory) {
+            // They have coaching history, but if their current record puts them in Tier 2/3, they must be Active.
+            if (currentTier) {
+              await updateDoc(caseDoc.ref, { status: 'Active', updatedAt: Date.now() });
+            }
+          }
+        } else {
+          // Case is Active
+          if (!currentTier && !hasHistory) {
+            // Currently Tier 1 and no MTSS history. Delete!
+            await deleteDoc(caseDoc.ref);
+          }
+        }
+      }
+
       return syncedCount;
     } catch (error) {
       console.error('Error in reconcileAllMTSSCases:', error);

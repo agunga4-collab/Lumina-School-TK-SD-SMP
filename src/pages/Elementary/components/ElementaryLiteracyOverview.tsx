@@ -73,8 +73,8 @@ export default function ElementaryLiteracyOverview({ schoolYear, period }: Props
       if (rec.supportStatus === 'ON_TRACK') {
         onTrackCount++;
       } else if (
-        rec.supportStatus === 'NEEDS_SUPPORT' || 
-        rec.supportStatus === 'INTERVENTION_RECOMMENDED'
+        rec.supportStatus === 'MONITOR' || 
+        rec.supportStatus === 'NEEDS_SUPPORT'
       ) {
         needsSupportCount++;
         followUpList.push(rec);
@@ -177,7 +177,7 @@ export default function ElementaryLiteracyOverview({ schoolYear, period }: Props
               <AlertTriangle size={18} />
             </div>
             <span className="text-[10px] font-black text-rose-600 uppercase tracking-widest">
-              BUTUH INTERVENSI (TIER 3 & SN)
+              BUTUH INTERVENSI (TIER 2 & TIER 3)
             </span>
           </div>
           <div className="mt-4">

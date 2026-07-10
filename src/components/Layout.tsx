@@ -510,11 +510,13 @@ export function Layout() {
              
              {(currentUser.role === 'HEAD_UNIT' || currentUser.role === 'HEAD_JUNIOR' || currentUser.role === 'SUPER_ADMIN') && (
                 <>
-                  <NavItem 
-                    to={currentUnit === 'KINDERGARTEN' ? '/dashboard/head-kindy' : (currentUnit === 'ELEMENTARY' ? '/dashboard/head-elementary' : '/dashboard/head')} 
-                    icon={<LayoutDashboard size={18} />} 
-                    label="Analisis Unit" 
-                  />
+                  {currentUnit !== 'KINDERGARTEN' && (
+                    <NavItem 
+                      to={currentUnit === 'ELEMENTARY' ? '/dashboard/head-elementary' : '/dashboard/head'} 
+                      icon={<LayoutDashboard size={18} />} 
+                      label="Analisis Unit" 
+                    />
+                  )}
                   <NavItem to="/child/passport" icon={<MapIcon size={18} />} label="Student Portfolio" />
                 </>
              )}

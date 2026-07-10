@@ -504,7 +504,7 @@ export default function ElementaryLiteracyNumeracy() {
         if (rec.supportStatus && rec.supportStatus !== 'INCOMPLETE_DATA') {
           completed++;
         }
-        if (rec.supportStatus === 'NEEDS_SUPPORT' || rec.supportStatus === 'INTERVENTION_RECOMMENDED') {
+        if (rec.supportStatus === 'MONITOR' || rec.supportStatus === 'NEEDS_SUPPORT') {
           support++;
         }
       }
@@ -656,7 +656,10 @@ export default function ElementaryLiteracyNumeracy() {
 
           {/* MINI OVERVIEW METRICS ROWS */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-            <div className="md:col-span-6 bg-slate-900 text-white rounded-3xl p-5 flex items-center justify-between shadow-xl shadow-slate-900/10">
+            <div className={cn(
+              "bg-slate-900 text-white rounded-3xl p-5 flex items-center justify-between shadow-xl shadow-slate-900/10",
+              selectedArea === "NUMERACY" ? "md:col-span-6" : "md:col-span-12"
+            )}>
               <div className="space-y-1.5">
                 <span className="text-[10px] font-black tracking-widest text-[#9d9da6] uppercase">Rasio Entri Selesai</span>
                 <div className="flex items-baseline gap-2">
@@ -671,41 +674,30 @@ export default function ElementaryLiteracyNumeracy() {
               <div className="h-10 w-px bg-slate-800 hidden sm:block"></div>
 
               <div className="text-right space-y-1">
-                <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest flex items-center justify-end gap-1">
-                  <AlertCircle size={10} />
-                  Butuh Pendampingan
+                <p className="text-[10px] font-black text-amber-450 uppercase tracking-widest flex items-center justify-end gap-1 font-mono">
+                  <AlertCircle size={10} className="text-amber-400" />
+                  NEEDS INTERVENTION
                 </p>
-                <div className="text-2xl font-black text-amber-400">{needsSupportCount}</div>
-                <p className="text-[9px] text-slate-400 font-mono uppercase font-black">NEEDS INTERVENTION</p>
+                <div className="text-3xl font-black text-amber-400 font-mono">{needsSupportCount}</div>
               </div>
             </div>
 
             {/* DYNAMIC BULK PREFILL TOOL */}
-            <div className="md:col-span-6 bg-slate-50 rounded-3xl p-5 border border-slate-200/50 flex flex-col justify-center gap-3">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
+            {selectedArea === "NUMERACY" && (
+              <div className="md:col-span-6 bg-slate-50 rounded-3xl p-5 border border-slate-200/50 flex flex-col justify-center gap-3">
                 <div className="flex items-center gap-2 text-slate-800 font-black text-[10px] uppercase tracking-wider">
                   <Sparkles size={12} className="text-indigo-500" />
-                  Asisten Entri Data Massal (Bulk Pre-Fill)
+                  Isi Massal Numerasi
                 </div>
-                <button
-                  type="button"
-                  onClick={applyBulkTier1}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] px-3 py-1.5 rounded-xl font-bold uppercase cursor-pointer transition-colors flex items-center gap-1 shrink-0 shadow-sm"
-                >
-                  <CheckCircle2 size={12} />
-                  Pilih Tier 1 Semua
-                </button>
-              </div>
 
-              {selectedArea === 'NUMERACY' ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div className="flex gap-1.5 items-center">
                     <input
                       type="text"
                       placeholder="Contoh: Perkalian Pecahan"
                       value={bulkTopic}
                       onChange={e => setBulkTopic(e.target.value)}
-                      className="bg-white border border-gray-200 text-xs px-3 py-1.5 rounded-xl flex-grow font-medium"
+                      className="bg-white border border-gray-200 text-xs px-3 py-1.5 rounded-xl flex-grow font-medium text-slate-800"
                     />
                     <button
                       type="button"
@@ -722,7 +714,7 @@ export default function ElementaryLiteracyNumeracy() {
                       placeholder="Contoh: Level 3B"
                       value={bulkMathLevel}
                       onChange={e => setBulkMathLevel(e.target.value)}
-                      className="bg-white border border-gray-200 text-xs px-3 py-1.5 rounded-xl flex-grow font-medium"
+                      className="bg-white border border-gray-200 text-xs px-3 py-1.5 rounded-xl flex-grow font-medium text-slate-800"
                     />
                     <button
                       type="button"
@@ -733,12 +725,8 @@ export default function ElementaryLiteracyNumeracy() {
                     </button>
                   </div>
                 </div>
-              ) : (
-                <p className="text-xs text-slate-500 italic mt-1">
-                  Klik <b>Pilih Tier 1 Semua</b> untuk mengisi kolom Intervensi seluruh siswa menjadi Tier 1 secara instan tanpa otomatis menyimpan.
-                </p>
-              )}
-            </div>
+              </div>
+            )}
           </div>
 
           {/* DYNAMIC STUDENTS ASSESSMENT SPREADSHEET TABLE */}
