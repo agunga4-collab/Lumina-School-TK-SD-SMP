@@ -179,11 +179,6 @@ export default function ElementaryHeadDashboard() {
                 </div>
               )}
            </div>
-           <div className="pt-2">
-              <button disabled className="w-full py-2 bg-gray-50 text-gray-400 rounded-xl text-xs font-bold cursor-not-allowed">
-                Input Catatan Observasi
-              </button>
-           </div>
         </div>
       </div>
     </div>

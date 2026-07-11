@@ -545,7 +545,6 @@ export function Layout() {
                   <NavItem to="/academic/lxd" icon={<BookOpen size={18} />} label="LXD" />
                   <NavItem to="/elementary/literasi-numerasi" icon={<BookOpen size={18} />} label="Literasi & Numerasi" />
                   <NavItem to="/elementary/mtss-academic" icon={<GraduationCap size={18} />} label="MTSS Academic" />
-                  <NavItem to="/observations" icon={<Eye size={18} />} label="Observasi Guru" />
                 </div>
               )}
 
@@ -566,6 +565,7 @@ export function Layout() {
                   )}
                   <NavItem to="/academic/buku-nilai" icon={<BarChart3 size={18} />} label="Buku Nilai" />
                   <NavItem to="/academic/rapor" icon={<FileText size={18} />} label="Rapor" />
+                  <NavItem to="/junior-high/literasi-numerasi" icon={<BookOpen size={18} />} label="Literasi & Numerasi" />
                   <NavItem to="/self-exploration" icon={<Sparkles size={18} />} label="Self-Exploration" />
                   <NavItem to="/junior-high/behavior/mtss/overview" icon={<ShieldAlert size={18} />} label="MTSS Behavior" />
                   <NavItem to="/junior-high/academic/mtss/overview" icon={<GraduationCap size={18} />} label="MTSS Academic" />

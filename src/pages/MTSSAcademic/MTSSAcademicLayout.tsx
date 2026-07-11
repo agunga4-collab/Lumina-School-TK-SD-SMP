@@ -8,7 +8,8 @@ import {
   GraduationCap,
   RefreshCw,
   Settings,
-  ShieldAlert
+  ShieldAlert,
+  FileSpreadsheet
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { motion } from 'motion/react';
@@ -17,6 +18,7 @@ import { useAuth } from '../../context/AuthContext';
 const TABS = [
   { id: 'screening', label: 'Tier 1: AAP & Test Out', icon: Eye, path: '/junior-high/academic/mtss/screening' },
   { id: 'cases', label: 'Tier 2: Interventions', icon: TrendingUp, path: '/junior-high/academic/mtss/cases' },
+  { id: 'coaching', label: 'Coaching Spreadsheet', icon: FileSpreadsheet, path: '/junior-high/academic/mtss/coaching' },
   { id: 'overview', label: 'Overview', icon: LayoutDashboard, path: '/junior-high/academic/mtss/overview' },
 ];
 

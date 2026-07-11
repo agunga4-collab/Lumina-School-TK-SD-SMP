@@ -29,6 +29,7 @@ import MTSSBehaviorOverview from './pages/MTSS/MTSSBehaviorOverview';
 import MTSSBehaviorIdentification from './pages/MTSS/MTSSBehaviorIdentification';
 import MTSSBehaviorTimeline from './pages/MTSS/MTSSBehaviorTimeline';
 import MTSSAcademicLayout from './pages/MTSSAcademic/MTSSAcademicLayout';
+import MTSSAcademicCoachingSpreadsheet from './pages/MTSSAcademic/CoachingSpreadsheet';
 
 // Self Exploration (SMP)
 const SEDashboard = React.lazy(() => import('./pages/SelfExploration/SEDashboard'));
@@ -46,6 +47,7 @@ import ChildAttendance from './pages/Parent/Attendance';
 import LiteracyInput from './pages/LiteracyNumeracy/LiteracyInput';
 import LiteracyRecap from './pages/LiteracyNumeracy/LiteracyRecap';
 import ElementaryLiteracyNumeracy from './pages/Elementary/LiteracyNumeracy';
+import JuniorHighLiteracyNumeracy from './pages/JuniorHigh/LiteracyNumeracy';
 import ElementaryLiteracyInputPage from './pages/Elementary/ElementaryLiteracyInputPage';
 import MTSSAcademicDashboard from './pages/Elementary/MTSSAcademicDashboard';
 import LiteracySummary from './pages/Parent/LiteracySummary';
@@ -324,6 +326,7 @@ export default function App() {
             <Route path="passport" element={<StudentPassport />} />
           </Route>
           <Route path="junior-high">
+            <Route path="literasi-numerasi" element={<JuniorHighLiteracyNumeracy />} />
             <Route path="behavior/mtss" element={
               <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER']}>
                 <MTSSBehaviorLayout />
@@ -357,6 +360,7 @@ export default function App() {
               <Route path="overview" element={<MTSSAcademicOverview />} />
               <Route path="cases" element={<MTSSAcademicCases />} />
               <Route path="cases/:id" element={<MTSSAcademicCaseDetail />} />
+              <Route path="coaching" element={<MTSSAcademicCoachingSpreadsheet />} />
               <Route path="screening" element={<MTSSAcademicScreening />} />
               <Route path="analytics" element={<MTSSAcademicOverview />} />
               <Route path="backup-config" element={
