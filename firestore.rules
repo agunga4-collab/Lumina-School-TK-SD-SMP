@@ -149,6 +149,14 @@ service cloud.firestore {
           && isValidUser(incoming()));
     }
 
+    match /onboarding/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && userId == request.auth.uid;
+      allow update: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow delete: if isAdmin();
+    }
+
     match /roleInvites/{inviteId} {
       allow get, list: if isSignedIn();
       allow create: if isAdmin();
