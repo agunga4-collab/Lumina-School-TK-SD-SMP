@@ -9,11 +9,13 @@ import { useOutletContext, Link, useNavigate } from 'react-router-dom';
 import { 
   User as AppUser, 
   Student, 
-  ParentStudentLink 
+  ParentStudentLink,
+  Class
 } from '../../types';
 import { 
   getParentStudentLinks, 
-  getStudentById 
+  getStudentById,
+  getClasses
 } from '../../lib/firebase';
 import { cn } from '../../lib/utils';
 
@@ -28,6 +30,34 @@ export default function ParentDashboard() {
   const [students, setStudents] = React.useState<Student[]>([]);
   const [selectedStudentId, setSelectedStudentId] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
+  const [classes, setClasses] = React.useState<Class[]>([]);
+
+  React.useEffect(() => {
+    const fetchClasses = async () => {
+      try {
+        const classList = await getClasses();
+        setClasses(classList || []);
+      } catch (err) {
+        console.error('Error fetching classes in parent dashboard:', err);
+      }
+    };
+    fetchClasses();
+  }, []);
+
+  const studentClass = React.useMemo(() => {
+    if (!selectedStudentId || !classes.length) return null;
+    const student = students.find(s => s.id === selectedStudentId);
+    if (!student) return null;
+    return classes.find(c => c.id === student.classId || c.name === student.classId) || null;
+  }, [selectedStudentId, students, classes]);
+
+  const formattedTeacherName = React.useMemo(() => {
+    if (!studentClass || !studentClass.homeroomTeacherName) return "";
+    const name = studentClass.homeroomTeacherName;
+    let cleaned = name.replace(/^\s*\(UNDANGAN\)\s*/i, "").trim();
+    cleaned = cleaned.replace(/^(mr|ms|mrs|tr|ibu|bapak)\.?\s+/i, "");
+    return `Tr. ${cleaned}`;
+  }, [studentClass]);
 
   React.useEffect(() => {
     if (parentStudents && parentStudents.length > 0) {
@@ -189,12 +219,14 @@ export default function ParentDashboard() {
                      </div>
                   </div>
 
-                  <div className="pt-4 mt-4 border-t border-white/10 relative z-10">
-                     <div className="p-3 bg-white/5 rounded-xl space-y-0.5 border border-white/5">
-                        <p className="text-[9px] font-black uppercase text-gray-500">Wali Kelas:</p>
-                        <p className="font-bold text-xs text-gray-200">Ms. Sarah Kartika</p>
+                  {formattedTeacherName && (
+                     <div className="pt-4 mt-4 border-t border-white/10 relative z-10">
+                        <div className="p-3 bg-white/5 rounded-xl space-y-0.5 border border-white/5">
+                           <p className="text-[9px] font-black uppercase text-gray-500">Wali Kelas:</p>
+                           <p className="font-bold text-xs text-gray-200">{formattedTeacherName}</p>
+                        </div>
                      </div>
-                  </div>
+                  )}
                </div>
             </div>
 

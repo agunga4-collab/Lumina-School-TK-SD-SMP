@@ -39,19 +39,24 @@ export default function Lateness() {
   React.useEffect(() => {
     const fetchClasses = async () => {
       try {
-        const q = query(collection(db, 'classes'));
+        const q = query(
+          collection(db, 'classes'),
+          where('unitId', '==', activeUnit)
+        );
         const snap = await getDocs(q);
         const classList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         setClasses(classList);
         if (classList.length > 0) {
           setSelectedClass(classList[0].id);
+        } else {
+          setSelectedClass('');
         }
       } catch (err) {
         console.error('Error fetching classes:', err);
       }
     };
     fetchClasses();
-  }, []);
+  }, [activeUnit]);
 
   React.useEffect(() => {
     if (!selectedClass) {
@@ -70,6 +75,23 @@ export default function Lateness() {
         );
         const snap = await getDocs(q);
         
+        // Fetch actual lateness counts for this month
+        const todayObj = new Date();
+        const startOfMonth = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-01`;
+        const latenessQuery = query(
+          collection(db, 'lateness_records'),
+          where('classId', '==', selectedClass),
+          where('date', '>=', startOfMonth)
+        );
+        const latenessSnap = await getDocs(latenessQuery);
+        const latenessCountMap: Record<string, number> = {};
+        latenessSnap.docs.forEach(doc => {
+          const data = doc.data();
+          if (data.studentId) {
+            latenessCountMap[data.studentId] = (latenessCountMap[data.studentId] || 0) + 1;
+          }
+        });
+
         const studentList: LatenessRecord[] = snap.docs
           .map(doc => ({
             id: doc.id,
@@ -77,7 +99,7 @@ export default function Lateness() {
             arrivalTime: '',
             reason: '',
             parentNote: false,
-            countThisMonth: 0,
+            countThisMonth: latenessCountMap[doc.id] || 0,
             className: currentClass?.name,
             classId: selectedClass
           }))
@@ -135,9 +157,17 @@ export default function Lateness() {
   };
 
   const handleSave = async () => {
-    const lateEntries = records.filter(r => r.arrivalTime !== '');
-    if (lateEntries.length === 0) {
+    const filledEntries = records.filter(r => r.arrivalTime !== '');
+    if (filledEntries.length === 0) {
       toast.error('Tidak ada data kedatangan yang diisi');
+      return;
+    }
+
+    const lateEntries = filledEntries.filter(r => r.arrivalTime > unitInfo.time);
+    const onTimeEntries = filledEntries.filter(r => r.arrivalTime <= unitInfo.time);
+
+    if (lateEntries.length === 0 && onTimeEntries.length > 0) {
+      toast.error('Semua data kedatangan yang diisi adalah Tepat Waktu (tidak terlambat). Data keterlambatan tidak perlu disimpan.');
       return;
     }
 
@@ -157,12 +187,21 @@ export default function Lateness() {
           classId: selectedClass
         });
       }
-      toast.success(`Data keterlambatan berhasil disimpan`);
+
+      let message = `Data keterlambatan berhasil disimpan untuk ${lateEntries.length} siswa.`;
+      if (onTimeEntries.length > 0) {
+        message += ` (${onTimeEntries.length} siswa tepat waktu diabaikan dari pencatatan keterlambatan)`;
+      }
+      toast.success(message);
+
       if (lateEntries.some(e => e.parentNote || e.countThisMonth >= threshold)) {
         toast.info('Notifikasi telah dikirim ke orang tua via WhatsApp/Email', {
           description: 'Sistem Lumina otomatis mengirimkan pesan untuk siswa dengan catatan khusus.'
         });
       }
+
+      // Clear the saved late records from the screen
+      setRecords(prev => prev.filter(r => !lateEntries.some(le => le.id === r.id)));
     } catch (err) {
       console.error('Error saving lateness:', err);
       toast.error('Gagal menyimpan data');
@@ -179,7 +218,7 @@ export default function Lateness() {
   const getUnitInfo = () => {
     switch(activeUnit) {
       case 'KINDERGARTEN': return { name: 'Kindergarten', time: '08:00', label: 'TK' };
-      case 'ELEMENTARY': return { name: 'Elementary', time: '07:15', label: 'SD' };
+      case 'ELEMENTARY': return { name: 'Elementary', time: '07:30', label: 'SD' };
       case 'JUNIOR_HIGH': return { name: 'Junior High', time: '07:30', label: 'SMP' };
       default: return { name: 'Academy', time: '07:30', label: 'Sekolah' };
     }
@@ -319,12 +358,24 @@ export default function Lateness() {
                                 </div>
                               </td>
                               <td className="px-6 py-4">
-                                <input 
-                                    type="time" 
-                                    className="bg-gray-50 border border-gray-100 rounded-lg px-3 py-1.5 text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500"
-                                    value={record.arrivalTime}
-                                    onChange={(e) => updateTime(record.id, e.target.value)}
-                                />
+                                <div className="flex flex-col gap-1.5">
+                                  <input 
+                                      type="time" 
+                                      className="bg-gray-50 border border-gray-100 rounded-lg px-3 py-1.5 text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 w-32"
+                                      value={record.arrivalTime}
+                                      onChange={(e) => updateTime(record.id, e.target.value)}
+                                  />
+                                  {record.arrivalTime && (
+                                    <span className={cn(
+                                      "text-[10px] font-bold px-1.5 py-0.5 rounded w-fit uppercase tracking-wider",
+                                      record.arrivalTime > unitInfo.time 
+                                        ? "bg-red-50 text-red-600 border border-red-100" 
+                                        : "bg-emerald-50 text-emerald-600 border border-emerald-100"
+                                    )}>
+                                      {record.arrivalTime > unitInfo.time ? 'Terlambat' : 'Tepat Waktu'}
+                                    </span>
+                                  )}
+                                </div>
                               </td>
                               <td className="px-6 py-4">
                                 <input 
@@ -413,19 +464,7 @@ export default function Lateness() {
               </div>
            </div>
 
-           <div className="bg-indigo-600 rounded-3xl p-6 text-white space-y-4 shadow-xl">
-              <div className="flex items-center gap-2">
-                 <MessageSquare size={18} />
-                 <h4 className="font-bold text-sm">Update ke Orang Tua</h4>
-              </div>
-              <p className="text-xs text-indigo-100 leading-relaxed">
-                 Kirim pesan ramah ke orang tua siswa yang terlambat hari ini melalui modul komunikasi Lumina.
-              </p>
-              <button className="w-full py-2.5 bg-white text-indigo-600 font-black rounded-xl text-[10px] uppercase tracking-wider hover:bg-indigo-50 transition-all flex items-center justify-center gap-2">
-                 Kirim Pesan Pendek
-                 <ArrowRight size={14} />
-              </button>
-           </div>
+
         </div>
       </div>
     </div>
