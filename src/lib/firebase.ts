@@ -159,8 +159,25 @@ export async function createUserOnboarding(user: any): Promise<AppUser> {
   const email = user.email?.toLowerCase().trim() || '';
   
   // First, check if profile exists
-  const existingProfile = await getUserProfile(user.uid);
+  let existingProfile = await getUserProfile(user.uid);
   
+  // CRITICAL MAP: If the existing pre-user record has status = "ready", map it safely to "active" (usable immediately)
+  if (existingProfile && existingProfile.status === ('ready' as any)) {
+    console.log(`[createUserOnboarding] Pre-user record exists with status 'ready' for UID: ${user.uid}. Mapping 'ready' -> 'active' to satisfy Firestore rules.`);
+    const updatedProfile: AppUser = {
+      ...existingProfile,
+      status: 'active' as const
+    };
+    try {
+      console.log(`[createUserOnboarding] [FIRESTORE WRITE] Setting updated profile to users/${user.uid}:`, updatedProfile);
+      await setDoc(doc(db, 'users', user.uid), updatedProfile);
+      existingProfile = updatedProfile;
+    } catch (err: any) {
+      console.error(`[createUserOnboarding] Failed to upgrade 'ready' profile to 'active':`, err);
+      handleFirestoreError(err, 'create', `users/${user.uid}`);
+    }
+  }
+
   // If profile exists AND is already active, return it
   if (existingProfile && existingProfile.status === 'active') {
     return existingProfile;
@@ -186,11 +203,14 @@ export async function createUserOnboarding(user: any): Promise<AppUser> {
       linkedStudents: invite.linkedStudents || [],
       classId: (invite as any).classId ?? null,
       academicYear: (invite as any).academicYear ?? null,
-      status: 'active',
+      status: 'active', // Safely map any invitation status 'ready' -> 'active'
       createdAt: existingProfile?.createdAt || Date.now()
     };
 
+    console.log(`[createUserOnboarding] [FIRESTORE BATCH WRITE] Preparing set users/${user.uid} with status 'active':`, profile);
     batch.set(doc(db, 'users', user.uid), profile);
+    
+    console.log(`[createUserOnboarding] [FIRESTORE BATCH WRITE] Preparing update roleInvites/${inviteWithId.id} with status 'used'`);
     batch.update(doc(db, 'roleInvites', inviteWithId.id), { status: 'used' });
 
     // Link newly created UID to any class that was previously assigned using the invite placeholder
@@ -198,6 +218,7 @@ export async function createUserOnboarding(user: any): Promise<AppUser> {
       const classesQuery = query(collection(db, 'classes'), where('homeroomTeacherId', '==', `INVITE_${inviteWithId.id}`));
       const classesSnap = await getDocs(classesQuery);
       classesSnap.docs.forEach(d => {
+        console.log(`[createUserOnboarding] [FIRESTORE BATCH WRITE] Preparing update classes/${d.id} homeroomTeacherId -> ${user.uid}`);
         batch.update(d.ref, { 
           homeroomTeacherId: user.uid,
           homeroomTeacherName: profile.displayName // Update to real name without "(UNDANGAN)"
@@ -208,6 +229,7 @@ export async function createUserOnboarding(user: any): Promise<AppUser> {
     }
 
     try {
+      console.log(`[createUserOnboarding] [FIRESTORE COMMIT] Executing onboarding batch for user: ${email}`);
       await batch.commit();
       return profile;
     } catch (err: any) {
@@ -240,6 +262,7 @@ export async function createUserOnboarding(user: any): Promise<AppUser> {
         createdAt: existingProfile?.createdAt || Date.now()
       };
       try {
+        console.log(`[createUserOnboarding] [FIRESTORE WRITE] Creating direct parent link user profile users/${user.uid} as 'active':`, profile);
         await setDoc(doc(db, 'users', user.uid), profile);
         return profile;
       } catch (err: any) {
@@ -262,6 +285,7 @@ export async function createUserOnboarding(user: any): Promise<AppUser> {
       };
 
       try {
+        console.log(`[createUserOnboarding] [FIRESTORE WRITE] Creating fallback pending user profile users/${user.uid} as 'pending':`, profile);
         await setDoc(doc(db, 'users', user.uid), profile);
         return profile;
       } catch (err: any) {

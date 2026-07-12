@@ -65,6 +65,11 @@ const getGradeOptions = (unitId: string): string[] => {
   return ["7", "8", "9"]; // JUNIOR_HIGH
 };
 
+const safeLower = (value: unknown): string => {
+  if (value === null || value === undefined) return "";
+  return String(value).toLowerCase();
+};
+
 function SortIcon({ column, currentConfig }: { column: string; currentConfig: { key: string; direction: "asc" | "desc" } }) {
   if (currentConfig.key !== column) return <ArrowUpDown size={12} className="text-gray-300" />;
   return currentConfig.direction === "asc" ? <ChevronUp size={12} className="text-blue-500" /> : <ChevronDown size={12} className="text-blue-500" />;
@@ -1632,11 +1637,12 @@ export default function SuperAdminPage() {
   }, [invites]);
 
   const filteredInvites = invites.filter((i) => {
+    if (!i) return false;
+    const searchLower = safeLower(searchTerm);
     const matchesSearch =
-      i.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      i.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (i.luminaId &&
-        i.luminaId.toLowerCase().includes(searchTerm.toLowerCase()));
+      safeLower(i.email).includes(searchLower) ||
+      safeLower(i.name).includes(searchLower) ||
+      safeLower(i.luminaId).includes(searchLower);
 
     const matchesUnit = selectedUnit === "ALL" || 
       i.unitId === selectedUnit || 
@@ -1727,10 +1733,13 @@ export default function SuperAdminPage() {
           bValue = studentIdToName[bId] || bId;
         }
 
-        if (aValue.toString().toLowerCase() < bValue.toString().toLowerCase()) {
+        const aLower = safeLower(aValue);
+        const bLower = safeLower(bValue);
+
+        if (aLower < bLower) {
           return sortConfig.direction === "asc" ? -1 : 1;
         }
-        if (aValue.toString().toLowerCase() > bValue.toString().toLowerCase()) {
+        if (aLower > bLower) {
           return sortConfig.direction === "asc" ? 1 : -1;
         }
         return 0;
@@ -1834,10 +1843,11 @@ export default function SuperAdminPage() {
 
   const sortedClasses = React.useMemo(() => {
     const filtered = classes.filter((c) => {
+      const searchLower = safeLower(searchTerm);
       const matchesSearch =
-        c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        c.academicYear.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        c.homeroomTeacherName?.toLowerCase().includes(searchTerm.toLowerCase());
+        safeLower(c.name).includes(searchLower) ||
+        safeLower(c.academicYear).includes(searchLower) ||
+        safeLower(c.homeroomTeacherName).includes(searchLower);
       const matchesUnit = selectedUnit === "ALL" || c.unitId === selectedUnit;
       return matchesSearch && matchesUnit;
     });
@@ -1845,10 +1855,12 @@ export default function SuperAdminPage() {
     return filtered.sort((a, b) => {
       const aValue = a[classSortConfig.key] || "";
       const bValue = b[classSortConfig.key] || "";
-      if (aValue.toString().toLowerCase() < bValue.toString().toLowerCase()) {
+      const aLower = safeLower(aValue);
+      const bLower = safeLower(bValue);
+      if (aLower < bLower) {
         return classSortConfig.direction === "asc" ? -1 : 1;
       }
-      if (aValue.toString().toLowerCase() > bValue.toString().toLowerCase()) {
+      if (aLower > bLower) {
         return classSortConfig.direction === "asc" ? 1 : -1;
       }
       return 0;
@@ -1856,9 +1868,11 @@ export default function SuperAdminPage() {
   }, [classes, searchTerm, selectedUnit, classSortConfig]);
 
   const filteredPending = pendingUsers.filter((u) => {
+    if (!u) return false;
+    const searchLower = safeLower(searchTerm);
     const matchesSearch =
-      u.displayName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      u.email.toLowerCase().includes(searchTerm.toLowerCase());
+      safeLower(u.displayName).includes(searchLower) ||
+      safeLower(u.email).includes(searchLower);
     const matchesUnit = selectedUnit === "ALL" || u.unitId === selectedUnit;
     return matchesSearch && matchesUnit;
   });
@@ -2490,11 +2504,12 @@ export default function SuperAdminPage() {
             )}
             {/* VIEWS: DATABASE LISTS (STANDARD RENDER IN SIDEBAR MENU) */}
             {["user-undangan", "user-pending", "kelas", "ai-prompts", "ai-knowledge", "ai-logo"].includes(activeMenu) && (
-              <div className="space-y-8 animate-in fade-in duration-200">
+              <div className="space-y-5 animate-in fade-in duration-200">
                 {/* Dynamically adjust title based on activeMenu */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
                   <div>
-                    <h2 className="text-2xl font-black text-gray-900 tracking-tight italic uppercase">
+                    <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                      <Users size={20} className="text-indigo-600" />
                       {activeMenu === "user-undangan" && "Manajemen Undangan"}
                       {activeMenu === "user-pending" && "Pending Aktivasi Akun"}
                       {activeMenu === "kelas" && "Manajemen Kelas"}
@@ -2502,7 +2517,7 @@ export default function SuperAdminPage() {
                       {activeMenu === "ai-knowledge" && "Knowledge Base Sync"}
                       {activeMenu === "ai-logo" && "Sistem Unggah Logo"}
                     </h2>
-                    <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">
+                    <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider mt-1">
                       {activeMenu === "user-undangan" && `Pusat Log Undangan Aktif (${counts[activeTab as keyof typeof counts] || 0} ${activeTab.toLowerCase()})`}
                       {activeMenu === "user-pending" && "Daftar User Pendaftar Baru yang Memerlukan Tindakan"}
                       {activeMenu === "kelas" && "Atur Kelas, Angkatan & Guru Lazuardi GCS"}
@@ -2512,7 +2527,7 @@ export default function SuperAdminPage() {
                     </p>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-2">
                     {activeMenu === "user-undangan" && (
                       <button
                         onClick={() => {
@@ -2532,9 +2547,9 @@ export default function SuperAdminPage() {
                           });
                           setIsModalOpen(true);
                         }}
-                        className="px-6 py-3.5 bg-gray-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-blue-600 transition-all font-sans font-black cursor-pointer"
+                        className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold tracking-wide flex items-center gap-1.5 hover:bg-indigo-700 transition-all cursor-pointer shadow-sm shadow-indigo-100"
                       >
-                        <Plus size={16} />
+                        <Plus size={14} />
                         Undang Manual
                       </button>
                     )}
@@ -2542,10 +2557,10 @@ export default function SuperAdminPage() {
                 </div>
 
                 {/* Sub Tab Navigation for Undangan (Active Tab inside user-undangan) */}
-                <div className="space-y-8">
+                <div className="space-y-4">
                   {activeMenu === "user-undangan" && (
-                    <div className="bg-white p-4 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6">
-                      <div className="flex items-center gap-1 overflow-x-auto pb-2 md:pb-0">
+                    <div className="bg-white p-2 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+                      <div className="flex items-center gap-1 overflow-x-auto pb-1 md:pb-0 w-full md:w-auto">
                         {[
                           { id: "STAFF" as const, icon: <Users size={14} />, label: "Staff" },
                           { id: "STUDENT" as const, icon: <GraduationCap size={14} />, label: "Siswa" },
@@ -2557,20 +2572,20 @@ export default function SuperAdminPage() {
                               setActiveTab(tab.id);
                             }}
                             className={cn(
-                              "px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all whitespace-nowrap cursor-pointer",
+                              "px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wide flex items-center gap-1.5 transition-all whitespace-nowrap cursor-pointer",
                               activeTab === tab.id
-                                ? "bg-gray-900 text-white shadow-xl shadow-gray-200"
-                                : "text-gray-400 hover:text-gray-600 hover:bg-gray-50",
+                                ? "bg-slate-900 text-white shadow-md shadow-slate-200"
+                                : "text-slate-400 hover:text-slate-600 hover:bg-slate-50",
                             )}
                           >
                             {tab.icon}
                             {tab.label}
                             <span
                               className={cn(
-                                "ml-1 px-1.5 py-0.5 rounded-md text-[8px] font-black font-mono",
+                                "ml-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold",
                                 activeTab === tab.id
                                   ? "bg-white/20 text-white"
-                                  : "bg-gray-100 text-gray-400",
+                                  : "bg-slate-100 text-slate-500",
                               )}
                             >
                               {counts[tab.id as keyof typeof counts]}
@@ -2582,29 +2597,30 @@ export default function SuperAdminPage() {
                   )}
 
                   {/* View Content layout wrappers */}
-                  <div className="space-y-6">
-          {/* Search and Filters */}
-          <div className="flex items-center justify-between gap-4">
-            <div className="relative flex-1 max-w-md">
+                  <div className="space-y-4">
+          {/* Unified Search & Filter Control Group */}
+          <div className="bg-slate-50/50 p-2.5 rounded-2xl border border-slate-100/60 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+            <div className="relative flex-1">
               <Search
-                className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-300"
-                size={18}
+                className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+                size={16}
               />
               <input
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder={`Cari di unit ${selectedUnit === "ALL" ? "semua" : selectedUnit.toLowerCase()}...`}
-                className="w-full pl-14 pr-6 py-4 bg-white border border-gray-100 rounded-[1.5rem] shadow-sm text-xs font-bold focus:ring-4 focus:ring-blue-50 focus:border-blue-200 transition-all outline-none"
+                placeholder={`Cari nama, email, atau NIS di unit ${selectedUnit === "ALL" ? "semua" : selectedUnit.toLowerCase()}...`}
+                className="w-full pl-11 pr-4 py-2.5 bg-white border border-slate-200/80 rounded-xl text-xs font-medium placeholder-slate-400 focus:ring-2 focus:ring-indigo-100 focus:border-indigo-500 transition-all outline-none"
               />
             </div>
-            <div className="flex items-center gap-3">
+            
+            <div className="flex items-center gap-2 shrink-0">
               {activeMenu === "user-undangan" && (activeTab === "STUDENT" || activeTab === "PARENT") && (
                 <div className="relative" id="class-filter-select-wrapper">
                   <select
                     value={selectedClassFilter}
                     onChange={(e) => setSelectedClassFilter(e.target.value)}
-                    className="appearance-none bg-white border border-gray-100 rounded-2xl pl-5 pr-10 py-3.5 text-[10px] font-black uppercase tracking-wider text-gray-700 shadow-sm focus:ring-4 focus:ring-blue-50 focus:border-blue-200 transition-all cursor-pointer outline-none min-w-[170px] h-[48px]"
+                    className="appearance-none bg-white border border-slate-200/80 rounded-xl pl-4 pr-10 py-2.5 text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-indigo-100 focus:border-indigo-500 transition-all cursor-pointer outline-none min-w-[150px] h-[38px]"
                   >
                     <option value="ALL">Semua Kelas</option>
                     <option value="EMPTY">Belum Ada Kelas</option>
@@ -2614,11 +2630,12 @@ export default function SuperAdminPage() {
                       </option>
                     ))}
                   </select>
-                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4 text-gray-400">
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400">
                     <Filter size={12} />
                   </div>
                 </div>
               )}
+
               {activeTab === "CLASSES" && (
                 <button
                   onClick={() => {
@@ -2635,65 +2652,78 @@ export default function SuperAdminPage() {
                     });
                     setIsClassModalOpen(true);
                   }}
-                  className="px-6 py-4 bg-gray-900 text-white rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-blue-600 transition-all shadow-lg"
+                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold tracking-wide flex items-center gap-1.5 transition-all shadow-sm cursor-pointer h-[38px]"
                 >
-                  <Plus size={16} />
+                  <Plus size={14} />
                   Tambah Kelas
                 </button>
               )}
+
               {activeTab === "PROMPTS" && (
                 <button
                   onClick={() => handleOpenPromptModal(null)}
-                  className="px-6 py-4 bg-gray-900 text-white rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-blue-600 transition-all shadow-lg font-bold"
+                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold tracking-wide flex items-center gap-1.5 transition-all shadow-sm cursor-pointer h-[38px]"
                 >
-                  <Plus size={16} />
+                  <Plus size={14} />
                   Tambah Prompt
                 </button>
               )}
+
               {activeTab === "KNOWLEDGE_BASE" && (
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <input
                     type="text"
                     value={folderIdText}
                     onChange={(e) => setFolderIdText(e.target.value)}
                     placeholder="Folder Google Drive ID..."
-                    className="px-4 py-3 bg-gray-50 border border-gray-150 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-blue-100 outline-none w-64"
+                    className="px-3 py-2 bg-white border border-slate-200/80 rounded-xl text-xs font-medium focus:ring-2 focus:ring-indigo-100 focus:border-indigo-500 outline-none w-56 h-[38px]"
                   />
                   <button
                     onClick={handleSyncKnowledge}
                     disabled={syncKnowledgeLoading}
-                    className="px-6 py-4 bg-emerald-500 hover:bg-emerald-600 disabled:bg-gray-300 text-white rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all shadow-lg font-bold cursor-pointer"
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer h-[38px]"
                   >
                     {syncKnowledgeLoading ? (
                       <>
-                        <Loader2 size={16} className="animate-spin" />
+                        <Loader2 size={14} className="animate-spin" />
                         Syncing...
                       </>
                     ) : (
                       <>
-                        <RefreshCw size={16} />
-                        Sync dari Google Drive
+                        <RefreshCw size={14} />
+                        Sync GDrive
                       </>
                     )}
                   </button>
                 </div>
               )}
-              <button className="p-4 bg-white border border-gray-100 rounded-2xl text-gray-400 hover:text-blue-600 transition-all shadow-sm">
-                <Filter size={18} />
+              
+              <button className="p-2.5 bg-white border border-slate-200/80 rounded-xl text-slate-400 hover:text-slate-600 transition-all shadow-sm h-[38px] w-[38px] flex items-center justify-center">
+                <Filter size={15} />
               </button>
             </div>
           </div>
 
           {/* Selection Actions Toolbar */}
           {activeMenu === "user-undangan" && ["STAFF", "STUDENT", "PARENT"].includes(activeTab) && (
-            <div className="bg-slate-50 border border-slate-100 rounded-[2rem] p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 select-none mb-4 animate-in fade-in slide-in-from-top-2 duration-200">
-              <div className="flex items-center gap-3.5">
-                <div className="w-11 h-11 bg-slate-900 rounded-2xl flex items-center justify-center text-white shadow-md shadow-slate-200">
-                  <Users size={16} />
+            <div className={cn(
+              "border rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all duration-300",
+              selectedInviteIds.length > 0 
+                ? "bg-indigo-50/70 border-indigo-100 shadow-sm shadow-indigo-50" 
+                : "bg-slate-50/50 border-slate-100/60"
+            )}>
+              <div className="flex items-center gap-3 select-none">
+                <div className={cn(
+                  "w-8 h-8 rounded-xl flex items-center justify-center transition-all",
+                  selectedInviteIds.length > 0 
+                    ? "bg-indigo-600 text-white shadow-sm" 
+                    : "bg-slate-200 text-slate-500"
+                )}>
+                  <Users size={14} />
                 </div>
                 <div>
-                  <p className="text-xs font-black text-gray-900 uppercase tracking-tight">Atur Pilihan Undangan</p>
-                  <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-0.5">
+                  <p className="text-xs font-bold text-slate-800">Manajemen Aksi Massal</p>
+                  <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mt-0.5">
                     {selectedInviteIds.length} dari {sortedInvites.length} record dipilih
                   </p>
                 </div>
@@ -2703,17 +2733,17 @@ export default function SuperAdminPage() {
                 <button
                   onClick={handleDeleteSelected}
                   disabled={selectedInviteIds.length === 0 || isBulkDeleting}
-                  className="px-5 py-3 h-11 bg-red-655 hover:bg-red-700 disabled:opacity-40 text-white rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer disabled:cursor-not-allowed transition-all flex items-center gap-2 border border-red-500/10 shadow-sm font-bold"
+                  className="px-3.5 py-1.5 h-8 bg-red-655 hover:bg-red-700 disabled:opacity-40 text-white rounded-lg text-[10px] font-bold tracking-wider cursor-pointer disabled:cursor-not-allowed transition-all flex items-center gap-1.5 shadow-sm"
                   id="btn-delete-selected"
                 >
-                  {isBulkDeleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                  HAPUS TERPILIH ({selectedInviteIds.length})
+                  {isBulkDeleting ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                  HAPUS PILIHAN ({selectedInviteIds.length})
                 </button>
 
                 <button
                   onClick={handleDeleteAllFiltered}
                   disabled={sortedInvites.length === 0 || isBulkDeleting}
-                  className="px-5 py-3 h-11 bg-gray-900 hover:bg-red-600 disabled:opacity-40 text-white rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer disabled:cursor-not-allowed transition-all flex items-center gap-2 border border-transparent shadow-sm font-bold"
+                  className="px-3.5 py-1.5 h-8 bg-slate-800 hover:bg-red-600 disabled:opacity-40 text-white rounded-lg text-[10px] font-bold tracking-wider cursor-pointer disabled:cursor-not-allowed transition-all flex items-center gap-1.5 shadow-sm"
                   id="btn-delete-all-filtered"
                 >
                   {isBulkDeleting ? <Loader2 size={11} className="animate-spin" /> : <AlertTriangle size={11} />}
@@ -2723,10 +2753,10 @@ export default function SuperAdminPage() {
                 {selectedInviteIds.length > 0 && (
                   <button
                     onClick={() => setSelectedInviteIds([])}
-                    className="px-4 py-3 h-11 bg-white border border-gray-200 hover:bg-gray-50 text-gray-400 hover:text-gray-600 rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all font-bold"
+                    className="px-3 py-1.5 h-8 bg-white border border-slate-200 hover:bg-slate-50 text-slate-500 hover:text-slate-700 rounded-lg text-[10px] font-bold tracking-wider cursor-pointer transition-all"
                     id="btn-cancel-selection"
                   >
-                    Batal Pilihan
+                    Batal
                   </button>
                 )}
               </div>
@@ -2734,7 +2764,7 @@ export default function SuperAdminPage() {
           )}
 
           {/* Table/List Area */}
-          <div className="bg-white rounded-[3rem] border border-gray-100 shadow-xl shadow-gray-50 overflow-x-auto relative min-h-[400px]">
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-x-auto relative min-h-[400px]">
             {loading && (
               <div className="absolute inset-0 bg-white/50 backdrop-blur-[2px] z-50 flex items-center justify-center">
                 <Loader2 size={40} className="text-blue-500 animate-spin" />
@@ -3648,8 +3678,8 @@ export default function SuperAdminPage() {
                               {invite.linkedStudents && invite.linkedStudents.length > 0 ? (
                                 [...invite.linkedStudents]
                                   .sort((a, b) => {
-                                    const nameA = studentIdToName[a] ? studentIdToName[a].toLowerCase() : a;
-                                    const nameB = studentIdToName[b] ? studentIdToName[b].toLowerCase() : b;
+                                    const nameA = studentIdToName[a] ? safeLower(studentIdToName[a]) : safeLower(a);
+                                    const nameB = studentIdToName[b] ? safeLower(studentIdToName[b]) : safeLower(b);
                                     return nameA.localeCompare(nameB);
                                   })
                                   .map((sid, idx) => (
