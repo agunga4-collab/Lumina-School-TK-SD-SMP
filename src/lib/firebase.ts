@@ -880,10 +880,12 @@ export async function getActiveStudents(classId: string, activeYear: string): Pr
       const sSnap = await getDocs(sq);
       students.push(...sSnap.docs.map(doc => {
         const data = doc.data();
+        const enrollment = enrollments.find(e => e.studentId === doc.id);
         return {
           id: doc.id,
           name: data.name || data.fullName || 'Siswa Tanpa Nama',
-          ...data
+          ...data,
+          classId: enrollment ? enrollment.classId : (data.classId || '')
         } as Student;
       }));
     }

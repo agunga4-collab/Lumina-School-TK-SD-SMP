@@ -64,7 +64,7 @@ const Modal = ({ isOpen, onClose, title, children, footer, width = "max-w-3xl" }
 };
 
 // --- Form 1: Lapor Kasus Baru ---
-export const NewCaseForm = ({ isOpen, onClose, onSuccess }: { isOpen: boolean, onClose: () => void, onSuccess: (caseId: string) => void }) => {
+export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { isOpen: boolean, onClose: () => void, onSuccess: (caseId: string) => void, initialStudentId?: string }) => {
   const { profile } = useAuth();
   const [loading, setLoading] = React.useState(false);
   const [students, setStudents] = React.useState<Student[]>([]);
@@ -84,6 +84,18 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess }: { isOpen: boolean, o
   });
 
   const [errors, setErrors] = React.useState<Record<string, string>>({});
+
+  React.useEffect(() => {
+    if (isOpen && initialStudentId) {
+      setFormData(prev => ({ ...prev, studentId: initialStudentId }));
+      getActiveCaseForStudent(initialStudentId).then(activeCase => {
+        setActiveCaseWarning(activeCase);
+      });
+    } else if (isOpen) {
+      setFormData(prev => ({ ...prev, studentId: '' }));
+      setActiveCaseWarning(null);
+    }
+  }, [isOpen, initialStudentId]);
 
   React.useEffect(() => {
     const loadBatch = async () => {
