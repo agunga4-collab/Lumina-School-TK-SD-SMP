@@ -283,17 +283,6 @@ export default function CaseList() {
             Operational Spreadsheet Registry • Junior High • TA {filters.academicYear} • Semester {filters.semester}
           </p>
         </div>
-        
-        <button
-          onClick={() => {
-            setPreselectedStudentId(undefined);
-            setShowNewCaseModal(true);
-          }}
-          className="flex items-center gap-2 bg-[#002366] hover:bg-blue-800 text-white px-4 py-2 rounded-xl font-black transition-all shadow-sm active:scale-95 text-[10px] uppercase tracking-widest shrink-0"
-        >
-          <Plus size={14} />
-          Lapor Kasus Baru
-        </button>
       </div>
 
       {/* Extreme Compact Metric Strip */}
