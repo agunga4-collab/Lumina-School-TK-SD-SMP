@@ -6,8 +6,9 @@ import {
   TrendingUp, UserCheck, Loader2, Trash2
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { db } from '../../lib/firebase';
+import { db, getActiveStudents } from '../../lib/firebase';
 import { collection, query, where, getDocs, doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { useAcademicYear } from '../../context/AcademicYearContext';
 import { toast } from 'sonner';
 import { useOutletContext } from 'react-router-dom';
 import { UnitType } from '../../types';
@@ -28,12 +29,15 @@ interface LatenessRecord {
 
 export default function Lateness() {
   const { activeUnit } = useOutletContext<{ activeUnit: UnitType }>();
+  const { activeYear } = useAcademicYear();
   const [records, setRecords] = React.useState<LatenessRecord[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [searchTerm, setSearchTerm] = React.useState('');
   const [classes, setClasses] = React.useState<any[]>([]);
   const [selectedClass, setSelectedClass] = React.useState('');
+  const [mostFrequentDay, setMostFrequentDay] = React.useState('-');
+  const [avgLateMinutes, setAvgLateMinutes] = React.useState('-');
   const threshold = 3;
 
   React.useEffect(() => {
@@ -68,14 +72,10 @@ export default function Lateness() {
       setLoading(true);
       try {
         const currentClass = classes.find(c => c.id === selectedClass);
-        const q = query(
-          collection(db, 'users'), 
-          where('role', '==', 'STUDENT'), 
-          where('jobTitle', '==', currentClass?.name || '')
-        );
-        const snap = await getDocs(q);
-        
-        // Fetch actual lateness counts for this month
+        const className = currentClass?.name || selectedClass;
+        const classId = currentClass?.id || selectedClass;
+
+        // Fetch actual lateness counts for this month first
         const todayObj = new Date();
         const startOfMonth = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-01`;
         const latenessQuery = query(
@@ -92,16 +92,140 @@ export default function Lateness() {
           }
         });
 
-        const studentList: LatenessRecord[] = snap.docs
-          .map(doc => ({
-            id: doc.id,
-            name: doc.data().displayName || doc.data().name || 'Unknown Student',
+        // Fetch all lateness records for the class to analyze patterns
+        const patternQuery = query(
+          collection(db, 'lateness_records'),
+          where('classId', '==', selectedClass)
+        );
+        const patternSnap = await getDocs(patternQuery);
+        const patternDocs = patternSnap.docs.map(doc => doc.data());
+
+        // Calculate most frequent day
+        const getDayName = (dateStr: string) => {
+          if (!dateStr) return '';
+          const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+          const [year, month, day] = dateStr.split('-').map(Number);
+          const d = new Date(year, month - 1, day);
+          return days[d.getDay()];
+        };
+
+        const dayCounts: Record<string, number> = {};
+        patternDocs.forEach(d => {
+          const dayName = getDayName(d.date);
+          if (dayName) {
+            dayCounts[dayName] = (dayCounts[dayName] || 0) + 1;
+          }
+        });
+
+        let maxCount = 0;
+        let mostFrequentDays: string[] = [];
+        Object.entries(dayCounts).forEach(([day, count]) => {
+          if (count > maxCount) {
+            maxCount = count;
+            mostFrequentDays = [day];
+          } else if (count === maxCount) {
+            mostFrequentDays.push(day);
+          }
+        });
+
+        const info = getUnitInfo();
+
+        // Convert time string "HH:MM" to minutes
+        const timeToMinutes = (t: string) => {
+          if (!t || !t.includes(':')) return 0;
+          const [h, m] = t.split(':').map(Number);
+          return h * 60 + m;
+        };
+
+        // Calculate average late minutes
+        let totalLateMinutes = 0;
+        let lateRecordsWithTimeCount = 0;
+        const targetTime = info.time;
+
+        patternDocs.forEach(d => {
+          if (d.arrivalTime) {
+            const minutesLate = timeToMinutes(d.arrivalTime) - timeToMinutes(targetTime);
+            if (minutesLate > 0) {
+              totalLateMinutes += minutesLate;
+              lateRecordsWithTimeCount++;
+            }
+          }
+        });
+
+        const calculatedMostFrequentDay = mostFrequentDays.length > 0 ? mostFrequentDays.join(' & ') : '-';
+        const calculatedAvgMinutes = lateRecordsWithTimeCount > 0 ? `${Math.round(totalLateMinutes / lateRecordsWithTimeCount)} Menit` : '-';
+
+        setMostFrequentDay(calculatedMostFrequentDay);
+        setAvgLateMinutes(calculatedAvgMinutes);
+
+        // Fetch Class Students using multi-fallback logic
+        let fetchedStudents: { id: string; name: string }[] = [];
+
+        // 1. Try to load from active students enrollments
+        try {
+          const activeS = await getActiveStudents(classId, activeYear);
+          if (activeS && activeS.length > 0) {
+            fetchedStudents = activeS.map(s => ({
+              id: s.id,
+              name: s.name
+            }));
+          }
+        } catch (activeErr) {
+          console.warn('Failed to load active students via helper in Lateness:', activeErr);
+        }
+
+        // 2. Fallback to querying multiple collections if no active students found
+        if (fetchedStudents.length === 0) {
+          const qByClassId = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('classId', '==', classId));
+          const qByClassName = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('classId', '==', className));
+          const qByJobTitle = query(collection(db, 'users'), where('role', '==', 'STUDENT'), where('jobTitle', 'in', [classId, className]));
+          
+          const qInvitesId = query(collection(db, 'roleInvites'), where('role', '==', 'STUDENT'), where('classId', '==', classId));
+          const qInvitesName = query(collection(db, 'roleInvites'), where('role', '==', 'STUDENT'), where('classId', '==', className));
+          
+          const qStudentsId = query(collection(db, 'students'), where('classId', '==', classId));
+          const qStudentsName = query(collection(db, 'students'), where('classId', '==', className));
+
+          const snapPromises = [
+            getDocs(qByClassId).catch(err => { console.warn("Failed to query users by classId:", err); return { docs: [] }; }),
+            getDocs(qByClassName).catch(err => { console.warn("Failed to query users by className:", err); return { docs: [] }; }),
+            getDocs(qByJobTitle).catch(err => { console.warn("Failed to query users by jobTitle:", err); return { docs: [] }; }),
+            getDocs(qInvitesId).catch(err => { console.warn("Failed to query roleInvites by classId:", err); return { docs: [] }; }),
+            getDocs(qInvitesName).catch(err => { console.warn("Failed to query roleInvites by className:", err); return { docs: [] }; }),
+            getDocs(qStudentsId).catch(err => { console.warn("Failed to query students by classId:", err); return { docs: [] }; }),
+            getDocs(qStudentsName).catch(err => { console.warn("Failed to query students by className:", err); return { docs: [] }; })
+          ];
+
+          const [snap1, snap2, snap3, snap4, snap5, snap6, snap7] = await Promise.all(snapPromises);
+          
+          const combinedDocs = [...snap1.docs, ...snap2.docs, ...snap3.docs, ...snap4.docs, ...snap5.docs, ...snap6.docs, ...snap7.docs];
+          const uniqueDocsMap = new Map();
+
+          combinedDocs.forEach(d => {
+            const data = d.data();
+            const studentId = data.luminaId || data.nis || data.nisn || d.id;
+            
+            if (!uniqueDocsMap.has(studentId)) {
+              uniqueDocsMap.set(studentId, { docId: d.id, name: data.name || data.displayName || data.fullName });
+            }
+          });
+
+          fetchedStudents = Array.from(uniqueDocsMap.values()).map(data => ({
+            id: data.docId,
+            name: data.name || "Siswa Tanpa Nama"
+          }));
+        }
+
+        const studentList: LatenessRecord[] = fetchedStudents
+          .map(student => ({
+            id: student.id,
+            name: student.name,
             arrivalTime: '',
             reason: '',
             parentNote: false,
-            countThisMonth: latenessCountMap[doc.id] || 0,
-            className: currentClass?.name,
-            classId: selectedClass
+            countThisMonth: latenessCountMap[student.id] || 0,
+            className: className,
+            classId: classId
           }))
           .filter(student => {
             const lowerName = student.name.toLowerCase();
@@ -137,7 +261,7 @@ export default function Lateness() {
     };
 
     loadStudents();
-  }, [selectedClass, classes]);
+  }, [selectedClass, classes, activeYear]);
 
   const updateTime = (id: string, arrivalTime: string) => {
     setRecords(records.map(r => r.id === id ? { ...r, arrivalTime } : r));
@@ -263,6 +387,7 @@ export default function Lateness() {
                 <div className="relative flex-1 max-w-xs">
                   <StudentSearch 
                     placeholder="Cari nama/panggilan..."
+                    classId={selectedClass}
                     onSelect={(student) => {
                       // Check if already in list
                       if (records.some(r => r.id === student.id)) {
@@ -428,18 +553,6 @@ export default function Lateness() {
 
         {/* Info & Alerts Sidebar */}
         <div className="space-y-6">
-           <div className="bg-orange-50 border border-orange-100 p-6 rounded-3xl space-y-4">
-              <div className="flex items-center gap-2 text-orange-600">
-                 <Bell size={20} />
-                 <h3 className="font-bold">Eskalasi Otomatis</h3>
-              </div>
-              <p className="text-xs text-orange-800 leading-relaxed">
-                 Siswa yang terlambat <strong>{threshold} kali</strong> atau lebih dalam satu bulan akan otomatis terdaftar sebagai "Butuh Perhatian" di Dashboard Kepala Sekolah.
-              </p>
-              <div className="p-4 bg-white/50 rounded-2xl border border-orange-200 text-[11px] text-orange-900 font-medium italic">
-                 "Halo Wali Kelas {unitInfo.label} - Arka sudah terlambat 3 kali bulan ini. Mohon diskusikan dengan orang tua saat penjemputan hari ini."
-              </div>
-           </div>
 
            <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-6">
               <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2">
@@ -450,14 +563,14 @@ export default function Lateness() {
                  <div className="p-4 bg-gray-50 rounded-2xl border border-gray-50 flex items-center justify-between">
                     <div>
                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Paling Sering Terlambat</p>
-                       <p className="text-sm font-bold text-gray-800">Senin & Jumat</p>
+                       <p className="text-sm font-bold text-gray-800">{mostFrequentDay}</p>
                     </div>
                     <History size={20} className="text-gray-200" />
                  </div>
                  <div className="p-4 bg-gray-50 rounded-2xl border border-gray-50 flex items-center justify-between">
                     <div>
                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Rata-rata Menit Terlambat</p>
-                       <p className="text-sm font-bold text-gray-800">12 Menit</p>
+                       <p className="text-sm font-bold text-gray-800">{avgLateMinutes}</p>
                     </div>
                     <Clock size={20} className="text-gray-200" />
                  </div>

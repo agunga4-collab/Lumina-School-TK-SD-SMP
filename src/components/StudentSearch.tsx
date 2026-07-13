@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Search, User, X, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 
 interface StudentSearchResult {
@@ -17,9 +17,10 @@ interface StudentSearchProps {
   onSelect: (student: StudentSearchResult) => void;
   placeholder?: string;
   className?: string;
+  classId?: string;
 }
 
-export default function StudentSearch({ onSelect, placeholder = "Cari siswa...", className }: StudentSearchProps) {
+export default function StudentSearch({ onSelect, placeholder = "Cari siswa...", className, classId }: StudentSearchProps) {
   const [isOpen, setIsOpen] = React.useState(false);
   const [searchTerm, setSearchTerm] = React.useState('');
   const [results, setResults] = React.useState<StudentSearchResult[]>([]);
@@ -45,7 +46,7 @@ export default function StudentSearch({ onSelect, placeholder = "Cari siswa...",
     const searchStudents = async () => {
       setLoading(true);
       try {
-        // Search in 'users' collection first (for active students)
+        // 1. Search in 'users' collection (for onboarded active students)
         const usersRef = collection(db, 'users');
         const usersQ = query(usersRef, where('role', '==', 'STUDENT'));
         const usersSnap = await getDocs(usersQ);
@@ -61,7 +62,7 @@ export default function StudentSearch({ onSelect, placeholder = "Cari siswa...",
           };
         });
 
-        // Search in 'roleInvites' for non-onboarded students
+        // 2. Search in 'roleInvites' for non-onboarded students
         const invitesRef = collection(db, 'roleInvites');
         const invitesQ = query(invitesRef, where('role', '==', 'STUDENT'));
         const invitesSnap = await getDocs(invitesQ);
@@ -76,20 +77,81 @@ export default function StudentSearch({ onSelect, placeholder = "Cari siswa...",
           };
         });
 
+        // 3. Search in master 'students' collection
+        const studentsRef = collection(db, 'students');
+        const studentsSnap = await getDocs(studentsRef);
+        const masterStudents = studentsSnap.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            name: data.name || data.fullName || 'Unknown',
+            nickname: data.nickname,
+            className: data.className || data.jobTitle,
+            classId: data.classId
+          };
+        });
+
+        // Resolve enrollments of selected class to find enrolled student ids
+        let enrolledStudentIds: string[] = [];
+        let targetClassName = '';
+        if (classId) {
+          try {
+            const classDoc = await getDoc(doc(db, 'classes', classId));
+            if (classDoc.exists()) {
+              targetClassName = classDoc.data().name || '';
+            }
+            
+            const enrollmentsRef = collection(db, 'enrollments');
+            const queries = [
+              query(enrollmentsRef, where('classId', '==', classId))
+            ];
+            if (targetClassName) {
+              queries.push(query(enrollmentsRef, where('classId', '==', targetClassName)));
+            }
+            const snaps = await Promise.all(queries.map(q => getDocs(q)));
+            snaps.forEach(snap => {
+              snap.docs.forEach(d => {
+                const data = d.data();
+                if (data.studentId && !enrolledStudentIds.includes(data.studentId)) {
+                  enrolledStudentIds.push(data.studentId);
+                }
+              });
+            });
+          } catch (e) {
+            console.warn("Error resolving enrollments in StudentSearch:", e);
+          }
+        }
+
         // Merge and filter
-        const allStudents = [...activeStudents, ...invitedStudents];
+        const allStudents = [...activeStudents, ...invitedStudents, ...masterStudents];
         
-        // De-duplicate by ID (active students preferred over invited if same person)
+        // De-duplicate by ID (active/students collection preferred over invites)
         const uniqueStudentsMap = new Map();
         allStudents.forEach(s => {
           if (!uniqueStudentsMap.has(s.id) || !s.id.startsWith('INVITE_')) {
-            uniqueStudentsMap.set(s.id, s);
+            const existing = uniqueStudentsMap.get(s.id);
+            // Reconcile and merge metadata
+            uniqueStudentsMap.set(s.id, {
+              ...existing,
+              ...s,
+              classId: s.classId || existing?.classId,
+              className: s.className || existing?.className
+            });
           }
         });
         
         const uniqueStudents = Array.from(uniqueStudentsMap.values());
 
         const filtered = uniqueStudents.filter(s => {
+          if (classId) {
+            const matchesEnrollment = enrolledStudentIds.includes(s.id);
+            const matchesClassId = s.classId === classId;
+            const matchesClassName = targetClassName && s.className && s.className.toLowerCase() === targetClassName.toLowerCase();
+            if (!matchesEnrollment && !matchesClassId && !matchesClassName) {
+              return false;
+            }
+          }
+
           const nameStr = s.name || '';
           const lowerName = nameStr.toLowerCase();
           // Stricter filtering for class placeholders and mock accounts
@@ -105,7 +167,7 @@ export default function StudentSearch({ onSelect, placeholder = "Cari siswa...",
             lowerName.includes(searchTerm.toLowerCase()) || 
             (s.nickname && s.nickname.toLowerCase().includes(searchTerm.toLowerCase()))
           );
-        }).slice(0, 10);
+        }).slice(0, 50);
 
         setResults(filtered);
       } catch (err) {
@@ -117,7 +179,7 @@ export default function StudentSearch({ onSelect, placeholder = "Cari siswa...",
 
     const timer = setTimeout(searchStudents, 300);
     return () => clearTimeout(timer);
-  }, [searchTerm]);
+  }, [searchTerm, classId]);
 
   return (
     <div ref={containerRef} className={cn("relative", className)}>
@@ -153,7 +215,7 @@ export default function StudentSearch({ onSelect, placeholder = "Cari siswa...",
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 10 }}
-            className="absolute z-50 w-full mt-2 bg-white rounded-3xl shadow-2xl border border-gray-100 overflow-hidden"
+            className="absolute z-50 w-full mt-2 bg-white rounded-3xl shadow-2xl border border-gray-100 max-h-60 overflow-y-auto"
           >
             {loading ? (
               <div className="p-8 flex items-center justify-center gap-3 text-gray-400">
