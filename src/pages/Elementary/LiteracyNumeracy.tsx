@@ -48,6 +48,12 @@ const PERIODS: { value: ElementaryPeriod; label: string }[] = [
 
 const READING_LEVEL_OPTIONS = ['IR+', 'IR', 'IR-', 'IR-EN', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'];
 
+const getRows = (val: string) => {
+  if (!val) return 1;
+  const lines = val.split('\n').length;
+  return Math.min(5, lines);
+};
+
 export interface ElementaryStudent {
   id: string; // NIS
   name: string;
@@ -397,15 +403,19 @@ export default function ElementaryLiteracyNumeracy() {
         rec.comprehensionScore = Number(compRaw);
       }
     } else if (selectedArea === 'MENGAJI') {
-      rec.iqroCurrentLevel = (rec.iqroCurrentLevel === '' || rec.iqroCurrentLevel === null || rec.iqroCurrentLevel === undefined) ? null : Number(rec.iqroCurrentLevel);
-      rec.targetIqroLevel = (rec.targetIqroLevel === '' || rec.targetIqroLevel === null || rec.targetIqroLevel === undefined) ? null : Number(rec.targetIqroLevel);
+      const parseVal = (val: any) => {
+        if (val === '' || val === null || val === undefined) return null;
+        const num = Number(val);
+        return isNaN(num) ? val : num;
+      };
+      rec.iqroCurrentLevel = parseVal(rec.iqroCurrentLevel);
+      rec.targetIqroLevel = parseVal(rec.targetIqroLevel);
       rec.completionStatus = rec.completionStatus || '';
     } else if (selectedArea === 'NUMERACY') {
       const hasAcc = rec.accuracy !== '' && rec.accuracy !== undefined && rec.accuracy !== null;
-      const hasSpeed = rec.speed !== '' && rec.speed !== undefined && rec.speed !== null;
       
       rec.accuracy = hasAcc ? Number(rec.accuracy) : null;
-      rec.speed = hasSpeed ? Number(rec.speed) : null;
+      rec.speed = null;
     }
 
     return rec;
@@ -796,7 +806,7 @@ export default function ElementaryLiteracyNumeracy() {
 
                       {selectedArea === 'MENGAJI' && (
                         <>
-                          <th className="py-3 px-2 w-24 text-center">Iqro Level</th>
+                          <th className="py-3 px-2 w-24 text-center">Level</th>
                           <th className="py-3 px-2 w-28 text-center">Current Checkpoint</th>
                           <th className="py-3 px-2 w-24 text-center">Target Level</th>
                           <th className="py-3 px-2 w-32 text-center">Status Kelulusan</th>
@@ -810,7 +820,6 @@ export default function ElementaryLiteracyNumeracy() {
                           <th className="py-3 px-2 w-28 text-center">Math Level</th>
                           <th className="py-3 px-2 w-44 text-center">Topik</th>
                           <th className="py-3 px-2 w-24 text-center">Accuracy (%)</th>
-                          <th className="py-3 px-2 w-32 text-center">Speed (Detik)</th>
                         </>
                       )}
 
@@ -999,39 +1008,33 @@ export default function ElementaryLiteracyNumeracy() {
                                 </div>
                               </td>
                             </>
-                          )}
-
-                          {/* --- MENGAJI --- */}
+                          )}                          {/* --- MENGAJI --- */}
                           {selectedArea === 'MENGAJI' && (
                             <>
                               <td className="py-3 px-2 text-center">
                                 <input
-                                  type="number"
-                                  min="1"
-                                  max="6"
-                                  placeholder="Iqra"
+                                  type="text"
+                                  placeholder=""
                                   value={record.iqroCurrentLevel ?? ''}
-                                  onChange={e => handleCellChange(st.id, 'iqroCurrentLevel', e.target.value === '' ? '' : Number(e.target.value))}
+                                  onChange={e => handleCellChange(st.id, 'iqroCurrentLevel', e.target.value)}
                                   className="w-16 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
+                                />
+                              </td>
+                              <td className="py-3 px-2 text-center">
+                                <textarea
+                                  rows={getRows(record.iqroCurrentCheckpoint || '')}
+                                  placeholder=""
+                                  value={record.iqroCurrentCheckpoint || ''}
+                                  onChange={e => handleCellChange(st.id, 'iqroCurrentCheckpoint', e.target.value)}
+                                  className="w-24 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold text-center resize-y text-[11px] focus:ring-1 focus:ring-slate-900 focus:bg-white"
                                 />
                               </td>
                               <td className="py-3 px-2 text-center">
                                 <input
                                   type="text"
-                                  placeholder="Surah/Ayah"
-                                  value={record.iqroCurrentCheckpoint || ''}
-                                  onChange={e => handleCellChange(st.id, 'iqroCurrentCheckpoint', e.target.value)}
-                                  className="w-24 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold text-center"
-                                />
-                              </td>
-                              <td className="py-3 px-2 text-center">
-                                <input
-                                  type="number"
-                                  min="1"
-                                  max="6"
-                                  placeholder="Target"
+                                  placeholder=""
                                   value={record.targetIqroLevel ?? ''}
-                                  onChange={e => handleCellChange(st.id, 'targetIqroLevel', e.target.value === '' ? '' : Number(e.target.value))}
+                                  onChange={e => handleCellChange(st.id, 'targetIqroLevel', e.target.value)}
                                   className="w-16 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
                                 />
                               </td>
@@ -1049,21 +1052,21 @@ export default function ElementaryLiteracyNumeracy() {
                                 </select>
                               </td>
                               <td className="py-3 px-2 text-center">
-                                <input
-                                  type="text"
-                                  placeholder="Kelemahan..."
+                                <textarea
+                                  rows={getRows(record.letterRecognitionNote || '')}
+                                  placeholder=""
                                   value={record.letterRecognitionNote || ''}
                                   onChange={e => handleCellChange(st.id, 'letterRecognitionNote', e.target.value)}
-                                  className="w-32 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-medium text-[11px]"
+                                  className="w-32 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-medium text-[11px] resize-y focus:ring-1 focus:ring-slate-900 focus:bg-white"
                                 />
                               </td>
                               <td className="py-3 px-2 text-center">
-                                <input
-                                  type="text"
-                                  placeholder="Tajwid..."
+                                <textarea
+                                  rows={getRows(record.tajwidNote || '')}
+                                  placeholder=""
                                   value={record.tajwidNote || ''}
                                   onChange={e => handleCellChange(st.id, 'tajwidNote', e.target.value)}
-                                  className="w-32 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-medium text-[11px]"
+                                  className="w-32 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-medium text-[11px] resize-y focus:ring-1 focus:ring-slate-900 focus:bg-white"
                                 />
                               </td>
                             </>
@@ -1082,12 +1085,12 @@ export default function ElementaryLiteracyNumeracy() {
                                 />
                               </td>
                               <td className="py-3 px-2 text-center">
-                                <input
-                                  type="text"
-                                  placeholder="Materi/Topik"
+                                <textarea
+                                  rows={getRows(record.topic || '')}
+                                  placeholder=""
                                   value={record.topic || ''}
                                   onChange={e => handleCellChange(st.id, 'topic', e.target.value)}
-                                  className="w-40 bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-1 font-bold"
+                                  className="w-40 bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-1 font-medium text-[11px] resize-y focus:ring-1 focus:ring-slate-900 focus:bg-white"
                                 />
                               </td>
                               <td className="py-3 px-2 text-center">
@@ -1101,18 +1104,6 @@ export default function ElementaryLiteracyNumeracy() {
                                     className="w-14 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
                                   />
                                   <span className="text-[10px] text-slate-400 font-bold">%</span>
-                                </div>
-                              </td>
-                              <td className="py-3 px-2 text-center">
-                                <div className="flex items-center gap-0.5 justify-center">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    value={record.speed ?? ''}
-                                    onChange={e => handleCellChange(st.id, 'speed', e.target.value === '' ? '' : Number(e.target.value))}
-                                    className="w-16 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
-                                  />
-                                  <span className="text-[10px] text-slate-400 font-bold">dtk</span>
                                 </div>
                               </td>
                             </>
@@ -1143,7 +1134,7 @@ export default function ElementaryLiteracyNumeracy() {
                           {/* LOCAL NOTES */}
                           <td className="py-3 px-4">
                             <textarea
-                              rows={1}
+                              rows={getRows(record.notes || '')}
                               placeholder="Ketik catatan di sini..."
                               value={record.notes || ''}
                               onChange={e => handleCellChange(st.id, 'notes', e.target.value)}
@@ -1286,7 +1277,7 @@ export default function ElementaryLiteracyNumeracy() {
                           {/* MENGAJI COLUMNS */}
                           {selectedArea === 'MENGAJI' && (
                             <>
-                              <th className="py-3 px-4 text-center">Iqro Level</th>
+                              <th className="py-3 px-4 text-center">Level</th>
                               <th className="py-3 px-4 text-center">Checkpoint</th>
                               <th className="py-3 px-4 text-center">Target Level</th>
                               <th className="py-3 px-4 text-center">Status Kelulusan</th>
@@ -1299,7 +1290,6 @@ export default function ElementaryLiteracyNumeracy() {
                               <th className="py-3 px-4 text-center">Math Level</th>
                               <th className="py-3 px-4 text-center">Topik</th>
                               <th className="py-3 px-4 text-center">Akurasi</th>
-                              <th className="py-3 px-4 text-center">Kecepatan</th>
                             </>
                           )}
 
@@ -1352,7 +1342,6 @@ export default function ElementaryLiteracyNumeracy() {
                                   <td className="py-3.5 px-4 text-center font-bold">{(record as any)?.mathLevel || '-'}</td>
                                   <td className="py-3.5 px-4 text-center text-slate-600 max-w-[124px] truncate">{(record as any)?.topic || '-'}</td>
                                   <td className="py-3.5 px-4 text-center font-extrabold text-[#7c3aed]">{(record as any)?.accuracy !== undefined && (record as any)?.accuracy !== null ? `${(record as any)?.accuracy}%` : '-'}</td>
-                                  <td className="py-3.5 px-4 text-center font-bold">{(record as any)?.speed !== undefined && (record as any)?.speed !== null ? `${(record as any)?.speed} dtk` : '-'}</td>
                                 </>
                               )}
 

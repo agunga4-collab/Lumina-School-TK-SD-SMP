@@ -41,9 +41,9 @@ export interface EnglishReadingProgress extends ElementaryProgressBase {
 
 export interface MengajiProgress extends ElementaryProgressBase {
   area: 'MENGAJI';
-  iqroCurrentLevel: number;
+  iqroCurrentLevel: number | string | null;
   iqroCurrentCheckpoint: string; // e.g., "2/40"
-  targetIqroLevel: number;
+  targetIqroLevel: number | string | null;
   completionStatus: 'ON_PROGRESS' | 'LULUS' | 'TIDAK_LULUS' | 'BELUM_DINILAI';
   letterRecognitionNote: string;
   tajwidNote: string;
