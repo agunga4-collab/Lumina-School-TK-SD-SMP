@@ -2,24 +2,42 @@ import * as React from 'react';
 import { useOutletContext, useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  FileSpreadsheet, User, Calendar, Target, Save, 
-  CheckCircle2, AlertCircle, Info, Clock, BookOpen,
-  ArrowRight, ShieldCheck, HelpCircle, ChevronLeft, ChevronRight, Plus
+  FileSpreadsheet, User, Calendar, Save, Trash2, Plus, 
+  Info, Clock, BookOpen, ChevronLeft, ChevronRight, HelpCircle
 } from 'lucide-react';
-import { cn, formatDate } from '../../lib/utils';
+import { cn } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { 
-  db, getCICOGoalConfig, saveCICOGoalConfig, 
-  getCICODailyReports, saveCICODailyReport,
-  getCICOWeeklyReflections, saveCICOWeeklyReflection,
-  getClasses, getActiveStudents, getTeachers, createBehaviorAlert,
+  db, getClasses, getActiveStudents, getTeachers, createBehaviorAlert,
   handleFirestoreError
 } from '../../lib/firebase';
-import { collection, query, where, onSnapshot, getDocs } from 'firebase/firestore';
-import { CICO_SESSIONS, CICO_DEFAULT_GOALS } from '../../constants';
+import { collection, query, where, onSnapshot, doc, getDoc, setDoc } from 'firebase/firestore';
 import type { 
-  MTSSCase, CICODailyReport, CICOSessionData, CICOWeeklyReflection, Student, Class, User as AppUser
+  MTSSCase, Student, Class, User as AppUser
 } from '../../types';
+
+interface BehaviorTargetRow {
+  id: string;
+  text: string;
+}
+
+interface CICOWeeklyWorksheet {
+  studentId: string;
+  classId: string;
+  weekStartingDate: string; // Monday date string (YYYY-MM-DD)
+  targets: BehaviorTargetRow[];
+  scores: {
+    [targetId: string]: {
+      [dayIdx: number]: { // 0: Mon, 1: Tue, 2: Wed, 3: Thu, 4: Fri
+        checkIn: number | null;
+        checkOut: number | null;
+      };
+    };
+  };
+  halBaik: string;
+  refleksi: string;
+  teacherNotes: string;
+}
 
 // Helper to get Monday of a week
 function getMonday(d: Date): Date {
@@ -51,43 +69,30 @@ export default function MTSSBehaviorSpreadsheet() {
   const [teachers, setTeachers] = React.useState<AppUser[]>([]);
 
   // Selection states
-  const [selectedClassId, setSelectedClassId] = React.useState<string>(urlClassId);
-  const [selectedStudentId, setSelectedStudentId] = React.useState<string>(urlStudentId);
+  const [selectedClassId, setSelectedClassId] = React.useState<string>(urlClassId || '');
+  const [selectedStudentId, setSelectedStudentId] = React.useState<string>(urlStudentId || '');
   const [currentWeekMonday, setCurrentWeekMonday] = React.useState<Date>(getMonday(new Date()));
-  const [activeDayIdx, setActiveDayIdx] = React.useState<number>(new Date().getDay() >= 1 && new Date().getDay() <= 5 ? new Date().getDay() - 1 : 0); // Default to Mon-Fri or Mon
 
-  // Core Data States
-  const [mtssCase, setMtssCase] = React.useState<MTSSCase | null>(null);
-  const [dailyReports, setDailyReports] = React.useState<CICODailyReport[]>([]);
-  const [reflections, setReflections] = React.useState<CICOWeeklyReflection[]>([]);
+  // Core Workbook States
+  const [targets, setTargets] = React.useState<BehaviorTargetRow[]>([]);
+  const [scores, setScores] = React.useState<CICOWeeklyWorksheet['scores']>({});
+  const [halBaik, setHalBaik] = React.useState('');
+  const [refleksi, setRefleksi] = React.useState('');
+  const [teacherNotes, setTeacherNotes] = React.useState('');
+
   const [loading, setLoading] = React.useState(true);
-  const [savingDaily, setSavingDaily] = React.useState(false);
-  const [savingReflection, setSavingReflection] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
 
-  // Daily Entry State
-  const [dailyForm, setDailyForm] = React.useState<Omit<CICODailyReport, 'id' | 'createdAt' | 'updatedAt'>>({
-    caseId: '',
-    studentId: '',
-    date: '',
-    weekNumber: 1,
-    sessions: [],
-    dailyAvgScore: 0,
-    dailyNote: '',
-    hasSpecialIncident: false,
-    incidentNote: '',
-    isAbsent: false,
-    createdBy: profile?.uid || ''
-  });
-
-  // Reflection form state
-  const [reflectionForm, setReflectionForm] = React.useState({
-    studentPositives: '',
-    studentPlans: '',
-    teacherNotes: ''
-  });
-
-  // Monday of selected week formatted as YYYY-MM-DD
   const mondayStr = currentWeekMonday.toISOString().split('T')[0];
+
+  // Sync state if url parameters change
+  React.useEffect(() => {
+    if (urlClassId) setSelectedClassId(urlClassId);
+  }, [urlClassId]);
+
+  React.useEffect(() => {
+    if (urlStudentId) setSelectedStudentId(urlStudentId);
+  }, [urlStudentId]);
 
   // 1. Fetch Classes, Cases and Teachers initially
   React.useEffect(() => {
@@ -116,7 +121,7 @@ export default function MTSSBehaviorSpreadsheet() {
       }
     };
 
-    // Listen to behavior cases to match active Tier 2 students
+    // Listen to behavior cases to match active Tier 2/3 students
     const casesQuery = query(
       collection(db, 'behaviorCases'),
       where('academicYear', '==', filters.academicYear)
@@ -140,7 +145,7 @@ export default function MTSSBehaviorSpreadsheet() {
         const classStudents = await getActiveStudents(selectedClassId, filters.academicYear);
         setStudents(classStudents || []);
 
-        // Auto-select first student if not set or not in list
+        // Auto-select first student if not set
         if (classStudents && classStudents.length > 0) {
           const isCurrentInList = classStudents.some(s => s.id === selectedStudentId);
           if (!isCurrentInList && !urlStudentId) {
@@ -156,53 +161,58 @@ export default function MTSSBehaviorSpreadsheet() {
     loadRoster();
   }, [selectedClassId, filters.academicYear]);
 
-  // 3. Find active case & fetch reports when selected student or selected week changes
+  // 3. Load or initialize workbook for the selected student & selected Monday
   React.useEffect(() => {
     if (!selectedStudentId) {
-      setMtssCase(null);
-      setDailyReports([]);
-      setReflections([]);
       setLoading(false);
       return;
     }
 
     setLoading(true);
-    // Find active behavior case for this student (preferably OPEN/MONITORING and Tier 2/3)
-    const matchedCase = cases.find(c => 
-      c.studentId === selectedStudentId && 
-      c.status !== 'CLOSED' &&
-      (c.tier === 'Tier 2' || c.tier === 'Tier 3')
-    ) || cases.find(c => c.studentId === selectedStudentId && c.status !== 'CLOSED')
-      || cases.find(c => c.studentId === selectedStudentId); // Fallback to any
 
-    setMtssCase(matchedCase || null);
-
-    if (!matchedCase) {
-      setDailyReports([]);
-      setReflections([]);
-      setLoading(false);
-      return;
-    }
-
-    // Fetch reports & reflections for this case
-    const loadCICOData = async () => {
+    const loadWorkbook = async () => {
       try {
-        const [reports, refs] = await Promise.all([
-          getCICODailyReports(matchedCase.id),
-          getCICOWeeklyReflections(matchedCase.id)
-        ]);
+        const docRef = doc(db, 'cicoWeeklyWorksheets', `${selectedStudentId}_${mondayStr}`);
+        const docSnap = await getDoc(docRef);
 
-        setDailyReports(reports || []);
-        setReflections(refs || []);
+        if (docSnap.exists()) {
+          const data = docSnap.data() as CICOWeeklyWorksheet;
+          setTargets(data.targets || []);
+          setScores(data.scores || {});
+          setHalBaik(data.halBaik || '');
+          setRefleksi(data.refleksi || '');
+          setTeacherNotes(data.teacherNotes || '');
+        } else {
+          // pre-fill from student's active CICO goals if any
+          const matchedCase = cases.find(c => 
+            c.studentId === selectedStudentId && 
+            c.status !== 'CLOSED'
+          );
+
+          const caseGoals = matchedCase?.tier2Meeting?.cicoGoals || [];
+          const initialTargets: BehaviorTargetRow[] = caseGoals.length > 0 
+            ? caseGoals.map((g, idx) => ({ id: g.id || `target-${idx}-${Date.now()}`, text: g.label }))
+            : [
+                { id: `target-1-${Date.now()}`, text: '' },
+                { id: `target-2-${Date.now()}`, text: '' },
+                { id: `target-3-${Date.now()}`, text: '' }
+              ];
+
+          setTargets(initialTargets);
+          setScores({});
+          setHalBaik('');
+          setRefleksi('');
+          setTeacherNotes('');
+        }
       } catch (err) {
-        console.error("Error loading CICO records:", err);
+        console.error("Error loading CICO workbook:", err);
       } finally {
         setLoading(false);
       }
     };
 
-    loadCICOData();
-  }, [selectedStudentId, cases]);
+    loadWorkbook();
+  }, [selectedStudentId, mondayStr, cases]);
 
   // Generate 5 days of the selected week
   const daysOfWeek = Array.from({ length: 5 }, (_, i) => {
@@ -210,243 +220,6 @@ export default function MTSSBehaviorSpreadsheet() {
     d.setDate(currentWeekMonday.getDate() + i);
     return d;
   });
-
-  const activeDateStr = daysOfWeek[activeDayIdx].toISOString().split('T')[0];
-
-  // Goals list (mapped for matching)
-  const cicoGoals = mtssCase?.tier2Meeting?.cicoGoals || CICO_DEFAULT_GOALS.map((g, i) => ({ id: `goal${i+1}`, label: g }));
-
-  // 4. Update the Daily Form state when active date or dailyReports change
-  React.useEffect(() => {
-    if (!selectedStudentId) return;
-
-    const existingReport = dailyReports.find(r => r.date === activeDateStr);
-    if (existingReport) {
-      setDailyForm(existingReport);
-    } else {
-      // Create fresh default session rows
-      const freshSessions: CICOSessionData[] = CICO_SESSIONS.map(s => ({
-        sessionId: s.id,
-        sessionName: s.label,
-        timeSlot: s.time,
-        scores: { goal1: null, goal2: null, goal3: null, goal4: null },
-        isNA: false,
-        filledBy: profile?.uid || '',
-        filledByName: profile?.displayName || ''
-      }));
-
-      setDailyForm({
-        caseId: mtssCase?.id || 'unmatched',
-        studentId: selectedStudentId,
-        date: activeDateStr,
-        weekNumber: 1,
-        sessions: freshSessions,
-        dailyAvgScore: 0,
-        dailyNote: '',
-        hasSpecialIncident: false,
-        incidentNote: '',
-        isAbsent: false,
-        createdBy: profile?.uid || ''
-      });
-    }
-  }, [activeDateStr, dailyReports, selectedStudentId, mtssCase]);
-
-  // 5. Update the Weekly Reflection state when mondayStr or reflections change
-  React.useEffect(() => {
-    if (!mtssCase) return;
-    const weeklyRef = reflections.find(r => r.weekStartingDate === mondayStr);
-    if (weeklyRef) {
-      setReflectionForm({
-        studentPositives: weeklyRef.studentPositives || '',
-        studentPlans: weeklyRef.studentPlans || '',
-        teacherNotes: weeklyRef.teacherNotes || ''
-      });
-    } else {
-      setReflectionForm({
-        studentPositives: '',
-        studentPlans: '',
-        teacherNotes: ''
-      });
-    }
-  }, [mondayStr, reflections, mtssCase]);
-
-  // Handle Score Toggle inside grid cell
-  const handleScoreSelect = (sessionId: string, goalKey: keyof CICOSessionData['scores'], scoreValue: 1 | 2 | 3) => {
-    setDailyForm(prev => {
-      const updatedSessions = prev.sessions.map(s => {
-        if (s.sessionId === sessionId) {
-          const currentVal = s.scores[goalKey];
-          // Toggle off if clicking the already selected score
-          const newVal = currentVal === scoreValue ? null : scoreValue;
-          return {
-            ...s,
-            scores: {
-              ...s.scores,
-              [goalKey]: newVal
-            },
-            filledBy: profile?.uid || '',
-            filledByName: profile?.displayName || s.filledByName || ''
-          };
-        }
-        return s;
-      });
-
-      // Calculate new metrics
-      let totalEarned = 0;
-      let totalPossible = 0;
-      updatedSessions.forEach(s => {
-        if (s.isNA) return;
-        Object.keys(s.scores).forEach(k => {
-          const sc = s.scores[k as keyof CICOSessionData['scores']];
-          if (sc !== null) {
-            totalEarned += sc;
-            totalPossible += 3;
-          }
-        });
-      });
-
-      const average = totalPossible > 0 ? (totalEarned / (totalPossible / 3)) : 0; // scale out of 3
-
-      return {
-        ...prev,
-        sessions: updatedSessions,
-        dailyAvgScore: average
-      };
-    });
-  };
-
-  // Toggle Entire Session as NA (Not Applicable)
-  const handleToggleNA = (sessionId: string) => {
-    setDailyForm(prev => {
-      const updatedSessions = prev.sessions.map(s => {
-        if (s.sessionId === sessionId) {
-          const isCurrentlyNA = !s.isNA;
-          return {
-            ...s,
-            isNA: isCurrentlyNA,
-            scores: isCurrentlyNA 
-              ? { goal1: null, goal2: null, goal3: null, goal4: null }
-              : s.scores
-          };
-        }
-        return s;
-      });
-
-      // Recalculate average
-      let totalEarned = 0;
-      let totalPossible = 0;
-      updatedSessions.forEach(s => {
-        if (s.isNA) return;
-        Object.keys(s.scores).forEach(k => {
-          const sc = s.scores[k as keyof CICOSessionData['scores']];
-          if (sc !== null) {
-            totalEarned += sc;
-            totalPossible += 3;
-          }
-        });
-      });
-
-      const average = totalPossible > 0 ? (totalEarned / (totalPossible / 3)) : 0;
-
-      return {
-        ...prev,
-        sessions: updatedSessions,
-        dailyAvgScore: average
-      };
-    });
-  };
-
-  // Save Daily Report Worksheet to firestore
-  const handleSaveDailyReport = async () => {
-    if (!mtssCase) return;
-    setSavingDaily(true);
-    try {
-      // Quick validation
-      let filledSessionsCount = 0;
-      dailyForm.sessions.forEach(s => {
-        if (s.isNA) return;
-        const hasSomeScore = Object.values(s.scores).some(v => v !== null);
-        if (hasSomeScore) filledSessionsCount++;
-      });
-
-      if (filledSessionsCount < 5 && !dailyForm.isAbsent) {
-        const proceed = window.confirm(`Hanya ${filledSessionsCount} sesi yang terisi nilai hari ini (Direkomendasikan minimal 5 sesi). Yakin ingin menyimpan worksheet?`);
-        if (!proceed) {
-          setSavingDaily(false);
-          return;
-        }
-      }
-
-      const payload = {
-        ...dailyForm,
-        caseId: mtssCase.id,
-        isLateInput: activeDateStr !== new Date().toISOString().split('T')[0]
-      };
-
-      await saveCICODailyReport(payload);
-
-      // Reload fresh daily reports
-      const reports = await getCICODailyReports(mtssCase.id);
-      setDailyReports(reports || []);
-
-      // High severity alert if low scores 3 days in a row
-      if (!dailyForm.isAbsent) {
-        const validReports = (reports || []).filter(r => !r.isAbsent).slice(0, 3);
-        if (validReports.length === 3 && validReports.every(r => r.dailyAvgScore < 1.5)) {
-          const targetRoles = ['BK_MENTOR', 'HEAD_JUNIOR', 'SUPER_ADMIN'];
-          const targetUserIds = teachers.filter(t => targetRoles.includes(t.role)).map(t => t.uid);
-
-          await createBehaviorAlert({
-            type: 'ALERT-T2-02',
-            severity: 'HIGH',
-            title: 'Skor CICO Sangat Rendah Beruntun',
-            message: `${mtssCase.studentName} mendapat nilai rata-rata CICO < 1.5 selama 3 hari kerja berturut-turut.`,
-            caseId: mtssCase.id,
-            studentId: mtssCase.studentId,
-            studentName: mtssCase.studentName,
-            targetUserIds,
-            actionUrl: `/junior-high/behavior/mtss/cases/${mtssCase.id}`
-          });
-        }
-      }
-
-      alert("Data CICO harian berhasil disimpan ke server!");
-    } catch (err: any) {
-      console.error(err);
-      alert(`Gagal menyimpan data: ${err.message || String(err)}`);
-    } finally {
-      setSavingDaily(false);
-    }
-  };
-
-  // Save Weekly Reflection
-  const handleSaveReflection = async () => {
-    if (!mtssCase) return;
-    setSavingReflection(true);
-    try {
-      const payload: Omit<CICOWeeklyReflection, 'id' | 'createdAt' | 'updatedAt'> = {
-        caseId: mtssCase.id,
-        weekStartingDate: mondayStr,
-        weekNumber: 1,
-        studentPositives: reflectionForm.studentPositives,
-        studentPlans: reflectionForm.studentPlans,
-        teacherNotes: reflectionForm.teacherNotes
-      };
-
-      await saveCICOWeeklyReflection(payload);
-
-      // Reload reflections
-      const refs = await getCICOWeeklyReflections(mtssCase.id);
-      setReflections(refs || []);
-
-      alert("Catatan refleksi mingguan berhasil disimpan!");
-    } catch (err: any) {
-      console.error(err);
-      alert(`Gagal menyimpan refleksi: ${err.message || String(err)}`);
-    } finally {
-      setSavingReflection(false);
-    }
-  };
 
   // Switch weeks
   const changeWeek = (direction: 'prev' | 'next') => {
@@ -456,35 +229,146 @@ export default function MTSSBehaviorSpreadsheet() {
     setCurrentWeekMonday(newMon);
   };
 
-  // Get daily average for displaying on calendar or tabs
-  const getDayAvgScore = (dateString: string) => {
-    const report = dailyReports.find(r => r.date === dateString);
-    if (!report) return null;
-    if (report.isAbsent) return 'Absent';
-    return report.dailyAvgScore;
+  // Add target row
+  const handleAddTargetRow = () => {
+    const newId = `target-${Date.now()}`;
+    setTargets(prev => [...prev, { id: newId, text: '' }]);
   };
 
-  const getDayPct = (dateString: string) => {
-    const report = dailyReports.find(r => r.date === dateString);
-    if (!report) return null;
-    if (report.isAbsent) return null;
-    // Calculate percentage based on session scores
+  // Remove target row
+  const handleRemoveTargetRow = (id: string) => {
+    setTargets(prev => prev.filter(t => t.id !== id));
+    setScores(prev => {
+      const updated = { ...prev };
+      delete updated[id];
+      return updated;
+    });
+  };
+
+  // Update target text
+  const handleTargetTextChange = (id: string, text: string) => {
+    setTargets(prev => prev.map(t => t.id === id ? { ...t, text } : t));
+  };
+
+  // Update cell score (Check In / Check Out)
+  const handleScoreChange = (targetId: string, dayIdx: number, type: 'checkIn' | 'checkOut', value: number | null) => {
+    setScores(prev => {
+      const targetScores = prev[targetId] || {};
+      const dayScores = targetScores[dayIdx] || { checkIn: null, checkOut: null };
+      
+      return {
+        ...prev,
+        [targetId]: {
+          ...targetScores,
+          [dayIdx]: {
+            ...dayScores,
+            [type]: value
+          }
+        }
+      };
+    });
+  };
+
+  // Calculate scores for a single day
+  const calculateDayScore = (dayIdx: number) => {
     let earned = 0;
     let possible = 0;
-    report.sessions.forEach(s => {
-      if (s.isNA) return;
-      Object.values(s.scores).forEach(sc => {
-        const val = sc as number | null;
-        if (val !== null) {
-          earned += val;
-          possible += 3;
+
+    targets.forEach(t => {
+      const cell = scores[t.id]?.[dayIdx];
+      if (cell) {
+        if (cell.checkIn !== null) {
+          earned += cell.checkIn;
+          possible += 4;
         }
-      });
+        if (cell.checkOut !== null) {
+          earned += cell.checkOut;
+          possible += 4;
+        }
+      }
     });
-    return possible > 0 ? (earned / possible) * 100 : 0;
+
+    return { earned, possible, pct: possible > 0 ? Math.round((earned / possible) * 100) : null };
+  };
+
+  // Calculate overall weekly score
+  const calculateWeeklyScore = () => {
+    let earned = 0;
+    let possible = 0;
+
+    targets.forEach(t => {
+      const targetScores = scores[t.id];
+      if (targetScores) {
+        for (let dayIdx = 0; dayIdx < 5; dayIdx++) {
+          const cell = targetScores[dayIdx];
+          if (cell) {
+            if (cell.checkIn !== null) {
+              earned += cell.checkIn;
+              possible += 4;
+            }
+            if (cell.checkOut !== null) {
+              earned += cell.checkOut;
+              possible += 4;
+            }
+          }
+        }
+      }
+    });
+
+    return { earned, possible, pct: possible > 0 ? Math.round((earned / possible) * 100) : null };
+  };
+
+  // Save the complete weekly workbook to firestore
+  const handleSaveWorkbook = async () => {
+    if (!selectedStudentId) return;
+    setSaving(true);
+    try {
+      const payload: CICOWeeklyWorksheet = {
+        studentId: selectedStudentId,
+        classId: selectedClassId,
+        weekStartingDate: mondayStr,
+        targets,
+        scores,
+        halBaik,
+        refleksi,
+        teacherNotes
+      };
+
+      const docRef = doc(db, 'cicoWeeklyWorksheets', `${selectedStudentId}_${mondayStr}`);
+      await setDoc(docRef, payload);
+
+      // Create behavior alerts if overall percentage is low and there is an active case
+      const weeklyStats = calculateWeeklyScore();
+      const matchedCase = cases.find(c => c.studentId === selectedStudentId && c.status !== 'CLOSED');
+      
+      if (matchedCase && weeklyStats.pct !== null && weeklyStats.pct < 60) {
+        const targetRoles = ['BK_MENTOR', 'HEAD_JUNIOR', 'SUPER_ADMIN'];
+        const targetUserIds = teachers.filter(t => targetRoles.includes(t.role)).map(t => t.uid);
+
+        await createBehaviorAlert({
+          type: 'ALERT-T2-02',
+          severity: 'HIGH',
+          title: 'Skor CICO Mingguan Rendah',
+          message: `${matchedCase.studentName} memperoleh rata-rata CICO mingguan ${weeklyStats.pct}% (di bawah batas 60%).`,
+          caseId: matchedCase.id,
+          studentId: matchedCase.studentId,
+          studentName: matchedCase.studentName,
+          targetUserIds,
+          actionUrl: `/junior-high/behavior/mtss/cases/${matchedCase.id}`
+        });
+      }
+
+      alert("Workbook pemantauan perilaku berhasil disimpan!");
+    } catch (err: any) {
+      console.error(err);
+      alert(`Gagal menyimpan workbook: ${err.message || String(err)}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const activeStudentObj = students.find(s => s.id === selectedStudentId);
+  const weeklyStats = calculateWeeklyScore();
 
   return (
     <div className="space-y-6">
@@ -554,7 +438,7 @@ export default function MTSSBehaviorSpreadsheet() {
         </div>
       </div>
 
-      {/* Conditional rendering for empty or unmatched student workbook */}
+      {/* Conditional rendering for empty or loading workbook */}
       {!selectedStudentId ? (
         <div className="bg-white p-16 rounded-[2.5rem] border border-gray-100 shadow-sm text-center max-w-xl mx-auto space-y-4">
           <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto">
@@ -563,7 +447,7 @@ export default function MTSSBehaviorSpreadsheet() {
           <div>
             <h3 className="text-lg font-black uppercase italic tracking-tight text-gray-900">MTSS Behavior Worksheet</h3>
             <p className="text-xs text-gray-500 leading-relaxed mt-2 uppercase font-semibold tracking-wider">
-              Pilih kelas dan siswa di atas untuk membuka buku kerja (workbook) pemantauan perilaku Check-In Check-Out (CICO) interaktif.
+              Pilih kelas dan siswa di atas untuk membuka lembar kerja CICO (Check-In Check-Out) interaktif mingguan.
             </p>
           </div>
         </div>
@@ -573,384 +457,289 @@ export default function MTSSBehaviorSpreadsheet() {
           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">Loading Student Ledger...</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+        <div className="space-y-6">
           
-          {/* LEFT SIDEBAR: Student Profile & CICO Case context */}
-          <div className="lg:col-span-1 space-y-6">
-            
-            {/* Roster & Case Profile card */}
-            <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6 space-y-4 relative overflow-hidden">
-              <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
-                <User size={80} />
+          {/* Top Score banner & KPI row */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-4">
+              <div className="p-3 bg-blue-50 text-blue-600 rounded-xl">
+                <User size={20} />
               </div>
-              <div className="space-y-1">
-                <span className="text-[9px] font-black text-blue-600 uppercase tracking-widest italic">Student Workbook</span>
-                <h3 className="text-lg font-black text-gray-900 tracking-tight leading-tight uppercase italic">{activeStudentObj?.name}</h3>
-                <p className="text-xs font-bold text-gray-400 font-mono">NISN: {activeStudentObj?.nisn || '—'}</p>
+              <div>
+                <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Active Student</span>
+                <p className="text-sm font-black text-gray-800 uppercase italic tracking-wide">{activeStudentObj?.name}</p>
+                <p className="text-[10px] font-mono text-gray-400 font-bold mt-0.5">NISN: {activeStudentObj?.nisn || '—'}</p>
               </div>
+            </div>
 
-              <div className="border-t border-gray-50 pt-4 space-y-3">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-gray-400 font-bold uppercase tracking-wider text-[10px]">CICO Status</span>
-                  {mtssCase ? (
-                    <span className="bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest">
-                      Active
-                    </span>
-                  ) : (
-                    <span className="bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest">
-                      Inactive
-                    </span>
-                  )}
+            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-4">
+              <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
+                <FileSpreadsheet size={20} />
+              </div>
+              <div>
+                <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Target Rows Count</span>
+                <p className="text-sm font-black text-gray-800 font-mono mt-0.5">{targets.length} Target Behaviors</p>
+                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Customizable workspace</p>
+              </div>
+            </div>
+
+            <div className="bg-[#001033] text-white p-6 rounded-2xl shadow-md flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-blue-900 text-blue-300 rounded-xl">
+                  <BookOpen size={20} />
                 </div>
-
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-gray-400 font-bold uppercase tracking-wider text-[10px]">Support Tier</span>
-                  <span className={cn(
-                    "px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest",
-                    mtssCase?.tier === 'Tier 3' ? 'bg-rose-50 text-rose-700 border border-rose-100' :
-                    mtssCase?.tier === 'Tier 2' ? 'bg-amber-50 text-amber-700 border border-amber-100' :
-                    'bg-gray-50 text-gray-500 border border-gray-100'
-                  )}>
-                    {mtssCase?.tier || 'No Active Program'}
-                  </span>
+                <div>
+                  <span className="text-[9px] font-black text-blue-300 uppercase tracking-widest">Weekly Achievement</span>
+                  <p className="text-[10px] text-blue-100/70 font-semibold mt-0.5 uppercase tracking-wide">Overall progress rate</p>
                 </div>
-
-                {mtssCase && (
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-gray-400 font-bold uppercase tracking-wider text-[10px]">Success Rate Target</span>
-                    <span className="font-bold text-gray-700 text-[10px] uppercase font-mono">
-                      {mtssCase?.tier2Meeting?.cicoTargetAchievement || 80}%
-                    </span>
-                  </div>
-                )}
               </div>
-
-              {/* Action Button if they don't have CICO initialized */}
-              {!mtssCase && (
-                <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 text-center space-y-3 mt-4">
-                  <p className="text-[10px] text-blue-700 font-bold uppercase tracking-wider leading-relaxed">
-                    Siswa ini belum memiliki rencana intervensi perilaku (CICO) yang aktif.
+              <div className="text-right">
+                <p className="text-lg font-black italic text-blue-300 leading-none">
+                  {weeklyStats.pct !== null ? `${weeklyStats.pct}%` : '—'}
+                </p>
+                {weeklyStats.possible > 0 && (
+                  <p className="text-[9px] font-mono text-blue-100/50 font-bold mt-1">
+                    {weeklyStats.earned} / {weeklyStats.possible} pts
                   </p>
-                  <Link
-                    to="/junior-high/behavior/mtss/cases"
-                    className="inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white text-[9px] font-black uppercase tracking-widest px-3 py-2 rounded-lg transition-all"
-                  >
-                    <Plus size={10} /> Aktifkan CICO
-                  </Link>
-                </div>
-              )}
-            </div>
-
-            {/* Excel workbook guidelines info box */}
-            <div className="bg-[#001033] text-white rounded-[2rem] p-6 space-y-3 shadow-inner">
-              <div className="flex items-center gap-2">
-                <Info size={16} className="text-blue-300 shrink-0" />
-                <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-300">Workbook Guide</h4>
-              </div>
-              <p className="text-[9px] text-blue-100/75 leading-relaxed uppercase tracking-wider font-semibold">
-                Setiap hari kerja, pendidik mengisi lembar kerja Check-In Check-Out (CICO).
-              </p>
-              <div className="space-y-1.5 pt-2 border-t border-blue-900 text-[9px] font-mono text-blue-100/60">
-                <p>• 3 = Memenuhi target mandiri (0-1 pengingat)</p>
-                <p>• 2 = Butuh pengingat moderat (2 kali)</p>
-                <p>• 1 = Intervensi intensif (3+ pengingat)</p>
-                <p>• N/A = Sesi dilewati atau libur</p>
+                )}
               </div>
             </div>
           </div>
 
-          {/* RIGHT WORKSHEET AREA: Main Daily CICO Grid & Reflections */}
-          <div className="lg:col-span-3 space-y-6">
-            
-            {/* Daily Sheet tabs (Excel sheet tabs-style) */}
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-              <div className="bg-gray-50 border-b border-gray-100 px-4 pt-3 flex items-end gap-1.5 overflow-x-auto no-scrollbar">
-                {daysOfWeek.map((day, idx) => {
-                  const dayDateStr = day.toISOString().split('T')[0];
-                  const avg = getDayAvgScore(dayDateStr);
-                  const pct = getDayPct(dayDateStr);
-                  const isActive = activeDayIdx === idx;
-                  const label = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'][idx];
-
-                  return (
-                    <button
-                      key={idx}
-                      onClick={() => setActiveDayIdx(idx)}
-                      className={cn(
-                        "flex flex-col items-start px-5 py-3 rounded-t-xl text-xs font-black uppercase tracking-widest transition-all duration-150 whitespace-nowrap min-w-[110px] border-x border-t relative z-10",
-                        isActive 
-                          ? "bg-white border-gray-200 text-blue-600 shadow-sm border-b-white translate-y-[1px]"
-                          : "bg-gray-100 border-transparent text-gray-400 hover:text-gray-700 hover:bg-gray-50"
-                      )}
-                    >
-                      <span className="text-[9px] tracking-widest opacity-60 font-black">{label}</span>
-                      <span className="text-[11px] font-black italic text-gray-800 leading-tight mt-0.5">{formatLocalDate(day)}</span>
-                      {avg !== null && (
-                        <span className={cn(
-                          "mt-1 text-[8px] font-bold font-mono px-1.5 py-0.5 rounded-md",
-                          avg === 'Absent' ? 'bg-slate-100 text-slate-500' :
-                          Number(avg) >= 2.4 ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' :
-                          Number(avg) >= 1.8 ? 'bg-amber-50 text-amber-700 border border-amber-100' :
-                          'bg-rose-50 text-rose-700 border border-rose-100'
-                        )}>
-                          {avg === 'Absent' ? 'ABS' : `${pct ? Math.round(pct) : 0}%`}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
+          {/* MAIN EXCEL-LIKE EDITABLE SPREADSHEET TABLE */}
+          <div className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm overflow-hidden">
+            <div className="p-6 border-b border-gray-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <div>
+                <h3 className="text-base font-black uppercase italic tracking-tight text-gray-900 flex items-center gap-2">
+                  <FileSpreadsheet size={20} className="text-blue-600" />
+                  CICO Weekly Scoring Grid
+                </h3>
+                <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">
+                  Type behavior targets, choose score 1-4 for check-in & check-out, and add more target rows.
+                </p>
               </div>
+              <button
+                onClick={handleAddTargetRow}
+                className="flex items-center gap-1.5 bg-[#002366] hover:bg-blue-800 text-white px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 shadow-sm"
+              >
+                <Plus size={14} />
+                Add Target Row
+              </button>
+            </div>
 
-              {/* Main Worksheet spreadsheet grid */}
-              <div className="p-6 space-y-6">
-                
-                {/* Daily control headers */}
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center">
-                      <Calendar size={18} />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-black uppercase tracking-widest text-gray-900">
-                        {['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat'][activeDayIdx]}, {daysOfWeek[activeDayIdx].toLocaleDateString('id-ID', { dateStyle: 'long' })}
-                      </h4>
-                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest leading-none mt-1">CICO Daily Evaluation Sheet</p>
-                    </div>
-                  </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[950px]">
+                <thead>
+                  <tr className="bg-gray-50/75 border-b border-gray-100 text-[10px] font-black uppercase tracking-widest text-gray-500">
+                    <th className="px-6 py-4 w-[280px]">Behavior Targets (Downward Rows)</th>
+                    {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].map((dayName, idx) => {
+                      const dayLocalDate = formatLocalDate(daysOfWeek[idx]);
+                      return (
+                        <th key={idx} className="px-3 py-3 border-l border-gray-100 text-center w-[150px]">
+                          <div>{dayName}</div>
+                          <div className="text-[8px] text-gray-400 mt-0.5 font-bold">{dayLocalDate}</div>
+                          <div className="grid grid-cols-2 gap-1 mt-2 text-[8px] text-blue-900 border-t border-gray-100/80 pt-1.5">
+                            <div>IN</div>
+                            <div>OUT</div>
+                          </div>
+                        </th>
+                      );
+                    })}
+                    <th className="px-4 py-4 text-center w-[60px]">Delete</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {targets.map((target, tIdx) => (
+                    <tr key={target.id} className="hover:bg-gray-50/30 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-mono font-bold text-gray-400">{tIdx + 1}.</span>
+                          <input
+                            type="text"
+                            value={target.text}
+                            onChange={(e) => handleTargetTextChange(target.id, e.target.value)}
+                            placeholder="Type behavior target (e.g. Focus on class task)"
+                            className="w-full text-xs font-bold text-gray-700 bg-transparent border-b border-transparent hover:border-gray-200 focus:border-blue-500 outline-none py-1 transition-all placeholder:text-gray-300"
+                          />
+                        </div>
+                      </td>
 
-                  <div className="flex items-center gap-4 self-stretch sm:self-auto justify-between">
-                    {/* Absent Toggle */}
-                    <label className="flex items-center gap-2 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={dailyForm.isAbsent}
-                        onChange={(e) => setDailyForm(prev => ({ ...prev, isAbsent: e.target.checked }))}
-                        className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
-                      />
-                      <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Siswa Absen / Libur</span>
-                    </label>
+                      {/* Mon to Fri cell scorers */}
+                      {[0, 1, 2, 3, 4].map((dayIdx) => {
+                        const cellScore = scores[target.id]?.[dayIdx] || { checkIn: null, checkOut: null };
 
-                    {/* Today's Avg metrics display */}
-                    {!dailyForm.isAbsent && (
-                      <div className="text-right">
-                        <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Day Score</p>
-                        <p className="text-base font-black italic text-blue-900">
-                          {dailyForm.dailyAvgScore.toFixed(2)} <span className="text-[10px] text-gray-400 uppercase tracking-widest font-black font-sans leading-none">/ 3</span>
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {dailyForm.isAbsent ? (
-                  <div className="py-16 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-                    <HelpCircle className="mx-auto text-gray-300 mb-2" size={32} />
-                    <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">Siswa ditandai absen atau libur hari ini.</p>
-                    <p className="text-[9px] text-gray-400 uppercase mt-1">Isian CICO dinonaktifkan untuk tanggal ini.</p>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto border border-gray-100 rounded-xl">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-gray-50">
-                          <th className="px-4 py-3 border-b border-gray-100 text-[10px] font-black uppercase tracking-widest text-gray-500">Session Phase</th>
-                          {cicoGoals.map((goal) => (
-                            <th key={goal.id} className="px-4 py-3 border-b border-gray-100 text-center text-[10px] font-black uppercase tracking-widest text-gray-900">
-                              {goal.label}
-                            </th>
-                          ))}
-                          <th className="px-4 py-3 border-b border-gray-100 text-center text-[10px] font-black uppercase tracking-widest text-gray-500">NA</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50">
-                        {dailyForm.sessions.map((session, sIdx) => {
-                          const currentSessionConstant = CICO_SESSIONS.find(cs => cs.id === session.sessionId);
+                        const renderScoreSelector = (type: 'checkIn' | 'checkOut') => {
+                          const activeVal = cellScore[type];
                           return (
-                            <tr key={session.sessionId} className={cn("hover:bg-gray-50/50 transition-colors", session.isNA && "opacity-40")}>
-                              <td className="px-4 py-4">
-                                <div className="flex flex-col">
-                                  <span className="text-xs font-black text-gray-900 uppercase italic leading-none">{session.sessionName}</span>
-                                  <span className="text-[8px] font-bold text-gray-400 uppercase tracking-widest mt-1">
-                                    {currentSessionConstant?.time || session.timeSlot || '—'}
-                                  </span>
-                                </div>
-                              </td>
-
-                              {cicoGoals.map((goal, gIdx) => {
-                                const scoreKey = `goal${gIdx + 1}` as keyof CICOSessionData['scores'];
-                                const selectedScore = session.scores[scoreKey];
-
-                                return (
-                                  <td key={goal.id} className="px-2 py-3 text-center">
-                                    <div className="flex items-center justify-center gap-1">
-                                      {[1, 2, 3].map((val) => (
-                                        <button
-                                          key={val}
-                                          disabled={session.isNA}
-                                          onClick={() => handleScoreSelect(session.sessionId, scoreKey, val as 1|2|3)}
-                                          className={cn(
-                                            "w-7 h-7 rounded-lg text-[10px] font-black transition-all flex items-center justify-center border",
-                                            selectedScore === val ? (
-                                              val === 3 ? "bg-emerald-500 border-emerald-500 text-white shadow-sm shadow-emerald-500/20" :
-                                              val === 2 ? "bg-amber-400 border-amber-400 text-white shadow-sm shadow-amber-400/20" :
-                                              "bg-rose-500 border-rose-500 text-white shadow-sm shadow-rose-500/20"
-                                            ) : "bg-white border-gray-200 text-gray-300 hover:text-gray-500 hover:bg-gray-50"
-                                          )}
-                                        >
-                                          {val}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  </td>
-                                );
-                              })}
-
-                              <td className="px-4 py-3 text-center">
-                                <button
-                                  onClick={() => handleToggleNA(session.sessionId)}
-                                  className={cn(
-                                    "px-2 py-1 rounded text-[8px] font-black uppercase tracking-widest border transition-all",
-                                    session.isNA 
-                                      ? "bg-slate-700 text-white border-slate-700" 
-                                      : "bg-white text-gray-400 border-gray-200 hover:text-gray-600 hover:bg-gray-50"
-                                  )}
-                                >
-                                  N/A
-                                </button>
-                              </td>
-                            </tr>
+                            <select
+                              value={activeVal === null ? '' : String(activeVal)}
+                              onChange={(e) => {
+                                const valStr = e.target.value;
+                                const val = valStr === '' ? null : Number(valStr);
+                                handleScoreChange(target.id, dayIdx, type, val);
+                              }}
+                              className={cn(
+                                "w-full text-center text-xs font-black font-mono rounded-lg border py-1.5 outline-none cursor-pointer appearance-none transition-all",
+                                activeVal === 4 ? "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100" :
+                                activeVal === 3 ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100" :
+                                activeVal === 2 ? "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100" :
+                                activeVal === 1 ? "bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100" :
+                                "bg-gray-50/50 border-gray-100 text-gray-300 hover:border-gray-200 hover:bg-gray-50"
+                              )}
+                            >
+                              <option value="">—</option>
+                              <option value="4">4</option>
+                              <option value="3">3</option>
+                              <option value="2">2</option>
+                              <option value="1">1</option>
+                            </select>
                           );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                        };
 
-                {/* Additional notes & Save row */}
-                {!dailyForm.isAbsent && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-gray-100">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Catatan Umum Harian</label>
-                      <textarea
-                        rows={2}
-                        value={dailyForm.dailyNote || ''}
-                        onChange={(e) => setDailyForm(prev => ({ ...prev, dailyNote: e.target.value }))}
-                        placeholder="Masukkan catatan evaluasi umum untuk hari ini..."
-                        className="w-full text-xs p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-300 resize-none"
-                      />
-                    </div>
+                        return (
+                          <td key={dayIdx} className="px-3 py-3 border-l border-gray-100">
+                            <div className="grid grid-cols-2 gap-1.5">
+                              {renderScoreSelector('checkIn')}
+                              {renderScoreSelector('checkOut')}
+                            </div>
+                          </td>
+                        );
+                      })}
 
-                    <div className="space-y-2">
-                      <label className="flex items-center gap-2 cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={dailyForm.hasSpecialIncident}
-                          onChange={(e) => setDailyForm(prev => ({ ...prev, hasSpecialIncident: e.target.checked }))}
-                          className="rounded text-red-600 focus:ring-red-500 w-4 h-4"
-                        />
-                        <span className="text-[10px] font-black text-rose-600 uppercase tracking-widest">Lapor Insiden Khusus Hari Ini?</span>
-                      </label>
+                      {/* Row actions */}
+                      <td className="px-4 py-4 text-center">
+                        <button
+                          onClick={() => handleRemoveTargetRow(target.id)}
+                          className="p-1.5 text-gray-300 hover:text-rose-500 rounded-lg hover:bg-rose-50 transition-colors"
+                          title="Delete Target Behavior"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
 
-                      {dailyForm.hasSpecialIncident && (
-                        <textarea
-                          rows={2}
-                          value={dailyForm.incidentNote || ''}
-                          onChange={(e) => setDailyForm(prev => ({ ...prev, incidentNote: e.target.value }))}
-                          placeholder="Jelaskan insiden khusus, respon guru, dan tindakan pencegahannya..."
-                          className="w-full text-xs p-3 border border-rose-100 bg-rose-50/10 rounded-xl outline-none focus:border-rose-300 resize-none text-rose-800 placeholder:text-rose-200"
-                        />
-                      )}
-                    </div>
-                  </div>
-                )}
+                  {targets.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="text-center py-8 text-gray-400 text-xs font-semibold uppercase">
+                        No targets found. Click "Add Target Row" to define monitoring items.
+                      </td>
+                    </tr>
+                  )}
 
-                {/* Save Daily buttons */}
-                <div className="flex justify-end pt-2">
-                  <button
-                    disabled={savingDaily}
-                    onClick={handleSaveDailyReport}
-                    className="flex items-center gap-2 bg-[#002366] hover:bg-blue-800 text-white px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 disabled:opacity-50 shadow-sm"
-                  >
-                    <Save size={14} />
-                    {savingDaily ? "Menyimpan..." : "Simpan Daily Sheet"}
-                  </button>
-                </div>
+                  {/* Operational Summary points row (Calculated points per column) */}
+                  <tr className="bg-blue-50/30 font-black text-gray-800 text-[10px] tracking-wider uppercase">
+                    <td className="px-6 py-4">
+                      <span>Daily Point Sum & Pct</span>
+                    </td>
+                    {[0, 1, 2, 3, 4].map((dayIdx) => {
+                      const dayStats = calculateDayScore(dayIdx);
+                      return (
+                        <td key={dayIdx} className="px-3 py-4 border-l border-gray-100 text-center">
+                          {dayStats.possible > 0 ? (
+                            <div className="space-y-0.5">
+                              <div className="text-[11px] font-mono text-blue-900">
+                                {dayStats.pct}%
+                              </div>
+                              <div className="text-[8px] font-mono text-gray-400 font-bold">
+                                {dayStats.earned} / {dayStats.possible} pts
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-gray-300 font-normal font-mono">—</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="px-4 py-4"></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
 
+            {/* General scoring guide label inside grid block */}
+            <div className="p-4 bg-gray-50 border-t border-gray-100 flex flex-wrap gap-x-6 gap-y-2 text-[9px] font-black uppercase tracking-widest text-gray-400">
+              <span className="text-gray-600">Scores:</span>
+              <span>4 = Excellent (No reminders needed)</span>
+              <span>3 = Very Good (1 reminder needed)</span>
+              <span>2 = Moderate (2 reminders needed)</span>
+              <span>1 = Needs Intervention (3+ reminders needed)</span>
+            </div>
+          </div>
+
+          {/* THREE CORE WEEKLY QUALITATIVE WORKBOOK TEXTAREAS */}
+          <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6 space-y-6">
+            <div className="flex items-center gap-3 pb-3 border-b border-gray-50">
+              <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
+                <BookOpen size={18} />
+              </div>
+              <div>
+                <h3 className="text-sm font-black uppercase italic tracking-tight text-gray-900">
+                  Weekly Qualitative Notebook
+                </h3>
+                <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-0.5 leading-none">
+                  Weekly monitoring reflections and evaluations of student performance
+                </p>
               </div>
             </div>
 
-            {/* 2. CICO WEEKLY REFLECTION & CONTEXT (Workbook style) */}
-            {mtssCase && (
-              <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-6 space-y-6">
-                <div className="flex items-center gap-3 pb-3 border-b border-gray-50">
-                  <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
-                    <BookOpen size={18} />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-black uppercase italic tracking-tight text-gray-900">
-                      Weekly Reflection Worksheet
-                    </h3>
-                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-0.5 leading-none">
-                      Workbook monitoring & refleksi guru-murid periode {mondayStr}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                      1. Hal Positif Murid (What went well?)
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={reflectionForm.studentPositives}
-                      onChange={(e) => setReflectionForm(prev => ({ ...prev, studentPositives: e.target.value }))}
-                      placeholder="Jelaskan kemajuan positif yang ditunjukkan murid minggu ini..."
-                      className="w-full text-xs p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-300 resize-none leading-relaxed"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                      2. Rencana Tindak Lanjut Murid (Next Week Focus)
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={reflectionForm.studentPlans}
-                      onChange={(e) => setReflectionForm(prev => ({ ...prev, studentPlans: e.target.value }))}
-                      placeholder="Apa fokus perbaikan atau target utama murid minggu depan?"
-                      className="w-full text-xs p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-300 resize-none leading-relaxed"
-                    />
-                  </div>
-
-                  <div className="md:col-span-2 space-y-1.5">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                      3. Catatan & Evaluasi Wali Kelas / Mentor
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={reflectionForm.teacherNotes}
-                      onChange={(e) => setReflectionForm(prev => ({ ...prev, teacherNotes: e.target.value }))}
-                      placeholder="Rekomendasi tambahan dari mentor perilaku / wali kelas untuk koordinasi..."
-                      className="w-full text-xs p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-300 resize-none leading-relaxed"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex justify-end">
-                  <button
-                    disabled={savingReflection}
-                    onClick={handleSaveReflection}
-                    className="flex items-center gap-2 bg-gray-900 hover:bg-black text-white px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 disabled:opacity-50"
-                  >
-                    <Save size={14} />
-                    {savingReflection ? "Menyimpan..." : "Simpan Refleksi Mingguan"}
-                  </button>
-                </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Field 1 */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">
+                  1. Hal baik yang sudah dilakukan minggu ini
+                </label>
+                <textarea
+                  rows={4}
+                  value={halBaik}
+                  onChange={(e) => setHalBaik(e.target.value)}
+                  placeholder="Deskripsikan tindakan positif, kesuksesan, atau perilaku teladan murid minggu ini..."
+                  className="w-full text-xs p-4 border border-gray-200 rounded-2xl outline-none focus:border-blue-300 resize-none leading-relaxed font-bold text-gray-700 bg-gray-50/10 focus:bg-white transition-all"
+                />
               </div>
-            )}
 
+              {/* Field 2 */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">
+                  2. Refleksi mingguan
+                </label>
+                <textarea
+                  rows={4}
+                  value={refleksi}
+                  onChange={(e) => setRefleksi(e.target.value)}
+                  placeholder="Tuliskan refleksi hasil evaluasi perilaku murid atau hasil diskusi guru-murid..."
+                  className="w-full text-xs p-4 border border-gray-200 rounded-2xl outline-none focus:border-blue-300 resize-none leading-relaxed font-bold text-gray-700 bg-gray-50/10 focus:bg-white transition-all"
+                />
+              </div>
+
+              {/* Field 3 */}
+              <div className="md:col-span-2 space-y-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">
+                  3. Teacher’s Note
+                </label>
+                <textarea
+                  rows={4}
+                  value={teacherNotes}
+                  onChange={(e) => setTeacherNotes(e.target.value)}
+                  placeholder="Catatan tambahan, arahan khusus mentor, masukan wali kelas, atau pesan koordinasi orang tua..."
+                  className="w-full text-xs p-4 border border-gray-200 rounded-2xl outline-none focus:border-blue-300 resize-none leading-relaxed font-bold text-gray-700 bg-gray-50/10 focus:bg-white transition-all"
+                />
+              </div>
+            </div>
+
+            {/* Save Workbook action bar */}
+            <div className="flex justify-end pt-4 border-t border-gray-50">
+              <button
+                disabled={saving}
+                onClick={handleSaveWorkbook}
+                className="flex items-center gap-2 bg-[#002366] hover:bg-blue-800 text-white px-8 py-4 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 disabled:opacity-50 shadow-md"
+              >
+                <Save size={14} />
+                {saving ? "Saving Workbook..." : "Save Weekly Workbook"}
+              </button>
+            </div>
           </div>
+
         </div>
       )}
     </div>
