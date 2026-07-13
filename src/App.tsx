@@ -26,7 +26,7 @@ import MTSSAcademicCaseDetail from './pages/MTSSAcademic/CaseDetail';
 import MTSSAcademicOverview from './pages/MTSSAcademic/Overview';
 import MTSSBehaviorLayout from './pages/MTSS/MTSSBehaviorLayout';
 import MTSSBehaviorOverview from './pages/MTSS/MTSSBehaviorOverview';
-import MTSSBehaviorIdentification from './pages/MTSS/MTSSBehaviorIdentification';
+import MTSSBehaviorSpreadsheet from './pages/MTSS/MTSSBehaviorSpreadsheet';
 import MTSSBehaviorTimeline from './pages/MTSS/MTSSBehaviorTimeline';
 import MTSSAcademicLayout from './pages/MTSSAcademic/MTSSAcademicLayout';
 import MTSSAcademicCoachingSpreadsheet from './pages/MTSSAcademic/CoachingSpreadsheet';
@@ -336,7 +336,7 @@ export default function App() {
               <Route path="overview" element={<MTSSBehaviorOverview />} />
               <Route path="cases" element={<CaseList />} />
               <Route path="cases/:id" element={<CaseDetail />} />
-              <Route path="identification" element={<MTSSBehaviorIdentification />} />
+              <Route path="spreadsheet" element={<MTSSBehaviorSpreadsheet />} />
               <Route path="timeline" element={<MTSSBehaviorTimeline />} />
               <Route path="analytics" element={<BehaviorAnalytics />} />
               <Route path="backup-config" element={
@@ -381,7 +381,7 @@ export default function App() {
 
           <Route path="mtss">
             <Route path="cases" element={<Navigate to="/junior-high/behavior/mtss/cases" replace />} />
-            <Route path="create" element={<Navigate to="/junior-high/behavior/mtss/identification" replace />} />
+            <Route path="create" element={<Navigate to="/junior-high/behavior/mtss/cases" replace />} />
             <Route path="case/:id" element={<LegacyCaseRedirect />} />
             <Route path="concern/new/:caseId" element={<AddConcern />} />
             <Route path="intervention/:id" element={<InterventionPlan />} />

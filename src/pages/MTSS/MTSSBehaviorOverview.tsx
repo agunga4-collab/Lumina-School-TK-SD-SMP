@@ -158,7 +158,7 @@ export default function MTSSBehaviorOverview() {
                   : "Semua kasus berjalan sesuai rencana pemantauan."}
               </p>
               <button 
-                onClick={() => navigate('/junior-high/behavior/mtss/identification')}
+                onClick={() => navigate('/junior-high/behavior/mtss/cases')}
                 className="w-full py-4 bg-white text-blue-900 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl hover:scale-105 active:scale-95 transition-all"
               >
                 Lapor Kasus Baru

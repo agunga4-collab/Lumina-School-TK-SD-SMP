@@ -9,7 +9,8 @@ import {
   BarChart3,
   TrendingUp,
   RefreshCw,
-  Settings
+  Settings,
+  FileSpreadsheet
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { motion } from 'motion/react';
@@ -18,7 +19,7 @@ import { useAuth } from '../../context/AuthContext';
 const TABS = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard, path: '/junior-high/behavior/mtss/overview' },
   { id: 'cases', label: 'Behavior Register', icon: ShieldAlert, path: '/junior-high/behavior/mtss/cases' },
-  { id: 'identification', label: 'Identification', icon: Eye, path: '/junior-high/behavior/mtss/identification' },
+  { id: 'spreadsheet', label: 'Spreadsheet', icon: FileSpreadsheet, path: '/junior-high/behavior/mtss/spreadsheet' },
   { id: 'timeline', label: 'Timeline', icon: History, path: '/junior-high/behavior/mtss/timeline' },
   { id: 'analytics', label: 'Analytics', icon: BarChart3, path: '/junior-high/behavior/mtss/analytics' },
   { id: 'backup-config', label: 'Backup Config', icon: Settings, path: '/junior-high/behavior/mtss/backup-config', adminOnly: true },

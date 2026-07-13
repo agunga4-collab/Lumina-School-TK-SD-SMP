@@ -644,26 +644,35 @@ export default function CaseList() {
 
                     {/* Aksi */}
                     <td className="px-4 py-2.5 text-right">
-                      {hasActiveCase ? (
+                      <div className="flex items-center justify-end gap-1.5">
                         <Link
-                          to={`/junior-high/behavior/mtss/cases/${studentCase.id}`}
-                          className="inline-flex items-center gap-0.5 bg-[#002366] hover:bg-blue-800 text-white px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 whitespace-nowrap"
+                          to={`/junior-high/behavior/mtss/spreadsheet?studentId=${student.id}&classId=${classFilter}`}
+                          className="inline-flex items-center gap-1 border border-blue-200 hover:border-blue-400 hover:bg-blue-50 text-blue-700 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap"
+                          title="Buka Spreadsheet CICO"
                         >
-                          View Log
-                          <ChevronRight size={10} />
+                          CICO Sheet
                         </Link>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setPreselectedStudentId(student.id);
-                            setShowNewCaseModal(true);
-                          }}
-                          className="inline-flex items-center gap-1 border border-dashed border-blue-300 hover:border-blue-500 hover:bg-blue-50/50 text-blue-600 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all active:scale-95 whitespace-nowrap cursor-pointer"
-                        >
-                          <Plus size={10} />
-                          Lapor
-                        </button>
-                      )}
+                        {hasActiveCase ? (
+                          <Link
+                            to={`/junior-high/behavior/mtss/cases/${studentCase.id}`}
+                            className="inline-flex items-center gap-0.5 bg-[#002366] hover:bg-blue-800 text-white px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 whitespace-nowrap"
+                          >
+                            View Log
+                            <ChevronRight size={10} />
+                          </Link>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setPreselectedStudentId(student.id);
+                              setShowNewCaseModal(true);
+                            }}
+                            className="inline-flex items-center gap-1 border border-dashed border-blue-300 hover:border-blue-500 hover:bg-blue-50/50 text-blue-600 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all active:scale-95 whitespace-nowrap cursor-pointer"
+                          >
+                            <Plus size={10} />
+                            Lapor
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </motion.tr>
                 );
