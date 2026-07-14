@@ -642,13 +642,22 @@ export default function CaseList() {
                           CICO Sheet
                         </Link>
                         {hasActiveCase ? (
-                          <Link
-                            to={`/junior-high/behavior/mtss/cases/${studentCase.id}`}
-                            className="inline-flex items-center gap-0.5 bg-[#002366] hover:bg-blue-800 text-white px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 whitespace-nowrap"
-                          >
-                            View Log
-                            <ChevronRight size={10} />
-                          </Link>
+                          <>
+                            <Link
+                              to={`/junior-high/behavior/mtss/cases/${studentCase.id}`}
+                              className="inline-flex items-center gap-0.5 bg-[#002366] hover:bg-blue-800 text-white px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 whitespace-nowrap"
+                            >
+                              View Log
+                              <ChevronRight size={10} />
+                            </Link>
+                            <Link
+                              to={`/junior-high/behavior/mtss/cases/${studentCase.id}?addConcern=true`}
+                              className="inline-flex items-center gap-1 border border-dashed border-blue-300 hover:border-blue-500 hover:bg-blue-50/50 text-blue-600 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all active:scale-95 whitespace-nowrap cursor-pointer"
+                            >
+                              <Plus size={10} />
+                              Lapor
+                            </Link>
+                          </>
                         ) : (
                           <button
                             onClick={() => {

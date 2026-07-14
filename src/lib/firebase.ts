@@ -1808,6 +1808,31 @@ export async function getMTSSConcerns(caseId: string): Promise<MTSSConcern[]> {
   }
 }
 
+export async function deleteMTSSConcern(caseId: string, concernId: string): Promise<void> {
+  try {
+    const caseRef = doc(db, 'behaviorCases', caseId);
+    const concernRef = doc(caseRef, 'concerns', concernId);
+    
+    const batch = writeBatch(db);
+    batch.delete(concernRef);
+    
+    // Read parent case to decrement totalConcerns
+    const caseDoc = await getDoc(caseRef);
+    if (caseDoc.exists()) {
+      const currentTotal = caseDoc.data()?.totalConcerns || 1;
+      batch.update(caseRef, {
+        totalConcerns: Math.max(0, currentTotal - 1),
+        lastUpdatedAt: Date.now()
+      });
+    }
+    
+    await batch.commit();
+    mtssSnapshotTriggerService.trigger('BEHAVIOR', caseId);
+  } catch (err: any) {
+    handleFirestoreError(err, 'delete', `behaviorCases/${caseId}/concerns/${concernId}`);
+  }
+}
+
 // --- CICO Section ---
 
 export async function getCICOGoalConfig(caseId: string): Promise<CICOGoalConfig | null> {
