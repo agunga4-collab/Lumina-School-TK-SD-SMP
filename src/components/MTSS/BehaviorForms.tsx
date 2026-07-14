@@ -4,14 +4,16 @@ import {
   X, Save, User, Calendar, MessageSquare, 
   Plus, CheckCircle2, AlertCircle, Search,
   ChevronRight, ChevronLeft, Target, ShieldCheck,
-  Star, Briefcase, FileText, Loader2, Trash2
+  Star, Briefcase, FileText, Loader2, Trash2, Eye
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
+import { toast } from 'sonner';
 import { 
   getTeachers, getStudentsByClass, getActiveCaseForStudent,
   createMTSSCase, addMTSSConcern, updateMTSSCase, closeMTSSCase,
-  saveCICOGoalConfig, createBehaviorAlert, getMTSSConcerns, getStudents
+  saveCICOGoalConfig, createBehaviorAlert, getMTSSConcerns, getStudents,
+  getStudentById, sendNotification
 } from '../../lib/firebase';
 import type { 
   MTSSCase, MTSSConcern, MTSSTier, User as AppUser, Student, CICOGoal, BehaviorNotification 
@@ -70,7 +72,18 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
   const [students, setStudents] = React.useState<Student[]>([]);
   const [teachers, setTeachers] = React.useState<AppUser[]>([]);
   const [activeCaseWarning, setActiveCaseWarning] = React.useState<MTSSCase | null>(null);
+  const [selectedStudent, setSelectedStudent] = React.useState<any | null>(null);
   
+  // Custom Tagging States for Person Responsible
+  const [responsibleInput, setResponsibleInput] = React.useState('');
+  const [selectedTeachers, setSelectedTeachers] = React.useState<AppUser[]>([]);
+  const [manualParties, setManualParties] = React.useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = React.useState(false);
+  const suggestionsRef = React.useRef<HTMLDivElement>(null);
+
+  // Post-save case decision state
+  const [savedCaseId, setSavedCaseId] = React.useState<string | null>(null);
+
   const [formData, setFormData] = React.useState({
     studentId: '',
     date: new Date().toISOString().split('T')[0],
@@ -79,7 +92,6 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
     progressNotes: '',
     nextSteps: '',
     nextStepDueDate: '',
-    responsibleParties: [] as string[],
     studentAsset: ''
   });
 
@@ -88,27 +100,98 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
   React.useEffect(() => {
     if (isOpen && initialStudentId) {
       setFormData(prev => ({ ...prev, studentId: initialStudentId }));
+      getStudentById(initialStudentId).then(student => {
+        setSelectedStudent(student);
+      });
       getActiveCaseForStudent(initialStudentId).then(activeCase => {
         setActiveCaseWarning(activeCase);
       });
     } else if (isOpen) {
       setFormData(prev => ({ ...prev, studentId: '' }));
+      setSelectedStudent(null);
       setActiveCaseWarning(null);
+      setSavedCaseId(null);
+      setSelectedTeachers([]);
+      setManualParties([]);
+      setResponsibleInput('');
     }
   }, [isOpen, initialStudentId]);
 
   React.useEffect(() => {
     const loadBatch = async () => {
-      // For demo, load all students or filter by class if available
       const [s, t] = await Promise.all([
         getStudents(),
         getTeachers()
       ]);
       setStudents(s || []);
-      setTeachers(t);
+      setTeachers(t || []);
     };
     if (isOpen) loadBatch();
   }, [isOpen]);
+
+  // Click outside suggestions dropdown
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (suggestionsRef.current && !suggestionsRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const jhTeachers = React.useMemo(() => {
+    return teachers.filter(t => 
+      t.unitId === 'junior_high' || 
+      t.role === 'HEAD_JUNIOR' || 
+      t.role === 'BK_MENTOR' ||
+      (t.jobTitle && t.jobTitle.toLowerCase().includes('junior')) ||
+      (t.jobTitle && t.jobTitle.toLowerCase().includes('smp'))
+    );
+  }, [teachers]);
+
+  const suggestions = React.useMemo(() => {
+    const untaggedTeachers = jhTeachers.filter(t => !selectedTeachers.some(st => st.uid === t.uid));
+    if (!responsibleInput) return untaggedTeachers;
+    const lowerInput = responsibleInput.toLowerCase();
+    return teachers.filter(t => 
+      !selectedTeachers.some(st => st.uid === t.uid) && 
+      (t.displayName.toLowerCase().includes(lowerInput) || (t.jobTitle && t.jobTitle.toLowerCase().includes(lowerInput)))
+    );
+  }, [teachers, jhTeachers, selectedTeachers, responsibleInput]);
+
+  const handleAddTeacher = (teacher: AppUser) => {
+    if (!selectedTeachers.some(st => st.uid === teacher.uid)) {
+      setSelectedTeachers(prev => [...prev, teacher]);
+    }
+    setResponsibleInput('');
+    setShowSuggestions(false);
+  };
+
+  const handleAddManual = () => {
+    const trimmed = responsibleInput.trim();
+    if (trimmed) {
+      // If it matches a teacher from full list, tag them properly
+      const matchedTeacher = teachers.find(t => t.displayName.toLowerCase() === trimmed.toLowerCase());
+      if (matchedTeacher) {
+        handleAddTeacher(matchedTeacher);
+      } else {
+        if (!manualParties.includes(trimmed)) {
+          setManualParties(prev => [...prev, trimmed]);
+        }
+        setResponsibleInput('');
+        setShowSuggestions(false);
+      }
+    }
+  };
+
+  const handleRemoveTeacher = (uid: string) => {
+    setSelectedTeachers(prev => prev.filter(t => t.uid !== uid));
+  };
+
+  const handleRemoveManual = (name: string) => {
+    setManualParties(prev => prev.filter(n => n !== name));
+  };
 
   const validate = () => {
     const newErrors: Record<string, string> = {};
@@ -119,9 +202,10 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleStudentSelect = async (studentId: string) => {
-    setFormData(prev => ({ ...prev, studentId }));
-    const activeCase = await getActiveCaseForStudent(studentId);
+  const handleStudentSelect = async (student: any) => {
+    setSelectedStudent(student);
+    setFormData(prev => ({ ...prev, studentId: student.id }));
+    const activeCase = await getActiveCaseForStudent(student.id);
     setActiveCaseWarning(activeCase);
   };
 
@@ -129,13 +213,18 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
     if (!validate()) return;
     setLoading(true);
     try {
-      const student = students.find(s => s.id === formData.studentId);
-      const teacherIds = [...formData.responsibleParties, profile?.uid || ''];
+      const studentName = selectedStudent?.name || 'Unknown';
+      const classId = selectedStudent?.className || selectedStudent?.classId || 'Unknown';
       
+      const combinedResponsible = [
+        ...selectedTeachers.map(t => t.displayName),
+        ...manualParties
+      ];
+
       const caseId = await createMTSSCase({
         studentId: formData.studentId,
-        studentName: student?.name || 'Unknown',
-        classId: student?.classId || 'Unknown',
+        studentName,
+        classId,
         academicYear: '2025/2026',
         tier: 'Tier 1',
         status: 'OPEN',
@@ -144,7 +233,9 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
         initialAssets: formData.studentAsset,
         totalConcerns: 1,
         lastConcernSummary: formData.description.slice(0, 50) + '...',
-        lastConcernDate: Date.now()
+        lastConcernDate: Date.now(),
+        // Save responsible parties to the case as well
+        ...(combinedResponsible.length > 0 ? { responsibleParties: combinedResponsible } as any : {})
       });
 
       await addMTSSConcern(caseId, {
@@ -156,17 +247,114 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
         nextSteps: formData.nextSteps,
         nextStepDueDate: formData.nextStepDueDate,
         progressNotes: formData.progressNotes,
-        isDone: false
+        isDone: false,
+        // Also add responsible parties details to the concern
+        ...(combinedResponsible.length > 0 ? { responsibleParties: combinedResponsible } as any : {})
       });
 
-      onSuccess(caseId);
-      onClose();
+      // Send notifications to tagged teachers
+      for (const teacher of selectedTeachers) {
+        if (teacher.email) {
+          await sendNotification({
+            userId: teacher.email,
+            type: 'BEHAVIOR_ALERT',
+            message: `Anda ditag sebagai Person Responsible untuk kasus perilaku baru ${studentName} (${classId}).`,
+            link: `/junior-high/behavior/mtss/cases/${caseId}`
+          }).catch(err => console.error("Error sending notification to:", teacher.email, err));
+        }
+
+        await createBehaviorAlert({
+          type: 'ALERT-TAGGED',
+          severity: 'INFO',
+          title: 'Ditunjuk sebagai Person Responsible',
+          message: `Anda ditag sebagai Person Responsible untuk kasus perilaku ${studentName} (${classId}).`,
+          caseId,
+          studentId: formData.studentId,
+          studentName,
+          targetUserIds: [teacher.uid],
+          actionUrl: `/junior-high/behavior/mtss/cases/${caseId}`
+        }).catch(err => console.error("Error creating behavior alert for:", teacher.uid, err));
+      }
+
+      toast.success('Kasus perilaku baru berhasil dilaporkan');
+      setSavedCaseId(caseId);
     } catch (err) {
-      console.error(err);
+      console.error("Error creating behavior case:", err);
+      toast.error('Gagal melaporkan kasus perilaku baru');
     } finally {
       setLoading(false);
     }
   };
+
+  if (savedCaseId) {
+    return (
+      <Modal isOpen={isOpen} onClose={onClose} title="Kasus Perilaku Berhasil Dilaporkan">
+        <div className="space-y-6 text-center py-6">
+          <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
+            <CheckCircle2 size={36} />
+          </div>
+          <div>
+            <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight">Kasus Perilaku Tersimpan</h3>
+            <p className="text-xs text-gray-500 mt-1">Laporan untuk siswa <span className="font-bold text-gray-700">{selectedStudent?.name}</span> telah berhasil dibuat.</p>
+          </div>
+
+          <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 text-left space-y-2">
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Apa langkah selanjutnya untuk kasus ini?</p>
+            <p className="text-xs text-gray-600 leading-relaxed">Tentukan status akhir dari pencatatan perilaku ini. Anda dapat langsung menutupnya jika masalah selesai, atau mengeskalasikannya ke program intervensi Tier 2.</p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 pt-4">
+            <button
+              onClick={async () => {
+                try {
+                  await updateMTSSCase(savedCaseId, { status: 'CLOSED' });
+                  toast.success('Kasus berhasil diselesaikan dan ditutup.');
+                  onSuccess(savedCaseId);
+                  onClose();
+                } catch (err) {
+                  console.error(err);
+                  toast.error('Gagal memperbarui status kasus');
+                }
+              }}
+              className="w-full py-4 bg-emerald-600 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-md hover:bg-emerald-700 transition-all flex items-center justify-center gap-2"
+            >
+              <CheckCircle2 size={16} />
+              Kasus Selesai (Tutup Kasus)
+            </button>
+
+            <button
+              onClick={async () => {
+                try {
+                  await updateMTSSCase(savedCaseId, { tier: 'Tier 2', status: 'IN_PROGRESS' });
+                  toast.success('Kasus berhasil di-eskalasi ke Tier 2.');
+                  onSuccess(savedCaseId);
+                  onClose();
+                } catch (err) {
+                  console.error(err);
+                  toast.error('Gagal memperbarui status kasus');
+                }
+              }}
+              className="w-full py-4 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-md hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
+            >
+              <Target size={16} />
+              Eskalasi ke Tier 2
+            </button>
+
+            <button
+              onClick={() => {
+                onSuccess(savedCaseId);
+                onClose();
+              }}
+              className="w-full py-4 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-gray-50 transition-all flex items-center justify-center gap-2"
+            >
+              <Eye size={16} />
+              Biarkan Tetap Aktif di Tier 1 (Lihat Detail)
+            </button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Lapor Kasus Perilaku Baru">
@@ -194,22 +382,25 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
               <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-2">Pilih Siswa</label>
               <StudentSearch 
                 placeholder="Cari nama atau panggilan..."
-                onSelect={(student) => handleStudentSelect(student.id)}
+                onSelect={(student) => handleStudentSelect(student)}
               />
-              {formData.studentId && (
+              {formData.studentId && selectedStudent && (
                 <div className="mt-2 px-4 py-3 bg-blue-50 rounded-xl border border-blue-100 flex items-center justify-between">
                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center text-blue-600 font-black text-xs">
-                         {students.find(s => s.id === formData.studentId)?.name[0]}
+                      <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center text-blue-600 font-black text-xs shadow-sm">
+                         {selectedStudent.name?.[0]}
                       </div>
                       <div>
-                         <p className="text-[10px] font-black uppercase text-gray-900">{students.find(s => s.id === formData.studentId)?.name}</p>
-                         <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">{students.find(s => s.id === formData.studentId)?.classId}</p>
+                         <p className="text-[10px] font-black uppercase text-gray-900">{selectedStudent.name}</p>
+                         <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">{selectedStudent.className || selectedStudent.classId || 'Tidak Ada Kelas'}</p>
                       </div>
                    </div>
                    <button 
                      type="button" 
-                     onClick={() => setFormData(p => ({ ...p, studentId: '' }))}
+                     onClick={() => {
+                       setFormData(p => ({ ...p, studentId: '' }));
+                       setSelectedStudent(null);
+                     }}
                      className="p-1 hover:bg-white rounded-md text-gray-400 hover:text-rose-500 transition-all"
                    >
                       <X size={14} />
@@ -300,17 +491,102 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
                 className="w-full px-6 py-4 rounded-xl bg-gray-50 border border-transparent focus:border-blue-300 transition-all font-bold text-sm"
               />
            </div>
-           <div className="space-y-2">
+           <div className="space-y-2 relative">
               <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-2">Person Responsible</label>
-              <select 
-                multiple
-                value={formData.responsibleParties}
-                onChange={(e) => setFormData(p=>({...p, responsibleParties: Array.from(e.target.selectedOptions, option => (option as HTMLOptionElement).value)}))}
-                className="w-full px-6 py-4 rounded-xl bg-gray-50 border border-transparent focus:border-blue-300 transition-all font-bold text-sm"
-              >
-                {teachers.map(t => <option key={t.uid} value={t.uid}>{t.displayName}</option>)}
-              </select>
-              <p className="text-[9px] font-black text-gray-300 uppercase tracking-widest mt-1 ml-2">Tahan Ctrl/Cmd untuk pilih multiple</p>
+              
+              {/* Tag/Badge display of selected responsible parties */}
+              <div className="flex flex-wrap gap-2 mb-2">
+                 {selectedTeachers.map(t => (
+                    <span key={t.uid} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 border border-blue-100 rounded-xl text-xs font-bold text-blue-700">
+                       <User size={12} />
+                       {t.displayName}
+                       <button 
+                          type="button" 
+                          onClick={() => handleRemoveTeacher(t.uid)}
+                          className="hover:text-red-500 transition-all"
+                       >
+                          <X size={12} />
+                       </button>
+                    </span>
+                 ))}
+                 {manualParties.map(name => (
+                    <span key={name} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-700">
+                       <User size={12} />
+                       {name}
+                       <button 
+                          type="button" 
+                          onClick={() => handleRemoveManual(name)}
+                          className="hover:text-red-500 transition-all"
+                       >
+                          <X size={12} />
+                       </button>
+                    </span>
+                 ))}
+              </div>
+
+              {/* Tag input field */}
+              <div className="flex gap-2">
+                 <input 
+                   type="text"
+                   value={responsibleInput}
+                   onChange={(e) => {
+                     setResponsibleInput(e.target.value);
+                     setShowSuggestions(true);
+                   }}
+                   onFocus={() => setShowSuggestions(true)}
+                   onKeyDown={(e) => {
+                     if (e.key === 'Enter') {
+                       e.preventDefault();
+                       handleAddManual();
+                     }
+                   }}
+                   placeholder="Ketik nama atau pilih guru junior high..."
+                   className="flex-1 px-5 py-3 rounded-xl bg-gray-50 border border-transparent focus:border-blue-300 focus:bg-white transition-all font-bold text-xs"
+                 />
+                 <button
+                    type="button"
+                    onClick={handleAddManual}
+                    className="px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs rounded-xl transition-all"
+                 >
+                    Tambah
+                 </button>
+              </div>
+
+              {/* Autocomplete suggestions dropdown */}
+              {showSuggestions && (
+                 <div 
+                   ref={suggestionsRef}
+                   className="absolute z-20 w-full mt-2 bg-white rounded-2xl border border-gray-100 shadow-xl max-h-52 overflow-y-auto"
+                 >
+                    <div className="p-3 border-b border-gray-50 bg-gray-50/50">
+                       <p className="text-[9px] font-black uppercase text-gray-400 tracking-wider">
+                          {responsibleInput ? "Hasil Pencarian Guru" : "Rekomendasi Guru Junior High"}
+                       </p>
+                    </div>
+                    {suggestions.length === 0 ? (
+                       <div className="p-4 text-center text-xs text-gray-400">
+                          {responsibleInput ? "Tekan 'Tambah' untuk mendaftarkan nama kustom" : "Semua guru junior high terpilih"}
+                       </div>
+                    ) : (
+                       <div className="divide-y divide-gray-50">
+                          {suggestions.map(t => (
+                             <button
+                               key={t.uid}
+                               type="button"
+                               onClick={() => handleAddTeacher(t)}
+                               className="w-full px-5 py-3 text-left hover:bg-blue-50/50 transition-all flex items-center justify-between group"
+                             >
+                                <div>
+                                   <p className="text-xs font-bold text-gray-800 group-hover:text-blue-600">{t.displayName}</p>
+                                   <p className="text-[9px] font-medium text-gray-400 mt-0.5">{t.jobTitle || 'Guru'}</p>
+                                </div>
+                                <Plus size={14} className="text-gray-300 group-hover:text-blue-500" />
+                             </button>
+                          ))}
+                       </div>
+                    )}
+                 </div>
+              )}
            </div>
         </div>
 
