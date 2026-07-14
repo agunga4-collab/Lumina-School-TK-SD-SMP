@@ -33,7 +33,7 @@ export default function CreateCase() {
     studentName: '',
     studentId: '',
     classId: '',
-    academicYear: activeYear || '2025/2026',
+    academicYear: activeYear || '2026/2027',
     tier: 'Tier 1' as MTSSTier,
     status: 'OPEN' as MTSSStatus,
     date: new Date().toISOString().split('T')[0],
@@ -232,7 +232,7 @@ export default function CreateCase() {
                <span className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-200">MTSS Behavior Module</span>
             </div>
             <h1 className="text-4xl font-black italic tracking-tighter uppercase mb-2">Lapor Kasus Perilaku</h1>
-            <p className="text-blue-100/70 text-xs font-bold uppercase tracking-widest">SMP Lazuardi GCS • Dokumentasi Tier 1/2/3</p>
+            <p className="text-blue-100/70 text-xs font-bold uppercase tracking-widest">SMP Lazuardi GCS</p>
           </div>
         </div>
 
@@ -402,24 +402,6 @@ export default function CreateCase() {
 
             {reportingMode === 'NEW' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Tier Awal</label>
-                  <div className="flex p-1 bg-gray-100 rounded-2xl gap-1">
-                    {['Tier 1', 'Tier 2', 'Tier 3'].map(t => (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() => setFormData(prev => ({ ...prev, tier: t as MTSSTier }))}
-                        className={cn(
-                          "flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer",
-                          formData.tier === t ? "bg-white text-blue-600 shadow-sm scale-105 font-black" : "text-gray-400 hover:text-gray-600 font-bold"
-                        )}
-                      >
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Academic Year</label>
                   <input
