@@ -141,24 +141,33 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
   }, []);
 
   const jhTeachers = React.useMemo(() => {
-    return teachers.filter(t => 
-      t.unitId === 'junior_high' || 
-      t.role === 'HEAD_JUNIOR' || 
-      t.role === 'BK_MENTOR' ||
-      (t.jobTitle && t.jobTitle.toLowerCase().includes('junior')) ||
-      (t.jobTitle && t.jobTitle.toLowerCase().includes('smp'))
-    );
+    return teachers.filter(t => {
+      const unit = (t.unitId || '').toUpperCase();
+      const role = (t.role || '').toUpperCase();
+      const job = (t.jobTitle || '').toLowerCase();
+      const name = (t.displayName || '').toLowerCase();
+      return (
+        unit === 'JUNIOR_HIGH' || 
+        role === 'HEAD_JUNIOR' || 
+        role === 'BK_MENTOR' ||
+        job.includes('junior') ||
+        job.includes('smp') ||
+        job.includes('high') ||
+        name.includes('guru smp') ||
+        name.includes('smp')
+      );
+    });
   }, [teachers]);
 
   const suggestions = React.useMemo(() => {
     const untaggedTeachers = jhTeachers.filter(t => !selectedTeachers.some(st => st.uid === t.uid));
     if (!responsibleInput) return untaggedTeachers;
     const lowerInput = responsibleInput.toLowerCase();
-    return teachers.filter(t => 
+    return jhTeachers.filter(t => 
       !selectedTeachers.some(st => st.uid === t.uid) && 
       (t.displayName.toLowerCase().includes(lowerInput) || (t.jobTitle && t.jobTitle.toLowerCase().includes(lowerInput)))
     );
-  }, [teachers, jhTeachers, selectedTeachers, responsibleInput]);
+  }, [jhTeachers, selectedTeachers, responsibleInput]);
 
   const handleAddTeacher = (teacher: AppUser) => {
     if (!selectedTeachers.some(st => st.uid === teacher.uid)) {
@@ -197,7 +206,6 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
     const newErrors: Record<string, string> = {};
     if (!formData.studentId) newErrors.studentId = "Pilih siswa wajib";
     if (formData.description.length < 50) newErrors.description = "Behavior concern minimal 50 karakter";
-    if (!formData.studentAsset) newErrors.studentAsset = "Student asset wajib diisi (Positive Discipline)";
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -433,18 +441,6 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
               <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">{formData.description.length} / 50 characters</p>
               {errors.description && <p className="text-[10px] font-black text-rose-500 uppercase tracking-widest">{errors.description}</p>}
            </div>
-        </div>
-
-        <div className="space-y-2">
-           <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-2">Student Asset / Kekuatan Siswa (Positive Discipline)</label>
-           <textarea 
-             value={formData.studentAsset}
-             onChange={(e) => setFormData(p=>({...p, studentAsset: e.target.value}))}
-             placeholder="Sebutkan setidaknya 1-2 kekuatan atau hal positif yang dimiliki siswa ini..."
-             rows={2}
-             className={cn("w-full px-6 py-4 rounded-xl bg-gray-50 border transition-all font-medium text-sm leading-relaxed", errors.studentAsset ? "border-rose-300" : "border-transparent focus:border-blue-300")}
-           />
-           {errors.studentAsset && <p className="text-[10px] font-black text-rose-500 uppercase tracking-widest mt-1 ml-2">{errors.studentAsset}</p>}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
