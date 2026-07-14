@@ -3,11 +3,11 @@ import { motion } from 'motion/react';
 import { 
   Clock, AlertCircle, Calendar, Search, 
   Save, History, Bell, MessageSquare, ArrowRight,
-  TrendingUp, UserCheck, Loader2, Trash2
+  TrendingUp, UserCheck, Loader2, Trash2, ChevronDown, Check
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { db, getActiveStudents } from '../../lib/firebase';
-import { collection, query, where, getDocs, doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, setDoc, serverTimestamp, getDoc, deleteDoc } from 'firebase/firestore';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { toast } from 'sonner';
 import { useOutletContext } from 'react-router-dom';
@@ -36,6 +36,7 @@ export default function Lateness() {
   const { activeUnit } = useOutletContext<{ activeUnit: UnitType }>();
   const { activeYear } = useAcademicYear();
   const [records, setRecords] = React.useState<LatenessRecord[]>([]);
+  const [classStudentsList, setClassStudentsList] = React.useState<LatenessRecord[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [searchTerm, setSearchTerm] = React.useState('');
@@ -48,6 +49,82 @@ export default function Lateness() {
   });
   const [highlightedStudentId, setHighlightedStudentId] = React.useState<string | null>(null);
   const threshold = 3;
+
+  const [todaySavedRecords, setTodaySavedRecords] = React.useState<any[]>([]);
+  const [loadingTodayRecords, setLoadingTodayRecords] = React.useState(false);
+
+  const fetchTodaySavedRecords = React.useCallback(async () => {
+    if (classes.length === 0) {
+      setTodaySavedRecords([]);
+      return;
+    }
+    setLoadingTodayRecords(true);
+    try {
+      const q = query(
+        collection(db, 'lateness_records'),
+        where('date', '==', selectedDate)
+      );
+      const snap = await getDocs(q);
+      const classIds = classes.map(c => c.id);
+      const recordsList = snap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .filter((r: any) => classIds.includes(r.classId));
+      
+      const mappedRecords = recordsList.map((r: any) => {
+        const matchingClass = classes.find(c => c.id === r.classId);
+        return {
+          ...r,
+          className: matchingClass?.name || r.className || 'Kelas Lain'
+        };
+      });
+
+      mappedRecords.sort((a, b) => a.studentName.localeCompare(b.studentName));
+      setTodaySavedRecords(mappedRecords);
+    } catch (err) {
+      console.error('Error fetching today\'s lateness records:', err);
+    } finally {
+      setLoadingTodayRecords(false);
+    }
+  }, [selectedDate, classes]);
+
+  React.useEffect(() => {
+    fetchTodaySavedRecords();
+  }, [fetchTodaySavedRecords]);
+
+  const handleDeleteSavedRecord = async (id: string) => {
+    if (!window.confirm('Apakah Anda yakin ingin menghapus data keterlambatan ini?')) {
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, 'lateness_records', id));
+      toast.success('Data keterlambatan berhasil dihapus');
+      fetchTodaySavedRecords();
+    } catch (err) {
+      console.error('Error deleting lateness record:', err);
+      toast.error('Gagal menghapus data keterlambatan');
+    }
+  };
+
+  // Custom Dropdown States & Refs
+  const [isClassDropdownOpen, setIsClassDropdownOpen] = React.useState(false);
+  const classDropdownRef = React.useRef<HTMLDivElement>(null);
+  const [isStudentDropdownOpen, setIsStudentDropdownOpen] = React.useState(false);
+  const studentDropdownRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (classDropdownRef.current && !classDropdownRef.current.contains(event.target as Node)) {
+        setIsClassDropdownOpen(false);
+      }
+      if (studentDropdownRef.current && !studentDropdownRef.current.contains(event.target as Node)) {
+        setIsStudentDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   React.useEffect(() => {
     const fetchClasses = async () => {
@@ -228,17 +305,29 @@ export default function Lateness() {
           }));
         }
 
+        // Create a map of existing lateness records for today to check if we should pre-fill them
+        const todayRecordsMap: Record<string, any> = {};
+        latenessSnap.docs.forEach(doc => {
+          const data = doc.data();
+          if (data.studentId && data.date === selectedDate) {
+            todayRecordsMap[data.studentId] = data;
+          }
+        });
+
         const studentList: LatenessRecord[] = fetchedStudents
-          .map(student => ({
-            id: student.id,
-            name: student.name,
-            arrivalTime: '',
-            reason: '',
-            parentNote: false,
-            countThisMonth: latenessCountMap[student.id] || 0,
-            className: className,
-            classId: classId
-          }))
+          .map(student => {
+            const todayRecord = todayRecordsMap[student.id];
+            return {
+              id: student.id,
+              name: student.name,
+              arrivalTime: todayRecord ? todayRecord.arrivalTime : '',
+              reason: todayRecord ? todayRecord.reason : '',
+              parentNote: todayRecord ? todayRecord.parentNote || false : false,
+              countThisMonth: latenessCountMap[student.id] || 0,
+              className: className,
+              classId: classId
+            };
+          })
           .filter(student => {
             const lowerName = student.name.toLowerCase();
             const isClassPlaceholder = 
@@ -258,12 +347,16 @@ export default function Lateness() {
           // Filter out students from current studentList that are already in recordsToKeep
           const manualRecords = recordsToKeep.filter(r => !studentList.some(s => s.id === r.id));
           
-          // Merge: manually added/modified records first, then the remaining from the new class list
-          return [...manualRecords, ...studentList.map(s => {
+          // Only show students who have a non-empty arrivalTime (i.e. they are already loaded as late today)
+          const alreadyFilledRecords = studentList.filter(s => s.arrivalTime !== '');
+          
+          // Merge: manually added/modified records first, then the filled ones from today's list
+          return [...manualRecords, ...alreadyFilledRecords.map(s => {
             const existing = recordsToKeep.find(r => r.id === s.id);
             return existing ? { ...s, ...existing } : s;
           })];
         });
+        setClassStudentsList(studentList);
       } catch (err) {
         console.error('Error loading students for lateness:', err);
         toast.error('Gagal memuat data siswa');
@@ -338,6 +431,7 @@ export default function Lateness() {
 
       // Clear the saved late records from the screen
       setRecords(prev => prev.filter(r => !lateEntries.some(le => le.id === r.id)));
+      fetchTodaySavedRecords();
     } catch (err) {
       console.error('Error saving lateness:', err);
       toast.error('Gagal menyimpan data');
@@ -383,73 +477,153 @@ export default function Lateness() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Input Section */}
         <div className="lg:col-span-2 space-y-6">
-          <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-100">
              <div className="p-6 border-b border-gray-50 flex items-center justify-between gap-4 flex-wrap">
                 <div className="flex items-center gap-3 flex-wrap">
                   <h2 className="font-bold text-gray-900 flex items-center gap-2 whitespace-nowrap">
                      <Clock size={18} className="text-orange-500" />
                      Input Kedatangan
                   </h2>
-                  <select 
-                    value={selectedClass}
-                    onChange={(e) => setSelectedClass(e.target.value)}
-                    className="bg-gray-50 border border-gray-100 rounded-lg px-3 py-1.5 text-xs font-bold outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    <option value="">Pilih Kelas</option>
-                    {classes.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
+                  <div className="relative" ref={classDropdownRef}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsClassDropdownOpen(!isClassDropdownOpen);
+                        setIsStudentDropdownOpen(false);
+                      }}
+                      className="bg-gray-50 hover:bg-gray-100 border border-gray-100 rounded-lg px-3 py-1.5 text-xs font-bold text-gray-700 outline-none focus:ring-1 focus:ring-blue-500 flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <span>{classes.find(c => c.id === selectedClass)?.name || 'Pilih Kelas'}</span>
+                      <ChevronDown size={14} className={cn("text-gray-400 transition-transform duration-200", isClassDropdownOpen && "rotate-180")} />
+                    </button>
+                    
+                    {isClassDropdownOpen && (
+                      <div className="absolute left-0 mt-1 w-48 bg-white border border-gray-100 rounded-xl shadow-lg py-1.5 z-50 max-h-60 overflow-y-auto focus:outline-none">
+                        {classes.length === 0 ? (
+                          <div className="px-3 py-2 text-xs text-gray-400 italic">Tidak ada kelas</div>
+                        ) : (
+                          classes.map(c => {
+                            const isSelected = c.id === selectedClass;
+                            return (
+                              <button
+                                key={c.id}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedClass(c.id);
+                                  setIsClassDropdownOpen(false);
+                                }}
+                                className={cn(
+                                  "w-full text-left px-3 py-2 text-xs font-medium transition-colors flex items-center justify-between",
+                                  isSelected ? "bg-blue-50 text-blue-700 font-bold" : "text-gray-700 hover:bg-gray-50"
+                                )}
+                              >
+                                <span>{c.name}</span>
+                                {isSelected && <Check size={12} className="text-blue-600" />}
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
+                  </div>
 
                   {selectedClass && (() => {
-                    const currentClass = classes.find(c => c.id === selectedClass);
-                    const currentClassName = currentClass?.name;
-                    const classStudents = records.filter(r => 
-                      r.classId === selectedClass || 
-                      (currentClassName && r.className === currentClassName) ||
-                      (currentClassName && r.classId === currentClassName)
-                    );
                     return (
-                      <select 
-                        value=""
-                        onChange={(e) => {
-                          const studentId = e.target.value;
-                          if (!studentId) return;
-                          
-                          setHighlightedStudentId(studentId);
-                          
-                          setTimeout(() => {
-                            const rowElement = document.getElementById(`student-row-${studentId}`);
-                            if (rowElement) {
-                              rowElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            }
-                            const timeInputElement = document.getElementById(`time-input-${studentId}`);
-                            if (timeInputElement) {
-                              (timeInputElement as HTMLInputElement).focus();
-                            }
-                          }, 100);
+                      <div className="relative" ref={studentDropdownRef}>
+                        <button
+                          type="button"
+                          disabled={loading}
+                          onClick={() => {
+                            setIsStudentDropdownOpen(!isStudentDropdownOpen);
+                            setIsClassDropdownOpen(false);
+                          }}
+                          className="bg-gray-50 hover:bg-gray-100 border border-gray-100 rounded-lg px-3 py-1.5 text-xs font-bold text-gray-700 outline-none focus:ring-1 focus:ring-blue-500 flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          <span className="truncate max-w-[120px]">
+                            Pilih Siswa ({classStudentsList.length})
+                          </span>
+                          <ChevronDown size={14} className={cn("text-gray-400 transition-transform duration-200 flex-shrink-0", isStudentDropdownOpen && "rotate-180")} />
+                        </button>
 
-                          setTimeout(() => {
-                            setHighlightedStudentId(null);
-                          }, 3000);
-                        }}
-                        className="bg-gray-50 border border-gray-100 rounded-lg px-3 py-1.5 text-xs font-bold outline-none focus:ring-1 focus:ring-blue-500 max-w-[180px]"
-                        disabled={loading}
-                      >
-                        {loading ? (
-                          <option value="">Memuat siswa...</option>
-                        ) : (
-                          <>
-                            <option value="">Pilih Siswa ({classStudents.length})</option>
-                            {classStudents
-                              .sort((a, b) => a.name.localeCompare(b.name))
-                              .map(s => (
-                                <option key={s.id} value={s.id}>{s.name}</option>
-                              ))
-                            }
-                          </>
+                        {isStudentDropdownOpen && (
+                          <div className="absolute left-0 mt-1 w-64 bg-white border border-gray-100 rounded-xl shadow-lg py-1.5 z-50 max-h-60 overflow-y-auto focus:outline-none">
+                            {loading ? (
+                              <div className="px-3 py-2 text-xs text-gray-400 italic">Memuat siswa...</div>
+                            ) : classStudentsList.length === 0 ? (
+                              <div className="px-3 py-2 text-xs text-gray-400 italic">Tidak ada siswa</div>
+                            ) : (
+                              [...classStudentsList]
+                                .sort((a, b) => a.name.localeCompare(b.name))
+                                .map(s => {
+                                  const isAdded = records.some(r => r.id === s.id);
+                                  return (
+                                    <button
+                                      key={s.id}
+                                      type="button"
+                                      onClick={() => {
+                                        const studentId = s.id;
+                                        
+                                        // Ensure the student exists in records and has arrivalTime initialized
+                                        setRecords(prev => {
+                                          const exists = prev.some(r => r.id === studentId);
+                                          if (exists) {
+                                            return prev.map(r => {
+                                              if (r.id === studentId) {
+                                                return { 
+                                                  ...r, 
+                                                  arrivalTime: r.arrivalTime || getCurrentTimeStr() 
+                                                };
+                                              }
+                                              return r;
+                                            });
+                                          } else {
+                                            // Add back from classStudentsList
+                                            const originalStudent = classStudentsList.find(cs => cs.id === studentId);
+                                            if (originalStudent) {
+                                              return [
+                                                { 
+                                                  ...originalStudent, 
+                                                  arrivalTime: getCurrentTimeStr() 
+                                                },
+                                                ...prev
+                                              ];
+                                            }
+                                            return prev;
+                                          }
+                                        });
+
+                                        setHighlightedStudentId(studentId);
+                                        setIsStudentDropdownOpen(false);
+                                        
+                                        setTimeout(() => {
+                                          const rowElement = document.getElementById(`student-row-${studentId}`);
+                                          if (rowElement) {
+                                            rowElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                          }
+                                          const timeInputElement = document.getElementById(`time-input-${studentId}`);
+                                          if (timeInputElement) {
+                                            (timeInputElement as HTMLInputElement).focus();
+                                          }
+                                        }, 100);
+
+                                        setTimeout(() => {
+                                          setHighlightedStudentId(null);
+                                        }, 3000);
+                                      }}
+                                      className={cn(
+                                        "w-full text-left px-3 py-2 text-xs font-medium transition-colors flex items-center justify-between gap-2 truncate",
+                                        isAdded ? "bg-blue-50/70 text-blue-700 font-bold" : "text-gray-700 hover:bg-gray-50"
+                                      )}
+                                    >
+                                      <span className="truncate">{s.name}</span>
+                                      {isAdded && <Check size={12} className="text-blue-600 flex-shrink-0" />}
+                                    </button>
+                                  );
+                                })
+                            )}
+                          </div>
                         )}
-                      </select>
+                      </div>
                     );
                   })()}
                 </div>
@@ -516,7 +690,7 @@ export default function Lateness() {
                 </div>
              </div>
              
-             <div className="overflow-x-auto">
+             <div className="overflow-x-auto rounded-b-3xl">
                 {loading ? (
                   <div className="p-12 flex flex-col items-center justify-center gap-2 text-gray-400">
                     <Loader2 size={24} className="animate-spin text-blue-500" />
@@ -645,6 +819,89 @@ export default function Lateness() {
                 {saving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
                 {saving ? 'Menyimpan...' : 'Simpan & Kirim Notifikasi'}
              </button>
+          </div>
+
+          {/* Keterlambatan Hari Ini Section */}
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+             <div className="p-6 border-b border-gray-50 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                   <div className="p-2 bg-amber-50 text-amber-600 rounded-xl">
+                      <Clock size={20} />
+                   </div>
+                   <div>
+                      <h2 className="font-bold text-gray-900 text-sm">Keterlambatan Hari Ini</h2>
+                      <p className="text-xs text-gray-500">Daftar siswa yang tercatat terlambat pada {new Date(selectedDate).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                   </div>
+                </div>
+                <span className="bg-amber-50 text-amber-700 text-xs font-bold px-2.5 py-1 rounded-full">
+                   {todaySavedRecords.length} Siswa
+                </span>
+             </div>
+
+             <div className="overflow-x-auto">
+                {loadingTodayRecords ? (
+                  <div className="p-8 flex flex-col items-center justify-center gap-2 text-gray-400">
+                    <Loader2 size={24} className="animate-spin text-blue-500" />
+                    <p className="text-xs font-medium uppercase tracking-widest">Memuat data keterlambatan...</p>
+                  </div>
+                ) : todaySavedRecords.length === 0 ? (
+                  <div className="p-12 text-center text-gray-400">
+                    <p className="text-sm italic">Belum ada data keterlambatan yang disimpan hari ini.</p>
+                  </div>
+                ) : (
+                  <table className="w-full text-left">
+                    <thead className="bg-gray-50/50">
+                        <tr>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Kelas</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Waktu Tiba</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Alasan / Keterangan</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Izin Ortu</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Aksi</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                        {todaySavedRecords.map((record) => (
+                          <tr key={record.id} className="hover:bg-gray-50/30 transition-all duration-200">
+                              <td className="px-6 py-4">
+                                <p className="font-bold text-gray-900 text-sm">{record.studentName}</p>
+                              </td>
+                              <td className="px-6 py-4">
+                                <span className="text-xs font-medium text-blue-500 bg-blue-50 px-2 py-0.5 rounded-sm">
+                                  {record.className}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4">
+                                <span className="text-xs font-bold text-red-600 bg-red-50 border border-red-100 px-2 py-0.5 rounded-sm">
+                                  {record.arrivalTime}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4">
+                                <p className="text-sm text-gray-600">{record.reason || <span className="text-gray-300 italic">-</span>}</p>
+                              </td>
+                              <td className="px-6 py-4 text-center">
+                                <span className={cn(
+                                  "inline-flex p-1.5 rounded-lg text-xs font-semibold",
+                                  record.parentNote ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-gray-50 text-gray-400 border border-gray-100"
+                                )}>
+                                  {record.parentNote ? 'Ada Izin' : 'Tanpa Izin'}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 text-right">
+                                <button 
+                                    onClick={() => handleDeleteSavedRecord(record.id)}
+                                    className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                                    title="Hapus Keterlambatan"
+                                >
+                                    <Trash2 size={16} />
+                                </button>
+                              </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
+             </div>
           </div>
         </div>
 
