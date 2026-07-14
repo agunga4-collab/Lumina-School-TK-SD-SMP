@@ -5,10 +5,10 @@ import {
   ChevronLeft, Info, Send, User, Calendar, 
   MapPin, Clock, FileText, AlertCircle, Sparkles,
   Layers, MessageSquare, Briefcase, Loader2, X,
-  History, PlusCircle, CheckCircle
+  History, PlusCircle, CheckCircle, HelpCircle, ClipboardCheck
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { createMTSSCase, addMTSSConcern, getStudentActiveBehaviorCases } from '../../lib/firebase';
+import { createMTSSCase, addMTSSConcern, getStudentActiveBehaviorCases, getTeachers } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import type { MTSSTier, MTSSStatus } from '../../types';
@@ -24,6 +24,7 @@ export default function CreateCase() {
   const [loadingCases, setLoadingCases] = React.useState(false);
   const [reportingMode, setReportingMode] = React.useState<'NEW' | 'EXISTING'>('NEW');
   const [selectedCaseId, setSelectedCaseId] = React.useState<string>('');
+  const [teachers, setTeachers] = React.useState<any[]>([]);
 
   const [formData, setFormData] = React.useState({
     studentName: '',
@@ -37,7 +38,11 @@ export default function CreateCase() {
     location: '',
     description: '',
     interventionsTried: '',
+    progressNotes: '',
     nextSteps: '',
+    nextStepDueDate: '',
+    nextStepPicId: '',
+    nextStepPicName: '',
   });
 
   React.useEffect(() => {
@@ -45,6 +50,29 @@ export default function CreateCase() {
       setFormData(prev => ({ ...prev, academicYear: activeYear }));
     }
   }, [activeYear]);
+
+  React.useEffect(() => {
+    const fetchTeachers = async () => {
+      try {
+        const list = await getTeachers();
+        setTeachers(list || []);
+      } catch (err) {
+        console.error("Error loading teachers:", err);
+      }
+    };
+    fetchTeachers();
+  }, []);
+
+  // Pre-fill reporter/PIC with currently logged-in user once teachers list is loaded
+  React.useEffect(() => {
+    if (profile && !formData.nextStepPicId) {
+      setFormData(prev => ({
+        ...prev,
+        nextStepPicId: profile.uid,
+        nextStepPicName: profile.displayName || 'Unknown Teacher'
+      }));
+    }
+  }, [profile, teachers]);
 
   const handleStudentSelect = async (student: any) => {
     setFormData(prev => ({ 
@@ -90,10 +118,22 @@ export default function CreateCase() {
       alert("Silakan pilih siswa terlebih dahulu.");
       return;
     }
+
+    if (!formData.description.trim()) {
+      alert("Silakan isi deskripsi Behavior Concern terlebih dahulu.");
+      return;
+    }
     
     setIsSubmitting(true);
     
     try {
+      const interventionsArray = formData.interventionsTried
+        ? formData.interventionsTried.split(',').map(i => i.trim()).filter(Boolean)
+        : [];
+
+      const targetPicId = formData.nextStepPicId || profile?.uid || 'unknown';
+      const targetPicName = formData.nextStepPicName || profile?.displayName || 'Unknown Teacher';
+
       if (reportingMode === 'EXISTING') {
         if (!selectedCaseId) {
           alert("Silakan pilih kasus aktif yang ingin dilanjutkan.");
@@ -107,8 +147,12 @@ export default function CreateCase() {
           description: formData.description,
           reporterId: profile?.uid || 'unknown',
           reporterName: profile?.displayName || 'Unknown Teacher',
-          interventionsTried: formData.interventionsTried.split(',').map(i => i.trim()),
+          interventionsTried: interventionsArray,
+          progressNotes: formData.progressNotes,
           nextSteps: formData.nextSteps,
+          nextStepPicId: targetPicId,
+          nextStepPicName: targetPicName,
+          nextStepDueDate: formData.nextStepDueDate || undefined,
           isDone: false,
         });
 
@@ -122,8 +166,8 @@ export default function CreateCase() {
           academicYear: formData.academicYear,
           tier: formData.tier,
           status: formData.status,
-          picId: profile?.uid || 'unknown',
-          picName: profile?.displayName || 'Unknown Teacher',
+          picId: targetPicId,
+          picName: targetPicName,
           totalConcerns: 1,
           lastConcernSummary: formData.description,
           lastConcernDate: Date.now(),
@@ -136,8 +180,12 @@ export default function CreateCase() {
             description: formData.description,
             reporterId: profile?.uid || 'unknown',
             reporterName: profile?.displayName || 'Unknown Teacher',
-            interventionsTried: formData.interventionsTried.split(',').map(i => i.trim()),
+            interventionsTried: interventionsArray,
+            progressNotes: formData.progressNotes,
             nextSteps: formData.nextSteps,
+            nextStepPicId: targetPicId,
+            nextStepPicName: targetPicName,
+            nextStepDueDate: formData.nextStepDueDate || undefined,
             isDone: false,
           });
 
@@ -236,7 +284,7 @@ export default function CreateCase() {
                     <span className="text-[10px] font-black uppercase tracking-widest text-amber-800">Siswa Ini Memiliki Kasus Aktif</span>
                   </div>
                   <p className="text-xs text-gray-600 font-medium leading-relaxed">
-                    Siswa ini saat ini memiliki penanganan kasus perilaku yang sedang berjalan. Pilih apakah ingin melanjutkan kasus yang ada (menambahkan catatan kejadian) atau memulai kasus baru yang berbeda.
+                    Siswa ini saat ini memiliki penanganan kasus perilaku yang sedang berjalan. Pilih apakah ingin melanjutkan kasus yang ada (menambahkan catatan kejadian) atau memulai kasus baru yang berbeda (menambah kasus berbeda).
                   </p>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -253,7 +301,7 @@ export default function CreateCase() {
                       <div>
                         <div className="flex items-center gap-1.5 mb-1">
                           <History size={14} className="text-amber-600" />
-                          <span className="text-[10px] font-black uppercase tracking-widest text-amber-800">Lanjutkan Kasus Aktif</span>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-amber-800 font-black">Lanjutkan Kasus Aktif</span>
                         </div>
                         <p className="text-[11px] text-gray-500 font-bold leading-relaxed">
                           Menambahkan kejadian/log sebagai timeline baru pada kasus yang sudah berjalan.
@@ -274,10 +322,10 @@ export default function CreateCase() {
                       <div>
                         <div className="flex items-center gap-1.5 mb-1">
                           <PlusCircle size={14} className="text-blue-600" />
-                          <span className="text-[10px] font-black uppercase tracking-widest text-blue-800">Buat Kasus Baru</span>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-blue-800 font-black">Buat Kasus Baru Berbeda</span>
                         </div>
                         <p className="text-[11px] text-gray-500 font-bold leading-relaxed">
-                          Membuat penanganan kasus baru yang benar-benar berbeda dari yang berjalan.
+                          Membuat penanganan kasus baru yang berbeda dari yang sedang berjalan.
                         </p>
                       </div>
                     </button>
@@ -300,7 +348,11 @@ export default function CreateCase() {
                               name="selectedCaseId"
                               value={c.id}
                               checked={selectedCaseId === c.id}
-                              onChange={() => setSelectedCaseId(c.id)}
+                              onChange={() => {
+                                setSelectedCaseId(c.id);
+                                // Also pre-fill target tier if needed
+                                setFormData(prev => ({ ...prev, tier: c.tier }));
+                              }}
                               className="mt-1 text-amber-600 focus:ring-amber-500"
                             />
                             <div className="flex-1 min-w-0">
@@ -361,7 +413,7 @@ export default function CreateCase() {
             )}
           </div>
 
-          {/* Section: Kejadian */}
+          {/* Section: Kejadian / Detail Laporan */}
           <div className="space-y-6">
             <div className="flex items-center gap-3 mb-2">
                <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
@@ -404,7 +456,7 @@ export default function CreateCase() {
                   <input
                     required
                     type="text"
-                    placeholder="E.g. Kantin"
+                    placeholder="E.g. Kantin, Koridor, Kelas"
                     className="w-full pl-12 pr-4 py-4 rounded-2xl bg-gray-50 border border-transparent focus:bg-white focus:border-blue-300 focus:ring-4 focus:ring-blue-50 outline-none transition-all font-bold text-sm"
                     value={formData.location}
                     onChange={e => setFormData(prev => ({ ...prev, location: e.target.value }))}
@@ -414,46 +466,107 @@ export default function CreateCase() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Deskripsi Objektif</label>
+              <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Behavior Concern</label>
               <textarea
                 required
                 rows={4}
-                placeholder="Jelaskan apa yang diobservasi secara detail dan objektif..."
-                className="w-full px-6 py-4 rounded-2xl bg-gray-50 border border-transparent focus:bg-white focus:border-blue-300 focus:ring-4 focus:ring-blue-50 outline-none transition-all font-bold text-sm leading-relaxed"
+                placeholder="Jelaskan perilaku yang menjadi kekhawatiran secara spesifik..."
+                className="w-full px-6 py-4 rounded-2xl bg-gray-50 border border-transparent focus:bg-white focus:border-blue-300 focus:ring-4 focus:ring-blue-50 outline-none transition-all font-medium text-sm leading-relaxed"
                 value={formData.description}
                 onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
               />
             </div>
           </div>
 
-          {/* Section: Intervensi */}
+          {/* Section: Intervensi & Tindakan */}
           <div className="space-y-6">
             <div className="flex items-center gap-3 mb-2">
                <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
                   <Briefcase size={18} />
                </div>
-               <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Tindakan Langsung</h3>
+               <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Intervensi & Tindakan</h3>
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Intervensi yang sudah dilakukan</label>
+              <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Interventions Already Tried</label>
               <textarea
-                placeholder="E.g. Teguran lisan, bicara personal, pisahkan tempat duduk... (pisahkan dengan koma)"
-                className="w-full px-6 py-4 rounded-2xl bg-gray-50 border border-transparent focus:bg-white focus:border-blue-300 focus:ring-4 focus:ring-blue-50 outline-none transition-all font-bold text-sm leading-relaxed"
+                rows={3}
+                placeholder="Sebutkan tindakan/intervensi yang sudah dicoba (pisahkan dengan koma atau baris baru)..."
+                className="w-full px-6 py-4 rounded-2xl bg-gray-50 border border-transparent focus:bg-white focus:border-blue-300 focus:ring-4 focus:ring-blue-50 outline-none transition-all font-medium text-sm leading-relaxed"
                 value={formData.interventionsTried}
                 onChange={e => setFormData(prev => ({ ...prev, interventionsTried: e.target.value }))}
               />
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Rencana Langkah Selanjutnya</label>
-              <input
-                type="text"
-                placeholder="E.g. Diskusi dengan wali kelas pada 24 April"
-                className="w-full px-6 py-4 rounded-2xl bg-gray-50 border border-transparent focus:bg-white focus:border-blue-300 focus:ring-4 focus:ring-blue-50 outline-none transition-all font-bold text-sm"
+              <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Progress After Intervention</label>
+              <textarea
+                rows={3}
+                placeholder="Jelaskan perkembangan atau reaksi siswa setelah diberikan intervensi..."
+                className="w-full px-6 py-4 rounded-2xl bg-gray-50 border border-transparent focus:bg-white focus:border-blue-300 focus:ring-4 focus:ring-blue-50 outline-none transition-all font-medium text-sm leading-relaxed"
+                value={formData.progressNotes}
+                onChange={e => setFormData(prev => ({ ...prev, progressNotes: e.target.value }))}
+              />
+            </div>
+          </div>
+
+          {/* Section: Next Steps & Penanggung Jawab */}
+          <div className="space-y-6">
+            <div className="flex items-center gap-3 mb-2">
+               <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                  <ClipboardCheck size={18} />
+               </div>
+               <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Next Steps & Person Responsible</h3>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Next Steps Plan</label>
+              <textarea
+                rows={3}
+                placeholder="Rencana tindakan selanjutnya untuk membantu siswa..."
+                className="w-full px-6 py-4 rounded-2xl bg-gray-50 border border-transparent focus:bg-white focus:border-blue-300 focus:ring-4 focus:ring-blue-50 outline-none transition-all font-medium text-sm leading-relaxed"
                 value={formData.nextSteps}
                 onChange={e => setFormData(prev => ({ ...prev, nextSteps: e.target.value }))}
               />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Target Selesai Next Steps</label>
+                <div className="relative">
+                  <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" size={18} />
+                  <input
+                    type="date"
+                    className="w-full pl-12 pr-4 py-4 rounded-2xl bg-gray-50 border border-transparent focus:bg-white focus:border-blue-300 focus:ring-4 focus:ring-blue-50 outline-none transition-all font-bold text-sm"
+                    value={formData.nextStepDueDate}
+                    onChange={e => setFormData(prev => ({ ...prev, nextStepDueDate: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Person Responsible</label>
+                <div className="relative">
+                  <select
+                    className="w-full px-6 py-4 rounded-2xl bg-gray-50 border border-transparent focus:bg-white focus:border-blue-300 focus:ring-4 focus:ring-blue-50 outline-none transition-all font-bold text-sm appearance-none cursor-pointer"
+                    value={formData.nextStepPicId}
+                    onChange={e => {
+                      const matched = teachers.find(t => t.uid === e.target.value);
+                      setFormData(prev => ({
+                        ...prev,
+                        nextStepPicId: e.target.value,
+                        nextStepPicName: matched ? matched.displayName : 'Unknown Teacher'
+                      }));
+                    }}
+                  >
+                    <option value="">Pilih Penanggung Jawab</option>
+                    {teachers.map(t => (
+                      <option key={t.uid} value={t.uid}>{t.displayName} ({t.role})</option>
+                    ))}
+                  </select>
+                  <ChevronLeft className="absolute right-4 top-1/2 -translate-y-1/2 rotate-[-90deg] text-gray-400 pointer-events-none" size={18} />
+                </div>
+              </div>
             </div>
           </div>
 
