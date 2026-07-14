@@ -46,6 +46,7 @@ export default function Lateness() {
   const [selectedDate, setSelectedDate] = React.useState<string>(() => {
     return new Date().toISOString().split('T')[0];
   });
+  const [highlightedStudentId, setHighlightedStudentId] = React.useState<string | null>(null);
   const threshold = 3;
 
   React.useEffect(() => {
@@ -384,7 +385,7 @@ export default function Lateness() {
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
              <div className="p-6 border-b border-gray-50 flex items-center justify-between gap-4 flex-wrap">
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3 flex-wrap">
                   <h2 className="font-bold text-gray-900 flex items-center gap-2 whitespace-nowrap">
                      <Clock size={18} className="text-orange-500" />
                      Input Kedatangan
@@ -399,6 +400,58 @@ export default function Lateness() {
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
+
+                  {selectedClass && (() => {
+                    const currentClass = classes.find(c => c.id === selectedClass);
+                    const currentClassName = currentClass?.name;
+                    const classStudents = records.filter(r => 
+                      r.classId === selectedClass || 
+                      (currentClassName && r.className === currentClassName) ||
+                      (currentClassName && r.classId === currentClassName)
+                    );
+                    return (
+                      <select 
+                        value=""
+                        onChange={(e) => {
+                          const studentId = e.target.value;
+                          if (!studentId) return;
+                          
+                          setHighlightedStudentId(studentId);
+                          
+                          setTimeout(() => {
+                            const rowElement = document.getElementById(`student-row-${studentId}`);
+                            if (rowElement) {
+                              rowElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }
+                            const timeInputElement = document.getElementById(`time-input-${studentId}`);
+                            if (timeInputElement) {
+                              (timeInputElement as HTMLInputElement).focus();
+                            }
+                          }, 100);
+
+                          setTimeout(() => {
+                            setHighlightedStudentId(null);
+                          }, 3000);
+                        }}
+                        className="bg-gray-50 border border-gray-100 rounded-lg px-3 py-1.5 text-xs font-bold outline-none focus:ring-1 focus:ring-blue-500 max-w-[180px]"
+                        disabled={loading}
+                      >
+                        {loading ? (
+                          <option value="">Memuat siswa...</option>
+                        ) : (
+                          <>
+                            <option value="">Pilih Siswa ({classStudents.length})</option>
+                            {classStudents
+                              .sort((a, b) => a.name.localeCompare(b.name))
+                              .map(s => (
+                                <option key={s.id} value={s.id}>{s.name}</option>
+                              ))
+                            }
+                          </>
+                        )}
+                      </select>
+                    );
+                  })()}
                 </div>
                 <div className="relative flex-1 max-w-xs">
                    <StudentSearch 
@@ -486,7 +539,14 @@ export default function Lateness() {
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                         {filteredRecords.map(record => (
-                          <tr key={record.id} className="hover:bg-gray-50/50 transition-colors">
+                          <tr 
+                            key={record.id} 
+                            id={`student-row-${record.id}`}
+                            className={cn(
+                              "hover:bg-gray-50/50 transition-all duration-300", 
+                              record.id === highlightedStudentId ? "bg-amber-50 ring-2 ring-amber-500/30" : ""
+                            )}
+                          >
                               <td className="px-6 py-4">
                                 <div className="flex flex-col">
                                   <p className="font-bold text-gray-900 text-sm">{record.name}</p>
@@ -513,6 +573,7 @@ export default function Lateness() {
                                   <div className="flex items-center gap-1.5">
                                     <input 
                                         type="time" 
+                                        id={`time-input-${record.id}`}
                                         className="bg-gray-50 border border-gray-100 rounded-lg px-3 py-1.5 text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 w-32"
                                         value={record.arrivalTime}
                                         onChange={(e) => updateTime(record.id, e.target.value)}

@@ -195,7 +195,8 @@ export default function StudentSearch({
             name: data.displayName || data.name || 'Unknown',
             nickname: data.nickname,
             className: mappedEnrollment?.className || data.jobTitle,
-            classId: mappedEnrollment?.classId || data.classId
+            classId: mappedEnrollment?.classId || data.classId,
+            email: data.email
           });
         });
 
@@ -211,7 +212,8 @@ export default function StudentSearch({
             name: data.name || '',
             nickname: data.nickname,
             className: mappedEnrollment?.className || data.jobTitle,
-            classId: mappedEnrollment?.classId || data.classId
+            classId: mappedEnrollment?.classId || data.classId,
+            email: data.email
           });
         });
 
@@ -225,22 +227,67 @@ export default function StudentSearch({
             name: data.name || data.fullName || 'Unknown',
             nickname: data.nickname,
             className: mappedEnrollment?.className || data.className || data.jobTitle,
-            classId: mappedEnrollment?.classId || data.classId
+            classId: mappedEnrollment?.classId || data.classId,
+            email: data.email
           });
         });
 
-        // 3. Merge and De-duplicate by student ID
+        // 3. Merge and De-duplicate by student ID, Name, and Email
         const allStudents = [...activeStudents, ...invitedStudents, ...masterStudents];
-        const uniqueStudentsMap = new Map();
+        const uniqueStudentsMap = new Map<string, any>();
+        const emailToId = new Map<string, string>();
+        const nameToId = new Map<string, string>();
+
         allStudents.forEach(s => {
-          if (!uniqueStudentsMap.has(s.id) || !s.id.startsWith('INVITE_')) {
-            const existing = uniqueStudentsMap.get(s.id);
-            uniqueStudentsMap.set(s.id, {
+          const emailKey = s.email ? s.email.toLowerCase().trim() : '';
+          const nameKey = s.name ? s.name.toLowerCase().replace(/\s+/g, ' ').trim() : '';
+
+          let existingId = null;
+          if (emailKey && emailToId.has(emailKey)) {
+            existingId = emailToId.get(emailKey);
+          } else if (nameKey && nameToId.has(nameKey)) {
+            existingId = nameToId.get(nameKey);
+          }
+
+          if (existingId) {
+            const existing = uniqueStudentsMap.get(existingId);
+            
+            // Prioritize non-invite and numeric IDs
+            const sIsInvite = s.id.startsWith('INVITE_');
+            const existingIsInvite = existing.id.startsWith('INVITE_');
+            
+            let primaryId = existing.id;
+            if (existingIsInvite && !sIsInvite) {
+              primaryId = s.id;
+            } else if (!existingIsInvite && !sIsInvite) {
+              const existingIsNumeric = /^\d+$/.test(existing.id);
+              const sIsNumeric = /^\d+$/.test(s.id);
+              if (!existingIsNumeric && sIsNumeric) {
+                primaryId = s.id;
+              }
+            }
+
+            const merged = {
               ...existing,
               ...s,
-              classId: s.classId || existing?.classId,
-              className: s.className || existing?.className
-            });
+              id: primaryId,
+              classId: s.classId || existing.classId,
+              className: s.className || existing.className,
+              email: s.email || existing.email,
+              nickname: s.nickname || existing.nickname,
+            };
+
+            if (primaryId !== existingId) {
+              uniqueStudentsMap.delete(existingId);
+              if (emailKey) emailToId.set(emailKey, primaryId);
+              if (nameKey) nameToId.set(nameKey, primaryId);
+            }
+
+            uniqueStudentsMap.set(primaryId, merged);
+          } else {
+            uniqueStudentsMap.set(s.id, s);
+            if (emailKey) emailToId.set(emailKey, s.id);
+            if (nameKey) nameToId.set(nameKey, s.id);
           }
         });
         
