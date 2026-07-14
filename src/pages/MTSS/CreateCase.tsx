@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { motion } from 'motion/react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   ChevronLeft, Info, Send, User, Calendar, 
   MapPin, Clock, FileText, AlertCircle, Sparkles,
@@ -8,7 +8,7 @@ import {
   History, PlusCircle, CheckCircle, HelpCircle, ClipboardCheck
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { createMTSSCase, addMTSSConcern, getStudentActiveBehaviorCases, getTeachers } from '../../lib/firebase';
+import { createMTSSCase, addMTSSConcern, getStudentActiveBehaviorCases, getTeachers, getStudentById } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import type { MTSSTier, MTSSStatus } from '../../types';
@@ -17,6 +17,7 @@ import StudentSearch from '../../components/StudentSearch';
 
 export default function CreateCase() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { profile } = useAuth();
   const { activeYear } = useAcademicYear();
   const [isSubmitting, setIsSubmitting] = React.useState(false);
@@ -25,6 +26,8 @@ export default function CreateCase() {
   const [reportingMode, setReportingMode] = React.useState<'NEW' | 'EXISTING'>('NEW');
   const [selectedCaseId, setSelectedCaseId] = React.useState<string>('');
   const [teachers, setTeachers] = React.useState<any[]>([]);
+
+  const qStudentId = searchParams.get('studentId');
 
   const [formData, setFormData] = React.useState({
     studentName: '',
@@ -74,6 +77,19 @@ export default function CreateCase() {
     }
   }, [profile, teachers]);
 
+  // Handle studentId from query parameters
+  React.useEffect(() => {
+    if (qStudentId) {
+      getStudentById(qStudentId).then(student => {
+        if (student) {
+          handleStudentSelect(student);
+        }
+      }).catch(err => {
+        console.error("Error loading student from query param:", err);
+      });
+    }
+  }, [qStudentId]);
+
   const handleStudentSelect = async (student: any) => {
     setFormData(prev => ({ 
       ...prev, 
@@ -86,11 +102,15 @@ export default function CreateCase() {
     try {
       const cases = await getStudentActiveBehaviorCases(student.id);
       setActiveCases(cases || []);
+      const urlMode = searchParams.get('mode');
+      if (urlMode === 'NEW' || urlMode === 'EXISTING') {
+        setReportingMode(urlMode as 'NEW' | 'EXISTING');
+      } else {
+        setReportingMode('NEW'); // ALWAYS default to a NEW case as requested by the user
+      }
       if (cases && cases.length > 0) {
-        setReportingMode('EXISTING');
         setSelectedCaseId(cases[0].id);
       } else {
-        setReportingMode('NEW');
         setSelectedCaseId('');
       }
     } catch (err) {

@@ -335,6 +335,7 @@ export default function App() {
               <Route index element={<Navigate to="overview" replace />} />
               <Route path="overview" element={<MTSSBehaviorOverview />} />
               <Route path="cases" element={<CaseList />} />
+              <Route path="cases/new" element={<CreateCase />} />
               <Route path="cases/:id" element={<CaseDetail />} />
               <Route path="spreadsheet" element={<MTSSBehaviorSpreadsheet />} />
               <Route path="timeline" element={<MTSSBehaviorTimeline />} />

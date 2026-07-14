@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, Plus, ChevronRight, AlertCircle, 
   User, TrendingUp, AlertTriangle, Layers,
-  Activity, ShieldAlert, RefreshCw, FileText
+  Activity, ShieldAlert, RefreshCw, FileText,
+  PlusCircle, History
 } from 'lucide-react';
 import { useNavigate, Link, useOutletContext } from 'react-router-dom';
 import { cn, formatDate } from '../../lib/utils';
@@ -25,6 +26,7 @@ export default function CaseList() {
   const [tierFilter, setTierFilter] = React.useState<string>('all');
   const [statusFilter, setStatusFilter] = React.useState<string>('all');
   const [showOnlyActive, setShowOnlyActive] = React.useState(false);
+  const [activeLaporSiswaId, setActiveLaporSiswaId] = React.useState<string | null>(null);
   
   // Data states
   const [cases, setCases] = React.useState<MTSSCase[]>([]);
@@ -632,7 +634,7 @@ export default function CaseList() {
                     </td>
 
                     {/* Aksi */}
-                    <td className="px-4 py-2.5 text-right">
+                    <td className="px-4 py-2.5 text-right relative">
                       <div className="flex items-center justify-end gap-1.5">
                         <Link
                           to={`/junior-high/behavior/mtss/spreadsheet?studentId=${student.id}&classId=${classFilter}`}
@@ -650,25 +652,65 @@ export default function CaseList() {
                               View Log
                               <ChevronRight size={10} />
                             </Link>
-                            <Link
-                              to={`/junior-high/behavior/mtss/cases/${studentCase.id}?addConcern=true`}
-                              className="inline-flex items-center gap-1 border border-dashed border-blue-300 hover:border-blue-500 hover:bg-blue-50/50 text-blue-600 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all active:scale-95 whitespace-nowrap cursor-pointer"
-                            >
-                              <Plus size={10} />
-                              Lapor
-                            </Link>
+
+                            <div className="relative inline-block text-left">
+                              <button
+                                onClick={() => setActiveLaporSiswaId(activeLaporSiswaId === student.id ? null : student.id)}
+                                className="inline-flex items-center gap-1 border border-dashed border-blue-300 hover:border-blue-500 hover:bg-blue-50/50 text-blue-600 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all active:scale-95 whitespace-nowrap cursor-pointer"
+                              >
+                                <Plus size={10} />
+                                Lapor
+                              </button>
+
+                              {activeLaporSiswaId === student.id && (
+                                <>
+                                  <div 
+                                    className="fixed inset-0 z-40" 
+                                    onClick={() => setActiveLaporSiswaId(null)}
+                                  />
+                                  <div className="absolute right-0 mt-1 w-64 rounded-xl bg-white border border-gray-200 shadow-xl z-50 py-2.5 text-left animate-in fade-in slide-in-from-top-1 duration-100">
+                                    <div className="px-3.5 py-1 border-b border-gray-100 mb-1">
+                                      <p className="text-[8.5px] font-black text-gray-400 uppercase tracking-wider">Opsi Penanganan</p>
+                                    </div>
+                                    <Link
+                                      to={`/junior-high/behavior/mtss/cases/new?studentId=${student.id}&mode=NEW`}
+                                      onClick={() => setActiveLaporSiswaId(null)}
+                                      className="flex flex-col gap-0.5 px-3.5 py-2 hover:bg-blue-50/80 transition-colors"
+                                    >
+                                      <span className="text-[10px] font-black text-blue-800 uppercase tracking-tight flex items-center gap-1">
+                                        <PlusCircle size={10} />
+                                        Buat Kasus Baru (Ulang Cycle)
+                                      </span>
+                                      <span className="text-[9px] text-gray-500 font-bold tracking-tight leading-normal">
+                                        Memulai penanganan kasus kategori berbeda dari awal.
+                                      </span>
+                                    </Link>
+                                    <Link
+                                      to={`/junior-high/behavior/mtss/cases/new?studentId=${student.id}&mode=EXISTING`}
+                                      onClick={() => setActiveLaporSiswaId(null)}
+                                      className="flex flex-col gap-0.5 px-3.5 py-2 hover:bg-amber-50/80 transition-colors"
+                                    >
+                                      <span className="text-[10px] font-black text-amber-800 uppercase tracking-tight flex items-center gap-1">
+                                        <History size={10} />
+                                        Lanjutkan Kasus Aktif
+                                      </span>
+                                      <span className="text-[9px] text-gray-500 font-bold tracking-tight leading-normal">
+                                        Melanjutkan log penanganan kasus yang sedang aktif.
+                                      </span>
+                                    </Link>
+                                  </div>
+                                </>
+                              )}
+                            </div>
                           </>
                         ) : (
-                          <button
-                            onClick={() => {
-                              setPreselectedStudentId(student.id);
-                              setShowNewCaseModal(true);
-                            }}
+                          <Link
+                            to={`/junior-high/behavior/mtss/cases/new?studentId=${student.id}&mode=NEW`}
                             className="inline-flex items-center gap-1 border border-dashed border-blue-300 hover:border-blue-500 hover:bg-blue-50/50 text-blue-600 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all active:scale-95 whitespace-nowrap cursor-pointer"
                           >
                             <Plus size={10} />
                             Lapor
-                          </button>
+                          </Link>
                         )}
                       </div>
                     </td>
