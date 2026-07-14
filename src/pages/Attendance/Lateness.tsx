@@ -417,18 +417,27 @@ export default function Lateness() {
                        const studentClassId = student.classId;
                        const studentClassName = student.className;
 
-                       if (studentClassId) {
+                       // Find the class in the currently loaded unit's active classes
+                       const foundClass = classes.find(c => 
+                         (studentClassId && (c.id === studentClassId || c.name.toLowerCase() === studentClassId.toLowerCase() || c.id.toLowerCase().includes(studentClassId.toLowerCase()))) ||
+                         (studentClassName && (c.name.toLowerCase() === studentClassName.toLowerCase() || studentClassName.toLowerCase().includes(c.name.toLowerCase())))
+                       );
+
+                       if (foundClass) {
+                         finalClassId = foundClass.id;
+                         setSelectedClass(foundClass.id);
+                       } else if (studentClassId) {
                          finalClassId = studentClassId;
                          setSelectedClass(studentClassId);
                        } else if (studentClassName) {
                          // Try to find class by name (exact or loose match)
-                         const foundClass = classes.find(c => 
+                         const foundClassByLabel = classes.find(c => 
                            c.name.toLowerCase() === studentClassName.toLowerCase() ||
                            studentClassName.toLowerCase().includes(c.name.toLowerCase())
                          );
-                         if (foundClass) {
-                           finalClassId = foundClass.id;
-                           setSelectedClass(foundClass.id);
+                         if (foundClassByLabel) {
+                           finalClassId = foundClassByLabel.id;
+                           setSelectedClass(foundClassByLabel.id);
                          }
                        }
                        

@@ -173,18 +173,26 @@ export default function JuniorHighLiteracyNumeracy() {
             id: s.id,
             name: s.name,
             classId: s.classId,
-            className: classes.find(c => c.id === s.classId)?.name || 'SMP'
+            className: classes.find(c => c.id === s.classId || (s.classId && c.name.toLowerCase() === s.classId.toLowerCase()))?.name || 'SMP'
           }));
         } else {
           const allStudents = await getStudents() || [];
           classStudents = allStudents
-            .filter(s => s.currentUnit === 'JUNIOR_HIGH' && s.classId === selectedClassId)
-            .map(s => ({
-              id: s.id,
-              name: s.name,
-              classId: s.classId || selectedClassId,
-              className: classes.find(c => c.id === (s.classId || selectedClassId))?.name || 'SMP'
-            }));
+            .filter(s => {
+              const matchesId = s.classId === selectedClassId;
+              const activeClass = classes.find(c => c.id === selectedClassId);
+              const matchesName = activeClass && s.classId && s.classId.toLowerCase() === activeClass.name.toLowerCase();
+              return s.currentUnit === 'JUNIOR_HIGH' && (matchesId || matchesName);
+            })
+            .map(s => {
+              const targetId = s.classId || selectedClassId;
+              return {
+                id: s.id,
+                name: s.name,
+                classId: targetId,
+                className: classes.find(c => c.id === targetId || (targetId && c.name.toLowerCase() === targetId.toLowerCase()))?.name || 'SMP'
+              };
+            });
         }
 
         classStudents.sort((a, b) => a.name.localeCompare(b.name));

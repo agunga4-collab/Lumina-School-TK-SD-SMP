@@ -89,7 +89,7 @@ export default function StudentSearch({
                     enrolledStudentIds.push(data.studentId);
                   }
                   enrollmentMap[data.studentId] = {
-                    classId: data.classId,
+                    classId: classId, // Normalize to the stable document class ID
                     className: targetClassName || data.classId
                   };
                 }
@@ -107,6 +107,7 @@ export default function StudentSearch({
               where('academicYear', '==', academicYear)
             );
             const classesSnap = await getDocs(classesQ);
+            const nameToIdMap: Record<string, string> = {};
             classesSnap.docs.forEach(doc => {
               const data = doc.data();
               if (data.status !== 'archived') {
@@ -114,6 +115,7 @@ export default function StudentSearch({
                 if (data.name) {
                   classNames.push(data.name.toLowerCase());
                   classNameMap[doc.id] = data.name;
+                  nameToIdMap[data.name.toLowerCase()] = doc.id;
                 }
               }
             });
@@ -128,11 +130,14 @@ export default function StudentSearch({
               const enrollmentsSnap = await getDocs(enrollmentsQ);
               enrollmentsSnap.docs.forEach(doc => {
                 const data = doc.data();
-                if (data.studentId && classIds.includes(data.classId)) {
-                  enrolledStudentIds.push(data.studentId);
+                const matchedClassId = data.classId ? (classIds.includes(data.classId) ? data.classId : nameToIdMap[data.classId.toLowerCase()]) : null;
+                if (data.studentId && matchedClassId) {
+                  if (!enrolledStudentIds.includes(data.studentId)) {
+                    enrolledStudentIds.push(data.studentId);
+                  }
                   enrollmentMap[data.studentId] = {
-                    classId: data.classId,
-                    className: classNameMap[data.classId] || data.classId
+                    classId: matchedClassId,
+                    className: classNameMap[matchedClassId] || data.classId
                   };
                 }
               });
@@ -142,6 +147,41 @@ export default function StudentSearch({
           }
         }
 
+        // Helper to normalize classes/names based on the active classes metadata
+        const normalizeStudent = (s: any) => {
+          let resolvedClassId = s.classId;
+          let resolvedClassName = s.className;
+
+          if (resolvedClassId && !classIds.includes(resolvedClassId)) {
+            // Check if classId in record is actually class name
+            const matchByName = Object.entries(classNameMap).find(
+              ([_, name]) => name.toLowerCase() === resolvedClassId.toLowerCase()
+            );
+            if (matchByName) {
+              resolvedClassId = matchByName[0];
+              resolvedClassName = matchByName[1];
+            } else {
+              // Try soft matching against list of active classIds or classNames
+              const lowerId = resolvedClassId.toLowerCase();
+              const matchedId = classIds.find(id => id.toLowerCase().includes(lowerId) || lowerId.includes(id.toLowerCase()));
+              if (matchedId) {
+                resolvedClassId = matchedId;
+                resolvedClassName = classNameMap[matchedId];
+              }
+            }
+          }
+
+          if (!resolvedClassName && resolvedClassId) {
+            resolvedClassName = classNameMap[resolvedClassId] || resolvedClassId;
+          }
+
+          return {
+            ...s,
+            classId: resolvedClassId,
+            className: resolvedClassName
+          };
+        };
+
         // 2. Fetch master lists (users, roleInvites, students)
         const usersRef = collection(db, 'users');
         const usersQ = query(usersRef, where('role', '==', 'STUDENT'));
@@ -150,13 +190,13 @@ export default function StudentSearch({
         const activeStudents = usersSnap.docs.map(doc => {
           const data = doc.data();
           const mappedEnrollment = enrollmentMap[doc.id];
-          return {
+          return normalizeStudent({
             id: doc.id,
             name: data.displayName || data.name || 'Unknown',
             nickname: data.nickname,
             className: mappedEnrollment?.className || data.jobTitle,
             classId: mappedEnrollment?.classId || data.classId
-          };
+          });
         });
 
         const invitesRef = collection(db, 'roleInvites');
@@ -166,13 +206,13 @@ export default function StudentSearch({
           const data = doc.data();
           const inviteId = `INVITE_${doc.id}`;
           const mappedEnrollment = enrollmentMap[inviteId] || enrollmentMap[doc.id];
-          return {
+          return normalizeStudent({
             id: inviteId,
             name: data.name || '',
             nickname: data.nickname,
             className: mappedEnrollment?.className || data.jobTitle,
             classId: mappedEnrollment?.classId || data.classId
-          };
+          });
         });
 
         const studentsRef = collection(db, 'students');
@@ -180,13 +220,13 @@ export default function StudentSearch({
         const masterStudents = studentsSnap.docs.map(doc => {
           const data = doc.data();
           const mappedEnrollment = enrollmentMap[doc.id];
-          return {
+          return normalizeStudent({
             id: doc.id,
             name: data.name || data.fullName || 'Unknown',
             nickname: data.nickname,
             className: mappedEnrollment?.className || data.className || data.jobTitle,
             classId: mappedEnrollment?.classId || data.classId
-          };
+          });
         });
 
         // 3. Merge and De-duplicate by student ID
@@ -211,7 +251,7 @@ export default function StudentSearch({
           // If filtering by classId, must match the target class or enrollments
           if (classId) {
             const matchesEnrollment = enrolledStudentIds.includes(s.id);
-            const matchesClassId = s.classId === classId;
+            const matchesClassId = s.classId === classId || (s.classId && targetClassName && s.classId.toLowerCase() === targetClassName.toLowerCase());
             const matchesClassName = targetClassName && s.className && s.className.toLowerCase() === targetClassName.toLowerCase();
             if (!matchesEnrollment && !matchesClassId && !matchesClassName) {
               return false;
@@ -221,7 +261,7 @@ export default function StudentSearch({
           // If filtering by unitId, must be enrolled in one of the unit's active classes
           if (unitId) {
             const matchesEnrollment = enrolledStudentIds.includes(s.id);
-            const matchesClassId = s.classId && classIds.includes(s.classId);
+            const matchesClassId = s.classId && (classIds.includes(s.classId) || classNames.includes(s.classId.toLowerCase()));
             const matchesClassName = s.className && classNames.includes(s.className.toLowerCase());
             if (!matchesEnrollment && !matchesClassId && !matchesClassName) {
               return false;
