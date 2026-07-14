@@ -1756,6 +1756,22 @@ export async function getMTSSCases(filters?: {
   }
 }
 
+export async function getStudentActiveBehaviorCases(studentId: string): Promise<MTSSCase[]> {
+  try {
+    const q = query(
+      collection(db, 'behaviorCases'),
+      where('studentId', '==', studentId)
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as MTSSCase))
+      .filter(c => c.status !== 'CLOSED');
+  } catch (err: any) {
+    handleFirestoreError(err, 'list', 'behaviorCases/student');
+    return [];
+  }
+}
+
 export async function createMTSSCase(caseData: Omit<MTSSCase, 'id' | 'createdAt' | 'lastUpdatedAt'>): Promise<string> {
   try {
     const docRef = doc(collection(db, 'behaviorCases'));

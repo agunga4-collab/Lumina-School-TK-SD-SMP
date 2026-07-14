@@ -4,10 +4,11 @@ import { useNavigate } from 'react-router-dom';
 import { 
   ChevronLeft, Info, Send, User, Calendar, 
   MapPin, Clock, FileText, AlertCircle, Sparkles,
-  Layers, MessageSquare, Briefcase, Loader2, X
+  Layers, MessageSquare, Briefcase, Loader2, X,
+  History, PlusCircle, CheckCircle
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { createMTSSCase, addMTSSConcern } from '../../lib/firebase';
+import { createMTSSCase, addMTSSConcern, getStudentActiveBehaviorCases } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import type { MTSSTier, MTSSStatus } from '../../types';
@@ -19,6 +20,11 @@ export default function CreateCase() {
   const { profile } = useAuth();
   const { activeYear } = useAcademicYear();
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [activeCases, setActiveCases] = React.useState<any[]>([]);
+  const [loadingCases, setLoadingCases] = React.useState(false);
+  const [reportingMode, setReportingMode] = React.useState<'NEW' | 'EXISTING'>('NEW');
+  const [selectedCaseId, setSelectedCaseId] = React.useState<string>('');
+
   const [formData, setFormData] = React.useState({
     studentName: '',
     studentId: '',
@@ -40,29 +46,63 @@ export default function CreateCase() {
     }
   }, [activeYear]);
 
+  const handleStudentSelect = async (student: any) => {
+    setFormData(prev => ({ 
+      ...prev, 
+      studentName: student.name,
+      studentId: student.id,
+      classId: student.className || prev.classId
+    }));
+    
+    setLoadingCases(true);
+    try {
+      const cases = await getStudentActiveBehaviorCases(student.id);
+      setActiveCases(cases || []);
+      if (cases && cases.length > 0) {
+        setReportingMode('EXISTING');
+        setSelectedCaseId(cases[0].id);
+      } else {
+        setReportingMode('NEW');
+        setSelectedCaseId('');
+      }
+    } catch (err) {
+      console.error("Error loading active cases:", err);
+    } finally {
+      setLoadingCases(false);
+    }
+  };
+
+  const handleStudentClear = () => {
+    setFormData(prev => ({ 
+      ...prev, 
+      studentName: '', 
+      studentId: '',
+      classId: '' 
+    }));
+    setActiveCases([]);
+    setReportingMode('NEW');
+    setSelectedCaseId('');
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formData.studentId) {
+      alert("Silakan pilih siswa terlebih dahulu.");
+      return;
+    }
+    
     setIsSubmitting(true);
     
     try {
-      // 1. Create the MTSS Case
-      const caseId = await createMTSSCase({
-        studentId: formData.studentId || 'S' + Math.floor(Math.random() * 1000),
-        studentName: formData.studentName,
-        classId: formData.classId,
-        academicYear: formData.academicYear,
-        tier: formData.tier,
-        status: formData.status,
-        picId: profile?.uid || 'unknown',
-        picName: profile?.displayName || 'Unknown Teacher',
-        totalConcerns: 1,
-        lastConcernSummary: formData.description,
-        lastConcernDate: Date.now(),
-      });
+      if (reportingMode === 'EXISTING') {
+        if (!selectedCaseId) {
+          alert("Silakan pilih kasus aktif yang ingin dilanjutkan.");
+          setIsSubmitting(false);
+          return;
+        }
 
-      if (caseId) {
-        // 2. Add the initial concern
-        await addMTSSConcern(caseId, {
+        // Add concern/incident directly to the selected existing case
+        await addMTSSConcern(selectedCaseId, {
           date: formData.date,
           description: formData.description,
           reporterId: profile?.uid || 'unknown',
@@ -72,10 +112,40 @@ export default function CreateCase() {
           isDone: false,
         });
 
-        navigate('/mtss/cases');
+        navigate('/junior-high/behavior/mtss/cases/' + selectedCaseId);
+      } else {
+        // Create a completely new case
+        const caseId = await createMTSSCase({
+          studentId: formData.studentId,
+          studentName: formData.studentName,
+          classId: formData.classId,
+          academicYear: formData.academicYear,
+          tier: formData.tier,
+          status: formData.status,
+          picId: profile?.uid || 'unknown',
+          picName: profile?.displayName || 'Unknown Teacher',
+          totalConcerns: 1,
+          lastConcernSummary: formData.description,
+          lastConcernDate: Date.now(),
+        });
+
+        if (caseId) {
+          // Add the initial concern
+          await addMTSSConcern(caseId, {
+            date: formData.date,
+            description: formData.description,
+            reporterId: profile?.uid || 'unknown',
+            reporterName: profile?.displayName || 'Unknown Teacher',
+            interventionsTried: formData.interventionsTried.split(',').map(i => i.trim()),
+            nextSteps: formData.nextSteps,
+            isDone: false,
+          });
+
+          navigate('/junior-high/behavior/mtss/cases/' + caseId);
+        }
       }
     } catch (error) {
-      console.error("Error creating case:", error);
+      console.error("Error submitting case:", error);
     } finally {
       setIsSubmitting(false);
     }
@@ -113,21 +183,14 @@ export default function CreateCase() {
                 <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Cari & Pilih Siswa</label>
                 <StudentSearch 
                   placeholder="Ketik nama lengkap atau panggilan..."
-                  onSelect={(student) => {
-                    setFormData(prev => ({ 
-                      ...prev, 
-                      studentName: student.name,
-                      studentId: student.id,
-                      classId: student.className || prev.classId
-                    }));
-                  }}
+                  onSelect={handleStudentSelect}
                 />
                 {formData.studentName && (
                   <div className="mt-2 px-4 py-2 bg-blue-50 rounded-xl flex items-center justify-between">
                     <span className="text-xs font-bold text-blue-700">Terpilih: {formData.studentName}</span>
                     <button 
                       type="button"
-                      onClick={() => setFormData(prev => ({ ...prev, studentName: '', studentId: '' }))}
+                      onClick={handleStudentClear}
                       className="text-blue-400 hover:text-blue-600"
                     >
                       <X size={14} />
@@ -140,7 +203,8 @@ export default function CreateCase() {
                 <div className="relative">
                   <select
                     required
-                    className="w-full px-6 py-4 rounded-2xl bg-gray-50 border border-transparent focus:bg-white focus:border-blue-300 focus:ring-4 focus:ring-blue-50 outline-none transition-all font-bold text-sm appearance-none cursor-pointer"
+                    disabled={reportingMode === 'EXISTING'}
+                    className="w-full px-6 py-4 rounded-2xl bg-gray-50 border border-transparent focus:bg-white focus:border-blue-300 focus:ring-4 focus:ring-blue-50 outline-none transition-all font-bold text-sm appearance-none cursor-pointer disabled:opacity-60"
                     value={formData.classId}
                     onChange={e => setFormData(prev => ({ ...prev, classId: e.target.value }))}
                   >
@@ -158,35 +222,143 @@ export default function CreateCase() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-               <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Tier Awal</label>
-                <div className="flex p-1 bg-gray-100 rounded-2xl gap-1">
-                   {['Tier 1', 'Tier 2', 'Tier 3'].map(t => (
-                     <button
-                       key={t}
-                       type="button"
-                       onClick={() => setFormData(prev => ({ ...prev, tier: t as MTSSTier }))}
-                       className={cn(
-                         "flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
-                         formData.tier === t ? "bg-white text-blue-600 shadow-sm scale-105" : "text-gray-400 hover:text-gray-600"
-                       )}
-                     >
-                       {t}
-                     </button>
-                   ))}
+            {/* Selection Options: Lanjutkan Kasus Aktif atau Buat Baru */}
+            {loadingCases ? (
+              <div className="flex items-center gap-2 p-4 bg-gray-50 rounded-2xl">
+                <Loader2 className="animate-spin text-blue-500" size={16} />
+                <span className="text-xs font-bold text-gray-500">Memeriksa kasus aktif siswa...</span>
+              </div>
+            ) : (
+              activeCases.length > 0 && (
+                <div className="bg-amber-50/40 rounded-[2rem] p-6 border border-amber-100 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="text-amber-500" size={18} />
+                    <span className="text-[10px] font-black uppercase tracking-widest text-amber-800">Siswa Ini Memiliki Kasus Aktif</span>
+                  </div>
+                  <p className="text-xs text-gray-600 font-medium leading-relaxed">
+                    Siswa ini saat ini memiliki penanganan kasus perilaku yang sedang berjalan. Pilih apakah ingin melanjutkan kasus yang ada (menambahkan catatan kejadian) atau memulai kasus baru yang berbeda.
+                  </p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <button
+                      type="button"
+                      onClick={() => setReportingMode('EXISTING')}
+                      className={cn(
+                        "p-5 rounded-2xl border text-left transition-all relative flex flex-col justify-between cursor-pointer",
+                        reportingMode === 'EXISTING'
+                          ? "border-amber-500 bg-amber-50/50 ring-2 ring-amber-200"
+                          : "border-gray-200 bg-white hover:bg-gray-50"
+                      )}
+                    >
+                      <div>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <History size={14} className="text-amber-600" />
+                          <span className="text-[10px] font-black uppercase tracking-widest text-amber-800">Lanjutkan Kasus Aktif</span>
+                        </div>
+                        <p className="text-[11px] text-gray-500 font-bold leading-relaxed">
+                          Menambahkan kejadian/log sebagai timeline baru pada kasus yang sudah berjalan.
+                        </p>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setReportingMode('NEW')}
+                      className={cn(
+                        "p-5 rounded-2xl border text-left transition-all relative flex flex-col justify-between cursor-pointer",
+                        reportingMode === 'NEW'
+                          ? "border-blue-500 bg-blue-50 ring-2 ring-blue-200"
+                          : "border-gray-200 bg-white hover:bg-gray-50"
+                      )}
+                    >
+                      <div>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <PlusCircle size={14} className="text-blue-600" />
+                          <span className="text-[10px] font-black uppercase tracking-widest text-blue-800">Buat Kasus Baru</span>
+                        </div>
+                        <p className="text-[11px] text-gray-500 font-bold leading-relaxed">
+                          Membuat penanganan kasus baru yang benar-benar berbeda dari yang berjalan.
+                        </p>
+                      </div>
+                    </button>
+                  </div>
+
+                  {reportingMode === 'EXISTING' && (
+                    <div className="space-y-3 pt-2">
+                      <label className="text-[10px] font-black uppercase text-amber-800 tracking-widest ml-1">Pilih Kasus Aktif yang Ingin Dilanjutkan</label>
+                      <div className="space-y-2">
+                        {activeCases.map((c) => (
+                          <label
+                            key={c.id}
+                            className={cn(
+                              "flex items-start gap-4 p-4 rounded-xl border cursor-pointer transition-all bg-white",
+                              selectedCaseId === c.id ? "border-amber-500 bg-amber-50/30" : "border-gray-200 hover:bg-gray-50"
+                            )}
+                          >
+                            <input
+                              type="radio"
+                              name="selectedCaseId"
+                              value={c.id}
+                              checked={selectedCaseId === c.id}
+                              onChange={() => setSelectedCaseId(c.id)}
+                              className="mt-1 text-amber-600 focus:ring-amber-500"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-[9px] font-black uppercase tracking-widest bg-amber-100 text-amber-800 px-2 py-0.5 rounded">
+                                  {c.tier}
+                                </span>
+                                <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                                  Status: {c.status}
+                                </span>
+                                <span className="text-[10px] font-bold text-gray-500 ml-auto">
+                                  Reporter/PIC: {c.picName || 'BK'}
+                                </span>
+                              </div>
+                              <p className="text-xs font-bold text-gray-800 truncate">
+                                Kasus Terakhir: {c.lastConcernSummary || 'Tidak ada deskripsi'}
+                              </p>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            )}
+
+            {reportingMode === 'NEW' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Tier Awal</label>
+                  <div className="flex p-1 bg-gray-100 rounded-2xl gap-1">
+                    {['Tier 1', 'Tier 2', 'Tier 3'].map(t => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, tier: t as MTSSTier }))}
+                        className={cn(
+                          "flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer",
+                          formData.tier === t ? "bg-white text-blue-600 shadow-sm scale-105 font-black" : "text-gray-400 hover:text-gray-600 font-bold"
+                        )}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Academic Year</label>
+                  <input
+                    type="text"
+                    readOnly
+                    className="w-full px-6 py-4 rounded-2xl bg-gray-100 border border-transparent text-gray-400 font-bold text-sm outline-none"
+                    value={formData.academicYear}
+                  />
                 </div>
               </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Academic Year</label>
-                <input
-                  type="text"
-                  readOnly
-                  className="w-full px-6 py-4 rounded-2xl bg-gray-100 border border-transparent text-gray-400 font-bold text-sm outline-none"
-                  value={formData.academicYear}
-                />
-              </div>
-            </div>
+            )}
           </div>
 
           {/* Section: Kejadian */}
@@ -290,7 +462,9 @@ export default function CreateCase() {
             <div className="space-y-1">
                <h4 className="text-xs font-black text-blue-900 tracking-tight uppercase italic">Penting</h4>
                <p className="text-[11px] font-bold text-blue-700 leading-relaxed uppercase tracking-wide">
-                  Laporan ini akan otomatis membuat entitas "Data 1" untuk siswa tersebut. Tim BK akan meninjau level keparahan (Tier) dalam 24 jam kerja.
+                  {reportingMode === 'EXISTING' 
+                    ? "Laporan ini akan ditambahkan sebagai catatan kejadian baru pada kasus penanganan aktif yang Anda pilih." 
+                    : "Laporan ini akan otomatis membuat entitas kasus penanganan perilaku baru (Tier 1/2/3) untuk siswa tersebut."}
                </p>
             </div>
           </div>

@@ -205,7 +205,7 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
   const validate = () => {
     const newErrors: Record<string, string> = {};
     if (!formData.studentId) newErrors.studentId = "Pilih siswa wajib";
-    if (formData.description.length < 50) newErrors.description = "Behavior concern minimal 50 karakter";
+    if (!formData.description.trim()) newErrors.description = "Behavior concern wajib diisi";
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -240,7 +240,7 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
         picName: profile?.displayName || '',
         initialAssets: formData.studentAsset,
         totalConcerns: 1,
-        lastConcernSummary: formData.description.slice(0, 50) + '...',
+        lastConcernSummary: formData.description.length > 50 ? formData.description.slice(0, 50) + '...' : formData.description,
         lastConcernDate: Date.now(),
         // Save responsible parties to the case as well
         ...(combinedResponsible.length > 0 ? { responsibleParties: combinedResponsible } as any : {})
@@ -429,7 +429,7 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
         </div>
 
         <div className="space-y-2">
-           <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-2">Behavior Concern (Min 50 Karakter)</label>
+           <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-2">Behavior Concern</label>
            <textarea 
              value={formData.description}
              onChange={(e) => setFormData(p=>({...p, description: e.target.value}))}
@@ -438,7 +438,7 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
              className={cn("w-full px-6 py-4 rounded-xl bg-gray-50 border transition-all font-medium text-sm leading-relaxed", errors.description ? "border-rose-300" : "border-transparent focus:border-blue-300")}
            />
            <div className="flex justify-between mt-1 px-2">
-              <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">{formData.description.length} / 50 characters</p>
+              <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">{formData.description.length} karakter</p>
               {errors.description && <p className="text-[10px] font-black text-rose-500 uppercase tracking-widest">{errors.description}</p>}
            </div>
         </div>
