@@ -27,6 +27,11 @@ interface LatenessRecord {
   isManual?: boolean;
 }
 
+const getCurrentTimeStr = () => {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+};
+
 export default function Lateness() {
   const { activeUnit } = useOutletContext<{ activeUnit: UnitType }>();
   const { activeYear } = useAcademicYear();
@@ -38,6 +43,9 @@ export default function Lateness() {
   const [selectedClass, setSelectedClass] = React.useState('');
   const [mostFrequentDay, setMostFrequentDay] = React.useState('-');
   const [avgLateMinutes, setAvgLateMinutes] = React.useState('-');
+  const [selectedDate, setSelectedDate] = React.useState<string>(() => {
+    return new Date().toISOString().split('T')[0];
+  });
   const threshold = 3;
 
   React.useEffect(() => {
@@ -48,7 +56,10 @@ export default function Lateness() {
           where('unitId', '==', activeUnit)
         );
         const snap = await getDocs(q);
-        const classList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const classList = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter((c: any) => c.academicYear === activeYear && c.status !== 'archived');
+        
         setClasses(classList);
         if (classList.length > 0) {
           setSelectedClass(classList[0].id);
@@ -60,7 +71,7 @@ export default function Lateness() {
       }
     };
     fetchClasses();
-  }, [activeUnit]);
+  }, [activeUnit, activeYear]);
 
   React.useEffect(() => {
     if (!selectedClass) {
@@ -76,7 +87,7 @@ export default function Lateness() {
         const classId = currentClass?.id || selectedClass;
 
         // Fetch actual lateness counts for this month first
-        const todayObj = new Date();
+        const todayObj = new Date(selectedDate);
         const startOfMonth = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-01`;
         const latenessQuery = query(
           collection(db, 'lateness_records'),
@@ -261,7 +272,7 @@ export default function Lateness() {
     };
 
     loadStudents();
-  }, [selectedClass, classes, activeYear]);
+  }, [selectedClass, classes, activeYear, selectedDate]);
 
   const updateTime = (id: string, arrivalTime: string) => {
     setRecords(records.map(r => r.id === id ? { ...r, arrivalTime } : r));
@@ -297,7 +308,7 @@ export default function Lateness() {
 
     setSaving(true);
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = selectedDate;
       for (const entry of lateEntries) {
         const docId = `LATE_${today}_${entry.id}`;
         await setDoc(doc(db, 'lateness_records', docId), {
@@ -359,7 +370,12 @@ export default function Lateness() {
         </div>
         <div className="bg-blue-50 px-4 py-2 rounded-xl border border-blue-100 flex items-center gap-2">
            <Calendar className="text-blue-600" size={18} />
-           <span className="text-sm font-bold text-blue-800">{new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())}</span>
+           <input 
+             type="date"
+             value={selectedDate}
+             onChange={(e) => setSelectedDate(e.target.value)}
+             className="bg-transparent border-none outline-none text-sm font-bold text-blue-800 cursor-pointer focus:ring-0"
+           />
         </div>
       </header>
 
@@ -385,55 +401,56 @@ export default function Lateness() {
                   </select>
                 </div>
                 <div className="relative flex-1 max-w-xs">
-                  <StudentSearch 
-                    placeholder="Cari nama/panggilan..."
-                    classId={selectedClass}
-                    onSelect={(student) => {
-                      // Check if already in list
-                      if (records.some(r => r.id === student.id)) {
-                        toast.info(`${student.name} sudah ada di daftar`);
-                        return;
-                      }
+                   <StudentSearch 
+                     placeholder="Cari nama/panggilan..."
+                     unitId={activeUnit}
+                     academicYear={activeYear}
+                     onSelect={(student) => {
+                       // Check if already in list
+                       if (records.some(r => r.id === student.id)) {
+                         toast.info(`${student.name} sudah ada di daftar`);
+                         return;
+                       }
 
-                      // Automatically identify class if student has it
-                      let finalClassId = selectedClass;
-                      const studentClassId = student.classId;
-                      const studentClassName = student.className;
+                       // Automatically identify class if student has it
+                       let finalClassId = selectedClass;
+                       const studentClassId = student.classId;
+                       const studentClassName = student.className;
 
-                      if (studentClassId && studentClassId !== selectedClass) {
-                        finalClassId = studentClassId;
-                        setSelectedClass(studentClassId);
-                      } else if (!studentClassId && studentClassName) {
-                        // Try to find class by name (exact or loose match)
-                        const foundClass = classes.find(c => 
-                          c.name.toLowerCase() === studentClassName.toLowerCase() ||
-                          studentClassName.toLowerCase().includes(c.name.toLowerCase())
-                        );
-                        if (foundClass && foundClass.id !== selectedClass) {
-                          finalClassId = foundClass.id;
-                          setSelectedClass(foundClass.id);
-                        }
-                      }
-                      
-                      // Try to resolve class name from ID if still missing
-                      const resolvedClassName = studentClassName || classes.find(c => c.id === finalClassId)?.name;
+                       if (studentClassId) {
+                         finalClassId = studentClassId;
+                         setSelectedClass(studentClassId);
+                       } else if (studentClassName) {
+                         // Try to find class by name (exact or loose match)
+                         const foundClass = classes.find(c => 
+                           c.name.toLowerCase() === studentClassName.toLowerCase() ||
+                           studentClassName.toLowerCase().includes(c.name.toLowerCase())
+                         );
+                         if (foundClass) {
+                           finalClassId = foundClass.id;
+                           setSelectedClass(foundClass.id);
+                         }
+                       }
+                       
+                       // Try to resolve class name from ID if still missing
+                       const resolvedClassName = studentClassName || classes.find(c => c.id === finalClassId)?.name;
 
-                      const newRecord: LatenessRecord = {
-                        id: student.id,
-                        name: student.name,
-                        arrivalTime: '',
-                        reason: '',
-                        parentNote: false,
-                        countThisMonth: 0,
-                        className: resolvedClassName,
-                        classId: finalClassId,
-                        isManual: true
-                      };
-                      
-                      setRecords(prev => [newRecord, ...prev.filter(r => r.id !== student.id)]);
-                      toast.success(`${student.name} ditambahkan (${student.className || 'Tanpa Kelas'})`);
-                    }}
-                  />
+                       const newRecord: LatenessRecord = {
+                         id: student.id,
+                         name: student.name,
+                         arrivalTime: getCurrentTimeStr(), // Auto-detect current time when searched/added
+                         reason: '',
+                         parentNote: false,
+                         countThisMonth: 0,
+                         className: resolvedClassName,
+                         classId: finalClassId,
+                         isManual: true
+                       };
+                       
+                       setRecords(prev => [newRecord, ...prev.filter(r => r.id !== student.id)]);
+                       toast.success(`${student.name} ditambahkan (${resolvedClassName || 'Tanpa Kelas'})`);
+                     }}
+                   />
                 </div>
              </div>
              
@@ -484,12 +501,22 @@ export default function Lateness() {
                               </td>
                               <td className="px-6 py-4">
                                 <div className="flex flex-col gap-1.5">
-                                  <input 
-                                      type="time" 
-                                      className="bg-gray-50 border border-gray-100 rounded-lg px-3 py-1.5 text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 w-32"
-                                      value={record.arrivalTime}
-                                      onChange={(e) => updateTime(record.id, e.target.value)}
-                                  />
+                                  <div className="flex items-center gap-1.5">
+                                    <input 
+                                        type="time" 
+                                        className="bg-gray-50 border border-gray-100 rounded-lg px-3 py-1.5 text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 w-32"
+                                        value={record.arrivalTime}
+                                        onChange={(e) => updateTime(record.id, e.target.value)}
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => updateTime(record.id, getCurrentTimeStr())}
+                                      className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all shrink-0"
+                                      title="Set jam saat ini"
+                                    >
+                                      <Clock size={16} />
+                                    </button>
+                                  </div>
                                   {record.arrivalTime && (
                                     <span className={cn(
                                       "text-[10px] font-bold px-1.5 py-0.5 rounded w-fit uppercase tracking-wider",

@@ -18,9 +18,18 @@ interface StudentSearchProps {
   placeholder?: string;
   className?: string;
   classId?: string;
+  unitId?: string;
+  academicYear?: string;
 }
 
-export default function StudentSearch({ onSelect, placeholder = "Cari siswa...", className, classId }: StudentSearchProps) {
+export default function StudentSearch({ 
+  onSelect, 
+  placeholder = "Cari siswa...", 
+  className, 
+  classId,
+  unitId,
+  academicYear
+}: StudentSearchProps) {
   const [isOpen, setIsOpen] = React.useState(false);
   const [searchTerm, setSearchTerm] = React.useState('');
   const [results, setResults] = React.useState<StudentSearchResult[]>([]);
@@ -46,60 +55,23 @@ export default function StudentSearch({ onSelect, placeholder = "Cari siswa...",
     const searchStudents = async () => {
       setLoading(true);
       try {
-        // 1. Search in 'users' collection (for onboarded active students)
-        const usersRef = collection(db, 'users');
-        const usersQ = query(usersRef, where('role', '==', 'STUDENT'));
-        const usersSnap = await getDocs(usersQ);
-        
-        const activeStudents = usersSnap.docs.map(doc => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            name: data.displayName || data.name || 'Unknown',
-            nickname: data.nickname,
-            className: data.jobTitle,
-            classId: data.classId
-          };
-        });
-
-        // 2. Search in 'roleInvites' for non-onboarded students
-        const invitesRef = collection(db, 'roleInvites');
-        const invitesQ = query(invitesRef, where('role', '==', 'STUDENT'));
-        const invitesSnap = await getDocs(invitesQ);
-        const invitedStudents = invitesSnap.docs.map(doc => {
-          const data = doc.data();
-          return {
-            id: `INVITE_${doc.id}`,
-            name: data.name || '',
-            nickname: data.nickname,
-            className: data.jobTitle,
-            classId: data.classId
-          };
-        });
-
-        // 3. Search in master 'students' collection
-        const studentsRef = collection(db, 'students');
-        const studentsSnap = await getDocs(studentsRef);
-        const masterStudents = studentsSnap.docs.map(doc => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            name: data.name || data.fullName || 'Unknown',
-            nickname: data.nickname,
-            className: data.className || data.jobTitle,
-            classId: data.classId
-          };
-        });
-
-        // Resolve enrollments of selected class to find enrolled student ids
+        // 1. Resolve class metadata and enrollments based on either classId OR (unitId + academicYear)
+        let classIds: string[] = [];
+        let classNames: string[] = [];
+        const classNameMap: Record<string, string> = {};
+        const enrollmentMap: Record<string, { classId: string; className: string }> = {};
         let enrolledStudentIds: string[] = [];
         let targetClassName = '';
+
         if (classId) {
           try {
             const classDoc = await getDoc(doc(db, 'classes', classId));
             if (classDoc.exists()) {
               targetClassName = classDoc.data().name || '';
+              classNameMap[classId] = targetClassName;
             }
+            classIds.push(classId);
+            if (targetClassName) classNames.push(targetClassName.toLowerCase());
             
             const enrollmentsRef = collection(db, 'enrollments');
             const queries = [
@@ -112,25 +84,117 @@ export default function StudentSearch({ onSelect, placeholder = "Cari siswa...",
             snaps.forEach(snap => {
               snap.docs.forEach(d => {
                 const data = d.data();
-                if (data.studentId && !enrolledStudentIds.includes(data.studentId)) {
-                  enrolledStudentIds.push(data.studentId);
+                if (data.studentId) {
+                  if (!enrolledStudentIds.includes(data.studentId)) {
+                    enrolledStudentIds.push(data.studentId);
+                  }
+                  enrollmentMap[data.studentId] = {
+                    classId: data.classId,
+                    className: targetClassName || data.classId
+                  };
                 }
               });
             });
           } catch (e) {
             console.warn("Error resolving enrollments in StudentSearch:", e);
           }
+        } else if (unitId && academicYear) {
+          try {
+            const classesRef = collection(db, 'classes');
+            const classesQ = query(
+              classesRef, 
+              where('unitId', '==', unitId),
+              where('academicYear', '==', academicYear)
+            );
+            const classesSnap = await getDocs(classesQ);
+            classesSnap.docs.forEach(doc => {
+              const data = doc.data();
+              if (data.status !== 'archived') {
+                classIds.push(doc.id);
+                if (data.name) {
+                  classNames.push(data.name.toLowerCase());
+                  classNameMap[doc.id] = data.name;
+                }
+              }
+            });
+
+            if (classIds.length > 0) {
+              const enrollmentsRef = collection(db, 'enrollments');
+              const enrollmentsQ = query(
+                enrollmentsRef,
+                where('academicYear', '==', academicYear),
+                where('status', '==', 'active')
+              );
+              const enrollmentsSnap = await getDocs(enrollmentsQ);
+              enrollmentsSnap.docs.forEach(doc => {
+                const data = doc.data();
+                if (data.studentId && classIds.includes(data.classId)) {
+                  enrolledStudentIds.push(data.studentId);
+                  enrollmentMap[data.studentId] = {
+                    classId: data.classId,
+                    className: classNameMap[data.classId] || data.classId
+                  };
+                }
+              });
+            }
+          } catch (e) {
+            console.warn("Error resolving unit classes and enrollments in StudentSearch:", e);
+          }
         }
 
-        // Merge and filter
-        const allStudents = [...activeStudents, ...invitedStudents, ...masterStudents];
+        // 2. Fetch master lists (users, roleInvites, students)
+        const usersRef = collection(db, 'users');
+        const usersQ = query(usersRef, where('role', '==', 'STUDENT'));
+        const usersSnap = await getDocs(usersQ);
         
-        // De-duplicate by ID (active/students collection preferred over invites)
+        const activeStudents = usersSnap.docs.map(doc => {
+          const data = doc.data();
+          const mappedEnrollment = enrollmentMap[doc.id];
+          return {
+            id: doc.id,
+            name: data.displayName || data.name || 'Unknown',
+            nickname: data.nickname,
+            className: mappedEnrollment?.className || data.jobTitle,
+            classId: mappedEnrollment?.classId || data.classId
+          };
+        });
+
+        const invitesRef = collection(db, 'roleInvites');
+        const invitesQ = query(invitesRef, where('role', '==', 'STUDENT'));
+        const invitesSnap = await getDocs(invitesQ);
+        const invitedStudents = invitesSnap.docs.map(doc => {
+          const data = doc.data();
+          const inviteId = `INVITE_${doc.id}`;
+          const mappedEnrollment = enrollmentMap[inviteId] || enrollmentMap[doc.id];
+          return {
+            id: inviteId,
+            name: data.name || '',
+            nickname: data.nickname,
+            className: mappedEnrollment?.className || data.jobTitle,
+            classId: mappedEnrollment?.classId || data.classId
+          };
+        });
+
+        const studentsRef = collection(db, 'students');
+        const studentsSnap = await getDocs(studentsRef);
+        const masterStudents = studentsSnap.docs.map(doc => {
+          const data = doc.data();
+          const mappedEnrollment = enrollmentMap[doc.id];
+          return {
+            id: doc.id,
+            name: data.name || data.fullName || 'Unknown',
+            nickname: data.nickname,
+            className: mappedEnrollment?.className || data.className || data.jobTitle,
+            classId: mappedEnrollment?.classId || data.classId
+          };
+        });
+
+        // 3. Merge and De-duplicate by student ID
+        const allStudents = [...activeStudents, ...invitedStudents, ...masterStudents];
         const uniqueStudentsMap = new Map();
         allStudents.forEach(s => {
           if (!uniqueStudentsMap.has(s.id) || !s.id.startsWith('INVITE_')) {
             const existing = uniqueStudentsMap.get(s.id);
-            // Reconcile and merge metadata
             uniqueStudentsMap.set(s.id, {
               ...existing,
               ...s,
@@ -142,7 +206,9 @@ export default function StudentSearch({ onSelect, placeholder = "Cari siswa...",
         
         const uniqueStudents = Array.from(uniqueStudentsMap.values());
 
+        // 4. Filter according to query/class/unit and check for name or nickname matches
         const filtered = uniqueStudents.filter(s => {
+          // If filtering by classId, must match the target class or enrollments
           if (classId) {
             const matchesEnrollment = enrolledStudentIds.includes(s.id);
             const matchesClassId = s.classId === classId;
@@ -152,9 +218,18 @@ export default function StudentSearch({ onSelect, placeholder = "Cari siswa...",
             }
           }
 
+          // If filtering by unitId, must be enrolled in one of the unit's active classes
+          if (unitId) {
+            const matchesEnrollment = enrolledStudentIds.includes(s.id);
+            const matchesClassId = s.classId && classIds.includes(s.classId);
+            const matchesClassName = s.className && classNames.includes(s.className.toLowerCase());
+            if (!matchesEnrollment && !matchesClassId && !matchesClassName) {
+              return false;
+            }
+          }
+
           const nameStr = s.name || '';
           const lowerName = nameStr.toLowerCase();
-          // Stricter filtering for class placeholders and mock accounts
           const isClassPlaceholder = 
             lowerName === 'gc smp' || 
             lowerName.includes('grade ') || 
@@ -179,7 +254,7 @@ export default function StudentSearch({ onSelect, placeholder = "Cari siswa...",
 
     const timer = setTimeout(searchStudents, 300);
     return () => clearTimeout(timer);
-  }, [searchTerm, classId]);
+  }, [searchTerm, classId, unitId, academicYear]);
 
   return (
     <div ref={containerRef} className={cn("relative", className)}>
