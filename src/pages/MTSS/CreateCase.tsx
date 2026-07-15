@@ -33,7 +33,7 @@ export default function CreateCase() {
     studentName: '',
     studentId: '',
     classId: '',
-    academicYear: activeYear || '2026/2027',
+    academicYear: '2026/2027',
     tier: 'Tier 1' as MTSSTier,
     status: 'OPEN' as MTSSStatus,
     date: new Date().toISOString().split('T')[0],
@@ -49,7 +49,7 @@ export default function CreateCase() {
   });
 
   React.useEffect(() => {
-    if (activeYear) {
+    if (activeYear && activeYear === '2026/2027') {
       setFormData(prev => ({ ...prev, academicYear: activeYear }));
     }
   }, [activeYear]);
