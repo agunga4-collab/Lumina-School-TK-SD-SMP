@@ -21,7 +21,7 @@ export default function SEPeriods() {
   const [submitting, setSubmitting] = React.useState(false);
 
   const [formData, setFormData] = React.useState({
-    academicYear: '2025/2026',
+    academicYear: '2026/2027',
     semester: '1' as '1' | '2',
     periodNumber: 1 as 1 | 2,
     label: '',

@@ -325,6 +325,31 @@ service cloud.firestore {
       allow write: if isAdmin() || (isStudent() && studentId == request.auth.uid);
     }
 
+    match /sePeriods/{periodId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isJuniorHighStaff();
+    }
+
+    match /seActivities/{activityId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isJuniorHighStaff();
+    }
+
+    match /seEnrollments/{enrollmentId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    match /seSessionLogs/{logId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isJuniorHighStaff();
+    }
+
+    match /seSelfAssessments/{assessmentId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
     match /attendance/{attendanceId} {
       allow read: if (isActive() && (isTeacher() || isJuniorHighStaff() || isLinkedStudent(existing().studentId))) || isAdmin();
       allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
