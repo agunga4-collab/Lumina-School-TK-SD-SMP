@@ -479,7 +479,6 @@ export default function MTSSBehaviorSpreadsheet() {
               <div>
                 <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Target Rows Count</span>
                 <p className="text-sm font-black text-gray-800 font-mono mt-0.5">{targets.length} Target Behaviors</p>
-                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Customizable workspace</p>
               </div>
             </div>
 
@@ -512,11 +511,8 @@ export default function MTSSBehaviorSpreadsheet() {
               <div>
                 <h3 className="text-base font-black uppercase italic tracking-tight text-gray-900 flex items-center gap-2">
                   <FileSpreadsheet size={20} className="text-blue-600" />
-                  CICO Weekly Scoring Grid
+                  Check In Check Out Monitoring System
                 </h3>
-                <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">
-                  Type behavior targets, choose score 1-4 for check-in & check-out, and add more target rows.
-                </p>
               </div>
               <button
                 onClick={handleAddTargetRow}
@@ -531,7 +527,7 @@ export default function MTSSBehaviorSpreadsheet() {
               <table className="w-full text-left border-collapse min-w-[950px]">
                 <thead>
                   <tr className="bg-gray-50/75 border-b border-gray-100 text-[10px] font-black uppercase tracking-widest text-gray-500">
-                    <th className="px-6 py-4 w-[280px]">Behavior Targets (Downward Rows)</th>
+                    <th className="px-6 py-4 w-[280px]">Behavior Targets</th>
                     {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].map((dayName, idx) => {
                       const dayLocalDate = formatLocalDate(daysOfWeek[idx]);
                       return (
@@ -660,10 +656,10 @@ export default function MTSSBehaviorSpreadsheet() {
             {/* General scoring guide label inside grid block */}
             <div className="p-4 bg-gray-50 border-t border-gray-100 flex flex-wrap gap-x-6 gap-y-2 text-[9px] font-black uppercase tracking-widest text-gray-400">
               <span className="text-gray-600">Scores:</span>
-              <span>4 = Excellent (No reminders needed)</span>
-              <span>3 = Very Good (1 reminder needed)</span>
-              <span>2 = Moderate (2 reminders needed)</span>
-              <span>1 = Needs Intervention (3+ reminders needed)</span>
+              <span>4: Outstanding effort (76-100)</span>
+              <span>3: Good Effort and acceptable behavior (51-75)</span>
+              <span>2: Some Effort with limited success (26-50)</span>
+              <span>1: Little/No Effort (0-25)</span>
             </div>
           </div>
 
@@ -675,7 +671,7 @@ export default function MTSSBehaviorSpreadsheet() {
               </div>
               <div>
                 <h3 className="text-sm font-black uppercase italic tracking-tight text-gray-900">
-                  Weekly Qualitative Notebook
+                  Reflections and Notes
                 </h3>
                 <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-0.5 leading-none">
                   Weekly monitoring reflections and evaluations of student performance
