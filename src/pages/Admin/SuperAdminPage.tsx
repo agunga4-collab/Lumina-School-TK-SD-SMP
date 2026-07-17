@@ -945,7 +945,7 @@ export default function SuperAdminPage() {
   const [classFormData, setClassFormData] = React.useState({
     grade: "7",
     className: "",
-    academicYear: "2025/2026",
+    academicYear: "2026/2027",
     homeroomTeacherId: "",
     unitId: "JUNIOR_HIGH" as UnitType,
     teacherSignatureUrl: "",
@@ -1285,7 +1285,7 @@ export default function SuperAdminPage() {
       setClassFormData({
         grade: "7",
         className: "",
-        academicYear: "2025/2026",
+        academicYear: "2026/2027",
         homeroomTeacherId: "",
         unitId: "JUNIOR_HIGH",
         teacherSignatureUrl: "",
@@ -2685,7 +2685,7 @@ export default function SuperAdminPage() {
                     setClassFormData({
                       grade: defaultGrade,
                       className: "",
-                      academicYear: "2025/2026",
+                      academicYear: "2026/2027",
                       homeroomTeacherId: "",
                       unitId: defaultUnit,
                       teacherSignatureUrl: "",
@@ -6341,9 +6341,8 @@ export default function SuperAdminPage() {
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
                     Tahun Ajaran
                   </label>
-                  <input
+                  <select
                     required
-                    type="text"
                     value={classFormData.academicYear}
                     onChange={(e) =>
                       setClassFormData({
@@ -6352,8 +6351,13 @@ export default function SuperAdminPage() {
                       })
                     }
                     className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
-                    placeholder="2025/2026"
-                  />
+                  >
+                    <option value="2025/2026">2025/2026</option>
+                    <option value="2026/2027">2026/2027</option>
+                    <option value="2027/2028">2027/2028</option>
+                    <option value="2028/2029">2028/2029</option>
+                    <option value="2029/2030">2029/2030</option>
+                  </select>
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">

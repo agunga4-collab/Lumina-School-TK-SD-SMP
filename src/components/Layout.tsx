@@ -66,10 +66,19 @@ export function Layout() {
     fetchLogos();
   }, []);
   
-  // Close sidebar on navigation (mobile)
+  // Close sidebar on navigation (mobile only)
   React.useEffect(() => {
-    setSidebarOpen(false);
+    if (window.innerWidth < 1024) {
+      setSidebarOpen(false);
+    }
   }, [location.pathname]);
+
+  // Open sidebar on desktop by default on mount
+  React.useEffect(() => {
+    if (window.innerWidth >= 1024) {
+      setSidebarOpen(true);
+    }
+  }, []);
 
   // Listen for pending LXD count for admins
   React.useEffect(() => {
@@ -450,7 +459,7 @@ export function Layout() {
 
       {/* Sidebar */}
       <aside className={cn(
-        "fixed inset-y-0 left-0 w-72 bg-white border-r border-gray-200 flex flex-col shadow-xl lg:shadow-sm z-40 lg:z-20 transition-transform duration-300 transform lg:translate-x-0 lg:static",
+        "fixed inset-y-0 left-0 w-72 bg-white border-r border-gray-200 flex flex-col shadow-xl lg:shadow-sm z-40 lg:z-20 transition-transform duration-300 transform",
         sidebarOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <div className="p-6 flex items-center justify-between">
@@ -633,12 +642,15 @@ export function Layout() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto relative h-full">
+      <main className={cn(
+        "flex-1 overflow-y-auto relative h-full transition-all duration-300",
+        sidebarOpen ? "lg:pl-72" : "lg:pl-0"
+      )}>
         <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 py-3 px-4 lg:px-8 sticky top-0 z-10 flex justify-between items-center h-[64px] lg:h-[72px]">
           <div className="flex items-center gap-3 lg:gap-4">
              <button 
-               onClick={() => setSidebarOpen(true)}
-               className="p-2 bg-gray-50 rounded-xl text-gray-600 hover:bg-gray-100 lg:hidden border border-gray-100"
+               onClick={() => setSidebarOpen(!sidebarOpen)}
+               className="p-2 bg-gray-50 rounded-xl text-gray-600 hover:bg-gray-100 border border-gray-100 flex items-center justify-center transition-all cursor-pointer"
              >
                 <Menu size={20} />
              </button>
