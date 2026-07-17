@@ -940,6 +940,7 @@ export default function SuperAdminPage() {
   );
 
   const [studentEnrollments, setStudentEnrollments] = React.useState<{ academicYear: string; classId: string }[]>([]);
+  const [selectedClassYearFilter, setSelectedClassYearFilter] = React.useState<string>("2026/2027");
 
   // Class Form State
   const [classFormData, setClassFormData] = React.useState({
@@ -1883,7 +1884,8 @@ export default function SuperAdminPage() {
         safeLower(c.academicYear).includes(searchLower) ||
         safeLower(c.homeroomTeacherName).includes(searchLower);
       const matchesUnit = selectedUnit === "ALL" || c.unitId === selectedUnit;
-      return matchesSearch && matchesUnit;
+      const matchesYear = c.academicYear === selectedClassYearFilter;
+      return matchesSearch && matchesUnit && matchesYear;
     });
 
     return filtered.sort((a, b) => {
@@ -1899,7 +1901,7 @@ export default function SuperAdminPage() {
       }
       return 0;
     });
-  }, [classes, searchTerm, selectedUnit, classSortConfig]);
+  }, [classes, searchTerm, selectedUnit, classSortConfig, selectedClassYearFilter]);
 
   const filteredPending = pendingUsers.filter((u) => {
     if (!u) return false;
@@ -2677,26 +2679,45 @@ export default function SuperAdminPage() {
               )}
 
               {activeTab === "CLASSES" && (
-                <button
-                  onClick={() => {
-                    setEditingId(null);
-                    const defaultUnit = selectedUnit === "ALL" ? "KINDERGARTEN" : selectedUnit;
-                    const defaultGrade = getGradeOptions(defaultUnit)[0];
-                    setClassFormData({
-                      grade: defaultGrade,
-                      className: "",
-                      academicYear: "2026/2027",
-                      homeroomTeacherId: "",
-                      unitId: defaultUnit,
-                      teacherSignatureUrl: "",
-                    });
-                    setIsClassModalOpen(true);
-                  }}
-                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold tracking-wide flex items-center gap-1.5 transition-all shadow-sm cursor-pointer h-[38px]"
-                >
-                  <Plus size={14} />
-                  Tambah Kelas
-                </button>
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <select
+                      value={selectedClassYearFilter}
+                      onChange={(e) => setSelectedClassYearFilter(e.target.value)}
+                      className="appearance-none bg-white border border-slate-200/80 rounded-xl pl-4 pr-10 py-2.5 text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-indigo-100 focus:border-indigo-500 transition-all cursor-pointer outline-none min-w-[150px] h-[38px]"
+                    >
+                      <option value="2025/2026">Tahun Ajaran: 2025/2026</option>
+                      <option value="2026/2027">Tahun Ajaran: 2026/2027</option>
+                      <option value="2027/2028">Tahun Ajaran: 2027/2028</option>
+                      <option value="2028/2029">Tahun Ajaran: 2028/2029</option>
+                      <option value="2029/2030">Tahun Ajaran: 2029/2030</option>
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400">
+                      <Filter size={12} />
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setEditingId(null);
+                      const defaultUnit = selectedUnit === "ALL" ? "KINDERGARTEN" : selectedUnit;
+                      const defaultGrade = getGradeOptions(defaultUnit)[0];
+                      setClassFormData({
+                        grade: defaultGrade,
+                        className: "",
+                        academicYear: selectedClassYearFilter || "2026/2027",
+                        homeroomTeacherId: "",
+                        unitId: defaultUnit,
+                        teacherSignatureUrl: "",
+                      });
+                      setIsClassModalOpen(true);
+                    }}
+                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold tracking-wide flex items-center gap-1.5 transition-all shadow-sm cursor-pointer h-[38px] shrink-0"
+                  >
+                    <Plus size={14} />
+                    Tambah Kelas
+                  </button>
+                </div>
               )}
 
               {activeTab === "PROMPTS" && (
