@@ -2,7 +2,7 @@ import * as React from 'react';
 import { 
   Home, Bell, Grid, LogOut, ChevronRight, LayoutDashboard, 
   Map as MapIcon, Smile, Camera, History, Heart, CheckSquare, BookOpen, 
-  Eye, Clock, ShieldAlert, ShieldCheck, ClipboardList, Target, Mail, RefreshCw,
+  Eye, Clock, ShieldAlert, ShieldCheck, ClipboardList, ClipboardCheck, Target, Mail, RefreshCw,
   Baby, TrendingUp, Folder, BarChart3, FileText, Sparkles, Settings, GraduationCap, User, Users,
   Menu, X
 } from 'lucide-react';
@@ -554,6 +554,7 @@ export function Layout() {
                   <NavItem to="/academic/lxd" icon={<BookOpen size={18} />} label="LXD" />
                   <NavItem to="/elementary/literasi-numerasi" icon={<BookOpen size={18} />} label="Literasi & Numerasi" />
                   <NavItem to="/elementary/mtss-academic" icon={<GraduationCap size={18} />} label="MTSS Academic" />
+                  <NavItem to="/elementary/ldss" icon={<ClipboardCheck size={18} />} label="LDSS" />
                 </div>
               )}
 

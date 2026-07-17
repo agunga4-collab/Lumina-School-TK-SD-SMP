@@ -50,6 +50,7 @@ import ElementaryLiteracyNumeracy from './pages/Elementary/LiteracyNumeracy';
 import JuniorHighLiteracyNumeracy from './pages/JuniorHigh/LiteracyNumeracy';
 import ElementaryLiteracyInputPage from './pages/Elementary/ElementaryLiteracyInputPage';
 import MTSSAcademicDashboard from './pages/Elementary/MTSSAcademicDashboard';
+import LdssPage from './pages/Elementary/LdssPage';
 import LiteracySummary from './pages/Parent/LiteracySummary';
 import Lateness from './pages/Attendance/Lateness';
 import ElementaryHeadDashboard from './pages/Dashboard/ElementaryHeadDashboard';
@@ -309,6 +310,21 @@ export default function App() {
           <Route path="elementary/mtss-academic" element={
             <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER']}>
               <MTSSAcademicDashboard />
+            </RoleGuard>
+          } />
+          <Route path="elementary/ldss" element={
+            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER']}>
+              <LdssPage />
+            </RoleGuard>
+          } />
+          <Route path="elementary/ldss/settings" element={
+            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER']}>
+              <LdssPage />
+            </RoleGuard>
+          } />
+          <Route path="elementary/ldss/settings/:age" element={
+            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER']}>
+              <LdssPage />
             </RoleGuard>
           } />
           <Route path="kindy">

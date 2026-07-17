@@ -610,6 +610,23 @@
         "updatedBy": { "type": "string" }
       },
       "required": ["studentId", "startDate", "endDate"]
+    },
+    "LdssTemplate": {
+      "title": "LdssTemplate",
+      "description": "Lazuardi Developmental Screening System templates by age.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "age": { "type": "number", "minimum": 6, "maximum": 12 },
+        "version": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "active", "archived"] },
+        "domains": { "type": "array" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "publishedAt": { "type": "string" }
+      },
+      "required": ["id", "age", "version", "status", "domains", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -776,6 +793,10 @@
     "weekly_summary_drafts/{draftId}": {
       "schema": "WeeklySummaryDraft",
       "description": "Draft comments and summary information for Kindergarten Weekly Reports."
+    },
+    "ldssTemplates/{templateId}": {
+      "schema": "LdssTemplate",
+      "description": "LDSS instrument templates."
     }
   }
 }

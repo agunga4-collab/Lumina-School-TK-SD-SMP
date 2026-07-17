@@ -1630,3 +1630,34 @@ export interface PromptTemplate {
   updatedBy: string;
 }
 
+export type LdssAge = 6 | 7 | 8 | 9 | 10 | 11 | 12;
+
+export type LdssIndicator = {
+  id: string;
+  text: string;
+  order: number;
+};
+
+export type LdssDomain = {
+  id: string;
+  name: string;
+  order: number;
+  indicators: LdssIndicator[];
+};
+
+export type LdssTemplateStatus = 'draft' | 'active' | 'archived';
+
+export type LdssTemplate = {
+  id: string;
+  age: LdssAge;
+  version: string;
+  status: LdssTemplateStatus;
+  domains: LdssDomain[];
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+  publishedAt?: string;
+};
+
+
+

@@ -493,5 +493,10 @@ service cloud.firestore {
     match /weekly_summary_drafts/{draftId} {
       allow read, write: if (isActive() && (isJuniorHighStaff() || isTeacher())) || isAdmin();
     }
+
+    match /ldssTemplates/{templateId} {
+      allow read: if isActive();
+      allow write: if isAdmin() || (currentUserExists() && userRole() == 'HEAD_UNIT');
+    }
   }
 }
