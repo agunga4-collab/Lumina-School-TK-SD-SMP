@@ -942,6 +942,15 @@ export default function SuperAdminPage() {
   const [studentEnrollments, setStudentEnrollments] = React.useState<{ academicYear: string; classId: string }[]>([]);
   const [selectedClassYearFilter, setSelectedClassYearFilter] = React.useState<string>("2026/2027");
 
+  // Promotion/Student Copy State
+  const [isPromotionModalOpen, setIsPromotionModalOpen] = React.useState(false);
+  const [promotionSourceYear, setPromotionSourceYear] = React.useState("2025/2026");
+  const [promotionSourceClassId, setPromotionSourceClassId] = React.useState("");
+  const [promotionTargetYear, setPromotionTargetYear] = React.useState("2026/2027");
+  const [promotionTargetClassId, setPromotionTargetClassId] = React.useState("");
+  const [promotionSelectedStudentIds, setPromotionSelectedStudentIds] = React.useState<string[]>([]);
+  const [isPromoting, setIsPromoting] = React.useState(false);
+
   // Class Form State
   const [classFormData, setClassFormData] = React.useState({
     grade: "7",
@@ -1298,6 +1307,124 @@ export default function SuperAdminPage() {
       alert("Error: " + error.message);
     } finally {
       setFormLoading(false);
+    }
+  };
+
+  // Promotion Source Students filtering
+  const sourceClassObj = React.useMemo(() => {
+    return classes.find(c => c.id === promotionSourceClassId);
+  }, [classes, promotionSourceClassId]);
+
+  const sourceStudents = React.useMemo(() => {
+    if (!promotionSourceClassId) return [];
+    return invites.filter(i => 
+      i.role === "STUDENT" && 
+      (i.classId === promotionSourceClassId || (sourceClassObj && i.classId === sourceClassObj.name))
+    );
+  }, [invites, promotionSourceClassId, sourceClassObj]);
+
+  // Set all source students as selected by default when source class changes
+  React.useEffect(() => {
+    setPromotionSelectedStudentIds(sourceStudents.map(s => s.id));
+  }, [sourceStudents]);
+
+  const handlePromoteSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!promotionTargetClassId) {
+      alert("Silakan pilih kelas tujuan!");
+      return;
+    }
+    if (promotionSelectedStudentIds.length === 0) {
+      alert("Silakan pilih minimal 1 siswa untuk dipromosikan!");
+      return;
+    }
+
+    const targetClass = classes.find(c => c.id === promotionTargetClassId);
+    if (!targetClass) {
+      alert("Kelas tujuan tidak ditemukan!");
+      return;
+    }
+
+    const confirmMsg = `Anda akan memindahkan/menyalin ${promotionSelectedStudentIds.length} siswa ke kelas "${targetClass.name}" (${promotionTargetYear}). Tindakan ini akan memperbarui data kelas aktif siswa, menambahkan riwayat tahun ajaran di database enrollments, serta memperbarui data akun aktif mereka jika ada. Lanjutkan?`;
+    if (!confirm(confirmMsg)) return;
+
+    setIsPromoting(true);
+    try {
+      const batch = writeBatch(db);
+      
+      for (const studentId of promotionSelectedStudentIds) {
+        const studentInvite = invites.find(i => i.id === studentId);
+        if (!studentInvite) continue;
+
+        const luminaId = studentInvite.luminaId;
+        if (!luminaId) continue;
+
+        // 1. Update roleInvite
+        const inviteRef = doc(db, "roleInvites", studentId);
+        batch.update(inviteRef, {
+          classId: targetClass.id,
+          academicYear: targetClass.academicYear,
+        });
+
+        // 2. Update student document
+        const studentRef = doc(db, "students", luminaId);
+        batch.set(studentRef, {
+          id: luminaId,
+          luminaId: luminaId,
+          oldLuminaId: studentInvite.oldLuminaId || "",
+          name: studentInvite.name,
+          email: studentInvite.email,
+          classId: targetClass.id,
+          unitId: targetClass.unitId,
+          academicYear: targetClass.academicYear,
+          nisn: studentInvite.nisn || "",
+          nickname: studentInvite.nickname || "",
+          gender: studentInvite.gender || "",
+          parentEmail: studentInvite.parentEmail || "",
+          status: "active",
+          updatedAt: Date.now(),
+        }, { merge: true });
+
+        // 3. Create enrollment
+        const enrollmentId = `${luminaId}_${targetClass.academicYear.replace(/\//g, "-")}`;
+        const enrollmentRef = doc(db, "enrollments", enrollmentId);
+        batch.set(enrollmentRef, {
+          id: enrollmentId,
+          studentId: luminaId,
+          classId: targetClass.id,
+          unitId: targetClass.unitId,
+          academicYear: targetClass.academicYear,
+          status: "active",
+          updatedAt: Date.now()
+        }, { merge: true });
+
+        // 4. Update user document
+        try {
+          const qUser = query(collection(db, "users"), where("email", "==", studentInvite.email.toLowerCase().trim()));
+          const userSnap = await getDocs(qUser);
+          if (!userSnap.empty) {
+            userSnap.docs.forEach((docSnap) => {
+              const userRef = doc(db, "users", docSnap.id);
+              batch.update(userRef, {
+                classId: targetClass.id,
+                academicYear: targetClass.academicYear,
+              });
+            });
+          }
+        } catch (uErr) {
+          console.error("Failed to fetch/update active user document:", uErr);
+        }
+      }
+
+      await batch.commit();
+      alert(`Berhasil mempromosikan/menyalin ${promotionSelectedStudentIds.length} siswa ke kelas ${targetClass.name}!`);
+      setIsPromotionModalOpen(false);
+      fetchData();
+    } catch (err: any) {
+      console.error("Error promoting students:", err);
+      alert("Gagal mempromosikan siswa: " + err.message);
+    } finally {
+      setIsPromoting(false);
     }
   };
 
@@ -2696,6 +2823,21 @@ export default function SuperAdminPage() {
                       <Filter size={12} />
                     </div>
                   </div>
+
+                  <button
+                    onClick={() => {
+                      setPromotionSourceYear("2025/2026");
+                      setPromotionSourceClassId("");
+                      setPromotionTargetYear("2026/2027");
+                      setPromotionTargetClassId("");
+                      setPromotionSelectedStudentIds([]);
+                      setIsPromotionModalOpen(true);
+                    }}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold tracking-wide flex items-center gap-1.5 transition-all shadow-sm cursor-pointer h-[38px] shrink-0"
+                  >
+                    <GraduationCap size={14} />
+                    Promosi & Salin Siswa TA
+                  </button>
 
                   <button
                     onClick={() => {
@@ -6548,6 +6690,231 @@ export default function SuperAdminPage() {
                     <Loader2 size={18} className="animate-spin" />
                   )}
                   Simpan Kelas
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Modal Promosikan & Salin Siswa */}
+      {isPromotionModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm"
+            onClick={() => setIsPromotionModalOpen(false)}
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-[90vh]"
+          >
+            <div className="p-8 border-b border-gray-50 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-black text-gray-900 tracking-tight italic flex items-center gap-2">
+                  <GraduationCap className="text-indigo-600" size={24} />
+                  Promosikan & Salin Siswa TA
+                </h2>
+                <p className="text-[11px] text-gray-500 font-bold uppercase tracking-tight mt-1">
+                  Pindahkan / Salin Siswa dari Kelas Tahun Lalu ke Kelas Baru dalam 1 Kali Kerja
+                </p>
+              </div>
+              <button
+                onClick={() => setIsPromotionModalOpen(false)}
+                className="p-2 text-gray-400 hover:text-gray-900"
+              >
+                <XCircle size={24} strokeWidth={1.5} />
+              </button>
+            </div>
+
+            <form
+              onSubmit={handlePromoteSubmit}
+              className="p-8 space-y-6 overflow-y-auto flex-1 text-left"
+            >
+              {/* Source Class Selection */}
+              <div className="bg-slate-50/50 p-5 rounded-3xl border border-slate-100 space-y-4">
+                <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest block">
+                  Langkah 1: Pilih Kelas Asal (Sumber)
+                </span>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                      Tahun Ajaran Asal
+                    </label>
+                    <select
+                      value={promotionSourceYear}
+                      onChange={(e) => {
+                        setPromotionSourceYear(e.target.value);
+                        setPromotionSourceClassId("");
+                      }}
+                      className="w-full px-4 py-3 bg-white border border-gray-100 rounded-xl text-xs font-bold focus:ring-2 focus:ring-blue-100"
+                    >
+                      <option value="2025/2026">2025/2026</option>
+                      <option value="2026/2027">2026/2027</option>
+                      <option value="2027/2028">2027/2028</option>
+                      <option value="2028/2029">2028/2029</option>
+                      <option value="2029/2030">2029/2030</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                      Kelas Asal
+                    </label>
+                    <select
+                      required
+                      value={promotionSourceClassId}
+                      onChange={(e) => setPromotionSourceClassId(e.target.value)}
+                      className="w-full px-4 py-3 bg-white border border-gray-100 rounded-xl text-xs font-bold focus:ring-2 focus:ring-blue-100"
+                    >
+                      <option value="">Pilih Kelas Asal</option>
+                      {classes
+                        .filter((c) => c.academicYear === promotionSourceYear)
+                        .map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name} ({c.unitId})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Target Class Selection */}
+              <div className="bg-indigo-50/20 p-5 rounded-3xl border border-indigo-100/50 space-y-4">
+                <span className="text-[10px] font-black text-indigo-700 uppercase tracking-widest block">
+                  Langkah 2: Pilih Kelas Tujuan (Target)
+                </span>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                      Tahun Ajaran Baru
+                    </label>
+                    <select
+                      value={promotionTargetYear}
+                      onChange={(e) => {
+                        setPromotionTargetYear(e.target.value);
+                        setPromotionTargetClassId("");
+                      }}
+                      className="w-full px-4 py-3 bg-white border border-gray-100 rounded-xl text-xs font-bold focus:ring-2 focus:ring-blue-100"
+                    >
+                      <option value="2025/2026">2025/2026</option>
+                      <option value="2026/2027">2026/2027</option>
+                      <option value="2027/2028">2027/2028</option>
+                      <option value="2028/2029">2028/2029</option>
+                      <option value="2029/2030">2029/2030</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                      Kelas Tujuan
+                    </label>
+                    <select
+                      required
+                      value={promotionTargetClassId}
+                      onChange={(e) => setPromotionTargetClassId(e.target.value)}
+                      className="w-full px-4 py-3 bg-white border border-gray-100 rounded-xl text-xs font-bold focus:ring-2 focus:ring-blue-100"
+                    >
+                      <option value="">Pilih Kelas Tujuan</option>
+                      {classes
+                        .filter((c) => c.academicYear === promotionTargetYear)
+                        .map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name} ({c.unitId})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Student Selection Checklist */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">
+                    Langkah 3: Pilih Siswa ({promotionSelectedStudentIds.length} dari {sourceStudents.length} terpilih)
+                  </span>
+                  {sourceStudents.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (promotionSelectedStudentIds.length === sourceStudents.length) {
+                          setPromotionSelectedStudentIds([]);
+                        } else {
+                          setPromotionSelectedStudentIds(sourceStudents.map(s => s.id));
+                        }
+                      }}
+                      className="text-[9px] font-black text-indigo-600 uppercase tracking-tight hover:underline"
+                    >
+                      {promotionSelectedStudentIds.length === sourceStudents.length ? "Deselect All" : "Select All"}
+                    </button>
+                  )}
+                </div>
+
+                <div className="border border-gray-100 rounded-3xl p-4 bg-gray-50/50 max-h-52 overflow-y-auto space-y-2">
+                  {promotionSourceClassId === "" ? (
+                    <div className="text-center py-6 text-xs text-gray-400 font-bold italic">
+                      Silakan pilih Kelas Asal terlebih dahulu
+                    </div>
+                  ) : sourceStudents.length === 0 ? (
+                    <div className="text-center py-6 text-xs text-gray-400 font-bold italic">
+                      Tidak ada siswa ditemukan di kelas asal ini
+                    </div>
+                  ) : (
+                    sourceStudents.map((s) => {
+                      const isChecked = promotionSelectedStudentIds.includes(s.id);
+                      return (
+                        <label
+                          key={s.id}
+                          className="flex items-center gap-3 p-3 bg-white rounded-2xl border border-gray-100 hover:border-indigo-100 cursor-pointer transition-all shadow-sm"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {
+                              if (isChecked) {
+                                setPromotionSelectedStudentIds(
+                                  promotionSelectedStudentIds.filter((id) => id !== s.id)
+                                );
+                              } else {
+                                setPromotionSelectedStudentIds([...promotionSelectedStudentIds, s.id]);
+                              }
+                            }}
+                            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4"
+                          />
+                          <div className="flex flex-col">
+                            <span className="text-[10px] font-black text-gray-900 uppercase">
+                              {s.name}
+                            </span>
+                            <span className="text-[9px] font-mono text-gray-400">
+                              Lumina ID: {s.luminaId} | Email: {s.email}
+                            </span>
+                          </div>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-4 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsPromotionModalOpen(false)}
+                  className="flex-1 py-4 text-xs font-black text-gray-400 uppercase tracking-widest"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPromoting || promotionSelectedStudentIds.length === 0}
+                  className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all disabled:bg-gray-200 disabled:text-gray-400"
+                >
+                  {isPromoting && (
+                    <Loader2 size={18} className="animate-spin" />
+                  )}
+                  Promosikan {promotionSelectedStudentIds.length} Siswa
                 </button>
               </div>
             </form>
