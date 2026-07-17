@@ -941,11 +941,12 @@ export default function SuperAdminPage() {
 
   const [studentEnrollments, setStudentEnrollments] = React.useState<{ academicYear: string; classId: string }[]>([]);
   const [selectedClassYearFilter, setSelectedClassYearFilter] = React.useState<string>("2026/2027");
+  const [allEnrollments, setAllEnrollments] = React.useState<any[]>([]);
 
   // Promotion/Student Copy State
   const [isPromotionModalOpen, setIsPromotionModalOpen] = React.useState(false);
   const [promotionSourceYear, setPromotionSourceYear] = React.useState("2025/2026");
-  const [promotionSourceClassId, setPromotionSourceClassId] = React.useState("");
+  const [promotionSourceClassIds, setPromotionSourceClassIds] = React.useState<string[]>([]);
   const [promotionTargetYear, setPromotionTargetYear] = React.useState("2026/2027");
   const [promotionTargetClassId, setPromotionTargetClassId] = React.useState("");
   const [promotionSelectedStudentIds, setPromotionSelectedStudentIds] = React.useState<string[]>([]);
@@ -974,6 +975,14 @@ export default function SuperAdminPage() {
       setPendingUsers(pend || []);
       setClasses(cls || []);
       setTeachers(tchs || []);
+
+      // Fetch All Enrollments
+      try {
+        const enrollsSnap = await getDocs(collection(db, "enrollments"));
+        setAllEnrollments(enrollsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any })));
+      } catch (err) {
+        console.warn("Failed to load enrollments from Firestore:", err);
+      }
 
       // Fetch AI Prompt Templates
       try {
@@ -1311,19 +1320,27 @@ export default function SuperAdminPage() {
   };
 
   // Promotion Source Students filtering
-  const sourceClassObj = React.useMemo(() => {
-    return classes.find(c => c.id === promotionSourceClassId);
-  }, [classes, promotionSourceClassId]);
-
   const sourceStudents = React.useMemo(() => {
-    if (!promotionSourceClassId) return [];
-    return invites.filter(i => 
-      i.role === "STUDENT" && 
-      (i.classId === promotionSourceClassId || (sourceClassObj && i.classId === sourceClassObj.name))
-    );
-  }, [invites, promotionSourceClassId, sourceClassObj]);
+    if (promotionSourceClassIds.length === 0) return [];
+    const sourceClassObjs = classes.filter(c => promotionSourceClassIds.includes(c.id));
+    const sourceClassNames = sourceClassObjs.map(c => c.name);
 
-  // Set all source students as selected by default when source class changes
+    return invites.filter(i => {
+      if (i.role !== "STUDENT") return false;
+      const isDirectMatch = promotionSourceClassIds.includes(i.classId || "") || sourceClassNames.includes(i.classId || "");
+      if (isDirectMatch) return true;
+      if (i.luminaId) {
+        return allEnrollments.some(e => 
+          e.studentId === i.luminaId &&
+          e.academicYear === promotionSourceYear &&
+          (promotionSourceClassIds.includes(e.classId) || sourceClassNames.includes(e.classId))
+        );
+      }
+      return false;
+    });
+  }, [invites, promotionSourceClassIds, classes, allEnrollments, promotionSourceYear]);
+
+  // Set all source students as selected by default when source classes change
   React.useEffect(() => {
     setPromotionSelectedStudentIds(sourceStudents.map(s => s.id));
   }, [sourceStudents]);
@@ -2827,7 +2844,7 @@ export default function SuperAdminPage() {
                   <button
                     onClick={() => {
                       setPromotionSourceYear("2025/2026");
-                      setPromotionSourceClassId("");
+                      setPromotionSourceClassIds([]);
                       setPromotionTargetYear("2026/2027");
                       setPromotionTargetClassId("");
                       setPromotionSelectedStudentIds([]);
@@ -3029,7 +3046,18 @@ export default function SuperAdminPage() {
                   ) : (
                     sortedClasses.map((cls) => {
                       const classStudents = invites
-                        .filter((i) => i.role === "STUDENT" && (i.classId === cls.id || i.classId === cls.name))
+                        .filter((i) => {
+                          if (i.role !== "STUDENT") return false;
+                          if (i.classId === cls.id || i.classId === cls.name) return true;
+                          if (i.luminaId) {
+                            return allEnrollments.some(
+                              (e) =>
+                                e.studentId === i.luminaId &&
+                                (e.classId === cls.id || e.classId === cls.name)
+                            );
+                          }
+                          return false;
+                        })
                         .sort((a, b) => {
                           const aName = a.name.toLowerCase();
                           const bName = b.name.toLowerCase();
@@ -6737,7 +6765,7 @@ export default function SuperAdminPage() {
                   Langkah 1: Pilih Kelas Asal (Sumber)
                 </span>
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
+                  <div className="col-span-2 sm:col-span-1 space-y-1">
                     <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">
                       Tahun Ajaran Asal
                     </label>
@@ -6745,7 +6773,7 @@ export default function SuperAdminPage() {
                       value={promotionSourceYear}
                       onChange={(e) => {
                         setPromotionSourceYear(e.target.value);
-                        setPromotionSourceClassId("");
+                        setPromotionSourceClassIds([]);
                       }}
                       className="w-full px-4 py-3 bg-white border border-gray-100 rounded-xl text-xs font-bold focus:ring-2 focus:ring-blue-100"
                     >
@@ -6757,25 +6785,46 @@ export default function SuperAdminPage() {
                     </select>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">
-                      Kelas Asal
+                  <div className="col-span-2 space-y-2 text-left">
+                    <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1 block">
+                      Kelas Asal (Bisa pilih lebih dari satu)
                     </label>
-                    <select
-                      required
-                      value={promotionSourceClassId}
-                      onChange={(e) => setPromotionSourceClassId(e.target.value)}
-                      className="w-full px-4 py-3 bg-white border border-gray-100 rounded-xl text-xs font-bold focus:ring-2 focus:ring-blue-100"
-                    >
-                      <option value="">Pilih Kelas Asal</option>
+                    <div className="grid grid-cols-2 gap-2 max-h-36 overflow-y-auto p-3 border border-gray-100 rounded-xl bg-white">
                       {classes
                         .filter((c) => c.academicYear === promotionSourceYear)
-                        .map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name} ({c.unitId})
-                          </option>
-                        ))}
-                    </select>
+                        .map((c) => {
+                          const isChecked = promotionSourceClassIds.includes(c.id);
+                          return (
+                            <label
+                              key={c.id}
+                              className="flex items-center gap-2.5 p-2 bg-slate-50 hover:bg-indigo-50/50 rounded-xl border border-gray-100 cursor-pointer transition-all text-left"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => {
+                                  if (isChecked) {
+                                    setPromotionSourceClassIds(
+                                      promotionSourceClassIds.filter((id) => id !== c.id)
+                                    );
+                                  } else {
+                                    setPromotionSourceClassIds([...promotionSourceClassIds, c.id]);
+                                  }
+                                }}
+                                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5"
+                              />
+                              <span className="text-[10px] font-bold text-gray-700 uppercase">
+                                {c.name} ({c.unitId})
+                              </span>
+                            </label>
+                          );
+                        })}
+                      {classes.filter((c) => c.academicYear === promotionSourceYear).length === 0 && (
+                        <span className="col-span-2 text-center text-[10px] text-gray-400 font-bold italic py-4">
+                          Tidak ada kelas ditemukan untuk tahun ajaran asal ini.
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -6853,7 +6902,7 @@ export default function SuperAdminPage() {
                 </div>
 
                 <div className="border border-gray-100 rounded-3xl p-4 bg-gray-50/50 max-h-52 overflow-y-auto space-y-2">
-                  {promotionSourceClassId === "" ? (
+                  {promotionSourceClassIds.length === 0 ? (
                     <div className="text-center py-6 text-xs text-gray-400 font-bold italic">
                       Silakan pilih Kelas Asal terlebih dahulu
                     </div>
