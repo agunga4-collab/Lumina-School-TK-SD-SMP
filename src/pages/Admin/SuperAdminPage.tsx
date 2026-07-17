@@ -939,6 +939,8 @@ export default function SuperAdminPage() {
     },
   );
 
+  const [studentEnrollments, setStudentEnrollments] = React.useState<{ academicYear: string; classId: string }[]>([]);
+
   // Class Form State
   const [classFormData, setClassFormData] = React.useState({
     grade: "7",
@@ -1321,11 +1323,17 @@ export default function SuperAdminPage() {
           }
         }
 
-        const updatedFormData = { ...formData, oldLuminaId: finalOldLuminaId };
+        const activeEnrollment = studentEnrollments[0] || { academicYear: "2025/2026", classId: "" };
+        const updatedFormData = {
+          ...formData,
+          oldLuminaId: finalOldLuminaId,
+          academicYear: activeEnrollment.academicYear,
+          classId: activeEnrollment.classId,
+        };
         await updateInvite(editingId, updatedFormData);
         
         // Propagate the change to active student and enrollment records
-        if (formData.role === "STUDENT" && formData.luminaId && formData.classId && formData.academicYear) {
+        if (formData.role === "STUDENT" && formData.luminaId) {
           try {
             const batch = writeBatch(db);
             
@@ -1334,8 +1342,24 @@ export default function SuperAdminPage() {
               const oldStudentRef = doc(db, "students", previousLuminaId);
               batch.delete(oldStudentRef);
               
-              const oldEnrollmentId = `${previousLuminaId}_${formData.academicYear.replace(/\//g, "-")}`;
-              batch.delete(doc(db, "enrollments", oldEnrollmentId));
+              // Fetch and delete all old enrollments under previous student ID
+              const oldEnrollsQ = query(collection(db, "enrollments"), where("studentId", "==", previousLuminaId));
+              const oldEnrollsSnap = await getDocs(oldEnrollsQ);
+              oldEnrollsSnap.docs.forEach((docSnap) => {
+                batch.delete(docSnap.ref);
+              });
+            } else {
+              // Delete enrollments that are no longer in our list
+              const enrollsQ = query(collection(db, "enrollments"), where("studentId", "==", formData.luminaId));
+              const enrollsSnap = await getDocs(enrollsQ);
+              const existingEnrollIds = enrollsSnap.docs.map(docSnap => docSnap.id);
+              const newEnrollIds = studentEnrollments.map(e => `${formData.luminaId}_${e.academicYear.replace(/\//g, "-")}`);
+              
+              existingEnrollIds.forEach(id => {
+                if (!newEnrollIds.includes(id)) {
+                  batch.delete(doc(db, "enrollments", id));
+                }
+              });
             }
 
             // Create/Update student record
@@ -1346,9 +1370,9 @@ export default function SuperAdminPage() {
               oldLuminaId: finalOldLuminaId,
               name: formData.name,
               email: formData.email,
-              classId: formData.classId,
+              classId: activeEnrollment.classId,
               unitId: formData.unitId,
-              academicYear: formData.academicYear,
+              academicYear: activeEnrollment.academicYear,
               nisn: formData.nisn || "",
               nickname: formData.nickname || "",
               gender: formData.gender || "",
@@ -1358,18 +1382,20 @@ export default function SuperAdminPage() {
               createdAt: Date.now()
             }, { merge: true });
 
-            // Create/Update enrollment record
-            const enrollmentId = `${formData.luminaId}_${formData.academicYear.replace(/\//g, "-")}`;
-            const enrollmentRef = doc(db, "enrollments", enrollmentId);
-            batch.set(enrollmentRef, {
-              id: enrollmentId,
-              studentId: formData.luminaId,
-              classId: formData.classId,
-              unitId: formData.unitId,
-              academicYear: formData.academicYear,
-              status: "active",
-              updatedAt: Date.now()
-            }, { merge: true });
+            // Create/Update all enrollment records in our list
+            studentEnrollments.forEach(e => {
+              const enrollmentId = `${formData.luminaId}_${e.academicYear.replace(/\//g, "-")}`;
+              const enrollmentRef = doc(db, "enrollments", enrollmentId);
+              batch.set(enrollmentRef, {
+                id: enrollmentId,
+                studentId: formData.luminaId,
+                classId: e.classId,
+                unitId: formData.unitId,
+                academicYear: e.academicYear,
+                status: "active",
+                updatedAt: Date.now()
+              }, { merge: true });
+            });
 
             await batch.commit();
             console.log("[SuperAdmin] Edited Student and Enrollment updated/propagated successfully.");
@@ -1393,8 +1419,8 @@ export default function SuperAdminPage() {
                 oldLuminaId: finalOldLuminaId || null,
                 nickname: formData.nickname || null,
                 linkedStudents: formData.linkedStudents || [],
-                classId: formData.classId || null,
-                academicYear: formData.academicYear || null,
+                classId: activeEnrollment.classId || null,
+                academicYear: activeEnrollment.academicYear || null,
                 fatherName: formData.fatherName || null,
                 motherName: formData.motherName || null,
               });
@@ -1406,10 +1432,16 @@ export default function SuperAdminPage() {
           console.error("[SuperAdmin] Failed to propagate edit to active user(s):", uErr);
         }
       } else {
-        const inviteId = await addInvite(formData);
+        const activeEnrollment = studentEnrollments[0] || { academicYear: "2025/2026", classId: "" };
+        const updatedNewFormData = {
+          ...formData,
+          academicYear: activeEnrollment.academicYear,
+          classId: activeEnrollment.classId,
+        };
+        const inviteId = await addInvite(updatedNewFormData);
 
         // If STUDENT, also ensure student and enrollment records exist
-        if (formData.role === "STUDENT" && formData.luminaId && formData.classId && formData.academicYear) {
+        if (formData.role === "STUDENT" && formData.luminaId && studentEnrollments.length > 0) {
           try {
             const batch = writeBatch(db);
             
@@ -1421,9 +1453,9 @@ export default function SuperAdminPage() {
               oldLuminaId: formData.oldLuminaId || "",
               name: formData.name,
               email: formData.email,
-              classId: formData.classId,
+              classId: activeEnrollment.classId,
               unitId: formData.unitId,
-              academicYear: formData.academicYear,
+              academicYear: activeEnrollment.academicYear,
               nisn: formData.nisn || "",
               nickname: formData.nickname || "",
               gender: formData.gender || "",
@@ -1433,18 +1465,20 @@ export default function SuperAdminPage() {
               createdAt: Date.now()
             }, { merge: true });
 
-            // 2. Ensure enrollment record
-            const enrollmentId = `${formData.luminaId}_${formData.academicYear.replace(/\//g, "-")}`;
-            const enrollmentRef = doc(db, "enrollments", enrollmentId);
-            batch.set(enrollmentRef, {
-              id: enrollmentId,
-              studentId: formData.luminaId,
-              classId: formData.classId,
-              unitId: formData.unitId,
-              academicYear: formData.academicYear,
-              status: "active",
-              updatedAt: Date.now()
-            }, { merge: true });
+            // 2. Ensure all enrollment records
+            studentEnrollments.forEach(e => {
+              const enrollmentId = `${formData.luminaId}_${e.academicYear.replace(/\//g, "-")}`;
+              const enrollmentRef = doc(db, "enrollments", enrollmentId);
+              batch.set(enrollmentRef, {
+                id: enrollmentId,
+                studentId: formData.luminaId,
+                classId: e.classId,
+                unitId: formData.unitId,
+                academicYear: e.academicYear,
+                status: "active",
+                updatedAt: Date.now()
+              }, { merge: true });
+            });
 
             await batch.commit();
             console.log("[SuperAdmin] Created/Updated Student & Enrollment for manual invite.");
@@ -2545,6 +2579,12 @@ export default function SuperAdminPage() {
                             academicYear: "2025/2026",
                             linkedStudents: [],
                           });
+                          setStudentEnrollments([
+                            {
+                              academicYear: "2025/2026",
+                              classId: "",
+                            }
+                          ]);
                           setIsModalOpen(true);
                         }}
                         className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold tracking-wide flex items-center gap-1.5 hover:bg-indigo-700 transition-all cursor-pointer shadow-sm shadow-indigo-100"
@@ -3739,9 +3779,50 @@ export default function SuperAdminPage() {
                         <td className="px-10 py-6 text-right sticky right-0 bg-white group-hover:bg-gray-50 transition-all z-10 shadow-[-10px_0_15px_-5px_rgba(0,0,0,0.05)]">
                           <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-all">
                             <button
-                              onClick={() => {
+                              onClick={async () => {
                                 setEditingId(invite.id);
                                 setFormData({ ...invite });
+                                if (invite.role === "STUDENT" && invite.luminaId) {
+                                  try {
+                                    const q = query(
+                                      collection(db, "enrollments"),
+                                      where("studentId", "==", invite.luminaId)
+                                    );
+                                    const snap = await getDocs(q);
+                                    const enrolls = snap.docs.map(doc => {
+                                      const data = doc.data();
+                                      return {
+                                        academicYear: data.academicYear || "",
+                                        classId: data.classId || "",
+                                      };
+                                    });
+                                    if (enrolls.length === 0) {
+                                      setStudentEnrollments([
+                                        {
+                                          academicYear: invite.academicYear || "2025/2026",
+                                          classId: invite.classId || "",
+                                        }
+                                      ]);
+                                    } else {
+                                      setStudentEnrollments(enrolls);
+                                    }
+                                  } catch (err) {
+                                    console.error("Failed to fetch student enrollments on edit:", err);
+                                    setStudentEnrollments([
+                                      {
+                                        academicYear: invite.academicYear || "2025/2026",
+                                        classId: invite.classId || "",
+                                      }
+                                    ]);
+                                  }
+                                } else {
+                                  setStudentEnrollments([
+                                    {
+                                      academicYear: invite.academicYear || "2025/2026",
+                                      classId: invite.classId || "",
+                                    }
+                                  ]);
+                                }
                                 setIsModalOpen(true);
                               }}
                               className="p-2 text-gray-400 hover:text-blue-600 hover:bg-white rounded-xl shadow-sm"
@@ -5871,42 +5952,88 @@ export default function SuperAdminPage() {
 
               {formData.role === "STUDENT" ? (
                 <div className="space-y-6">
-                  <div className="grid grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
-                        Tahun Ajaran
-                      </label>
-                      <input
-                        type="text"
-                        value={formData.academicYear}
-                        onChange={(e) =>
-                          setFormData({ ...formData, academicYear: e.target.value })
-                        }
-                        className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm italic font-medium focus:ring-2 focus:ring-blue-100"
-                        placeholder="2025/2026"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
-                        Pilih Kelas
-                      </label>
-                      <select
-                        value={formData.classId}
-                        onChange={(e) =>
-                          setFormData({ ...formData, classId: e.target.value })
-                        }
-                        className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
+                  {/* Dynamic Academic Year and Class List */}
+                  <div className="space-y-4 bg-slate-50/50 p-5 rounded-3xl border border-slate-100">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">
+                        Daftar Kelas & Tahun Ajaran
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStudentEnrollments((prev) => [
+                            ...prev,
+                            { academicYear: "2025/2026", classId: "" },
+                          ]);
+                        }}
+                        className="text-[10px] font-black text-indigo-600 hover:text-indigo-800 uppercase tracking-widest flex items-center gap-1 cursor-pointer"
                       >
-                        <option value="">Pilih Kelas</option>
-                        {classes
-                          .filter((c) => c.unitId === formData.unitId)
-                          .map((c) => (
-                            <option key={c.id} value={c.name}>
-                              {c.name}
-                            </option>
-                          ))}
-                      </select>
+                        <Plus size={12} /> Tambah Tahun Ajaran
+                      </button>
                     </div>
+
+                    {studentEnrollments.map((enrollment, index) => (
+                      <div key={index} className="flex items-end gap-3 bg-white p-4 rounded-2xl border border-gray-100 shadow-sm relative">
+                        <div className="flex-1 space-y-1.5">
+                          <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">
+                            Tahun Ajaran
+                          </label>
+                          <input
+                            required
+                            type="text"
+                            value={enrollment.academicYear}
+                            onChange={(e) => {
+                              const newYear = e.target.value;
+                              setStudentEnrollments((prev) => {
+                                const next = [...prev];
+                                next[index] = { ...next[index], academicYear: newYear };
+                                return next;
+                              });
+                            }}
+                            className="w-full px-4 py-2.5 bg-gray-50 border-none rounded-xl text-xs italic font-medium focus:ring-2 focus:ring-blue-100"
+                            placeholder="2025/2026"
+                          />
+                        </div>
+                        <div className="flex-1 space-y-1.5">
+                          <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">
+                            Pilih Kelas
+                          </label>
+                          <select
+                            required
+                            value={enrollment.classId}
+                            onChange={(e) => {
+                              const newClass = e.target.value;
+                              setStudentEnrollments((prev) => {
+                                const next = [...prev];
+                                next[index] = { ...next[index], classId: newClass };
+                                return next;
+                              });
+                            }}
+                            className="w-full px-4 py-2.5 bg-gray-50 border-none rounded-xl text-xs font-bold focus:ring-2 focus:ring-blue-100"
+                          >
+                            <option value="">Pilih Kelas</option>
+                            {classes
+                              .filter((c) => c.unitId === formData.unitId)
+                              .map((c) => (
+                                <option key={c.id} value={c.name}>
+                                  {c.name}
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                        {studentEnrollments.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setStudentEnrollments((prev) => prev.filter((_, idx) => idx !== index));
+                            }}
+                            className="p-2.5 text-gray-400 hover:text-red-500 bg-gray-50 hover:bg-red-50 rounded-xl transition-colors cursor-pointer"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
                   </div>
                   <div className="grid grid-cols-2 gap-6">
                     <div className="space-y-2">
