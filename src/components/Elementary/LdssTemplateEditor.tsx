@@ -31,6 +31,7 @@ import {
   archiveLdssTemplate 
 } from "../../services/ldssTemplateService";
 import { LdssTemplate, LdssAge, LdssDomain, LdssIndicator } from "../../types";
+import { SEED_DOMAINS_USIA_6 } from "../../data/ldssSeedData6";
 
 interface LdssTemplateEditorProps {
   age: LdssAge;
@@ -164,6 +165,32 @@ export default function LdssTemplateEditor({ age }: LdssTemplateEditorProps) {
     setSelectedTemplate(newTemplate);
     setVersionText("v1.0");
     setHasUnsavedChanges(true);
+  };
+
+  // Load official template draft for Age 6
+  const handleLoadOfficialTemplate = () => {
+    if (age !== 6) return;
+    const officialTemplate: LdssTemplate = {
+      id: "template_6_official_" + Date.now(),
+      age: 6,
+      version: "v1.0",
+      status: "draft",
+      domains: JSON.parse(JSON.stringify(SEED_DOMAINS_USIA_6)),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdBy: userEmail
+    };
+
+    setSelectedTemplate(officialTemplate);
+    setVersionText("v1.0");
+    setHasUnsavedChanges(true);
+
+    // Expand all domains initially for easier viewing and custom editing
+    const expanded: Record<string, boolean> = {};
+    SEED_DOMAINS_USIA_6.forEach(d => {
+      expanded[d.id] = true;
+    });
+    setExpandedDomains(expanded);
   };
 
   // Helper to update selected template domains with unsaved state tracking
@@ -896,19 +923,30 @@ export default function LdssTemplateEditor({ age }: LdssTemplateEditorProps) {
               <div className="p-4 bg-indigo-50 text-indigo-600 rounded-2xl">
                 <FileText size={32} />
               </div>
-              <div className="space-y-1.5 max-w-sm mx-auto">
+              <div className="space-y-1.5 max-w-md mx-auto">
                 <h4 className="text-base font-black text-gray-900 tracking-tight">Belum Ada Template Usia {age}</h4>
                 <p className="text-xs text-slate-500 font-medium leading-relaxed">
-                  Belum ada instrumen screening LDSS yang dibuat untuk anak usia {age} tahun di database. Buat template draft untuk mulai merancang.
+                  Belum ada instrumen screening LDSS yang dibuat untuk anak usia {age} tahun di database. Anda dapat merancang dari kosong atau menggunakan template resmi bawaan.
                 </p>
               </div>
-              <button
-                onClick={handleCreateTemplate}
-                className="flex items-center gap-2 px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-xl transition-all shadow-sm cursor-pointer"
-              >
-                <Plus size={14} />
-                <span>Buat Template Usia {age}</span>
-              </button>
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-3 w-full max-w-md">
+                <button
+                  onClick={handleCreateTemplate}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 bg-white border border-gray-200 hover:bg-slate-50 text-gray-700 text-xs font-black rounded-xl transition-all shadow-sm cursor-pointer"
+                >
+                  <Plus size={14} />
+                  <span>Buat dari Kosong</span>
+                </button>
+                {age === 6 && (
+                  <button
+                    onClick={handleLoadOfficialTemplate}
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl transition-all shadow-sm cursor-pointer"
+                  >
+                    <Sparkles size={14} className="text-emerald-100" />
+                    <span>Muat Template Resmi</span>
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
             

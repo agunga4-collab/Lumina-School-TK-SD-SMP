@@ -679,19 +679,33 @@ function LdssSettingsShell() {
                 </div>
 
                 {hasTemplate ? (
-                  <div className="space-y-1">
-                    <p className="text-[11px] text-indigo-650 font-black">
-                      {totalDomains} Domain • {totalIndicators} Indikator
-                    </p>
-                    <p className="text-[10px] text-slate-400 font-semibold leading-relaxed">
-                      Selesai dimodifikasi pada {new Date(latestTemplate.updatedAt).toLocaleDateString("id-ID")}
-                    </p>
+                  <div className="space-y-2.5">
+                    <div className="space-y-0.5">
+                      <p className="text-[11px] text-indigo-650 font-black">
+                        {totalDomains} Domain • {totalIndicators} Indikator
+                      </p>
+                      <p className="text-[10px] text-slate-400 font-semibold leading-relaxed">
+                        Selesai dimodifikasi pada {new Date(latestTemplate.updatedAt).toLocaleDateString("id-ID")}
+                      </p>
+                    </div>
+                    {latestTemplate?.domains && latestTemplate.domains.length > 0 && (
+                      <div className="pt-2 border-t border-gray-100 space-y-1.5">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Daftar Domain:</p>
+                        <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto pr-0.5">
+                          {latestTemplate.domains.map((dom) => (
+                            <span key={dom.id} className="px-2 py-0.5 bg-slate-50 border border-gray-150 text-slate-600 rounded-lg text-[9px] font-semibold">
+                              {dom.name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div>
                     {age === 6 ? (
                       <p className="text-[11px] text-indigo-600 font-bold leading-relaxed">
-                        Membuat draft instrumen 15 domain dan 75 indikator.
+                        Tersedia opsi memuat draft instrumen standar dengan 15 domain dan 75 indikator, atau buat baru dari awal.
                       </p>
                     ) : (
                       <p className="text-[11px] text-slate-400 font-semibold leading-relaxed">
@@ -704,13 +718,22 @@ function LdssSettingsShell() {
 
               {/* Action button */}
               {age === 6 && !hasTemplate ? (
-                <button
-                  onClick={handleSeedClick}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black border transition-all cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-650 shadow-sm"
-                >
-                  <span>Muat Template Resmi Usia 6</span>
-                  <Sparkles size={12} className="shrink-0 text-emerald-100" />
-                </button>
+                <div className="flex flex-col gap-1.5 w-full pt-1">
+                  <button
+                    onClick={handleSeedClick}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black border transition-all cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-650 shadow-sm"
+                  >
+                    <span>Muat Template Resmi Usia 6</span>
+                    <Sparkles size={12} className="shrink-0 text-emerald-100" />
+                  </button>
+                  <button
+                    onClick={() => navigate(`/elementary/ldss/settings/${age}`)}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black border transition-all cursor-pointer bg-white border-gray-200 hover:bg-slate-50 text-gray-700 shadow-sm"
+                  >
+                    <span>Atur Template Manual</span>
+                    <ArrowRight size={12} />
+                  </button>
+                </div>
               ) : (
                 <button
                   onClick={() => navigate(`/elementary/ldss/settings/${age}`)}
