@@ -10,7 +10,9 @@ import {
   Info, 
   ChevronDown, 
   ChevronUp,
-  FileText
+  FileText,
+  Mic,
+  MicOff
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useAuth } from "../../context/AuthContext";
@@ -20,6 +22,171 @@ import {
   getLdssAssessment, 
   saveLdssAssessment 
 } from "../../services/ldssTemplateService";
+
+interface AutosizeTextareaProps {
+  value: string;
+  onChange: (val: string) => void;
+  placeholder?: string;
+  id: string;
+  rows?: number;
+  className?: string;
+}
+
+function AutosizeTextarea({
+  value,
+  onChange,
+  placeholder = "Tambah catatan...",
+  id,
+  rows = 1,
+  className = ""
+}: AutosizeTextareaProps) {
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const [isListening, setIsListening] = React.useState(false);
+  const [lang, setLang] = React.useState<"id-ID" | "en-US">("id-ID");
+  const [speechSupported, setSpeechSupported] = React.useState(true);
+  const recognitionRef = React.useRef<any>(null);
+
+  // Auto-resize effect
+  React.useEffect(() => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      textarea.style.height = "auto";
+      textarea.style.height = `${textarea.scrollHeight}px`;
+    }
+  }, [value]);
+
+  // Check speech recognition support
+  React.useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setSpeechSupported(false);
+    }
+  }, []);
+
+  const toggleListening = () => {
+    if (!speechSupported) return;
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    
+    if (isListening) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      setIsListening(false);
+      return;
+    }
+
+    try {
+      const rec = new SpeechRecognition();
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.lang = lang;
+
+      rec.onstart = () => {
+        setIsListening(true);
+      };
+
+      rec.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        if (transcript) {
+          const appended = value 
+            ? `${value.trim()} ${transcript}` 
+            : transcript;
+          onChange(appended);
+        }
+      };
+
+      rec.onerror = (event: any) => {
+        console.error("Speech recognition error:", event.error);
+        setIsListening(false);
+      };
+
+      rec.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = rec;
+      rec.start();
+    } catch (err) {
+      console.error("Failed to start speech recognition:", err);
+      setIsListening(false);
+    }
+  };
+
+  return (
+    <div className={`w-full space-y-1 text-left ${className}`}>
+      <div className="relative flex items-end bg-slate-50 border border-gray-150 hover:bg-white hover:border-gray-200 focus-within:bg-white focus-within:ring-2 focus-within:ring-indigo-150 rounded-xl transition-all">
+        <textarea
+          ref={textareaRef}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          rows={rows}
+          className="w-full bg-transparent focus:outline-none rounded-xl pl-4 pr-24 py-2 text-xs font-semibold text-slate-700 placeholder-slate-400 resize-none min-h-[36px] max-h-48 overflow-y-auto leading-relaxed"
+        />
+
+        {/* Speech-to-Text and Lang Selection Container */}
+        <div className="absolute right-2 bottom-1.5 flex items-center gap-1.5 bg-white/90 backdrop-blur-sm px-1.5 py-0.5 rounded-lg border border-gray-100 shadow-sm z-10">
+          {speechSupported && (
+            <>
+              {/* Language Selector Pill */}
+              <button
+                type="button"
+                onClick={() => setLang(prev => prev === "id-ID" ? "en-US" : "id-ID")}
+                className="text-[9px] font-black text-slate-500 hover:text-indigo-600 px-1 py-0.5 rounded hover:bg-slate-100 transition-colors cursor-pointer"
+                title="Ganti Bahasa (ID / EN)"
+              >
+                {lang === "id-ID" ? "🇮🇩 ID" : "🇺🇸 EN"}
+              </button>
+
+              <span className="w-px h-3 bg-gray-200" />
+            </>
+          )}
+
+          {/* Microphone Trigger Button */}
+          {speechSupported ? (
+            <button
+              type="button"
+              onClick={toggleListening}
+              className={`p-1 rounded-md cursor-pointer transition-all relative flex items-center justify-center ${
+                isListening
+                  ? "bg-rose-50 text-rose-600 ring-2 ring-rose-200"
+                  : "text-slate-400 hover:text-indigo-600 hover:bg-slate-100"
+              }`}
+              title={isListening ? "Berhenti mendengarkan" : "Mulai merekam suara"}
+            >
+              {isListening ? (
+                <>
+                  <Mic size={13} className="animate-pulse" />
+                  <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+                  </span>
+                </>
+              ) : (
+                <Mic size={13} />
+              )}
+            </button>
+          ) : (
+            <div className="p-1 text-slate-300" title="Voice typing tidak didukung browser ini">
+              <MicOff size={13} />
+            </div>
+          )}
+        </div>
+      </div>
+      {isListening && (
+        <motion.p 
+          initial={{ opacity: 0, y: -2 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-[10px] text-rose-500 font-bold flex items-center gap-1 pl-2 animate-pulse"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-rose-500 block"></span>
+          Mendengarkan ({lang === "id-ID" ? "Bahasa Indonesia" : "English"})... Silakan bicara.
+        </motion.p>
+      )}
+    </div>
+  );
+}
 
 interface LdssAssessmentFormProps {
   student: Student;
@@ -369,22 +536,22 @@ export default function LdssAssessmentForm({
                         return (
                           <div
                             key={ind.id}
-                            className="bg-white border border-gray-150 p-4 rounded-xl flex flex-col md:flex-row md:items-start justify-between gap-4 shadow-sm hover:border-gray-200 transition-all"
+                            className="bg-white border border-gray-150 p-4 rounded-xl flex flex-col gap-4 shadow-sm hover:border-gray-200 transition-all text-left"
                           >
-                            {/* Indicator Text & Order */}
-                            <div className="flex items-start gap-2.5 flex-1">
-                              <span className="text-[10px] font-black text-slate-400 bg-slate-50 border border-gray-150 rounded px-1.5 py-0.5 mt-0.5 shrink-0">
-                                {index + 1}.{indIdx + 1}
-                              </span>
-                              <p className="text-xs font-bold text-slate-700 leading-relaxed">
-                                {ind.text}
-                              </p>
-                            </div>
+                            {/* Top Row: Indicator text on the left, YES/NO buttons on the right */}
+                            <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                              {/* Indicator Text & Order */}
+                              <div className="flex items-start gap-2.5 flex-1">
+                                <span className="text-[10px] font-black text-slate-400 bg-slate-50 border border-gray-150 rounded px-1.5 py-0.5 mt-0.5 shrink-0">
+                                  {index + 1}.{indIdx + 1}
+                                </span>
+                                <p className="text-xs font-bold text-slate-700 leading-relaxed">
+                                  {ind.text}
+                                </p>
+                              </div>
 
-                            {/* Scoring Buttons and Note Panel */}
-                            <div className="flex flex-col gap-3 shrink-0 w-full md:w-auto md:max-w-sm">
                               {/* YES/NO Score Toggles */}
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 shrink-0">
                                 <button
                                   type="button"
                                   onClick={() => handleScoreChange(ind.id, "YA")}
@@ -410,14 +577,16 @@ export default function LdssAssessmentForm({
                                   <span>TIDAK</span>
                                 </button>
                               </div>
+                            </div>
 
-                              {/* Indicator-Specific Notes */}
-                              <input
-                                type="text"
+                            {/* Bottom Row: Full-width specific notes textarea with Speech-to-text */}
+                            <div className="w-full">
+                              <AutosizeTextarea
+                                id={ind.id}
                                 value={currentNote}
-                                onChange={(e) => handleNoteChange(ind.id, e.target.value)}
+                                onChange={(val) => handleNoteChange(ind.id, val)}
                                 placeholder="Tambah catatan khusus (opsional)..."
-                                className="w-full bg-slate-50 border border-gray-150 hover:bg-white focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-150 rounded-xl px-3 py-1.5 text-[11px] font-medium text-slate-700 placeholder-slate-400 transition-all"
+                                rows={1}
                               />
                             </div>
                           </div>
@@ -443,15 +612,15 @@ export default function LdssAssessmentForm({
           </h5>
         </div>
 
-        <textarea
+        <AutosizeTextarea
+          id="general_notes"
           value={generalNotes}
-          onChange={(e) => {
-            setGeneralNotes(e.target.value);
+          onChange={(val) => {
+            setGeneralNotes(val);
             setSaveSuccess(false);
           }}
           placeholder="Tulis kesimpulan umum screening, observasi tambahan, atau rekomendasi program perkembangan untuk siswa di sini..."
           rows={4}
-          className="w-full bg-slate-50 border border-gray-150 hover:bg-white focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-150 rounded-2xl p-4 text-xs font-semibold text-slate-700 placeholder-slate-400 leading-relaxed transition-all"
         />
       </div>
 

@@ -9,6 +9,8 @@ import {
   Settings,
   Search,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   GraduationCap,
   Calendar,
   Sparkles,
@@ -285,9 +287,25 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
 
   const handleStudentSelect = (std: Student) => {
     setSelectedStudent(std);
-    setSelectedAge(null);
+    // Keep selectedAge if already set to allow quick consecutive assessment
     setStudentSearch("");
     setIsStudentDropdownOpen(false);
+  };
+
+  const handlePrevStudent = () => {
+    if (!selectedStudent || students.length <= 1) return;
+    const currentIndex = students.findIndex((s) => s.id === selectedStudent.id);
+    if (currentIndex === -1) return;
+    const prevIndex = (currentIndex - 1 + students.length) % students.length;
+    setSelectedStudent(students[prevIndex]);
+  };
+
+  const handleNextStudent = () => {
+    if (!selectedStudent || students.length <= 1) return;
+    const currentIndex = students.findIndex((s) => s.id === selectedStudent.id);
+    if (currentIndex === -1) return;
+    const nextIndex = (currentIndex + 1) % students.length;
+    setSelectedStudent(students[nextIndex]);
   };
 
   const handleAgeSelect = (age: LdssAge) => {
@@ -366,32 +384,56 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
             </AnimatePresence>
           </div>
 
-          {/* Dropdown 2: Pilih Siswa */}
+          {/* Dropdown 2: Pilih Siswa with navigation buttons */}
           <div ref={studentDropdownRef} className="relative space-y-1.5 text-left">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider ml-1">
               Pilih Siswa
             </label>
-            <button
-              type="button"
-              disabled={!selectedClass}
-              onClick={() => setIsStudentDropdownOpen(!isStudentDropdownOpen)}
-              className={`w-full px-4 py-3 bg-white border rounded-xl text-xs font-bold shadow-sm flex items-center justify-between transition-all h-[44px] ${
-                !selectedClass
-                  ? "bg-slate-50 border-gray-100 text-gray-400 cursor-not-allowed"
-                  : "border-gray-150 text-gray-800 hover:bg-slate-50 cursor-pointer focus:ring-2 focus:ring-indigo-100"
-              }`}
-            >
-              <span className="truncate">
-                {loadingStudents
-                  ? "Memuat Siswa..."
-                  : selectedStudent
-                  ? selectedStudent.name
-                  : !selectedClass
-                  ? "Pilih kelas terlebih dahulu"
-                  : "Pilih Siswa"}
-              </span>
-              <ChevronDown size={14} className="text-gray-400 shrink-0" />
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={!selectedStudent || students.length <= 1}
+                onClick={handlePrevStudent}
+                className={`p-2.5 bg-white border border-gray-150 rounded-xl text-gray-600 hover:bg-slate-50 hover:text-indigo-600 focus:ring-2 focus:ring-indigo-100 transition-all h-[44px] w-[44px] flex items-center justify-center shrink-0 shadow-sm cursor-pointer disabled:bg-slate-50 disabled:border-gray-100 disabled:text-gray-300 disabled:cursor-not-allowed`}
+                title="Siswa Sebelumnya"
+              >
+                <ChevronLeft size={16} className="stroke-[2.5]" />
+              </button>
+
+              <div className="flex-1 min-w-0">
+                <button
+                  type="button"
+                  disabled={!selectedClass}
+                  onClick={() => setIsStudentDropdownOpen(!isStudentDropdownOpen)}
+                  className={`w-full px-3.5 py-3 bg-white border rounded-xl text-xs font-bold shadow-sm flex items-center justify-between transition-all h-[44px] ${
+                    !selectedClass
+                      ? "bg-slate-50 border-gray-100 text-gray-400 cursor-not-allowed"
+                      : "border-gray-150 text-gray-800 hover:bg-slate-50 cursor-pointer focus:ring-2 focus:ring-indigo-100"
+                  }`}
+                >
+                  <span className="truncate">
+                    {loadingStudents
+                      ? "Memuat Siswa..."
+                      : selectedStudent
+                      ? selectedStudent.name
+                      : !selectedClass
+                      ? "Pilih kelas terlebih dahulu"
+                      : "Pilih Siswa"}
+                  </span>
+                  <ChevronDown size={14} className="text-gray-400 shrink-0" />
+                </button>
+              </div>
+
+              <button
+                type="button"
+                disabled={!selectedStudent || students.length <= 1}
+                onClick={handleNextStudent}
+                className={`p-2.5 bg-white border border-gray-150 rounded-xl text-gray-600 hover:bg-slate-50 hover:text-indigo-600 focus:ring-2 focus:ring-indigo-100 transition-all h-[44px] w-[44px] flex items-center justify-center shrink-0 shadow-sm cursor-pointer disabled:bg-slate-50 disabled:border-gray-100 disabled:text-gray-300 disabled:cursor-not-allowed`}
+                title="Siswa Berikutnya"
+              >
+                <ChevronRight size={16} className="stroke-[2.5]" />
+              </button>
+            </div>
 
             {/* Float Portal Dropdown with Search, Max Height & Internal Scroll */}
             <AnimatePresence>
