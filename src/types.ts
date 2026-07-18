@@ -1659,5 +1659,22 @@ export type LdssTemplate = {
   publishedAt?: string;
 };
 
+export type LdssAssessment = {
+  id: string;
+  studentId: string;
+  studentName: string;
+  classId: string;
+  academicYear: string;
+  age: LdssAge;
+  templateId: string;
+  scores: Record<string, "YA" | "TIDAK" | null>;
+  notes: Record<string, string>;
+  generalNotes?: string;
+  assessedBy: string;
+  assessedAt: string;
+  updatedAt: string;
+};
+
+
 
 

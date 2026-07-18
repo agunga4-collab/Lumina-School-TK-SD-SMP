@@ -10,7 +10,7 @@ import {
   runTransaction
 } from "firebase/firestore";
 import { db, handleFirestoreError } from "../lib/firebase";
-import { LdssTemplate, LdssAge, LdssTemplateStatus } from "../types";
+import { LdssTemplate, LdssAge, LdssTemplateStatus, LdssAssessment } from "../types";
 
 const COLLECTION_NAME = "ldssTemplates";
 
@@ -515,6 +515,68 @@ export async function seedLdssTemplateAge12(email: string, seedDomains: any[]): 
       throw error;
     }
     handleFirestoreError(error, "write", `${COLLECTION_NAME}/${seedTemplateId}/seed`);
+    throw error;
+  }
+}
+
+/**
+ * Fetch the active template for a specific age
+ */
+export async function getActiveLdssTemplateForAge(age: LdssAge): Promise<LdssTemplate | null> {
+  try {
+    const q = query(
+      collection(db, COLLECTION_NAME), 
+      where("age", "==", age),
+      where("status", "==", "active")
+    );
+    const querySnapshot = await getDocs(q);
+    if (querySnapshot.empty) {
+      return null;
+    }
+    let activeTemplate: LdssTemplate | null = null;
+    querySnapshot.forEach((docSnap) => {
+      activeTemplate = { id: docSnap.id, ...docSnap.data() } as LdssTemplate;
+    });
+    return activeTemplate;
+  } catch (error) {
+    console.error(`Failed to get active template for age ${age}:`, error);
+    return null;
+  }
+}
+
+const ASSESSMENT_COLLECTION = "ldssAssessments";
+
+/**
+ * Fetch a student's LDSS assessment for a specific age and academic year
+ */
+export async function getLdssAssessment(
+  studentId: string,
+  age: LdssAge,
+  academicYear: string
+): Promise<LdssAssessment | null> {
+  try {
+    const docId = `${studentId}_${age}_${academicYear.replace("/", "-")}`;
+    const docRef = doc(db, ASSESSMENT_COLLECTION, docId);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      return { id: docSnap.id, ...docSnap.data() } as LdssAssessment;
+    }
+    return null;
+  } catch (error) {
+    console.error(`Failed to get LDSS assessment for student ${studentId}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Save or update an LDSS assessment record
+ */
+export async function saveLdssAssessment(assessment: LdssAssessment): Promise<void> {
+  try {
+    const docRef = doc(db, ASSESSMENT_COLLECTION, assessment.id);
+    await setDoc(docRef, assessment);
+  } catch (error) {
+    handleFirestoreError(error, "write", `${ASSESSMENT_COLLECTION}/${assessment.id}`);
     throw error;
   }
 }

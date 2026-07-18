@@ -498,5 +498,9 @@ service cloud.firestore {
       allow read: if isActive() || isAdmin();
       allow write: if isAdmin() || (currentUserExists() && userRole() == 'HEAD_UNIT');
     }
+
+    match /ldssAssessments/{assessmentId} {
+      allow read, write: if isSignedIn() && (isActive() || isAdmin());
+    }
   }
 }

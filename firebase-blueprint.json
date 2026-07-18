@@ -627,6 +627,27 @@
         "publishedAt": { "type": "string" }
       },
       "required": ["id", "age", "version", "status", "domains", "createdAt", "updatedAt"]
+    },
+    "LdssAssessment": {
+      "title": "LdssAssessment",
+      "description": "Student results/scores for LDSS screening.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "classId": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "age": { "type": "number", "minimum": 6, "maximum": 12 },
+        "templateId": { "type": "string" },
+        "scores": { "type": "object" },
+        "notes": { "type": "object" },
+        "generalNotes": { "type": "string" },
+        "assessedBy": { "type": "string" },
+        "assessedAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "studentId", "studentName", "classId", "academicYear", "age", "templateId", "scores", "notes", "assessedBy", "assessedAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -797,6 +818,10 @@
     "ldssTemplates/{templateId}": {
       "schema": "LdssTemplate",
       "description": "LDSS instrument templates."
+    },
+    "ldssAssessments/{assessmentId}": {
+      "schema": "LdssAssessment",
+      "description": "LDSS student screening records and scores."
     }
   }
 }

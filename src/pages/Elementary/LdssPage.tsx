@@ -32,6 +32,7 @@ import { SEED_DOMAINS_USIA_10 } from "../../data/ldssSeedData10";
 import { SEED_DOMAINS_USIA_11 } from "../../data/ldssSeedData11";
 import { SEED_DOMAINS_USIA_12 } from "../../data/ldssSeedData12";
 import LdssTemplateEditor from "../../components/Elementary/LdssTemplateEditor";
+import LdssAssessmentForm from "../../components/Elementary/LdssAssessmentForm";
 
 export default function LdssPage() {
   const { profile } = useAuth();
@@ -514,32 +515,19 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
         <AnimatePresence mode="wait">
           {selectedClass && selectedStudent && selectedAge ? (
             <motion.div
-              key="ldss-filled-placeholder"
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              transition={{ duration: 0.2 }}
-              className="bg-white rounded-3xl border border-gray-150 p-8 shadow-sm flex flex-col items-center justify-center text-center space-y-6 max-w-2xl mx-auto"
+              key="ldss-filled-form"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.25 }}
+              className="w-full"
             >
-              <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600">
-                <Activity size={32} />
-              </div>
-              <div className="space-y-2">
-                <h4 className="text-base font-black text-gray-900 tracking-tight">
-                  Instrumen LDSS Usia {selectedAge} Tahun
-                </h4>
-                <p className="text-xs text-slate-500 font-medium max-w-md mx-auto">
-                  Instrumen asesmen Lazuardi Developmental Screening System untuk{" "}
-                  <span className="font-bold text-indigo-600">{selectedStudent.name}</span> ({selectedClass.name}){" "}
-                  akan ditampilkan di sini setelah konfigurasi indikator selesai.
-                </p>
-              </div>
-
-              {/* Status Badge */}
-              <div className="inline-flex items-center gap-1.5 bg-yellow-50 text-yellow-700 border border-yellow-100 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider shadow-sm">
-                <Sparkles size={13} className="text-yellow-600 animate-pulse" />
-                <span>Tahap berikutnya: Pengisian indikator</span>
-              </div>
+              <LdssAssessmentForm
+                student={selectedStudent}
+                classInfo={selectedClass}
+                age={selectedAge}
+                academicYear={activeYear}
+              />
             </motion.div>
           ) : (
             <motion.div
