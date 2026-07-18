@@ -23,8 +23,14 @@ import {
   Loader2
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { getAllLdssTemplates, seedLdssTemplateAge6 } from "../../services/ldssTemplateService";
+import { getAllLdssTemplates, seedLdssTemplateAge6, seedLdssTemplateAge7, seedLdssTemplateAge8, seedLdssTemplateAge9, seedLdssTemplateAge10, seedLdssTemplateAge11, seedLdssTemplateAge12 } from "../../services/ldssTemplateService";
 import { SEED_DOMAINS_USIA_6 } from "../../data/ldssSeedData6";
+import { SEED_DOMAINS_USIA_7 } from "../../data/ldssSeedData7";
+import { SEED_DOMAINS_USIA_8 } from "../../data/ldssSeedData8";
+import { SEED_DOMAINS_USIA_9 } from "../../data/ldssSeedData9";
+import { SEED_DOMAINS_USIA_10 } from "../../data/ldssSeedData10";
+import { SEED_DOMAINS_USIA_11 } from "../../data/ldssSeedData11";
+import { SEED_DOMAINS_USIA_12 } from "../../data/ldssSeedData12";
 import LdssTemplateEditor from "../../components/Elementary/LdssTemplateEditor";
 
 export default function LdssPage() {
@@ -570,6 +576,7 @@ function LdssSettingsShell() {
   const [templates, setTemplates] = React.useState<LdssTemplate[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [showSeedModal, setShowSeedModal] = React.useState(false);
+  const [seedAge, setSeedAge] = React.useState<LdssAge | null>(null);
   const [seeding, setSeeding] = React.useState(false);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
 
@@ -587,16 +594,34 @@ function LdssSettingsShell() {
     loadTemplates();
   }, []);
 
-  const handleSeedClick = () => {
+  const handleSeedClick = (ageToSeed: LdssAge) => {
     setErrorMessage(null);
+    setSeedAge(ageToSeed);
     setShowSeedModal(true);
   };
 
   const executeSeed = async () => {
+    if (!seedAge) return;
     setSeeding(true);
     setErrorMessage(null);
     try {
-      await seedLdssTemplateAge6(userEmail, SEED_DOMAINS_USIA_6);
+      if (seedAge === 6) {
+        await seedLdssTemplateAge6(userEmail, SEED_DOMAINS_USIA_6);
+      } else if (seedAge === 7) {
+        await seedLdssTemplateAge7(userEmail, SEED_DOMAINS_USIA_7);
+      } else if (seedAge === 8) {
+        await seedLdssTemplateAge8(userEmail, SEED_DOMAINS_USIA_8);
+      } else if (seedAge === 9) {
+        await seedLdssTemplateAge9(userEmail, SEED_DOMAINS_USIA_9);
+      } else if (seedAge === 10) {
+        await seedLdssTemplateAge10(userEmail, SEED_DOMAINS_USIA_10);
+      } else if (seedAge === 11) {
+        await seedLdssTemplateAge11(userEmail, SEED_DOMAINS_USIA_11);
+      } else if (seedAge === 12) {
+        await seedLdssTemplateAge12(userEmail, SEED_DOMAINS_USIA_12);
+      } else {
+        throw new Error("Seeding tidak didukung untuk usia " + seedAge);
+      }
       
       // Store flag for toast on next screen
       sessionStorage.setItem("ldss_seed_success", "true");
@@ -604,8 +629,8 @@ function LdssSettingsShell() {
       // Close modal
       setShowSeedModal(false);
       
-      // Navigate directly to Usia 6 template editor
-      navigate(`/elementary/ldss/settings/6`);
+      // Navigate directly to the template editor
+      navigate(`/elementary/ldss/settings/${seedAge}`);
     } catch (err: any) {
       console.error("Error during template seeding:", err);
       setErrorMessage(err?.message || "Gagal memuat template resmi. Silakan coba kembali.");
@@ -707,6 +732,10 @@ function LdssSettingsShell() {
                       <p className="text-[11px] text-indigo-600 font-bold leading-relaxed">
                         Tersedia opsi memuat draft instrumen standar dengan 15 domain dan 75 indikator, atau buat baru dari awal.
                       </p>
+                    ) : age === 7 || age === 8 || age === 9 || age === 10 || age === 11 || age === 12 ? (
+                      <p className="text-[11px] text-indigo-600 font-bold leading-relaxed">
+                        Membuat draft instrumen 15 domain dan 75 indikator.
+                      </p>
                     ) : (
                       <p className="text-[11px] text-slate-400 font-semibold leading-relaxed">
                         Belum ada instrumen yang ditambahkan untuk anak usia {age} tahun.
@@ -717,13 +746,13 @@ function LdssSettingsShell() {
               </div>
 
               {/* Action button */}
-              {age === 6 && !hasTemplate ? (
+              {(age === 6 || age === 7 || age === 8 || age === 9 || age === 10 || age === 11 || age === 12) && !hasTemplate ? (
                 <div className="flex flex-col gap-1.5 w-full pt-1">
                   <button
-                    onClick={handleSeedClick}
+                    onClick={() => handleSeedClick(age)}
                     className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black border transition-all cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-650 shadow-sm"
                   >
-                    <span>Muat Template Resmi Usia 6</span>
+                    <span>Muat Template Resmi Usia {age}</span>
                     <Sparkles size={12} className="shrink-0 text-emerald-100" />
                   </button>
                   <button
@@ -777,7 +806,7 @@ function LdssSettingsShell() {
                   <Sparkles size={20} />
                 </div>
                 <h4 className="text-base font-black text-gray-900 tracking-tight">
-                  Muat Template LDSS Usia 6?
+                  Muat Template LDSS Usia {seedAge}?
                 </h4>
               </div>
 

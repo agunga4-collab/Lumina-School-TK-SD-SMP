@@ -32,6 +32,12 @@ import {
 } from "../../services/ldssTemplateService";
 import { LdssTemplate, LdssAge, LdssDomain, LdssIndicator } from "../../types";
 import { SEED_DOMAINS_USIA_6 } from "../../data/ldssSeedData6";
+import { SEED_DOMAINS_USIA_7 } from "../../data/ldssSeedData7";
+import { SEED_DOMAINS_USIA_8 } from "../../data/ldssSeedData8";
+import { SEED_DOMAINS_USIA_9 } from "../../data/ldssSeedData9";
+import { SEED_DOMAINS_USIA_10 } from "../../data/ldssSeedData10";
+import { SEED_DOMAINS_USIA_11 } from "../../data/ldssSeedData11";
+import { SEED_DOMAINS_USIA_12 } from "../../data/ldssSeedData12";
 
 interface LdssTemplateEditorProps {
   age: LdssAge;
@@ -73,7 +79,7 @@ export default function LdssTemplateEditor({ age }: LdssTemplateEditorProps) {
 
   // Modal / Confirm States
   const [confirmModal, setConfirmModal] = React.useState<{
-    type: "delete_domain" | "delete_indicator" | "archive" | "activate" | "leave";
+    type: "delete_domain" | "delete_indicator" | "archive" | "activate" | "leave" | "load_official_confirm";
     targetId?: string; // domainId or indicatorId
     parentId?: string; // domainId for indicator
     title: string;
@@ -167,15 +173,28 @@ export default function LdssTemplateEditor({ age }: LdssTemplateEditorProps) {
     setHasUnsavedChanges(true);
   };
 
-  // Load official template draft for Age 6
+  // Load official template draft for Age 6, 7, 8, 9, 10, 11, or 12
   const handleLoadOfficialTemplate = () => {
-    if (age !== 6) return;
+    if (age !== 6 && age !== 7 && age !== 8 && age !== 9 && age !== 10 && age !== 11 && age !== 12) return;
+    const seedDomains = age === 6 
+      ? SEED_DOMAINS_USIA_6 
+      : age === 7 
+        ? SEED_DOMAINS_USIA_7 
+        : age === 8
+          ? SEED_DOMAINS_USIA_8
+          : age === 9
+            ? SEED_DOMAINS_USIA_9
+            : age === 10
+              ? SEED_DOMAINS_USIA_10
+              : age === 11
+                ? SEED_DOMAINS_USIA_11
+                : SEED_DOMAINS_USIA_12;
     const officialTemplate: LdssTemplate = {
-      id: "template_6_official_" + Date.now(),
-      age: 6,
+      id: `template_${age}_official_` + Date.now(),
+      age: age,
       version: "v1.0",
       status: "draft",
-      domains: JSON.parse(JSON.stringify(SEED_DOMAINS_USIA_6)),
+      domains: JSON.parse(JSON.stringify(seedDomains)),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       createdBy: userEmail
@@ -187,10 +206,18 @@ export default function LdssTemplateEditor({ age }: LdssTemplateEditorProps) {
 
     // Expand all domains initially for easier viewing and custom editing
     const expanded: Record<string, boolean> = {};
-    SEED_DOMAINS_USIA_6.forEach(d => {
+    seedDomains.forEach(d => {
       expanded[d.id] = true;
     });
     setExpandedDomains(expanded);
+  };
+
+  const confirmLoadOfficialTemplate = () => {
+    setConfirmModal({
+      type: "load_official_confirm",
+      title: "Muat Template Resmi?",
+      message: `Apakah Anda yakin ingin memuat template resmi bawaan untuk Usia ${age} Tahun? Tindakan ini akan menimpa/mengganti seluruh domain dan indikator yang ada saat ini di draf ini.`,
+    });
   };
 
   // Helper to update selected template domains with unsaved state tracking
@@ -723,13 +750,13 @@ export default function LdssTemplateEditor({ age }: LdssTemplateEditorProps) {
           </div>
           <div className="space-y-0.5">
             <p className="text-xs font-black">Berhasil Memuat Template</p>
-            <p className="text-[11px] font-medium text-emerald-600">Template LDSS Usia 6 v1.0 berhasil dibuat sebagai draft.</p>
+            <p className="text-[11px] font-medium text-emerald-600">Template LDSS Usia {age} v1.0 berhasil dibuat sebagai draft.</p>
           </div>
         </div>
       )}
 
-      {/* Usia 6 Specific Info Banner and Summary Chips */}
-      {age === 6 && selectedTemplate && (
+      {/* Specific Info Banner and Summary Chips */}
+      {(age === 6 || age === 7 || age === 8 || age === 9 || age === 10 || age === 11 || age === 12) && selectedTemplate && (
         <div className="bg-gradient-to-r from-indigo-50/40 to-indigo-50/10 border border-indigo-100 rounded-3xl p-5 text-left space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-start gap-3">
@@ -737,7 +764,7 @@ export default function LdssTemplateEditor({ age }: LdssTemplateEditorProps) {
                 <Info size={16} />
               </div>
               <div className="space-y-1">
-                <h4 className="text-xs font-black text-gray-900 tracking-tight">Instrumen Screening Resmi Usia 6 Tahun</h4>
+                <h4 className="text-xs font-black text-gray-900 tracking-tight">Instrumen Screening Resmi Usia {age} Tahun</h4>
                 <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
                   Tinjau seluruh indikator sebelum mengaktifkan template. Pengisian oleh guru akan tersedia setelah template aktif.
                 </p>
@@ -937,7 +964,7 @@ export default function LdssTemplateEditor({ age }: LdssTemplateEditorProps) {
                   <Plus size={14} />
                   <span>Buat dari Kosong</span>
                 </button>
-                {age === 6 && (
+                {(age === 6 || age === 7 || age === 8 || age === 9 || age === 10 || age === 11 || age === 12) && (
                   <button
                     onClick={handleLoadOfficialTemplate}
                     className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl transition-all shadow-sm cursor-pointer"
@@ -960,13 +987,24 @@ export default function LdssTemplateEditor({ age }: LdssTemplateEditorProps) {
                 </h3>
 
                 {!isReadOnly && (
-                  <button
-                    onClick={handleAddDomain}
-                    className="flex items-center gap-1 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100/70 text-indigo-700 px-3.5 py-2 rounded-xl text-xs font-black transition-all shadow-sm cursor-pointer"
-                  >
-                    <Plus size={14} />
-                    <span>Tambah Domain</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {(age === 6 || age === 7 || age === 8 || age === 9 || age === 10 || age === 11 || age === 12) && (
+                      <button
+                        onClick={confirmLoadOfficialTemplate}
+                        className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-150 hover:bg-emerald-100/70 text-emerald-700 px-3.5 py-2 rounded-xl text-xs font-black transition-all shadow-sm cursor-pointer"
+                      >
+                        <Sparkles size={13} className="text-emerald-650 shrink-0" />
+                        <span>Muat Template Resmi</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={handleAddDomain}
+                      className="flex items-center gap-1 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100/70 text-indigo-700 px-3.5 py-2 rounded-xl text-xs font-black transition-all shadow-sm cursor-pointer"
+                    >
+                      <Plus size={14} />
+                      <span>Tambah Domain</span>
+                    </button>
+                  </div>
                 )}
               </div>
 
@@ -974,16 +1012,27 @@ export default function LdssTemplateEditor({ age }: LdssTemplateEditorProps) {
                 /* No domains yet */
                 <div className="bg-white border border-gray-150 rounded-3xl p-12 text-center flex flex-col items-center justify-center space-y-4">
                   <p className="text-xs text-slate-400 font-bold max-w-sm leading-relaxed">
-                    Belum ada domain instrumen. Tambahkan domain utama untuk mengelompokkan indikator screening perkembangan.
+                    Belum ada domain instrumen. Silakan muat template resmi atau tambahkan domain utama secara manual untuk mengelompokkan indikator screening perkembangan.
                   </p>
                   {!isReadOnly && (
-                    <button
-                      onClick={handleAddDomain}
-                      className="flex items-center gap-1.5 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-xl transition-all shadow-sm cursor-pointer"
-                    >
-                      <Plus size={14} />
-                      <span>Tambah Domain Pertama</span>
-                    </button>
+                    <div className="flex flex-col sm:flex-row items-center justify-center gap-3 w-full max-w-md">
+                      {(age === 6 || age === 7 || age === 8 || age === 9 || age === 10 || age === 11 || age === 12) && (
+                        <button
+                          onClick={confirmLoadOfficialTemplate}
+                          className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl transition-all shadow-sm cursor-pointer"
+                        >
+                          <Sparkles size={14} className="text-emerald-100 shrink-0" />
+                          <span>Muat Template Resmi</span>
+                        </button>
+                      )}
+                      <button
+                        onClick={handleAddDomain}
+                        className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 bg-white border border-gray-200 hover:bg-slate-50 text-gray-700 text-xs font-black rounded-xl transition-all shadow-sm cursor-pointer"
+                      >
+                        <Plus size={14} />
+                        <span>Tambah Domain Manual</span>
+                      </button>
+                    </div>
                   )}
                 </div>
               ) : (
@@ -1252,6 +1301,9 @@ export default function LdssTemplateEditor({ age }: LdssTemplateEditorProps) {
                       executeActivateTemplate();
                     } else if (confirmModal.type === "archive") {
                       executeArchiveTemplate();
+                    } else if (confirmModal.type === "load_official_confirm") {
+                      handleLoadOfficialTemplate();
+                      setConfirmModal(null);
                     }
                   }}
                   className={`px-4 py-2.5 text-xs font-black rounded-xl transition-all shadow-sm cursor-pointer text-white ${
@@ -1259,6 +1311,8 @@ export default function LdssTemplateEditor({ age }: LdssTemplateEditorProps) {
                       ? "bg-rose-600 hover:bg-rose-700"
                       : confirmModal.type === "leave"
                       ? "bg-amber-500 hover:bg-amber-600"
+                      : confirmModal.type === "load_official_confirm"
+                      ? "bg-emerald-600 hover:bg-emerald-700"
                       : "bg-indigo-600 hover:bg-indigo-700"
                   }`}
                 >
