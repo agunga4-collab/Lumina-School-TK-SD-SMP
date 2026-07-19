@@ -50,6 +50,12 @@ service cloud.firestore {
       ];
     }
 
+    function isJHConferenceStaff() {
+      return isActive() && userRole() in [
+        'SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR'
+      ];
+    }
+
     function isMTSSAcademicManager() {
       return isActive() && userRole() in [
         'HEAD_UNIT', 'HEAD_JUNIOR', 'MTSS_ACADEMIC_PJ', 'SUPER_ADMIN'
@@ -95,6 +101,12 @@ service cloud.firestore {
           )
         )
       );
+    }
+
+    function isOwnStudentData(studentId) {
+      return isStudent() && studentId is string && currentUserExists() &&
+        ('luminaId' in currentUser()) &&
+        currentUser().luminaId == studentId;
     }
 
     function incoming() {
@@ -501,6 +513,38 @@ service cloud.firestore {
 
     match /ldssAssessments/{assessmentId} {
       allow read, write: if isSignedIn() && (isActive() || isAdmin());
+    }
+
+    match /conferencePeriods/{periodId} {
+      allow read: if isSignedIn() && isActive();
+      allow write: if isAdmin();
+    }
+
+    match /studentConferenceResponses/{responseId} {
+      allow read: if isActive() && (isJuniorHighStaff() || isOwnStudentData(existing().studentId) || isLinkedStudent(existing().studentId));
+      allow create: if isActive() && (isOwnStudentData(incoming().studentId) || isJuniorHighStaff());
+      allow update: if isActive() && (isOwnStudentData(existing().studentId) || isJuniorHighStaff());
+      allow delete: if isActive() && (isOwnStudentData(existing().studentId) || isJuniorHighStaff());
+    }
+
+    match /mentorAssignments/{assignmentId} {
+      allow read: if isActive() && (
+        isJHConferenceStaff() || 
+        (resource != null && isOwnStudentData(existing().studentId))
+      );
+      allow create: if isJHConferenceStaff() && 
+        incoming().studentId is string && 
+        incoming().periodId is string;
+      allow update: if isJHConferenceStaff() && 
+        incoming().studentId == existing().studentId && 
+        incoming().periodId == existing().periodId;
+    }
+
+    match /smartGoalTrackerEntries/{entryId} {
+      allow read: if isActive() && (isJuniorHighStaff() || isOwnStudentData(existing().studentId) || isLinkedStudent(existing().studentId));
+      allow create: if isActive() && (isOwnStudentData(incoming().studentId) || isJuniorHighStaff());
+      allow update: if isActive() && (isOwnStudentData(existing().studentId) || isJuniorHighStaff());
+      allow delete: if isActive() && (isOwnStudentData(existing().studentId) || isJuniorHighStaff());
     }
   }
 }

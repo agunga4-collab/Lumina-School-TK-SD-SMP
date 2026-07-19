@@ -1675,6 +1675,124 @@ export type LdssAssessment = {
   updatedAt: string;
 };
 
+// --- Three-Way Conference & SMART Goal Tracker Types ---
+export type ConferenceGoalStrand = 'SPIRITUAL' | 'IMAGINAL' | 'RATIONAL' | 'MATERIAL_PHYSICAL';
+
+export type ConferenceGoalStatus = 'DRAFT' | 'ACTIVE' | 'COMPLETED' | 'ARCHIVED';
+
+export interface ConferencePeriod {
+  id: string;
+  academicYear: string;
+  semester: 1 | 2;
+  label: string;
+  status: 'DRAFT' | 'OPEN' | 'CLOSED' | 'ARCHIVED';
+  goalSettingOpenDate: number | null;
+  goalSettingCloseDate: number | null;
+  trackerOpenDate: number | null;
+  trackerCloseDate: number | null;
+  createdAt: number;
+  updatedAt: number;
+  createdBy: string;
+  updatedBy: string;
+}
+
+export interface SmartGoal {
+  id: string;
+  strand: ConferenceGoalStrand;
+  goal: string;
+  smartSpecific: string;
+  smartMeasurable: string;
+  smartAchievable: string;
+  smartRelevant: string;
+  smartTimeBound: string;
+  actions: string;
+  evidence: string;
+  startDate: number | null;
+  targetDate: number | null;
+  status: ConferenceGoalStatus;
+  order: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface StudentConferenceResponse {
+  id: string; // ${periodId}_${studentId}
+  periodId: string;
+  studentId: string;
+  studentName: string;
+  studentLuminaId: string;
+  classId: string;
+  className: string;
+  gradeLevel: number;
+  academicYear: string;
+  semester: 1 | 2;
+  status: 'DRAFT' | 'SUBMITTED' | 'CONFERENCE_COMPLETED';
+  aboutMe: string;
+  strengths: string;
+  areasForGrowth: string;
+  goals: SmartGoal[];
+  selfExplorationReferenceId: string | null;
+  selfExplorationSnapshot?: any;
+  karyaIlmiahReferenceId: string | null;
+  unitActivity?: string;
+  createdAt: number;
+  updatedAt: number;
+  submittedAt?: number | null;
+  submittedBy?: string | null;
+}
+
+export interface MentorAssignment {
+  id: string; // ${periodId}_${studentId}
+  periodId: string;
+  academicYear: string;
+  semester: 1 | 2;
+  studentId: string;
+  studentName: string;
+  classId: string;
+  className: string;
+  mentorId: string;
+  mentorName: string;
+  mentorEmail: string;
+  status: 'ACTIVE' | 'REASSIGNED' | 'REMOVED';
+  assignedBy: string;
+  assignedByName: string;
+  assignedAt: number;
+  updatedBy?: string | null;
+  updatedAt?: number | null;
+  previousMentorId: string | null;
+  reassignmentReason: string | null;
+  assignmentHistory?: Array<{
+    mentorId: string | null;
+    mentorName: string | null;
+    mentorEmail: string | null;
+    action: 'ASSIGNED' | 'REASSIGNED' | 'REMOVED';
+    actionBy: string;
+    actionByName: string;
+    actionAt: number;
+    reason: string | null;
+  }>;
+}
+
+export interface SmartGoalTrackerEntry {
+  id: string;
+  periodId: string;
+  studentId: string;
+  goalId: string;
+  goalStrand: ConferenceGoalStrand;
+  goalSnapshot: SmartGoal;
+  entryDate: number;
+  actionsTaken: string;
+  progressMade: string;
+  hinderingBehaviors: string;
+  improvementPlan: string;
+  mentorComment: string | null;
+  commentedBy: string | null;
+  commentedByName: string | null;
+  commentedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
 
 
 

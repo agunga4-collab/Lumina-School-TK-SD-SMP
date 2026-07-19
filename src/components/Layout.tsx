@@ -4,7 +4,7 @@ import {
   Map as MapIcon, Smile, Camera, History, Heart, CheckSquare, BookOpen, 
   Eye, Clock, ShieldAlert, ShieldCheck, ClipboardList, ClipboardCheck, Target, Mail, RefreshCw,
   Baby, TrendingUp, Folder, BarChart3, FileText, Sparkles, Settings, GraduationCap, User, Users,
-  Menu, X
+  Menu, X, Presentation
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, Navigate, useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -505,6 +505,9 @@ export function Layout() {
                 <>
                   <NavItem to="/student/dashboard" icon={<Home size={18} />} label="Dashboard Siswa" />
                   <NavItem to="/self-exploration/my" icon={<Sparkles size={18} />} label="Self Exploration" />
+                  <NavItem to="/student/goal-setting" icon={<Target size={18} />} label="Goal Setting" />
+                  <NavItem to="/student/my-presentation" icon={<Presentation size={18} />} label="My Presentation" />
+                  <NavItem to="/student/smart-goal-tracker" icon={<TrendingUp size={18} />} label="SMART Goal Tracker" />
                   <NavItem to="/student/reports" icon={<FileText size={18} />} label="Rapor Saya" />
                 </>
              ) : currentUser.role === 'PARENT' ? (
@@ -579,6 +582,15 @@ export function Layout() {
                   <NavItem to="/self-exploration" icon={<Sparkles size={18} />} label="Self-Exploration" />
                   <NavItem to="/junior-high/behavior/mtss/overview" icon={<ShieldAlert size={18} />} label="MTSS Behavior" />
                   <NavItem to="/junior-high/academic/mtss/overview" icon={<GraduationCap size={18} />} label="MTSS Academic" />
+                  {['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR'].includes(currentUser.role) && (
+                    <>
+                      <NavItem to="/junior-high/conference/workspace" icon={<Users size={18} />} label="3-Way Conf Workspace" />
+                      <NavItem to="/junior-high/conference/tracker" icon={<TrendingUp size={18} />} label="SMART Goal Tracker" />
+                    </>
+                  )}
+                  {currentUser.role === 'SUPER_ADMIN' && (
+                    <NavItem to="/junior-high/conference/admin" icon={<Settings size={18} />} label="3-Way Conf Settings" />
+                  )}
                 </div>
               )}
             </>

@@ -48,6 +48,8 @@ import LiteracyInput from './pages/LiteracyNumeracy/LiteracyInput';
 import LiteracyRecap from './pages/LiteracyNumeracy/LiteracyRecap';
 import ElementaryLiteracyNumeracy from './pages/Elementary/LiteracyNumeracy';
 import JuniorHighLiteracyNumeracy from './pages/JuniorHigh/LiteracyNumeracy';
+import ConferencePeriodManagement from './pages/JuniorHigh/ThreeWayConference/ConferencePeriodManagement';
+import TeacherConferenceWorkspace from './pages/JuniorHigh/ThreeWayConference/TeacherConferenceWorkspace';
 import ElementaryLiteracyInputPage from './pages/Elementary/ElementaryLiteracyInputPage';
 import MTSSAcademicDashboard from './pages/Elementary/MTSSAcademicDashboard';
 import LdssPage from './pages/Elementary/LdssPage';
@@ -92,6 +94,10 @@ import { LGBackupTestButton } from './components/Admin/LGBackupTestButton';
 
 import StudentDashboard from './pages/Student/StudentDashboard';
 import StudentReports from './pages/Student/StudentReports';
+import StudentGoalSettingPage from './pages/Student/StudentGoalSettingPage';
+import StudentMyPresentationPage from './pages/Student/StudentMyPresentationPage';
+import StudentSmartGoalTrackerPage from './pages/Student/StudentSmartGoalTrackerPage';
+import StaffSmartGoalTrackerPage from './pages/JuniorHigh/ThreeWayConference/StaffSmartGoalTrackerPage';
 import ParentDashboard from './pages/Parent/ParentDashboard';
 import ParentReports from './pages/Parent/ParentReports';
 import ParentStudents from './pages/Parent/ParentStudents';
@@ -343,6 +349,23 @@ export default function App() {
           </Route>
           <Route path="junior-high">
             <Route path="literasi-numerasi" element={<JuniorHighLiteracyNumeracy />} />
+            <Route path="conference/admin" element={
+              <RoleGuard roles={['SUPER_ADMIN']}>
+                <ConferencePeriodManagement />
+              </RoleGuard>
+            } />
+            <Route path="conference/workspace" element={
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR']}>
+                <TeacherConferenceWorkspace />
+              </RoleGuard>
+            } />
+            <Route path="conference/tracker" element={
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR']}>
+                <StaffSmartGoalTrackerPage />
+              </RoleGuard>
+            } />
+            <Route path="three-way-conference/settings" element={<Navigate to="/junior-high/conference/admin" replace />} />
+            <Route path="three-way-conference/workspace" element={<Navigate to="/junior-high/conference/workspace" replace />} />
             <Route path="behavior/mtss" element={
               <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER']}>
                 <MTSSBehaviorLayout />
@@ -424,6 +447,30 @@ export default function App() {
                 element={
                   <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
                     <StudentDashboard />
+                  </RoleGuard>
+                } 
+             />
+             <Route 
+                path="goal-setting" 
+                element={
+                  <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
+                    <StudentGoalSettingPage />
+                  </RoleGuard>
+                } 
+             />
+             <Route 
+                path="my-presentation" 
+                element={
+                  <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
+                    <StudentMyPresentationPage />
+                  </RoleGuard>
+                } 
+             />
+             <Route 
+                path="smart-goal-tracker" 
+                element={
+                  <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
+                    <StudentSmartGoalTrackerPage />
                   </RoleGuard>
                 } 
              />

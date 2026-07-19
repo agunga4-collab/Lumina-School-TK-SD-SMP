@@ -951,6 +951,8 @@ export default function SuperAdminPage() {
   const [promotionTargetClassId, setPromotionTargetClassId] = React.useState("");
   const [promotionSelectedStudentIds, setPromotionSelectedStudentIds] = React.useState<string[]>([]);
   const [isPromoting, setIsPromoting] = React.useState(false);
+  const [promotionSearchQuery, setPromotionSearchQuery] = React.useState("");
+  const [promotionSortOrder, setPromotionSortOrder] = React.useState<"asc" | "desc">("asc");
 
   // Class Form State
   const [classFormData, setClassFormData] = React.useState({
@@ -1340,10 +1342,71 @@ export default function SuperAdminPage() {
     });
   }, [invites, promotionSourceClassIds, classes, allEnrollments, promotionSourceYear]);
 
-  // Set all source students as selected by default when source classes change
+  // Get detailed promotion status of a student for the target year
+  const getStudentPromotionInfo = React.useCallback((s: any) => {
+    // Check if student has an enrollment in the target academic year
+    const targetEnrollment = allEnrollments.find(e => 
+      e.academicYear === promotionTargetYear && 
+      (
+        (s.luminaId && e.studentId === s.luminaId) || 
+        e.studentId === s.id
+      )
+    );
+
+    if (targetEnrollment) {
+      const targetClassObj = classes.find(c => c.id === targetEnrollment.classId);
+      return {
+        isPromoted: true,
+        className: targetClassObj ? targetClassObj.name : "Kelas tidak dikenal"
+      };
+    }
+
+    // Check if the current invite's active class belongs to the target academic year
+    const currentClass = classes.find(c => c.id === s.classId);
+    if (currentClass && currentClass.academicYear === promotionTargetYear) {
+      return {
+        isPromoted: true,
+        className: currentClass.name
+      };
+    }
+
+    return { isPromoted: false, className: "" };
+  }, [allEnrollments, promotionTargetYear, classes]);
+
+  // Filtered and Sorted Source Students for display in Step 3
+  const processedSourceStudents = React.useMemo(() => {
+    let result = [...sourceStudents];
+
+    // Search filter
+    if (promotionSearchQuery.trim()) {
+      const q = promotionSearchQuery.toLowerCase().trim();
+      result = result.filter(s => 
+        (s.name || "").toLowerCase().includes(q) || 
+        (s.luminaId || "").toLowerCase().includes(q) || 
+        (s.email || "").toLowerCase().includes(q)
+      );
+    }
+
+    // Sort order
+    result.sort((a, b) => {
+      const nameA = a.name || "";
+      const nameB = b.name || "";
+      if (promotionSortOrder === "asc") {
+        return nameA.localeCompare(nameB);
+      } else {
+        return nameB.localeCompare(nameA);
+      }
+    });
+
+    return result;
+  }, [sourceStudents, promotionSearchQuery, promotionSortOrder]);
+
+  // Set all eligible (unpromoted) source students as selected by default when source classes or target year change
   React.useEffect(() => {
-    setPromotionSelectedStudentIds(sourceStudents.map(s => s.id));
-  }, [sourceStudents]);
+    const unpromoted = sourceStudents.filter(s => !getStudentPromotionInfo(s).isPromoted);
+    setPromotionSelectedStudentIds(unpromoted.map(s => s.id));
+    setPromotionSearchQuery("");
+  }, [sourceStudents, promotionTargetYear, getStudentPromotionInfo]);
 
   const handlePromoteSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -6888,40 +6951,104 @@ export default function SuperAdminPage() {
                     <button
                       type="button"
                       onClick={() => {
-                        if (promotionSelectedStudentIds.length === sourceStudents.length) {
-                          setPromotionSelectedStudentIds([]);
+                        // All unpromoted students from the currently filtered view
+                        const eligibleVisible = processedSourceStudents.filter(s => !getStudentPromotionInfo(s).isPromoted);
+                        const eligibleVisibleIds = eligibleVisible.map(s => s.id);
+                        const allEligibleVisibleSelected = eligibleVisibleIds.length > 0 && eligibleVisibleIds.every(id => promotionSelectedStudentIds.includes(id));
+                        
+                        if (allEligibleVisibleSelected) {
+                          // Deselect only the currently visible eligible ones
+                          setPromotionSelectedStudentIds(promotionSelectedStudentIds.filter(id => !eligibleVisibleIds.includes(id)));
                         } else {
-                          setPromotionSelectedStudentIds(sourceStudents.map(s => s.id));
+                          // Select all currently visible eligible ones
+                          setPromotionSelectedStudentIds(Array.from(new Set([...promotionSelectedStudentIds, ...eligibleVisibleIds])));
                         }
                       }}
-                      className="text-[9px] font-black text-indigo-600 uppercase tracking-tight hover:underline"
+                      className="text-[9px] font-black text-indigo-600 uppercase tracking-tight hover:underline cursor-pointer"
                     >
-                      {promotionSelectedStudentIds.length === sourceStudents.length ? "Deselect All" : "Select All"}
+                      {(() => {
+                        const eligibleVisible = processedSourceStudents.filter(s => !getStudentPromotionInfo(s).isPromoted);
+                        const eligibleVisibleIds = eligibleVisible.map(s => s.id);
+                        const allEligibleVisibleSelected = eligibleVisible.length > 0 && eligibleVisibleIds.every(id => promotionSelectedStudentIds.includes(id));
+                        return allEligibleVisibleSelected ? "Deselect All" : "Select All";
+                      })()}
                     </button>
                   )}
                 </div>
+
+                {sourceStudents.length > 0 && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-1 mb-2">
+                    {/* Search Input */}
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Cari nama, NIS, email..."
+                        value={promotionSearchQuery}
+                        onChange={(e) => setPromotionSearchQuery(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-gray-100 rounded-xl text-[10px] font-bold focus:ring-2 focus:ring-blue-100 pl-8"
+                      />
+                      <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-gray-400" />
+                    </div>
+
+                    {/* Sorting Buttons */}
+                    <div className="flex items-center gap-1.5 justify-end">
+                      <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider">
+                        Urut:
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPromotionSortOrder("asc")}
+                        className={`px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-tight transition-all cursor-pointer ${
+                          promotionSortOrder === "asc"
+                            ? "bg-indigo-600 text-white shadow-sm"
+                            : "bg-white text-gray-500 border border-gray-100 hover:bg-gray-50"
+                        }`}
+                      >
+                        A-Z
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPromotionSortOrder("desc")}
+                        className={`px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-tight transition-all cursor-pointer ${
+                          promotionSortOrder === "desc"
+                            ? "bg-indigo-600 text-white shadow-sm"
+                            : "bg-white text-gray-500 border border-gray-100 hover:bg-gray-50"
+                        }`}
+                      >
+                        Z-A
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="border border-gray-100 rounded-3xl p-4 bg-gray-50/50 max-h-52 overflow-y-auto space-y-2">
                   {promotionSourceClassIds.length === 0 ? (
                     <div className="text-center py-6 text-xs text-gray-400 font-bold italic">
                       Silakan pilih Kelas Asal terlebih dahulu
                     </div>
-                  ) : sourceStudents.length === 0 ? (
+                  ) : processedSourceStudents.length === 0 ? (
                     <div className="text-center py-6 text-xs text-gray-400 font-bold italic">
-                      Tidak ada siswa ditemukan di kelas asal ini
+                      {promotionSearchQuery.trim() ? "Tidak ada hasil pencarian" : "Tidak ada siswa ditemukan di kelas asal ini"}
                     </div>
                   ) : (
-                    sourceStudents.map((s) => {
+                    processedSourceStudents.map((s) => {
+                      const promoInfo = getStudentPromotionInfo(s);
                       const isChecked = promotionSelectedStudentIds.includes(s.id);
                       return (
                         <label
                           key={s.id}
-                          className="flex items-center gap-3 p-3 bg-white rounded-2xl border border-gray-100 hover:border-indigo-100 cursor-pointer transition-all shadow-sm"
+                          className={`flex items-center gap-3 p-3 rounded-2xl border transition-all shadow-sm ${
+                            promoInfo.isPromoted 
+                              ? "bg-gray-50 border-gray-100 opacity-60 cursor-not-allowed" 
+                              : "bg-white border-gray-100 hover:border-indigo-100 cursor-pointer"
+                          }`}
                         >
                           <input
                             type="checkbox"
-                            checked={isChecked}
+                            checked={isChecked && !promoInfo.isPromoted}
+                            disabled={promoInfo.isPromoted}
                             onChange={() => {
+                              if (promoInfo.isPromoted) return;
                               if (isChecked) {
                                 setPromotionSelectedStudentIds(
                                   promotionSelectedStudentIds.filter((id) => id !== s.id)
@@ -6930,15 +7057,24 @@ export default function SuperAdminPage() {
                                 setPromotionSelectedStudentIds([...promotionSelectedStudentIds, s.id]);
                               }
                             }}
-                            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4"
+                            className={`rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4 ${
+                              promoInfo.isPromoted ? "opacity-40 cursor-not-allowed" : "cursor-pointer"
+                            }`}
                           />
-                          <div className="flex flex-col">
-                            <span className="text-[10px] font-black text-gray-900 uppercase">
-                              {s.name}
-                            </span>
-                            <span className="text-[9px] font-mono text-gray-400">
-                              Lumina ID: {s.luminaId} | Email: {s.email}
-                            </span>
+                          <div className="flex-1 flex items-center justify-between gap-2">
+                            <div className="flex flex-col">
+                              <span className="text-[10px] font-black text-gray-900 uppercase">
+                                {s.name}
+                              </span>
+                              <span className="text-[9px] font-mono text-gray-400">
+                                Lumina ID: {s.luminaId} | Email: {s.email}
+                              </span>
+                            </div>
+                            {promoInfo.isPromoted && (
+                              <span className="shrink-0 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[8px] font-black uppercase tracking-wider border border-amber-100">
+                                Sudah di {promoInfo.className}
+                              </span>
+                            )}
                           </div>
                         </label>
                       );
