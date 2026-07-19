@@ -14,6 +14,7 @@ import {
 import { cn } from '../../lib/utils';
 import { motion } from 'motion/react';
 import { useAuth } from '../../context/AuthContext';
+import { useAcademicYear } from '../../context/AcademicYearContext';
 
 const TABS = [
   { id: 'screening', label: 'Tier 1: AAP & Test Out', icon: Eye, path: '/junior-high/academic/mtss/screening' },
@@ -26,11 +27,25 @@ export default function MTSSAcademicLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const { profile } = useAuth();
+  const { activeYear, activeSemester } = useAcademicYear();
   const outerContext = useOutletContext<any>();
+  
   const [filters, setFilters] = useState({
-    academicYear: '2025/2026',
-    semester: '2'
+    academicYear: activeYear || '2025/2026',
+    semester: String(activeSemester) || '2'
   });
+
+  React.useEffect(() => {
+    if (activeYear) {
+      setFilters(prev => ({ ...prev, academicYear: activeYear }));
+    }
+  }, [activeYear]);
+
+  React.useEffect(() => {
+    if (activeSemester) {
+      setFilters(prev => ({ ...prev, semester: String(activeSemester) }));
+    }
+  }, [activeSemester]);
 
   const isPrivileged = profile?.role && [
     'SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR'

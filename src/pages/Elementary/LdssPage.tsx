@@ -212,15 +212,15 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
   const studentDropdownRef = React.useRef<HTMLDivElement>(null);
   const ageDropdownRef = React.useRef<HTMLDivElement>(null);
 
-  // Load Classes on mount
+  // Load Classes when activeYear changes
   React.useEffect(() => {
     const loadClasses = async () => {
       try {
         setLoadingClasses(true);
         const allClasses = await getClasses();
-        // Filter only Active Elementary Classes
+        // Filter only Active Elementary Classes for activeYear
         const elementaryClasses = allClasses.filter(
-          (c) => c.unitId === "ELEMENTARY" && c.status !== "archived"
+          (c) => c.unitId === "ELEMENTARY" && c.status !== "archived" && c.academicYear === activeYear
         );
         setClasses(elementaryClasses);
       } catch (err) {
@@ -230,7 +230,7 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
       }
     };
     loadClasses();
-  }, []);
+  }, [activeYear]);
 
   // Load Students when class changes
   React.useEffect(() => {

@@ -28,6 +28,12 @@ const mockStudents: StudentAttendance[] = [];
 export default function Attendance() {
   const navigate = useNavigate();
   const { activeUnit } = useOutletContext<{ activeUnit: UnitType }>();
+  const { activeYear, activeSemester: contextSemester } = useAcademicYear();
+
+  // Real App context would come from a global config or active semester hook
+  const activeAcademicYear = activeYear;
+  const activeSemester = String(contextSemester) as any;
+
   const [view, setView] = React.useState<'INPUT' | 'RECAP' | 'ALERTS'>('INPUT');
   const [students, setStudents] = React.useState<StudentAttendance[]>([]);
   const [classes, setClasses] = React.useState<Class[]>([]);
@@ -70,7 +76,9 @@ export default function Attendance() {
           orderBy('name', 'asc')
         );
         const snap = await getDocs(q);
-        const classList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Class));
+        const classList = snap.docs
+          .map(doc => ({ id: doc.id, ...doc.data() } as Class))
+          .filter(c => c.academicYear === activeYear && c.status !== 'archived');
         setClasses(classList);
         if (classList.length > 0) {
           setSelectedClass(classList[0].id); // Always reset & select first class of new unit
@@ -85,13 +93,7 @@ export default function Attendance() {
       }
     };
     fetchClasses();
-  }, [activeUnit]);
-
-  const { activeYear, activeSemester: contextSemester } = useAcademicYear();
-
-  // Real App context would come from a global config or active semester hook
-  const activeAcademicYear = activeYear;
-  const activeSemester = String(contextSemester) as any;
+  }, [activeUnit, activeYear]);
 
   React.useEffect(() => {
     // Fetch profile role for visibility check

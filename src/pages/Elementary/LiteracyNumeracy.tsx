@@ -112,7 +112,7 @@ export default function ElementaryLiteracyNumeracy() {
         setLoading(true);
         const allClasses = await getClasses() || [];
         const elementaryClasses = allClasses.filter(
-          c => c.unitId === 'ELEMENTARY' && c.status !== 'archived'
+          c => c.unitId === 'ELEMENTARY' && c.status !== 'archived' && c.academicYear === activeYear
         );
         setClasses(elementaryClasses);
 
@@ -140,7 +140,7 @@ export default function ElementaryLiteracyNumeracy() {
     if (profile) {
       loadMetadata();
     }
-  }, [profile]);
+  }, [profile, activeYear]);
 
   // Parse elementary grade level from the active class selection name
   React.useEffect(() => {

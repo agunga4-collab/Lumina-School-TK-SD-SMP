@@ -110,7 +110,8 @@ export default function CoachingSpreadsheet() {
 
       setCases(casesData || []);
       setStudents(studentsData || []);
-      setClassesList(classesData || []);
+      const filteredClasses = (classesData || []).filter(c => c.academicYear === filters.academicYear && c.status !== 'archived');
+      setClassesList(filteredClasses);
       setBatchSheets(sheetsData || []);
 
       if (currentUser && !setupTeacherName) {

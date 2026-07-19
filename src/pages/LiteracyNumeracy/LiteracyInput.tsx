@@ -7,9 +7,10 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { LiteracyArea, LiteracyLevel } from '../../types';
-import { db, getStudents, getClasses } from '../../lib/firebase';
+import { db, getStudents, getClasses, getActiveStudents } from '../../lib/firebase';
 import { collection, addDoc } from 'firebase/firestore';
 import { toast } from 'sonner';
+import { useAcademicYear } from '../../context/AcademicYearContext';
 
 interface Student {
   id: string;
@@ -36,6 +37,7 @@ const mengajiLevels = [
 ];
 
 export default function LiteracyInput() {
+  const { activeYear } = useAcademicYear();
   const [selectedArea, setSelectedArea] = React.useState<LiteracyArea>('BAHASA');
   const [selectedStudent, setSelectedStudent] = React.useState<Student | null>(null);
   const [level, setLevel] = React.useState<LiteracyLevel>(2);
@@ -54,12 +56,15 @@ export default function LiteracyInput() {
       try {
         setLoading(true);
         const [allStudents, allClasses] = await Promise.all([
-          getStudents() || [],
+          getActiveStudents('ALL', activeYear) || [],
           getClasses() || []
         ]);
+
+        const filteredClasses = (allClasses || [])
+          .filter(c => c.academicYear === activeYear && c.status !== 'archived');
         
         // Map classes for easy lookup
-        const classMap = new Map((allClasses || []).map(c => [c.id, c.name]));
+        const classMap = new Map((filteredClasses || []).map(c => [c.id, c.name]));
         
         const mapped = (allStudents || [])
           .filter(s => {
@@ -78,7 +83,7 @@ export default function LiteracyInput() {
           }));
 
         setStudents(mapped);
-        setClasses(allClasses || []);
+        setClasses(filteredClasses);
       } catch (err) {
         console.error('Error loading library/literacy students:', err);
       } finally {
@@ -86,7 +91,7 @@ export default function LiteracyInput() {
       }
     };
     loadData();
-  }, []);
+  }, [activeYear]);
 
   const filteredStudents = React.useMemo(() => {
     return students.filter(student => {

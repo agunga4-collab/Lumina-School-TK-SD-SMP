@@ -15,12 +15,14 @@ import {
 import { db } from '../../lib/firebase';
 import { AttendanceStatus, AttendanceRecord, Class, UnitType } from '../../types';
 import { cn } from '../../lib/utils';
+import { useAcademicYear } from '../../context/AcademicYearContext';
 
 interface AttendanceAnalysisProps {
   unitId: UnitType;
 }
 
 export default function AttendanceAnalysis({ unitId }: AttendanceAnalysisProps) {
+  const { activeYear } = useAcademicYear();
   const [viewMode, setViewMode] = React.useState<'RANGE' | 'MONTHLY'>('RANGE');
   const [loading, setLoading] = React.useState(true);
   const [selectedMonth, setSelectedMonth] = React.useState(new Date().getMonth());
@@ -72,13 +74,16 @@ export default function AttendanceAnalysis({ unitId }: AttendanceAnalysisProps) 
       try {
         const q = query(collection(db, 'classes'), where('unitId', '==', unitId));
         const snap = await getDocs(q);
-        setClasses(snap.docs.map(d => ({ id: d.id, ...d.data() } as Class)));
+        const filtered = snap.docs
+          .map(d => ({ id: d.id, ...d.data() } as Class))
+          .filter(c => c.academicYear === activeYear && c.status !== 'archived');
+        setClasses(filtered);
       } catch (err) {
         console.error("Error fetching classes:", err);
       }
     };
     fetchClasses();
-  }, [unitId]);
+  }, [unitId, activeYear]);
 
   // Fetch and Process Data
   React.useEffect(() => {

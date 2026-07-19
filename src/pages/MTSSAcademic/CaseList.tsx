@@ -93,7 +93,8 @@ export default function CaseList() {
       ]);
       setCases(casesData || []);
       setStudents(studentsData || []);
-      setClasses(classesData || []);
+      const filteredClasses = (classesData || []).filter(c => c.academicYear === filters.academicYear && c.status !== 'archived');
+      setClasses(filteredClasses);
     } catch (err) {
       console.error(err);
     } finally {

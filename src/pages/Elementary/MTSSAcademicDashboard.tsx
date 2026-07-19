@@ -136,7 +136,7 @@ export default function MTSSAcademicDashboard() {
       try {
         const allClasses = await getClasses() || [];
         const elementaryClasses = allClasses.filter(
-          c => c.unitId === 'ELEMENTARY' && c.status !== 'archived'
+          c => c.unitId === 'ELEMENTARY' && c.status !== 'archived' && c.academicYear === activeYear
         );
         setClassesList(elementaryClasses);
         if (elementaryClasses.length > 0 && setupClassIds.length === 0) {
@@ -147,7 +147,7 @@ export default function MTSSAcademicDashboard() {
       }
     };
     loadClasses();
-  }, []);
+  }, [activeYear]);
 
   // Fetch all batch sheets from Firestore
   const loadBatchSheets = async () => {

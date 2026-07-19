@@ -111,7 +111,7 @@ export default function JuniorHighLiteracyNumeracy() {
         setLoading(true);
         const allClasses = await getClasses() || [];
         const juniorHighClasses = allClasses.filter(
-          c => c.unitId === 'JUNIOR_HIGH' && c.status !== 'archived'
+          c => c.unitId === 'JUNIOR_HIGH' && c.status !== 'archived' && c.academicYear === activeYear
         );
         setClasses(juniorHighClasses);
 
@@ -139,7 +139,7 @@ export default function JuniorHighLiteracyNumeracy() {
     if (profile) {
       loadMetadata();
     }
-  }, [profile]);
+  }, [profile, activeYear]);
 
   // Parse Junior High grade level from the active class selection name
   React.useEffect(() => {
