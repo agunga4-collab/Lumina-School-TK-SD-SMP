@@ -3930,7 +3930,7 @@ export default function SuperAdminPage() {
                             </td>
                             <td className="px-6 py-6 text-center">
                               <span className="text-[11px] font-black text-gray-700 italic">
-                                {invite.classId || "-"}
+                                {classes.find(c => c.id === invite.classId || c.name === invite.classId)?.name || invite.classId || "-"}
                               </span>
                             </td>
                             <td className="px-6 py-6">
@@ -4045,16 +4045,20 @@ export default function SuperAdminPage() {
                                     const snap = await getDocs(q);
                                     const enrolls = snap.docs.map(doc => {
                                       const data = doc.data();
+                                      const rawClassId = data.classId || "";
+                                      const matchingClass = classes.find(c => c.name === rawClassId);
                                       return {
                                         academicYear: data.academicYear || "",
-                                        classId: data.classId || "",
+                                        classId: matchingClass ? matchingClass.id : rawClassId,
                                       };
                                     });
                                     if (enrolls.length === 0) {
+                                      const rawClassId = invite.classId || "";
+                                      const matchingClass = classes.find(c => c.name === rawClassId);
                                       setStudentEnrollments([
                                         {
                                           academicYear: invite.academicYear || "2025/2026",
-                                          classId: invite.classId || "",
+                                          classId: matchingClass ? matchingClass.id : rawClassId,
                                         }
                                       ]);
                                     } else {
@@ -4062,18 +4066,22 @@ export default function SuperAdminPage() {
                                     }
                                   } catch (err) {
                                     console.error("Failed to fetch student enrollments on edit:", err);
+                                    const rawClassId = invite.classId || "";
+                                    const matchingClass = classes.find(c => c.name === rawClassId);
                                     setStudentEnrollments([
                                       {
                                         academicYear: invite.academicYear || "2025/2026",
-                                        classId: invite.classId || "",
+                                        classId: matchingClass ? matchingClass.id : rawClassId,
                                       }
                                     ]);
                                   }
                                 } else {
+                                  const rawClassId = invite.classId || "";
+                                  const matchingClass = classes.find(c => c.name === rawClassId);
                                   setStudentEnrollments([
                                     {
                                       academicYear: invite.academicYear || "2025/2026",
-                                      classId: invite.classId || "",
+                                      classId: matchingClass ? matchingClass.id : rawClassId,
                                     }
                                   ]);
                                 }
@@ -6254,7 +6262,13 @@ export default function SuperAdminPage() {
                           </label>
                           <select
                             required
-                            value={enrollment.classId}
+                            value={(() => {
+                              const byId = classes.find(c => c.id === enrollment.classId);
+                              if (byId) return byId.id;
+                              const byName = classes.find(c => c.name === enrollment.classId);
+                              if (byName) return byName.id;
+                              return enrollment.classId || "";
+                            })()}
                             onChange={(e) => {
                               const newClass = e.target.value;
                               setStudentEnrollments((prev) => {
@@ -6269,7 +6283,7 @@ export default function SuperAdminPage() {
                             {classes
                               .filter((c) => c.unitId === formData.unitId)
                               .map((c) => (
-                                <option key={c.id} value={c.name}>
+                                <option key={c.id} value={c.id}>
                                   {c.name}
                                 </option>
                               ))}
