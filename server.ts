@@ -41,6 +41,16 @@ function getAdminDb() {
   }
 }
 
+function isUserSuperAdmin(role: string | null, email?: string): boolean {
+  if (role === "SUPER_ADMIN") return true;
+  if (!email) return false;
+  const lowerEmail = email.toLowerCase().trim();
+  return (
+    lowerEmail === "agunga4@gmail.com" ||
+    lowerEmail === "agunga4@lazuardi.sch.id"
+  );
+}
+
 const getGoogleAuth = () => {
   try {
     const saJson = process.env.GOOGLE_BACKUP_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT;
@@ -2507,7 +2517,7 @@ app.post("/api/admin/reconcile-student-refs", async (req, res) => {
 
     const userDoc = await db.collection("users").doc(decodedToken.uid).get();
     const userRole = userDoc.exists ? userDoc.data()?.role : null;
-    const isSuperAdmin = userRole === "SUPER_ADMIN" || decodedToken.email === "agunga4@gmail.com";
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
 
     if (!isSuperAdmin) {
       return res.status(403).json({ error: "Access denied. Active Super Admin permission required." });
@@ -2578,7 +2588,7 @@ app.post("/api/admin/cleanup-invalid-ids", async (req, res) => {
 
     const userDoc = await db.collection("users").doc(decodedToken.uid).get();
     const userRole = userDoc.exists ? userDoc.data()?.role : null;
-    const isSuperAdmin = userRole === "SUPER_ADMIN" || decodedToken.email === "agunga4@gmail.com";
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
 
     if (!isSuperAdmin) {
       return res.status(403).json({ error: "Access denied. Active Super Admin permission required." });
@@ -2672,10 +2682,7 @@ app.post("/api/admin/delete-invites", async (req, res) => {
 
     const userDoc = await db.collection("users").doc(decodedToken.uid).get();
     const userRole = userDoc.exists ? userDoc.data()?.role : null;
-    const isSuperAdmin = 
-      userRole === "SUPER_ADMIN" || 
-      decodedToken.email === "agunga4@gmail.com" || 
-      decodedToken.email === "agunga4@lazuardi.sch.id";
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
 
     if (!isSuperAdmin) {
       return res.status(403).json({ error: "Access denied. Active Super Admin permission required." });
@@ -2739,9 +2746,7 @@ app.post("/api/admin/scan-identity-conflicts", async (req, res) => {
 
     const userDoc = await db.collection("users").doc(decodedToken.uid).get();
     const userRole = userDoc.exists ? userDoc.data()?.role : null;
-    const isSuperAdmin = userRole === "SUPER_ADMIN" || 
-                         decodedToken.email === "agunga4@gmail.com" || 
-                         decodedToken.email === "agunga4@lazuardi.sch.id";
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
 
     if (!isSuperAdmin) {
       return res.status(403).json({ error: "Access denied. Active Super Admin permission required." });
@@ -3038,7 +3043,7 @@ app.post("/api/test-prompt", async (req, res) => {
 
     const userDoc = await db.collection("users").doc(decodedToken.uid).get();
     const userRole = userDoc.exists ? userDoc.data()?.role : null;
-    const isSuperAdmin = userRole === "SUPER_ADMIN" || decodedToken.email === "agunga4@gmail.com";
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
 
     if (!isSuperAdmin) {
       return res.status(403).json({ error: "Access denied. Active Super Admin permission required." });
@@ -3876,7 +3881,7 @@ app.post("/api/sync-knowledge", async (req, res) => {
 
     const userDoc = await db.collection("users").doc(decodedToken.uid).get();
     const userRole = userDoc.exists ? userDoc.data()?.role : null;
-    const isSuperAdmin = userRole === "SUPER_ADMIN" || decodedToken.email === "agunga4@gmail.com";
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
 
     if (!isSuperAdmin) {
       return res.status(403).json({ error: "Access denied. Active Super Admin permission required." });

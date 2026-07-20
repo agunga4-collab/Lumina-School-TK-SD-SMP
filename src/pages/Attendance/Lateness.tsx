@@ -139,11 +139,7 @@ export default function Lateness() {
           .filter((c: any) => c.academicYear === activeYear && c.status !== 'archived');
         
         setClasses(classList);
-        if (classList.length > 0) {
-          setSelectedClass(classList[0].id);
-        } else {
-          setSelectedClass('');
-        }
+        setSelectedClass('');
       } catch (err) {
         console.error('Error fetching classes:', err);
       }

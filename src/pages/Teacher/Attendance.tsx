@@ -80,11 +80,7 @@ export default function Attendance() {
           .map(doc => ({ id: doc.id, ...doc.data() } as Class))
           .filter(c => c.academicYear === activeYear && c.status !== 'archived');
         setClasses(classList);
-        if (classList.length > 0) {
-          setSelectedClass(classList[0].id); // Always reset & select first class of new unit
-        } else {
-          setSelectedClass('');
-        }
+        setSelectedClass('');
       } catch (err) {
         console.error('Error fetching classes:', err);
         setSelectedClass('');
@@ -111,6 +107,11 @@ export default function Attendance() {
 
   React.useEffect(() => {
     const loadStudents = async () => {
+      if (!selectedClass) {
+        setStudents([]);
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setError(null);
       try {
@@ -510,12 +511,13 @@ export default function Attendance() {
                     >
                       {loadingClasses ? (
                         <option>Loading...</option>
-                      ) : classes.length === 0 ? (
-                        <option>No Classes</option>
                       ) : (
-                        classes.map(c => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))
+                        <>
+                          <option value="">Pilih Kelas</option>
+                          {classes.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </>
                       )}
                     </select>
                     <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">

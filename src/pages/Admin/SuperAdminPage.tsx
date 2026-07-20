@@ -1781,9 +1781,16 @@ export default function SuperAdminPage() {
         body: JSON.stringify({ inviteIds: [id] }),
       });
 
-      const resData = await response.json();
+      const text = await response.text();
+      let resData: any = {};
+      try {
+        resData = JSON.parse(text);
+      } catch (e) {
+        throw new Error(`HTTP ${response.status}: ${text.slice(0, 150) || "No response details available"}`);
+      }
+
       if (!response.ok || !resData.success) {
-        throw new Error(resData.error || "Gagal menghubungi backend server.");
+        throw new Error(resData.error || `HTTP ${response.status}: Gagal menghubungi backend server.`);
       }
 
       fetchData();
@@ -2029,9 +2036,16 @@ export default function SuperAdminPage() {
         body: JSON.stringify({ inviteIds: selectedInviteIds }),
       });
 
-      const resData = await response.json();
+      const text = await response.text();
+      let resData: any = {};
+      try {
+        resData = JSON.parse(text);
+      } catch (e) {
+        throw new Error(`HTTP ${response.status}: ${text.slice(0, 150) || "No response details available"}`);
+      }
+
       if (!response.ok || !resData.success) {
-        throw new Error(resData.error || "Gagal menghubungi backend server.");
+        throw new Error(resData.error || `HTTP ${response.status}: Gagal menghubungi backend server.`);
       }
 
       alert(`Berhasil menghapus ${selectedInviteIds.length} undangan!`);
@@ -2067,9 +2081,16 @@ export default function SuperAdminPage() {
         body: JSON.stringify({ inviteIds: idsToDelete }),
       });
 
-      const resData = await response.json();
+      const text = await response.text();
+      let resData: any = {};
+      try {
+        resData = JSON.parse(text);
+      } catch (e) {
+        throw new Error(`HTTP ${response.status}: ${text.slice(0, 150) || "No response details available"}`);
+      }
+
       if (!response.ok || !resData.success) {
-        throw new Error(resData.error || "Gagal menghubungi backend server.");
+        throw new Error(resData.error || `HTTP ${response.status}: Gagal menghubungi backend server.`);
       }
 
       alert(`Berhasil menghapus semua (${idsToDelete.length}) undangan!`);
