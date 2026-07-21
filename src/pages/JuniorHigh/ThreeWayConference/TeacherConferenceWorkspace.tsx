@@ -184,26 +184,35 @@ export default function TeacherConferenceWorkspace() {
   // Sorting Logic
   const sortedStudents = [...filteredStudents].sort((a, b) => {
     switch (sortBy) {
-      case 'name_asc':
-        return a.student.name.localeCompare(b.student.name);
-      case 'name_desc':
-        return b.student.name.localeCompare(a.student.name);
-      case 'class_asc':
-        return a.className.localeCompare(b.className);
+      case 'name_asc': {
+        const nameA = a?.student?.name || '';
+        const nameB = b?.student?.name || '';
+        return nameA.localeCompare(nameB);
+      }
+      case 'name_desc': {
+        const nameA = a?.student?.name || '';
+        const nameB = b?.student?.name || '';
+        return nameB.localeCompare(nameA);
+      }
+      case 'class_asc': {
+        const classA = a?.className || '';
+        const classB = b?.className || '';
+        return classA.localeCompare(classB);
+      }
       case 'updated_desc': {
-        const timeA = a.response?.updatedAt || 0;
-        const timeB = b.response?.updatedAt || 0;
+        const timeA = a?.response?.updatedAt || 0;
+        const timeB = b?.response?.updatedAt || 0;
         return timeB - timeA;
       }
       case 'status_desc': {
         const statusOrder = { CONFERENCE_COMPLETED: 4, SUBMITTED: 3, DRAFT: 2, NOT_STARTED: 1 };
-        const statusA = statusOrder[a.response ? a.response.status : 'NOT_STARTED'];
-        const statusB = statusOrder[b.response ? b.response.status : 'NOT_STARTED'];
+        const statusA = statusOrder[a?.response ? a.response.status : 'NOT_STARTED'] || 1;
+        const statusB = statusOrder[b?.response ? b.response.status : 'NOT_STARTED'] || 1;
         return statusB - statusA;
       }
       case 'mentor_asc': {
-        const mentorA = a.assignment?.status !== 'REMOVED' ? (a.assignment?.mentorName || '') : 'ZZZZZZ';
-        const mentorB = b.assignment?.status !== 'REMOVED' ? (b.assignment?.mentorName || '') : 'ZZZZZZ';
+        const mentorA = a?.assignment?.status !== 'REMOVED' ? (a?.assignment?.mentorName || '') : 'ZZZZZZ';
+        const mentorB = b?.assignment?.status !== 'REMOVED' ? (b?.assignment?.mentorName || '') : 'ZZZZZZ';
         return mentorA.localeCompare(mentorB);
       }
       default:
