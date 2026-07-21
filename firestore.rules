@@ -523,8 +523,7 @@ service cloud.firestore {
     match /studentConferenceResponses/{responseId} {
       allow get: if isActive() && (
         isJuniorHighStaff() ||
-        (resource != null && isOwnStudentData(resource.data.studentId)) ||
-        (resource == null && isStudent() && currentUserExists() && ('luminaId' in currentUser()) && responseId.matches('^.*_' + currentUser().luminaId + '$')) ||
+        (isStudent() && currentUserExists() && ('luminaId' in currentUser()) && responseId.split('_')[1] == currentUser().luminaId) ||
         (resource != null && isLinkedStudent(resource.data.studentId))
       );
       allow list: if isActive() && (
@@ -534,7 +533,7 @@ service cloud.firestore {
       );
       allow create: if isActive() && (
         isJuniorHighStaff() ||
-        (isOwnStudentData(incoming().studentId) && responseId.matches('^.*_' + incoming().studentId + '$'))
+        (isOwnStudentData(incoming().studentId) && responseId.split('_')[1] == incoming().studentId)
       );
       allow update: if isActive() && (
         isJuniorHighStaff() ||
@@ -549,8 +548,8 @@ service cloud.firestore {
     match /mentorAssignments/{assignmentId} {
       allow get: if isActive() && (
         isJHConferenceStaff() ||
-        (resource != null && isOwnStudentData(resource.data.studentId)) ||
-        (resource == null && isStudent() && currentUserExists() && ('luminaId' in currentUser()) && assignmentId.matches('^.*_' + currentUser().luminaId + '$'))
+        (isStudent() && currentUserExists() && ('luminaId' in currentUser()) && assignmentId.split('_')[1] == currentUser().luminaId) ||
+        (resource != null && isLinkedStudent(resource.data.studentId))
       );
       allow list: if isActive() && (
         isJHConferenceStaff() ||
