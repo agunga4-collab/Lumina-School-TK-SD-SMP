@@ -29,8 +29,20 @@ interface LatenessRecord {
 }
 
 const getCurrentTimeStr = () => {
-  const now = new Date();
-  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const formatter = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Jakarta',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+  return formatter.format(new Date());
+};
+
+const getFormattedSelectedDate = (dateStr: string) => {
+  if (!dateStr) return '';
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const d = new Date(year, month - 1, day);
+  return d.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 };
 
 export default function Lateness() {
@@ -47,19 +59,36 @@ export default function Lateness() {
   const [mostFrequentDay, setMostFrequentDay] = React.useState('-');
   const [avgLateMinutes, setAvgLateMinutes] = React.useState('-');
   const [selectedDate, setSelectedDate] = React.useState<string>(() => {
-    return new Date().toISOString().split('T')[0];
+    const formatter = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Asia/Jakarta',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+    return formatter.format(new Date());
   });
   const [highlightedStudentId, setHighlightedStudentId] = React.useState<string | null>(null);
   const threshold = 3;
 
   const [todaySavedRecords, setTodaySavedRecords] = React.useState<any[]>([]);
   const [loadingTodayRecords, setLoadingTodayRecords] = React.useState(false);
+  const [unitClasses, setUnitClasses] = React.useState<any[]>([]);
 
   React.useEffect(() => {
-    if (classes.length === 0) {
-      setTodaySavedRecords([]);
-      return;
-    }
+    const q = query(
+      collection(db, 'classes'),
+      where('unitId', '==', activeUnit || 'JUNIOR_HIGH')
+    );
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() as any }));
+      setUnitClasses(list);
+    }, (err) => {
+      console.error('Error listening to unit classes:', err);
+    });
+    return () => unsubscribe();
+  }, [activeUnit]);
+
+  React.useEffect(() => {
     setLoadingTodayRecords(true);
     
     const q = query(
@@ -68,20 +97,109 @@ export default function Lateness() {
     );
 
     const unsubscribe = onSnapshot(q, (snap) => {
-      const classIds = classes.map(c => c.id);
+      const normalizeKey = (str: string) => {
+        if (!str) return '';
+        return str.toLowerCase().replace(/[^a-z0-9]/g, '');
+      };
+
+      const classKeys = unitClasses.flatMap(c => [c.id, c.name].filter(Boolean));
+      const currentClassKeys = classes.flatMap(c => [c.id, c.name].filter(Boolean));
+      const allKeys = Array.from(new Set([...classKeys, ...currentClassKeys]));
+      const normalizedAllKeys = allKeys.map(k => normalizeKey(k));
+
       const recordsList = snap.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }))
-        .filter((r: any) => classIds.includes(r.classId));
+        .map(doc => ({ id: doc.id, ...doc.data() as any }))
+        .filter((r: any) => {
+          const unitToCompare = (activeUnit || 'JUNIOR_HIGH').toUpperCase();
+          
+          // 1. If explicit unitId exists and matches (case-insensitive)
+          if (r.unitId) {
+            return r.unitId.toUpperCase() === unitToCompare;
+          }
+          
+          // 2. Try normalized classId/className matching
+          const normClassId = normalizeKey(r.classId);
+          const normClassName = normalizeKey(r.className);
+          
+          const matchesKey = (
+            (normClassId && normalizedAllKeys.includes(normClassId)) ||
+            (normClassName && normalizedAllKeys.includes(normClassName))
+          );
+          if (matchesKey) return true;
+
+          // 3. Fallback name-based unit detection for safety (in case class maps are not loaded yet or legacy data)
+          const isJuniorHigh = unitToCompare === 'JUNIOR_HIGH';
+          const isElementary = unitToCompare === 'ELEMENTARY';
+          const isKindergarten = unitToCompare === 'KINDERGARTEN';
+          
+          const nameLower = (r.className || '').toLowerCase();
+          const idLower = (r.classId || '').toLowerCase();
+          
+          const isSmp = nameLower.includes('smp') || 
+                        nameLower.includes('junior') || 
+                        nameLower.includes('al-jazari') || 
+                        nameLower.includes('al jazari') ||
+                        nameLower.includes('grade 7') || 
+                        nameLower.includes('grade 8') || 
+                        nameLower.includes('grade 9') ||
+                        nameLower.includes('kelas 7') || 
+                        nameLower.includes('kelas 8') || 
+                        nameLower.includes('kelas 9') ||
+                        /\b(7|8|9)\b/.test(nameLower) ||
+                        /\b(7|8|9)\b/.test(idLower) ||
+                        nameLower.startsWith('7') ||
+                        nameLower.startsWith('8') ||
+                        nameLower.startsWith('9');
+
+          const isSd = nameLower.includes('sd') || 
+                       nameLower.includes('elementary') || 
+                       nameLower.includes('grade 1') || 
+                       nameLower.includes('grade 2') || 
+                       nameLower.includes('grade 3') || 
+                       nameLower.includes('grade 4') || 
+                       nameLower.includes('grade 5') || 
+                       nameLower.includes('grade 6') ||
+                       nameLower.includes('kelas 1') || 
+                       nameLower.includes('kelas 2') || 
+                       nameLower.includes('kelas 3') || 
+                       nameLower.includes('kelas 4') || 
+                       nameLower.includes('kelas 5') || 
+                       nameLower.includes('kelas 6') ||
+                       /\b(1|2|3|4|5|6)\b/.test(nameLower) ||
+                       /\b(1|2|3|4|5|6)\b/.test(idLower) ||
+                       nameLower.startsWith('1') ||
+                       nameLower.startsWith('2') ||
+                       nameLower.startsWith('3') ||
+                       nameLower.startsWith('4') ||
+                       nameLower.startsWith('5') ||
+                       nameLower.startsWith('6');
+
+          const isTk = nameLower.includes('tk') || 
+                       nameLower.includes('kindergarten') || 
+                       nameLower.includes('pra tk') || 
+                       nameLower.includes('playgroup');
+
+          if (isJuniorHigh && isSmp) return true;
+          if (isElementary && isSd) return true;
+          if (isKindergarten && isTk) return true;
+
+          return false;
+        });
       
       const mappedRecords = recordsList.map((r: any) => {
-        const matchingClass = classes.find(c => c.id === r.classId);
+        const matchingClass = [...unitClasses, ...classes].find(c => 
+          c.id === r.classId || 
+          (r.classId && c.id.toLowerCase() === r.classId.toLowerCase()) || 
+          c.name === r.classId || 
+          (r.className && c.name.toLowerCase() === r.className.toLowerCase())
+        );
         return {
           ...r,
           className: matchingClass?.name || r.className || 'Kelas Lain'
         };
       });
 
-      mappedRecords.sort((a, b) => a.studentName.localeCompare(b.studentName));
+      mappedRecords.sort((a, b) => (a.studentName || "").localeCompare(b.studentName || ""));
       setTodaySavedRecords(mappedRecords);
       setLoadingTodayRecords(false);
     }, (err) => {
@@ -90,7 +208,7 @@ export default function Lateness() {
     });
 
     return () => unsubscribe();
-  }, [selectedDate, classes]);
+  }, [selectedDate, classes, unitClasses, activeUnit]);
 
   const handleDeleteSavedRecord = async (id: string) => {
     if (!window.confirm('Apakah Anda yakin ingin menghapus data keterlambatan ini?')) {
@@ -139,7 +257,12 @@ export default function Lateness() {
           .filter((c: any) => c.academicYear === activeYear && c.status !== 'archived');
         
         setClasses(classList);
-        setSelectedClass('');
+        setSelectedClass(prev => {
+          if (prev && classList.some((c: any) => c.id === prev)) {
+            return prev;
+          }
+          return classList[0]?.id || '';
+        });
       } catch (err) {
         console.error('Error fetching classes:', err);
       }
@@ -258,9 +381,14 @@ export default function Lateness() {
     const className = currentClass?.name || selectedClass;
     const classId = currentClass?.id || selectedClass;
 
+    const classKeys = [classId];
+    if (className && className !== classId) {
+      classKeys.push(className);
+    }
+
     const latenessQuery = query(
       collection(db, 'lateness_records'),
-      where('classId', '==', selectedClass)
+      where('classId', 'in', classKeys)
     );
 
     const unsubscribe = onSnapshot(latenessQuery, (snap) => {
@@ -420,8 +548,15 @@ export default function Lateness() {
     setSaving(true);
     try {
       const today = selectedDate;
+      const currentClassObj = classes.find(c => c.id === selectedClass) || { id: selectedClass, name: selectedClass };
+      const defaultClassName = currentClassObj.name || selectedClass;
+
       for (const entry of lateEntries) {
         const docId = `LATE_${today}_${entry.id}`;
+        
+        const studentClassId = entry.classId || selectedClass;
+        const studentClassName = entry.className || defaultClassName;
+
         await setDoc(doc(db, 'lateness_records', docId), {
           studentId: entry.id,
           studentName: entry.name,
@@ -430,7 +565,10 @@ export default function Lateness() {
           reason: entry.reason,
           parentNote: entry.parentNote,
           recordedAt: serverTimestamp(),
-          classId: selectedClass
+          classId: studentClassId,
+          className: studentClassName,
+          academicYear: activeYear,
+          unitId: activeUnit
         });
       }
 
@@ -848,7 +986,7 @@ export default function Lateness() {
                    </div>
                    <div>
                       <h2 className="font-bold text-gray-900 text-sm">Keterlambatan Hari Ini</h2>
-                      <p className="text-xs text-gray-500">Daftar siswa yang tercatat terlambat pada {new Date(selectedDate).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                      <p className="text-xs text-gray-500">Daftar siswa yang tercatat terlambat pada {getFormattedSelectedDate(selectedDate)}</p>
                    </div>
                 </div>
                 <span className="bg-amber-50 text-amber-700 text-xs font-bold px-2.5 py-1 rounded-full">
