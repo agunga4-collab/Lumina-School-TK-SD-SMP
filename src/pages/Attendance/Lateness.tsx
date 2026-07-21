@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { db, getActiveStudents } from '../../lib/firebase';
-import { collection, query, where, getDocs, doc, setDoc, serverTimestamp, getDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, setDoc, serverTimestamp, getDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { toast } from 'sonner';
 import { useOutletContext } from 'react-router-dom';
@@ -18,6 +18,7 @@ import StudentSearch from '../../components/StudentSearch';
 interface LatenessRecord {
   id: string;
   name: string;
+  nickname?: string;
   arrivalTime: string;
   reason: string;
   parentNote: boolean;
@@ -37,6 +38,7 @@ export default function Lateness() {
   const { activeYear } = useAcademicYear();
   const [records, setRecords] = React.useState<LatenessRecord[]>([]);
   const [classStudentsList, setClassStudentsList] = React.useState<LatenessRecord[]>([]);
+  const [classRoster, setClassRoster] = React.useState<{ id: string; name: string; nickname?: string }[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [searchTerm, setSearchTerm] = React.useState('');
@@ -53,18 +55,19 @@ export default function Lateness() {
   const [todaySavedRecords, setTodaySavedRecords] = React.useState<any[]>([]);
   const [loadingTodayRecords, setLoadingTodayRecords] = React.useState(false);
 
-  const fetchTodaySavedRecords = React.useCallback(async () => {
+  React.useEffect(() => {
     if (classes.length === 0) {
       setTodaySavedRecords([]);
       return;
     }
     setLoadingTodayRecords(true);
-    try {
-      const q = query(
-        collection(db, 'lateness_records'),
-        where('date', '==', selectedDate)
-      );
-      const snap = await getDocs(q);
+    
+    const q = query(
+      collection(db, 'lateness_records'),
+      where('date', '==', selectedDate)
+    );
+
+    const unsubscribe = onSnapshot(q, (snap) => {
       const classIds = classes.map(c => c.id);
       const recordsList = snap.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
@@ -80,16 +83,14 @@ export default function Lateness() {
 
       mappedRecords.sort((a, b) => a.studentName.localeCompare(b.studentName));
       setTodaySavedRecords(mappedRecords);
-    } catch (err) {
-      console.error('Error fetching today\'s lateness records:', err);
-    } finally {
       setLoadingTodayRecords(false);
-    }
-  }, [selectedDate, classes]);
+    }, (err) => {
+      console.error('Error listening today\'s lateness records:', err);
+      setLoadingTodayRecords(false);
+    });
 
-  React.useEffect(() => {
-    fetchTodaySavedRecords();
-  }, [fetchTodaySavedRecords]);
+    return () => unsubscribe();
+  }, [selectedDate, classes]);
 
   const handleDeleteSavedRecord = async (id: string) => {
     if (!window.confirm('Apakah Anda yakin ingin menghapus data keterlambatan ini?')) {
@@ -98,7 +99,6 @@ export default function Lateness() {
     try {
       await deleteDoc(doc(db, 'lateness_records', id));
       toast.success('Data keterlambatan berhasil dihapus');
-      fetchTodaySavedRecords();
     } catch (err) {
       console.error('Error deleting lateness record:', err);
       toast.error('Gagal menghapus data keterlambatan');
@@ -149,102 +149,19 @@ export default function Lateness() {
 
   React.useEffect(() => {
     if (!selectedClass) {
+      setClassRoster([]);
       setLoading(false);
       return;
     }
 
-    const loadStudents = async () => {
+    const loadRoster = async () => {
       setLoading(true);
       try {
         const currentClass = classes.find(c => c.id === selectedClass);
         const className = currentClass?.name || selectedClass;
         const classId = currentClass?.id || selectedClass;
 
-        // Fetch actual lateness counts for this month first
-        const todayObj = new Date(selectedDate);
-        const startOfMonth = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-01`;
-        const latenessQuery = query(
-          collection(db, 'lateness_records'),
-          where('classId', '==', selectedClass),
-          where('date', '>=', startOfMonth)
-        );
-        const latenessSnap = await getDocs(latenessQuery);
-        const latenessCountMap: Record<string, number> = {};
-        latenessSnap.docs.forEach(doc => {
-          const data = doc.data();
-          if (data.studentId) {
-            latenessCountMap[data.studentId] = (latenessCountMap[data.studentId] || 0) + 1;
-          }
-        });
-
-        // Fetch all lateness records for the class to analyze patterns
-        const patternQuery = query(
-          collection(db, 'lateness_records'),
-          where('classId', '==', selectedClass)
-        );
-        const patternSnap = await getDocs(patternQuery);
-        const patternDocs = patternSnap.docs.map(doc => doc.data());
-
-        // Calculate most frequent day
-        const getDayName = (dateStr: string) => {
-          if (!dateStr) return '';
-          const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-          const [year, month, day] = dateStr.split('-').map(Number);
-          const d = new Date(year, month - 1, day);
-          return days[d.getDay()];
-        };
-
-        const dayCounts: Record<string, number> = {};
-        patternDocs.forEach(d => {
-          const dayName = getDayName(d.date);
-          if (dayName) {
-            dayCounts[dayName] = (dayCounts[dayName] || 0) + 1;
-          }
-        });
-
-        let maxCount = 0;
-        let mostFrequentDays: string[] = [];
-        Object.entries(dayCounts).forEach(([day, count]) => {
-          if (count > maxCount) {
-            maxCount = count;
-            mostFrequentDays = [day];
-          } else if (count === maxCount) {
-            mostFrequentDays.push(day);
-          }
-        });
-
-        const info = getUnitInfo();
-
-        // Convert time string "HH:MM" to minutes
-        const timeToMinutes = (t: string) => {
-          if (!t || !t.includes(':')) return 0;
-          const [h, m] = t.split(':').map(Number);
-          return h * 60 + m;
-        };
-
-        // Calculate average late minutes
-        let totalLateMinutes = 0;
-        let lateRecordsWithTimeCount = 0;
-        const targetTime = info.time;
-
-        patternDocs.forEach(d => {
-          if (d.arrivalTime) {
-            const minutesLate = timeToMinutes(d.arrivalTime) - timeToMinutes(targetTime);
-            if (minutesLate > 0) {
-              totalLateMinutes += minutesLate;
-              lateRecordsWithTimeCount++;
-            }
-          }
-        });
-
-        const calculatedMostFrequentDay = mostFrequentDays.length > 0 ? mostFrequentDays.join(' & ') : '-';
-        const calculatedAvgMinutes = lateRecordsWithTimeCount > 0 ? `${Math.round(totalLateMinutes / lateRecordsWithTimeCount)} Menit` : '-';
-
-        setMostFrequentDay(calculatedMostFrequentDay);
-        setAvgLateMinutes(calculatedAvgMinutes);
-
-        // Fetch Class Students using multi-fallback logic
-        let fetchedStudents: { id: string; name: string }[] = [];
+        let fetchedStudents: { id: string; name: string; nickname?: string }[] = [];
 
         // 1. Try to load from active students enrollments
         try {
@@ -252,7 +169,8 @@ export default function Lateness() {
           if (activeS && activeS.length > 0) {
             fetchedStudents = activeS.map(s => ({
               id: s.id,
-              name: s.name
+              name: s.name,
+              nickname: s.nickname || (s as any).panggilan || (s as any).nicknameStr || ''
             }));
           }
         } catch (activeErr) {
@@ -291,78 +209,181 @@ export default function Lateness() {
             const studentId = data.luminaId || data.nis || data.nisn || d.id;
             
             if (!uniqueDocsMap.has(studentId)) {
-              uniqueDocsMap.set(studentId, { docId: d.id, name: data.name || data.displayName || data.fullName });
+              uniqueDocsMap.set(studentId, { 
+                docId: d.id, 
+                name: data.name || data.displayName || data.fullName,
+                nickname: data.nickname || data.panggilan || data.nicknameStr || ''
+              });
             }
           });
 
           fetchedStudents = Array.from(uniqueDocsMap.values()).map(data => ({
             id: data.docId,
-            name: data.name || "Siswa Tanpa Nama"
+            name: data.name || "Siswa Tanpa Nama",
+            nickname: data.nickname || ''
           }));
         }
 
-        // Create a map of existing lateness records for today to check if we should pre-fill them
-        const todayRecordsMap: Record<string, any> = {};
-        latenessSnap.docs.forEach(doc => {
-          const data = doc.data();
-          if (data.studentId && data.date === selectedDate) {
-            todayRecordsMap[data.studentId] = data;
-          }
+        const filteredStudents = fetchedStudents.filter(student => {
+          const lowerName = student.name.toLowerCase();
+          const isClassPlaceholder = 
+            lowerName === 'gc smp' || 
+            lowerName.includes('grade ') || 
+            lowerName.includes('kelas ') ||
+            lowerName.includes('general class') ||
+            lowerName.includes('placeholder') ||
+            lowerName.includes('test student');
+          return !isClassPlaceholder && student.name.trim().length > 1;
         });
 
-        const studentList: LatenessRecord[] = fetchedStudents
-          .map(student => {
-            const todayRecord = todayRecordsMap[student.id];
-            return {
-              id: student.id,
-              name: student.name,
-              arrivalTime: todayRecord ? todayRecord.arrivalTime : '',
-              reason: todayRecord ? todayRecord.reason : '',
-              parentNote: todayRecord ? todayRecord.parentNote || false : false,
-              countThisMonth: latenessCountMap[student.id] || 0,
-              className: className,
-              classId: classId
-            };
-          })
-          .filter(student => {
-            const lowerName = student.name.toLowerCase();
-            const isClassPlaceholder = 
-              lowerName === 'gc smp' || 
-              lowerName.includes('grade ') || 
-              lowerName.includes('kelas ') ||
-              lowerName.includes('general class') ||
-              lowerName.includes('placeholder') ||
-              lowerName.includes('test student');
-            return !isClassPlaceholder && student.name.length > 2;
-          });
-        
-        setRecords(prev => {
-          // Keep records that have data entered OR are marked as manually added (via search)
-          const recordsToKeep = prev.filter(r => r.arrivalTime !== '' || r.reason !== '' || r.isManual);
-          
-          // Filter out students from current studentList that are already in recordsToKeep
-          const manualRecords = recordsToKeep.filter(r => !studentList.some(s => s.id === r.id));
-          
-          // Only show students who have a non-empty arrivalTime (i.e. they are already loaded as late today)
-          const alreadyFilledRecords = studentList.filter(s => s.arrivalTime !== '');
-          
-          // Merge: manually added/modified records first, then the filled ones from today's list
-          return [...manualRecords, ...alreadyFilledRecords.map(s => {
-            const existing = recordsToKeep.find(r => r.id === s.id);
-            return existing ? { ...s, ...existing } : s;
-          })];
-        });
-        setClassStudentsList(studentList);
+        setClassRoster(filteredStudents);
       } catch (err) {
-        console.error('Error loading students for lateness:', err);
-        toast.error('Gagal memuat data siswa');
+        console.error('Error loading roster:', err);
+        toast.error('Gagal memuat roster siswa');
       } finally {
         setLoading(false);
       }
     };
 
-    loadStudents();
-  }, [selectedClass, classes, activeYear, selectedDate]);
+    loadRoster();
+  }, [selectedClass, classes, activeYear]);
+
+  React.useEffect(() => {
+    if (!selectedClass) {
+      setClassStudentsList([]);
+      return;
+    }
+
+    const currentClass = classes.find(c => c.id === selectedClass);
+    const className = currentClass?.name || selectedClass;
+    const classId = currentClass?.id || selectedClass;
+
+    const latenessQuery = query(
+      collection(db, 'lateness_records'),
+      where('classId', '==', selectedClass)
+    );
+
+    const unsubscribe = onSnapshot(latenessQuery, (snap) => {
+      const allRecords = snap.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+
+      // 1. Calculate this month's records
+      const todayObj = new Date(selectedDate);
+      const startOfMonth = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-01`;
+      const thisMonthRecords = allRecords.filter(r => r.date >= startOfMonth);
+
+      const latenessCountMap: Record<string, number> = {};
+      thisMonthRecords.forEach(r => {
+        if (r.studentId) {
+          latenessCountMap[r.studentId] = (latenessCountMap[r.studentId] || 0) + 1;
+        }
+      });
+
+      // 2. Calculate statistics (most frequent day & average late minutes)
+      const getDayName = (dateStr: string) => {
+        if (!dateStr) return '';
+        const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+        const [year, month, day] = dateStr.split('-').map(Number);
+        const d = new Date(year, month - 1, day);
+        return days[d.getDay()];
+      };
+
+      const dayCounts: Record<string, number> = {};
+      allRecords.forEach(d => {
+        const dayName = getDayName(d.date);
+        if (dayName) {
+          dayCounts[dayName] = (dayCounts[dayName] || 0) + 1;
+        }
+      });
+
+      let maxCount = 0;
+      let mostFrequentDays: string[] = [];
+      Object.entries(dayCounts).forEach(([day, count]) => {
+        if (count > maxCount) {
+          maxCount = count;
+          mostFrequentDays = [day];
+        } else if (count === maxCount) {
+          mostFrequentDays.push(day);
+        }
+      });
+
+      const info = getUnitInfo();
+      const timeToMinutes = (t: string) => {
+        if (!t || !t.includes(':')) return 0;
+        const [h, m] = t.split(':').map(Number);
+        return h * 60 + m;
+      };
+
+      let totalLateMinutes = 0;
+      let lateRecordsWithTimeCount = 0;
+      const targetTime = info.time;
+
+      allRecords.forEach(d => {
+        if (d.arrivalTime) {
+          const minutesLate = timeToMinutes(d.arrivalTime) - timeToMinutes(targetTime);
+          if (minutesLate > 0) {
+            totalLateMinutes += minutesLate;
+            lateRecordsWithTimeCount++;
+          }
+        }
+      });
+
+      const calculatedMostFrequentDay = mostFrequentDays.length > 0 ? mostFrequentDays.join(' & ') : '-';
+      const calculatedAvgMinutes = lateRecordsWithTimeCount > 0 ? `${Math.round(totalLateMinutes / lateRecordsWithTimeCount)} Menit` : '-';
+
+      setMostFrequentDay(calculatedMostFrequentDay);
+      setAvgLateMinutes(calculatedAvgMinutes);
+
+      // 3. Create a map of existing lateness records for today to check if we should pre-fill them
+      const todayRecordsMap: Record<string, any> = {};
+      allRecords.forEach(r => {
+        if (r.studentId && r.date === selectedDate) {
+          todayRecordsMap[r.studentId] = r;
+        }
+      });
+
+      // 4. Update student list
+      const studentList: LatenessRecord[] = classRoster.map(student => {
+        const todayRecord = todayRecordsMap[student.id];
+        return {
+          id: student.id,
+          name: student.name,
+          nickname: student.nickname || '',
+          arrivalTime: todayRecord ? todayRecord.arrivalTime : '',
+          reason: todayRecord ? todayRecord.reason : '',
+          parentNote: todayRecord ? todayRecord.parentNote || false : false,
+          countThisMonth: latenessCountMap[student.id] || 0,
+          className: className,
+          classId: classId
+        };
+      });
+
+      setRecords(prev => {
+        // Keep records that have unsaved changes or are marked as manual
+        const recordsToKeep = prev.filter(r => {
+          const saved = todayRecordsMap[r.id];
+          if (saved) {
+            return r.arrivalTime !== saved.arrivalTime || r.reason !== saved.reason || r.parentNote !== saved.parentNote;
+          } else {
+            return r.arrivalTime !== '' || r.reason !== '' || r.isManual;
+          }
+        });
+        
+        const manualRecords = recordsToKeep.filter(r => !studentList.some(s => s.id === r.id));
+        const alreadyFilledRecords = studentList.filter(s => s.arrivalTime !== '');
+        
+        return [...manualRecords, ...alreadyFilledRecords.map(s => {
+          const existing = recordsToKeep.find(r => r.id === s.id);
+          return existing ? { ...s, ...existing, countThisMonth: s.countThisMonth } : s;
+        })];
+      });
+
+      setClassStudentsList(studentList);
+    }, (err) => {
+      console.error('Error listening to lateness records:', err);
+    });
+
+    return () => unsubscribe();
+  }, [selectedClass, classes, selectedDate, classRoster]);
 
   const updateTime = (id: string, arrivalTime: string) => {
     setRecords(records.map(r => r.id === id ? { ...r, arrivalTime } : r));
@@ -427,7 +448,6 @@ export default function Lateness() {
 
       // Clear the saved late records from the screen
       setRecords(prev => prev.filter(r => !lateEntries.some(le => le.id === r.id)));
-      fetchTodaySavedRecords();
     } catch (err) {
       console.error('Error saving lateness:', err);
       toast.error('Gagal menyimpan data');
@@ -438,6 +458,7 @@ export default function Lateness() {
 
   const filteredRecords = records.filter(r => 
     r.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (r.nickname && r.nickname.toLowerCase().includes(searchTerm.toLowerCase())) ||
     r.id.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -670,6 +691,7 @@ export default function Lateness() {
                        const newRecord: LatenessRecord = {
                          id: student.id,
                          name: student.name,
+                         nickname: student.nickname || "",
                          arrivalTime: getCurrentTimeStr(), // Auto-detect current time when searched/added
                          reason: '',
                          parentNote: false,

@@ -101,16 +101,17 @@ export default function StudentSearch({
         } else if (unitId && academicYear) {
           try {
             const classesRef = collection(db, 'classes');
+            // Query classes only by unitId to avoid composite index requirements
             const classesQ = query(
               classesRef, 
-              where('unitId', '==', unitId),
-              where('academicYear', '==', academicYear)
+              where('unitId', '==', unitId)
             );
             const classesSnap = await getDocs(classesQ);
             const nameToIdMap: Record<string, string> = {};
             classesSnap.docs.forEach(doc => {
               const data = doc.data();
-              if (data.status !== 'archived') {
+              // Filter status and academicYear in memory
+              if (data.status !== 'archived' && data.academicYear === academicYear) {
                 classIds.push(doc.id);
                 if (data.name) {
                   classNames.push(data.name.toLowerCase());
@@ -122,14 +123,17 @@ export default function StudentSearch({
 
             if (classIds.length > 0) {
               const enrollmentsRef = collection(db, 'enrollments');
+              // Query enrollments only by academicYear to avoid composite index requirements
               const enrollmentsQ = query(
                 enrollmentsRef,
-                where('academicYear', '==', academicYear),
-                where('status', '==', 'active')
+                where('academicYear', '==', academicYear)
               );
               const enrollmentsSnap = await getDocs(enrollmentsQ);
               enrollmentsSnap.docs.forEach(doc => {
                 const data = doc.data();
+                // Filter status in memory
+                if (data.status !== 'active') return;
+                
                 const matchedClassId = data.classId ? (classIds.includes(data.classId) ? data.classId : nameToIdMap[data.classId.toLowerCase()]) : null;
                 if (data.studentId && matchedClassId) {
                   if (!enrolledStudentIds.includes(data.studentId)) {
@@ -192,10 +196,10 @@ export default function StudentSearch({
           const mappedEnrollment = enrollmentMap[doc.id];
           return normalizeStudent({
             id: doc.id,
-            name: data.displayName || data.name || 'Unknown',
-            nickname: data.nickname,
-            className: mappedEnrollment?.className || data.jobTitle,
-            classId: mappedEnrollment?.classId || data.classId,
+            name: data.displayName || data.name || data.fullName || data.fullNameStr || 'Unknown',
+            nickname: data.nickname || data.panggilan || data.nicknameStr || '',
+            className: mappedEnrollment?.className || data.jobTitle || data.className || data.classNameStr || '',
+            classId: mappedEnrollment?.classId || data.classId || '',
             email: data.email
           });
         });
@@ -209,10 +213,10 @@ export default function StudentSearch({
           const mappedEnrollment = enrollmentMap[inviteId] || enrollmentMap[doc.id];
           return normalizeStudent({
             id: inviteId,
-            name: data.name || '',
-            nickname: data.nickname,
-            className: mappedEnrollment?.className || data.jobTitle,
-            classId: mappedEnrollment?.classId || data.classId,
+            name: data.name || data.displayName || data.fullName || data.fullNameStr || '',
+            nickname: data.nickname || data.panggilan || data.nicknameStr || '',
+            className: mappedEnrollment?.className || data.jobTitle || data.className || data.classNameStr || '',
+            classId: mappedEnrollment?.classId || data.classId || '',
             email: data.email
           });
         });
@@ -224,10 +228,10 @@ export default function StudentSearch({
           const mappedEnrollment = enrollmentMap[doc.id];
           return normalizeStudent({
             id: doc.id,
-            name: data.name || data.fullName || 'Unknown',
-            nickname: data.nickname,
-            className: mappedEnrollment?.className || data.className || data.jobTitle,
-            classId: mappedEnrollment?.classId || data.classId,
+            name: data.name || data.fullName || data.displayName || data.fullNameStr || 'Unknown',
+            nickname: data.nickname || data.panggilan || data.nicknameStr || '',
+            className: mappedEnrollment?.className || data.className || data.classNameStr || data.jobTitle || '',
+            classId: mappedEnrollment?.classId || data.classId || '',
             email: data.email
           });
         });
@@ -325,7 +329,7 @@ export default function StudentSearch({
             lowerName.includes('placeholder') ||
             lowerName.includes('test student');
             
-          return !isClassPlaceholder && nameStr.length > 2 && (
+          return !isClassPlaceholder && nameStr.trim().length > 1 && (
             lowerName.includes(searchTerm.toLowerCase()) || 
             (s.nickname && s.nickname.toLowerCase().includes(searchTerm.toLowerCase()))
           );

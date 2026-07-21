@@ -541,10 +541,28 @@ service cloud.firestore {
     }
 
     match /smartGoalTrackerEntries/{entryId} {
-      allow read: if isActive() && (isJuniorHighStaff() || isOwnStudentData(existing().studentId) || isLinkedStudent(existing().studentId));
-      allow create: if isActive() && (isOwnStudentData(incoming().studentId) || isJuniorHighStaff());
-      allow update: if isActive() && (isOwnStudentData(existing().studentId) || isJuniorHighStaff());
-      allow delete: if isActive() && (isOwnStudentData(existing().studentId) || isJuniorHighStaff());
+      allow read: if isActive() && (isOwnStudentData(existing().studentId) || isJHConferenceStaff());
+      allow create: if isActive() &&
+        isOwnStudentData(incoming().studentId) &&
+        incoming().keys().hasAll(['studentId', 'periodId', 'goalId', 'goalStrand', 'goalSnapshot']) &&
+        !('mentorComment' in incoming()) &&
+        !('commentedBy' in incoming()) &&
+        !('commentedByName' in incoming()) &&
+        !('commentedAt' in incoming());
+      allow update: if isActive() && (
+        (
+          isOwnStudentData(existing().studentId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'entryDate', 'actionsTaken', 'progressMade', 'hinderingBehaviors', 'improvementPlan', 'updatedAt'
+          ])
+        ) || (
+          isJHConferenceStaff() &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'mentorComment', 'commentedBy', 'commentedByName', 'commentedAt', 'updatedAt'
+          ])
+        )
+      );
+      allow delete: if false;
     }
   }
 }
