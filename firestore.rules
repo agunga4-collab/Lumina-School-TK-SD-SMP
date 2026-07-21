@@ -521,16 +521,40 @@ service cloud.firestore {
     }
 
     match /studentConferenceResponses/{responseId} {
-      allow read: if isActive() && (isJuniorHighStaff() || isOwnStudentData(existing().studentId) || isLinkedStudent(existing().studentId));
-      allow create: if isActive() && (isOwnStudentData(incoming().studentId) || isJuniorHighStaff());
-      allow update: if isActive() && (isOwnStudentData(existing().studentId) || isJuniorHighStaff());
-      allow delete: if isActive() && (isOwnStudentData(existing().studentId) || isJuniorHighStaff());
+      allow get: if isActive() && (
+        isJuniorHighStaff() ||
+        (resource != null && isOwnStudentData(resource.data.studentId)) ||
+        (resource == null && isStudent() && currentUserExists() && ('luminaId' in currentUser()) && responseId.endsWith('_' + currentUser().luminaId)) ||
+        (resource != null && isLinkedStudent(resource.data.studentId))
+      );
+      allow list: if isActive() && (
+        isJuniorHighStaff() ||
+        (isStudent() && currentUserExists() && ('luminaId' in currentUser()) && resource.data.studentId == currentUser().luminaId) ||
+        isLinkedStudent(resource.data.studentId)
+      );
+      allow create: if isActive() && (
+        isJuniorHighStaff() ||
+        (isOwnStudentData(incoming().studentId) && responseId.endsWith('_' + incoming().studentId))
+      );
+      allow update: if isActive() && (
+        isJuniorHighStaff() ||
+        (isOwnStudentData(existing().studentId) && incoming().studentId == existing().studentId)
+      );
+      allow delete: if isActive() && (
+        isJuniorHighStaff() ||
+        isOwnStudentData(existing().studentId)
+      );
     }
 
     match /mentorAssignments/{assignmentId} {
-      allow read: if isActive() && (
-        isJHConferenceStaff() || 
-        (resource != null && isOwnStudentData(existing().studentId))
+      allow get: if isActive() && (
+        isJHConferenceStaff() ||
+        (resource != null && isOwnStudentData(resource.data.studentId)) ||
+        (resource == null && isStudent() && currentUserExists() && ('luminaId' in currentUser()) && assignmentId.endsWith('_' + currentUser().luminaId))
+      );
+      allow list: if isActive() && (
+        isJHConferenceStaff() ||
+        (isStudent() && currentUserExists() && ('luminaId' in currentUser()) && resource.data.studentId == currentUser().luminaId)
       );
       allow create: if isJHConferenceStaff() && 
         incoming().studentId is string && 
@@ -541,7 +565,14 @@ service cloud.firestore {
     }
 
     match /smartGoalTrackerEntries/{entryId} {
-      allow read: if isActive() && (isOwnStudentData(existing().studentId) || isJHConferenceStaff());
+      allow get: if isActive() && (
+        isJHConferenceStaff() ||
+        (resource != null && isOwnStudentData(resource.data.studentId))
+      );
+      allow list: if isActive() && (
+        isJHConferenceStaff() ||
+        (isStudent() && currentUserExists() && ('luminaId' in currentUser()) && resource.data.studentId == currentUser().luminaId)
+      );
       allow create: if isActive() &&
         isOwnStudentData(incoming().studentId) &&
         incoming().keys().hasAll(['studentId', 'periodId', 'goalId', 'goalStrand', 'goalSnapshot']) &&
