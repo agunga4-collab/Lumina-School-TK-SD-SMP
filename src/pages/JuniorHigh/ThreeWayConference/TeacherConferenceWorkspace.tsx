@@ -319,7 +319,7 @@ export default function TeacherConferenceWorkspace() {
               {getPeriodStatusBadge(activePeriod.status)}
               <span className="text-xs text-gray-400 font-medium hidden sm:inline">•</span>
               <span className="text-xs text-gray-500 font-medium">
-                Window: <strong>{new Date(activePeriod.startDate).toLocaleDateString('id-ID')}</strong> to <strong>{new Date(activePeriod.endDate).toLocaleDateString('id-ID')}</strong>
+                Goal Window: <strong>{activePeriod.goalSettingOpenDate ? new Date(activePeriod.goalSettingOpenDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</strong> to <strong>{activePeriod.goalSettingCloseDate ? new Date(activePeriod.goalSettingCloseDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</strong>
               </span>
             </div>
           </div>
