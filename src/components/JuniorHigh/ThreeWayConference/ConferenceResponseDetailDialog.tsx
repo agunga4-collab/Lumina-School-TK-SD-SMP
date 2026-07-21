@@ -446,10 +446,25 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                     </div>
 
                     {/* Unit Activity */}
-                    <div className="space-y-1.5 pt-2 border-t border-gray-50">
+                    <div className="space-y-2.5 pt-3 border-t border-gray-100">
                       <h4 className="text-xs font-black uppercase tracking-wider text-gray-400">Extracurricular / Unit Activity</h4>
-                      {response.unitActivity ? (
-                        <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 text-xs text-gray-700 font-semibold text-gray-800">
+                      {response.unitActivityCategory ? (
+                        <div className="space-y-2 bg-gray-50 border border-gray-100 rounded-xl p-4 text-xs">
+                          <div>
+                            <span className="font-black text-gray-400 uppercase tracking-wider text-[9px]">Activity Choice</span>
+                            <p className="text-gray-800 font-bold mt-0.5">{response.unitActivityCategory} &mdash; {response.unitActivityName}</p>
+                          </div>
+                          <div className="pt-2 border-t border-gray-200/50">
+                            <span className="font-black text-gray-400 uppercase tracking-wider text-[9px]">Student Worries</span>
+                            <p className="text-gray-700 font-medium mt-0.5 whitespace-pre-wrap">{response.unitActivityWorries}</p>
+                          </div>
+                          <div className="pt-2 border-t border-gray-200/50">
+                            <span className="font-black text-gray-400 uppercase tracking-wider text-[9px]">Plan to Overcome</span>
+                            <p className="text-gray-700 font-medium mt-0.5 whitespace-pre-wrap">{response.unitActivityOvercomingPlan}</p>
+                          </div>
+                        </div>
+                      ) : response.unitActivity ? (
+                        <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 text-xs text-gray-700 font-semibold text-gray-800 whitespace-pre-wrap">
                           {response.unitActivity}
                         </div>
                       ) : (

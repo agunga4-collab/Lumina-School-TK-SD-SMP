@@ -50,12 +50,20 @@ export default function StudentGoalSettingPage() {
     areasForGrowth: string;
     goals: SmartGoal[];
     unitActivity: string;
+    unitActivityCategory: string;
+    unitActivityName: string;
+    unitActivityWorries: string;
+    unitActivityOvercomingPlan: string;
   }>({
     aboutMe: '',
     strengths: '',
     areasForGrowth: '',
     goals: [],
     unitActivity: '',
+    unitActivityCategory: '',
+    unitActivityName: '',
+    unitActivityWorries: '',
+    unitActivityOvercomingPlan: '',
   });
 
   // Track if we have unsaved local changes
@@ -112,6 +120,10 @@ export default function StudentGoalSettingPage() {
             areasForGrowth: existingResponse.areasForGrowth || '',
             goals: existingResponse.goals || [],
             unitActivity: existingResponse.unitActivity || '',
+            unitActivityCategory: existingResponse.unitActivityCategory || '',
+            unitActivityName: existingResponse.unitActivityName || '',
+            unitActivityWorries: existingResponse.unitActivityWorries || '',
+            unitActivityOvercomingPlan: existingResponse.unitActivityOvercomingPlan || '',
           });
         }
 
@@ -177,10 +189,16 @@ export default function StudentGoalSettingPage() {
 
   // Form field change callback
   const handleFieldChange = (field: string, value: any) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }));
+    setFormData(prev => {
+      const updated = {
+        ...prev,
+        [field]: value
+      };
+      if (field === 'unitActivityCategory') {
+        updated.unitActivityName = '';
+      }
+      return updated;
+    });
     setIsDirty(true);
   };
 
@@ -197,6 +215,10 @@ export default function StudentGoalSettingPage() {
         areasForGrowth: formData.areasForGrowth,
         goals: formData.goals,
         unitActivity: formData.unitActivity,
+        unitActivityCategory: formData.unitActivityCategory,
+        unitActivityName: formData.unitActivityName,
+        unitActivityWorries: formData.unitActivityWorries,
+        unitActivityOvercomingPlan: formData.unitActivityOvercomingPlan,
         selfExplorationReferenceId: selfExplorationRef?.enrollment?.id || null,
         selfExplorationSnapshot: selfExplorationRef?.enrollment || null,
       };
@@ -229,6 +251,10 @@ export default function StudentGoalSettingPage() {
         areasForGrowth: formData.areasForGrowth,
         goals: formData.goals,
         unitActivity: formData.unitActivity,
+        unitActivityCategory: formData.unitActivityCategory,
+        unitActivityName: formData.unitActivityName,
+        unitActivityWorries: formData.unitActivityWorries,
+        unitActivityOvercomingPlan: formData.unitActivityOvercomingPlan,
         selfExplorationReferenceId: selfExplorationRef?.enrollment?.id || null,
         selfExplorationSnapshot: selfExplorationRef?.enrollment || null,
       };
@@ -255,6 +281,10 @@ export default function StudentGoalSettingPage() {
       areasForGrowth: formData.areasForGrowth,
       goals: formData.goals,
       unitActivity: formData.unitActivity,
+      unitActivityCategory: formData.unitActivityCategory,
+      unitActivityName: formData.unitActivityName,
+      unitActivityWorries: formData.unitActivityWorries,
+      unitActivityOvercomingPlan: formData.unitActivityOvercomingPlan,
     };
 
     const validation = threeWayConferenceService.validateConferenceResponseForSubmission(payload);
@@ -429,6 +459,7 @@ export default function StudentGoalSettingPage() {
             <SelfExplorationReferenceSection
               loading={seLoading}
               referenceData={selfExplorationRef}
+              grade={student?.grade || response?.gradeLevel}
             />
           )}
 
@@ -436,8 +467,12 @@ export default function StudentGoalSettingPage() {
           {activeStep.id === 'unit-activity' && (
             <UnitActivitySection
               unitActivity={formData.unitActivity}
+              unitActivityCategory={formData.unitActivityCategory}
+              unitActivityName={formData.unitActivityName}
+              unitActivityWorries={formData.unitActivityWorries}
+              unitActivityOvercomingPlan={formData.unitActivityOvercomingPlan}
               disabled={!isEditable}
-              onChange={(value) => handleFieldChange('unitActivity', value)}
+              onChange={handleFieldChange}
             />
           )}
 
@@ -543,11 +578,32 @@ export default function StudentGoalSettingPage() {
                   </div>
 
                   {/* Unit Activity */}
-                  <div className="space-y-2 border-t border-gray-100 pt-6">
+                  <div className="space-y-4 border-t border-gray-100 pt-6">
                     <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">My Unit Activity</h4>
-                    <p className="text-sm font-semibold text-gray-700 leading-relaxed bg-gray-50 p-5 rounded-2xl border border-gray-100 whitespace-pre-wrap">
-                      {formData.unitActivity || <em className="text-gray-300">No input provided</em>}
-                    </p>
+                    {formData.unitActivityCategory ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-1">
+                          <span className="text-[9px] font-black uppercase text-gray-400 tracking-wider">Unit Activity Field</span>
+                          <p className="text-xs font-bold text-gray-800">{formData.unitActivityCategory}</p>
+                        </div>
+                        <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-1">
+                          <span className="text-[9px] font-black uppercase text-gray-400 tracking-wider">Unit Activity Chosen</span>
+                          <p className="text-xs font-bold text-gray-800">{formData.unitActivityName}</p>
+                        </div>
+                        <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-1 md:col-span-2">
+                          <span className="text-[9px] font-black uppercase text-gray-400 tracking-wider">My Worries Joining This</span>
+                          <p className="text-xs font-semibold text-gray-700 leading-relaxed whitespace-pre-wrap">{formData.unitActivityWorries}</p>
+                        </div>
+                        <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-1 md:col-span-2">
+                          <span className="text-[9px] font-black uppercase text-gray-400 tracking-wider">My Overcoming Plan</span>
+                          <p className="text-xs font-semibold text-gray-700 leading-relaxed whitespace-pre-wrap">{formData.unitActivityOvercomingPlan}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-sm font-semibold text-gray-700 leading-relaxed bg-gray-50 p-5 rounded-2xl border border-gray-100 whitespace-pre-wrap">
+                        {formData.unitActivity || <em className="text-gray-300">No input provided</em>}
+                      </p>
+                    )}
                   </div>
 
                 </div>

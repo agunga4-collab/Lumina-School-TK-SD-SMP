@@ -1735,6 +1735,10 @@ export interface StudentConferenceResponse {
   selfExplorationSnapshot?: any;
   karyaIlmiahReferenceId: string | null;
   unitActivity?: string;
+  unitActivityCategory?: string;
+  unitActivityName?: string;
+  unitActivityWorries?: string;
+  unitActivityOvercomingPlan?: string;
   createdAt: number;
   updatedAt: number;
   submittedAt?: number | null;

@@ -360,6 +360,10 @@ export const threeWayConferenceService = {
         selfExplorationSnapshot: responsePayload.selfExplorationSnapshot || null,
         karyaIlmiahReferenceId: responsePayload.karyaIlmiahReferenceId || null,
         unitActivity: responsePayload.unitActivity || '',
+        unitActivityCategory: responsePayload.unitActivityCategory || '',
+        unitActivityName: responsePayload.unitActivityName || '',
+        unitActivityWorries: responsePayload.unitActivityWorries || '',
+        unitActivityOvercomingPlan: responsePayload.unitActivityOvercomingPlan || '',
         createdAt: existingSnap.exists() ? (existingSnap.data() as StudentConferenceResponse).createdAt : nowTime,
         updatedAt: nowTime,
       };
@@ -444,6 +448,10 @@ export const threeWayConferenceService = {
         selfExplorationSnapshot: responsePayload.selfExplorationSnapshot || null,
         karyaIlmiahReferenceId: responsePayload.karyaIlmiahReferenceId || null,
         unitActivity: responsePayload.unitActivity || '',
+        unitActivityCategory: responsePayload.unitActivityCategory || '',
+        unitActivityName: responsePayload.unitActivityName || '',
+        unitActivityWorries: responsePayload.unitActivityWorries || '',
+        unitActivityOvercomingPlan: responsePayload.unitActivityOvercomingPlan || '',
         createdAt: existingSnap.exists() ? (existingSnap.data() as StudentConferenceResponse).createdAt : nowTime,
         updatedAt: nowTime,
         submittedAt: nowTime,
@@ -528,6 +536,19 @@ export const threeWayConferenceService = {
         errors.push(`Maximum two goals are allowed for the ${strand} strand.`);
       }
     });
+
+    if (!response.unitActivityCategory || !response.unitActivityCategory.trim()) {
+      errors.push('Unit Activity Field is required.');
+    }
+    if (!response.unitActivityName || !response.unitActivityName.trim()) {
+      errors.push('Unit Activity Chosen is required.');
+    }
+    if (!response.unitActivityWorries || !response.unitActivityWorries.trim()) {
+      errors.push('Your worries joining the Unit Activity is required.');
+    }
+    if (!response.unitActivityOvercomingPlan || !response.unitActivityOvercomingPlan.trim()) {
+      errors.push('Your plan to overcome Unit Activity worries is required.');
+    }
 
     return {
       isValid: errors.length === 0,
