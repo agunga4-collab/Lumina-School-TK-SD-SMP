@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { getStudentById } from '../../lib/firebase';
 import { threeWayConferenceService } from '../../services/threeWayConferenceService';
-import { Student, ConferencePeriod, StudentConferenceResponse, SmartGoal } from '../../types';
+import { Student, ConferencePeriod, StudentConferenceResponse, SmartGoal, UnitActivityItem } from '../../types';
 import { toast } from 'sonner';
 
 // Sub-components
@@ -50,20 +50,14 @@ export default function StudentGoalSettingPage() {
     areasForGrowth: string;
     goals: SmartGoal[];
     unitActivity: string;
-    unitActivityCategory: string;
-    unitActivityName: string;
-    unitActivityWorries: string;
-    unitActivityOvercomingPlan: string;
+    unitActivities: UnitActivityItem[];
   }>({
     aboutMe: '',
     strengths: '',
     areasForGrowth: '',
     goals: [],
     unitActivity: '',
-    unitActivityCategory: '',
-    unitActivityName: '',
-    unitActivityWorries: '',
-    unitActivityOvercomingPlan: '',
+    unitActivities: [],
   });
 
   // Track if we have unsaved local changes
@@ -120,10 +114,7 @@ export default function StudentGoalSettingPage() {
             areasForGrowth: existingResponse.areasForGrowth || '',
             goals: existingResponse.goals || [],
             unitActivity: existingResponse.unitActivity || '',
-            unitActivityCategory: existingResponse.unitActivityCategory || '',
-            unitActivityName: existingResponse.unitActivityName || '',
-            unitActivityWorries: existingResponse.unitActivityWorries || '',
-            unitActivityOvercomingPlan: existingResponse.unitActivityOvercomingPlan || '',
+            unitActivities: existingResponse.unitActivities || [],
           });
         }
 
@@ -189,16 +180,10 @@ export default function StudentGoalSettingPage() {
 
   // Form field change callback
   const handleFieldChange = (field: string, value: any) => {
-    setFormData(prev => {
-      const updated = {
-        ...prev,
-        [field]: value
-      };
-      if (field === 'unitActivityCategory') {
-        updated.unitActivityName = '';
-      }
-      return updated;
-    });
+    setFormData(prev => ({
+      ...prev,
+      [field]: value
+    }));
     setIsDirty(true);
   };
 
@@ -215,10 +200,7 @@ export default function StudentGoalSettingPage() {
         areasForGrowth: formData.areasForGrowth,
         goals: formData.goals,
         unitActivity: formData.unitActivity,
-        unitActivityCategory: formData.unitActivityCategory,
-        unitActivityName: formData.unitActivityName,
-        unitActivityWorries: formData.unitActivityWorries,
-        unitActivityOvercomingPlan: formData.unitActivityOvercomingPlan,
+        unitActivities: formData.unitActivities,
         selfExplorationReferenceId: selfExplorationRef?.enrollment?.id || null,
         selfExplorationSnapshot: selfExplorationRef?.enrollment || null,
       };
@@ -251,10 +233,7 @@ export default function StudentGoalSettingPage() {
         areasForGrowth: formData.areasForGrowth,
         goals: formData.goals,
         unitActivity: formData.unitActivity,
-        unitActivityCategory: formData.unitActivityCategory,
-        unitActivityName: formData.unitActivityName,
-        unitActivityWorries: formData.unitActivityWorries,
-        unitActivityOvercomingPlan: formData.unitActivityOvercomingPlan,
+        unitActivities: formData.unitActivities,
         selfExplorationReferenceId: selfExplorationRef?.enrollment?.id || null,
         selfExplorationSnapshot: selfExplorationRef?.enrollment || null,
       };
@@ -281,10 +260,7 @@ export default function StudentGoalSettingPage() {
       areasForGrowth: formData.areasForGrowth,
       goals: formData.goals,
       unitActivity: formData.unitActivity,
-      unitActivityCategory: formData.unitActivityCategory,
-      unitActivityName: formData.unitActivityName,
-      unitActivityWorries: formData.unitActivityWorries,
-      unitActivityOvercomingPlan: formData.unitActivityOvercomingPlan,
+      unitActivities: formData.unitActivities,
     };
 
     const validation = threeWayConferenceService.validateConferenceResponseForSubmission(payload);
@@ -467,10 +443,7 @@ export default function StudentGoalSettingPage() {
           {activeStep.id === 'unit-activity' && (
             <UnitActivitySection
               unitActivity={formData.unitActivity}
-              unitActivityCategory={formData.unitActivityCategory}
-              unitActivityName={formData.unitActivityName}
-              unitActivityWorries={formData.unitActivityWorries}
-              unitActivityOvercomingPlan={formData.unitActivityOvercomingPlan}
+              unitActivities={formData.unitActivities}
               disabled={!isEditable}
               onChange={handleFieldChange}
             />
@@ -579,25 +552,33 @@ export default function StudentGoalSettingPage() {
 
                   {/* Unit Activity */}
                   <div className="space-y-4 border-t border-gray-100 pt-6">
-                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">My Unit Activity</h4>
-                    {formData.unitActivityCategory ? (
+                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">My Unit Activities</h4>
+                    {formData.unitActivities && formData.unitActivities.length > 0 ? (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-1">
-                          <span className="text-[9px] font-black uppercase text-gray-400 tracking-wider">Unit Activity Field</span>
-                          <p className="text-xs font-bold text-gray-800">{formData.unitActivityCategory}</p>
-                        </div>
-                        <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-1">
-                          <span className="text-[9px] font-black uppercase text-gray-400 tracking-wider">Unit Activity Chosen</span>
-                          <p className="text-xs font-bold text-gray-800">{formData.unitActivityName}</p>
-                        </div>
-                        <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-1 md:col-span-2">
-                          <span className="text-[9px] font-black uppercase text-gray-400 tracking-wider">My Worries Joining This</span>
-                          <p className="text-xs font-semibold text-gray-700 leading-relaxed whitespace-pre-wrap">{formData.unitActivityWorries}</p>
-                        </div>
-                        <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-1 md:col-span-2">
-                          <span className="text-[9px] font-black uppercase text-gray-400 tracking-wider">My Overcoming Plan</span>
-                          <p className="text-xs font-semibold text-gray-700 leading-relaxed whitespace-pre-wrap">{formData.unitActivityOvercomingPlan}</p>
-                        </div>
+                        {formData.unitActivities.map((ua) => (
+                          <div key={ua.category} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-3">
+                            <div className="flex items-center justify-between border-b border-gray-200/50 pb-1.5">
+                              <span className="text-[10px] font-black text-teal-950 uppercase tracking-wide">{ua.category}</span>
+                              <span className="text-[8px] font-black px-1.5 py-0.5 bg-white border border-teal-500/10 rounded-md text-teal-600 uppercase tracking-wider">
+                                Selected
+                              </span>
+                            </div>
+                            <div className="space-y-2 text-xs">
+                              <div>
+                                <span className="font-black text-gray-400 uppercase tracking-wider text-[8px]">Activity Chosen</span>
+                                <p className="text-gray-800 font-bold mt-0.5">{ua.activityName || <em className="text-gray-300">None selected</em>}</p>
+                              </div>
+                              <div>
+                                <span className="font-black text-gray-400 uppercase tracking-wider text-[8px]">My Worries</span>
+                                <p className="text-gray-700 font-semibold leading-relaxed whitespace-pre-wrap">{ua.worries || <em className="text-gray-300">No worries provided</em>}</p>
+                              </div>
+                              <div>
+                                <span className="font-black text-gray-400 uppercase tracking-wider text-[8px]">My Overcoming Plan</span>
+                                <p className="text-gray-700 font-semibold leading-relaxed whitespace-pre-wrap">{ua.overcomingPlan || <em className="text-gray-300">No plan provided</em>}</p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     ) : (
                       <p className="text-sm font-semibold text-gray-700 leading-relaxed bg-gray-50 p-5 rounded-2xl border border-gray-100 whitespace-pre-wrap">

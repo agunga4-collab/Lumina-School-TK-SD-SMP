@@ -123,7 +123,21 @@ export default function StudentMyPresentationPage() {
     }
 
     // 11. Unit Activity
-    if (response.unitActivity && response.unitActivity.trim()) {
+    if (response.unitActivities && response.unitActivities.length > 0) {
+      response.unitActivities.forEach(ua => {
+        // Only push if the student actually made some entry in the block
+        if (ua.activityName || ua.worries || ua.overcomingPlan) {
+          list.push({
+            type: 'UNIT_ACTIVITY',
+            title: `Unit Activity: ${ua.category}`,
+            unitActivityCategory: ua.category,
+            unitActivityName: ua.activityName,
+            unitActivityWorries: ua.worries,
+            unitActivityOvercomingPlan: ua.overcomingPlan
+          });
+        }
+      });
+    } else if (response.unitActivity && response.unitActivity.trim()) {
       list.push({ type: 'UNIT_ACTIVITY', title: 'My Unit Activity' });
     }
 

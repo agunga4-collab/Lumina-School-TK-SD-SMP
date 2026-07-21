@@ -1715,6 +1715,13 @@ export interface SmartGoal {
   updatedAt: number;
 }
 
+export interface UnitActivityItem {
+  category: string;
+  activityName: string;
+  worries: string;
+  overcomingPlan: string;
+}
+
 export interface StudentConferenceResponse {
   id: string; // ${periodId}_${studentId}
   periodId: string;
@@ -1739,6 +1746,7 @@ export interface StudentConferenceResponse {
   unitActivityName?: string;
   unitActivityWorries?: string;
   unitActivityOvercomingPlan?: string;
+  unitActivities?: UnitActivityItem[];
   createdAt: number;
   updatedAt: number;
   submittedAt?: number | null;

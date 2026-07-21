@@ -447,8 +447,31 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
 
                     {/* Unit Activity */}
                     <div className="space-y-2.5 pt-3 border-t border-gray-100">
-                      <h4 className="text-xs font-black uppercase tracking-wider text-gray-400">Extracurricular / Unit Activity</h4>
-                      {response.unitActivityCategory ? (
+                      <h4 className="text-xs font-black uppercase tracking-wider text-gray-400">Extracurricular / Unit Activities</h4>
+                      {response.unitActivities && response.unitActivities.length > 0 ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {response.unitActivities.map((ua) => (
+                            <div key={ua.category} className="space-y-2 bg-gray-50 border border-gray-100 rounded-xl p-3 text-xs">
+                              <div className="flex justify-between items-center border-b border-gray-200/50 pb-1">
+                                <span className="font-black text-teal-800 uppercase text-[9px]">{ua.category}</span>
+                                <span className="text-[7px] font-black px-1 bg-teal-100 text-teal-700 rounded uppercase">Chosen</span>
+                              </div>
+                              <div>
+                                <span className="font-black text-gray-400 uppercase tracking-wider text-[8px]">Activity Chosen</span>
+                                <p className="text-gray-800 font-bold mt-0.5">{ua.activityName || <em className="text-gray-300">None selected</em>}</p>
+                              </div>
+                              <div className="pt-1.5 border-t border-gray-200/30">
+                                <span className="font-black text-gray-400 uppercase tracking-wider text-[8px]">Student Worries</span>
+                                <p className="text-gray-700 font-medium mt-0.5 whitespace-pre-wrap">{ua.worries || <em className="text-gray-300">None</em>}</p>
+                              </div>
+                              <div className="pt-1.5 border-t border-gray-200/30">
+                                <span className="font-black text-gray-400 uppercase tracking-wider text-[8px]">Plan to Overcome</span>
+                                <p className="text-gray-700 font-medium mt-0.5 whitespace-pre-wrap">{ua.overcomingPlan || <em className="text-gray-300">None</em>}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : response.unitActivityCategory ? (
                         <div className="space-y-2 bg-gray-50 border border-gray-100 rounded-xl p-4 text-xs">
                           <div>
                             <span className="font-black text-gray-400 uppercase tracking-wider text-[9px]">Activity Choice</span>

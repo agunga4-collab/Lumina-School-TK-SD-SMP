@@ -364,6 +364,7 @@ export const threeWayConferenceService = {
         unitActivityName: responsePayload.unitActivityName || '',
         unitActivityWorries: responsePayload.unitActivityWorries || '',
         unitActivityOvercomingPlan: responsePayload.unitActivityOvercomingPlan || '',
+        unitActivities: responsePayload.unitActivities || [],
         createdAt: existingSnap.exists() ? (existingSnap.data() as StudentConferenceResponse).createdAt : nowTime,
         updatedAt: nowTime,
       };
@@ -452,6 +453,7 @@ export const threeWayConferenceService = {
         unitActivityName: responsePayload.unitActivityName || '',
         unitActivityWorries: responsePayload.unitActivityWorries || '',
         unitActivityOvercomingPlan: responsePayload.unitActivityOvercomingPlan || '',
+        unitActivities: responsePayload.unitActivities || [],
         createdAt: existingSnap.exists() ? (existingSnap.data() as StudentConferenceResponse).createdAt : nowTime,
         updatedAt: nowTime,
         submittedAt: nowTime,
@@ -537,18 +539,24 @@ export const threeWayConferenceService = {
       }
     });
 
-    if (!response.unitActivityCategory || !response.unitActivityCategory.trim()) {
-      errors.push('Unit Activity Field is required.');
-    }
-    if (!response.unitActivityName || !response.unitActivityName.trim()) {
-      errors.push('Unit Activity Chosen is required.');
-    }
-    if (!response.unitActivityWorries || !response.unitActivityWorries.trim()) {
-      errors.push('Your worries joining the Unit Activity is required.');
-    }
-    if (!response.unitActivityOvercomingPlan || !response.unitActivityOvercomingPlan.trim()) {
-      errors.push('Your plan to overcome Unit Activity worries is required.');
-    }
+    const categories = ['Performing Arts', 'Arts & Makerspace', 'Physical Education', 'Digital Literacy'];
+    const uas = response.unitActivities || [];
+    categories.forEach(cat => {
+      const ua = uas.find(u => u.category === cat);
+      if (!ua) {
+        errors.push(`Unit Activity block "${cat}" is missing.`);
+      } else {
+        if (!ua.activityName || !ua.activityName.trim()) {
+          errors.push(`Unit Activity Chosen for "${cat}" is required.`);
+        }
+        if (!ua.worries || !ua.worries.trim()) {
+          errors.push(`Your worries for "${cat}" is required.`);
+        }
+        if (!ua.overcomingPlan || !ua.overcomingPlan.trim()) {
+          errors.push(`Your plan to overcome worries for "${cat}" is required.`);
+        }
+      }
+    });
 
     return {
       isValid: errors.length === 0,

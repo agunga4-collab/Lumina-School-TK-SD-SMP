@@ -23,6 +23,10 @@ export interface SlideData {
   title: string;
   strand?: 'SPIRITUAL' | 'IMAGINAL' | 'RATIONAL' | 'MATERIAL';
   goals?: SmartGoal[];
+  unitActivityCategory?: string;
+  unitActivityName?: string;
+  unitActivityWorries?: string;
+  unitActivityOvercomingPlan?: string;
 }
 
 interface PresentationSlideProps {
@@ -389,22 +393,51 @@ export function PresentationSlide({
         return (
           <div className="space-y-6 p-6 md:p-8 text-left">
             <div className="flex items-center gap-4 pb-4 border-b border-gray-100">
-              <div className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
+              <div className="w-12 h-12 rounded-2xl bg-teal-50 flex items-center justify-center text-teal-600 shrink-0">
                 <Compass size={24} />
               </div>
               <div>
-                <h3 className="text-xl font-black text-gray-900 uppercase italic tracking-tight">My Unit Activity</h3>
-                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">Narrative reflection of school unit activities</p>
+                <h3 className="text-xl font-black text-gray-900 uppercase italic tracking-tight">
+                  {slide.unitActivityCategory ? `Unit Activity: ${slide.unitActivityCategory}` : 'My Unit Activity'}
+                </h3>
+                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">
+                  {slide.unitActivityCategory ? 'Reflection per chosen category' : 'Narrative reflection of school unit activities'}
+                </p>
               </div>
             </div>
 
-            <div className="text-sm md:text-base text-gray-600 leading-relaxed whitespace-pre-wrap max-h-[50vh] overflow-y-auto pr-2">
-              {unitActivity && unitActivity.trim() ? (
-                unitActivity
-              ) : (
-                <p className="text-gray-400 italic">No unit activity narrative added.</p>
-              )}
-            </div>
+            {slide.unitActivityCategory ? (
+              <div className="space-y-5">
+                <div className="p-4 bg-gray-50 border border-gray-100 rounded-2xl">
+                  <span className="font-black text-gray-400 uppercase tracking-wider text-[10px]">Specific Activity Chosen</span>
+                  <p className="text-gray-800 font-black mt-1 text-sm md:text-base">
+                    {slide.unitActivityName || <em className="text-gray-300">None selected</em>}
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="p-5 bg-rose-50/30 border border-rose-100 rounded-2xl space-y-2">
+                    <span className="font-black text-rose-500 uppercase tracking-wider text-[10px] block">My Worries</span>
+                    <p className="text-xs md:text-sm text-gray-700 font-semibold leading-relaxed whitespace-pre-wrap max-h-[25vh] overflow-y-auto">
+                      {slide.unitActivityWorries || <em className="text-gray-300">No worries entered</em>}
+                    </p>
+                  </div>
+                  <div className="p-5 bg-teal-50/30 border border-teal-100 rounded-2xl space-y-2">
+                    <span className="font-black text-teal-600 uppercase tracking-wider text-[10px] block">Plan to Overcome</span>
+                    <p className="text-xs md:text-sm text-gray-700 font-semibold leading-relaxed whitespace-pre-wrap max-h-[25vh] overflow-y-auto">
+                      {slide.unitActivityOvercomingPlan || <em className="text-gray-300">No plan entered</em>}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm md:text-base text-gray-600 leading-relaxed whitespace-pre-wrap max-h-[50vh] overflow-y-auto pr-2">
+                {unitActivity && unitActivity.trim() ? (
+                  unitActivity
+                ) : (
+                  <p className="text-gray-400 italic">No unit activity narrative added.</p>
+                )}
+              </div>
+            )}
           </div>
         );
 
