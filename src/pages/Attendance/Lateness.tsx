@@ -45,6 +45,14 @@ const getFormattedSelectedDate = (dateStr: string) => {
   return d.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 };
 
+const JUNIOR_HIGH_REASONS = [
+  'Macet',
+  'Bangun kesiangan',
+  'Menunggu anggota keluarga',
+  'Sakit perut',
+  'Hujan'
+];
+
 export default function Lateness() {
   const { activeUnit } = useOutletContext<{ activeUnit: UnitType }>();
   const { activeYear } = useAcademicYear();
@@ -73,6 +81,7 @@ export default function Lateness() {
   const [todaySavedRecords, setTodaySavedRecords] = React.useState<any[]>([]);
   const [loadingTodayRecords, setLoadingTodayRecords] = React.useState(false);
   const [unitClasses, setUnitClasses] = React.useState<any[]>([]);
+  const [customReasons, setCustomReasons] = React.useState<Record<string, boolean>>({});
 
   React.useEffect(() => {
     const q = query(
@@ -930,13 +939,68 @@ export default function Lateness() {
                                 </div>
                               </td>
                               <td className="px-6 py-4">
-                                <input 
-                                    type="text" 
-                                    placeholder="Tulis alasan..."
-                                    className="w-full bg-transparent border-b border-transparent focus:border-blue-300 outline-none text-sm transition-all py-1 placeholder:text-gray-300"
-                                    value={record.reason}
-                                    onChange={(e) => updateReason(record.id, e.target.value)}
-                                />
+                                {activeUnit === 'JUNIOR_HIGH' ? (
+                                  (() => {
+                                    const isPreset = JUNIOR_HIGH_REASONS.includes(record.reason) || record.reason === '';
+                                    const isCustom = customReasons[record.id] || (record.reason !== '' && !isPreset);
+
+                                    if (isCustom) {
+                                      return (
+                                        <div className="flex items-center gap-2 w-full">
+                                          <input 
+                                              type="text" 
+                                              placeholder="Tulis alasan..."
+                                              className="flex-1 bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-sm transition-all py-1 placeholder:text-gray-300 font-medium"
+                                              value={record.reason}
+                                              onChange={(e) => updateReason(record.id, e.target.value)}
+                                              autoFocus
+                                          />
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setCustomReasons(prev => ({ ...prev, [record.id]: false }));
+                                              updateReason(record.id, '');
+                                            }}
+                                            className="text-xs font-black text-gray-400 hover:text-blue-600 uppercase tracking-wider shrink-0"
+                                            title="Kembali ke pilihan"
+                                          >
+                                            Batal
+                                          </button>
+                                        </div>
+                                      );
+                                    }
+
+                                    return (
+                                      <select
+                                        value={record.reason}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          if (val === 'custom') {
+                                            setCustomReasons(prev => ({ ...prev, [record.id]: true }));
+                                            updateReason(record.id, '');
+                                          } else {
+                                            updateReason(record.id, val);
+                                          }
+                                        }}
+                                        className="w-full bg-transparent border-b border-gray-200 hover:border-gray-300 focus:border-blue-500 outline-none text-sm py-1 font-medium text-gray-700 cursor-pointer"
+                                      >
+                                        <option value="" className="text-gray-400">-- Pilih Alasan --</option>
+                                        {JUNIOR_HIGH_REASONS.map(r => (
+                                          <option key={r} value={r} className="text-gray-700 font-medium">{r}</option>
+                                        ))}
+                                        <option value="custom" className="text-blue-600 font-bold">Lainnya (Tulis manual)...</option>
+                                      </select>
+                                    );
+                                  })()
+                                ) : (
+                                  <input 
+                                      type="text" 
+                                      placeholder="Tulis alasan..."
+                                      className="w-full bg-transparent border-b border-transparent focus:border-blue-300 outline-none text-sm transition-all py-1 placeholder:text-gray-300"
+                                      value={record.reason}
+                                      onChange={(e) => updateReason(record.id, e.target.value)}
+                                  />
+                                )}
                               </td>
                               <td className="px-6 py-4 text-center">
                                 <button 
