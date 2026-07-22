@@ -266,7 +266,7 @@ export default function App() {
             } 
           />
           <Route path="dashboard">
-            <Route path="head" element={<HeadDashboard />} />
+            <Route path="head" element={<Navigate to="/" replace />} />
             <Route path="head-elementary" element={<ElementaryHeadDashboard />} />
             <Route path="head-kindy" element={<HeadDashboardKG />} />
           </Route>

@@ -517,14 +517,18 @@ export function Layout() {
                   <NavItem to="/parent/students" icon={<Users size={18} />} label="Data Siswa" />
                 </>
              ) : (
-                <NavItem to="/" icon={<Home size={18} />} label="Dashboard" />
+                // Hide traditional "Dashboard" menu for Head roles (Head Unit, Head Junior, Super Admin)
+                !['HEAD_UNIT', 'HEAD_JUNIOR', 'SUPER_ADMIN'].includes(currentUser.role) && (
+                  <NavItem to="/" icon={<Home size={18} />} label="Dashboard" />
+                )
              )}
              
-             {(currentUser.role === 'HEAD_UNIT' || currentUser.role === 'HEAD_JUNIOR' || currentUser.role === 'SUPER_ADMIN') && (
+             {/* Render "Analisis Unit" first for Head Unit, Head Junior, and Super Admin roles */}
+             {['HEAD_UNIT', 'HEAD_JUNIOR', 'SUPER_ADMIN'].includes(currentUser.role) && (
                 <>
                   {currentUnit !== 'KINDERGARTEN' && (
                     <NavItem 
-                      to={currentUnit === 'ELEMENTARY' ? '/dashboard/head-elementary' : '/dashboard/head'} 
+                      to={currentUnit === 'ELEMENTARY' ? '/dashboard/head-elementary' : '/'} 
                       icon={<LayoutDashboard size={18} />} 
                       label="Analisis Unit" 
                     />

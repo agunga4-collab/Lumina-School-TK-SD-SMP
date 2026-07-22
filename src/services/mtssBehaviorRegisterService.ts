@@ -35,7 +35,7 @@ export const mtssBehaviorRegisterService = {
 
       return await response.json();
     } catch (error) {
-      console.error('Behavior register sync error:', error);
+      console.error('Individual Case Record sync error:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown network error'

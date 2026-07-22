@@ -10,6 +10,7 @@ import { useNavigate, useOutletContext } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import type { UserRole, UnitType, User } from '../../types';
 import KindergartenHeadDashboard from '../Kindergarten/HeadDashboard';
+import HeadDashboard from '../Dashboard/HeadDashboard';
 
 export default function LuminaHome() {
   const { 
@@ -32,6 +33,10 @@ export default function LuminaHome() {
 
   if (activeUnit === 'KINDERGARTEN' && (userRole === 'HEAD_UNIT' || userRole === 'SUPER_ADMIN')) {
     return <KindergartenHeadDashboard />;
+  }
+
+  if (activeUnit === 'JUNIOR_HIGH' && (userRole === 'HEAD_UNIT' || userRole === 'HEAD_JUNIOR' || userRole === 'SUPER_ADMIN')) {
+    return <HeadDashboard />;
   }
 
   const isParent = userRole === 'PARENT';

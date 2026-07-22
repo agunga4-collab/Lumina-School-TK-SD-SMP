@@ -102,7 +102,7 @@ export default function CaseList() {
           setStudents(roster);
         }
       } catch (err) {
-        console.error("Error loading active student roster for behavior register:", err);
+        console.error("Error loading active student roster for Individual Case Record:", err);
       } finally {
         if (active) {
           setLoading(false);
@@ -245,7 +245,7 @@ export default function CaseList() {
     return (
       <div className="h-[60vh] flex flex-col items-center justify-center space-y-4">
         <Activity className="animate-pulse text-blue-600" size={48} />
-        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-400">Loading Student Register</p>
+        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-400">Loading Case Record</p>
       </div>
     );
   }
@@ -273,7 +273,7 @@ export default function CaseList() {
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-black text-gray-900 uppercase italic tracking-tight flex items-center gap-2">
               <ShieldAlert className="text-blue-900" size={20} />
-              Behavior <span className="text-blue-600">Intervention Register</span>
+              Individual <span className="text-blue-600">Case Record</span>
             </h2>
             {loadingConcerns && (
               <span className="flex items-center gap-1 text-[9px] text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded-md">
