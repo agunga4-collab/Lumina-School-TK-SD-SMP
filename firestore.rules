@@ -202,8 +202,8 @@ service cloud.firestore {
     }
 
     match /behaviorCases/{caseId} {
-      allow read: if isActive() &&
-        (isJuniorHighStaff() || isLinkedStudent(existing().studentId));
+      allow read: if isActive() && isJuniorHighStaff();
+      allow read: if isActive() && isLinkedStudent(existing().studentId);
       allow create: if isJuniorHighStaff() && incoming().keys().hasAll(['studentId', 'status', 'tier']);
       allow update: if isAdmin() || isJuniorHighStaff();
       allow delete: if isAdmin();
@@ -216,8 +216,8 @@ service cloud.firestore {
     }
 
     match /juniorhigh_mtss_academic_cases/{caseId} {
-      allow read: if isActive() &&
-        (isJuniorHighStaff() || isLinkedStudent(existing().studentId));
+      allow read: if isActive() && isJuniorHighStaff();
+      allow read: if isActive() && isLinkedStudent(existing().studentId);
       allow create: if isJuniorHighStaff() && isValidMTSSAcademicCase(incoming());
       allow update: if isAdmin() || isJuniorHighStaff();
       allow delete: if isAdmin();
@@ -281,8 +281,8 @@ service cloud.firestore {
     }
 
     match /cicoSessions/{sessionId} {
-      allow read: if isActive() &&
-        (isJuniorHighStaff() || isLinkedStudent(existing().studentId));
+      allow read: if isActive() && isJuniorHighStaff();
+      allow read: if isActive() && isLinkedStudent(existing().studentId);
       allow write: if isJuniorHighStaff();
     }
 
@@ -296,14 +296,28 @@ service cloud.firestore {
     }
 
     match /reflections/{reflectionId} {
-      allow read: if isActive() &&
-        ((isStudent() && existing().studentId == request.auth.uid) || isJuniorHighStaff() || isLinkedStudent(existing().studentId));
+      allow read: if isActive() && isJuniorHighStaff();
+      allow read: if isActive() && isStudent() && existing().studentId == request.auth.uid;
+      allow read: if isActive() && isLinkedStudent(existing().studentId);
       allow create: if isStudent() || isJuniorHighStaff();
       allow update: if isAdmin() || (isStudent() && existing().studentId == request.auth.uid);
     }
 
     match /literacyProgress/{progressId} {
-      allow read: if isActive() && (isJuniorHighStaff() || isLinkedStudent(existing().studentId));
+      allow read: if isActive() && isJuniorHighStaff();
+      allow read: if isActive() && isLinkedStudent(existing().studentId);
+      allow write: if isJuniorHighStaff();
+    }
+
+    match /junior_high_literacy_numeracy_records/{recordId} {
+      allow read: if isActive() && isJuniorHighStaff();
+      allow read: if isActive() && isLinkedStudent(existing().studentId);
+      allow write: if isJuniorHighStaff();
+    }
+
+    match /cicoWeeklyReflections/{reflectionId} {
+      allow read: if isActive() && isJuniorHighStaff();
+      allow read: if isActive() && isLinkedStudent(existing().studentId);
       allow write: if isJuniorHighStaff();
     }
 
@@ -363,17 +377,26 @@ service cloud.firestore {
     }
 
     match /attendance/{attendanceId} {
-      allow read: if (isActive() && (isTeacher() || isJuniorHighStaff() || isLinkedStudent(existing().studentId))) || isAdmin();
+      allow read: if isActive() && isTeacher();
+      allow read: if isActive() && isJuniorHighStaff();
+      allow read: if isAdmin();
+      allow read: if isActive() && isLinkedStudent(existing().studentId);
       allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
     }
 
     match /attendance_records/{recordId} {
-      allow read: if (isActive() && (isTeacher() || isJuniorHighStaff() || isLinkedStudent(existing().studentId))) || isAdmin();
+      allow read: if isActive() && isTeacher();
+      allow read: if isActive() && isJuniorHighStaff();
+      allow read: if isAdmin();
+      allow read: if isActive() && isLinkedStudent(existing().studentId);
       allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
     }
 
     match /lateness_records/{recordId} {
-      allow read: if (isActive() && (isTeacher() || isJuniorHighStaff() || isLinkedStudent(existing().studentId))) || isAdmin();
+      allow read: if isActive() && isTeacher();
+      allow read: if isActive() && isJuniorHighStaff();
+      allow read: if isAdmin();
+      allow read: if isActive() && isLinkedStudent(existing().studentId);
       allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
     }
 
@@ -388,7 +411,10 @@ service cloud.firestore {
     }
 
     match /observations/{observationId} {
-      allow read: if (isActive() && (isTeacher() || isJuniorHighStaff() || isLinkedStudent(existing().studentId))) || isAdmin();
+      allow read: if isActive() && isTeacher();
+      allow read: if isActive() && isJuniorHighStaff();
+      allow read: if isAdmin();
+      allow read: if isActive() && isLinkedStudent(existing().studentId);
       allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
     }
 
@@ -521,16 +547,13 @@ service cloud.firestore {
     }
 
     match /studentConferenceResponses/{responseId} {
-      allow get: if isActive() && (
-        isJuniorHighStaff() ||
-        (isStudent() && currentUserExists() && ('luminaId' in currentUser()) && responseId.split('_')[1] == currentUser().luminaId) ||
-        (resource != null && isLinkedStudent(resource.data.studentId))
-      );
-      allow list: if isActive() && (
-        isJuniorHighStaff() ||
-        (isStudent() && currentUserExists() && ('luminaId' in currentUser()) && resource.data.studentId == currentUser().luminaId) ||
-        isLinkedStudent(resource.data.studentId)
-      );
+      allow get: if isActive() && isJuniorHighStaff();
+      allow get: if isActive() && isStudent() && currentUserExists() && ('luminaId' in currentUser()) && responseId.split('_')[1] == currentUser().luminaId;
+      allow get: if isActive() && resource != null && isLinkedStudent(resource.data.studentId);
+
+      allow list: if isActive() && isJuniorHighStaff();
+      allow list: if isActive() && isStudent() && currentUserExists() && ('luminaId' in currentUser()) && resource.data.studentId == currentUser().luminaId;
+      allow list: if isActive() && isLinkedStudent(resource.data.studentId);
       allow create: if isActive() && (
         isJuniorHighStaff() ||
         (isOwnStudentData(incoming().studentId) && responseId.split('_')[1] == incoming().studentId)
@@ -546,15 +569,12 @@ service cloud.firestore {
     }
 
     match /mentorAssignments/{assignmentId} {
-      allow get: if isActive() && (
-        isJHConferenceStaff() ||
-        (isStudent() && currentUserExists() && ('luminaId' in currentUser()) && assignmentId.split('_')[1] == currentUser().luminaId) ||
-        (resource != null && isLinkedStudent(resource.data.studentId))
-      );
-      allow list: if isActive() && (
-        isJHConferenceStaff() ||
-        (isStudent() && currentUserExists() && ('luminaId' in currentUser()) && resource.data.studentId == currentUser().luminaId)
-      );
+      allow get: if isActive() && isJHConferenceStaff();
+      allow get: if isActive() && isStudent() && currentUserExists() && ('luminaId' in currentUser()) && assignmentId.split('_')[1] == currentUser().luminaId;
+      allow get: if isActive() && resource != null && isLinkedStudent(resource.data.studentId);
+
+      allow list: if isActive() && isJHConferenceStaff();
+      allow list: if isActive() && isStudent() && currentUserExists() && ('luminaId' in currentUser()) && resource.data.studentId == currentUser().luminaId;
       allow create: if isJHConferenceStaff() && 
         incoming().studentId is string && 
         incoming().periodId is string;
@@ -564,14 +584,11 @@ service cloud.firestore {
     }
 
     match /smartGoalTrackerEntries/{entryId} {
-      allow get: if isActive() && (
-        isJHConferenceStaff() ||
-        (resource != null && isOwnStudentData(resource.data.studentId))
-      );
-      allow list: if isActive() && (
-        isJHConferenceStaff() ||
-        (isStudent() && currentUserExists() && ('luminaId' in currentUser()) && resource.data.studentId == currentUser().luminaId)
-      );
+      allow get: if isActive() && isJHConferenceStaff();
+      allow get: if isActive() && resource != null && isOwnStudentData(resource.data.studentId);
+
+      allow list: if isActive() && isJHConferenceStaff();
+      allow list: if isActive() && isStudent() && currentUserExists() && ('luminaId' in currentUser()) && resource.data.studentId == currentUser().luminaId;
       allow create: if isActive() &&
         isOwnStudentData(incoming().studentId) &&
         incoming().keys().hasAll(['studentId', 'periodId', 'goalId', 'goalStrand', 'goalSnapshot']) &&

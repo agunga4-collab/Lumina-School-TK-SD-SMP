@@ -182,7 +182,7 @@ export default function JuniorHighLiteracyNumeracy() {
               const matchesId = s.classId === selectedClassId;
               const activeClass = classes.find(c => c.id === selectedClassId);
               const matchesName = activeClass && s.classId && s.classId.toLowerCase() === activeClass.name.toLowerCase();
-              return s.currentUnit === 'JUNIOR_HIGH' && (matchesId || matchesName);
+              return (s.unitId === 'JUNIOR_HIGH' || s.currentUnit === 'JUNIOR_HIGH') && (matchesId || matchesName);
             })
             .map(s => {
               const targetId = s.classId || selectedClassId;
