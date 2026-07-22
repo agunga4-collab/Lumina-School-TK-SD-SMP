@@ -208,7 +208,26 @@ export default function Lateness() {
         };
       });
 
-      mappedRecords.sort((a, b) => (a.studentName || "").localeCompare(b.studentName || ""));
+      if (activeUnit === 'JUNIOR_HIGH') {
+        const getMillis = (r: any) => {
+          if (!r.recordedAt) {
+            return Date.now();
+          }
+          if (typeof r.recordedAt.toMillis === 'function') {
+            return r.recordedAt.toMillis();
+          }
+          if (r.recordedAt.seconds) {
+            return r.recordedAt.seconds * 1000;
+          }
+          if (r.recordedAt instanceof Date) {
+            return r.recordedAt.getTime();
+          }
+          return 0;
+        };
+        mappedRecords.sort((a, b) => getMillis(b) - getMillis(a));
+      } else {
+        mappedRecords.sort((a, b) => (a.studentName || "").localeCompare(b.studentName || ""));
+      }
       setTodaySavedRecords(mappedRecords);
       setLoadingTodayRecords(false);
     }, (err) => {
@@ -479,7 +498,7 @@ export default function Lateness() {
       });
 
       // 4. Update student list
-      const studentList: LatenessRecord[] = classRoster.map(student => {
+      let studentList: LatenessRecord[] = classRoster.map(student => {
         const todayRecord = todayRecordsMap[student.id];
         return {
           id: student.id,
@@ -494,11 +513,16 @@ export default function Lateness() {
         };
       });
 
+      if (activeUnit === 'JUNIOR_HIGH') {
+        studentList = studentList.filter(s => !todayRecordsMap[s.id]);
+      }
+
       setRecords(prev => {
         // Keep records that have unsaved changes or are marked as manual
         const recordsToKeep = prev.filter(r => {
           const saved = todayRecordsMap[r.id];
           if (saved) {
+            if (activeUnit === 'JUNIOR_HIGH') return false;
             return r.arrivalTime !== saved.arrivalTime || r.reason !== saved.reason || r.parentNote !== saved.parentNote;
           } else {
             return r.arrivalTime !== '' || r.reason !== '' || r.isManual;
@@ -800,6 +824,12 @@ export default function Lateness() {
                        // Check if already in list
                        if (records.some(r => r.id === student.id)) {
                          toast.info(`${student.name} sudah ada di daftar`);
+                         return;
+                       }
+
+                       // Prevent selecting already recorded late students for Junior High
+                       if (activeUnit === 'JUNIOR_HIGH' && todaySavedRecords.some(r => r.studentId === student.id)) {
+                         toast.error(`${student.name} sudah tercatat terlambat hari ini`);
                          return;
                        }
 

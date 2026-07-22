@@ -115,7 +115,7 @@ export const TrackerWorkspaceFilters: React.FC<TrackerWorkspaceFiltersProps> = (
             onChange={(e) => setGradeFilter(e.target.value)}
             className="block w-full py-2 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
           >
-            <option value="all">All Grades</option>
+            <option value="all">Pilih Grade</option>
             {availableGrades.map((g) => (
               <option key={g} value={g}>
                 Grade {g}
