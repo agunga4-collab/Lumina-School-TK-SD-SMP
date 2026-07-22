@@ -305,7 +305,7 @@ export function Layout() {
   if (!activeUnit && currentUser.role !== 'STUDENT') {
     const accessibleUnits = getAccessibleUnits(currentUser);
 
-    if (showChatView) {
+    if (showChatView && currentUser.role !== 'PARENT' && currentUser.role !== 'STUDENT') {
       return (
         <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6 md:p-12 overflow-y-auto">
           <div className="max-w-4xl w-full space-y-6 my-auto">
@@ -416,22 +416,24 @@ export function Layout() {
               })}
 
               {/* Lumina Chat Portal Card */}
-              <button 
-                onClick={() => setShowChatView(true)}
-                className="group bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm hover:shadow-xl hover:border-blue-200 transition-all text-left flex flex-col justify-between aspect-square relative overflow-hidden cursor-pointer"
-              >
-                 <div className="mb-4">
-                    <LuminaLogo size="double" className="group-hover:scale-105 transition-transform duration-300 shadow-sm" />
-                 </div>
-                 <div>
-                    <h3 className="text-lg font-black text-gray-900 group-hover:text-blue-600 transition-colors">
-                      Lumina Chat AI
-                    </h3>
-                    <p className="text-xs text-gray-400 font-bold mt-1 uppercase tracking-widest leading-loose">
-                      Tanya Asisten AI
-                    </p>
-                 </div>
-              </button>
+              {currentUser.role !== 'PARENT' && currentUser.role !== 'STUDENT' && (
+                <button 
+                  onClick={() => setShowChatView(true)}
+                  className="group bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm hover:shadow-xl hover:border-blue-200 transition-all text-left flex flex-col justify-between aspect-square relative overflow-hidden cursor-pointer"
+                >
+                   <div className="mb-4">
+                      <LuminaLogo size="double" className="group-hover:scale-105 transition-transform duration-300 shadow-sm" />
+                   </div>
+                   <div>
+                      <h3 className="text-lg font-black text-gray-900 group-hover:text-blue-600 transition-colors">
+                        Lumina Chat AI
+                      </h3>
+                      <p className="text-xs text-gray-400 font-bold mt-1 uppercase tracking-widest leading-loose">
+                        Tanya Asisten AI
+                      </p>
+                   </div>
+                </button>
+              )}
            </div>
 
            <div className="text-center">
