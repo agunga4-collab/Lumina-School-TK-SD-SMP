@@ -165,16 +165,28 @@ export default function HeadDashboard() {
   }, []);
 
   // --- Dynamic Filtering Helpers ---
+  const filteredClasses = useMemo(() => {
+    return classes.filter(c => !c.academicYear || c.academicYear === selectedYear);
+  }, [classes, selectedYear]);
+
+  const findClass = (idOrName: string) => {
+    if (!idOrName) return undefined;
+    return classes.find(c => 
+      (c.id === idOrName || c.name === idOrName) && 
+      (!c.academicYear || c.academicYear === selectedYear)
+    );
+  };
+
   const isStudentInClass = (studentClassId: string, targetClassId: string) => {
     if (targetClassId === 'ALL') return true;
     if (!studentClassId) return false;
     if (studentClassId === targetClassId) return true;
     
-    const targetClass = classes.find(c => c.id === targetClassId || c.name === targetClassId);
+    const targetClass = findClass(targetClassId);
     if (targetClass && (studentClassId === targetClass.name || studentClassId === targetClass.id)) {
       return true;
     }
-    const studentClass = classes.find(c => c.id === studentClassId || c.name === studentClassId);
+    const studentClass = findClass(studentClassId);
     if (studentClass && (studentClass.name === targetClassId || studentClass.id === targetClassId)) {
       return true;
     }
@@ -187,7 +199,7 @@ export default function HeadDashboard() {
       if (!isNaN(g)) return g;
     }
     if (s.classId) {
-      const cls = classes.find(c => c.id === s.classId || c.name === s.classId);
+      const cls = findClass(s.classId);
       if (cls && cls.name) {
         const g = parseInt(cls.name);
         if (!isNaN(g)) return g;
@@ -210,6 +222,7 @@ export default function HeadDashboard() {
   // --- Dynamic Filtering Logic ---
   const filteredStudents = useMemo(() => {
     return students.filter(s => {
+      if (s.academicYear && s.academicYear !== selectedYear) return false;
       if (selectedCohort !== 'ALL') {
         const studentGrade = getStudentGrade(s);
         if (studentGrade !== parseInt(selectedCohort)) return false;
@@ -217,7 +230,7 @@ export default function HeadDashboard() {
       if (selectedClassId !== 'ALL' && !isStudentInClass(s.classId, selectedClassId)) return false;
       return true;
     });
-  }, [students, selectedClassId, selectedCohort, classes]);
+  }, [students, selectedClassId, selectedCohort, classes, selectedYear]);
 
   const activeStudentIds = useMemo(() => new Set(filteredStudents.map(s => s.id)), [filteredStudents]);
   const isStudentFiltered = (sid: string) => activeStudentIds.has(sid);
@@ -225,7 +238,10 @@ export default function HeadDashboard() {
   // --- Unified Lateness Records ---
   const unifiedLateness = useMemo(() => {
     // 1. Get all lateness records matching JUNIOR_HIGH or filtered students
-    const jhl = latenessRecords.filter(r => r.unitId === 'JUNIOR_HIGH' || isStudentFiltered(r.studentId));
+    const jhl = latenessRecords.filter(r => {
+      if (r.academicYear && r.academicYear !== selectedYear) return false;
+      return r.unitId === 'JUNIOR_HIGH' || isStudentFiltered(r.studentId);
+    });
     
     // Create a set of studentId_date keys from lateness_records to avoid duplicates
     const existingKeys = new Set(jhl.map(r => `${r.studentId}_${r.date}`));
@@ -247,7 +263,7 @@ export default function HeadDashboard() {
           reason: r.note || 'Terlambat presensi kelas',
           parentNote: r.parentNote || '',
           classId: r.classId,
-          className: classes.find(c => c.id === r.classId)?.name || r.classId,
+          className: findClass(r.classId)?.name || r.classId,
           academicYear: r.academicYear || selectedYear,
           unitId: 'JUNIOR_HIGH'
         };
@@ -369,14 +385,20 @@ export default function HeadDashboard() {
 
   // 2. Kehadiran per Kelas Hari Ini
   const todayClassAttendance = useMemo(() => {
-    const jhClasses = classes.filter(c => {
+    const jhClasses = filteredClasses.filter(c => {
       if (selectedClassId !== 'ALL' && c.id !== selectedClassId) return false;
       if (selectedCohort !== 'ALL' && !isClassInCohort(c, selectedCohort)) return false;
       return true;
     });
     return jhClasses.map(cls => {
-      const clsStudents = students.filter(s => isStudentInClass(s.classId, cls.id));
-      const recsToday = attendanceRecords.filter(r => isStudentInClass(r.classId, cls.id) && r.date === todayStr);
+      const clsStudents = students.filter(s => {
+        if (s.academicYear && s.academicYear !== selectedYear) return false;
+        return isStudentInClass(s.classId, cls.id);
+      });
+      const recsToday = attendanceRecords.filter(r => {
+        if (r.academicYear && r.academicYear !== selectedYear) return false;
+        return isStudentInClass(r.classId, cls.id) && r.date === todayStr;
+      });
       
       const hadir = recsToday.filter(r => r.status === 'HADIR' || r.status === 'LATE').length;
       const sakit = recsToday.filter(r => r.status === 'SAKIT').length;
@@ -386,7 +408,7 @@ export default function HeadDashboard() {
       const isCompleted = clsStudents.length === 0 || recsToday.length >= clsStudents.length;
       return { classId: cls.id, className: cls.name, teacher: cls.homeroomTeacherName || 'Guru', totalStudents: clsStudents.length, recsCount: recsToday.length, hadir, sakit, izin, alpa, isCompleted };
     });
-  }, [classes, students, attendanceRecords, todayStr, selectedClassId, selectedCohort]);
+  }, [filteredClasses, students, attendanceRecords, todayStr, selectedClassId, selectedCohort, selectedYear]);
 
   // 3. Daily Case Record (Individual Case Record - created today)
   const todayCases = useMemo(() => {
@@ -501,7 +523,7 @@ export default function HeadDashboard() {
     // Class ranks
     const classCounts: Record<string, number> = {};
     records.forEach(r => {
-      const className = classes.find(c => c.id === r.classId || c.name === r.classId)?.name || r.classId;
+      const className = findClass(r.classId)?.name || r.classId;
       classCounts[className] = (classCounts[className] || 0) + 1;
     });
     const classRank = Object.entries(classCounts).map(([name, count]) => ({ name, count })).sort((a,b) => b.count - a.count);
@@ -510,7 +532,7 @@ export default function HeadDashboard() {
     const studentCounts: Record<string, { name: string, className: string, count: number, totalMin: number }> = {};
     records.forEach(r => {
       if (!studentCounts[r.studentId]) {
-        const clsName = classes.find(c => c.id === r.classId || c.name === r.classId)?.name || r.classId;
+        const clsName = findClass(r.classId)?.name || r.classId;
         studentCounts[r.studentId] = { name: r.studentName, className: clsName, count: 0, totalMin: 0 };
       }
       studentCounts[r.studentId].count++;
@@ -536,7 +558,7 @@ export default function HeadDashboard() {
     })).sort((a, b) => a.date.localeCompare(b.date));
 
     return { totalCount, avgMin, topDayName: topDay ? topDay[0] : '-', topDayCount: topDay ? topDay[1] : 0, classRank, studentRank, chartData };
-  }, [filteredLateness, classes]);
+  }, [filteredLateness, classes, selectedYear]);
 
   // 2. Kehadiran Tab Analysis
   const attendanceAnalysis = useMemo(() => {
@@ -559,7 +581,7 @@ export default function HeadDashboard() {
         if (gradeVal) g = String(gradeVal);
       }
       if (!g && r.classId) {
-        const cls = classes.find(c => c.id === r.classId || c.name === r.classId);
+        const cls = findClass(r.classId);
         if (cls && cls.name) {
           const gradeVal = parseInt(cls.name);
           if (!isNaN(gradeVal)) g = String(gradeVal);
@@ -581,7 +603,7 @@ export default function HeadDashboard() {
     // Class Rate
     const classMap: Record<string, { present: number, total: number }> = {};
     recs.forEach(r => {
-      const cls = classes.find(c => c.id === r.classId || c.name === r.classId);
+      const cls = findClass(r.classId);
       const cid = cls ? cls.id : r.classId;
       if (!cid) return;
       if (!classMap[cid]) classMap[cid] = { present: 0, total: 0 };
@@ -590,7 +612,7 @@ export default function HeadDashboard() {
     });
     const classRates = Object.entries(classMap).map(([cid, d]) => ({
       classId: cid,
-      name: classes.find(c => c.id === cid)?.name || cid,
+      name: findClass(cid)?.name || cid,
       rate: d.total > 0 ? Math.round((d.present / d.total) * 100) : 0
     })).sort((a,b) => b.rate - a.rate);
 
@@ -602,7 +624,7 @@ export default function HeadDashboard() {
       if (r.status === 'HADIR' || r.status === 'LATE') studentMap[r.studentId].present++;
     });
     const lowPresence = Object.entries(studentMap).map(([id, d]) => ({
-      id, name: d.name, className: classes.find(c => c.id === d.classId || c.name === d.classId)?.name || d.classId, rate: d.total > 0 ? Math.round((d.present / d.total) * 100) : 0, total: d.total
+      id, name: d.name, className: findClass(d.classId)?.name || d.classId, rate: d.total > 0 ? Math.round((d.present / d.total) * 100) : 0, total: d.total
     })).filter(s => s.rate < 90 && s.total >= 3).sort((a,b) => a.rate - b.rate);
 
     const classesFollowUp = classRates.filter(c => c.rate < 95);
@@ -623,7 +645,7 @@ export default function HeadDashboard() {
     })).sort((a,b) => a.date.localeCompare(b.date));
 
     return { rate, sakit, izin, alpa, cohortRates, classRates, lowPresence, classesFollowUp, trendData };
-  }, [filteredAttendance, classes, students]);
+  }, [filteredAttendance, classes, students, selectedYear]);
 
   // 3. MTSS Academic Tab Analysis
   const academicAnalysis = useMemo(() => {
@@ -812,7 +834,7 @@ export default function HeadDashboard() {
               className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-xs font-semibold text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-600"
             >
               <option value="ALL">Semua Kelas</option>
-              {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {filteredClasses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
 
