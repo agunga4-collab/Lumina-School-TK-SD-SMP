@@ -611,7 +611,14 @@ export default function Lateness() {
       }
       toast.success(message);
 
-      if (lateEntries.some(e => e.parentNote || e.countThisMonth >= threshold)) {
+      const hasNotificationTrigger = lateEntries.some(e => {
+        if (activeUnit === 'JUNIOR_HIGH') {
+          return e.countThisMonth >= threshold;
+        }
+        return e.parentNote || e.countThisMonth >= threshold;
+      });
+
+      if (hasNotificationTrigger) {
         toast.info('Notifikasi telah dikirim ke orang tua via WhatsApp/Email', {
           description: 'Sistem Lumina otomatis mengirimkan pesan untuk siswa dengan catatan khusus.'
         });
@@ -902,7 +909,9 @@ export default function Lateness() {
                           <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa</th>
                           <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Waktu Tiba</th>
                           <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Alasan / Keterangan</th>
-                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Izin Ortu</th>
+                          {activeUnit !== 'JUNIOR_HIGH' && (
+                            <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Izin Ortu</th>
+                          )}
                           <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Batal</th>
                         </tr>
                     </thead>
@@ -1032,17 +1041,19 @@ export default function Lateness() {
                                   />
                                 )}
                               </td>
-                              <td className="px-6 py-4 text-center">
-                                <button 
-                                    onClick={() => toggleNote(record.id)}
-                                    className={cn(
-                                      "p-2 rounded-xl transition-all",
-                                      record.parentNote ? "bg-emerald-100 text-emerald-600" : "bg-gray-100 text-gray-300 hover:text-gray-400"
-                                    )}
-                                >
-                                    <UserCheck size={18} />
-                                </button>
-                              </td>
+                              {activeUnit !== 'JUNIOR_HIGH' && (
+                                <td className="px-6 py-4 text-center">
+                                  <button 
+                                      onClick={() => toggleNote(record.id)}
+                                      className={cn(
+                                        "p-2 rounded-xl transition-all",
+                                        record.parentNote ? "bg-emerald-100 text-emerald-600" : "bg-gray-100 text-gray-300 hover:text-gray-400"
+                                      )}
+                                  >
+                                      <UserCheck size={18} />
+                                  </button>
+                                </td>
+                              )}
                               <td className="px-6 py-4 text-right">
                                 <button 
                                     onClick={() => removeRecord(record.id)}
@@ -1106,7 +1117,9 @@ export default function Lateness() {
                           <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Kelas</th>
                           <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Waktu Tiba</th>
                           <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Alasan / Keterangan</th>
-                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Izin Ortu</th>
+                          {activeUnit !== 'JUNIOR_HIGH' && (
+                            <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Izin Ortu</th>
+                          )}
                           <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Aksi</th>
                         </tr>
                     </thead>
@@ -1129,14 +1142,16 @@ export default function Lateness() {
                               <td className="px-6 py-4">
                                 <p className="text-sm text-gray-600">{record.reason || <span className="text-gray-300 italic">-</span>}</p>
                               </td>
-                              <td className="px-6 py-4 text-center">
-                                <span className={cn(
-                                  "inline-flex p-1.5 rounded-lg text-xs font-semibold",
-                                  record.parentNote ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-gray-50 text-gray-400 border border-gray-100"
-                                )}>
-                                  {record.parentNote ? 'Ada Izin' : 'Tanpa Izin'}
-                                </span>
-                              </td>
+                              {activeUnit !== 'JUNIOR_HIGH' && (
+                                <td className="px-6 py-4 text-center">
+                                  <span className={cn(
+                                    "inline-flex p-1.5 rounded-lg text-xs font-semibold",
+                                    record.parentNote ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-gray-50 text-gray-400 border border-gray-100"
+                                  )}>
+                                    {record.parentNote ? 'Ada Izin' : 'Tanpa Izin'}
+                                  </span>
+                                </td>
+                              )}
                               <td className="px-6 py-4 text-right">
                                 <button 
                                     onClick={() => handleDeleteSavedRecord(record.id)}
