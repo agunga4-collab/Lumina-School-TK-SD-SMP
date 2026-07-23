@@ -98,18 +98,18 @@ const AttendanceBackupConfigPage: React.FC = () => {
       });
 
       const data = await response.json();
-      if (data.success) {
-        toast.success('Verifikasi Berhasil', {
-          description: `Folder ditemukan: ${data.folderName}`
+      if (response.ok && data.success) {
+        toast.success('Akses Google Drive berhasil diverifikasi. Konfigurasi siap digunakan.', {
+          description: 'Verify Access hanya memeriksa akses folder; folder dan Google Sheet baru dibuat setelah presensi disimpan.'
         });
       } else {
         toast.error('Verifikasi Gagal', {
           description: data.error || 'Folder tidak dapat diakses atau Shared Drive salah.'
         });
       }
-    } catch (error) {
+    } catch (error: any) {
       toast.error('Error', {
-        description: 'Koneksi ke server gagal.'
+        description: error?.message || 'Koneksi ke server gagal.'
       });
     } finally {
       setTesting(false);
@@ -165,8 +165,8 @@ const AttendanceBackupConfigPage: React.FC = () => {
             disabled={testing}
             className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors flex items-center gap-2 disabled:opacity-50"
           >
-            {testing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
-            Verify Access
+            {testing ? <RefreshCw className="w-4 h-4 animate-spin text-blue-600" /> : <Shield className="w-4 h-4" />}
+            {testing ? 'Verifying...' : 'Verify Access'}
           </button>
           <button
             onClick={handleSave}
@@ -241,6 +241,11 @@ const AttendanceBackupConfigPage: React.FC = () => {
                     <code className="bg-blue-100/50 px-1 rounded">Attendance / {`{AcademicYear}`} / {`{Semester}`} / {`{ClassSheet}`}</code>
                   </p>
                 </div>
+              </div>
+
+              <div className="text-xs text-gray-500 bg-gray-50 p-3.5 rounded-xl border border-gray-100 leading-relaxed">
+                <p className="font-semibold text-gray-700 mb-1">Pemberitahuan Verifikasi Akses:</p>
+                Verify Access hanya memeriksa akses folder utama. Subfolder dan Google Sheet baru baru akan dibuat secara otomatis setelah data presensi disimpan.
               </div>
             </div>
           </motion.div>
