@@ -3795,6 +3795,16 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// API: Attendance Health Check
+app.get("/api/attendance/health", (req, res) => {
+  res.json({ ok: true, service: "attendance-backup" });
+});
+
+// API: Ping
+app.get("/api/ping", (req, res) => {
+  res.json({ status: 'pong', time: new Date().toISOString() });
+});
+
 // API: Learning Goal Backup Proxy
 app.post("/api/lg-backup-proxy", async (req, res) => {
   try {
