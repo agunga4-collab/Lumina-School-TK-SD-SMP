@@ -9,7 +9,7 @@ import {
   getDocs,
   onSnapshot
 } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { 
   AttendanceBackupConfig, 
   AttendanceBackupFileMap,
@@ -115,10 +115,16 @@ export const attendanceSyncService = {
    */
   async triggerSync(record: AttendanceRecord): Promise<AttendanceSyncResult> {
     try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (idToken) {
+        headers['Authorization'] = `Bearer ${idToken}`;
+      }
+
       const response = await fetch('/api/attendance/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ record })
+        headers,
+        body: JSON.stringify({ recordId: record.id })
       });
 
       if (!response.ok) {

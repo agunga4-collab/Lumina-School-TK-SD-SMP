@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   CheckCircle2, AlertCircle, Clock, UserX, Search, Filter, 
   Save, Calendar, ChevronRight, ChevronLeft, AlertTriangle, MessageSquare, 
-  Settings2, BarChart3, Bell, RefreshCw, Layers, Trash2
+  Settings2, BarChart3, Bell, RefreshCw, Layers, Trash2, ExternalLink
 } from 'lucide-react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { cn } from '../../lib/utils';
@@ -11,7 +11,7 @@ import { db, auth, getActiveStudents } from '../../lib/firebase';
 import { collection, query, where, getDocs, setDoc, doc, serverTimestamp, getDoc, orderBy, deleteDoc } from 'firebase/firestore';
 import { AttendanceStatus, AttendanceRecord, Student, UnitType, Class } from '../../types';
 import { useAcademicYear } from '../../context/AcademicYearContext';
-import { attendanceSyncService } from '../../services/attendanceBackupConfigService';
+import { attendanceSyncService, attendanceBackupConfigService } from '../../services/attendanceBackupConfigService';
 import { toast } from 'sonner';
 import StudentSearch from '../../components/StudentSearch';
 
@@ -61,6 +61,19 @@ export default function Attendance() {
   const [recapMatrix, setRecapMatrix] = React.useState<Record<string, Record<string, string>>>({});
   const [recapViewMode, setRecapViewMode] = React.useState<'SUMMARY' | 'MATRIX'>('SUMMARY');
   const [loadingRecap, setLoadingRecap] = React.useState(false);
+  const [fileMap, setFileMap] = React.useState<any | null>(null);
+
+  React.useEffect(() => {
+    const loadFileMap = async () => {
+      if (selectedClass && activeAcademicYear && activeSemester && activeUnit === 'JUNIOR_HIGH') {
+        const map = await attendanceBackupConfigService.getFileMap(selectedClass, activeAcademicYear, activeSemester as any);
+        setFileMap(map);
+      } else {
+        setFileMap(null);
+      }
+    };
+    loadFileMap();
+  }, [selectedClass, activeAcademicYear, activeSemester, activeUnit]);
 
   const [threshold, setThreshold] = React.useState(3);
   const [userProfile, setUserProfile] = React.useState<any>(null); // In real app, from AuthContext
@@ -745,6 +758,19 @@ export default function Attendance() {
                 ))}
               </select>
             </div>
+            {activeUnit === 'JUNIOR_HIGH' && fileMap?.spreadsheetId && (
+              <div className="ml-auto flex items-center">
+                <a
+                  href={`https://docs.google.com/spreadsheets/d/${fileMap.spreadsheetId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-sm transition-colors cursor-pointer"
+                >
+                  <ExternalLink size={14} />
+                  Buka Google Sheet
+                </a>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">

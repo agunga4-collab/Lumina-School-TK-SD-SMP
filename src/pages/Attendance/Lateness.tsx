@@ -3,11 +3,12 @@ import { motion } from 'motion/react';
 import { 
   Clock, AlertCircle, Calendar, Search, 
   Save, History, Bell, MessageSquare, ArrowRight,
-  TrendingUp, UserCheck, Loader2, Trash2, ChevronDown, Check
+  TrendingUp, UserCheck, Loader2, Trash2, ChevronDown, Check,
+  X, Edit2
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { db, getActiveStudents } from '../../lib/firebase';
-import { collection, query, where, getDocs, doc, setDoc, serverTimestamp, getDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, setDoc, serverTimestamp, getDoc, deleteDoc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { toast } from 'sonner';
 import { useOutletContext } from 'react-router-dom';
@@ -82,6 +83,32 @@ export default function Lateness() {
   const [loadingTodayRecords, setLoadingTodayRecords] = React.useState(false);
   const [unitClasses, setUnitClasses] = React.useState<any[]>([]);
   const [customReasons, setCustomReasons] = React.useState<Record<string, boolean>>({});
+
+  // Edit saved reason state
+  const [editingRecordId, setEditingRecordId] = React.useState<string | null>(null);
+  const [editingReason, setEditingReason] = React.useState<string>('');
+  const [editingCustomReason, setEditingCustomReason] = React.useState<boolean>(false);
+  const [updatingReasonId, setUpdatingReasonId] = React.useState<string | null>(null);
+
+  const handleUpdateReason = async (recordId: string) => {
+    setUpdatingReasonId(recordId);
+    try {
+      const docRef = doc(db, 'lateness_records', recordId);
+      await updateDoc(docRef, {
+        reason: editingReason,
+        updatedAt: serverTimestamp()
+      });
+      toast.success('Alasan keterlambatan berhasil diperbarui');
+      setEditingRecordId(null);
+      setEditingReason('');
+      setEditingCustomReason(false);
+    } catch (err) {
+      console.error('Error updating lateness reason:', err);
+      toast.error('Gagal memperbarui alasan keterlambatan');
+    } finally {
+      setUpdatingReasonId(null);
+    }
+  };
 
   React.useEffect(() => {
     const q = query(
@@ -1140,7 +1167,85 @@ export default function Lateness() {
                                 </span>
                               </td>
                               <td className="px-6 py-4">
-                                <p className="text-sm text-gray-600">{record.reason || <span className="text-gray-300 italic">-</span>}</p>
+                                {editingRecordId === record.id ? (
+                                  activeUnit === 'JUNIOR_HIGH' ? (
+                                    (() => {
+                                      if (editingCustomReason) {
+                                        return (
+                                          <div className="flex items-center gap-2 w-full">
+                                            <input 
+                                                type="text" 
+                                                placeholder="Tulis alasan..."
+                                                className="flex-1 bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-sm transition-all py-1 placeholder:text-gray-300 font-medium"
+                                                value={editingReason}
+                                                onChange={(e) => setEditingReason(e.target.value)}
+                                                autoFocus
+                                            />
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setEditingCustomReason(false);
+                                                setEditingReason('');
+                                              }}
+                                              className="text-xs font-black text-gray-400 hover:text-blue-600 uppercase tracking-wider shrink-0"
+                                              title="Kembali ke pilihan"
+                                            >
+                                              Batal
+                                            </button>
+                                          </div>
+                                        );
+                                      }
+
+                                      return (
+                                        <select
+                                          value={editingReason}
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            if (val === 'custom') {
+                                              setEditingCustomReason(true);
+                                              setEditingReason('');
+                                            } else {
+                                              setEditingReason(val);
+                                            }
+                                          }}
+                                          className="w-full bg-transparent border-b border-gray-200 hover:border-gray-300 focus:border-blue-500 outline-none text-sm py-1 font-medium text-gray-700 cursor-pointer"
+                                        >
+                                          <option value="" className="text-gray-400">-- Pilih Alasan --</option>
+                                          {JUNIOR_HIGH_REASONS.map(r => (
+                                            <option key={r} value={r} className="text-gray-700 font-medium">{r}</option>
+                                          ))}
+                                          <option value="custom" className="text-blue-600 font-bold">Lainnya (Tulis manual)...</option>
+                                        </select>
+                                      );
+                                    })()
+                                  ) : (
+                                    <input 
+                                        type="text" 
+                                        placeholder="Tulis alasan..."
+                                        className="w-full bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-sm transition-all py-1 placeholder:text-gray-300"
+                                        value={editingReason}
+                                        onChange={(e) => setEditingReason(e.target.value)}
+                                        autoFocus
+                                    />
+                                  )
+                                ) : (
+                                  <div className="flex items-center gap-2 group min-h-[32px]">
+                                    <p className="text-sm text-gray-600">{record.reason || <span className="text-gray-300 italic">-</span>}</p>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingRecordId(record.id);
+                                        setEditingReason(record.reason || '');
+                                        const isPreset = JUNIOR_HIGH_REASONS.includes(record.reason || '') || (record.reason || '') === '';
+                                        setEditingCustomReason(!isPreset);
+                                      }}
+                                      className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-blue-500 rounded transition-all shrink-0 cursor-pointer"
+                                      title="Edit Alasan"
+                                    >
+                                      <Edit2 size={12} />
+                                    </button>
+                                  </div>
+                                )}
                               </td>
                               {activeUnit !== 'JUNIOR_HIGH' && (
                                 <td className="px-6 py-4 text-center">
@@ -1153,13 +1258,51 @@ export default function Lateness() {
                                 </td>
                               )}
                               <td className="px-6 py-4 text-right">
-                                <button 
-                                    onClick={() => handleDeleteSavedRecord(record.id)}
-                                    className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
-                                    title="Hapus Keterlambatan"
-                                >
-                                    <Trash2 size={16} />
-                                </button>
+                                {editingRecordId === record.id ? (
+                                  <div className="flex items-center justify-end gap-1">
+                                    <button 
+                                        onClick={() => handleUpdateReason(record.id)}
+                                        disabled={updatingReasonId === record.id}
+                                        className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all cursor-pointer"
+                                        title="Simpan Perubahan"
+                                    >
+                                        {updatingReasonId === record.id ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                                    </button>
+                                    <button 
+                                        onClick={() => {
+                                          setEditingRecordId(null);
+                                          setEditingReason('');
+                                          setEditingCustomReason(false);
+                                        }}
+                                        className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-all cursor-pointer"
+                                        title="Batal"
+                                    >
+                                        <X size={16} />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-end gap-1">
+                                    <button 
+                                        onClick={() => {
+                                          setEditingRecordId(record.id);
+                                          setEditingReason(record.reason || '');
+                                          const isPreset = JUNIOR_HIGH_REASONS.includes(record.reason || '') || (record.reason || '') === '';
+                                          setEditingCustomReason(!isPreset);
+                                        }}
+                                        className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all cursor-pointer"
+                                        title="Edit Alasan"
+                                    >
+                                        <Edit2 size={16} />
+                                    </button>
+                                    <button 
+                                        onClick={() => handleDeleteSavedRecord(record.id)}
+                                        className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all cursor-pointer"
+                                        title="Hapus Keterlambatan"
+                                    >
+                                        <Trash2 size={16} />
+                                    </button>
+                                  </div>
+                                )}
                               </td>
                           </tr>
                         ))}
