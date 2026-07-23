@@ -484,27 +484,78 @@ app.post("/api/attendance/sync", async (req, res) => {
       const semesterFolderId = await findOrCreateFolder(`Semester ${record.semester}`, yearFolderId, config.sharedDriveId);
       
       const ssTitle = `Attendance Recap - ${record.classId} - ${record.academicYear} (S${record.semester})`;
-      const ssResponse = await sheets.spreadsheets.create({
-        requestBody: {
-          properties: { title: ssTitle },
-          sheets: [
-            { properties: { title: 'Metadata' } },
-            { properties: { title: 'Rekap' } },
-            { properties: { title: 'Log' } }
-          ],
-        },
-        fields: 'spreadsheetId,spreadsheetUrl'
+      
+      // Perform an idempotent search in Drive to prevent duplicate creation
+      const q = `name = '${ssTitle.replace(/'/g, "\\'")}' and '${semesterFolderId}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`;
+      const existingSS = await drive.files.list({
+        q,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+        driveId: config.sharedDriveId,
+        corpora: config.sharedDriveId ? 'drive' : undefined,
+        fields: 'files(id, name, webViewLink)',
       });
 
-      spreadsheetId = ssResponse.data.spreadsheetId!;
-      
-      // Move to correct folder
-      await drive.files.update({
-        fileId: spreadsheetId,
-        addParents: semesterFolderId,
-        removeParents: (await drive.files.get({ fileId: spreadsheetId, fields: 'parents' })).data.parents?.join(','),
-        supportsAllDrives: true,
-      });
+      let spreadsheetUrl = "";
+      if (existingSS.data.files && existingSS.data.files.length > 0) {
+        spreadsheetId = existingSS.data.files[0].id!;
+        spreadsheetUrl = existingSS.data.files[0].webViewLink!;
+        console.log(`[BackupSync] Found existing spreadsheet in Shared Drive: ${spreadsheetId}`);
+      } else {
+        // Create file using Google Drive API directly to prevent Shared Drive permission issues
+        console.log(`[BackupSync] Creating spreadsheet in Shared Drive via Drive API...`);
+        try {
+          const fileResponse = await drive.files.create({
+            requestBody: {
+              name: ssTitle,
+              mimeType: 'application/vnd.google-apps.spreadsheet',
+              parents: [semesterFolderId]
+            },
+            supportsAllDrives: true,
+            fields: 'id, name, webViewLink'
+          });
+          spreadsheetId = fileResponse.data.id!;
+          spreadsheetUrl = fileResponse.data.webViewLink!;
+          console.log(`[BackupSync] Created spreadsheet in Shared Drive: ${spreadsheetId}`);
+
+          // Initialize sheets: Metadata, Rekap, Log
+          const ssMeta = await sheets.spreadsheets.get({ spreadsheetId });
+          const defaultSheetId = ssMeta.data.sheets?.[0]?.properties?.sheetId;
+
+          const initRequests: any[] = [
+            { addSheet: { properties: { title: 'Metadata' } } },
+            { addSheet: { properties: { title: 'Rekap' } } },
+            { addSheet: { properties: { title: 'Log' } } }
+          ];
+
+          if (defaultSheetId !== undefined) {
+            initRequests.push({ deleteSheet: { sheetId: defaultSheetId } });
+          }
+
+          await sheets.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: { requests: initRequests }
+          });
+
+          // Initialize Headers (Metadata)
+          await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: 'Metadata!A1',
+            valueInputOption: 'RAW',
+            requestBody: { values: [['Property', 'Value'], ['Class', record.classId], ['Year', record.academicYear], ['Semester', record.semester]] }
+          });
+          
+          await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: 'Log!A1',
+            valueInputOption: 'RAW',
+            requestBody: { values: [['Timestamp', 'Student ID', 'Student Name', 'Date', 'Status', 'Note', 'Updated By']] }
+          });
+        } catch (createErr: any) {
+          console.error("[BackupSync] Error creating spreadsheet via Drive API:", createErr);
+          throw new Error(`Gagal membuat file spreadsheet pada Shared Drive: ${createErr.message || createErr}`);
+        }
+      }
 
       // Save to map
       await db.collection("attendance_backup_file_maps").doc(mapId).set({
@@ -513,24 +564,9 @@ app.post("/api/attendance/sync", async (req, res) => {
         academicYear: record.academicYear,
         semester: record.semester,
         spreadsheetId,
-        spreadsheetUrl: ssResponse.data.spreadsheetUrl,
+        spreadsheetUrl,
         folderId: semesterFolderId,
         lastSyncedAt: Date.now()
-      });
-
-      // Initialize Headers (Metadata)
-      await sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: 'Metadata!A1',
-        valueInputOption: 'RAW',
-        requestBody: { values: [['Property', 'Value'], ['Class', record.classId], ['Year', record.academicYear], ['Semester', record.semester]] }
-      });
-      
-      await sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: 'Log!A1',
-        valueInputOption: 'RAW',
-        requestBody: { values: [['Timestamp', 'Student ID', 'Student Name', 'Date', 'Status', 'Note', 'Updated By']] }
       });
     }
 
