@@ -10,7 +10,7 @@ import {
   runTransaction
 } from "firebase/firestore";
 import { db, handleFirestoreError } from "../lib/firebase";
-import { LdssTemplate, LdssAge, LdssTemplateStatus, LdssAssessment } from "../types";
+import { LdssTemplate, LdssAge, LdssTemplateStatus, LdssAssessment, LdssSessionAssessment } from "../types";
 
 const COLLECTION_NAME = "ldssTemplates";
 
@@ -577,6 +577,55 @@ export async function saveLdssAssessment(assessment: LdssAssessment): Promise<vo
     await setDoc(docRef, assessment);
   } catch (error) {
     handleFirestoreError(error, "write", `${ASSESSMENT_COLLECTION}/${assessment.id}`);
+    throw error;
+  }
+}
+
+/**
+ * Generate a new session ID for a multi-session LDSS assessment
+ */
+export function generateLdssSessionId(): string {
+  return doc(collection(db, "ldss_assessments")).id;
+}
+
+/**
+ * Fetch all session assessments for a student under a specific age and academic year
+ */
+export async function getStudentLdssSessions(
+  studentId: string,
+  age: LdssAge,
+  academicYear: string
+): Promise<LdssSessionAssessment[]> {
+  try {
+    const q = query(
+      collection(db, "ldss_assessments"),
+      where("studentId", "==", studentId),
+      where("instrumentAge", "==", age),
+      where("academicYearId", "==", academicYear)
+    );
+    const querySnapshot = await getDocs(q);
+    const sessions: LdssSessionAssessment[] = [];
+    querySnapshot.forEach((docSnap) => {
+      sessions.push({ id: docSnap.id, ...docSnap.data() } as LdssSessionAssessment);
+    });
+    // Sort by assessmentDate descending or createdAt descending
+    sessions.sort((a, b) => new Date(b.assessmentDate).getTime() - new Date(a.assessmentDate).getTime());
+    return sessions;
+  } catch (error) {
+    handleFirestoreError(error, "list", "ldss_assessments");
+    return [];
+  }
+}
+
+/**
+ * Save or update a session-based LDSS assessment
+ */
+export async function saveLdssSession(session: LdssSessionAssessment): Promise<void> {
+  try {
+    const docRef = doc(db, "ldss_assessments", session.id);
+    await setDoc(docRef, session);
+  } catch (error) {
+    handleFirestoreError(error, "write", `ldss_assessments/${session.id}`);
     throw error;
   }
 }

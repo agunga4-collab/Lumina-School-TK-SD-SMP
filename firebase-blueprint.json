@@ -648,6 +648,36 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["id", "studentId", "studentName", "classId", "academicYear", "age", "templateId", "scores", "notes", "assessedBy", "assessedAt", "updatedAt"]
+    },
+    "LdssSessionAssessment": {
+      "title": "LdssSessionAssessment",
+      "description": "Multi-session student developmental screening session results for LDSS.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentNameSnapshot": { "type": "string" },
+        "classId": { "type": "string" },
+        "classNameSnapshot": { "type": "string" },
+        "unitId": { "type": "string" },
+        "academicYearId": { "type": "string" },
+        "academicYearLabel": { "type": "string" },
+        "instrumentAge": { "type": "number", "minimum": 6, "maximum": 12 },
+        "assessmentDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "completed"] },
+        "responses": { "type": "object" },
+        "sectionProgress": { "type": "object" },
+        "generalNotes": { "type": "string" },
+        "scoringSummary": { "type": "object" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "completedAt": { "type": "string" },
+        "createdBy": { "type": "object" },
+        "updatedBy": { "type": "object" },
+        "templateVersion": { "type": "string" },
+        "reopenedBy": { "type": "array" }
+      },
+      "required": ["id", "studentId", "studentNameSnapshot", "classId", "classNameSnapshot", "unitId", "academicYearId", "instrumentAge", "assessmentDate", "status", "responses", "sectionProgress", "createdAt", "updatedAt", "createdBy", "templateVersion"]
     }
   },
   "firestore": {
@@ -822,6 +852,10 @@
     "ldssAssessments/{assessmentId}": {
       "schema": "LdssAssessment",
       "description": "LDSS student screening records and scores."
+    },
+    "ldss_assessments/{sessionId}": {
+      "schema": "LdssSessionAssessment",
+      "description": "LDSS multi-session student screening records."
     }
   }
 }

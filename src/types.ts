@@ -1675,6 +1675,60 @@ export type LdssAssessment = {
   updatedAt: string;
 };
 
+export interface LdssSessionResponse {
+  score: "YA" | "TIDAK" | null;
+  note: string;
+}
+
+export interface LdssSessionProgress {
+  completed: number;
+  total: number;
+  percent: number;
+}
+
+export type LdssSessionAssessment = {
+  id: string;
+  studentId: string;
+  studentNameSnapshot: string;
+  classId: string;
+  classNameSnapshot: string;
+  unitId: string;
+  academicYearId: string;
+  academicYearLabel: string;
+  instrumentAge: LdssAge;
+  assessmentDate: string; // YYYY-MM-DD, wajib
+  status: 'draft' | 'completed';
+  responses: Record<string, LdssSessionResponse>;
+  sectionProgress: Record<string, LdssSessionProgress>;
+  generalNotes: string;
+  scoringSummary: {
+    totalYes: number;
+    totalNo: number;
+    totalBlank: number;
+    percentCompleted: number;
+  };
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+  createdBy: {
+    uid?: string;
+    email: string;
+    name?: string;
+  };
+  updatedBy?: {
+    uid?: string;
+    email: string;
+    name?: string;
+  } | null;
+  templateVersion: string;
+  reopenedBy?: {
+    uid?: string;
+    email: string;
+    name?: string;
+    reopenedAt: string;
+  }[] | null;
+};
+
 // --- Three-Way Conference & SMART Goal Tracker Types ---
 export type ConferenceGoalStrand = 'SPIRITUAL' | 'IMAGINAL' | 'RATIONAL' | 'MATERIAL_PHYSICAL';
 

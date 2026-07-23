@@ -541,6 +541,10 @@ service cloud.firestore {
       allow read, write: if isSignedIn() && (isActive() || isAdmin());
     }
 
+    match /ldss_assessments/{assessmentId} {
+      allow read, write: if isSignedIn() && (isActive() || isAdmin());
+    }
+
     match /conferencePeriods/{periodId} {
       allow read: if isSignedIn() && isActive();
       allow write: if isAdmin();
