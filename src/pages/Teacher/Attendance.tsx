@@ -40,6 +40,7 @@ export default function Attendance() {
   const [loadingClasses, setLoadingClasses] = React.useState(true);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
+  const [backingUp, setBackingUp] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
   const [lastSaved, setLastSaved] = React.useState<{date: string, classId: string} | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -392,6 +393,153 @@ export default function Attendance() {
     setStudents(students.map(s => s.id === id ? { ...s, note } : s));
   };
   
+  const handleSaveFirestore = async () => {
+    const unselectedCount = students.filter(s => s.status === null).length;
+    if (unselectedCount > 0) {
+      const confirmSave = window.confirm(`${unselectedCount} siswa belum memiliki status kehadiran. Lanjutkan simpan? (Siswa tanpa status tidak akan disimpan/dianggap belum diabsen)`);
+      if (!confirmSave) return;
+    }
+
+    setSaving(true);
+    let successCount = 0;
+
+    try {
+      const userEmail = auth.currentUser?.email || 'unknown_teacher';
+
+      for (const student of students) {
+        if (student.status === null) continue;
+
+        const recordId = `${selectedClass}_${selectedDate}_${student.id}`;
+        const record: AttendanceRecord = {
+          id: recordId,
+          studentId: student.id,
+          studentName: student.name,
+          classId: selectedClass,
+          academicYear: activeAcademicYear,
+          semester: activeSemester,
+          date: selectedDate,
+          status: student.status,
+          note: student.note,
+          latenessMinutes: null,
+          recordedBy: userEmail,
+          recordedAt: Date.now(),
+          updatedAt: Date.now(),
+          syncStatus: 'PENDING',
+          lastSyncAt: null,
+          syncError: null,
+          retryCount: 0
+        };
+
+        // Save to Firestore
+        await setDoc(doc(db, 'attendance_records', recordId), {
+          ...record,
+          recordedAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+        
+        successCount++;
+      }
+
+      setLastSaved({ date: selectedDate, classId: selectedClass });
+      toast.success('Kehadiran Disimpan', {
+        description: `${successCount} data berhasil disimpan ke Firestore.`
+      });
+
+    } catch (err) {
+      console.error('Save Firestore error:', err);
+      toast.error('Gagal Simpan', {
+        description: 'Terjadi kesalahan saat menyimpan data ke Firestore.'
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleBackupGoogleSheets = async () => {
+    const unselectedCount = students.filter(s => s.status === null).length;
+    if (unselectedCount > 0) {
+      const confirmBackup = window.confirm(`${unselectedCount} siswa belum memiliki status kehadiran. Lanjutkan backup? (Hanya siswa dengan status kehadiran yang akan diekspor)`);
+      if (!confirmBackup) return;
+    }
+
+    const studentsToBackup = students.filter(s => s.status !== null);
+    if (studentsToBackup.length === 0) {
+      toast.error('Tidak ada data kehadiran yang siap diekspor.');
+      return;
+    }
+
+    setBackingUp(true);
+    let successCount = 0;
+    let syncCount = 0;
+
+    try {
+      const userEmail = auth.currentUser?.email || 'unknown_teacher';
+
+      for (const student of studentsToBackup) {
+        const recordId = `${selectedClass}_${selectedDate}_${student.id}`;
+        const record: AttendanceRecord = {
+          id: recordId,
+          studentId: student.id,
+          studentName: student.name,
+          classId: selectedClass,
+          academicYear: activeAcademicYear,
+          semester: activeSemester,
+          date: selectedDate,
+          status: student.status!,
+          note: student.note,
+          latenessMinutes: null,
+          recordedBy: userEmail,
+          recordedAt: Date.now(),
+          updatedAt: Date.now(),
+          syncStatus: 'PENDING',
+          lastSyncAt: null,
+          syncError: null,
+          retryCount: 0
+        };
+
+        // 1. Save to Firestore first to make sure it's up to date
+        await setDoc(doc(db, 'attendance_records', recordId), {
+          ...record,
+          recordedAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+
+        successCount++;
+
+        // 2. Trigger Google Sheets Sync
+        const syncResult = await attendanceSyncService.triggerSync(record);
+        if (syncResult.success) {
+          syncCount++;
+          await setDoc(doc(db, 'attendance_records', recordId), {
+            syncStatus: 'SYNCED',
+            lastSyncAt: Date.now(),
+            syncError: null
+          }, { merge: true });
+        } else {
+          console.error(`Sync failed for ${recordId}:`, syncResult.error);
+          await setDoc(doc(db, 'attendance_records', recordId), {
+            syncStatus: 'FAILED',
+            syncError: syncResult.error,
+            retryCount: 1
+          }, { merge: true });
+        }
+      }
+
+      setLastSaved({ date: selectedDate, classId: selectedClass });
+      toast.success('Backup Selesai', {
+        description: `${syncCount} dari ${successCount} data berhasil diekspor ke Google Sheets.`
+      });
+
+    } catch (err) {
+      console.error('Backup error:', err);
+      toast.error('Gagal Ekspor Backup', {
+        description: 'Terjadi kesalahan saat mengekspor data ke Google Sheets.'
+      });
+    } finally {
+      setBackingUp(false);
+    }
+  };
+
   const handleSaveAll = async () => {
     const unselectedCount = students.filter(s => s.status === null).length;
     if (unselectedCount > 0) {
@@ -705,14 +853,35 @@ export default function Attendance() {
                  Data Sudah Disimpan
                </div>
              )}
-             <button 
-              onClick={handleSaveAll}
-              disabled={saving}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-10 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50"
-             >
-                {saving ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
-                {saving ? 'Menyimpan...' : 'Simpan Kehadiran Hari Ini'}
-             </button>
+             {activeUnit === 'JUNIOR_HIGH' ? (
+               <>
+                 <button 
+                  onClick={handleSaveFirestore}
+                  disabled={saving || backingUp}
+                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50"
+                 >
+                    {saving ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
+                    {saving ? 'Menyimpan...' : 'Simpan (Firestore)'}
+                 </button>
+                 <button 
+                  onClick={handleBackupGoogleSheets}
+                  disabled={saving || backingUp}
+                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-emerald-100 transition-all active:scale-95 disabled:opacity-50"
+                 >
+                    {backingUp ? <RefreshCw size={18} className="animate-spin" /> : <ExternalLink size={18} />}
+                    {backingUp ? 'Mengekspor...' : 'Back Up (Google Sheets)'}
+                 </button>
+               </>
+             ) : (
+               <button 
+                onClick={handleSaveAll}
+                disabled={saving}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-10 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50"
+               >
+                  {saving ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
+                  {saving ? 'Menyimpan...' : 'Simpan Kehadiran Hari Ini'}
+               </button>
+             )}
           </div>
         </div>
       )}
