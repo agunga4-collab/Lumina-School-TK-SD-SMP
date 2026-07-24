@@ -63,18 +63,32 @@ export default function Attendance() {
   const [recapViewMode, setRecapViewMode] = React.useState<'SUMMARY' | 'MATRIX'>('SUMMARY');
   const [loadingRecap, setLoadingRecap] = React.useState(false);
   const [fileMap, setFileMap] = React.useState<any | null>(null);
+  const [attendanceType, setAttendanceType] = React.useState<'DAILY' | 'DHUHUR'>('DAILY');
 
   React.useEffect(() => {
     const loadFileMap = async () => {
-      if (selectedClass && activeAcademicYear && activeSemester && activeUnit === 'JUNIOR_HIGH') {
-        const map = await attendanceBackupConfigService.getFileMap(selectedClass, activeAcademicYear, activeSemester as any);
-        setFileMap(map);
+      if (activeAcademicYear && activeSemester && activeUnit === 'JUNIOR_HIGH') {
+        if (attendanceType === 'DHUHUR') {
+          const mapId = `dhuhur_JUNIOR_HIGH_${activeAcademicYear.replace(/\//g, '-')}_S${activeSemester}`;
+          const docRef = doc(db, 'attendance_backup_file_maps', mapId);
+          const snap = await getDoc(docRef);
+          if (snap.exists()) {
+            setFileMap(snap.data());
+          } else {
+            setFileMap(null);
+          }
+        } else if (selectedClass) {
+          const map = await attendanceBackupConfigService.getFileMap(selectedClass, activeAcademicYear, activeSemester as any);
+          setFileMap(map);
+        } else {
+          setFileMap(null);
+        }
       } else {
         setFileMap(null);
       }
     };
     loadFileMap();
-  }, [selectedClass, activeAcademicYear, activeSemester, activeUnit]);
+  }, [selectedClass, activeAcademicYear, activeSemester, activeUnit, attendanceType]);
 
   const [threshold, setThreshold] = React.useState(3);
   const [userProfile, setUserProfile] = React.useState<any>(null); // In real app, from AuthContext
@@ -201,9 +215,10 @@ export default function Attendance() {
           })).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
         }
 
-        // Load existing records for today
+        // Load existing records for today depending on type
+        const recordsCollection = attendanceType === 'DHUHUR' ? 'dhuhur_attendance_records' : 'attendance_records';
         const recordsQ = query(
-          collection(db, 'attendance_records'),
+          collection(db, recordsCollection),
           where('classId', 'in', [classId, className]),
           where('date', '==', selectedDate)
         );
@@ -214,7 +229,7 @@ export default function Attendance() {
         if (studentList.length > 0) {
           setStudents(studentList.map(s => ({
             ...s,
-            status: (recordsMap.get(s.id) as AttendanceStatus) || null,
+            status: (recordsMap.get(s.id) as any) || null,
             note: notesMap.get(s.id) || ''
           })));
         } else {
@@ -231,7 +246,7 @@ export default function Attendance() {
     };
 
     loadStudents();
-  }, [selectedClass, selectedDate, classes, activeAcademicYear]);
+  }, [selectedClass, selectedDate, classes, activeAcademicYear, attendanceType]);
 
   const handleDeleteOne = async (studentId: string) => {
     if (!window.confirm('Hapus data kehadiran untuk siswa ini?')) return;
@@ -300,11 +315,9 @@ export default function Attendance() {
         const monthPrefix = `${recapYear}-${recapMonth}`;
         
         // Query all records for this month
-        // We might need to use >= and <= for date if we want to be more precise, 
-        // but '==' with string prefix only works if we query the whole collection.
-        // Better: use where('date', '>=', `${monthPrefix}-01`) and where('date', '<=', `${monthPrefix}-31`)
+        const recordsCollection = attendanceType === 'DHUHUR' ? 'dhuhur_attendance_records' : 'attendance_records';
         const q = query(
-          collection(db, 'attendance_records'),
+          collection(db, recordsCollection),
           where('classId', 'in', [classId, className]),
           where('date', '>=', `${monthPrefix}-01`),
           where('date', '<=', `${monthPrefix}-31`)
@@ -331,18 +344,23 @@ export default function Attendance() {
           
           matrix[sId][date] = status;
           
-          if (status === 'HADIR') { agg[sId].hadir++; totalHadir++; }
-          else if (status === 'SAKIT') { agg[sId].sakit++; totalSakit++; }
-          else if (status === 'IZIN') { agg[sId].izin++; totalIzin++; }
-          else if (status === 'ALPA') { agg[sId].alpa++; totalAlpa++; }
-          else if (status === 'LATE') { agg[sId].late++; totalLate++; }
+          if (attendanceType === 'DHUHUR') {
+            if (status === 'H') { agg[sId].hadir++; totalHadir++; }
+            else if (status === 'T') { agg[sId].late++; totalLate++; }
+            else if (status === 'A') { agg[sId].alpa++; totalAlpa++; }
+          } else {
+            if (status === 'HADIR') { agg[sId].hadir++; totalHadir++; }
+            else if (status === 'SAKIT') { agg[sId].sakit++; totalSakit++; }
+            else if (status === 'IZIN') { agg[sId].izin++; totalIzin++; }
+            else if (status === 'ALPA') { agg[sId].alpa++; totalAlpa++; }
+            else if (status === 'LATE') { agg[sId].late++; totalLate++; }
+          }
         });
 
         setRecapData(agg);
         setRecapMatrix(matrix);
         
         const totalRecords = snap.docs.length;
-        const studentCount = students.length || 1;
         
         setRecapStats({
           hadir: totalHadir,
@@ -350,7 +368,7 @@ export default function Attendance() {
           izin: totalIzin,
           alpa: totalAlpa,
           late: totalLate,
-          attendanceRate: totalRecords > 0 ? Math.round((totalHadir / totalRecords) * 100) : 0
+          attendanceRate: totalRecords > 0 ? Math.round(((totalHadir + (attendanceType === 'DHUHUR' ? totalLate : 0)) / totalRecords) * 100) : 0
         });
 
       } catch (err) {
@@ -361,7 +379,7 @@ export default function Attendance() {
     };
 
     loadMonthlyRecap();
-  }, [view, selectedClass, recapMonth, recapYear, students.length]);
+  }, [view, selectedClass, recapMonth, recapYear, students.length, attendanceType]);
 
   const handlePrevDate = () => {
     const d = new Date(selectedDate);
@@ -385,7 +403,7 @@ export default function Attendance() {
     setSelectedDate(yesterday.toISOString().split('T')[0]);
   };
 
-  const handleStatusChange = (id: string, newStatus: AttendanceStatus) => {
+  const handleStatusChange = (id: string, newStatus: AttendanceStatus | 'H' | 'T' | 'A') => {
     setStudents(students.map(s => s.id === id ? { ...s, status: newStatus } : s));
   };
 
@@ -540,6 +558,182 @@ export default function Attendance() {
     }
   };
 
+  const handleSaveDhuhurFirestore = async () => {
+    const unselectedCount = students.filter(s => s.status === null).length;
+    if (unselectedCount > 0) {
+      const confirmSave = window.confirm(`${unselectedCount} siswa belum memiliki status kehadiran shalat Dhuhur. Lanjutkan simpan? (Siswa tanpa status tidak akan disimpan)`);
+      if (!confirmSave) return;
+    }
+
+    setSaving(true);
+    let successCount = 0;
+
+    try {
+      const user = auth.currentUser;
+      const userEmail = user?.email || 'unknown_teacher';
+      const userUid = user?.uid || 'unknown_uid';
+
+      const currentClassEntity = classes.find(c => c.id === selectedClass || c.name === selectedClass);
+      const className = currentClassEntity?.name || selectedClass;
+      const academicYearId = activeAcademicYear.replace(/\//g, '-');
+
+      for (const student of students) {
+        if (student.status === null) continue;
+
+        const recordId = `dhuhur_${selectedClass}_${selectedDate}_${student.id}`;
+        
+        const record = {
+          id: recordId,
+          studentId: student.id,
+          classId: selectedClass,
+          date: selectedDate,
+          unit: 'JUNIOR_HIGH',
+          status: student.status, // 'H' | 'T' | 'A'
+          note: student.note || "",
+          academicYearId,
+          academicYear: activeAcademicYear,
+          semester: parseInt(activeSemester, 10),
+          studentNameSnapshot: student.name,
+          classNameSnapshot: className,
+          recordedByUid: userUid,
+          recordedByEmail: userEmail,
+          recordedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          backupType: 'DHUHUR_ATTENDANCE',
+          syncStatus: 'PENDING',
+          lastSyncAt: null,
+          syncError: null,
+          retryCount: 0
+        };
+
+        // Save to Firestore with merge
+        await setDoc(doc(db, 'dhuhur_attendance_records', recordId), record, { merge: true });
+        successCount++;
+      }
+
+      setLastSaved({ date: selectedDate, classId: selectedClass });
+      toast.success('Kehadiran Shalat Dhuhur Disimpan', {
+        description: `${successCount} data berhasil disimpan ke Firestore.`
+      });
+
+    } catch (err: any) {
+      console.error('Save Dhuhur Firestore error:', err);
+      toast.error('Gagal Simpan', {
+        description: err.message || 'Terjadi kesalahan saat menyimpan data ke Firestore.'
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleBackupDhuhurGoogleSheets = async () => {
+    const unselectedCount = students.filter(s => s.status === null).length;
+    if (unselectedCount > 0) {
+      const confirmBackup = window.confirm(`${unselectedCount} siswa belum memiliki status kehadiran shalat Dhuhur. Lanjutkan backup? (Hanya siswa dengan status yang akan diekspor)`);
+      if (!confirmBackup) return;
+    }
+
+    const studentsToBackup = students.filter(s => s.status !== null);
+    if (studentsToBackup.length === 0) {
+      toast.error('Tidak ada data kehadiran yang siap diekspor.');
+      return;
+    }
+
+    setBackingUp(true);
+    let successCount = 0;
+
+    try {
+      const user = auth.currentUser;
+      const userEmail = user?.email || 'unknown_teacher';
+      const userUid = user?.uid || 'unknown_uid';
+
+      const currentClassEntity = classes.find(c => c.id === selectedClass || c.name === selectedClass);
+      const className = currentClassEntity?.name || selectedClass;
+      const academicYearId = activeAcademicYear.replace(/\//g, '-');
+
+      const recordIds: string[] = [];
+
+      // 1. Save all to Firestore first as PENDING
+      for (const student of studentsToBackup) {
+        const recordId = `dhuhur_${selectedClass}_${selectedDate}_${student.id}`;
+        recordIds.push(recordId);
+
+        const record = {
+          id: recordId,
+          studentId: student.id,
+          classId: selectedClass,
+          date: selectedDate,
+          unit: 'JUNIOR_HIGH',
+          status: student.status!, // 'H' | 'T' | 'A'
+          note: student.note || "",
+          academicYearId,
+          academicYear: activeAcademicYear,
+          semester: parseInt(activeSemester, 10),
+          studentNameSnapshot: student.name,
+          classNameSnapshot: className,
+          recordedByUid: userUid,
+          recordedByEmail: userEmail,
+          recordedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          backupType: 'DHUHUR_ATTENDANCE',
+          syncStatus: 'PENDING',
+          lastSyncAt: null,
+          syncError: null,
+          retryCount: 0
+        };
+
+        await setDoc(doc(db, 'dhuhur_attendance_records', recordId), record, { merge: true });
+        successCount++;
+      }
+
+      // 2. Call the batch sync API
+      const idToken = await user?.getIdToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (idToken) {
+        headers['Authorization'] = `Bearer ${idToken}`;
+      }
+
+      const response = await fetch('/api/attendance/dhuhur/sync-batch', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          academicYearId,
+          semester: activeSemester,
+          classId: selectedClass,
+          date: selectedDate,
+          recordIds
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Gagal mem-backup ke Google Sheets via server API.');
+      }
+
+      const syncResult = await response.json();
+      
+      setLastSaved({ date: selectedDate, classId: selectedClass });
+      
+      if (syncResult.summary?.failed > 0) {
+        toast.warning('Backup Selesai dengan Sebagian Gagal', {
+          description: `${syncResult.summary.success} berhasil, ${syncResult.summary.failed} gagal diekspor.`
+        });
+      } else {
+        toast.success('Backup Selesai', {
+          description: `Semua ${syncResult.summary.success} data berhasil diekspor ke Google Sheets.`
+        });
+      }
+
+    } catch (err: any) {
+      console.error('Backup Dhuhur error:', err);
+      toast.error('Gagal Ekspor Backup', {
+        description: err.message || 'Terjadi kesalahan saat mengekspor data ke Google Sheets.'
+      });
+    } finally {
+      setBackingUp(false);
+    }
+  };
+
   const handleSaveAll = async () => {
     const unselectedCount = students.filter(s => s.status === null).length;
     if (unselectedCount > 0) {
@@ -657,6 +851,35 @@ export default function Attendance() {
         </div>
       </header>
 
+      {activeUnit === 'JUNIOR_HIGH' && (
+        <div className="flex border-b border-gray-100 pb-1.5 gap-6">
+          <button 
+            onClick={() => {
+              setAttendanceType('DAILY');
+              setStudents([]);
+            }}
+            className={cn(
+              "pb-2 text-sm font-bold border-b-2 px-1 transition-all",
+              attendanceType === 'DAILY' ? "border-blue-600 text-blue-600" : "border-transparent text-gray-400 hover:text-gray-600"
+            )}
+          >
+            Kehadiran Harian
+          </button>
+          <button 
+            onClick={() => {
+              setAttendanceType('DHUHUR');
+              setStudents([]);
+            }}
+            className={cn(
+              "pb-2 text-sm font-bold border-b-2 px-1 transition-all",
+              attendanceType === 'DHUHUR' ? "border-blue-600 text-blue-600" : "border-transparent text-gray-400 hover:text-gray-600"
+            )}
+          >
+            Kehadiran Shalat Dhuhur
+          </button>
+        </div>
+      )}
+
       {view === 'INPUT' && (
         <div className="space-y-6">
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-wrap items-center justify-between gap-4">
@@ -728,19 +951,21 @@ export default function Attendance() {
              </div>
              <div className="flex gap-2">
                 <button 
-                  onClick={() => setStudents(students.map(s => ({ ...s, status: 'HADIR' })))}
+                  onClick={() => setStudents(students.map(s => ({ ...s, status: attendanceType === 'DHUHUR' ? 'H' : 'HADIR' })))}
                   className="px-4 py-2 bg-blue-50 text-blue-600 rounded-xl text-sm font-bold border border-blue-100 hover:bg-blue-100 transition-all active:scale-95"
                 >
                   Cek Semua Hadir
                 </button>
-                <button 
-                  onClick={handleDeleteAll}
-                  disabled={deleting}
-                  className="px-4 py-2 bg-red-50 text-red-600 rounded-xl text-sm font-bold border border-red-100 hover:bg-red-100 transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2"
-                >
-                  {deleting ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                  Hapus Semua Data Hari Ini
-                </button>
+                {attendanceType !== 'DHUHUR' && (
+                  <button 
+                    onClick={handleDeleteAll}
+                    disabled={deleting}
+                    className="px-4 py-2 bg-red-50 text-red-600 rounded-xl text-sm font-bold border border-red-100 hover:bg-red-100 transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {deleting ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                    Hapus Semua Data Hari Ini
+                  </button>
+                )}
              </div>
           </div>
 
@@ -783,26 +1008,54 @@ export default function Attendance() {
                     </td>
                     <td className="px-2 py-4">
                       <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit mx-auto">
-                        <StatusBtn 
-                          active={student.status === 'HADIR'} 
-                          type="HADIR" 
-                          onClick={() => handleStatusChange(student.id, 'HADIR')} 
-                        />
-                        <StatusBtn 
-                          active={student.status === 'SAKIT'} 
-                          type="SAKIT" 
-                          onClick={() => handleStatusChange(student.id, 'SAKIT')} 
-                        />
-                        <StatusBtn 
-                          active={student.status === 'IZIN'} 
-                          type="IZIN" 
-                          onClick={() => handleStatusChange(student.id, 'IZIN')} 
-                        />
-                        <StatusBtn 
-                          active={student.status === 'ALPA'} 
-                          type="ALPA" 
-                          onClick={() => handleStatusChange(student.id, 'ALPA')} 
-                        />
+                        {attendanceType === 'DHUHUR' ? (
+                          <>
+                            <StatusBtnDhuhur 
+                              active={student.status === 'H'} 
+                              type="H" 
+                              label="H"
+                              title="Hadir Tepat Waktu"
+                              onClick={() => handleStatusChange(student.id, 'H')} 
+                            />
+                            <StatusBtnDhuhur 
+                              active={student.status === 'T'} 
+                              type="T" 
+                              label="T"
+                              title="Terlambat"
+                              onClick={() => handleStatusChange(student.id, 'T')} 
+                            />
+                            <StatusBtnDhuhur 
+                              active={student.status === 'A'} 
+                              type="A" 
+                              label="A"
+                              title="Absen"
+                              onClick={() => handleStatusChange(student.id, 'A')} 
+                            />
+                          </>
+                        ) : (
+                          <>
+                            <StatusBtn 
+                              active={student.status === 'HADIR'} 
+                              type="HADIR" 
+                              onClick={() => handleStatusChange(student.id, 'HADIR')} 
+                            />
+                            <StatusBtn 
+                              active={student.status === 'SAKIT'} 
+                              type="SAKIT" 
+                              onClick={() => handleStatusChange(student.id, 'SAKIT')} 
+                            />
+                            <StatusBtn 
+                              active={student.status === 'IZIN'} 
+                              type="IZIN" 
+                              onClick={() => handleStatusChange(student.id, 'IZIN')} 
+                            />
+                            <StatusBtn 
+                              active={student.status === 'ALPA'} 
+                              type="ALPA" 
+                              onClick={() => handleStatusChange(student.id, 'ALPA')} 
+                            />
+                          </>
+                        )}
                       </div>
                     </td>
                     <td className="px-6 py-4">
@@ -819,7 +1072,7 @@ export default function Attendance() {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex justify-center">
-                        {student.status && (
+                        {student.status && attendanceType !== 'DHUHUR' && (
                           <button 
                             onClick={() => handleDeleteOne(student.id)}
                             className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
@@ -854,24 +1107,45 @@ export default function Attendance() {
                </div>
              )}
              {activeUnit === 'JUNIOR_HIGH' ? (
-               <>
-                 <button 
-                  onClick={handleSaveFirestore}
-                  disabled={saving || backingUp}
-                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50"
-                 >
-                    {saving ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
-                    {saving ? 'Menyimpan...' : 'Simpan (Lumina)'}
-                 </button>
-                 <button 
-                  onClick={handleBackupGoogleSheets}
-                  disabled={saving || backingUp}
-                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-emerald-100 transition-all active:scale-95 disabled:opacity-50"
-                 >
-                    {backingUp ? <RefreshCw size={18} className="animate-spin" /> : <ExternalLink size={18} />}
-                    {backingUp ? 'Mengekspor...' : 'Back Up (Google Sheets)'}
-                 </button>
-               </>
+               attendanceType === 'DHUHUR' ? (
+                 <>
+                   <button 
+                    onClick={handleSaveDhuhurFirestore}
+                    disabled={saving || backingUp}
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50"
+                   >
+                      {saving ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
+                      {saving ? 'Menyimpan...' : 'Simpan (Lumina)'}
+                   </button>
+                   <button 
+                    onClick={handleBackupDhuhurGoogleSheets}
+                    disabled={saving || backingUp}
+                    className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-emerald-100 transition-all active:scale-95 disabled:opacity-50"
+                   >
+                      {backingUp ? <RefreshCw size={18} className="animate-spin" /> : <ExternalLink size={18} />}
+                      {backingUp ? 'Mengekspor...' : 'Back Up (Google Sheets)'}
+                   </button>
+                 </>
+               ) : (
+                 <>
+                   <button 
+                    onClick={handleSaveFirestore}
+                    disabled={saving || backingUp}
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50"
+                   >
+                      {saving ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
+                      {saving ? 'Menyimpan...' : 'Simpan (Lumina)'}
+                   </button>
+                   <button 
+                    onClick={handleBackupGoogleSheets}
+                    disabled={saving || backingUp}
+                    className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-emerald-100 transition-all active:scale-95 disabled:opacity-50"
+                   >
+                      {backingUp ? <RefreshCw size={18} className="animate-spin" /> : <ExternalLink size={18} />}
+                      {backingUp ? 'Mengekspor...' : 'Back Up (Google Sheets)'}
+                   </button>
+                 </>
+               )
              ) : (
                <button 
                 onClick={handleSaveAll}
@@ -942,12 +1216,20 @@ export default function Attendance() {
             )}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-            <RecapCard title="Tingkat Hadir" value={`${recapStats.attendanceRate}%`} icon={<CheckCircle2 className="text-green-600" />} />
-            <RecapCard title="Total Sakit" value={recapStats.sakit.toString()} icon={<Clock className="text-blue-600" />} />
-            <RecapCard title="Total Izin" value={recapStats.izin.toString()} icon={<AlertCircle className="text-yellow-600" />} />
-            <RecapCard title="Total Alpa" value={recapStats.alpa.toString()} icon={<UserX className="text-red-600" />} />
-          </div>
+          {attendanceType === 'DHUHUR' ? (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <RecapCard title="Tingkat Tepat Waktu" value={`${recapStats.attendanceRate}%`} icon={<CheckCircle2 className="text-green-600" />} />
+              <RecapCard title="Total Terlambat" value={recapStats.late.toString()} icon={<Clock className="text-orange-600" />} />
+              <RecapCard title="Total Absen" value={recapStats.alpa.toString()} icon={<UserX className="text-red-600" />} />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+              <RecapCard title="Tingkat Hadir" value={`${recapStats.attendanceRate}%`} icon={<CheckCircle2 className="text-green-600" />} />
+              <RecapCard title="Total Sakit" value={recapStats.sakit.toString()} icon={<Clock className="text-blue-600" />} />
+              <RecapCard title="Total Izin" value={recapStats.izin.toString()} icon={<AlertCircle className="text-yellow-600" />} />
+              <RecapCard title="Total Alpa" value={recapStats.alpa.toString()} icon={<UserX className="text-red-600" />} />
+            </div>
+          )}
 
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="p-6 border-b border-gray-100 flex flex-wrap justify-between items-center gap-4">
@@ -975,27 +1257,38 @@ export default function Attendance() {
                   Tabel Harian
                 </button>
               </div>
-              <div className="flex gap-2">
-                 <button 
-                  onClick={() => attendanceSyncService.downloadPdfRecap(selectedClass, activeAcademicYear, activeSemester)}
-                  className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 active:scale-95 transition-all"
-                 >
-                  Cetak (PDF)
-                 </button>
-              </div>
+              {attendanceType !== 'DHUHUR' && (
+                <div className="flex gap-2">
+                   <button 
+                    onClick={() => attendanceSyncService.downloadPdfRecap(selectedClass, activeAcademicYear, activeSemester)}
+                    className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 active:scale-95 transition-all"
+                   >
+                    Cetak (PDF)
+                   </button>
+                </div>
+              )}
             </div>
             
             <div className="overflow-x-auto">
               {recapViewMode === 'SUMMARY' ? (
                 <table className="w-full text-left">
                   <thead className="bg-gray-50/50 border-b border-gray-100">
-                    <tr>
-                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Nama Siswa</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Hadir</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Sakit</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Izin</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Alpa</th>
-                    </tr>
+                    {attendanceType === 'DHUHUR' ? (
+                      <tr>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Nama Siswa</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Tepat Waktu</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Terlambat</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Absen</th>
+                      </tr>
+                    ) : (
+                      <tr>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Nama Siswa</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Hadir</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Sakit</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Izin</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Alpa</th>
+                      </tr>
+                    )}
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {loadingRecap ? (
@@ -1007,7 +1300,7 @@ export default function Attendance() {
                       </tr>
                     ) : students.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="px-6 py-12 text-center text-gray-400 font-medium">
+                        <td colSpan={attendanceType === 'DHUHUR' ? 4 : 5} className="px-6 py-12 text-center text-gray-400 font-medium">
                           Tidak ada data siswa.
                         </td>
                       </tr>
@@ -1019,18 +1312,34 @@ export default function Attendance() {
                             <p className="font-bold text-gray-900 text-sm">{s.name}</p>
                             <p className="text-[10px] text-gray-400 font-medium">#{s.id}</p>
                           </td>
-                          <td className="px-6 py-4 text-center">
-                            <StatsBadge value={stats.hadir} color="green" />
-                          </td>
-                          <td className="px-6 py-4 text-center">
-                            <StatsBadge value={stats.sakit} color="blue" />
-                          </td>
-                          <td className="px-6 py-4 text-center">
-                            <StatsBadge value={stats.izin} color="yellow" />
-                          </td>
-                          <td className="px-6 py-4 text-center">
-                            <StatsBadge value={stats.alpa} color="red" />
-                          </td>
+                          {attendanceType === 'DHUHUR' ? (
+                            <>
+                              <td className="px-6 py-4 text-center">
+                                <StatsBadge value={stats.hadir} color="green" />
+                              </td>
+                              <td className="px-6 py-4 text-center">
+                                <StatsBadge value={stats.late} color="orange" />
+                              </td>
+                              <td className="px-6 py-4 text-center">
+                                <StatsBadge value={stats.alpa} color="red" />
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              <td className="px-6 py-4 text-center">
+                                <StatsBadge value={stats.hadir} color="green" />
+                              </td>
+                              <td className="px-6 py-4 text-center">
+                                <StatsBadge value={stats.sakit} color="blue" />
+                              </td>
+                              <td className="px-6 py-4 text-center">
+                                <StatsBadge value={stats.izin} color="yellow" />
+                              </td>
+                              <td className="px-6 py-4 text-center">
+                                <StatsBadge value={stats.alpa} color="red" />
+                              </td>
+                            </>
+                          )}
                         </tr>
                       );
                     })}
@@ -1076,10 +1385,16 @@ export default function Attendance() {
                               let symbol = '-';
                               let colorClass = 'text-gray-200';
                               
-                              if (status === 'HADIR') { symbol = 'H'; colorClass = 'text-green-600 font-black'; }
-                              else if (status === 'SAKIT') { symbol = 'S'; colorClass = 'text-blue-600 font-black'; }
-                              else if (status === 'IZIN') { symbol = 'I'; colorClass = 'text-yellow-600 font-black'; }
-                              else if (status === 'ALPA') { symbol = 'A'; colorClass = 'text-red-600 font-black'; }
+                              if (attendanceType === 'DHUHUR') {
+                                if (status === 'H') { symbol = 'H'; colorClass = 'text-green-600 font-black'; }
+                                else if (status === 'T') { symbol = 'T'; colorClass = 'text-orange-600 font-black'; }
+                                else if (status === 'A') { symbol = 'A'; colorClass = 'text-red-600 font-black'; }
+                              } else {
+                                if (status === 'HADIR') { symbol = 'H'; colorClass = 'text-green-600 font-black'; }
+                                else if (status === 'SAKIT') { symbol = 'S'; colorClass = 'text-blue-600 font-black'; }
+                                else if (status === 'IZIN') { symbol = 'I'; colorClass = 'text-yellow-600 font-black'; }
+                                else if (status === 'ALPA') { symbol = 'A'; colorClass = 'text-red-600 font-black'; }
+                              }
 
                               return (
                                 <td key={day} className={cn("px-3 py-3 text-center text-xs border-r border-gray-50", colorClass)}>
@@ -1226,6 +1541,27 @@ function StatusBtn({ active, type, onClick }: { active: boolean; type: Attendanc
       )}
     >
       <span className="text-[10px] font-black">{type[0]}</span>
+    </button>
+  );
+}
+
+function StatusBtnDhuhur({ active, type, label, title, onClick }: { active: boolean; type: 'H' | 'T' | 'A'; label: string; title: string; onClick: () => void }) {
+  const colors = {
+    H: active ? 'bg-green-500 text-white shadow-lg' : 'text-gray-400 hover:bg-green-50 hover:text-green-500',
+    T: active ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:bg-orange-50 hover:text-orange-500',
+    A: active ? 'bg-red-500 text-white shadow-lg' : 'text-gray-400 hover:bg-red-50 hover:text-red-500',
+  };
+
+  return (
+    <button 
+      onClick={onClick}
+      title={title}
+      className={cn(
+        "w-8 h-8 rounded-lg flex items-center justify-center transition-all",
+        colors[type]
+      )}
+    >
+      <span className="text-[10px] font-black">{label}</span>
     </button>
   );
 }

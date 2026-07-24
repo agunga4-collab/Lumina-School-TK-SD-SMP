@@ -787,6 +787,44 @@ export interface AttendanceBackupFileMap {
   lastSyncedAt: number;
 }
 
+export interface FirestoreTimestamp {
+  seconds: number;
+  nanoseconds: number;
+  toDate?: () => Date;
+}
+
+export type DhuhurAttendanceStatus = 'H' | 'T' | 'A';
+export type AttendanceBackupType =
+  | 'DAILY_ATTENDANCE'
+  | 'DHUHUR_ATTENDANCE';
+
+export interface DhuhurAttendanceRecord {
+  id: string;
+  studentId: string;
+  classId: string;
+  date: string;
+  unit: 'JUNIOR_HIGH';
+  academicYearId: string;
+  academicYear: string;
+  semester: '1' | '2';
+
+  studentNameSnapshot: string;
+  classNameSnapshot: string;
+  recordedByUid: string;
+  recordedByEmail: string;
+  recordedAt: FirestoreTimestamp;
+
+  backupType: 'DHUHUR_ATTENDANCE';
+  status: DhuhurAttendanceStatus;
+  note: string;
+
+  updatedAt: FirestoreTimestamp;
+  syncStatus: 'PENDING' | 'SYNCED' | 'FAILED';
+  lastSyncAt: FirestoreTimestamp | null;
+  syncError: string | null;
+  retryCount: number;
+}
+
 // --- MTSS Academic Backup Types ---
 export type MTSSBackupStatus = 'READY' | 'MISCONFIGURED' | 'NEEDS_REAUTH';
 export type MTSSSyncStatus = 'PENDING' | 'SYNCED' | 'FAILED';

@@ -21,9 +21,9 @@ export const attendanceBackupRetryService = {
   /**
    * Mark a sync attempt as failed in Firestore
    */
-  async markAttendanceSyncFailed(recordId: string, error: string): Promise<void> {
+  async markAttendanceSyncFailed(recordId: string, error: string, collectionName: string = 'attendance_records'): Promise<void> {
     try {
-      const docRef = doc(db, 'attendance_records', recordId);
+      const docRef = doc(db, collectionName, recordId);
       const docSnap = await getDoc(docRef);
       const currentRetryCount = docSnap.exists() ? (docSnap.data().retryCount || 0) : 0;
       
@@ -41,9 +41,9 @@ export const attendanceBackupRetryService = {
   /**
    * Mark a sync attempt as success in Firestore
    */
-  async markAttendanceSyncSuccess(recordId: string): Promise<void> {
+  async markAttendanceSyncSuccess(recordId: string, collectionName: string = 'attendance_records'): Promise<void> {
     try {
-      const docRef = doc(db, 'attendance_records', recordId);
+      const docRef = doc(db, collectionName, recordId);
       await updateDoc(docRef, {
         syncStatus: 'SYNCED',
         syncError: null,
@@ -57,28 +57,28 @@ export const attendanceBackupRetryService = {
   /**
    * Retry sync for a single record
    */
-  async retryAttendanceSyncForRecord(recordId: string): Promise<AttendanceSyncResult> {
+  async retryAttendanceSyncForRecord(recordId: string, collectionName: string = 'attendance_records'): Promise<AttendanceSyncResult> {
     try {
-      const docRef = doc(db, 'attendance_records', recordId);
+      const docRef = doc(db, collectionName, recordId);
       const snap = await getDoc(docRef);
       
       if (!snap.exists()) {
         return { recordId, success: false, timestamp: Date.now(), error: 'Record not found' };
       }
 
-      const record = snap.data() as AttendanceRecord;
+      const record = snap.data();
       const result = await attendanceSyncService.triggerSync(record);
       
       if (result.success) {
-        await this.markAttendanceSyncSuccess(recordId);
+        await this.markAttendanceSyncSuccess(recordId, collectionName);
       } else {
-        await this.markAttendanceSyncFailed(recordId, result.error || 'Unknown error during retry');
+        await this.markAttendanceSyncFailed(recordId, result.error || 'Unknown error during retry', collectionName);
       }
       
       return result;
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Retry failed';
-      await this.markAttendanceSyncFailed(recordId, msg);
+      await this.markAttendanceSyncFailed(recordId, msg, collectionName);
       return { recordId, success: false, timestamp: Date.now(), error: msg };
     }
   },
@@ -125,23 +125,37 @@ export const attendanceBackupRetryService = {
    */
   async retryAllFailedAttendanceSyncs(maxLimit: number = 50): Promise<{ processed: number; success: number }> {
     try {
-      const q = query(
+      const qDaily = query(
         collection(db, 'attendance_records'),
         where('syncStatus', '==', 'FAILED'),
         orderBy('updatedAt', 'asc'),
         limit(maxLimit)
       );
-      
-      const snap = await getDocs(q);
+      const snapDaily = await getDocs(qDaily);
+      const dailyRecords = snapDaily.docs.map(d => ({ id: d.id, data: d.data(), collectionName: 'attendance_records' }));
+
+      const qDhuhur = query(
+        collection(db, 'dhuhur_attendance_records'),
+        where('syncStatus', '==', 'FAILED'),
+        orderBy('updatedAt', 'asc'),
+        limit(maxLimit)
+      );
+      const snapDhuhur = await getDocs(qDhuhur);
+      const dhuhurRecords = snapDhuhur.docs.map(d => ({ id: d.id, data: d.data(), collectionName: 'dhuhur_attendance_records' }));
+
+      const allFailed = [...dailyRecords, ...dhuhurRecords]
+        .sort((a, b) => (a.data.updatedAt || 0) - (b.data.updatedAt || 0))
+        .slice(0, maxLimit);
+
       let successCount = 0;
 
-      for (const d of snap.docs) {
-        const result = await this.retryAttendanceSyncForRecord(d.id);
+      for (const item of allFailed) {
+        const result = await this.retryAttendanceSyncForRecord(item.id, item.collectionName);
         if (result.success) successCount++;
         await new Promise(resolve => setTimeout(resolve, 500));
       }
 
-      return { processed: snap.size, success: successCount };
+      return { processed: allFailed.length, success: successCount };
     } catch (error) {
       console.error('Error in global retry:', error);
       throw error;

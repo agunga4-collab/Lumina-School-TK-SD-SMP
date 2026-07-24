@@ -45,9 +45,18 @@ const AttendanceBackupDiagnostics: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      // Load stats
-      const allRecordsSnap = await getDocs(query(collection(db, 'attendance_records'), limit(1000)));
-      const allRecords = allRecordsSnap.docs.map(d => d.data() as AttendanceRecord);
+      // Load stats for DAILY and DHUHUR
+      const dailyRecordsSnap = await getDocs(query(collection(db, 'attendance_records'), limit(1000)));
+      const dailyRecords = dailyRecordsSnap.docs.map(d => ({ ...d.data(), id: d.id }) as AttendanceRecord);
+
+      const dhuhurRecordsSnap = await getDocs(query(collection(db, 'dhuhur_attendance_records'), limit(1000)));
+      const dhuhurRecords = dhuhurRecordsSnap.docs.map(d => ({
+        ...d.data(),
+        id: d.id,
+        studentName: d.data().studentNameSnapshot || d.data().studentName || 'Siswa'
+      }) as any);
+      
+      const allRecords = [...dailyRecords, ...dhuhurRecords];
       
       const s = {
         total: allRecords.length,
@@ -64,8 +73,22 @@ const AttendanceBackupDiagnostics: React.FC = () => {
         limit(100)
       );
       const failedSnap = await getDocs(failedQuery);
-      const failedRecords = failedSnap.docs.map(d => d.data() as AttendanceRecord);
-      setRecords(failedRecords.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 50));
+      const failedRecords = failedSnap.docs.map(d => ({ ...d.data(), id: d.id }) as AttendanceRecord);
+
+      const failedDhuhurQuery = query(
+        collection(db, 'dhuhur_attendance_records'),
+        where('syncStatus', '==', 'FAILED'),
+        limit(100)
+      );
+      const failedDhuhurSnap = await getDocs(failedDhuhurQuery);
+      const failedDhuhurRecords = failedDhuhurSnap.docs.map(d => ({
+        ...d.data(),
+        id: d.id,
+        studentName: d.data().studentNameSnapshot || d.data().studentName || 'Siswa'
+      }) as any);
+
+      const mergedFailed = [...failedRecords, ...failedDhuhurRecords];
+      setRecords(mergedFailed.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 50));
 
       // Load file maps
       const mapsSnap = await getDocs(collection(db, 'attendance_backup_file_maps'));
@@ -86,7 +109,9 @@ const AttendanceBackupDiagnostics: React.FC = () => {
   const handleRetryOne = async (recordId: string) => {
     setResyncing(recordId);
     try {
-      const result = await attendanceBackupRetryService.retryAttendanceSyncForRecord(recordId);
+      const record = records.find(r => r.id === recordId);
+      const colName = record?.backupType === 'DHUHUR_ATTENDANCE' ? 'dhuhur_attendance_records' : 'attendance_records';
+      const result = await attendanceBackupRetryService.retryAttendanceSyncForRecord(recordId, colName);
       if (result.success) {
         toast.success('Sync Berhasil', { description: `Record ${recordId} berhasil di-backup.` });
         loadData();
@@ -232,7 +257,16 @@ const AttendanceBackupDiagnostics: React.FC = () => {
                       <tr key={r.id} className="group hover:bg-red-50/30 transition-colors">
                         <td className="px-6 py-4">
                           <div className="font-bold text-gray-900 text-sm">{r.studentName}</div>
-                          <div className="text-xs text-gray-500">{r.classId} • {r.academicYear}</div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-xs text-gray-500">{r.classId} • {r.academicYear}</span>
+                            <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider ${
+                              r.backupType === 'DHUHUR_ATTENDANCE' 
+                                ? "bg-orange-50 text-orange-600 border border-orange-100" 
+                                : "bg-blue-50 text-blue-600 border border-blue-100"
+                            }`}>
+                              {r.backupType === 'DHUHUR_ATTENDANCE' ? 'Shalat Dhuhur' : 'Harian'}
+                            </span>
+                          </div>
                         </td>
                         <td className="px-6 py-4">
                           <div className="text-sm text-gray-700 font-mono">{r.date}</div>

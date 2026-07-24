@@ -374,6 +374,35 @@
         "syncStatus": { "type": "string", "enum": ["PENDING", "SYNCED", "FAILED"] }
       }
     },
+    "DhuhurAttendanceRecord": {
+      "title": "DhuhurAttendanceRecord",
+      "description": "Dhuhur prayer attendance record for Junior High students.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "classId": { "type": "string" },
+        "date": { "type": "string" },
+        "unit": { "type": "string", "enum": ["JUNIOR_HIGH"] },
+        "academicYearId": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "semester": { "type": "string", "enum": ["1", "2"] },
+        "studentNameSnapshot": { "type": "string" },
+        "classNameSnapshot": { "type": "string" },
+        "recordedByUid": { "type": "string" },
+        "recordedByEmail": { "type": "string" },
+        "recordedAt": { "type": "object" },
+        "backupType": { "type": "string", "enum": ["DHUHUR_ATTENDANCE"] },
+        "status": { "type": "string", "enum": ["H", "T", "A"] },
+        "note": { "type": "string" },
+        "updatedAt": { "type": "object" },
+        "syncStatus": { "type": "string", "enum": ["PENDING", "SYNCED", "FAILED"] },
+        "lastSyncAt": { "type": "object" },
+        "syncError": { "type": "string" },
+        "retryCount": { "type": "number" }
+      },
+      "required": ["id", "studentId", "classId", "date", "unit", "academicYearId", "academicYear", "semester", "studentNameSnapshot", "classNameSnapshot", "recordedByUid", "recordedByEmail", "recordedAt", "backupType", "status", "updatedAt", "syncStatus", "retryCount"]
+    },
     "Assessment": {
       "title": "Assessment",
       "description": "Student assessment scores records.",
@@ -740,6 +769,10 @@
     "attendance/{attendanceId}": {
       "schema": "AttendanceRecord",
       "description": "Daily attendance records with sync status."
+    },
+    "dhuhur_attendance_records/{recordId}": {
+      "schema": "DhuhurAttendanceRecord",
+      "description": "Dhuhur prayer attendance records with sync status."
     },
     "roleInvites/{inviteId}": {
       "schema": "RoleInvite",

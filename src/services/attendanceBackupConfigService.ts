@@ -113,12 +113,51 @@ export const attendanceSyncService = {
    * Trigger sync for a specific record
    * This calls the backend to perform the actual Google Sheets update
    */
-  async triggerSync(record: AttendanceRecord): Promise<AttendanceSyncResult> {
+  async triggerSync(record: any): Promise<AttendanceSyncResult> {
     try {
       const idToken = await auth.currentUser?.getIdToken();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (idToken) {
         headers['Authorization'] = `Bearer ${idToken}`;
+      }
+
+      if (record.backupType === 'DHUHUR_ATTENDANCE') {
+        const response = await fetch('/api/attendance/dhuhur/sync-batch', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            classId: record.classId,
+            date: record.date,
+            academicYearId: record.academicYearId,
+            semester: record.semester,
+            records: [{
+              id: record.id,
+              studentId: record.studentId,
+              studentNameSnapshot: record.studentNameSnapshot,
+              classNameSnapshot: record.classNameSnapshot,
+              status: record.status,
+              note: record.note || ''
+            }]
+          })
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          return {
+            recordId: record.id,
+            success: false,
+            timestamp: Date.now(),
+            error: errorData.error || 'Server error'
+          };
+        }
+
+        const resData = await response.json();
+        return {
+          recordId: record.id,
+          success: resData.success !== false,
+          timestamp: Date.now(),
+          error: resData.error || null
+        };
       }
 
       const response = await fetch('/api/attendance/sync', {

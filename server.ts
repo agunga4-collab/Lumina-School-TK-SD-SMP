@@ -1127,6 +1127,591 @@ app.post("/api/attendance/sync", async (req, res) => {
   }
 });
 
+// API: Sync Dhuhur Attendance Batch to Google Sheets
+app.post("/api/attendance/dhuhur/sync-batch", async (req, res) => {
+  let decodedToken: any;
+  let userData: any = {};
+  let userRole: string | null = null;
+  const db = getAdminDb();
+  if (!db) {
+    return res.status(500).json({ error: "Firestore is not online." });
+  }
+
+  try {
+    // 1. Verify Firebase ID Token from Authorization header
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    // 2. Fetch User Profile and Validate Roles/Unit
+    const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+    if (!userDoc.exists) {
+      return res.status(403).json({ error: "Access denied. User profile not found." });
+    }
+    userData = userDoc.data() || {};
+    userRole = userData.role || null;
+
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
+    const isJuniorHigh = userData.unitId === 'JUNIOR_HIGH' || (Array.isArray(userData.assignedUnits) && userData.assignedUnits.includes('JUNIOR_HIGH'));
+    
+    const hasValidRole = isSuperAdmin || ['HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER'].includes(userRole || "");
+    const isAuthorized = isSuperAdmin || (hasValidRole && isJuniorHigh);
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: "Access denied. Active Junior High role/unit required." });
+    }
+
+    // 3. Validate Request Parameters
+    const { academicYearId, semester, classId, date, recordIds } = req.body;
+    if (!academicYearId || !semester || !classId || !date || !Array.isArray(recordIds) || recordIds.length === 0) {
+      return res.status(400).json({ error: "Missing required fields or recordIds in request body" });
+    }
+
+    // 4. Fetch the target records from Firestore
+    const recordsSnap = await db.collection("dhuhur_attendance_records")
+      .where("classId", "==", classId)
+      .where("date", "==", date)
+      .where("academicYearId", "==", academicYearId)
+      .where("semester", "==", semester)
+      .get();
+
+    const recordsInDb = recordsSnap.docs.map(doc => doc.data());
+    // Filter to only the requested recordIds
+    const recordsToSync = recordsInDb.filter(r => recordIds.includes(r.id));
+
+    if (recordsToSync.length === 0) {
+      return res.status(404).json({ error: "No matching Dhuhur records found to sync" });
+    }
+
+    // Ensure all records have JUNIOR_HIGH unit and DHUHUR_ATTENDANCE backupType
+    for (const rec of recordsToSync) {
+      if (rec.unit !== 'JUNIOR_HIGH' || rec.backupType !== 'DHUHUR_ATTENDANCE') {
+        return res.status(400).json({ error: `Record ${rec.id} is invalid for Dhuhur backup` });
+      }
+    }
+
+    // 5. Load backup config
+    const configSnap = await db.collection("system_backup_configs").doc("junior_high_attendance").get();
+    if (!configSnap.exists) {
+      throw new Error("Backup config not found");
+    }
+    const config = configSnap.data();
+    if (!config?.isEnabled) {
+      return res.json({ success: true, message: "Backup disabled" });
+    }
+
+    // 6. Resolve target Spreadsheet (Map)
+    // Key: dhuhur_JUNIOR_HIGH_{academicYearId}_S{semester}
+    const mapId = `dhuhur_JUNIOR_HIGH_${academicYearId}_S${semester}`;
+    const mapSnap = await db.collection("attendance_backup_file_maps").doc(mapId).get();
+    
+    let spreadsheetId = "";
+    let spreadsheetUrl = "";
+    let semesterFolderId = "";
+
+    const firstRecord = recordsToSync[0];
+    const academicYear = firstRecord.academicYear; // e.g. "2026/2027"
+
+    if (mapSnap.exists) {
+      const mapData = mapSnap.data();
+      spreadsheetId = mapData?.spreadsheetId;
+      spreadsheetUrl = mapData?.spreadsheetUrl;
+      semesterFolderId = mapData?.folderId;
+    }
+
+    // Double check with Drive to make sure spreadsheetId actually exists
+    let driveExists = false;
+    if (spreadsheetId) {
+      try {
+        await drive.files.get({ fileId: spreadsheetId, supportsAllDrives: true });
+        driveExists = true;
+      } catch (err) {
+        console.warn(`[DhuhurSync] Spreadsheet ID ${spreadsheetId} mapped but not found in Drive. Will recreate.`);
+      }
+    }
+
+    if (!driveExists) {
+      console.log(`[DhuhurSync] Creating structure for ${mapId}`);
+      const yearFolderId = await findOrCreateFolder(academicYear, config.rootFolderId, config.sharedDriveId);
+      semesterFolderId = await findOrCreateFolder(`Semester ${semester}`, yearFolderId, config.sharedDriveId);
+      
+      const ssTitle = `Kehadiran Shalat Dhuhur Junior High — ${academicYear} — Semester ${semester}`;
+      
+      // Idempotent search
+      const q = `name = '${ssTitle.replace(/'/g, "\\'")}' and '${semesterFolderId}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`;
+      const existingSS = await drive.files.list({
+        q,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+        driveId: config.sharedDriveId,
+        corpora: config.sharedDriveId ? 'drive' : undefined,
+        fields: 'files(id, name, webViewLink)',
+      });
+
+      if (existingSS.data.files && existingSS.data.files.length > 0) {
+        spreadsheetId = existingSS.data.files[0].id!;
+        spreadsheetUrl = existingSS.data.files[0].webViewLink!;
+        console.log(`[DhuhurSync] Found existing Dhuhur spreadsheet: ${spreadsheetId}`);
+      } else {
+        console.log(`[DhuhurSync] Creating new spreadsheet in Shared Drive via Drive API...`);
+        try {
+          const fileResponse = await drive.files.create({
+            requestBody: {
+              name: ssTitle,
+              mimeType: 'application/vnd.google-apps.spreadsheet',
+              parents: [semesterFolderId]
+            },
+            supportsAllDrives: true,
+            fields: 'id, name, webViewLink'
+          });
+          spreadsheetId = fileResponse.data.id!;
+          spreadsheetUrl = fileResponse.data.webViewLink!;
+          console.log(`[DhuhurSync] Created spreadsheet: ${spreadsheetId}`);
+
+          // Initialize sheets
+          const ssMeta = await sheets.spreadsheets.get({ spreadsheetId });
+          const defaultSheetId = ssMeta.data.sheets?.[0]?.properties?.sheetId;
+
+          const initRequests: any[] = [
+            { addSheet: { properties: { title: 'Metadata' } } },
+            { addSheet: { properties: { title: 'Rekap' } } },
+            { addSheet: { properties: { title: 'Log' } } }
+          ];
+
+          if (defaultSheetId !== undefined) {
+            initRequests.push({ deleteSheet: { sheetId: defaultSheetId } });
+          }
+
+          await sheets.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: { requests: initRequests }
+          });
+
+          // Initialize Metadata
+          await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: 'Metadata!A1',
+            valueInputOption: 'RAW',
+            requestBody: {
+              values: [
+                ['Property', 'Value'],
+                ['Unit', 'JUNIOR_HIGH'],
+                ['Tahun Ajaran', academicYear],
+                ['Semester', semester],
+                ['Tipe Kehadiran', 'Shalat Dhuhur'],
+                ['Dibuat pada', new Date().toISOString()],
+                ['Terakhir diperbarui', new Date().toISOString()]
+              ]
+            }
+          });
+
+          // Initialize Log
+          await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: 'Log!A1',
+            valueInputOption: 'RAW',
+            requestBody: {
+              values: [[
+                'Record ID', 'Tanggal', 'Tahun Ajaran', 'Semester', 'Kelas',
+                'Student ID', 'Nama Siswa', 'Status Kode', 'Status Keterangan',
+                'Catatan', 'Diinput Oleh', 'Waktu Simpan'
+              ]]
+            }
+          });
+
+          // Initialize Rekap
+          await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: 'Rekap!A1',
+            valueInputOption: 'RAW',
+            requestBody: {
+              values: [[
+                'Kelas', 'Student ID', 'Nama Siswa', 'H', 'T', 'A', 'Total Sesi', 'Persentase Tepat Waktu'
+              ]]
+            }
+          });
+        } catch (createErr: any) {
+          console.error("[DhuhurSync] Error creating spreadsheet:", createErr);
+          throw new Error(`Gagal membuat file spreadsheet Dhuhur: ${createErr.message || createErr}`);
+        }
+      }
+
+      // Save map
+      await db.collection("attendance_backup_file_maps").doc(mapId).set({
+        id: mapId,
+        classId: "JUNIOR_HIGH_DHUHUR",
+        academicYear,
+        semester,
+        spreadsheetId,
+        spreadsheetUrl,
+        folderId: semesterFolderId,
+        lastSyncedAt: Date.now()
+      });
+    }
+
+    // Now process records
+    // 1. Log tab upsert
+    console.log(`[DhuhurSync] Upserting Log tab...`);
+    const logResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'Log!A1:L10000',
+    });
+    const logRows = logResponse.data.values || [];
+    const logHeader = logRows[0] || [
+      'Record ID', 'Tanggal', 'Tahun Ajaran', 'Semester', 'Kelas',
+      'Student ID', 'Nama Siswa', 'Status Kode', 'Status Keterangan',
+      'Catatan', 'Diinput Oleh', 'Waktu Simpan'
+    ];
+
+    const logMap = new Map();
+    for (let i = 1; i < logRows.length; i++) {
+      const row = logRows[i];
+      if (row[0]) {
+        logMap.set(row[0], row);
+      }
+    }
+
+    for (const record of recordsToSync) {
+      const statusKet = record.status === 'H' ? 'Hadir Tepat Waktu' : record.status === 'T' ? 'Terlambat' : 'Absen';
+      logMap.set(record.id, [
+        record.id,
+        record.date,
+        record.academicYear,
+        record.semester,
+        record.classNameSnapshot,
+        record.studentId,
+        record.studentNameSnapshot,
+        record.status,
+        statusKet,
+        record.note || "",
+        record.recordedByEmail,
+        new Date().toISOString()
+      ]);
+    }
+
+    const finalLogRows = [logHeader, ...Array.from(logMap.values())];
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: 'Log!A1',
+      valueInputOption: 'RAW',
+      requestBody: { values: finalLogRows }
+    });
+
+    // 2. Rekap tab upsert
+    console.log(`[DhuhurSync] Upserting Rekap tab...`);
+    const studentIds = recordsToSync.map(r => r.studentId);
+    
+    // Fetch all dhuhur records for these students to count accurately without full scan
+    const studentRecordsSnap = await db.collection("dhuhur_attendance_records")
+      .where("academicYearId", "==", academicYearId)
+      .where("semester", "==", semester)
+      .where("studentId", "in", studentIds)
+      .get();
+
+    const studentRecords = studentRecordsSnap.docs.map(doc => doc.data());
+
+    const rekapResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'Rekap!A1:H5000',
+    });
+    const rekapRows = rekapResponse.data.values || [];
+    const rekapHeader = rekapRows[0] || [
+      'Kelas', 'Student ID', 'Nama Siswa', 'H', 'T', 'A', 'Total Sesi', 'Persentase Tepat Waktu'
+    ];
+
+    const rekapMap = new Map();
+    for (let i = 1; i < rekapRows.length; i++) {
+      const row = rekapRows[i];
+      if (row[1]) {
+        rekapMap.set(row[1], row);
+      }
+    }
+
+    for (const studentId of studentIds) {
+      const sRecs = studentRecords.filter(r => r.studentId === studentId);
+      const countH = sRecs.filter(r => r.status === 'H').length;
+      const countT = sRecs.filter(r => r.status === 'T').length;
+      const countA = sRecs.filter(r => r.status === 'A').length;
+
+      const anyRec = sRecs[0] || recordsToSync.find(r => r.studentId === studentId);
+      const className = anyRec?.classNameSnapshot || '';
+      const studentName = anyRec?.studentNameSnapshot || '';
+
+      rekapMap.set(studentId, [className, studentId, studentName, countH, countT, countA]);
+    }
+
+    // Sort by Class name then Student Name
+    const sortedRekapRows = Array.from(rekapMap.values()).sort((a, b) => {
+      const classComp = (a[0] || '').localeCompare(b[0] || '');
+      if (classComp !== 0) return classComp;
+      return (a[2] || '').localeCompare(b[2] || '');
+    });
+
+    const finalRekapRows = [rekapHeader];
+    sortedRekapRows.forEach((row, idx) => {
+      const rowNum = idx + 2;
+      finalRekapRows.push([
+        row[0],
+        row[1],
+        row[2],
+        row[3],
+        row[4],
+        row[5],
+        `=D${rowNum}+E${rowNum}+F${rowNum}`,
+        `=IF((D${rowNum}+E${rowNum}+F${rowNum})>0,D${rowNum}/(D${rowNum}+E${rowNum}+F${rowNum}),"")`
+      ]);
+    });
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: 'Rekap!A1',
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: finalRekapRows }
+    });
+
+    // 3. Month tab upsert
+    console.log(`[DhuhurSync] Upserting Month tab...`);
+    const dateParts = date.split('-'); // ["2026", "07", "23"]
+    const yearNum = parseInt(dateParts[0], 10);
+    const monthNum = parseInt(dateParts[1], 10);
+    const dayNum = parseInt(dateParts[2], 10);
+
+    const INDONESIAN_MONTHS = [
+      "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+      "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+    ];
+    const monthNameIndo = INDONESIAN_MONTHS[monthNum - 1];
+    const tabTitle = `${monthNameIndo} ${yearNum}`;
+
+    // Add monthly sheet if not exists
+    const ssInfo = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheetTitles = ssInfo.data.sheets?.map((s: any) => s.properties?.title || "") || [];
+
+    if (!sheetTitles.includes(tabTitle)) {
+      console.log(`[DhuhurSync] Adding monthly sheet: ${tabTitle}`);
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [{ addSheet: { properties: { title: tabTitle } } }]
+        }
+      });
+    }
+
+    const monthResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${tabTitle}!A1:ZZ1000`,
+    });
+    const monthRows = monthResponse.data.values || [];
+    const totalDays = new Date(yearNum, monthNum, 0).getDate();
+
+    const monthHeader1 = [`REKAP KEHADIRAN SHALAT DHUHUR JUNIOR HIGH`];
+    const monthHeader2 = [`Bulan: ${tabTitle} | Tahun Ajaran: ${academicYear} | Semester: ${semester}`];
+    const monthHeader3 = [];
+    const monthHeader4 = ['No', 'Kelas', 'Student ID', 'Nama Siswa'];
+    for (let d = 1; d <= totalDays; d++) {
+      monthHeader4.push(String(d));
+    }
+    monthHeader4.push('H', 'T', 'A', 'Persentase Tepat Waktu');
+
+    // Parse existing monthly student rows
+    const studentMonthMap = new Map(); // key: classId_studentId -> row array
+    for (let i = 4; i < monthRows.length; i++) {
+      const row = monthRows[i];
+      if (row[1] && row[2]) {
+        studentMonthMap.set(`${row[1]}_${row[2]}`, row);
+      }
+    }
+
+    // Upsert current batch into map
+    for (const record of recordsToSync) {
+      const key = `${record.classId}_${record.studentId}`;
+      let row = studentMonthMap.get(key);
+      if (!row) {
+        row = [
+          "", // No placeholder
+          record.classId,
+          record.studentId,
+          record.studentNameSnapshot
+        ];
+        // fill days
+        for (let d = 1; d <= totalDays; d++) {
+          row.push("");
+        }
+      }
+      // Update day d cell. Day d is at index 4 + d - 1 = 3 + d
+      row[3 + dayNum] = record.status;
+      studentMonthMap.set(key, row);
+    }
+
+    // Sort studentMonthMap by Class (col 1) then Student Name (col 3)
+    const sortedMonthRows = Array.from(studentMonthMap.values()).sort((a, b) => {
+      const classComp = (a[1] || '').localeCompare(b[1] || '');
+      if (classComp !== 0) return classComp;
+      return (a[3] || '').localeCompare(b[3] || '');
+    });
+
+    // Re-generate formulas and index
+    const finalMonthRows = [monthHeader1, monthHeader2, monthHeader3, monthHeader4];
+    
+    const firstDateColLetter = 'E'; // Col index 4 is E
+    const lastDateColLetter = getColumnLetter(3 + totalDays);
+    const colH_Letter = getColumnLetter(4 + totalDays);
+    const colT_Letter = getColumnLetter(4 + totalDays + 1);
+    const colA_Letter = getColumnLetter(4 + totalDays + 2);
+
+    sortedMonthRows.forEach((row, idx) => {
+      const rowNum = idx + 5;
+      const finalRow = [
+        String(idx + 1), // No
+        row[1], // Kelas
+        row[2], // Student ID
+        row[3]  // Nama Siswa
+      ];
+      // Push days
+      for (let d = 1; d <= totalDays; d++) {
+        finalRow.push(row[3 + d] || "");
+      }
+      // Push formula cells
+      finalRow.push(
+        `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "H")`,
+        `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "T")`,
+        `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "A")`,
+        `=IF((${colH_Letter}${rowNum}+${colT_Letter}${rowNum}+${colA_Letter}${rowNum})>0, ${colH_Letter}${rowNum}/(${colH_Letter}${rowNum}+${colT_Letter}${rowNum}+${colA_Letter}${rowNum}), "")`
+      );
+      finalMonthRows.push(finalRow);
+    });
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${tabTitle}!A1`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: finalMonthRows }
+    });
+
+    // Apply conditional formatting styling on Month sheet if empty initially
+    if (monthRows.length < 4) {
+      const ssUpdatedMeta = await sheets.spreadsheets.get({ spreadsheetId });
+      const sheetId = ssUpdatedMeta.data.sheets?.find((s: any) => s.properties?.title === tabTitle)?.properties?.sheetId || 0;
+
+      const mergeRequests = [
+        { mergeCells: { range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: totalDays + 8 }, mergeType: 'MERGE_ALL' } },
+        { mergeCells: { range: { sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: totalDays + 8 }, mergeType: 'MERGE_ALL' } }
+      ];
+
+      const percentFormatRequest = {
+        repeatCell: {
+          range: { sheetId, startRowIndex: 4, endRowIndex: Math.max(100, 5 + sortedMonthRows.length), startColumnIndex: 4 + totalDays + 3, endColumnIndex: 4 + totalDays + 4 },
+          cell: { userEnteredFormat: { numberFormat: { type: 'PERCENT', pattern: '0.0%' } } },
+          fields: 'userEnteredFormat.numberFormat'
+        }
+      };
+
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            ...mergeRequests,
+            percentFormatRequest
+          ]
+        }
+      }).catch(err => console.error("batchUpdate month error", err));
+    }
+
+    // 7. Update Sync Status for All Successful Records in Firestore
+    const batch = db.batch();
+    const results: any[] = [];
+    let successCount = 0;
+    let failureCount = 0;
+
+    const getAdminTimestamp = (await import("firebase-admin/firestore")).FieldValue.serverTimestamp;
+
+    for (const rec of recordsToSync) {
+      try {
+        const ref = db.collection("dhuhur_attendance_records").doc(rec.id);
+        batch.update(ref, {
+          syncStatus: 'SYNCED',
+          lastSyncAt: getAdminTimestamp(),
+          syncError: null,
+          updatedAt: getAdminTimestamp()
+        });
+        results.push({ id: rec.id, success: true });
+        successCount++;
+      } catch (recErr: any) {
+        results.push({ id: rec.id, success: false, error: recErr.message });
+        failureCount++;
+      }
+    }
+
+    await batch.commit();
+
+    // 8. Add Backup Audit Log
+    try {
+      await db.collection("attendance_backup_audit_logs").add({
+        id: `audit_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+        timestamp: Date.now(),
+        action: 'DHUHUR_BACKUP',
+        performedBy: decodedToken.email,
+        details: {
+          classId,
+          date,
+          academicYearId,
+          semester,
+          totalRecords: recordsToSync.length,
+          successCount,
+          failureCount
+        }
+      });
+    } catch (auditErr) {
+      console.error("[DhuhurSync] Audit log failed", auditErr);
+    }
+
+    return res.json({
+      success: true,
+      spreadsheetId,
+      spreadsheetUrl,
+      results,
+      summary: {
+        total: recordsToSync.length,
+        success: successCount,
+        failed: failureCount
+      }
+    });
+
+  } catch (error: any) {
+    console.error("[DhuhurSync] Critical batch failure:", error);
+    
+    // Mark all target records as FAILED in Firestore on complete batch sync failure
+    if (db && Array.isArray(req.body.recordIds)) {
+      try {
+        const getAdminTimestamp = (await import("firebase-admin/firestore")).FieldValue.serverTimestamp;
+        const failBatch = db.batch();
+        for (const rId of req.body.recordIds) {
+          const ref = db.collection("dhuhur_attendance_records").doc(rId);
+          failBatch.update(ref, {
+            syncStatus: 'FAILED',
+            syncError: error.message || "Unknown error during sync batch API",
+            updatedAt: getAdminTimestamp()
+          });
+        }
+        await failBatch.commit();
+      } catch (subErr) {
+        console.error("[DhuhurSync] Sub-error writing fail statuses", subErr);
+      }
+    }
+
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 function getColumnLetter(index: number): string {
   let letter = "";
   while (index >= 0) {
