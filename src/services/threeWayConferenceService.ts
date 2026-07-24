@@ -499,7 +499,7 @@ export const threeWayConferenceService = {
       strandCounts[goal.strand] = (strandCounts[goal.strand] || 0) + 1;
 
       if (!goal.goal || !goal.goal.trim()) {
-        errors.push(`${prefix} "My Goal" is required.`);
+        errors.push(`${prefix} "My Final Smart Goal" is required.`);
       }
       if (!goal.startDate) {
         errors.push(`${prefix} Start Date is required.`);

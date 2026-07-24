@@ -95,20 +95,6 @@ export default function GoalEditor({ goal, disabled, onUpdate, onRemove }: GoalE
         )}
       </div>
 
-      {/* Primary Goal Text */}
-      <div className="space-y-2">
-        <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
-          My Goal <span className="text-red-500">*</span>
-        </label>
-        <textarea
-          disabled={disabled}
-          value={goal.goal || ''}
-          onChange={(e) => handleFieldChange('goal', e.target.value)}
-          placeholder="State your main objective clearly here..."
-          className="w-full min-h-[80px] p-4 bg-gray-50 hover:bg-gray-100/50 focus:bg-white rounded-xl border border-transparent focus:border-blue-500 outline-none transition-all duration-200 text-sm font-bold text-gray-700 leading-relaxed resize-none disabled:opacity-75 disabled:hover:bg-gray-50"
-        />
-      </div>
-
       {/* Dates Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Start Date */}
@@ -234,6 +220,20 @@ export default function GoalEditor({ goal, disabled, onUpdate, onRemove }: GoalE
             </div>
           </div>
         )}
+      </div>
+
+      {/* Primary Goal Text */}
+      <div className="space-y-2">
+        <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+          My Final Smart Goal <span className="text-red-500">*</span>
+        </label>
+        <textarea
+          disabled={disabled}
+          value={goal.goal || ''}
+          onChange={(e) => handleFieldChange('goal', e.target.value)}
+          placeholder="State your main objective clearly here..."
+          className="w-full min-h-[80px] p-4 bg-gray-50 hover:bg-gray-100/50 focus:bg-white rounded-xl border border-transparent focus:border-blue-500 outline-none transition-all duration-200 text-sm font-bold text-gray-700 leading-relaxed resize-none disabled:opacity-75 disabled:hover:bg-gray-50"
+        />
       </div>
 
       {/* Goal Action Plan */}
