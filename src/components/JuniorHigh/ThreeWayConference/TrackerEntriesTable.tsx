@@ -35,6 +35,54 @@ export const TrackerEntriesTable: React.FC<TrackerEntriesTableProps> = ({
     }
   };
 
+  const getOverallStatusBadge = (status: string | undefined) => {
+    const s = status || 'SUBMITTED';
+    switch (s) {
+      case 'DRAFT':
+        return (
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-gray-600 bg-gray-50 border border-gray-100 px-2 py-0.5 rounded-full">
+            Draft
+          </span>
+        );
+      case 'EDITING':
+        return (
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full animate-pulse">
+            Editing
+          </span>
+        );
+      case 'SUBMITTED':
+        return (
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-full">
+            Submitted
+          </span>
+        );
+      case 'PARTIALLY_APPROVED':
+        return (
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">
+            Partially Approved
+          </span>
+        );
+      case 'REVISION_REQUIRED':
+        return (
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-600 bg-red-50 border border-red-100 px-2 py-0.5 rounded-full">
+            Revision Req.
+          </span>
+        );
+      case 'FULLY_APPROVED':
+        return (
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full">
+            Approved
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-gray-500 bg-gray-50 px-2 py-0.5 rounded-full">
+            {s}
+          </span>
+        );
+    }
+  };
+
   if (entries.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-gray-100 p-12 text-center space-y-4" id="staff-tracker-table-empty">
@@ -63,6 +111,7 @@ export const TrackerEntriesTable: React.FC<TrackerEntriesTableProps> = ({
               <th className="px-5 py-3.5">Goal</th>
               <th className="px-5 py-3.5">Entry Date</th>
               <th className="px-5 py-3.5">Progress Summary</th>
+              <th className="px-5 py-3.5">Status</th>
               <th className="px-5 py-3.5">Comment Status</th>
               <th className="px-5 py-3.5 text-right">Actions</th>
             </tr>
@@ -113,6 +162,11 @@ export const TrackerEntriesTable: React.FC<TrackerEntriesTableProps> = ({
                   {/* Progress Summary */}
                   <td className="px-5 py-4 text-gray-500 italic max-w-[150px] truncate" title={progressText}>
                     {truncatedProgress || '-'}
+                  </td>
+
+                  {/* Status */}
+                  <td className="px-5 py-4">
+                    {getOverallStatusBadge(entry.overallStatus)}
                   </td>
 
                   {/* Comment Status */}

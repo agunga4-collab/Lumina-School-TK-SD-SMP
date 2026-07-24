@@ -33,6 +33,57 @@ export default function TrackerEntryCard({
     }
   };
 
+  const getOverallStatusBadge = (status: string | undefined) => {
+    const s = status || 'DRAFT';
+    switch (s) {
+      case 'DRAFT':
+        return (
+          <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-700 border border-gray-200/50">
+            Draft
+          </span>
+        );
+      case 'EDITING':
+        return (
+          <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200/50 animate-pulse">
+            Editing
+          </span>
+        );
+      case 'SUBMITTED':
+        return (
+          <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200/50">
+            Waiting Review
+          </span>
+        );
+      case 'PARTIALLY_APPROVED':
+        return (
+          <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/50">
+            Partially Approved
+          </span>
+        );
+      case 'REVISION_REQUIRED':
+        return (
+          <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200/50">
+            Revision Required
+          </span>
+        );
+      case 'FULLY_APPROVED':
+        return (
+          <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/50">
+            Fully Approved
+          </span>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const isEditable = canEdit && (
+    !entry.overallStatus || 
+    entry.overallStatus === 'DRAFT' || 
+    entry.overallStatus === 'EDITING' || 
+    entry.overallStatus === 'REVISION_REQUIRED'
+  );
+
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden p-5 space-y-4" id={`tracker-entry-card-${entry.id}`}>
       {/* Top section: Date and goal identifier */}
@@ -45,9 +96,10 @@ export default function TrackerEntryCard({
             <Calendar className="h-3.5 w-3.5" />
             <span className="font-medium">{formatDate(entry.entryDate)}</span>
           </div>
+          {getOverallStatusBadge(entry.overallStatus)}
         </div>
 
-        {canEdit && (
+        {isEditable && (
           <button
             onClick={() => onEdit(entry)}
             className="inline-flex items-center gap-1 px-3 py-1 text-xs font-bold text-gray-700 bg-gray-50 hover:bg-gray-100 hover:text-gray-900 border border-gray-200 rounded-lg transition cursor-pointer"

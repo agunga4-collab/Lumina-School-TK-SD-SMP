@@ -84,6 +84,7 @@ export default function StudentSmartGoalTrackerPage() {
     progressMade: string;
     hinderingBehaviors: string;
     improvementPlan: string;
+    isSubmit?: boolean;
   }) => {
     if (!period) return;
     try {
@@ -93,7 +94,7 @@ export default function StudentSmartGoalTrackerPage() {
           payload,
           studentId
         );
-        toast.success('Your progress update has been updated.');
+        toast.success(payload.isSubmit ? 'Your progress update has been submitted.' : 'Your progress update draft has been updated.');
       } else {
         await threeWayConferenceService.createStudentTrackerEntry(
           {
@@ -103,7 +104,7 @@ export default function StudentSmartGoalTrackerPage() {
           },
           studentId
         );
-        toast.success('Your progress update has been saved.');
+        toast.success(payload.isSubmit ? 'Your progress update has been submitted.' : 'Your progress update draft has been saved.');
       }
 
       // Reload data
@@ -119,7 +120,16 @@ export default function StudentSmartGoalTrackerPage() {
     }
   };
 
-  const handleEditClick = (entry: SmartGoalTrackerEntry) => {
+  const handleEditClick = async (entry: SmartGoalTrackerEntry) => {
+    // If starting edit from DRAFT or REVISION_REQUIRED or if no status, set to EDITING
+    if (!entry.overallStatus || entry.overallStatus === 'DRAFT' || entry.overallStatus === 'REVISION_REQUIRED') {
+      try {
+        await threeWayConferenceService.startEditingTrackerEntry(entry.id, studentId);
+        entry.overallStatus = 'EDITING';
+      } catch (err) {
+        console.error('Failed to set status to EDITING:', err);
+      }
+    }
     setEditingEntry(entry);
     setShowForm(true);
     // Smooth scroll to form

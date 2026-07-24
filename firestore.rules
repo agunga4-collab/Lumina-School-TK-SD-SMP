@@ -604,21 +604,22 @@ service cloud.firestore {
       allow list: if isActive() && isStudent() && currentUserExists() && ('luminaId' in currentUser()) && resource.data.studentId == currentUser().luminaId;
       allow create: if isActive() &&
         isOwnStudentData(incoming().studentId) &&
-        incoming().keys().hasAll(['studentId', 'periodId', 'goalId', 'goalStrand', 'goalSnapshot']) &&
-        !('mentorComment' in incoming()) &&
-        !('commentedBy' in incoming()) &&
-        !('commentedByName' in incoming()) &&
-        !('commentedAt' in incoming());
+        incoming().keys().hasAll(['studentId', 'periodId', 'goalId', 'goalStrand', 'goalSnapshot']);
       allow update: if isActive() && (
         (
           isOwnStudentData(existing().studentId) &&
           incoming().diff(existing()).affectedKeys().hasOnly([
-            'entryDate', 'actionsTaken', 'progressMade', 'hinderingBehaviors', 'improvementPlan', 'updatedAt'
+            'entryDate', 'actionsTaken', 'progressMade', 'hinderingBehaviors', 'improvementPlan', 'updatedAt',
+            'overallStatus', 'submittedAt', 'lastSubmittedAt', 'revisionRound', 'editingStartedAt', 'lastActiveAt'
+          ]) &&
+          !incoming().diff(existing()).affectedKeys().hasAny([
+            'sectionReviews', 'mentorComment', 'commentedBy', 'commentedByName', 'commentedAt'
           ])
         ) || (
           isJHConferenceStaff() &&
           incoming().diff(existing()).affectedKeys().hasOnly([
-            'mentorComment', 'commentedBy', 'commentedByName', 'commentedAt', 'updatedAt'
+            'mentorComment', 'commentedBy', 'commentedByName', 'commentedAt', 'updatedAt',
+            'overallStatus', 'sectionReviews'
           ])
         )
       );

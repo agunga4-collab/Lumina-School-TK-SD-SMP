@@ -14,6 +14,7 @@ interface TrackerEntryFormProps {
     progressMade: string;
     hinderingBehaviors: string;
     improvementPlan: string;
+    isSubmit?: boolean;
   }) => Promise<void>;
   onCancel: () => void;
 }
@@ -110,6 +111,11 @@ export default function TrackerEntryForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Default to submit on form enter, or do nothing if custom handlers are preferred
+  };
+
+  const handleSaveClick = async (e: React.MouseEvent, isSubmit: boolean) => {
+    e.preventDefault();
     if (saving) return;
 
     if (!validate()) return;
@@ -123,7 +129,8 @@ export default function TrackerEntryForm({
         actionsTaken,
         progressMade,
         hinderingBehaviors,
-        improvementPlan
+        improvementPlan,
+        isSubmit
       });
     } catch (err: any) {
       setErrors(prev => ({ ...prev, submit: err.message || 'Failed to save entry' }));
@@ -131,6 +138,44 @@ export default function TrackerEntryForm({
       setSaving(false);
     }
   };
+
+  const renderSectionReviewStatus = (sectionName: 'goal' | 'actionPlan' | 'progress' | 'reflection') => {
+    if (!editingEntry?.sectionReviews) return null;
+    const review = editingEntry.sectionReviews[sectionName];
+    if (!review || review.status === 'NOT_REVIEWED') return null;
+
+    if (review.status === 'APPROVED') {
+      return (
+        <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100/60 px-2 py-0.5 rounded-md w-max mt-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+          Section Approved (Locked)
+        </div>
+      );
+    }
+
+    if (review.status === 'REVISION_REQUIRED') {
+      return (
+        <div className="mt-1 space-y-1 w-full">
+          <div className="flex items-center gap-1.5 text-[10px] font-bold text-red-700 bg-red-50 border border-red-100/60 px-2 py-0.5 rounded-md w-max">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+            Revision Required
+          </div>
+          {review.comment && (
+            <p className="text-xs text-red-800 bg-red-50/50 border border-red-100/30 p-2 rounded-lg leading-relaxed italic">
+              Feedback: "{review.comment}"
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  const isGoalApproved = editingEntry?.sectionReviews?.goal?.status === 'APPROVED';
+  const isActionPlanApproved = editingEntry?.sectionReviews?.actionPlan?.status === 'APPROVED';
+  const isProgressApproved = editingEntry?.sectionReviews?.progress?.status === 'APPROVED';
+  const isReflectionApproved = editingEntry?.sectionReviews?.reflection?.status === 'APPROVED';
 
   return (
     <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 space-y-6" id="tracker-entry-form">
@@ -243,63 +288,70 @@ export default function TrackerEntryForm({
       {/* Form Fields matching the document intent */}
       <div className="space-y-5">
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-gray-700 uppercase tracking-wider">
-            Things I Have Done to Achieve My Goal <span className="text-red-500">*</span>
+          <label className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center justify-between">
+            <span>Things I Have Done to Achieve My Goal <span className="text-red-500">*</span></span>
           </label>
           <textarea
             value={actionsTaken}
             onChange={(e) => setActionsTaken(e.target.value)}
             rows={3}
+            disabled={isActionPlanApproved}
             placeholder="List specific tasks, steps, or practices you did."
-            className={`w-full px-3 py-2 border rounded-lg text-sm bg-white focus:outline-none focus:ring-2 ${
+            className={`w-full px-3 py-2 border rounded-lg text-sm bg-white focus:outline-none focus:ring-2 disabled:bg-gray-50 disabled:text-gray-500 ${
               errors.actionsTaken ? 'border-red-300 focus:ring-red-100' : 'border-gray-200 focus:ring-blue-100'
             }`}
           />
+          {renderSectionReviewStatus('actionPlan')}
           {errors.actionsTaken && <span className="text-xs text-red-500">{errors.actionsTaken}</span>}
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-gray-700 uppercase tracking-wider">
-            Progress I Have Made <span className="text-red-500">*</span>
+          <label className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center justify-between">
+            <span>Progress I Have Made <span className="text-red-500">*</span></span>
           </label>
           <textarea
             value={progressMade}
             onChange={(e) => setProgressMade(e.target.value)}
             rows={3}
+            disabled={isProgressApproved}
             placeholder="Describe any improvements, results, or milestones achieved."
-            className={`w-full px-3 py-2 border rounded-lg text-sm bg-white focus:outline-none focus:ring-2 ${
+            className={`w-full px-3 py-2 border rounded-lg text-sm bg-white focus:outline-none focus:ring-2 disabled:bg-gray-50 disabled:text-gray-500 ${
               errors.progressMade ? 'border-red-300 focus:ring-red-100' : 'border-gray-200 focus:ring-blue-100'
             }`}
           />
+          {renderSectionReviewStatus('progress')}
           {errors.progressMade && <span className="text-xs text-red-500">{errors.progressMade}</span>}
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-gray-700 uppercase tracking-wider">
-            What Behavior Hinders My Goal <span className="text-red-500">*</span>
+          <label className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center justify-between">
+            <span>What Behavior Hinders My Goal <span className="text-red-500">*</span></span>
           </label>
           <textarea
             value={hinderingBehaviors}
             onChange={(e) => setHinderingBehaviors(e.target.value)}
             rows={3}
+            disabled={isReflectionApproved}
             placeholder="Identify obstacles, habits, or distractions that get in the way."
-            className={`w-full px-3 py-2 border rounded-lg text-sm bg-white focus:outline-none focus:ring-2 ${
+            className={`w-full px-3 py-2 border rounded-lg text-sm bg-white focus:outline-none focus:ring-2 disabled:bg-gray-50 disabled:text-gray-500 ${
               errors.hinderingBehaviors ? 'border-red-300 focus:ring-red-100' : 'border-gray-200 focus:ring-blue-100'
             }`}
           />
+          {renderSectionReviewStatus('reflection')}
           {errors.hinderingBehaviors && <span className="text-xs text-red-500">{errors.hinderingBehaviors}</span>}
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-gray-700 uppercase tracking-wider">
-            My Improvement Plan <span className="text-red-500">*</span>
+          <label className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center justify-between">
+            <span>My Improvement Plan <span className="text-red-500">*</span></span>
           </label>
           <textarea
             value={improvementPlan}
             onChange={(e) => setImprovementPlan(e.target.value)}
             rows={3}
+            disabled={isReflectionApproved}
             placeholder="What adjustments or routines will you focus on to overcome hindering behaviors?"
-            className={`w-full px-3 py-2 border rounded-lg text-sm bg-white focus:outline-none focus:ring-2 ${
+            className={`w-full px-3 py-2 border rounded-lg text-sm bg-white focus:outline-none focus:ring-2 disabled:bg-gray-50 disabled:text-gray-500 ${
               errors.improvementPlan ? 'border-red-300 focus:ring-red-100' : 'border-gray-200 focus:ring-blue-100'
             }`}
           />
@@ -317,12 +369,25 @@ export default function TrackerEntryForm({
           Cancel
         </button>
         <button
-          type="submit"
+          type="button"
           disabled={saving}
+          onClick={(e) => handleSaveClick(e, false)}
+          className="px-4 py-2 text-xs font-bold text-gray-600 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 transition disabled:opacity-50 cursor-pointer"
+        >
+          Save Draft
+        </button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={(e) => handleSaveClick(e, true)}
           className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 transition rounded-lg shadow disabled:opacity-50 cursor-pointer"
         >
           <Save className="h-4 w-4" />
-          {saving ? 'Saving...' : 'Save Progress Update'}
+          {saving 
+            ? 'Submitting...' 
+            : editingEntry?.overallStatus === 'REVISION_REQUIRED' || editingEntry?.overallStatus === 'PARTIALLY_APPROVED'
+              ? 'Submit Ulang'
+              : 'Submit untuk Ditinjau'}
         </button>
       </div>
     </form>

@@ -37,6 +37,7 @@ export default function StaffSmartGoalTrackerPage() {
   const [goalTypeFilter, setGoalTypeFilter] = React.useState('all');
   const [mentorFilter, setMentorFilter] = React.useState('all');
   const [commentFilter, setCommentFilter] = React.useState('all');
+  const [statusFilter, setStatusFilter] = React.useState('all');
   const [sortBy, setSortBy] = React.useState('date_desc');
 
   // Dialog State
@@ -240,6 +241,12 @@ export default function StaffSmartGoalTrackerPage() {
       }
     }
 
+    // Status filter
+    if (statusFilter !== 'all') {
+      const entryStatus = entry.overallStatus || 'SUBMITTED';
+      if (entryStatus !== statusFilter) return false;
+    }
+
     return true;
   });
 
@@ -276,6 +283,7 @@ export default function StaffSmartGoalTrackerPage() {
     setGoalTypeFilter('all');
     setMentorFilter('all');
     setCommentFilter('all');
+    setStatusFilter('all');
     setSortBy('date_desc');
   };
 
@@ -330,6 +338,8 @@ export default function StaffSmartGoalTrackerPage() {
         setMentorFilter={setMentorFilter}
         commentFilter={commentFilter}
         setCommentFilter={setCommentFilter}
+        statusFilter={statusFilter}
+        setStatusFilter={setStatusFilter}
         sortBy={sortBy}
         setSortBy={setSortBy}
         availableGrades={availableGrades}

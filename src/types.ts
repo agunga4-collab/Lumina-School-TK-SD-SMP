@@ -722,6 +722,7 @@ export interface Student {
   oldLuminaId?: string; // Old NIS/Lumina ID
   grade?: number;
   academicYear?: string;
+  email?: string;
 }
 
 export interface Enrollment {
@@ -1895,6 +1896,18 @@ export interface MentorAssignment {
   }>;
 }
 
+export type TrackerSectionStatus = 'NOT_REVIEWED' | 'APPROVED' | 'REVISION_REQUIRED';
+
+export interface TrackerSectionReview {
+  status: TrackerSectionStatus;
+  comment: string;
+  reviewedByUid?: string | null;
+  reviewedByName?: string | null;
+  reviewedAt?: number | null;
+}
+
+export type TrackerOverallStatus = 'DRAFT' | 'EDITING' | 'SUBMITTED' | 'PARTIALLY_APPROVED' | 'REVISION_REQUIRED' | 'FULLY_APPROVED';
+
 export interface SmartGoalTrackerEntry {
   id: string;
   periodId: string;
@@ -1913,6 +1926,22 @@ export interface SmartGoalTrackerEntry {
   commentedAt: number | null;
   createdAt: number;
   updatedAt: number;
+
+  // NEW BACKWARD-COMPATIBLE FIELDS
+  overallStatus?: TrackerOverallStatus;
+  sectionReviews?: {
+    goal: TrackerSectionReview;
+    actionPlan: TrackerSectionReview;
+    progress: TrackerSectionReview;
+    reflection: TrackerSectionReview;
+  };
+  assignedMentorId?: string | null;
+  assignedMentorName?: string | null;
+  submittedAt?: number | null;
+  lastSubmittedAt?: number | null;
+  revisionRound?: number;
+  editingStartedAt?: number | null;
+  lastActiveAt?: number | null;
 }
 
 

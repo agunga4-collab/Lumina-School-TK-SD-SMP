@@ -9,7 +9,7 @@ import {
   getDocs,
   runTransaction
 } from 'firebase/firestore';
-import { db, handleFirestoreError, getStudentById, getStudents, getClasses, auth } from '../lib/firebase';
+import { db, handleFirestoreError, getStudentById, getStudents, getClasses, auth, sendNotification } from '../lib/firebase';
 import type {
   ConferencePeriod,
   StudentConferenceResponse,
@@ -18,7 +18,9 @@ import type {
   SmartGoal,
   User,
   Student,
-  Class
+  Class,
+  TrackerSectionReview,
+  TrackerOverallStatus
 } from '../types';
 
 const PERIODS_COLLECTION = 'conferencePeriods';
@@ -1095,6 +1097,7 @@ export const threeWayConferenceService = {
     progressMade: string;
     hinderingBehaviors: string;
     improvementPlan: string;
+    isSubmit?: boolean;
   }, resolvedStudentId: string): Promise<string> {
     try {
       const { periodId, studentId, goalId, entryDate, actionsTaken, progressMade, hinderingBehaviors, improvementPlan } = payload;
@@ -1150,6 +1153,27 @@ export const threeWayConferenceService = {
       const entryRef = doc(collection(db, TRACKER_COLLECTION));
       const entryId = entryRef.id;
 
+      let assignedMentorId = null;
+      let assignedMentorName = null;
+      try {
+        const assignment = await this.getMentorAssignment(periodId, studentId);
+        if (assignment && assignment.status === 'ACTIVE') {
+          assignedMentorId = assignment.mentorId || null;
+          assignedMentorName = assignment.mentorName || null;
+        }
+      } catch (e) {
+        console.warn('Could not fetch mentor assignment for new tracker entry:', e);
+      }
+
+      const sectionReviews = {
+        goal: { status: 'NOT_REVIEWED' as const, comment: '' },
+        actionPlan: { status: 'NOT_REVIEWED' as const, comment: '' },
+        progress: { status: 'NOT_REVIEWED' as const, comment: '' },
+        reflection: { status: 'NOT_REVIEWED' as const, comment: '' }
+      };
+
+      const initialStatus = payload.isSubmit ? 'SUBMITTED' : 'DRAFT';
+
       const newEntry: SmartGoalTrackerEntry = {
         id: entryId,
         periodId,
@@ -1167,10 +1191,38 @@ export const threeWayConferenceService = {
         commentedByName: null,
         commentedAt: null,
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
+
+        // NEW BACKWARD-COMPATIBLE FIELDS
+        overallStatus: initialStatus,
+        sectionReviews,
+        assignedMentorId,
+        assignedMentorName,
+        submittedAt: payload.isSubmit ? now : null,
+        lastSubmittedAt: payload.isSubmit ? now : null,
+        revisionRound: 0,
+        editingStartedAt: null,
+        lastActiveAt: now
       };
 
       await setDoc(entryRef, newEntry);
+
+      if (payload.isSubmit) {
+        try {
+          const assignment = await this.getMentorAssignment(periodId, studentId);
+          if (assignment?.mentorEmail) {
+            await sendNotification({
+              userId: assignment.mentorEmail,
+              type: 'REPORT_SUBMITTED',
+              message: `Tracker ${response.studentName} menunggu review.`,
+              link: `/junior-high/conference/tracker`
+            });
+          }
+        } catch (notifErr) {
+          console.error('Failed to send submit notification:', notifErr);
+        }
+      }
+
       return entryId;
     } catch (error) {
       return handleFirestoreError(error, 'write', TRACKER_COLLECTION);
@@ -1186,6 +1238,7 @@ export const threeWayConferenceService = {
     progressMade: string;
     hinderingBehaviors: string;
     improvementPlan: string;
+    isSubmit?: boolean;
   }, resolvedStudentId: string): Promise<void> {
     try {
       const entryRef = doc(db, TRACKER_COLLECTION, entryId);
@@ -1214,7 +1267,7 @@ export const threeWayConferenceService = {
         throw new Error('The SMART Goal Tracker window has closed.');
       }
 
-      const { entryDate, actionsTaken, progressMade, hinderingBehaviors, improvementPlan } = payload;
+      const { entryDate, actionsTaken, progressMade, hinderingBehaviors, improvementPlan, isSubmit } = payload;
 
       // Validate date inside active tracker window
       if (period.trackerOpenDate && entryDate < period.trackerOpenDate) {
@@ -1233,15 +1286,202 @@ export const threeWayConferenceService = {
       if (!hinderingBehaviors?.trim()) throw new Error('Hindering behaviors is required.');
       if (!improvementPlan?.trim()) throw new Error('Improvement plan is required.');
 
-      // Update fields (excluding mentor comments and other immutable fields)
-      await updateDoc(entryRef, {
+      // Determine new status
+      let newOverallStatus: TrackerOverallStatus = existingEntry.overallStatus || 'DRAFT';
+      let newRevisionRound = existingEntry.revisionRound || 0;
+      let newSubmittedAt = existingEntry.submittedAt || null;
+      let newLastSubmittedAt = existingEntry.lastSubmittedAt || null;
+
+      if (isSubmit) {
+        newOverallStatus = 'SUBMITTED';
+        newLastSubmittedAt = now;
+        if (!newSubmittedAt) {
+          newSubmittedAt = now;
+        }
+        if (existingEntry.overallStatus === 'REVISION_REQUIRED' || existingEntry.overallStatus === 'PARTIALLY_APPROVED') {
+          newRevisionRound = (existingEntry.revisionRound || 0) + 1;
+        }
+      }
+
+      const updateData: any = {
         entryDate,
         actionsTaken,
         progressMade,
         hinderingBehaviors,
         improvementPlan,
+        overallStatus: newOverallStatus,
+        revisionRound: newRevisionRound,
+        submittedAt: newSubmittedAt,
+        lastSubmittedAt: newLastSubmittedAt,
+        lastActiveAt: now,
+        updatedAt: now
+      };
+
+      await updateDoc(entryRef, updateData);
+
+      // Send notification to mentor if submitted
+      if (isSubmit) {
+        try {
+          const assignment = await this.getMentorAssignment(periodId, resolvedStudentId);
+          if (assignment?.mentorEmail) {
+            await sendNotification({
+              userId: assignment.mentorEmail,
+              type: 'REPORT_SUBMITTED',
+              message: `Tracker ${assignment.studentName} menunggu review.`,
+              link: `/junior-high/conference/tracker`
+            });
+          }
+        } catch (notifErr) {
+          console.error('Failed to send submit notification:', notifErr);
+        }
+      }
+    } catch (error) {
+      return handleFirestoreError(error, 'write', `${TRACKER_COLLECTION}/${entryId}`);
+    }
+  },
+
+  /**
+   * Start editing a student tracker progress entry (DRAFT or REVISION_REQUIRED -> EDITING)
+   */
+  async startEditingTrackerEntry(entryId: string, resolvedStudentId: string): Promise<void> {
+    try {
+      const entryRef = doc(db, TRACKER_COLLECTION, entryId);
+      const snap = await getDoc(entryRef);
+      if (!snap.exists()) throw new Error('Tracker entry not found.');
+      
+      const existingEntry = snap.data() as SmartGoalTrackerEntry;
+      if (existingEntry.studentId !== resolvedStudentId) {
+        throw new Error('Unauthorized: This entry does not belong to you.');
+      }
+
+      const now = Date.now();
+      await updateDoc(entryRef, {
+        overallStatus: 'EDITING',
+        editingStartedAt: now,
+        lastActiveAt: now,
         updatedAt: now
       });
+    } catch (error) {
+      return handleFirestoreError(error, 'write', `${TRACKER_COLLECTION}/${entryId}`);
+    }
+  },
+
+  /**
+   * Save section reviews and update overall status for a student progress tracker entry
+   */
+  async saveSectionReviews(
+    entryId: string,
+    sectionReviews: {
+      goal: TrackerSectionReview;
+      actionPlan: TrackerSectionReview;
+      progress: TrackerSectionReview;
+      reflection: TrackerSectionReview;
+    },
+    currentUserProfile: User
+  ): Promise<void> {
+    try {
+      const eligibleRoles = ['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR'];
+      if (!eligibleRoles.includes(currentUserProfile.role)) {
+        throw new Error('Unauthorized: Role not allowed to write reviews.');
+      }
+
+      // Check Junior High Access
+      const unit = currentUserProfile.unitId;
+      const assigned = (currentUserProfile as any).assignedUnits || [];
+      const hasJHAccess = unit === 'JUNIOR_HIGH' || assigned.includes('JUNIOR_HIGH') || currentUserProfile.role === 'SUPER_ADMIN';
+      if (!hasJHAccess) {
+        throw new Error('Unauthorized: You do not have Junior High workspace access.');
+      }
+
+      const entryRef = doc(db, TRACKER_COLLECTION, entryId);
+      const entrySnap = await getDoc(entryRef);
+      if (!entrySnap.exists()) {
+        throw new Error('Tracker entry not found.');
+      }
+      const entryData = entrySnap.data() as SmartGoalTrackerEntry;
+
+      // Validate period is not ARCHIVED
+      const period = await this.getConferencePeriodById(entryData.periodId);
+      if (!period) {
+        throw new Error('Conference period not found.');
+      }
+      if (period.status === 'ARCHIVED') {
+        throw new Error('Cannot add or edit reviews for an archived period.');
+      }
+
+      // Validate each section review (if status is REVISION_REQUIRED, comment is required)
+      const sections: Array<'goal' | 'actionPlan' | 'progress' | 'reflection'> = ['goal', 'actionPlan', 'progress', 'reflection'];
+      for (const sec of sections) {
+        const rev = sectionReviews[sec];
+        if (rev.status === 'REVISION_REQUIRED' && !rev.comment?.trim()) {
+          throw new Error(`Komentar wajib diisi jika bagian "${sec}" membutuhkan revisi.`);
+        }
+      }
+
+      // Calculate overallStatus based on section reviews
+      const statuses = [
+        sectionReviews.goal.status,
+        sectionReviews.actionPlan.status,
+        sectionReviews.progress.status,
+        sectionReviews.reflection.status
+      ];
+
+      let overallStatus: TrackerOverallStatus = 'SUBMITTED';
+      if (statuses.every(s => s === 'APPROVED')) {
+        overallStatus = 'FULLY_APPROVED';
+      } else if (statuses.includes('REVISION_REQUIRED')) {
+        if (statuses.includes('APPROVED')) {
+          overallStatus = 'PARTIALLY_APPROVED';
+        } else {
+          overallStatus = 'REVISION_REQUIRED';
+        }
+      } else {
+        overallStatus = 'SUBMITTED';
+      }
+
+      const now = Date.now();
+      // Add reviewer metadata to sections that were reviewed (status not NOT_REVIEWED)
+      const updatedSectionReviews = { ...sectionReviews };
+      for (const sec of sections) {
+        const rev = updatedSectionReviews[sec];
+        if (rev.status !== 'NOT_REVIEWED') {
+          rev.reviewedByUid = currentUserProfile.uid;
+          rev.reviewedByName = currentUserProfile.displayName || currentUserProfile.email;
+          rev.reviewedAt = now;
+        } else {
+          rev.reviewedByUid = null;
+          rev.reviewedByName = null;
+          rev.reviewedAt = null;
+        }
+      }
+
+      const updatePayload: Partial<SmartGoalTrackerEntry> = {
+        sectionReviews: updatedSectionReviews,
+        overallStatus,
+        updatedAt: now
+      };
+
+      await updateDoc(entryRef, updatePayload);
+
+      // Send notification to student
+      try {
+        const student = await getStudentById(entryData.studentId);
+        if (student?.email) {
+          const typeStr = overallStatus === 'FULLY_APPROVED' ? 'REPORT_APPROVED' : 'REPORT_REJECTED';
+          const msgStr = overallStatus === 'FULLY_APPROVED' 
+            ? `Smart Goal Tracker progress update kamu telah DISETUJUI PENUH!` 
+            : `Smart Goal Tracker progress update kamu butuh revisi. Status: ${overallStatus === 'PARTIALLY_APPROVED' ? 'Disetujui Sebagian' : 'Perlu Revisi'}.`;
+
+          await sendNotification({
+            userId: student.email,
+            type: typeStr,
+            message: msgStr,
+            link: '/student/smart-goal-tracker'
+          });
+        }
+      } catch (notifErr) {
+        console.error('Failed to send review notification:', notifErr);
+      }
     } catch (error) {
       return handleFirestoreError(error, 'write', `${TRACKER_COLLECTION}/${entryId}`);
     }

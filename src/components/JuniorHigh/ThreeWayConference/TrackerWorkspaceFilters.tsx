@@ -14,6 +14,8 @@ interface TrackerWorkspaceFiltersProps {
   setMentorFilter: (m: string) => void;
   commentFilter: string;
   setCommentFilter: (c: string) => void;
+  statusFilter: string;
+  setStatusFilter: (s: string) => void;
   sortBy: string;
   setSortBy: (s: string) => void;
   availableGrades: Array<string | number>;
@@ -36,6 +38,8 @@ export const TrackerWorkspaceFilters: React.FC<TrackerWorkspaceFiltersProps> = (
   setMentorFilter,
   commentFilter,
   setCommentFilter,
+  statusFilter,
+  setStatusFilter,
   sortBy,
   setSortBy,
   availableGrades,
@@ -51,6 +55,7 @@ export const TrackerWorkspaceFilters: React.FC<TrackerWorkspaceFiltersProps> = (
     goalTypeFilter !== 'all' ||
     mentorFilter !== 'all' ||
     commentFilter !== 'all' ||
+    statusFilter !== 'all' ||
     sortBy !== 'date_desc';
 
   return (
@@ -103,7 +108,7 @@ export const TrackerWorkspaceFilters: React.FC<TrackerWorkspaceFiltersProps> = (
       </div>
 
       {/* Filter Options Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4 pt-2 border-t border-gray-50">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-4 pt-2 border-t border-gray-50">
         {/* Grade Filter */}
         <div>
           <label htmlFor="tracker-filter-grade-select" className="block text-xs font-bold text-gray-600 uppercase tracking-wider mb-1.5">
@@ -198,6 +203,27 @@ export const TrackerWorkspaceFilters: React.FC<TrackerWorkspaceFiltersProps> = (
             <option value="all">All Entries</option>
             <option value="commented">Commented</option>
             <option value="uncommented">No Comment</option>
+          </select>
+        </div>
+
+        {/* Workflow Status Filter */}
+        <div>
+          <label htmlFor="tracker-filter-status-select" className="block text-xs font-bold text-gray-600 uppercase tracking-wider mb-1.5">
+            Workflow Status
+          </label>
+          <select
+            id="tracker-filter-status-select"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="block w-full py-2 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+          >
+            <option value="all">All Statuses</option>
+            <option value="DRAFT">Draft</option>
+            <option value="EDITING">Editing</option>
+            <option value="SUBMITTED">Submitted / Waiting Review</option>
+            <option value="PARTIALLY_APPROVED">Partially Approved</option>
+            <option value="REVISION_REQUIRED">Revision Required</option>
+            <option value="FULLY_APPROVED">Fully Approved</option>
           </select>
         </div>
       </div>
