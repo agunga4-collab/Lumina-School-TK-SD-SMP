@@ -1177,11 +1177,14 @@ app.post("/api/attendance/dhuhur/sync-batch", async (req, res) => {
     }
 
     // 4. Fetch the target records from Firestore
+    const semesterNum = parseInt(String(semester), 10);
+    const semesterQueryList = isNaN(semesterNum) ? [semester] : [semesterNum, String(semesterNum)];
+
     const recordsSnap = await db.collection("dhuhur_attendance_records")
       .where("classId", "==", classId)
       .where("date", "==", date)
       .where("academicYearId", "==", academicYearId)
-      .where("semester", "==", semester)
+      .where("semester", "in", semesterQueryList)
       .get();
 
     const recordsInDb = recordsSnap.docs.map(doc => doc.data());
@@ -1413,7 +1416,7 @@ app.post("/api/attendance/dhuhur/sync-batch", async (req, res) => {
     // Fetch all dhuhur records for these students to count accurately without full scan
     const studentRecordsSnap = await db.collection("dhuhur_attendance_records")
       .where("academicYearId", "==", academicYearId)
-      .where("semester", "==", semester)
+      .where("semester", "in", semesterQueryList)
       .where("studentId", "in", studentIds)
       .get();
 
