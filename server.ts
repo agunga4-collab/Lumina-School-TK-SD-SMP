@@ -1820,34 +1820,36 @@ app.post("/api/attendance/sync-batch", async (req, res) => {
       } else {
         const monthResponse = await sheets.spreadsheets.values.get({
           spreadsheetId,
-          range: `${tabTitle}!A1:ZZ500`,
+          range: `${tabTitle}!A1:ZZ1000`,
         });
         const monthRows = monthResponse.data.values || [];
 
-        const monthStudentNameToRowIndex = new Map<string, number>();
+        // Parse existing student rows in Month tab
+        const studentRowMap = new Map<string, string[]>(); // key: studentName -> full row array
         for (let i = 4; i < monthRows.length; i++) {
-          const row = monthRows[i];
+          const row = monthRows[i] as string[];
           if (row[1]) {
-            monthStudentNameToRowIndex.set(row[1], i);
+            studentRowMap.set(row[1], row);
           }
         }
 
-        const valueRangesToUpdate: any[] = [];
-        const newStudentRowsToAppend: any[] = [];
-
+        // Merge current batch into studentRowMap
         for (const record of finalRecordsToSync) {
-          const mappedName = studentIdToName.get(record.studentId) || record.studentName;
-          let rowIndex = monthStudentNameToRowIndex.has(mappedName) 
-            ? monthStudentNameToRowIndex.get(mappedName)! 
-            : monthStudentNameToRowIndex.get(record.studentName)!;
-
-          if (rowIndex === undefined) {
-            for (let i = 4; i < monthRows.length; i++) {
-              if (monthRows[i][1] === mappedName || monthRows[i][1] === record.studentName) {
-                rowIndex = i;
-                break;
-              }
+          const studentName = record.studentName as string;
+          let row = studentRowMap.get(studentName);
+          if (!row) {
+            row = [
+              "", // No placeholder, filled later
+              studentName
+            ];
+            for (let d = 1; d <= totalDays; d++) {
+              row.push("");
             }
+          }
+
+          // Ensure row has enough columns for all days to prevent indexing bugs
+          while (row.length < 2 + totalDays) {
+            row.push("");
           }
 
           let code = '';
@@ -1856,68 +1858,56 @@ app.post("/api/attendance/sync-batch", async (req, res) => {
           else if (record.status === 'IZIN') code = 'I';
           else if (record.status === 'ALPA') code = 'A';
 
-          if (rowIndex === undefined || rowIndex === -1) {
-            const newRowNo = monthRows.length + newStudentRowsToAppend.length + 5;
-            const newStudentRow = [
-              String(monthRows.length - 4 + newStudentRowsToAppend.length + 1),
-              record.studentName,
-            ];
-            for (let d = 1; d <= totalDays; d++) {
-              const dayStr = String(d).padStart(2, '0');
-              const fullDate = `${yearNum}-${String(monthNum).padStart(2, '0')}-${dayStr}`;
-              let cellVal = '';
-              if (fullDate === record.date) {
-                cellVal = code;
-              }
-              newStudentRow.push(cellVal);
-            }
+          // Update cell for record.date (dayNum). Day d is at index 1 + d (since col 0 is No, col 1 is Nama Siswa)
+          row[1 + dayNum] = code;
+          studentRowMap.set(studentName, row);
+        }
 
-            const firstDateColLetter = 'C';
-            const lastDateColLetter = getColumnLetter(2 + totalDays - 1);
-            const colH_Letter = getColumnLetter(2 + totalDays);
-            const colS_Letter = getColumnLetter(2 + totalDays + 1);
-            const colI_Letter = getColumnLetter(2 + totalDays + 2);
-            const colA_Letter = getColumnLetter(2 + totalDays + 3);
+        // Sort by Student Name
+        const sortedMonthRows = Array.from(studentRowMap.values()).sort((a, b) => {
+          return (a[1] || '').localeCompare(b[1] || '');
+        });
 
-            newStudentRow.push(
-              `=COUNTIF(${firstDateColLetter}${newRowNo}:${lastDateColLetter}${newRowNo}, "H")`,
-              `=COUNTIF(${firstDateColLetter}${newRowNo}:${lastDateColLetter}${newRowNo}, "S")`,
-              `=COUNTIF(${firstDateColLetter}${newRowNo}:${lastDateColLetter}${newRowNo}, "I")`,
-              `=COUNTIF(${firstDateColLetter}${newRowNo}:${lastDateColLetter}${newRowNo}, "A")`,
-              `=IF((${colH_Letter}${newRowNo}+${colS_Letter}${newRowNo}+${colI_Letter}${newRowNo}+${colA_Letter}${newRowNo})>0, ${colH_Letter}${newRowNo}/(${colH_Letter}${newRowNo}+${colS_Letter}${newRowNo}+${colI_Letter}${newRowNo}+${colA_Letter}${newRowNo}), "")`
-            );
+        // Re-generate formulas and index
+        const finalMonthRows: string[][] = [
+          (monthRows[0] as string[]) || [`REKAP KEHADIRAN JUNIOR HIGH — ${classData?.name || classId}`],
+          (monthRows[1] as string[]) || [`Bulan: ${tabTitle} | Tahun Ajaran: ${firstRecord.academicYear} | Semester: ${semester}`],
+          (monthRows[2] as string[]) || [],
+          (monthRows[3] as string[]) || ['No', 'Nama Siswa', ...Array.from({ length: totalDays }, (_, i) => String(i + 1)), 'H', 'S', 'I', 'A', 'Persentase Kehadiran']
+        ];
 
-            newStudentRowsToAppend.push(newStudentRow);
-          } else {
-            const colIndex = 2 + dayNum - 1;
-            const colLetter = getColumnLetter(colIndex);
-            const cellRange = `${tabTitle}!${colLetter}${rowIndex + 1}`;
+        const firstDateColLetter = 'C';
+        const lastDateColLetter = getColumnLetter(2 + totalDays - 1);
+        const colH_Letter = getColumnLetter(2 + totalDays);
+        const colS_Letter = getColumnLetter(2 + totalDays + 1);
+        const colI_Letter = getColumnLetter(2 + totalDays + 2);
+        const colA_Letter = getColumnLetter(2 + totalDays + 3);
 
-            valueRangesToUpdate.push({
-              range: cellRange,
-              values: [[code]]
-            });
+        sortedMonthRows.forEach((row, idx) => {
+          const rowNum = idx + 5;
+          const finalRow = [
+            String(idx + 1), // No
+            row[1] // Student Name
+          ];
+          for (let d = 1; d <= totalDays; d++) {
+            finalRow.push(row[1 + d] || "");
           }
-        }
+          finalRow.push(
+            `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "H")`,
+            `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "S")`,
+            `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "I")`,
+            `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "A")`,
+            `=IF((${colH_Letter}${rowNum}+${colS_Letter}${rowNum}+${colI_Letter}${rowNum}+${colA_Letter}${rowNum})>0, ${colH_Letter}${rowNum}/(${colH_Letter}${rowNum}+${colS_Letter}${rowNum}+${colI_Letter}${rowNum}+${colA_Letter}${rowNum}), "")`
+          );
+          finalMonthRows.push(finalRow);
+        });
 
-        if (valueRangesToUpdate.length > 0) {
-          await sheets.spreadsheets.values.batchUpdate({
-            spreadsheetId,
-            requestBody: {
-              valueInputOption: 'USER_ENTERED',
-              data: valueRangesToUpdate
-            }
-          });
-        }
-
-        if (newStudentRowsToAppend.length > 0) {
-          await sheets.spreadsheets.values.append({
-            spreadsheetId,
-            range: `${tabTitle}!A5`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: { values: newStudentRowsToAppend }
-          });
-        }
+        await sheets.spreadsheets.values.update({
+          spreadsheetId,
+          range: `${tabTitle}!A1`,
+          valueInputOption: 'USER_ENTERED',
+          requestBody: { values: finalMonthRows }
+        });
       }
 
       // Mark successful records as SYNCED

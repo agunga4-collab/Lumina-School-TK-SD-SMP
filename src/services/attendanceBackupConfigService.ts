@@ -105,6 +105,22 @@ export const attendanceBackupConfigService = {
   }
 };
 
+export interface GenericAttendanceRecord {
+  id: string;
+  studentId: string;
+  classId: string;
+  semester: string;
+  date: string;
+  status: string;
+  backupType?: string;
+  academicYear?: string;
+  academicYearId?: string;
+  studentName?: string;
+  studentNameSnapshot?: string;
+  classNameSnapshot?: string;
+  note?: string;
+}
+
 /**
  * Service to trigger real-time sync via API (Backend)
  */
@@ -113,7 +129,7 @@ export const attendanceSyncService = {
    * Trigger sync for a specific record
    * This calls the backend to perform the actual Google Sheets update
    */
-  async triggerSync(record: any): Promise<AttendanceSyncResult> {
+  async triggerSync(record: GenericAttendanceRecord): Promise<AttendanceSyncResult> {
     try {
       const idToken = await auth.currentUser?.getIdToken();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -166,7 +182,7 @@ export const attendanceSyncService = {
         body: JSON.stringify({
           classId: record.classId,
           date: record.date,
-          academicYearId: record.academicYear.replace(/\//g, '-'),
+          academicYearId: (record.academicYear || '').replace(/\//g, '-'),
           semester: record.semester,
           recordIds: [record.id]
         })
@@ -183,7 +199,7 @@ export const attendanceSyncService = {
       }
 
       const resData = await response.json();
-      const itemResult = resData.results?.find((r: any) => r.id === record.id);
+      const itemResult = resData.results?.find((r: { id: string; success: boolean; error?: string }) => r.id === record.id);
       return {
         recordId: record.id,
         success: itemResult ? itemResult.success : resData.success !== false,

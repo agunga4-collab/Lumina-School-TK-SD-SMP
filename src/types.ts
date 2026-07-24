@@ -1037,7 +1037,7 @@ export interface ReportCard {
   updatedAt: number;
 }
 
-export type SEStrand = 'Imaginal' | 'Rational' | 'Physical';
+export type SEStrand = 'Imaginal' | 'Rational' | 'Physical' | 'Material/Physical' | 'IMAGINAL' | 'RATIONAL' | 'MATERIAL_PHYSICAL';
 
 export interface SEPeriod {
   id: string;
@@ -1073,17 +1073,35 @@ export interface SEChoice {
   activityName: string;
   customActivity: string | null;
   requiresTemplate: boolean;
-  // planning
-  finalTarget: string;
-  equipment: string;
-  weeklyTargets: { week: number; target: string }[];
-  // approval
-  approvalStatus: 'PENDING' | 'APPROVED' | 'REVISION_NEEDED';
-  approvalNote: string | null;
-  approvedBy: string | null;
-  approvedAt: number | null;
+  // planning (legacy/optional)
+  finalTarget?: string;
+  equipment?: string;
+  weeklyTargets?: { week: number; target: string }[];
+  // approval (legacy)
+  approvalStatus?: 'PENDING' | 'APPROVED' | 'REVISION_NEEDED';
+  approvalNote?: string | null;
+  approvedBy?: string | null;
+  approvedAt?: number | null;
   // final result
-  teacherComment: string | null;
+  teacherComment?: string | null;
+  
+  // revised module fields
+  formAttachments?: {
+    id: string;
+    fileName: string;
+    mimeType: string;
+    sizeBytes: number;
+    storagePath: string;
+    downloadUrl: string;
+    uploadedAt: number;
+    uploadedByUid: string;
+  }[];
+  status?: 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REVISION_REQUIRED' | 'CHANGE_REQUESTED';
+  submittedAt?: number;
+  verifiedAt?: number;
+  verifiedByUid?: string;
+  verifiedByName?: string;
+  revisionNote?: string;
 }
 
 export interface SEEnrollment {

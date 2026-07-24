@@ -2,18 +2,48 @@ import * as React from 'react';
 import { 
   Sparkles, Calendar, ChevronRight, Clock, 
   CheckCircle2, AlertCircle, PlayCircle, ClipboardList,
-  Target, Info, Plus
+  Target, Info, Plus, UploadCloud, Trash2, FileText, 
+  Eye, Loader2, ArrowRight
 } from 'lucide-react';
 import { 
   getSEPeriods, getSEEnrollment, getSEActivities, 
-  saveSEEnrollment, db 
+  saveSEEnrollment, db, storage, ref, uploadBytes, 
+  getDownloadURL, deleteObject 
 } from '../../../lib/firebase';
-import { SEPeriod, SEEnrollment, SEChoice, Student } from '../../../types';
+import { SEPeriod, SEEnrollment, SEChoice, Student, SEStrand } from '../../../types';
 import { useAuth } from '../../../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../../lib/utils';
 import { collection, query, where, getDocs, limit } from 'firebase/firestore';
+
+const STRANDS_CONFIG: { id: SEStrand; label: string; color: string; icon: React.ReactNode; desc: string }[] = [
+  { id: 'Imaginal', label: 'Imaginal', color: 'bg-pink-100 text-pink-600 border-pink-200', icon: <Sparkles size={24} />, desc: 'Imagination & Creativity' },
+  { id: 'Rational', label: 'Rational', color: 'bg-blue-100 text-blue-600 border-blue-200', icon: <BrainIcon size={24} />, desc: 'Cognitive Flexibility' },
+  { id: 'Physical', label: 'Material/Physical', color: 'bg-amber-100 text-amber-600 border-amber-200', icon: <DumbbellIcon size={24} />, desc: 'Physical fitness & practical skills' }
+];
+
+function BrainIcon(props: any) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={props.size || 24} height={props.size || 24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/>
+      <path d="M12 6v12"/>
+      <path d="M8 10c0-2.21 1.79-4 4-4"/>
+      <path d="M12 18c2.21 0 4-1.79 4-4"/>
+    </svg>
+  );
+}
+
+function DumbbellIcon(props: any) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={props.size || 24} height={props.size || 24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M6.5 6.5h11"/>
+      <path d="M18.5 9v6a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 15V9A1.5 1.5 0 0 1 7 7.5h10a1.5 1.5 0 0 1 1.5 1.5z"/>
+      <path d="M2 12h3.5"/>
+      <path d="M18.5 12H22"/>
+    </svg>
+  );
+}
 
 export default function SEMy() {
   const { profile } = useAuth();
@@ -22,27 +52,40 @@ export default function SEMy() {
   const [enrollment, setEnrollment] = React.useState<SEEnrollment | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [studentData, setStudentData] = React.useState<Student | null>(null);
+  const [activities, setActivities] = React.useState<any[]>([]);
+  
+  // Modal Editor state
+  const [selectedSlot, setSelectedSlot] = React.useState<number | null>(null);
 
   const fetchData = React.useCallback(async () => {
     if (!profile?.email) return;
 
-    // Get Active Period
-    const periods = await getSEPeriods('JUNIOR_HIGH');
-    const active = periods.find(p => p.isActive);
-    setActivePeriod(active || null);
+    try {
+      // Get Active Period
+      const periods = await getSEPeriods('JUNIOR_HIGH');
+      const active = periods.find(p => p.isActive);
+      setActivePeriod(active || null);
 
-    // Get Student Profile to get NIS and Class
-    const sSnap = await getDocs(query(collection(db, 'students'), where('email', '==', profile.email), limit(1)));
-    if (!sSnap.empty) {
-      const s = { id: sSnap.docs[0].id, ...sSnap.docs[0].data() } as Student;
-      setStudentData(s);
-      
-      if (active) {
-        const enroll = await getSEEnrollment(active.id, s.id);
-        setEnrollment(enroll);
+      // Get Student Profile
+      const sSnap = await getDocs(query(collection(db, 'students'), where('email', '==', profile.email), limit(1)));
+      if (!sSnap.empty) {
+        const s = { id: sSnap.docs[0].id, ...sSnap.docs[0].data() } as Student;
+        setStudentData(s);
+        
+        if (active) {
+          const enroll = await getSEEnrollment(active.id, s.id);
+          setEnrollment(enroll);
+        }
       }
+
+      // Fetch official SE activities
+      const acts = await getSEActivities('JUNIOR_HIGH');
+      setActivities(acts || []);
+    } catch (err) {
+      console.error("Error fetching SE data:", err);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [profile?.email]);
 
   React.useEffect(() => {
@@ -51,15 +94,16 @@ export default function SEMy() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Clock className="animate-spin text-blue-600" size={48} />
+      <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4">
+        <Loader2 className="animate-spin text-blue-600" size={48} />
+        <p className="text-sm font-semibold text-gray-500">Memuat data pilihan Self Exploration...</p>
       </div>
     );
   }
 
   if (!activePeriod) {
     return (
-      <div className="p-20 bg-gray-50 rounded-[3rem] border-2 border-dashed border-gray-200 text-center space-y-4">
+      <div className="p-20 bg-gray-50 rounded-[3rem] border border-gray-200 text-center space-y-4 max-w-2xl mx-auto mt-10">
          <div className="w-16 h-16 bg-white rounded-3xl shadow-lg flex items-center justify-center mx-auto text-gray-400">
             <AlertCircle size={32} />
          </div>
@@ -69,10 +113,30 @@ export default function SEMy() {
     );
   }
 
+  const isGrade9 = studentData?.grade === 9;
+  const numSlots = isGrade9 ? 1 : 2;
+
+  // Initialize or mock choices list
+  const displayChoices: SEChoice[] = Array.from({ length: numSlots }, (_, i) => {
+    const slotNum = (i + 1) as 1 | 2;
+    const existing = enrollment?.choices?.find(c => c.slot === slotNum);
+    if (existing) return existing;
+    return {
+      slot: slotNum,
+      strand: '' as SEStrand,
+      activityId: '',
+      activityName: '',
+      customActivity: null,
+      requiresTemplate: false,
+      status: 'DRAFT',
+      formAttachments: []
+    };
+  });
+
   return (
-    <div className="space-y-8 pb-20">
+    <div className="space-y-8 pb-20 max-w-6xl mx-auto px-4 sm:px-6">
       {/* Active Period Banner */}
-      <div className="relative p-10 bg-blue-600 rounded-[3.5rem] overflow-hidden text-white shadow-2xl shadow-blue-200">
+      <div className="relative p-10 bg-gradient-to-r from-blue-600 to-indigo-700 rounded-[3rem] overflow-hidden text-white shadow-xl">
          <div className="absolute top-0 right-0 p-12 opacity-10">
             <Sparkles size={120} />
          </div>
@@ -81,67 +145,109 @@ export default function SEMy() {
                <div className="flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.2em] opacity-80">
                   <Calendar size={14} /> Periode Aktif • Junior High
                </div>
-               <h1 className="text-4xl font-black italic uppercase tracking-tight mt-2">{activePeriod.label}</h1>
+               <h1 className="text-4xl font-black mt-2 leading-none">{activePeriod.label}</h1>
             </div>
 
-            <div className="flex flex-wrap items-center gap-8 pt-6 border-t border-white/10 uppercase font-black text-[10px] tracking-widest">
+            <div className="flex flex-wrap items-center gap-8 pt-6 border-t border-white/15 uppercase font-black text-[10px] tracking-widest">
                <div className="flex items-center gap-3 bg-white/10 px-6 py-3 rounded-2xl backdrop-blur-md">
                    <Clock size={16} /> Total: {activePeriod.totalSessions} Sesi
                </div>
                <div className="flex items-center gap-3">
-                   Deadline Rencana: {new Date(activePeriod.planningDeadline).toLocaleDateString('id-ID', { day: 'numeric', month: 'long' })}
+                   Deadline Pengisian: {new Date(activePeriod.planningDeadline).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
                </div>
             </div>
          </div>
       </div>
 
-      {/* Main Content */}
+      {/* Main Content Area */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
          <div className="lg:col-span-8 space-y-6">
-            <div className="flex items-center justify-between px-6">
-               <h2 className="text-lg font-black text-gray-900 uppercase italic">Kegiatan Saya</h2>
+            <div className="flex items-center justify-between px-2">
+               <h2 className="text-lg font-black text-gray-900 uppercase italic">Pilihan Kegiatan Saya</h2>
                {enrollment && (
-                 <span className={cn(
-                   "px-6 py-2 rounded-full text-[9px] font-black uppercase tracking-widest shadow-lg",
-                   enrollment.status === 'APPROVED' ? "bg-emerald-500 text-white" : 
-                   enrollment.status === 'SUBMITTED' ? "bg-blue-600 text-white" :
-                   "bg-gray-100 text-gray-400"
-                 )}>
-                   {enrollment.status.replace('_', ' ')}
+                 <span className="px-5 py-2 bg-blue-50 text-blue-700 border border-blue-100 rounded-full text-[9px] font-black uppercase tracking-widest">
+                   {enrollment.choices.every(c => c.status === 'APPROVED' || c.approvalStatus === 'APPROVED') ? 'Semua Disetujui' : 'Dalam Proses'}
                  </span>
                )}
             </div>
 
-            {!enrollment ? (
-              <div className="group relative bg-white p-12 rounded-[3.5rem] border-2 border-dashed border-gray-200 hover:border-blue-600 hover:bg-blue-50/20 transition-all text-center space-y-6 cursor-pointer"
-                   onClick={() => navigate(`/self-exploration/my/${activePeriod.id}/plan`)}>
-                 <div className="w-20 h-20 bg-blue-600 text-white rounded-3xl shadow-2xl flex items-center justify-center mx-auto transition-transform group-hover:scale-110">
-                    <Plus size={40} />
-                 </div>
-                 <div>
-                    <h3 className="text-xl font-black text-gray-900 uppercase italic">Mulai Rencana SE</h3>
-                    <p className="text-gray-500 text-sm mt-1">Kamu belum mengisi rencana kegiatan untuk periode ini.</p>
-                 </div>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                 {enrollment.choices.map(choice => (
-                   <SECard 
-                      key={choice.slot} 
-                      choice={choice} 
-                      enrollment={enrollment} 
-                      activePeriod={activePeriod}
-                      onClick={() => navigate(`/self-exploration/my/${activePeriod.id}/details/${choice.slot}`)} 
-                   />
-                 ))}
-              </div>
-            )}
+            {/* Slots Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+               {displayChoices.map((choice) => {
+                 const currentStatus = choice.status || (
+                   choice.approvalStatus === 'APPROVED' ? 'APPROVED' :
+                   choice.approvalStatus === 'REVISION_NEEDED' ? 'REVISION_REQUIRED' :
+                   enrollment?.status === 'SUBMITTED' ? 'SUBMITTED' : 'DRAFT'
+                 );
+
+                 return (
+                   <div 
+                     key={choice.slot}
+                     className="bg-white rounded-3xl p-8 border border-gray-100 shadow-sm hover:shadow-md transition-all flex flex-col justify-between space-y-6 relative overflow-hidden"
+                     id={`se-card-slot-${choice.slot}`}
+                   >
+                     <div>
+                       <div className="flex items-center justify-between mb-4">
+                         <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">
+                           Slot {choice.slot}
+                         </span>
+                         <StatusBadge status={currentStatus} />
+                       </div>
+
+                       {choice.strand ? (
+                         <div className="space-y-2">
+                           <div className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">
+                             {choice.strand === 'Physical' ? 'Material/Physical' : choice.strand}
+                           </div>
+                           <h3 className="text-xl font-extrabold text-gray-900 leading-tight">
+                             {choice.activityName}
+                           </h3>
+                           {choice.formAttachments && choice.formAttachments.length > 0 && (
+                             <p className="text-xs font-semibold text-emerald-600 flex items-center gap-1.5 mt-2">
+                               <CheckCircle2 size={14} /> Bukti Form Terlampir ({choice.formAttachments.length})
+                             </p>
+                           )}
+                         </div>
+                       ) : (
+                         <div className="space-y-2 py-4">
+                           <p className="text-xs text-gray-400 font-bold uppercase italic">Belum memilih kegiatan</p>
+                           <p className="text-xs text-gray-400 font-medium">Klik tombol di bawah untuk mengisi pilihan dan mengunggah form.</p>
+                         </div>
+                       )}
+                     </div>
+
+                     <div className="pt-4 border-t border-gray-50 flex items-center gap-2">
+                       <button
+                         onClick={() => setSelectedSlot(choice.slot)}
+                         className="flex-1 py-3 bg-gray-50 hover:bg-gray-100 text-gray-700 font-bold uppercase text-[9px] tracking-widest rounded-xl transition-all flex items-center justify-center gap-2"
+                         id={`btn-edit-slot-${choice.slot}`}
+                       >
+                         {choice.strand ? 'Ubah Pilihan' : 'Pilih Kegiatan'}
+                         <ArrowRight size={12} />
+                       </button>
+
+                       {currentStatus === 'APPROVED' && enrollment && (
+                         <button
+                           onClick={() => navigate(`/self-exploration/my/${enrollment.id}/details/${choice.slot}`)}
+                           className="py-3 px-4 bg-blue-50 hover:bg-blue-100 text-blue-600 font-bold uppercase text-[9px] tracking-widest rounded-xl transition-all"
+                           title="Catat Sesi & Log"
+                           id={`btn-log-slot-${choice.slot}`}
+                         >
+                           Sesi & Log
+                         </button>
+                       )}
+                     </div>
+                   </div>
+                 );
+               })}
+            </div>
          </div>
 
+         {/* Sidebar with guidelines */}
          <div className="lg:col-span-4 space-y-8">
-            <div className="bg-white p-8 rounded-[3rem] shadow-sm border border-gray-100 space-y-6">
+            <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 space-y-6">
                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center">
+                  <div className="w-10 h-10 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center">
                      <AlertCircle size={20} />
                   </div>
                   <h3 className="font-black uppercase italic text-sm">Penting! Aturan Strand</h3>
@@ -150,11 +256,11 @@ export default function SEMy() {
                <div className="space-y-4">
                   <div className="p-4 bg-gray-50 rounded-2xl space-y-2">
                      <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Grade 7 & 8</p>
-                     <p className="text-xs font-bold text-gray-700 leading-relaxed">Pilih 2 strand BERBEDA dalam 1 periode.</p>
+                     <p className="text-xs font-bold text-gray-700 leading-relaxed">Wajib memilih 2 strand BERBEDA dalam 1 periode.</p>
                   </div>
                   <div className="p-4 bg-gray-50 rounded-2xl space-y-2">
                      <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Grade 9</p>
-                     <p className="text-xs font-bold text-gray-700 leading-relaxed">Pilih 1 strand per periode. Periode 2 wajib strand berbeda dari Periode 1.</p>
+                     <p className="text-xs font-bold text-gray-700 leading-relaxed">Pilih 1 strand per periode.</p>
                   </div>
                   <div className="p-4 bg-red-50 rounded-2xl border border-red-100">
                      <p className="text-[10px] font-black uppercase text-red-600 tracking-widest mb-1">Dilarang!</p>
@@ -165,110 +271,591 @@ export default function SEMy() {
                </div>
             </div>
 
-            <div className="bg-gray-900 p-8 rounded-[3rem] shadow-2xl text-white space-y-6">
+            <div className="bg-gray-900 p-8 rounded-[2.5rem] text-white space-y-6">
                <div className="flex items-center gap-3">
                   <ClipboardList size={20} />
-                  <h3 className="font-black uppercase italic text-sm">Panduan Tahapan</h3>
+                  <h3 className="font-black uppercase italic text-sm">Panduan Alur</h3>
                </div>
-               <div className="space-y-6 relative ml-3">
-                  <div className="absolute left-0 top-0 bottom-0 w-px bg-white/20" />
-                  <Step icon={<Plus size={12} />} label="Step 1" text="Pengisian Rencana" active={!enrollment || enrollment.status === 'PLANNING'} />
-                  <Step icon={<Target size={12} />} label="Step 2" text="Persetujuan Homeroom" active={enrollment?.status === 'SUBMITTED'} />
-                  <Step icon={<PlayCircle size={12} />} label="Step 3" text="Pelaksanaan & Log Sesi" active={enrollment?.status === 'APPROVED' || enrollment?.status === 'IN_PROGRESS'} />
-                  <Step icon={<CheckCircle2 size={12} />} label="Step 4" text="Self-Assessment" active={enrollment?.status === 'SELF_ASSESSED'} />
+               <div className="space-y-4 relative ml-3 border-l border-white/10 pl-5">
+                  <div className="relative space-y-0.5">
+                    <p className="text-[9px] font-black uppercase text-blue-400">Langkah 1</p>
+                    <p className="text-xs font-bold">Pilih strand & aktivitas, lalu unggah foto form pemilihan fisik (PDF/JPG).</p>
+                  </div>
+                  <div className="relative space-y-0.5">
+                    <p className="text-[9px] font-black uppercase text-blue-400">Langkah 2</p>
+                    <p className="text-xs font-bold">Kirim untuk verifikasi. Tunggu hingga disetujui guru pembimbing.</p>
+                  </div>
+                  <div className="relative space-y-0.5">
+                    <p className="text-[9px] font-black uppercase text-blue-400">Langkah 3</p>
+                    <p className="text-xs font-bold">Setelah disetujui, tombol "Sesi & Log" akan aktif untuk mengisi jurnal mingguan.</p>
+                  </div>
                </div>
             </div>
          </div>
       </div>
+
+      {/* Slide-over or Dialog Modal for Slot Editor */}
+      <AnimatePresence>
+        {selectedSlot !== null && (
+          <SlotEditorModal 
+            slot={selectedSlot}
+            studentData={studentData}
+            activePeriod={activePeriod}
+            enrollment={enrollment}
+            activities={activities}
+            onClose={() => {
+              setSelectedSlot(null);
+              fetchData();
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-function SECard({ choice, enrollment, activePeriod, onClick }: { 
-  choice: SEChoice, 
-  enrollment: SEEnrollment, 
-  activePeriod: SEPeriod,
-  onClick: () => void,
-  key?: React.Key
-}) {
-  const statusStyles: Record<string, string> = {
-    'PLANNING': 'border-gray-200 text-gray-400',
-    'SUBMITTED': 'border-blue-100 bg-blue-50/30 text-blue-600',
-    'APPROVED': 'border-emerald-100 bg-emerald-50/30 text-emerald-600',
-    'REVISION_NEEDED': 'border-red-100 bg-red-50/30 text-red-600',
-    'IN_PROGRESS': 'border-blue-600 bg-blue-600 text-white shadow-xl shadow-blue-100',
-    'SELF_ASSESSED': 'border-purple-100 bg-purple-50/30 text-purple-600',
-    'COMPLETED': 'border-emerald-600 bg-emerald-600 text-white'
+function StatusBadge({ status }: { status: string }) {
+  const styles: Record<string, string> = {
+    'DRAFT': 'bg-gray-50 text-gray-500 border-gray-200',
+    'SUBMITTED': 'bg-blue-50 text-blue-600 border-blue-200',
+    'APPROVED': 'bg-emerald-50 text-emerald-600 border-emerald-200',
+    'REVISION_REQUIRED': 'bg-red-50 text-red-600 border-red-200',
+    'CHANGE_REQUESTED': 'bg-amber-50 text-amber-600 border-amber-200'
   };
 
-  const strandIcon: Record<string, any> = {
-    'Imaginal': <Sparkles size={16} />,
-    'Rational': <Info size={16} />,
-    'Physical': <Target size={16} />
+  const label: Record<string, string> = {
+    'DRAFT': 'Draft',
+    'SUBMITTED': 'Menunggu Verifikasi',
+    'APPROVED': 'Disetujui',
+    'REVISION_REQUIRED': 'Perlu Revisi',
+    'CHANGE_REQUESTED': 'Ajukan Perubahan'
   };
-
-  const isLight = !['IN_PROGRESS', 'COMPLETED'].includes(enrollment.status);
 
   return (
-    <button 
-      onClick={onClick}
-      className={cn(
-        "relative p-8 rounded-[3rem] border-2 text-left transition-all hover:scale-[1.02] active:scale-95 group",
-        statusStyles[choice.approvalStatus === 'REVISION_NEEDED' ? 'REVISION_NEEDED' : enrollment.status] || 'border-gray-50'
-      )}
-    >
-       <div className="space-y-6">
-          <div className="flex items-center justify-between">
-             <div className={cn(
-               "px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-2",
-               isLight ? "bg-gray-100 text-gray-500" : "bg-white/20 text-white"
-             )}>
-                {strandIcon[choice.strand]} {choice.strand}
-             </div>
-             <ChevronRight size={20} className={cn(isLight ? "text-gray-300" : "text-white/50")} />
-          </div>
-
-          <div>
-             <p className={cn("text-[10px] font-black uppercase tracking-widest", isLight ? "text-gray-400" : "text-white/60")}>Slot {choice.slot}</p>
-             <h3 className="text-xl font-black italic uppercase leading-tight mt-1">{choice.activityName}</h3>
-          </div>
-
-          <div className="space-y-4 pt-4 border-t border-current/10">
-             <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest">
-                <span>Progres Sesi</span>
-                <span>0/{activePeriod.totalSessions}</span>
-             </div>
-             <div className={cn("h-2.5 rounded-full overflow-hidden", isLight ? "bg-gray-100" : "bg-white/20")}>
-                <div className={cn("h-full transition-all duration-1000", isLight ? "bg-blue-600" : "bg-white")} style={{ width: '0%' }} />
-             </div>
-          </div>
-
-          {choice.approvalStatus === 'REVISION_NEEDED' && (
-            <div className="absolute inset-0 bg-red-500/90 backdrop-blur-sm rounded-[3rem] flex flex-col items-center justify-center p-8 text-center text-white scale-0 group-hover:scale-100 transition-transform">
-               <AlertCircle size={40} className="mb-4" />
-               <p className="text-xs font-black uppercase tracking-widest">Perlu Revisi</p>
-               <p className="text-[10px] font-medium mt-2 leading-relaxed opacity-90 line-clamp-3">{choice.approvalNote}</p>
-            </div>
-          )}
-       </div>
-    </button>
+    <span className={cn(
+      "px-3 py-1 text-[8px] font-black uppercase tracking-widest border rounded-full",
+      styles[status] || styles['DRAFT']
+    )}>
+      {label[status] || status}
+    </span>
   );
 }
 
-function Step({ icon, label, text, active }: { icon: React.ReactNode, label: string, text: string, active: boolean }) {
+interface SlotEditorModalProps {
+  slot: number;
+  studentData: Student | null;
+  activePeriod: SEPeriod;
+  enrollment: SEEnrollment | null;
+  activities: any[];
+  onClose: () => void;
+}
+
+function SlotEditorModal({ slot, studentData, activePeriod, enrollment, activities, onClose }: SlotEditorModalProps) {
+  const { profile } = useAuth();
+  const [strand, setStrand] = React.useState<SEStrand | ''>('');
+  const [activityId, setActivityId] = React.useState<string>('');
+  const [customActivity, setCustomActivity] = React.useState<string>('');
+  const [attachments, setAttachments] = React.useState<any[]>([]);
+  const [status, setStatus] = React.useState<string>('DRAFT');
+  const [revisionNote, setRevisionNote] = React.useState<string>('');
+  
+  const [uploading, setUploading] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+
+  // Load existing slot choices
+  React.useEffect(() => {
+    if (enrollment) {
+      const choice = enrollment.choices?.find(c => c.slot === slot);
+      if (choice) {
+        setStrand(choice.strand || '');
+        setActivityId(choice.activityId || '');
+        setCustomActivity(choice.customActivity || '');
+        setAttachments(choice.formAttachments || []);
+        setRevisionNote(choice.revisionNote || choice.approvalNote || '');
+        setStatus(choice.status || (
+          choice.approvalStatus === 'APPROVED' ? 'APPROVED' :
+          choice.approvalStatus === 'REVISION_NEEDED' ? 'REVISION_REQUIRED' :
+          enrollment.status === 'SUBMITTED' ? 'SUBMITTED' : 'DRAFT'
+        ));
+      }
+    }
+  }, [enrollment, slot]);
+
+  // Handle strand selection change
+  const handleStrandChange = (selected: SEStrand) => {
+    setStrand(selected);
+    setActivityId(''); // reset activity selection
+    setCustomActivity('');
+  };
+
+  // Filter activities matching the selected strand
+  const filteredActivities = React.useMemo(() => {
+    if (!strand) return [];
+    return activities.filter(act => act.strand === strand && act.isActive);
+  }, [activities, strand]);
+
+  // Selected activity object
+  const selectedActivityObj = React.useMemo(() => {
+    return filteredActivities.find(a => a.id === activityId);
+  }, [filteredActivities, activityId]);
+
+  // File Upload Logic
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    if (!studentData) return;
+
+    if (attachments.length + files.length > 3) {
+      alert("Maksimal 3 file bukti yang dapat diunggah per slot.");
+      return;
+    }
+
+    setUploading(true);
+    const newAttachments = [...attachments];
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+
+        // Size check (max 5MB)
+        if (file.size > 5 * 1024 * 1024) {
+          alert(`File "${file.name}" melebihi batas ukuran 5MB.`);
+          continue;
+        }
+
+        // MIME check
+        const allowedTypes = ['image/jpeg', 'image/png', 'application/pdf'];
+        if (!allowedTypes.includes(file.type)) {
+          alert(`Format file "${file.name}" tidak didukung. Harap unggah format JPG, PNG, atau PDF.`);
+          continue;
+        }
+
+        const fileId = Date.now() + "_" + Math.random().toString(36).substr(2, 9);
+        const sanitizedAY = activePeriod.academicYear.replace('/', '_');
+        const storagePath = `self-exploration/${sanitizedAY}/${activePeriod.semester}/${activePeriod.id}/${studentData.id}/slot-${slot}/${fileId}_${file.name}`;
+        
+        const fileRef = ref(storage, storagePath);
+        const snapshot = await uploadBytes(fileRef, file);
+        const downloadUrl = await getDownloadURL(snapshot.ref);
+
+        newAttachments.push({
+          id: fileId,
+          fileName: file.name,
+          mimeType: file.type,
+          sizeBytes: file.size,
+          storagePath: storagePath,
+          downloadUrl: downloadUrl,
+          uploadedAt: Date.now(),
+          uploadedByUid: profile?.uid || 'student'
+        });
+      }
+
+      setAttachments(newAttachments);
+    } catch (err: any) {
+      console.error("Upload failed:", err);
+      alert("Terjadi kesalahan saat mengunggah file.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // Delete attachment
+  const handleFileDelete = async (attachmentId: string) => {
+    const fileObj = attachments.find(a => a.id === attachmentId);
+    if (!fileObj) return;
+
+    if (confirm("Apakah Anda yakin ingin menghapus file ini?")) {
+      try {
+        const fileRef = ref(storage, fileObj.storagePath);
+        await deleteObject(fileRef);
+      } catch (err) {
+        console.warn("Storage deletion warning (might be missing):", err);
+      }
+
+      setAttachments(prev => prev.filter(a => a.id !== attachmentId));
+    }
+  };
+
+  // Check if strand mismatch warning is needed (Grade 7 & 8 only)
+  const isGrade78 = studentData?.grade === 7 || studentData?.grade === 8;
+  const isStrandConflict = React.useMemo(() => {
+    if (!isGrade78 || !strand || !enrollment) return false;
+    const otherSlot = slot === 1 ? 2 : 1;
+    const otherChoice = enrollment.choices?.find(c => c.slot === otherSlot);
+    return otherChoice && otherChoice.strand && otherChoice.strand === strand;
+  }, [isGrade78, strand, enrollment, slot]);
+
+  // Form Validity check
+  const isValid = React.useMemo(() => {
+    if (!strand) return false;
+    if (!activityId) return false;
+    if (activityId === 'CUSTOM' && !customActivity.trim()) return false;
+    if (attachments.length === 0) return false;
+    if (isStrandConflict) return false;
+    return true;
+  }, [strand, activityId, customActivity, attachments, isStrandConflict]);
+
+  // Is editing permitted
+  const isReadOnly = status === 'SUBMITTED' || status === 'APPROVED';
+
+  // Save to Database
+  const handleSaveDb = async (isSubmit: boolean) => {
+    if (!studentData) return;
+    setSaving(true);
+
+    try {
+      const activityName = activityId === 'CUSTOM' ? customActivity : (selectedActivityObj?.name || '');
+      const requiresTemplate = activityId === 'CUSTOM' ? false : (selectedActivityObj?.requiresTemplate || false);
+
+      const updatedChoice: SEChoice = {
+        slot: slot as 1 | 2,
+        strand: strand as SEStrand,
+        activityId,
+        activityName,
+        customActivity: activityId === 'CUSTOM' ? customActivity : null,
+        requiresTemplate,
+        formAttachments: attachments,
+        status: isSubmit ? 'SUBMITTED' : 'DRAFT',
+        // Preserve legacy fields if editing
+        finalTarget: enrollment?.choices?.find(c => c.slot === slot)?.finalTarget || '',
+        equipment: enrollment?.choices?.find(c => c.slot === slot)?.equipment || '',
+        weeklyTargets: enrollment?.choices?.find(c => c.slot === slot)?.weeklyTargets || [],
+        // Map to legacy approvalStatus for teacher compatibility
+        approvalStatus: isSubmit ? 'PENDING' : 'PENDING'
+      };
+
+      // Merge choices
+      let currentChoices = enrollment ? [...enrollment.choices] : [];
+      const index = currentChoices.findIndex(c => c.slot === slot);
+      if (index >= 0) {
+        currentChoices[index] = updatedChoice;
+      } else {
+        currentChoices.push(updatedChoice);
+      }
+
+      // Keep them sorted by slot
+      currentChoices.sort((a, b) => a.slot - b.slot);
+
+      // Compute overall enrollment status safely
+      let overallStatus: SEEnrollment['status'] = 'PLANNING';
+      if (currentChoices.every(c => c.status === 'APPROVED')) {
+        overallStatus = 'APPROVED';
+      } else if (currentChoices.some(c => c.status === 'SUBMITTED')) {
+        overallStatus = 'SUBMITTED';
+      }
+
+      await saveSEEnrollment({
+        id: enrollment?.id || undefined,
+        studentId: studentData.id,
+        studentName: studentData.name,
+        classId: studentData.classId || '',
+        grade: studentData.grade as 7 | 8 | 9,
+        periodId: activePeriod.id,
+        academicYear: activePeriod.academicYear,
+        semester: activePeriod.semester,
+        periodNumber: activePeriod.periodNumber,
+        choices: currentChoices,
+        status: overallStatus
+      });
+
+      alert(isSubmit ? "Pilihan berhasil dikirim untuk verifikasi!" : "Pilihan disimpan sebagai draft.");
+      onClose();
+    } catch (err: any) {
+      console.error("Failed to save SE Choice:", err);
+      alert("Gagal menyimpan pilihan. Silakan coba kembali.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAjukanPerubahan = async () => {
+    if (confirm("Ajukan perubahan untuk pilihan ini? Status akan kembali menjadi Draft sehingga Anda dapat mengedit kembali.")) {
+      setSaving(true);
+      try {
+        let currentChoices = enrollment ? [...enrollment.choices] : [];
+        const index = currentChoices.findIndex(c => c.slot === slot);
+        if (index >= 0) {
+          currentChoices[index] = {
+            ...currentChoices[index],
+            status: 'CHANGE_REQUESTED',
+            approvalStatus: 'PENDING'
+          };
+        }
+
+        await saveSEEnrollment({
+          id: enrollment?.id,
+          studentId: studentData?.id || '',
+          studentName: studentData?.name || '',
+          classId: studentData?.classId || '',
+          grade: studentData?.grade as 7 | 8 | 9,
+          periodId: activePeriod.id,
+          academicYear: activePeriod.academicYear,
+          semester: activePeriod.semester,
+          periodNumber: activePeriod.periodNumber,
+          choices: currentChoices,
+          status: 'PLANNING'
+        });
+
+        setStatus('CHANGE_REQUESTED');
+      } catch (err) {
+        console.error("Request change error:", err);
+        alert("Gagal mengajukan perubahan.");
+      } finally {
+        setSaving(false);
+      }
+    }
+  };
+
   return (
-    <div className={cn(
-      "relative pl-8 space-y-1 transition-opacity",
-      active ? "opacity-100" : "opacity-40"
-    )}>
-       <div className={cn(
-         "absolute -left-[18px] top-0 w-9 h-9 rounded-full flex items-center justify-center border-2 border-gray-900 bg-gray-900 transition-all",
-         active ? "bg-blue-500 border-blue-500 scale-110 shadow-lg shadow-blue-500/20" : ""
-       )}>
-          {active ? icon : <div className="w-1.5 h-1.5 bg-white/20 rounded-full" />}
-       </div>
-       <p className="text-[9px] font-black uppercase tracking-[0.2em] text-white/40">{label}</p>
-       <p className="text-[10px] font-black uppercase tracking-widest">{text}</p>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" id="slot-editor-modal">
+      <motion.div 
+        initial={{ opacity: 0 }} 
+        animate={{ opacity: 1 }} 
+        exit={{ opacity: 0 }} 
+        className="absolute inset-0 bg-gray-900/40 backdrop-blur-md" 
+        onClick={onClose} 
+      />
+
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        className="relative w-full max-w-2xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[92vh]"
+      >
+        {/* Header */}
+        <div className="p-8 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <span className="text-[10px] font-black uppercase text-blue-600 tracking-widest">Editor Pilihan</span>
+            <h3 className="text-xl font-extrabold text-gray-900 mt-1">Slot {slot} — Self Exploration</h3>
+          </div>
+          <button 
+            onClick={onClose} 
+            className="w-10 h-10 flex items-center justify-center rounded-full bg-white hover:bg-gray-100 text-gray-400 hover:text-gray-900 border border-gray-100 transition-all"
+            id="btn-close-modal"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Scrollable Form */}
+        <div className="p-8 space-y-8 overflow-y-auto flex-1">
+          {/* Revision note if any */}
+          {status === 'REVISION_REQUIRED' && revisionNote && (
+            <div className="p-5 bg-red-50 rounded-2xl border border-red-100 flex items-start gap-3">
+              <AlertCircle className="text-red-600 shrink-0 mt-0.5" size={18} />
+              <div className="space-y-1">
+                <p className="text-[10px] font-black uppercase tracking-widest text-red-700">Catatan Revisi Guru</p>
+                <p className="text-xs font-semibold text-red-600 italic">"{revisionNote}"</p>
+              </div>
+            </div>
+          )}
+
+          {/* Read Only notice */}
+          {isReadOnly && (
+            <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 flex items-center gap-2.5">
+              <Info className="text-blue-600" size={16} />
+              <p className="text-[10px] font-black uppercase text-blue-800 tracking-widest">
+                {status === 'APPROVED' ? 'PILIHAN DISETUJUI. DATA DIKUNCI.' : 'MENUNGGU VERIFIKASI. DATA DIKUNCI.'}
+              </p>
+            </div>
+          )}
+
+          {/* 1. Pilih Strand */}
+          <div className="space-y-3">
+            <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">Pilih Strand</label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {STRANDS_CONFIG.map(s => {
+                const isSelected = strand === s.id;
+                return (
+                  <button
+                    key={s.id}
+                    disabled={isReadOnly}
+                    onClick={() => handleStrandChange(s.id)}
+                    className={cn(
+                      "p-5 rounded-2xl border-2 text-left transition-all relative flex flex-col items-start space-y-3",
+                      isSelected ? "border-blue-600 bg-blue-50/20" : "border-gray-50 hover:border-gray-200 bg-white",
+                      isReadOnly && "opacity-60 cursor-not-allowed"
+                    )}
+                    id={`btn-strand-${s.id}`}
+                  >
+                    <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center", s.color)}>
+                      {s.icon}
+                    </div>
+                    <div>
+                      <p className="text-xs font-black text-gray-900">{s.label}</p>
+                      <p className="text-[9px] font-semibold text-gray-400 mt-0.5 leading-relaxed">{s.desc}</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Strand conflict message */}
+            {isStrandConflict && (
+              <p className="text-[10px] font-black text-red-600 uppercase tracking-widest mt-2 bg-red-50 p-2.5 rounded-xl inline-block">
+                ⚠️ Strand harus berbeda dari Slot {slot === 1 ? '2' : '1'}! (Syarat Grade 7 & 8)
+              </p>
+            )}
+          </div>
+
+          {/* 2. Pilih Aktivitas */}
+          {strand && (
+            <div className="space-y-3">
+              <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">Pilih Aktivitas</label>
+              <select
+                disabled={isReadOnly}
+                value={activityId}
+                onChange={e => {
+                  setActivityId(e.target.value);
+                  setCustomActivity('');
+                }}
+                className="w-full h-14 px-5 bg-gray-50 rounded-2xl border-none font-bold focus:ring-2 focus:ring-blue-600 disabled:opacity-60"
+                id="select-activity"
+              >
+                <option value="">-- Pilih Aktivitas --</option>
+                {filteredActivities.map(act => (
+                  <option key={act.id} value={act.id}>{act.name}</option>
+                ))}
+                <option value="CUSTOM">Lainnya (Ketik Manual)</option>
+              </select>
+
+              {activityId === 'CUSTOM' && (
+                <input
+                  type="text"
+                  placeholder="Ketik nama aktivitas kamu..."
+                  disabled={isReadOnly}
+                  value={customActivity}
+                  onChange={e => setCustomActivity(e.target.value)}
+                  className="w-full h-14 px-5 bg-gray-50 rounded-2xl border-none font-bold focus:ring-2 focus:ring-blue-600 mt-2 disabled:opacity-60"
+                  id="input-custom-activity"
+                />
+              )}
+            </div>
+          )}
+
+          {/* 3. Unggah Bukti Form Pemilihan */}
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">Unggah Foto Form Pilihan</label>
+              <span className="text-[9px] font-bold text-gray-400">{attachments.length}/3 File</span>
+            </div>
+
+            {/* File list */}
+            {attachments.length > 0 && (
+              <div className="space-y-2.5">
+                {attachments.map((file) => (
+                  <div key={file.id} className="p-4 bg-gray-50 border border-gray-100 rounded-2xl flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3 truncate">
+                      <FileText className="text-gray-400 shrink-0" size={18} />
+                      <div className="truncate text-left">
+                        <p className="text-xs font-bold text-gray-800 truncate">{file.fileName}</p>
+                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">{(file.sizeBytes / 1024).toFixed(0)} KB • {file.mimeType.split('/')[1]?.toUpperCase()}</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <a 
+                        href={file.downloadUrl} 
+                        target="_blank" 
+                        rel="noreferrer referrer" 
+                        className="p-2 hover:bg-white text-gray-500 hover:text-blue-600 rounded-lg transition-all border border-transparent hover:border-gray-200"
+                        title="Lihat Form"
+                      >
+                        <Eye size={14} />
+                      </a>
+                      {!isReadOnly && (
+                        <button 
+                          onClick={() => handleFileDelete(file.id)}
+                          className="p-2 hover:bg-white text-red-500 rounded-lg transition-all border border-transparent hover:border-gray-200"
+                          title="Hapus Form"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Upload Zone */}
+            {!isReadOnly && attachments.length < 3 && (
+              <div className="relative group">
+                <input
+                  type="file"
+                  multiple
+                  accept="image/jpeg,image/png,application/pdf"
+                  onChange={handleFileUpload}
+                  disabled={uploading}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                  id="file-input-upload"
+                />
+                <div className="p-8 border-2 border-dashed border-gray-200 hover:border-blue-500 hover:bg-blue-50/10 rounded-2xl text-center transition-all flex flex-col items-center justify-center space-y-3">
+                  {uploading ? (
+                    <Loader2 className="animate-spin text-blue-600" size={28} />
+                  ) : (
+                    <UploadCloud className="text-gray-400 group-hover:text-blue-500 transition-colors" size={28} />
+                  )}
+                  <div>
+                    <p className="text-xs font-black text-gray-700">Pilih berkas atau seret ke sini</p>
+                    <p className="text-[10px] font-semibold text-gray-400 mt-1 leading-normal">Mendukung format JPG, PNG, atau PDF (Maks. 5MB per berkas)</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer controls */}
+        <div className="p-8 bg-gray-50 border-t border-gray-100 flex items-center justify-between gap-4">
+          <div>
+            {status === 'APPROVED' && (
+              <button
+                disabled={saving}
+                onClick={handleAjukanPerubahan}
+                className="py-3.5 px-6 border-2 border-amber-500 text-amber-600 hover:bg-amber-50 font-black uppercase text-[10px] tracking-widest rounded-xl transition-all"
+                id="btn-request-change"
+              >
+                Ajukan Perubahan
+              </button>
+            )}
+          </div>
+
+          <div className="flex gap-3">
+            {!isReadOnly && (
+              <>
+                <button
+                  disabled={saving || uploading}
+                  onClick={() => handleSaveDb(false)}
+                  className="py-3.5 px-6 border border-gray-200 hover:border-gray-300 bg-white hover:bg-gray-50 text-gray-600 font-black uppercase text-[10px] tracking-widest rounded-xl transition-all"
+                  id="btn-save-draft"
+                >
+                  Simpan Draft
+                </button>
+
+                <button
+                  disabled={!isValid || saving || uploading}
+                  onClick={() => handleSaveDb(true)}
+                  className="py-3.5 px-6 bg-blue-600 hover:bg-blue-700 text-white font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-lg shadow-blue-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                  id="btn-submit-verification"
+                >
+                  {saving ? 'Mengirim...' : 'Kirim untuk Verifikasi'}
+                </button>
+              </>
+            )}
+
+            {isReadOnly && (
+              <button
+                onClick={onClose}
+                className="py-3.5 px-8 bg-gray-200 hover:bg-gray-300 text-gray-700 font-black uppercase text-[10px] tracking-widest rounded-xl transition-all"
+                id="btn-close-readonly"
+              >
+                Tutup
+              </button>
+            )}
+          </div>
+        </div>
+      </motion.div>
     </div>
   );
 }

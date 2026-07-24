@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAnalytics } from 'firebase/analytics';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { initializeFirestore, doc, getDoc, setDoc, updateDoc, getDocFromServer, collection, query, where, getDocs, limit, writeBatch, deleteDoc, orderBy, documentId } from 'firebase/firestore';
 export { doc, writeBatch };
 import { mtssSnapshotTriggerService } from '../services/mtssSnapshotTriggerService.ts';
@@ -66,6 +67,8 @@ export const db = initializeFirestore(app, {
 export const auth = getAuth(app);
 export { analytics };
 export const googleProvider = new GoogleAuthProvider();
+export const storage = getStorage(app);
+export { ref, uploadBytes, getDownloadURL, deleteObject };
 
 export interface FirestoreErrorInfo {
   error: string;
@@ -1408,15 +1411,20 @@ export async function approveSEEnrollment(enrollmentId: string, slot: 1 | 2, app
         return { 
           ...c, 
           approvalStatus: 'APPROVED' as const, 
+          status: 'APPROVED' as const,
           approvedBy, 
           approvedAt: Date.now(),
-          approvalNote: null 
+          approvalNote: null,
+          verifiedAt: Date.now(),
+          verifiedByUid: approvedBy,
+          verifiedByName: approvedBy,
+          revisionNote: undefined
         };
       }
       return c;
     });
 
-    const allApproved = choices.every(c => c.approvalStatus === 'APPROVED');
+    const allApproved = choices.every(c => c.status === 'APPROVED' || c.approvalStatus === 'APPROVED');
     await updateDoc(doc(db, 'seEnrollments', enrollmentId), { 
       choices, 
       status: allApproved ? 'APPROVED' : enrollment.status,
@@ -1437,7 +1445,9 @@ export async function requestSERevision(enrollmentId: string, slot: 1 | 2, note:
         return { 
           ...c, 
           approvalStatus: 'REVISION_NEEDED' as const, 
-          approvalNote: note 
+          status: 'REVISION_REQUIRED' as const,
+          approvalNote: note,
+          revisionNote: note
         };
       }
       return c;
