@@ -1136,6 +1136,17 @@ function chunkArray<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
+// Helper function to sanitize class name and generate tab title under 100 characters without illegal characters
+function getSanitizedTabTitle(monthNameIndo: string, yearNum: number, className: string): string {
+  let cleanClassName = className.replace(/[\*\?\/\\\[\]\:]/g, ' ');
+  cleanClassName = cleanClassName.replace(/\s+/g, ' ').trim();
+  const title = `${monthNameIndo} ${yearNum} - ${cleanClassName}`;
+  let finalTitle = title.substring(0, 100).trim();
+  if (finalTitle.startsWith("'")) finalTitle = finalTitle.substring(1);
+  if (finalTitle.endsWith("'")) finalTitle = finalTitle.substring(0, finalTitle.length - 1);
+  return finalTitle || "Dhuhur Attendance";
+}
+
 // API: Sync Dhuhur Attendance Batch to Google Sheets
 app.post("/api/attendance/dhuhur/sync-batch", async (req, res) => {
   let decodedToken: any;
@@ -1504,8 +1515,8 @@ app.post("/api/attendance/dhuhur/sync-batch", async (req, res) => {
       requestBody: { values: finalRekapRows }
     });
 
-    // 3. Month tab upsert
-    console.log(`[DhuhurSync] Upserting Month tab...`);
+    // 3. Month tab upsert (per-class tabs: "Bulan Tahun - Nama Kelas")
+    console.log(`[DhuhurSync] Upserting Month tab(s)...`);
     const dateParts = date.split('-'); // ["2026", "07", "23"]
     const yearNum = parseInt(dateParts[0], 10);
     const monthNum = parseInt(dateParts[1], 10);
@@ -1516,140 +1527,154 @@ app.post("/api/attendance/dhuhur/sync-batch", async (req, res) => {
       "Juli", "Agustus", "September", "Oktober", "November", "Desember"
     ];
     const monthNameIndo = INDONESIAN_MONTHS[monthNum - 1];
-    const tabTitle = `${monthNameIndo} ${yearNum}`;
 
-    // Add monthly sheet if not exists
-    const ssInfo = await sheets.spreadsheets.get({ spreadsheetId });
-    const sheetTitles = ssInfo.data.sheets?.map((s: any) => s.properties?.title || "") || [];
-
-    if (!sheetTitles.includes(tabTitle)) {
-      console.log(`[DhuhurSync] Adding monthly sheet: ${tabTitle}`);
-      await sheets.spreadsheets.batchUpdate({
-        spreadsheetId,
-        requestBody: {
-          requests: [{ addSheet: { properties: { title: tabTitle } } }]
-        }
-      });
-    }
-
-    const monthResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `${tabTitle}!A1:ZZ1000`,
-    });
-    const monthRows = monthResponse.data.values || [];
-    const totalDays = new Date(yearNum, monthNum, 0).getDate();
-
-    const monthHeader1 = [`REKAP KEHADIRAN SHALAT DHUHUR JUNIOR HIGH`];
-    const monthHeader2 = [`Bulan: ${tabTitle} | Tahun Ajaran: ${academicYear} | Semester: ${semester}`];
-    const monthHeader3 = [];
-    const monthHeader4 = ['No', 'Kelas', 'Student ID', 'Nama Siswa'];
-    for (let d = 1; d <= totalDays; d++) {
-      monthHeader4.push(String(d));
-    }
-    monthHeader4.push('H', 'T', 'A', 'Persentase Tepat Waktu');
-
-    // Parse existing monthly student rows
-    const studentMonthMap = new Map(); // key: classId_studentId -> row array
-    for (let i = 4; i < monthRows.length; i++) {
-      const row = monthRows[i];
-      if (row[1] && row[2]) {
-        studentMonthMap.set(`${row[1]}_${row[2]}`, row);
-      }
-    }
-
-    // Upsert current batch into map
+    // Group recordsToSync by classNameSnapshot
+    const recordsByClass: { [className: string]: any[] } = {};
     for (const record of recordsToSync) {
-      const key = `${record.classId}_${record.studentId}`;
-      let row = studentMonthMap.get(key);
-      if (!row) {
-        row = [
-          "", // No placeholder
-          record.classId,
-          record.studentId,
-          record.studentNameSnapshot
-        ];
-        // fill days
-        for (let d = 1; d <= totalDays; d++) {
+      const clsName = record.classNameSnapshot || classId || "Class";
+      if (!recordsByClass[clsName]) {
+        recordsByClass[clsName] = [];
+      }
+      recordsByClass[clsName].push(record);
+    }
+
+    // Process each class group into its own sanitized monthly tab
+    for (const [className, classRecords] of Object.entries(recordsByClass)) {
+      const tabTitle = getSanitizedTabTitle(monthNameIndo, yearNum, className);
+
+      // Add monthly sheet if not exists
+      const ssInfo = await sheets.spreadsheets.get({ spreadsheetId });
+      const sheetTitles = ssInfo.data.sheets?.map((s: any) => s.properties?.title || "") || [];
+
+      if (!sheetTitles.includes(tabTitle)) {
+        console.log(`[DhuhurSync] Adding monthly sheet: ${tabTitle}`);
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [{ addSheet: { properties: { title: tabTitle } } }]
+          }
+        });
+      }
+
+      const monthResponse = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${tabTitle}!A1:ZZ1000`,
+      });
+      const monthRows = monthResponse.data.values || [];
+      const totalDays = new Date(yearNum, monthNum, 0).getDate();
+
+      const monthHeader1 = [`REKAP KEHADIRAN SHALAT DHUHUR JUNIOR HIGH - ${className}`];
+      const monthHeader2 = [`Bulan: ${monthNameIndo} ${yearNum} | Kelas: ${className} | Tahun Ajaran: ${academicYear} | Semester: ${semester}`];
+      const monthHeader3: string[] = [];
+      const monthHeader4 = ['No', 'Student ID', 'Nama Siswa'];
+      for (let d = 1; d <= totalDays; d++) {
+        monthHeader4.push(String(d));
+      }
+      monthHeader4.push('H', 'T', 'A', 'Persentase Tepat Waktu');
+
+      // Parse existing monthly student rows
+      const studentMonthMap = new Map(); // key: studentId -> row array
+      for (let i = 4; i < monthRows.length; i++) {
+        const row = monthRows[i];
+        if (row[1]) { // row[1] is studentId now
+          studentMonthMap.set(row[1], row);
+        }
+      }
+
+      // Upsert current batch into map
+      for (const record of classRecords) {
+        const key = record.studentId;
+        let row = studentMonthMap.get(key);
+        if (!row) {
+          row = [
+            "", // No placeholder
+            record.studentId,
+            record.studentNameSnapshot || ""
+          ];
+          // fill days with empty string
+          for (let d = 1; d <= totalDays; d++) {
+            row.push("");
+          }
+        }
+        // Ensure row has enough columns for all days to prevent indexing bugs
+        while (row.length < 3 + totalDays) {
           row.push("");
         }
+        // Update day d cell. Day d is at index 2 + d
+        row[2 + dayNum] = record.status || "";
+        studentMonthMap.set(key, row);
       }
-      // Update day d cell. Day d is at index 4 + d - 1 = 3 + d
-      row[3 + dayNum] = record.status;
-      studentMonthMap.set(key, row);
-    }
 
-    // Sort studentMonthMap by Class (col 1) then Student Name (col 3)
-    const sortedMonthRows = Array.from(studentMonthMap.values()).sort((a, b) => {
-      const classComp = (a[1] || '').localeCompare(b[1] || '');
-      if (classComp !== 0) return classComp;
-      return (a[3] || '').localeCompare(b[3] || '');
-    });
+      // Sort studentMonthMap by Student Name (col 2 of row array)
+      const sortedMonthRows = Array.from(studentMonthMap.values()).sort((a, b) => {
+        return (a[2] || '').localeCompare(b[2] || '');
+      });
 
-    // Re-generate formulas and index
-    const finalMonthRows = [monthHeader1, monthHeader2, monthHeader3, monthHeader4];
-    
-    const firstDateColLetter = 'E'; // Col index 4 is E
-    const lastDateColLetter = getColumnLetter(3 + totalDays);
-    const colH_Letter = getColumnLetter(4 + totalDays);
-    const colT_Letter = getColumnLetter(4 + totalDays + 1);
-    const colA_Letter = getColumnLetter(4 + totalDays + 2);
+      // Re-generate formulas and index
+      const finalMonthRows = [monthHeader1, monthHeader2, monthHeader3, monthHeader4];
+      
+      const firstDateColLetter = 'D'; // Col index 3 is D
+      const lastDateColLetter = getColumnLetter(2 + totalDays);
+      const colH_Letter = getColumnLetter(3 + totalDays);
+      const colT_Letter = getColumnLetter(3 + totalDays + 1);
+      const colA_Letter = getColumnLetter(3 + totalDays + 2);
 
-    sortedMonthRows.forEach((row, idx) => {
-      const rowNum = idx + 5;
-      const finalRow = [
-        String(idx + 1), // No
-        row[1], // Kelas
-        row[2], // Student ID
-        row[3]  // Nama Siswa
-      ];
-      // Push days
-      for (let d = 1; d <= totalDays; d++) {
-        finalRow.push(row[3 + d] || "");
-      }
-      // Push formula cells
-      finalRow.push(
-        `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "H")`,
-        `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "T")`,
-        `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "A")`,
-        `=IF((${colH_Letter}${rowNum}+${colT_Letter}${rowNum}+${colA_Letter}${rowNum})>0, ${colH_Letter}${rowNum}/(${colH_Letter}${rowNum}+${colT_Letter}${rowNum}+${colA_Letter}${rowNum}), "")`
-      );
-      finalMonthRows.push(finalRow);
-    });
-
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: `${tabTitle}!A1`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: finalMonthRows }
-    });
-
-    // Apply conditional formatting styling on Month sheet if empty initially
-    if (monthRows.length < 4) {
-      const ssUpdatedMeta = await sheets.spreadsheets.get({ spreadsheetId });
-      const sheetId = ssUpdatedMeta.data.sheets?.find((s: any) => s.properties?.title === tabTitle)?.properties?.sheetId || 0;
-
-      const mergeRequests = [
-        { mergeCells: { range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: totalDays + 8 }, mergeType: 'MERGE_ALL' } },
-        { mergeCells: { range: { sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: totalDays + 8 }, mergeType: 'MERGE_ALL' } }
-      ];
-
-      const percentFormatRequest = {
-        repeatCell: {
-          range: { sheetId, startRowIndex: 4, endRowIndex: Math.max(100, 5 + sortedMonthRows.length), startColumnIndex: 4 + totalDays + 3, endColumnIndex: 4 + totalDays + 4 },
-          cell: { userEnteredFormat: { numberFormat: { type: 'PERCENT', pattern: '0.0%' } } },
-          fields: 'userEnteredFormat.numberFormat'
+      sortedMonthRows.forEach((row, idx) => {
+        const rowNum = idx + 5;
+        const finalRow = [
+          String(idx + 1), // No
+          row[1], // Student ID
+          row[2]  // Nama Siswa
+        ];
+        // Push days
+        for (let d = 1; d <= totalDays; d++) {
+          finalRow.push(row[2 + d] || "");
         }
-      };
+        // Push formula cells
+        finalRow.push(
+          `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "H")`,
+          `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "T")`,
+          `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "A")`,
+          `=IF((${colH_Letter}${rowNum}+${colT_Letter}${rowNum}+${colA_Letter}${rowNum})>0, ${colH_Letter}${rowNum}/(${colH_Letter}${rowNum}+${colT_Letter}${rowNum}+${colA_Letter}${rowNum}), "")`
+        );
+        finalMonthRows.push(finalRow);
+      });
 
-      await sheets.spreadsheets.batchUpdate({
+      await sheets.spreadsheets.values.update({
         spreadsheetId,
-        requestBody: {
-          requests: [
-            ...mergeRequests,
-            percentFormatRequest
-          ]
-        }
-      }).catch(err => console.error("batchUpdate month error", err));
+        range: `${tabTitle}!A1`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: finalMonthRows }
+      });
+
+      // Apply conditional formatting styling on Month sheet if empty initially
+      if (monthRows.length < 4) {
+        const ssUpdatedMeta = await sheets.spreadsheets.get({ spreadsheetId });
+        const sheetId = ssUpdatedMeta.data.sheets?.find((s: any) => s.properties?.title === tabTitle)?.properties?.sheetId || 0;
+
+        const mergeRequests = [
+          { mergeCells: { range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: totalDays + 7 }, mergeType: 'MERGE_ALL' } },
+          { mergeCells: { range: { sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: totalDays + 7 }, mergeType: 'MERGE_ALL' } }
+        ];
+
+        const percentFormatRequest = {
+          repeatCell: {
+            range: { sheetId, startRowIndex: 4, endRowIndex: Math.max(100, 5 + sortedMonthRows.length), startColumnIndex: 3 + totalDays + 3, endColumnIndex: 3 + totalDays + 4 },
+            cell: { userEnteredFormat: { numberFormat: { type: 'PERCENT', pattern: '0.0%' } } },
+            fields: 'userEnteredFormat.numberFormat'
+          }
+        };
+
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [
+              ...mergeRequests,
+              percentFormatRequest
+            ]
+          }
+        }).catch(err => console.error("batchUpdate month error", err));
+      }
     }
 
     // 7. Update Sync Status for All Successful Records in Firestore
