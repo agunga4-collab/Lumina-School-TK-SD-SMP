@@ -1127,6 +1127,15 @@ app.post("/api/attendance/sync", async (req, res) => {
   }
 });
 
+// Helper function to chunk array for Firestore in query limits
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
 // API: Sync Dhuhur Attendance Batch to Google Sheets
 app.post("/api/attendance/dhuhur/sync-batch", async (req, res) => {
   let decodedToken: any;
@@ -1172,8 +1181,15 @@ app.post("/api/attendance/dhuhur/sync-batch", async (req, res) => {
 
     // 3. Validate Request Parameters
     const { academicYearId, semester, classId, date, recordIds } = req.body;
-    if (!academicYearId || !semester || !classId || !date || !Array.isArray(recordIds) || recordIds.length === 0) {
-      return res.status(400).json({ error: "Missing required fields or recordIds in request body" });
+    if (!academicYearId || !semester || !classId || !date) {
+      return res.status(400).json({ error: "Missing required fields (academicYearId, semester, classId, date) in request body" });
+    }
+    if (!Array.isArray(recordIds) || recordIds.length === 0) {
+      return res.status(400).json({ error: "recordIds must be a non-empty array" });
+    }
+    const uniqueRecordIds = Array.from(new Set(recordIds));
+    if (uniqueRecordIds.length !== recordIds.length) {
+      return res.status(400).json({ error: "recordIds must contain unique identifiers (no duplicates allowed)" });
     }
 
     // 4. Fetch the target records from Firestore
@@ -1195,10 +1211,13 @@ app.post("/api/attendance/dhuhur/sync-batch", async (req, res) => {
       return res.status(404).json({ error: "No matching Dhuhur records found to sync" });
     }
 
-    // Ensure all records have JUNIOR_HIGH unit and DHUHUR_ATTENDANCE backupType
+    // Ensure all records have JUNIOR_HIGH unit, DHUHUR_ATTENDANCE backupType, and are PENDING or FAILED
     for (const rec of recordsToSync) {
       if (rec.unit !== 'JUNIOR_HIGH' || rec.backupType !== 'DHUHUR_ATTENDANCE') {
-        return res.status(400).json({ error: `Record ${rec.id} is invalid for Dhuhur backup` });
+        return res.status(400).json({ error: `Record ${rec.id} is invalid for Dhuhur backup (must be JUNIOR_HIGH and DHUHUR_ATTENDANCE)` });
+      }
+      if (rec.syncStatus !== 'PENDING' && rec.syncStatus !== 'FAILED') {
+        return res.status(400).json({ error: `Record ${rec.id} has invalid status: ${rec.syncStatus}. Only PENDING or FAILED records can be backed up.` });
       }
     }
 
@@ -1411,16 +1430,20 @@ app.post("/api/attendance/dhuhur/sync-batch", async (req, res) => {
 
     // 2. Rekap tab upsert
     console.log(`[DhuhurSync] Upserting Rekap tab...`);
-    const studentIds = recordsToSync.map(r => r.studentId);
+    const studentIds = Array.from(new Set(recordsToSync.map(r => r.studentId)));
     
     // Fetch all dhuhur records for these students to count accurately without full scan
-    const studentRecordsSnap = await db.collection("dhuhur_attendance_records")
-      .where("academicYearId", "==", academicYearId)
-      .where("semester", "in", semesterQueryList)
-      .where("studentId", "in", studentIds)
-      .get();
-
-    const studentRecords = studentRecordsSnap.docs.map(doc => doc.data());
+    // We chunk studentIds to avoid hitting the 30-disjunction limit in Firestore
+    const studentRecords: any[] = [];
+    const studentChunks = chunkArray(studentIds, 10);
+    for (const chunk of studentChunks) {
+      const studentRecordsSnap = await db.collection("dhuhur_attendance_records")
+        .where("academicYearId", "==", academicYearId)
+        .where("semester", "in", semesterQueryList)
+        .where("studentId", "in", chunk)
+        .get();
+      studentRecords.push(...studentRecordsSnap.docs.map(doc => doc.data()));
+    }
 
     const rekapResponse = await sheets.spreadsheets.values.get({
       spreadsheetId,
