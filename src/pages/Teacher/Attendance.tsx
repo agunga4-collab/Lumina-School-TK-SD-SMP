@@ -861,7 +861,7 @@ export default function Attendance() {
                   className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50"
                  >
                     {saving ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
-                    {saving ? 'Menyimpan...' : 'Simpan (Firestore)'}
+                    {saving ? 'Menyimpan...' : 'Simpan (Lumina)'}
                  </button>
                  <button 
                   onClick={handleBackupGoogleSheets}
