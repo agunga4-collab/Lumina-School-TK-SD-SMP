@@ -9,6 +9,7 @@ import { ConferenceResponsesTable } from '../../../components/JuniorHigh/ThreeWa
 import { MentorAssignmentDialog } from '../../../components/JuniorHigh/ThreeWayConference/MentorAssignmentDialog';
 import { ConferenceResponseDetailDialog } from '../../../components/JuniorHigh/ThreeWayConference/ConferenceResponseDetailDialog';
 import type { Student, StudentConferenceResponse, MentorAssignment, ConferencePeriod, User } from '../../../types';
+import { toast } from 'sonner';
 
 interface ConferenceWorkspaceRow {
   student: Student;
@@ -75,11 +76,28 @@ export default function TeacherConferenceWorkspace() {
     setIsLoadingData(true);
     setError(null);
     try {
-      const [rows, mentorsList] = await Promise.all([
+      let rowsList: ConferenceWorkspaceRow[] = [];
+      let mentorsList: User[] = [];
+
+      const results = await Promise.allSettled([
         threeWayConferenceService.getConferenceWorkspaceStudents(activePeriod.id),
         threeWayConferenceService.getEligibleJuniorHighMentors()
       ]);
-      setStudents(rows);
+
+      if (results[0].status === 'fulfilled') {
+        rowsList = results[0].value;
+      } else {
+        throw results[0].reason;
+      }
+
+      if (results[1].status === 'fulfilled') {
+        mentorsList = results[1].value;
+      } else {
+        console.error('Failed to load eligible mentors:', results[1].reason);
+        toast.error('Failed to load eligible mentors list. Dropdown will be empty.');
+      }
+
+      setStudents(rowsList);
       setEligibleMentors(mentorsList);
     } catch (err: any) {
       setError(err.message || 'Failed to load conference workspace students.');

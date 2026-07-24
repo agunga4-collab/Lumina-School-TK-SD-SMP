@@ -60,11 +60,40 @@ export default function StaffSmartGoalTrackerPage() {
 
         if (period) {
           // Load reference data
-          const [entries, students, mentors] = await Promise.all([
-            threeWayConferenceService.getTrackerEntriesForPeriod(period.id),
-            threeWayConferenceService.getConferenceWorkspaceStudents(period.id),
-            threeWayConferenceService.getEligibleJuniorHighMentors()
-          ]);
+          let entries: SmartGoalTrackerEntry[] = [];
+          let students: any[] = [];
+          let mentors: User[] = [];
+
+          try {
+            const results = await Promise.allSettled([
+              threeWayConferenceService.getTrackerEntriesForPeriod(period.id),
+              threeWayConferenceService.getConferenceWorkspaceStudents(period.id),
+              threeWayConferenceService.getEligibleJuniorHighMentors()
+            ]);
+
+            if (results[0].status === 'fulfilled') {
+              entries = results[0].value;
+            } else {
+              throw results[0].reason;
+            }
+
+            if (results[1].status === 'fulfilled') {
+              students = results[1].value;
+            } else {
+              throw results[1].reason;
+            }
+
+            if (results[2].status === 'fulfilled') {
+              mentors = results[2].value;
+            } else {
+              console.error('Failed to load eligible mentors:', results[2].reason);
+              toast.error('Failed to load eligible mentors list. Dropdown will be empty.');
+            }
+          } catch (promiseErr: any) {
+            console.error('Failed to load critical workspace data:', promiseErr);
+            throw promiseErr;
+          }
+
           setTrackerEntries(entries);
           setWorkspaceStudents(students);
           setEligibleMentors(mentors);

@@ -739,7 +739,15 @@ export const threeWayConferenceService = {
     try {
       const q = query(
         collection(db, 'users'),
-        where('status', '==', 'active')
+        where('status', '==', 'active'),
+        where('role', 'in', [
+          'TEACHER',
+          'HOMEROOM_TEACHER',
+          'BK_MENTOR',
+          'HEAD_JUNIOR',
+          'HEAD_UNIT',
+          'SUPER_ADMIN'
+        ])
       );
       const snap = await getDocs(q);
       const eligibleRoles = ['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR'];
