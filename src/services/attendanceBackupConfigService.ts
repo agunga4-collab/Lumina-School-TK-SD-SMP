@@ -160,10 +160,16 @@ export const attendanceSyncService = {
         };
       }
 
-      const response = await fetch('/api/attendance/sync', {
+      const response = await fetch('/api/attendance/sync-batch', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ recordId: record.id })
+        body: JSON.stringify({
+          classId: record.classId,
+          date: record.date,
+          academicYearId: record.academicYear.replace(/\//g, '-'),
+          semester: record.semester,
+          recordIds: [record.id]
+        })
       });
 
       if (!response.ok) {
@@ -176,7 +182,15 @@ export const attendanceSyncService = {
         };
       }
 
-      return await response.json();
+      const resData = await response.json();
+      const itemResult = resData.results?.find((r: any) => r.id === record.id);
+      return {
+        recordId: record.id,
+        success: itemResult ? itemResult.success : resData.success !== false,
+        timestamp: Date.now(),
+        error: itemResult?.error || resData.error || null,
+        spreadsheetId: resData.spreadsheetId
+      };
     } catch (error) {
       console.error('Sync trigger error:', error);
       return {

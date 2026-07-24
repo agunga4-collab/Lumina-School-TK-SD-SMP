@@ -1127,6 +1127,872 @@ app.post("/api/attendance/sync", async (req, res) => {
   }
 });
 
+interface SyncBatchRequestBody {
+  classId: string;
+  date: string;
+  academicYearId: string;
+  semester: string;
+  recordIds: string[];
+}
+
+app.post("/api/attendance/sync-batch", async (req, res) => {
+  let decodedToken: { uid: string; email?: string; name?: string } | undefined;
+  let userData: { role?: string; displayName?: string; unitId?: string; assignedUnits?: string[] } = {};
+  let userRole: string | null = null;
+  const db = getAdminDb();
+  if (!db) {
+    return res.status(500).json({ error: "Firestore is not online." });
+  }
+
+  try {
+    // 1. Verify Firebase ID Token from Authorization header
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token) as { uid: string; email?: string; name?: string };
+    } catch (authErr: unknown) {
+      const errMsg = authErr instanceof Error ? authErr.message : String(authErr);
+      return res.status(401).json({ error: `Authentication failed: ${errMsg}` });
+    }
+
+    // 2. Fetch User Profile and Validate Roles/Unit
+    const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+    if (!userDoc.exists) {
+      return res.status(403).json({ error: "Access denied. User profile not found." });
+    }
+    userData = (userDoc.data() || {}) as typeof userData;
+    userRole = userData.role || null;
+
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
+    const isJuniorHigh = userData.unitId === 'JUNIOR_HIGH' || (Array.isArray(userData.assignedUnits) && userData.assignedUnits.includes('JUNIOR_HIGH'));
+    
+    const hasValidRole = isSuperAdmin || ['HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER'].includes(userRole || "");
+    const isAuthorized = isSuperAdmin || (hasValidRole && isJuniorHigh);
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: "Access denied. Active Junior High role/unit required." });
+    }
+
+    // 3. Validate Request Parameters
+    const { classId, date, academicYearId, semester, recordIds } = req.body as SyncBatchRequestBody;
+    if (!academicYearId || !semester || !classId || !date) {
+      return res.status(400).json({ error: "Missing required fields (academicYearId, semester, classId, date) in request body" });
+    }
+    if (!Array.isArray(recordIds) || recordIds.length === 0) {
+      return res.status(400).json({ error: "recordIds must be a non-empty array" });
+    }
+    const uniqueRecordIds = Array.from(new Set(recordIds));
+    if (uniqueRecordIds.length !== recordIds.length) {
+      return res.status(400).json({ error: "recordIds must contain unique identifiers (no duplicates allowed)" });
+    }
+
+    // 4. Validate classId unit is JUNIOR_HIGH
+    const classSnap = await db.collection("classes").doc(classId).get();
+    if (!classSnap.exists) {
+      return res.status(404).json({ error: "Class not found in Firestore" });
+    }
+    const classData = classSnap.data() as { name?: string; unitId?: string } | undefined;
+    if (classData?.unitId !== 'JUNIOR_HIGH') {
+      return res.status(403).json({ error: "Access denied. Class does not belong to Junior High." });
+    }
+
+    // 5. Fetch the target records from Firestore
+    const chunks = chunkArray(uniqueRecordIds, 30);
+    const recordsToSync: any[] = [];
+    for (const chunk of chunks) {
+      const snap = await db.collection("attendance_records")
+        .where("id", "in", chunk)
+        .get();
+      snap.docs.forEach(doc => recordsToSync.push(doc.data()));
+    }
+
+    if (recordsToSync.length === 0) {
+      return res.status(404).json({ error: "No matching records found to sync" });
+    }
+
+    // Ensure all records belong to the class and date
+    for (const rec of recordsToSync) {
+      if (rec.classId !== classId || rec.date !== date) {
+        return res.status(400).json({ error: `Record ${rec.id} is invalid for class ${classId} and date ${date}` });
+      }
+    }
+
+    const firstRecord = recordsToSync[0];
+
+    // 6. Load backup config
+    const configSnap = await db.collection("system_backup_configs").doc("junior_high_attendance").get();
+    if (!configSnap.exists) {
+      throw new Error("Backup config not found");
+    }
+    const config = configSnap.data() as { isEnabled?: boolean; rootFolderId: string; sharedDriveId?: string } | undefined;
+    if (!config?.isEnabled) {
+      return res.json({ success: true, message: "Backup disabled" });
+    }
+
+    // 7. Resolve target Spreadsheet (Map)
+    const academicYear = firstRecord.academicYear;
+    const mapId = `${classId}_${academicYearId}_S${semester}`;
+    const mapSnap = await db.collection("attendance_backup_file_maps").doc(mapId).get();
+    
+    let spreadsheetId = "";
+    let spreadsheetUrl = "";
+    let semesterFolderId = "";
+
+    if (mapSnap.exists) {
+      const mapData = mapSnap.data();
+      spreadsheetId = mapData?.spreadsheetId || "";
+      spreadsheetUrl = mapData?.spreadsheetUrl || "";
+      semesterFolderId = mapData?.folderId || "";
+    }
+
+    // Double check with Drive
+    let driveExists = false;
+    if (spreadsheetId) {
+      try {
+        await drive.files.get({ fileId: spreadsheetId, supportsAllDrives: true });
+        driveExists = true;
+      } catch (err) {
+        console.warn(`[BackupSync] Spreadsheet ID ${spreadsheetId} mapped but not found in Drive. Will recreate.`);
+      }
+    }
+
+    if (!driveExists) {
+      // Create Folder Structure and Spreadsheet
+      console.log(`[BackupSync] Creating structure for ${mapId}`);
+      const yearFolderId = await findOrCreateFolder(academicYear, config.rootFolderId, config.sharedDriveId);
+      semesterFolderId = await findOrCreateFolder(`Semester ${semester}`, yearFolderId, config.sharedDriveId);
+      
+      const ssTitle = `Attendance Recap - ${classId} - ${academicYear} (S${semester})`;
+      
+      // Perform an idempotent search in Drive to prevent duplicate creation
+      const q = `name = '${ssTitle.replace(/'/g, "\\'")}' and '${semesterFolderId}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`;
+      const existingSS = await drive.files.list({
+        q,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+        driveId: config.sharedDriveId,
+        corpora: config.sharedDriveId ? 'drive' : undefined,
+        fields: 'files(id, name, webViewLink)',
+      });
+
+      if (existingSS.data.files && existingSS.data.files.length > 0) {
+        spreadsheetId = existingSS.data.files[0].id!;
+        spreadsheetUrl = existingSS.data.files[0].webViewLink!;
+        console.log(`[BackupSync] Found existing spreadsheet in Shared Drive: ${spreadsheetId}`);
+      } else {
+        // Create file using Google Drive API directly
+        console.log(`[BackupSync] Creating spreadsheet in Shared Drive via Drive API...`);
+        try {
+          const fileResponse = await drive.files.create({
+            requestBody: {
+              name: ssTitle,
+              mimeType: 'application/vnd.google-apps.spreadsheet',
+              parents: [semesterFolderId]
+            },
+            supportsAllDrives: true,
+            fields: 'id, name, webViewLink'
+          });
+          spreadsheetId = fileResponse.data.id!;
+          spreadsheetUrl = fileResponse.data.webViewLink!;
+          console.log(`[BackupSync] Created spreadsheet in Shared Drive: ${spreadsheetId}`);
+
+          // Initialize sheets: Metadata, Rekap, Log
+          const ssMeta = await sheets.spreadsheets.get({ spreadsheetId });
+          const defaultSheetId = ssMeta.data.sheets?.[0]?.properties?.sheetId;
+
+          const initRequests: any[] = [
+            { addSheet: { properties: { title: 'Metadata' } } },
+            { addSheet: { properties: { title: 'Rekap' } } },
+            { addSheet: { properties: { title: 'Log' } } }
+          ];
+
+          if (defaultSheetId !== undefined) {
+            initRequests.push({ deleteSheet: { sheetId: defaultSheetId } });
+          }
+
+          await sheets.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: { requests: initRequests }
+          });
+
+          // Initialize Headers (Metadata)
+          await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: 'Metadata!A1',
+            valueInputOption: 'RAW',
+            requestBody: { values: [['Property', 'Value'], ['Class', classId], ['Year', academicYear], ['Semester', semester]] }
+          });
+          
+          await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: 'Log!A1',
+            valueInputOption: 'RAW',
+            requestBody: { values: [['Timestamp', 'Student ID', 'Student Name', 'Date', 'Status', 'Note', 'Updated By']] }
+          });
+        } catch (createErr: any) {
+          console.error("[BackupSync] Error creating spreadsheet via Drive API:", createErr);
+          throw new Error(`Gagal membuat file spreadsheet pada Shared Drive: ${createErr.message || createErr}`);
+        }
+      }
+
+      // Save to map
+      await db.collection("attendance_backup_file_maps").doc(mapId).set({
+        id: mapId,
+        classId: classId,
+        academicYear: academicYear,
+        semester: semester,
+        spreadsheetId,
+        spreadsheetUrl,
+        folderId: semesterFolderId,
+        lastSyncedAt: Date.now()
+      });
+    }
+
+    // 8. Fetch student mapping and rekap rows to support robust student ID/Name mapping and overwrite logic
+    const studentIdToName = new Map<string, string>();
+    const studentNameToId = new Map<string, string>();
+
+    const studentsSnap1 = await db.collection("students").where("classId", "==", classId).get();
+    const studentsSnap2 = classData?.name ? await db.collection("students").where("classId", "==", classData.name).get() : null;
+    const uniqueStudentsMap = new Map();
+
+    studentsSnap1.docs.forEach((doc: any) => {
+      const data = doc.data();
+      const id = data.luminaId || data.nis || doc.id;
+      const name = data.name || data.displayName || data.fullName || "Siswa Tanpa Nama";
+      uniqueStudentsMap.set(id, { id, name });
+      studentIdToName.set(id, name);
+      studentNameToId.set(name, id);
+    });
+
+    if (studentsSnap2) {
+      studentsSnap2.docs.forEach((doc: any) => {
+        const data = doc.data();
+        const id = data.luminaId || data.nis || doc.id;
+        const name = data.name || data.displayName || data.fullName || "Siswa Tanpa Nama";
+        uniqueStudentsMap.set(id, { id, name });
+        studentIdToName.set(id, name);
+        studentNameToId.set(name, id);
+      });
+    }
+
+    // Load current Rekap data
+    const rekapResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'Rekap!A1:ZZ500',
+    });
+    const rekapRows = rekapResponse.data.values || [];
+    for (let i = 1; i < rekapRows.length; i++) {
+      const id = rekapRows[i][0];
+      const name = rekapRows[i][1];
+      if (id && name) {
+        studentIdToName.set(id, name);
+        studentNameToId.set(name, id);
+      }
+    }
+
+    // Validate and catch partial record failure
+    const finalRecordsToSync: any[] = [];
+    const results: any[] = [];
+    let successCount = 0;
+    let failureCount = 0;
+
+    const dbBatch = db.batch();
+    const getAdminTimestamp = (await import("firebase-admin/firestore")).FieldValue.serverTimestamp;
+
+    for (const record of recordsToSync) {
+      try {
+        if (!record.studentId || !record.studentName) {
+          throw new Error("Data siswa tidak lengkap");
+        }
+        finalRecordsToSync.push(record);
+      } catch (recErr: any) {
+        results.push({ id: record.id, success: false, error: recErr.message });
+        failureCount++;
+        const ref = db.collection("attendance_records").doc(record.id);
+        dbBatch.update(ref, {
+          syncStatus: 'FAILED',
+          syncError: recErr.message,
+          updatedAt: getAdminTimestamp()
+        });
+      }
+    }
+
+    if (finalRecordsToSync.length > 0) {
+      // 9. Update the Log (Append/Update)
+      console.log(`[BackupSync] Updating Log tab...`);
+      const logResponse = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: 'Log!A1:G10000',
+      });
+      const logRows = logResponse.data.values || [];
+      const logHeader = logRows[0] || ['Timestamp', 'Student ID', 'Student Name', 'Date', 'Status', 'Note', 'Updated By'];
+
+      const logMap = new Map<string, any[]>();
+      for (let i = 1; i < logRows.length; i++) {
+        const row = logRows[i];
+        if (row[1] && row[3]) {
+          const key = `${row[1]}_${row[3]}`;
+          logMap.set(key, row);
+        }
+      }
+
+      for (const record of finalRecordsToSync) {
+        const key = `${record.studentId}_${record.date}`;
+        logMap.set(key, [
+          new Date().toISOString(),
+          record.studentId,
+          record.studentName,
+          record.date,
+          record.status,
+          record.note || "",
+          record.recordedBy
+        ]);
+      }
+
+      const finalLogRows = [logHeader, ...Array.from(logMap.values())];
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: 'Log!A1',
+        valueInputOption: 'RAW',
+        requestBody: { values: finalLogRows }
+      });
+
+      // 10. Update Recap (In memory and batch update)
+      console.log(`[BackupSync] Updating Rekap tab...`);
+      const rekapHeader = rekapRows[0] || ['Student ID', 'Student Name'];
+      
+      let colIndex = rekapHeader.indexOf(date);
+      if (colIndex === -1) {
+        colIndex = rekapHeader.length;
+        rekapHeader.push(date);
+        await sheets.spreadsheets.values.update({
+          spreadsheetId,
+          range: 'Rekap!A1',
+          valueInputOption: 'RAW',
+          requestBody: { values: [rekapHeader] }
+        });
+      }
+
+      const rekapStudentMap = new Map<string, any[]>();
+      for (let i = 1; i < rekapRows.length; i++) {
+        const row = rekapRows[i];
+        if (row[0]) {
+          rekapStudentMap.set(row[0], row);
+        }
+      }
+
+      for (const record of finalRecordsToSync) {
+        const studentId = record.studentId;
+        let row = rekapStudentMap.get(studentId);
+        if (!row) {
+          row = [studentId, record.studentName];
+        }
+        while (row.length < colIndex + 1) {
+          row.push('');
+        }
+        row[colIndex] = record.status;
+        rekapStudentMap.set(studentId, row);
+      }
+
+      const sortedRekapRows = Array.from(rekapStudentMap.values()).sort((a, b) => {
+        return (a[1] || '').localeCompare(b[1] || '');
+      });
+
+      const finalRekapRows = [rekapHeader, ...sortedRekapRows];
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: 'Rekap!A1',
+        valueInputOption: 'RAW',
+        requestBody: { values: finalRekapRows }
+      });
+
+      // 11. Monthly Recap Tab Sync
+      console.log(`[BackupSync] Updating Monthly Recap tab...`);
+      const INDONESIAN_MONTHS = [
+        "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+        "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+      ];
+      const dateParts = date.split('-'); // ["2026", "07", "22"]
+      const yearNum = parseInt(dateParts[0], 10);
+      const monthNum = parseInt(dateParts[1], 10);
+      const dayNum = parseInt(dateParts[2], 10);
+      const monthNameIndo = INDONESIAN_MONTHS[monthNum - 1];
+      const tabTitle = `${monthNameIndo} ${yearNum}`;
+      const totalDays = new Date(yearNum, monthNum, 0).getDate();
+
+      const ssUpdatedInfo = await sheets.spreadsheets.get({ spreadsheetId });
+      const sheetTitles = ssUpdatedInfo.data.sheets?.map((s: any) => s.properties?.title || "") || [];
+
+      if (!sheetTitles.includes(tabTitle)) {
+        console.log(`[BackupSync] Creating monthly sheet: ${tabTitle}`);
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [{ addSheet: { properties: { title: tabTitle } } }]
+          }
+        });
+
+        const sortedStudents = Array.from(uniqueStudentsMap.values())
+          .sort((a: any, b: any) => a.name.localeCompare(b.name));
+
+        const monthPrefix = `${yearNum}-${String(monthNum).padStart(2, '0')}`;
+        const monthlyRecordsSnap = await db.collection("attendance_records")
+          .where("classId", "in", [classId, classData?.name || ""])
+          .where("date", ">=", `${monthPrefix}-01`)
+          .where("date", "<=", `${monthPrefix}-31`)
+          .get();
+
+        const recordMap = new Map();
+        monthlyRecordsSnap.docs.forEach((doc: any) => {
+          const data = doc.data();
+          if (!recordMap.has(data.studentId)) {
+            recordMap.set(data.studentId, new Map());
+          }
+          recordMap.get(data.studentId).set(data.date, data.status);
+        });
+
+        for (const record of finalRecordsToSync) {
+          if (!recordMap.has(record.studentId)) {
+            recordMap.set(record.studentId, new Map());
+          }
+          recordMap.get(record.studentId).set(record.date, record.status);
+        }
+
+        const header1 = [`REKAP KEHADIRAN JUNIOR HIGH — ${classData?.name || classId}`];
+        const header2 = [`Bulan: ${tabTitle} | Tahun Ajaran: ${firstRecord.academicYear} | Semester: ${semester}`];
+        const header3: string[] = [];
+        const header4 = ['No', 'Nama Siswa'];
+        for (let d = 1; d <= totalDays; d++) {
+          header4.push(String(d));
+        }
+        header4.push('H', 'S', 'I', 'A', 'Persentase Kehadiran');
+
+        const rows = [header1, header2, header3, header4];
+
+        sortedStudents.forEach((student: any, sIdx: number) => {
+          const rowNum = 5 + sIdx;
+          const studentRow = [
+            String(sIdx + 1),
+            student.name
+          ];
+
+          for (let d = 1; d <= totalDays; d++) {
+            const dayStr = String(d).padStart(2, '0');
+            const fullDate = `${yearNum}-${String(monthNum).padStart(2, '0')}-${dayStr}`;
+            const status = recordMap.get(student.id)?.get(fullDate) || '';
+            let code = '';
+            if (status === 'HADIR' || status === 'LATE') code = 'H';
+            else if (status === 'SAKIT') code = 'S';
+            else if (status === 'IZIN') code = 'I';
+            else if (status === 'ALPA') code = 'A';
+            studentRow.push(code);
+          }
+
+          const firstDateColLetter = 'C';
+          const lastDateColLetter = getColumnLetter(2 + totalDays - 1);
+          const colH_Letter = getColumnLetter(2 + totalDays);
+          const colS_Letter = getColumnLetter(2 + totalDays + 1);
+          const colI_Letter = getColumnLetter(2 + totalDays + 2);
+          const colA_Letter = getColumnLetter(2 + totalDays + 3);
+
+          studentRow.push(
+            `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "H")`,
+            `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "S")`,
+            `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "I")`,
+            `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "A")`,
+            `=IF((${colH_Letter}${rowNum}+${colS_Letter}${rowNum}+${colI_Letter}${rowNum}+${colA_Letter}${rowNum})>0, ${colH_Letter}${rowNum}/(${colH_Letter}${rowNum}+${colS_Letter}${rowNum}+${colI_Letter}${rowNum}+${colA_Letter}${rowNum}), "")`
+          );
+
+          rows.push(studentRow);
+        });
+
+        await sheets.spreadsheets.values.update({
+          spreadsheetId,
+          range: `${tabTitle}!A1`,
+          valueInputOption: 'USER_ENTERED',
+          requestBody: { values: rows }
+        });
+
+        // Apply Styles
+        const ssUpdatedMeta = await sheets.spreadsheets.get({ spreadsheetId });
+        const sheetId = ssUpdatedMeta.data.sheets?.find((s: any) => s.properties?.title === tabTitle)?.properties?.sheetId || 0;
+
+        const mergeRequests = [
+          { mergeCells: { range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: totalDays + 7 }, mergeType: 'MERGE_ALL' } },
+          { mergeCells: { range: { sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: totalDays + 7 }, mergeType: 'MERGE_ALL' } }
+        ];
+
+        const titleStylingRequest = {
+          repeatCell: {
+            range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: totalDays + 7 },
+            cell: {
+              userEnteredFormat: {
+                horizontalAlignment: 'CENTER',
+                verticalAlignment: 'MIDDLE',
+                textFormat: { fontFamily: 'Arial', fontSize: 14, bold: true, foregroundColor: { red: 0.08, green: 0.28, blue: 0.58 } }
+              }
+            },
+            fields: 'userEnteredFormat(horizontalAlignment,verticalAlignment,textFormat)'
+          }
+        };
+
+        const subtitleStylingRequest = {
+          repeatCell: {
+            range: { sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: totalDays + 7 },
+            cell: {
+              userEnteredFormat: {
+                horizontalAlignment: 'CENTER',
+                verticalAlignment: 'MIDDLE',
+                textFormat: { fontFamily: 'Arial', fontSize: 10, italic: true, foregroundColor: { red: 0.4, green: 0.4, blue: 0.4 } }
+              }
+            },
+            fields: 'userEnteredFormat(horizontalAlignment,verticalAlignment,textFormat)'
+          }
+        };
+
+        const headerStylingRequest = {
+          repeatCell: {
+            range: { sheetId, startRowIndex: 3, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: totalDays + 7 },
+            cell: {
+              userEnteredFormat: {
+                backgroundColor: { red: 0.118, green: 0.227, blue: 0.541 },
+                horizontalAlignment: 'CENTER',
+                verticalAlignment: 'MIDDLE',
+                textFormat: { fontFamily: 'Arial', fontSize: 10, bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } }
+              }
+            },
+            fields: 'userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)'
+          }
+        };
+
+        const columnWidthRequests = [
+          { updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 1 }, properties: { pixelSize: 40 }, fields: 'pixelSize' } },
+          { updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: 1, endIndex: 2 }, properties: { pixelSize: 220 }, fields: 'pixelSize' } },
+          { updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: 2, endIndex: 2 + totalDays }, properties: { pixelSize: 32 }, fields: 'pixelSize' } },
+          { updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: 2 + totalDays, endIndex: 2 + totalDays + 4 }, properties: { pixelSize: 45 }, fields: 'pixelSize' } },
+          { updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: 2 + totalDays + 4, endIndex: 2 + totalDays + 5 }, properties: { pixelSize: 90 }, fields: 'pixelSize' } }
+        ];
+
+        const freezeRequest = {
+          updateSheetProperties: {
+            properties: { sheetId, gridProperties: { frozenRowCount: 4, frozenColumnCount: 2 } },
+            fields: 'gridProperties.frozenRowCount,gridProperties.frozenColumnCount'
+          }
+        };
+
+        const borderRequest = {
+          updateBorders: {
+            range: { sheetId, startRowIndex: 3, endRowIndex: Math.max(100, 5 + sortedStudents.length), startColumnIndex: 0, endColumnIndex: totalDays + 7 },
+            top: { style: 'SOLID', width: 1, color: { red: 0.8, green: 0.8, blue: 0.8 } },
+            bottom: { style: 'SOLID', width: 1, color: { red: 0.8, green: 0.8, blue: 0.8 } },
+            left: { style: 'SOLID', width: 1, color: { red: 0.8, green: 0.8, blue: 0.8 } },
+            right: { style: 'SOLID', width: 1, color: { red: 0.8, green: 0.8, blue: 0.8 } },
+            innerHorizontal: { style: 'SOLID', width: 1, color: { red: 0.8, green: 0.8, blue: 0.8 } },
+            innerVertical: { style: 'SOLID', width: 1, color: { red: 0.8, green: 0.8, blue: 0.8 } }
+          }
+        };
+
+        const conditionalFormattingRequests = [
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [{ sheetId, startRowIndex: 4, endRowIndex: Math.max(100, 5 + sortedStudents.length), startColumnIndex: 2, endColumnIndex: 2 + totalDays }],
+                booleanRule: {
+                  condition: { type: 'TEXT_EQUALS', values: [{ userEnteredValue: 'H' }] },
+                  format: { backgroundColor: { red: 0.85, green: 0.95, blue: 0.85 }, textFormat: { color: { red: 0.1, green: 0.5, blue: 0.1 }, bold: true } }
+                }
+              },
+              index: 0
+            }
+          },
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [{ sheetId, startRowIndex: 4, endRowIndex: Math.max(100, 5 + sortedStudents.length), startColumnIndex: 2, endColumnIndex: 2 + totalDays }],
+                booleanRule: {
+                  condition: { type: 'TEXT_EQUALS', values: [{ userEnteredValue: 'S' }] },
+                  format: { backgroundColor: { red: 0.85, green: 0.9, blue: 1.0 }, textFormat: { color: { red: 0.1, green: 0.3, blue: 0.8 }, bold: true } }
+                }
+              },
+              index: 1
+            }
+          },
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [{ sheetId, startRowIndex: 4, endRowIndex: Math.max(100, 5 + sortedStudents.length), startColumnIndex: 2, endColumnIndex: 2 + totalDays }],
+                booleanRule: {
+                  condition: { type: 'TEXT_EQUALS', values: [{ userEnteredValue: 'I' }] },
+                  format: { backgroundColor: { red: 1.0, green: 0.95, blue: 0.8 }, textFormat: { color: { red: 0.7, green: 0.5, blue: 0.0 }, bold: true } }
+                }
+              },
+              index: 2
+            }
+          },
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [{ sheetId, startRowIndex: 4, endRowIndex: Math.max(100, 5 + sortedStudents.length), startColumnIndex: 2, endColumnIndex: 2 + totalDays }],
+                booleanRule: {
+                  condition: { type: 'TEXT_EQUALS', values: [{ userEnteredValue: 'A' }] },
+                  format: { backgroundColor: { red: 1.0, green: 0.85, blue: 0.85 }, textFormat: { color: { red: 0.8, green: 0.1, blue: 0.1 }, bold: true } }
+                }
+              },
+              index: 3
+            }
+          }
+        ];
+
+        const percentFormatRequest = {
+          repeatCell: {
+            range: { sheetId, startRowIndex: 4, endRowIndex: Math.max(100, 5 + sortedStudents.length), startColumnIndex: 2 + totalDays + 4, endColumnIndex: 2 + totalDays + 5 },
+            cell: { userEnteredFormat: { numberFormat: { type: 'PERCENT', pattern: '0.0%' } } },
+            fields: 'userEnteredFormat.numberFormat'
+          }
+        };
+
+        const alignmentRequests = [
+          {
+            repeatCell: {
+              range: { sheetId, startRowIndex: 4, endRowIndex: Math.max(100, 5 + sortedStudents.length), startColumnIndex: 0, endColumnIndex: 1 },
+              cell: { userEnteredFormat: { horizontalAlignment: 'CENTER' } },
+              fields: 'userEnteredFormat.horizontalAlignment'
+            }
+          },
+          {
+            repeatCell: {
+              range: { sheetId, startRowIndex: 4, endRowIndex: Math.max(100, 5 + sortedStudents.length), startColumnIndex: 2, endColumnIndex: totalDays + 7 },
+              cell: { userEnteredFormat: { horizontalAlignment: 'CENTER' } },
+              fields: 'userEnteredFormat.horizontalAlignment'
+            }
+          }
+        ];
+
+        const weekendRequests = [];
+        for (let d = 1; d <= totalDays; d++) {
+          const dateObj = new Date(yearNum, monthNum - 1, d);
+          const dayOfWeek = dateObj.getDay();
+          if (dayOfWeek === 0 || dayOfWeek === 6) {
+            weekendRequests.push({
+              repeatCell: {
+                range: { sheetId, startRowIndex: 3, endRowIndex: Math.max(100, 5 + sortedStudents.length), startColumnIndex: 2 + d - 1, endColumnIndex: 2 + d },
+                cell: { userEnteredFormat: { backgroundColor: { red: 0.95, green: 0.95, blue: 0.95 } } },
+                fields: 'userEnteredFormat.backgroundColor'
+              }
+            });
+          }
+        }
+
+        const filterRequest = {
+          setBasicFilter: {
+            filter: {
+              range: { sheetId, startRowIndex: 3, endRowIndex: Math.max(100, 5 + sortedStudents.length), startColumnIndex: 0, endColumnIndex: totalDays + 7 }
+            }
+          }
+        };
+
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [
+              ...mergeRequests,
+              titleStylingRequest,
+              subtitleStylingRequest,
+              headerStylingRequest,
+              ...columnWidthRequests,
+              freezeRequest,
+              borderRequest,
+              ...conditionalFormattingRequests,
+              percentFormatRequest,
+              ...alignmentRequests,
+              ...weekendRequests,
+              filterRequest
+            ]
+          }
+        });
+
+      } else {
+        const monthResponse = await sheets.spreadsheets.values.get({
+          spreadsheetId,
+          range: `${tabTitle}!A1:ZZ500`,
+        });
+        const monthRows = monthResponse.data.values || [];
+
+        const monthStudentNameToRowIndex = new Map<string, number>();
+        for (let i = 4; i < monthRows.length; i++) {
+          const row = monthRows[i];
+          if (row[1]) {
+            monthStudentNameToRowIndex.set(row[1], i);
+          }
+        }
+
+        const valueRangesToUpdate: any[] = [];
+        const newStudentRowsToAppend: any[] = [];
+
+        for (const record of finalRecordsToSync) {
+          const mappedName = studentIdToName.get(record.studentId) || record.studentName;
+          let rowIndex = monthStudentNameToRowIndex.has(mappedName) 
+            ? monthStudentNameToRowIndex.get(mappedName)! 
+            : monthStudentNameToRowIndex.get(record.studentName)!;
+
+          if (rowIndex === undefined) {
+            for (let i = 4; i < monthRows.length; i++) {
+              if (monthRows[i][1] === mappedName || monthRows[i][1] === record.studentName) {
+                rowIndex = i;
+                break;
+              }
+            }
+          }
+
+          let code = '';
+          if (record.status === 'HADIR' || record.status === 'LATE') code = 'H';
+          else if (record.status === 'SAKIT') code = 'S';
+          else if (record.status === 'IZIN') code = 'I';
+          else if (record.status === 'ALPA') code = 'A';
+
+          if (rowIndex === undefined || rowIndex === -1) {
+            const newRowNo = monthRows.length + newStudentRowsToAppend.length + 5;
+            const newStudentRow = [
+              String(monthRows.length - 4 + newStudentRowsToAppend.length + 1),
+              record.studentName,
+            ];
+            for (let d = 1; d <= totalDays; d++) {
+              const dayStr = String(d).padStart(2, '0');
+              const fullDate = `${yearNum}-${String(monthNum).padStart(2, '0')}-${dayStr}`;
+              let cellVal = '';
+              if (fullDate === record.date) {
+                cellVal = code;
+              }
+              newStudentRow.push(cellVal);
+            }
+
+            const firstDateColLetter = 'C';
+            const lastDateColLetter = getColumnLetter(2 + totalDays - 1);
+            const colH_Letter = getColumnLetter(2 + totalDays);
+            const colS_Letter = getColumnLetter(2 + totalDays + 1);
+            const colI_Letter = getColumnLetter(2 + totalDays + 2);
+            const colA_Letter = getColumnLetter(2 + totalDays + 3);
+
+            newStudentRow.push(
+              `=COUNTIF(${firstDateColLetter}${newRowNo}:${lastDateColLetter}${newRowNo}, "H")`,
+              `=COUNTIF(${firstDateColLetter}${newRowNo}:${lastDateColLetter}${newRowNo}, "S")`,
+              `=COUNTIF(${firstDateColLetter}${newRowNo}:${lastDateColLetter}${newRowNo}, "I")`,
+              `=COUNTIF(${firstDateColLetter}${newRowNo}:${lastDateColLetter}${newRowNo}, "A")`,
+              `=IF((${colH_Letter}${newRowNo}+${colS_Letter}${newRowNo}+${colI_Letter}${newRowNo}+${colA_Letter}${newRowNo})>0, ${colH_Letter}${newRowNo}/(${colH_Letter}${newRowNo}+${colS_Letter}${newRowNo}+${colI_Letter}${newRowNo}+${colA_Letter}${newRowNo}), "")`
+            );
+
+            newStudentRowsToAppend.push(newStudentRow);
+          } else {
+            const colIndex = 2 + dayNum - 1;
+            const colLetter = getColumnLetter(colIndex);
+            const cellRange = `${tabTitle}!${colLetter}${rowIndex + 1}`;
+
+            valueRangesToUpdate.push({
+              range: cellRange,
+              values: [[code]]
+            });
+          }
+        }
+
+        if (valueRangesToUpdate.length > 0) {
+          await sheets.spreadsheets.values.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+              valueInputOption: 'USER_ENTERED',
+              data: valueRangesToUpdate
+            }
+          });
+        }
+
+        if (newStudentRowsToAppend.length > 0) {
+          await sheets.spreadsheets.values.append({
+            spreadsheetId,
+            range: `${tabTitle}!A5`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values: newStudentRowsToAppend }
+          });
+        }
+      }
+
+      // Mark successful records as SYNCED
+      for (const record of finalRecordsToSync) {
+        const ref = db.collection("attendance_records").doc(record.id);
+        dbBatch.update(ref, {
+          syncStatus: 'SYNCED',
+          lastSyncAt: Date.now(),
+          syncError: null,
+          updatedAt: getAdminTimestamp()
+        });
+        results.push({ id: record.id, success: true });
+        successCount++;
+      }
+    }
+
+    await dbBatch.commit();
+
+    // 12. Add Backup Audit Log
+    try {
+      await db.collection("attendance_backup_audit_logs").add({
+        id: `audit_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+        timestamp: Date.now(),
+        action: 'DAILY_BACKUP_BATCH',
+        performedBy: decodedToken.email,
+        details: {
+          classId,
+          date,
+          academicYearId,
+          semester,
+          totalRecords: recordsToSync.length,
+          successCount,
+          failureCount
+        }
+      });
+    } catch (auditErr) {
+      console.error("[BackupSync] Audit log failed", auditErr);
+    }
+
+    return res.json({
+      success: true,
+      spreadsheetId,
+      spreadsheetUrl,
+      results,
+      summary: {
+        total: recordsToSync.length,
+        success: successCount,
+        failed: failureCount
+      }
+    });
+
+  } catch (error: any) {
+    console.error("[BackupSync] Critical batch failure:", error);
+    
+    if (db && Array.isArray(req.body.recordIds)) {
+      try {
+        const getAdminTimestamp = (await import("firebase-admin/firestore")).FieldValue.serverTimestamp;
+        const failBatch = db.batch();
+        for (const rId of req.body.recordIds) {
+          const ref = db.collection("attendance_records").doc(rId);
+          failBatch.update(ref, {
+            syncStatus: 'FAILED',
+            syncError: error.message || "Unknown error during sync batch API",
+            updatedAt: getAdminTimestamp()
+          });
+        }
+        await failBatch.commit();
+      } catch (subErr) {
+        console.error("[BackupSync] Sub-error writing fail statuses", subErr);
+      }
+    }
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Helper function to chunk array for Firestore in query limits
 function chunkArray<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];

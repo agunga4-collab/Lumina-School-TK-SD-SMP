@@ -556,13 +556,18 @@ export default function Attendance() {
 
     setBackingUp(true);
     let successCount = 0;
-    let syncCount = 0;
 
     try {
-      const userEmail = auth.currentUser?.email || 'unknown_teacher';
+      const user = auth.currentUser;
+      const userEmail = user?.email || 'unknown_teacher';
+      const academicYearId = activeAcademicYear.replace(/\//g, '-');
+      const recordIds: string[] = [];
 
+      // 1. Save to Firestore first to make sure it's up to date
       for (const student of studentsToBackup) {
         const recordId = `${selectedClass}_${selectedDate}_${student.id}`;
+        recordIds.push(recordId);
+
         const record: AttendanceRecord = {
           id: recordId,
           studentId: student.id,
@@ -583,7 +588,6 @@ export default function Attendance() {
           retryCount: 0
         };
 
-        // 1. Save to Firestore first to make sure it's up to date
         await setDoc(doc(db, 'attendance_records', recordId), {
           ...record,
           recordedAt: serverTimestamp(),
@@ -591,35 +595,50 @@ export default function Attendance() {
         }, { merge: true });
 
         successCount++;
-
-        // 2. Trigger Google Sheets Sync
-        const syncResult = await attendanceSyncService.triggerSync(record);
-        if (syncResult.success) {
-          syncCount++;
-          await setDoc(doc(db, 'attendance_records', recordId), {
-            syncStatus: 'SYNCED',
-            lastSyncAt: Date.now(),
-            syncError: null
-          }, { merge: true });
-        } else {
-          console.error(`Sync failed for ${recordId}:`, syncResult.error);
-          await setDoc(doc(db, 'attendance_records', recordId), {
-            syncStatus: 'FAILED',
-            syncError: syncResult.error,
-            retryCount: 1
-          }, { merge: true });
-        }
       }
 
-      setLastSaved({ date: selectedDate, classId: selectedClass });
-      toast.success('Backup Selesai', {
-        description: `${syncCount} dari ${successCount} data berhasil diekspor ke Google Sheets.`
+      // 2. Call the batch sync API
+      const idToken = await user?.getIdToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (idToken) {
+        headers['Authorization'] = `Bearer ${idToken}`;
+      }
+
+      const response = await fetch('/api/attendance/sync-batch', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          academicYearId,
+          semester: activeSemester,
+          classId: selectedClass,
+          date: selectedDate,
+          recordIds
+        })
       });
 
-    } catch (err) {
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Gagal mem-backup ke Google Sheets via server API.');
+      }
+
+      const syncResult = await response.json();
+      
+      setLastSaved({ date: selectedDate, classId: selectedClass });
+      
+      if (syncResult.summary?.failed > 0) {
+        toast.warning('Backup Selesai dengan Sebagian Gagal', {
+          description: `${syncResult.summary.success} berhasil, ${syncResult.summary.failed} gagal diekspor.`
+        });
+      } else {
+        toast.success('Backup Selesai', {
+          description: `Semua ${syncResult.summary.success} data berhasil diekspor ke Google Sheets.`
+        });
+      }
+
+    } catch (err: any) {
       console.error('Backup error:', err);
       toast.error('Gagal Ekspor Backup', {
-        description: 'Terjadi kesalahan saat mengekspor data ke Google Sheets.'
+        description: err.message || 'Terjadi kesalahan saat mengekspor data ke Google Sheets.'
       });
     } finally {
       setBackingUp(false);
@@ -811,15 +830,19 @@ export default function Attendance() {
 
     setSaving(true);
     let successCount = 0;
-    let syncCount = 0;
 
     try {
-      const userEmail = auth.currentUser?.email || 'unknown_teacher';
+      const user = auth.currentUser;
+      const userEmail = user?.email || 'unknown_teacher';
+      const academicYearId = activeAcademicYear.replace(/\//g, '-');
+      const recordIds: string[] = [];
 
       for (const student of students) {
         if (student.status === null) continue;
 
         const recordId = `${selectedClass}_${selectedDate}_${student.id}`;
+        recordIds.push(recordId);
+
         const record: AttendanceRecord = {
           id: recordId,
           studentId: student.id,
@@ -848,36 +871,55 @@ export default function Attendance() {
         }, { merge: true });
         
         successCount++;
-
-        // 2. Real-time Backup Sync
-        const syncResult = await attendanceSyncService.triggerSync(record);
-        if (syncResult.success) {
-          syncCount++;
-          // Update local Firestore status
-          await setDoc(doc(db, 'attendance_records', recordId), {
-            syncStatus: 'SYNCED',
-            lastSyncAt: Date.now(),
-            syncError: null
-          }, { merge: true });
-        } else {
-          console.error(`Sync failed for ${recordId}:`, syncResult.error);
-          await setDoc(doc(db, 'attendance_records', recordId), {
-            syncStatus: 'FAILED',
-            syncError: syncResult.error,
-            retryCount: 1
-          }, { merge: true });
-        }
       }
 
-      setLastSaved({ date: selectedDate, classId: selectedClass });
-      toast.success('Kehadiran Disimpan', {
-        description: `${successCount} data berhasil disimpan. ${syncCount} berhasil di-backup ke Google Sheets.`
+      if (recordIds.length === 0) {
+        toast.error('Tidak ada data kehadiran yang siap disimpan.');
+        return;
+      }
+
+      // 2. Call batch sync API
+      const idToken = await user?.getIdToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (idToken) {
+        headers['Authorization'] = `Bearer ${idToken}`;
+      }
+
+      const response = await fetch('/api/attendance/sync-batch', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          academicYearId,
+          semester: activeSemester,
+          classId: selectedClass,
+          date: selectedDate,
+          recordIds
+        })
       });
 
-    } catch (err) {
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Gagal mem-backup ke Google Sheets via server API.');
+      }
+
+      const syncResult = await response.json();
+
+      setLastSaved({ date: selectedDate, classId: selectedClass });
+      
+      if (syncResult.summary?.failed > 0) {
+        toast.warning('Kehadiran Disimpan dengan Sebagian Gagal Backup', {
+          description: `${successCount} data disimpan. ${syncResult.summary.success} berhasil di-backup, ${syncResult.summary.failed} gagal.`
+        });
+      } else {
+        toast.success('Kehadiran Disimpan & Di-backup', {
+          description: `${successCount} data berhasil disimpan dan di-backup ke Google Sheets.`
+        });
+      }
+
+    } catch (err: any) {
       console.error('Save error:', err);
       toast.error('Gagal Simpan', {
-        description: 'Terjadi kesalahan saat menyimpan data ke database.'
+        description: err.message || 'Terjadi kesalahan saat menyimpan data ke database.'
       });
     } finally {
       setSaving(false);
