@@ -393,51 +393,9 @@ service cloud.firestore {
     }
 
     match /dhuhur_attendance_records/{recordId} {
-      function isValidDhuhurCreate(recId) {
-        return request.resource.data.id == recId
-          && request.resource.data.studentId != null && request.resource.data.studentId != ""
-          && request.resource.data.classId != null && request.resource.data.classId != ""
-          && request.resource.data.date != null && request.resource.data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
-          && request.resource.data.unit == 'JUNIOR_HIGH'
-          && request.resource.data.academicYearId != null && request.resource.data.academicYearId != ""
-          && request.resource.data.academicYear != null && request.resource.data.academicYear != ""
-          && request.resource.data.semester in ['1', '2']
-          && request.resource.data.studentNameSnapshot != null && request.resource.data.studentNameSnapshot != ""
-          && request.resource.data.classNameSnapshot != null && request.resource.data.classNameSnapshot != ""
-          && request.resource.data.recordedByUid != null && request.resource.data.recordedByUid != ""
-          && request.resource.data.recordedByEmail != null && request.resource.data.recordedByEmail != ""
-          && request.resource.data.recordedAt != null
-          && request.resource.data.backupType == 'DHUHUR_ATTENDANCE'
-          && request.resource.data.status in ['H', 'T', 'A']
-          && request.resource.data.updatedAt != null
-          && request.resource.data.syncStatus in ['PENDING', 'SYNCED', 'FAILED']
-          && request.resource.data.retryCount is int
-          && recId == 'dhuhur_' + request.resource.data.classId + '_' + request.resource.data.date + '_' + request.resource.data.studentId;
-      }
-
-      function isValidDhuhurUpdate() {
-        return request.resource.data.id == resource.data.id
-          && request.resource.data.studentId == resource.data.studentId
-          && request.resource.data.classId == resource.data.classId
-          && request.resource.data.date == resource.data.date
-          && request.resource.data.unit == resource.data.unit
-          && request.resource.data.academicYearId == resource.data.academicYearId
-          && request.resource.data.academicYear == resource.data.academicYear
-          && request.resource.data.semester == resource.data.semester
-          && request.resource.data.studentNameSnapshot == resource.data.studentNameSnapshot
-          && request.resource.data.classNameSnapshot == resource.data.classNameSnapshot
-          && request.resource.data.recordedByUid == resource.data.recordedByUid
-          && request.resource.data.recordedByEmail == resource.data.recordedByEmail
-          && request.resource.data.recordedAt == resource.data.recordedAt
-          && request.resource.data.backupType == resource.data.backupType
-          && request.resource.data.status in ['H', 'T', 'A']
-          && request.resource.data.updatedAt != null;
-      }
-
       allow read: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin());
       allow delete: if false;
-      allow create: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin()) && isValidDhuhurCreate(recordId);
-      allow update: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin()) && isValidDhuhurUpdate();
+      allow create, update: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin());
     }
 
     match /lateness_records/{recordId} {
