@@ -8,7 +8,7 @@ import {
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { db, auth, getActiveStudents } from '../../lib/firebase';
-import { collection, query, where, getDocs, setDoc, doc, serverTimestamp, getDoc, orderBy, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, setDoc, doc, serverTimestamp, getDoc, orderBy, deleteDoc, writeBatch } from 'firebase/firestore';
 import { AttendanceStatus, AttendanceRecord, Student, UnitType, Class } from '../../types';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { attendanceSyncService, attendanceBackupConfigService } from '../../services/attendanceBackupConfigService';
@@ -64,6 +64,7 @@ export default function Attendance() {
   const [loadingRecap, setLoadingRecap] = React.useState(false);
   const [fileMap, setFileMap] = React.useState<any | null>(null);
   const [attendanceType, setAttendanceType] = React.useState<'DAILY' | 'DHUHUR'>('DAILY');
+  const [refreshTrigger, setRefreshTrigger] = React.useState(0);
 
   React.useEffect(() => {
     const loadFileMap = async () => {
@@ -246,23 +247,51 @@ export default function Attendance() {
     };
 
     loadStudents();
-  }, [selectedClass, selectedDate, classes, activeAcademicYear, attendanceType]);
+  }, [selectedClass, selectedDate, classes, activeAcademicYear, attendanceType, refreshTrigger]);
 
   const handleDeleteOne = async (studentId: string) => {
-    if (!window.confirm('Hapus data kehadiran untuk siswa ini?')) return;
-    
-    setDeleting(true);
-    try {
-      const recordId = `${selectedClass}_${selectedDate}_${studentId}`;
-      await deleteDoc(doc(db, 'attendance_records', recordId));
+    const student = students.find(s => s.id === studentId);
+    if (!student) return;
+
+    if (attendanceType === 'DHUHUR') {
+      if (!window.confirm(`Hapus kehadiran Shalat Dhuhur ${student.name} pada ${selectedDate}?`)) return;
       
-      setStudents(students.map(s => s.id === studentId ? { ...s, status: null, note: '' } : s));
-      toast.success('Data dihapus', { description: 'Kehadiran individu berhasil dihapus' });
-    } catch (err) {
-      console.error('Delete error:', err);
-      toast.error('Gagal menghapus data');
-    } finally {
-      setDeleting(false);
+      setDeleting(true);
+      try {
+        const recordId = `dhuhur_${selectedClass}_${selectedDate}_${studentId}`;
+        const docRef = doc(db, 'dhuhur_attendance_records', recordId);
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+          await deleteDoc(docRef);
+        }
+        
+        setStudents(students.map(s => s.id === studentId ? { ...s, status: null, note: '' } : s));
+        toast.success('Kehadiran Shalat Dhuhur Dihapus', { 
+          description: `Kehadiran Shalat Dhuhur untuk ${student.name} berhasil dihapus.` 
+        });
+      } catch (err) {
+        console.error('Delete error:', err);
+        toast.error('Gagal menghapus data');
+      } finally {
+        setDeleting(false);
+      }
+    } else {
+      if (!window.confirm('Hapus data kehadiran untuk siswa ini?')) return;
+      
+      setDeleting(true);
+      try {
+        const recordId = `${selectedClass}_${selectedDate}_${studentId}`;
+        await deleteDoc(doc(db, 'attendance_records', recordId));
+        
+        setStudents(students.map(s => s.id === studentId ? { ...s, status: null, note: '' } : s));
+        toast.success('Data dihapus', { description: 'Kehadiran individu berhasil dihapus' });
+      } catch (err) {
+        console.error('Delete error:', err);
+        toast.error('Gagal menghapus data');
+      } finally {
+        setDeleting(false);
+      }
     }
   };
 
@@ -273,31 +302,70 @@ export default function Attendance() {
       return;
     }
 
-    if (!window.confirm(`Hapus SEMUA data kehadiran untuk kelas ini pada tanggal ${selectedDate}? Tindakan ini tidak dapat dibatalkan.`)) return;
-    
-    setDeleting(true);
-    try {
-      const currentClassEntity = classes.find(c => c.id === selectedClass || c.name === selectedClass);
-      const className = currentClassEntity?.name || selectedClass;
-      const classId = currentClassEntity?.id || selectedClass;
+    const currentClassEntity = classes.find(c => c.id === selectedClass || c.name === selectedClass);
+    const className = currentClassEntity?.name || selectedClass;
+    const classId = currentClassEntity?.id || selectedClass;
 
-      const q = query(
-        collection(db, 'attendance_records'),
-        where('classId', 'in', [classId, className]),
-        where('date', '==', selectedDate)
-      );
-
-      const snap = await getDocs(q);
-      const deletePromises = snap.docs.map(d => deleteDoc(d.ref));
-      await Promise.all(deletePromises);
+    if (attendanceType === 'DHUHUR') {
+      const count = students.filter(s => s.status !== null).length;
+      if (!window.confirm(`Anda akan menghapus ${count} data Kehadiran Shalat Dhuhur kelas ${className} pada ${selectedDate}. Tindakan ini tidak dapat dibatalkan.`)) return;
       
-      setStudents(students.map(s => ({ ...s, status: null, note: '' })));
-      toast.success('Pembersihan Selesai', { description: `Semua data kehadiran tanggal ${selectedDate} telah dihapus.` });
-    } catch (err) {
-      console.error('Delete error:', err);
-      toast.error('Gagal menghapus semua data');
-    } finally {
-      setDeleting(false);
+      setDeleting(true);
+      try {
+        const q = query(
+          collection(db, 'dhuhur_attendance_records'),
+          where('classId', 'in', [classId, className]),
+          where('date', '==', selectedDate)
+        );
+
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const docs = snap.docs;
+          const BATCH_LIMIT = 500;
+          for (let i = 0; i < docs.length; i += BATCH_LIMIT) {
+            const chunk = docs.slice(i, i + BATCH_LIMIT);
+            const batch = writeBatch(db);
+            chunk.forEach(docSnap => {
+              batch.delete(docSnap.ref);
+            });
+            await batch.commit();
+          }
+        }
+        
+        setStudents(students.map(s => ({ ...s, status: null, note: '' })));
+        setRefreshTrigger(prev => prev + 1);
+        toast.success('Pembersihan Selesai', { 
+          description: `${snap.size} data Kehadiran Shalat Dhuhur berhasil dihapus.` 
+        });
+      } catch (err) {
+        console.error('Delete error:', err);
+        toast.error('Gagal menghapus semua data');
+      } finally {
+        setDeleting(false);
+      }
+    } else {
+      if (!window.confirm(`Hapus SEMUA data kehadiran untuk kelas ini pada tanggal ${selectedDate}? Tindakan ini tidak dapat dibatalkan.`)) return;
+      
+      setDeleting(true);
+      try {
+        const q = query(
+          collection(db, 'attendance_records'),
+          where('classId', 'in', [classId, className]),
+          where('date', '==', selectedDate)
+        );
+
+        const snap = await getDocs(q);
+        const deletePromises = snap.docs.map(d => deleteDoc(d.ref));
+        await Promise.all(deletePromises);
+        
+        setStudents(students.map(s => ({ ...s, status: null, note: '' })));
+        toast.success('Pembersihan Selesai', { description: `Semua data kehadiran tanggal ${selectedDate} telah dihapus.` });
+      } catch (err) {
+        console.error('Delete error:', err);
+        toast.error('Gagal menghapus semua data');
+      } finally {
+        setDeleting(false);
+      }
     }
   };
 
@@ -956,11 +1024,11 @@ export default function Attendance() {
                 >
                   Cek Semua Hadir
                 </button>
-                {attendanceType !== 'DHUHUR' && (
+                {attendanceType === 'DHUHUR' && (
                   <button 
                     onClick={handleDeleteAll}
                     disabled={deleting}
-                    className="px-4 py-2 bg-red-50 text-red-600 rounded-xl text-sm font-bold border border-red-100 hover:bg-red-100 transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2"
+                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-bold transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2 shadow-sm"
                   >
                     {deleting ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
                     Hapus Semua Data Hari Ini
@@ -1072,10 +1140,11 @@ export default function Attendance() {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex justify-center">
-                        {student.status && attendanceType !== 'DHUHUR' && (
+                        {student.status && attendanceType === 'DHUHUR' && (
                           <button 
                             onClick={() => handleDeleteOne(student.id)}
-                            className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                            disabled={deleting}
+                            className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all disabled:opacity-50"
                             title="Hapus Kehadiran Siswa Ini"
                           >
                             <Trash2 size={16} />

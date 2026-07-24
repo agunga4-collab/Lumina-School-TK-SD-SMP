@@ -394,7 +394,10 @@ service cloud.firestore {
 
     match /dhuhur_attendance_records/{recordId} {
       allow read: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin());
-      allow delete: if false;
+      allow delete: if isActive() 
+        && (isJuniorHighStaff() || isTeacher() || isAdmin())
+        && resource.data.unit == 'JUNIOR_HIGH'
+        && resource.data.backupType == 'DHUHUR_ATTENDANCE';
       allow create, update: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin());
     }
 
