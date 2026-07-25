@@ -128,11 +128,29 @@ export default function StudentGoalSettingPage() {
         const now = Date.now();
         const { status, goalSettingOpenDate, goalSettingCloseDate } = activePeriod;
 
-        if (existingResponse && (existingResponse.status === 'SUBMITTED' || existingResponse.status === 'CONFERENCE_COMPLETED')) {
+        const reviews = existingResponse?.sectionReviews;
+        const hasRevisionRequired = reviews && (
+          Object.values(reviews).some((v: any) => v && v.status === 'REVISION_REQUIRED') ||
+          (reviews.smartGoals && Object.values(reviews.smartGoals).some((g: any) => g?.status === 'REVISION_REQUIRED'))
+        );
+
+        if (existingResponse && existingResponse.status === 'CONFERENCE_COMPLETED') {
           setPeriodState({
             status: 'READ_ONLY_STATUS',
-            message: `Your response has been ${existingResponse.status.toLowerCase()} and is now read-only.`,
+            message: `Your response has been completed and is now read-only.`,
             isEditable: false
+          });
+        } else if (existingResponse && existingResponse.status === 'SUBMITTED' && !hasRevisionRequired) {
+          setPeriodState({
+            status: 'READ_ONLY_STATUS',
+            message: `Your response has been submitted and is currently under review.`,
+            isEditable: false
+          });
+        } else if (existingResponse && existingResponse.status === 'SUBMITTED' && hasRevisionRequired) {
+          setPeriodState({
+            status: 'EDITABLE',
+            message: `Your workbook requires revisions. Please edit the highlighted sections and re-submit.`,
+            isEditable: true
           });
         } else if (status !== 'OPEN') {
           setPeriodState({
@@ -418,6 +436,7 @@ export default function StudentGoalSettingPage() {
               areasForGrowth={formData.areasForGrowth}
               disabled={!isEditable}
               onChange={handleFieldChange}
+              reviews={response?.sectionReviews}
             />
           )}
 
@@ -427,6 +446,7 @@ export default function StudentGoalSettingPage() {
               goals={formData.goals}
               disabled={!isEditable}
               onGoalsChange={(updatedGoals) => handleFieldChange('goals', updatedGoals)}
+              reviews={response?.sectionReviews}
             />
           )}
 
@@ -446,6 +466,7 @@ export default function StudentGoalSettingPage() {
               unitActivities={formData.unitActivities}
               disabled={!isEditable}
               onChange={handleFieldChange}
+              reviews={response?.sectionReviews}
             />
           )}
 

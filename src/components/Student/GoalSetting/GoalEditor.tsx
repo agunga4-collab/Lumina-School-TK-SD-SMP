@@ -11,13 +11,17 @@ interface GoalEditorProps {
   disabled: boolean;
   onUpdate: (updatedGoal: SmartGoal) => void;
   onRemove: () => void;
+  review?: { status: string; comment?: string };
 }
 
-export default function GoalEditor({ goal, disabled, onUpdate, onRemove }: GoalEditorProps) {
+export default function GoalEditor({ goal, disabled, onUpdate, onRemove, review }: GoalEditorProps) {
   const [isSmartCollapsed, setIsSmartCollapsed] = React.useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
 
+  const isGoalDisabled = disabled || (review ? review.status !== 'REVISION_REQUIRED' : false);
+
   const handleFieldChange = (field: keyof SmartGoal, value: any) => {
+    if (isGoalDisabled) return;
     onUpdate({
       ...goal,
       [field]: value,
@@ -46,6 +50,25 @@ export default function GoalEditor({ goal, disabled, onUpdate, onRemove }: GoalE
     }
   };
 
+  const renderFeedback = () => {
+    if (!review || !review.comment) return null;
+    
+    return (
+      <div className={`p-4 rounded-xl text-xs font-medium border ${
+        review.status === 'APPROVED' 
+          ? 'bg-emerald-50 text-emerald-800 border-emerald-100' 
+          : review.status === 'REVISION_REQUIRED' 
+            ? 'bg-rose-50 text-rose-800 border-rose-100 animate-pulse' 
+            : 'bg-gray-50 text-gray-700 border-gray-100'
+      }`}>
+        <p className="font-bold flex items-center gap-1 text-[10px] uppercase tracking-wider">
+          {review.status === 'APPROVED' ? '✓ Goal Disetujui Guru' : review.status === 'REVISION_REQUIRED' ? '⚠ Goal Perlu Revisi' : 'Reviewer'}
+        </p>
+        <p className="mt-1.5 leading-relaxed">{review.comment}</p>
+      </div>
+    );
+  };
+
   return (
     <div className="bg-white rounded-[2rem] border border-gray-100 p-6 md:p-8 space-y-6 shadow-sm transition-all duration-300 hover:border-blue-100">
       
@@ -62,7 +85,7 @@ export default function GoalEditor({ goal, disabled, onUpdate, onRemove }: GoalE
         </div>
 
         {/* Actions / Remove */}
-        {!disabled && (
+        {!isGoalDisabled && (
           <div className="relative">
             {!showDeleteConfirm ? (
               <button
@@ -95,6 +118,9 @@ export default function GoalEditor({ goal, disabled, onUpdate, onRemove }: GoalE
         )}
       </div>
 
+      {/* Teacher feedback box inside Goal editor if present */}
+      {renderFeedback()}
+
       {/* Dates Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Start Date */}
@@ -104,7 +130,7 @@ export default function GoalEditor({ goal, disabled, onUpdate, onRemove }: GoalE
           </label>
           <input
             type="date"
-            disabled={disabled}
+            disabled={isGoalDisabled}
             value={msToDateString(goal.startDate)}
             onChange={(e) => handleFieldChange('startDate', dateStringToMs(e.target.value))}
             className="w-full p-4 bg-gray-50 hover:bg-gray-100/50 focus:bg-white rounded-xl border border-transparent focus:border-blue-500 outline-none transition-all duration-200 text-sm font-bold text-gray-700 disabled:opacity-75"
@@ -118,7 +144,7 @@ export default function GoalEditor({ goal, disabled, onUpdate, onRemove }: GoalE
           </label>
           <input
             type="date"
-            disabled={disabled}
+            disabled={isGoalDisabled}
             value={msToDateString(goal.targetDate)}
             onChange={(e) => handleFieldChange('targetDate', dateStringToMs(e.target.value))}
             className="w-full p-4 bg-gray-50 hover:bg-gray-100/50 focus:bg-white rounded-xl border border-transparent focus:border-blue-500 outline-none transition-all duration-200 text-sm font-bold text-gray-700 disabled:opacity-75"
@@ -151,7 +177,7 @@ export default function GoalEditor({ goal, disabled, onUpdate, onRemove }: GoalE
                 <span className="text-[9px] text-gray-400 font-medium normal-case ml-1">- What exactly do I want to achieve?</span>
               </label>
               <textarea
-                disabled={disabled}
+                disabled={isGoalDisabled}
                 value={goal.smartSpecific || ''}
                 onChange={(e) => handleFieldChange('smartSpecific', e.target.value)}
                 placeholder="Detail exactly what you want to achieve..."
@@ -166,7 +192,7 @@ export default function GoalEditor({ goal, disabled, onUpdate, onRemove }: GoalE
                 <span className="text-[9px] text-gray-400 font-medium normal-case ml-1">- How will I know that I am making progress?</span>
               </label>
               <textarea
-                disabled={disabled}
+                disabled={isGoalDisabled}
                 value={goal.smartMeasurable || ''}
                 onChange={(e) => handleFieldChange('smartMeasurable', e.target.value)}
                 placeholder="Explain the metrics or signs that prove your progress..."
@@ -181,7 +207,7 @@ export default function GoalEditor({ goal, disabled, onUpdate, onRemove }: GoalE
                 <span className="text-[9px] text-gray-400 font-medium normal-case ml-1">- Why is this goal realistic for me?</span>
               </label>
               <textarea
-                disabled={disabled}
+                disabled={isGoalDisabled}
                 value={goal.smartAchievable || ''}
                 onChange={(e) => handleFieldChange('smartAchievable', e.target.value)}
                 placeholder="Why are you confident that you can achieve this?..."
@@ -196,7 +222,7 @@ export default function GoalEditor({ goal, disabled, onUpdate, onRemove }: GoalE
                 <span className="text-[9px] text-gray-400 font-medium normal-case ml-1">- Why is this goal meaningful to me?</span>
               </label>
               <textarea
-                disabled={disabled}
+                disabled={isGoalDisabled}
                 value={goal.smartRelevant || ''}
                 onChange={(e) => handleFieldChange('smartRelevant', e.target.value)}
                 placeholder="Why is this goal important to your personal growth?..."
@@ -211,7 +237,7 @@ export default function GoalEditor({ goal, disabled, onUpdate, onRemove }: GoalE
                 <span className="text-[9px] text-gray-400 font-medium normal-case ml-1">- When do I aim to achieve this goal?</span>
               </label>
               <textarea
-                disabled={disabled}
+                disabled={isGoalDisabled}
                 value={goal.smartTimeBound || ''}
                 onChange={(e) => handleFieldChange('smartTimeBound', e.target.value)}
                 placeholder="State the deadline or milestones clearly..."
@@ -228,7 +254,7 @@ export default function GoalEditor({ goal, disabled, onUpdate, onRemove }: GoalE
           My Final Smart Goal <span className="text-red-500">*</span>
         </label>
         <textarea
-          disabled={disabled}
+          disabled={isGoalDisabled}
           value={goal.goal || ''}
           onChange={(e) => handleFieldChange('goal', e.target.value)}
           placeholder="State your main objective clearly here..."
@@ -244,7 +270,7 @@ export default function GoalEditor({ goal, disabled, onUpdate, onRemove }: GoalE
             Things I Have to Do to Achieve My Goal <span className="text-red-500">*</span>
           </label>
           <textarea
-            disabled={disabled}
+            disabled={isGoalDisabled}
             value={goal.actions || ''}
             onChange={(e) => handleFieldChange('actions', e.target.value)}
             placeholder="Write clear steps or tasks you need to perform..."
@@ -258,7 +284,7 @@ export default function GoalEditor({ goal, disabled, onUpdate, onRemove }: GoalE
             Proof That My Effort Is Working <span className="text-red-500">*</span>
           </label>
           <textarea
-            disabled={disabled}
+            disabled={isGoalDisabled}
             value={goal.evidence || ''}
             onChange={(e) => handleFieldChange('evidence', e.target.value)}
             placeholder="What concrete evidence or signs will prove your steps are succeeding?..."

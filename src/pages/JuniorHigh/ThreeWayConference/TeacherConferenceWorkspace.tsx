@@ -57,17 +57,21 @@ export default function TeacherConferenceWorkspace() {
   const [classesList, setClassesList] = useState<Class[]>([]);
 
   useEffect(() => {
+    if (!activeYear) return;
     const fetchClasses = async () => {
       try {
         const cls = await getClasses();
-        const jhClasses = cls.filter(c => c.unitId === 'JUNIOR_HIGH' || ['7', '8', '9', 7, 8, 9].includes(c.grade));
+        const jhClasses = cls.filter(c => 
+          (c.unitId === 'JUNIOR_HIGH' || ['7', '8', '9', 7, 8, 9].includes(c.grade)) &&
+          c.academicYear === activeYear
+        );
         setClassesList(jhClasses);
       } catch (err) {
         console.error('Failed to load classes for filter:', err);
       }
     };
     fetchClasses();
-  }, []);
+  }, [activeYear]);
 
   // Load Active Period
   useEffect(() => {

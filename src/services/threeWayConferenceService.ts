@@ -290,6 +290,99 @@ export const threeWayConferenceService = {
   },
 
   /**
+   * Calculate overall status of a conference response based on its section-by-section reviews
+   */
+  calculateOverallStatus(response: StudentConferenceResponse): 'DRAFT' | 'SUBMITTED' | 'PARTIALLY_APPROVED' | 'REVISION_REQUIRED' | 'FULLY_APPROVED' {
+    if (!response.status || response.status === 'DRAFT') {
+      return 'DRAFT';
+    }
+    
+    const reviews = response.sectionReviews;
+    if (!reviews) {
+      return 'SUBMITTED';
+    }
+
+    const applicableSections: string[] = [];
+    if (response.aboutMe && response.aboutMe.trim() !== '') {
+      applicableSections.push('aboutMe');
+    }
+    if (response.strengths && response.strengths.trim() !== '') {
+      applicableSections.push('strengths');
+    }
+    if (response.areasForGrowth && response.areasForGrowth.trim() !== '') {
+      applicableSections.push('growthAreas');
+    }
+    
+    const hasSelfExploration = response.selfExplorationReferenceId || response.selfExplorationSnapshot;
+    if (hasSelfExploration) {
+      applicableSections.push('selfExploration');
+    }
+
+    const hasExtracurricular = response.unitActivity || (response.unitActivities && response.unitActivities.length > 0);
+    if (hasExtracurricular) {
+      applicableSections.push('extracurricular');
+    }
+
+    const isGrade9 = response.gradeLevel === 9;
+    if (isGrade9 && response.karyaIlmiahReferenceId) {
+      applicableSections.push('karyaIlmiah');
+    }
+
+    const goals = response.goals || [];
+    const goalIds = goals.map(g => g.id);
+
+    let totalApplicable = applicableSections.length + goalIds.length;
+    let approvedCount = 0;
+    let revisionCount = 0;
+    let notReviewedCount = 0;
+
+    applicableSections.forEach(sec => {
+      const rev = (reviews as any)[sec];
+      if (!rev || rev.status === 'NOT_REVIEWED') {
+        notReviewedCount++;
+      } else if (rev.status === 'APPROVED') {
+        approvedCount++;
+      } else if (rev.status === 'REVISION_REQUIRED') {
+        revisionCount++;
+      }
+    });
+
+    const goalReviews = reviews.smartGoals || {};
+    goalIds.forEach(id => {
+      const rev = goalReviews[id];
+      if (!rev || rev.status === 'NOT_REVIEWED') {
+        notReviewedCount++;
+      } else if (rev.status === 'APPROVED') {
+        approvedCount++;
+      } else if (rev.status === 'REVISION_REQUIRED') {
+        revisionCount++;
+      }
+    });
+
+    if (totalApplicable === 0) {
+      return 'SUBMITTED';
+    }
+
+    if (approvedCount === totalApplicable) {
+      return 'FULLY_APPROVED';
+    }
+
+    if (revisionCount > 0 && approvedCount > 0) {
+      return 'PARTIALLY_APPROVED';
+    }
+
+    if (revisionCount > 0 && approvedCount === 0) {
+      return 'REVISION_REQUIRED';
+    }
+
+    if (approvedCount > 0 && notReviewedCount > 0) {
+      return 'PARTIALLY_APPROVED';
+    }
+
+    return 'SUBMITTED';
+  },
+
+  /**
    * Save student conference response as a draft
    */
   async saveStudentConferenceDraft(
@@ -317,10 +410,23 @@ export const threeWayConferenceService = {
       const responseId = this.getConferenceResponseId(periodId, studentId);
       const responseRef = doc(db, RESPONSES_COLLECTION, responseId);
       const existingSnap = await getDoc(responseRef);
+      let existing: StudentConferenceResponse | null = null;
+      let existingReviews: any = null;
+      let isRevision = false;
+
       if (existingSnap.exists()) {
-        const existing = existingSnap.data() as StudentConferenceResponse;
+        existing = existingSnap.data() as StudentConferenceResponse;
+        existingReviews = existing.sectionReviews || null;
         if (existing.status !== 'DRAFT') {
-          throw new Error('Submitted or completed responses cannot be edited.');
+          // Check if revision is required
+          const hasRevision = existingReviews && (
+            Object.values(existingReviews).some((v: any) => v && v.status === 'REVISION_REQUIRED') ||
+            (existingReviews.smartGoals && Object.values(existingReviews.smartGoals).some((g: any) => g?.status === 'REVISION_REQUIRED'))
+          );
+          if (!hasRevision) {
+            throw new Error('Submitted or completed responses cannot be edited.');
+          }
+          isRevision = true;
         }
       }
 
@@ -354,7 +460,7 @@ export const threeWayConferenceService = {
         gradeLevel: studentData.grade || 0,
         academicYear: period.academicYear,
         semester: period.semester as 1 | 2,
-        status: 'DRAFT',
+        status: isRevision ? 'SUBMITTED' : 'DRAFT',
         aboutMe: responsePayload.aboutMe || '',
         strengths: responsePayload.strengths || '',
         areasForGrowth: responsePayload.areasForGrowth || '',
@@ -368,8 +474,14 @@ export const threeWayConferenceService = {
         unitActivityWorries: responsePayload.unitActivityWorries || '',
         unitActivityOvercomingPlan: responsePayload.unitActivityOvercomingPlan || '',
         unitActivities: responsePayload.unitActivities || [],
-        createdAt: existingSnap.exists() ? (existingSnap.data() as StudentConferenceResponse).createdAt : nowTime,
+        createdAt: existing ? existing.createdAt : nowTime,
         updatedAt: nowTime,
+        submittedAt: existing ? (existing.submittedAt || null) : null,
+        submittedBy: existing ? (existing.submittedBy || null) : null,
+        lastSubmittedAt: existing ? (existing.lastSubmittedAt || null) : null,
+        revisionRound: existing ? (existing.revisionRound || 0) : 0,
+        sectionReviews: existingReviews,
+        overallStatus: existing ? (existing.overallStatus || 'DRAFT') : 'DRAFT',
       };
 
       await setDoc(responseRef, docPayload);
@@ -407,10 +519,26 @@ export const threeWayConferenceService = {
       const responseId = this.getConferenceResponseId(periodId, studentId);
       const responseRef = doc(db, RESPONSES_COLLECTION, responseId);
       const existingSnap = await getDoc(responseRef);
+      let existing: StudentConferenceResponse | null = null;
+      let isRevision = false;
+      let existingReviews: any = null;
+      let revisionRound = 0;
+
       if (existingSnap.exists()) {
-        const existing = existingSnap.data() as StudentConferenceResponse;
+        existing = existingSnap.data() as StudentConferenceResponse;
+        existingReviews = existing.sectionReviews || null;
+        revisionRound = existing.revisionRound || 0;
+        
         if (existing.status !== 'DRAFT') {
-          throw new Error('Submitted or completed responses cannot be edited.');
+          // Check if indeed revision is required
+          const hasRevision = existingReviews && (
+            Object.values(existingReviews).some((v: any) => v && v.status === 'REVISION_REQUIRED') ||
+            (existingReviews.smartGoals && Object.values(existingReviews.smartGoals).some((g: any) => g?.status === 'REVISION_REQUIRED'))
+          );
+          if (!hasRevision) {
+            throw new Error('Submitted or completed responses cannot be edited.');
+          }
+          isRevision = true;
         }
       }
 
@@ -433,6 +561,28 @@ export const threeWayConferenceService = {
       }
 
       const nowTime = Date.now();
+      
+      // Build updated reviews if it is a revision submission
+      let updatedReviews = existingReviews ? JSON.parse(JSON.stringify(existingReviews)) : null;
+      if (isRevision && updatedReviews) {
+        revisionRound += 1;
+        // Reset only sections that were 'REVISION_REQUIRED' back to 'NOT_REVIEWED'
+        const keys = ['aboutMe', 'strengths', 'growthAreas', 'selfExploration', 'extracurricular', 'karyaIlmiah'];
+        keys.forEach(key => {
+          if (updatedReviews[key] && updatedReviews[key].status === 'REVISION_REQUIRED') {
+            updatedReviews[key].status = 'NOT_REVIEWED';
+            updatedReviews[key].comment = updatedReviews[key].comment || '';
+          }
+        });
+        if (updatedReviews.smartGoals) {
+          Object.keys(updatedReviews.smartGoals).forEach(goalId => {
+            if (updatedReviews.smartGoals[goalId] && updatedReviews.smartGoals[goalId].status === 'REVISION_REQUIRED') {
+              updatedReviews.smartGoals[goalId].status = 'NOT_REVIEWED';
+            }
+          });
+        }
+      }
+
       const docPayload: StudentConferenceResponse = {
         id: responseId,
         periodId,
@@ -458,11 +608,17 @@ export const threeWayConferenceService = {
         unitActivityWorries: responsePayload.unitActivityWorries || '',
         unitActivityOvercomingPlan: responsePayload.unitActivityOvercomingPlan || '',
         unitActivities: responsePayload.unitActivities || [],
-        createdAt: existingSnap.exists() ? (existingSnap.data() as StudentConferenceResponse).createdAt : nowTime,
+        createdAt: existing ? existing.createdAt : nowTime,
         updatedAt: nowTime,
-        submittedAt: nowTime,
+        submittedAt: existing ? (existing.submittedAt || nowTime) : nowTime,
         submittedBy: studentData.id || studentId,
+        lastSubmittedAt: nowTime,
+        revisionRound,
+        sectionReviews: updatedReviews,
       };
+
+      // Recalculate overall status
+      docPayload.overallStatus = this.calculateOverallStatus(docPayload);
 
       // Run validation rules
       const validation = this.validateConferenceResponseForSubmission(docPayload);
@@ -472,6 +628,37 @@ export const threeWayConferenceService = {
 
       await setDoc(responseRef, docPayload);
       await this.syncResponseToTracker(periodId, studentId, docPayload);
+
+      // In-app Notification triggered here
+      if (isRevision) {
+        try {
+          const assignment = await this.getMentorAssignment(periodId, studentId);
+          if (assignment && assignment.mentorEmail) {
+            await sendNotification({
+              userId: assignment.mentorEmail,
+              type: 'REPORT_SUBMITTED',
+              message: `${studentData.name || 'Siswa'} mengirim revisi Three-Way Conference.`,
+              link: `/junior-high/conference/workspace`
+            });
+          }
+        } catch (notifErr) {
+          console.error('Failed to send submit revision notification:', notifErr);
+        }
+      } else {
+        try {
+          const assignment = await this.getMentorAssignment(periodId, studentId);
+          if (assignment && assignment.mentorEmail) {
+            await sendNotification({
+              userId: assignment.mentorEmail,
+              type: 'REPORT_SUBMITTED',
+              message: `Response Three-Way Conference ${studentData.name || 'Siswa'} menunggu review.`,
+              link: `/junior-high/conference/workspace`
+            });
+          }
+        } catch (notifErr) {
+          console.error('Failed to send submit notification:', notifErr);
+        }
+      }
     } catch (error) {
       return handleFirestoreError(error, 'write', `${RESPONSES_COLLECTION}/${periodId}_${studentId}`);
     }
@@ -679,7 +866,10 @@ export const threeWayConferenceService = {
 
       // 2. Fetch JUNIOR_HIGH classes
       const classesList = (await getClasses()) || [];
-      const jhClasses = classesList.filter(c => c.unitId === 'JUNIOR_HIGH' || ['7', '8', '9', 7, 8, 9].includes(c.grade));
+      const jhClasses = classesList.filter(c => 
+        (c.unitId === 'JUNIOR_HIGH' || ['7', '8', '9', 7, 8, 9].includes(c.grade)) &&
+        c.academicYear === activeYear
+      );
       const classMap = new Map<string, Class>();
       jhClasses.forEach(c => classMap.set(c.id, c));
 
@@ -1783,6 +1973,125 @@ export const threeWayConferenceService = {
       });
     } catch (error) {
       return handleFirestoreError(error, 'write', `${TRACKER_COLLECTION}/${entryId}`);
+    }
+  },
+
+  /**
+   * Save teacher reviews for a student's Three-Way Conference Response
+   */
+  async saveTeacherConferenceReview(
+    periodId: string,
+    studentId: string,
+    reviewPayload: {
+      reflectionStatus: 'APPROVED' | 'REVISION_REQUIRED';
+      reflectionComment: string;
+      extracurricularStatus: 'APPROVED' | 'REVISION_REQUIRED';
+      extracurricularComment: string;
+      smartGoals: Record<string, { status: 'APPROVED' | 'REVISION_REQUIRED'; comment: string }>;
+    },
+    currentUserUid: string,
+    currentUserName: string
+  ): Promise<void> {
+    try {
+      const responseId = `${periodId}_${studentId}`;
+      const responseRef = doc(db, RESPONSES_COLLECTION, responseId);
+      const snap = await getDoc(responseRef);
+      if (!snap.exists()) {
+        throw new Error('Conference response not found.');
+      }
+      const responseData = snap.data() as StudentConferenceResponse;
+      const now = Date.now();
+
+      // Build sectionReviews structured payload
+      const sectionReviews: any = {
+        aboutMe: {
+          status: reviewPayload.reflectionStatus,
+          comment: reviewPayload.reflectionComment,
+          reviewedByUid: currentUserUid,
+          reviewedByName: currentUserName,
+          reviewedAt: now
+        },
+        strengths: {
+          status: reviewPayload.reflectionStatus,
+          comment: reviewPayload.reflectionComment,
+          reviewedByUid: currentUserUid,
+          reviewedByName: currentUserName,
+          reviewedAt: now
+        },
+        growthAreas: {
+          status: reviewPayload.reflectionStatus,
+          comment: reviewPayload.reflectionComment,
+          reviewedByUid: currentUserUid,
+          reviewedByName: currentUserName,
+          reviewedAt: now
+        },
+        reflection: { // key for student UI component lock
+          status: reviewPayload.reflectionStatus,
+          comment: reviewPayload.reflectionComment,
+          reviewedByUid: currentUserUid,
+          reviewedByName: currentUserName,
+          reviewedAt: now
+        },
+        extracurricular: {
+          status: reviewPayload.extracurricularStatus,
+          comment: reviewPayload.extracurricularComment,
+          reviewedByUid: currentUserUid,
+          reviewedByName: currentUserName,
+          reviewedAt: now
+        },
+        smartGoals: {}
+      };
+
+      // Map goals reviews
+      if (reviewPayload.smartGoals) {
+        Object.entries(reviewPayload.smartGoals).forEach(([goalId, val]) => {
+          sectionReviews.smartGoals[goalId] = {
+            status: val.status,
+            comment: val.comment,
+            reviewedByUid: currentUserUid,
+            reviewedByName: currentUserName,
+            reviewedAt: now
+          };
+        });
+      }
+
+      // Build overall response object to calculate its status
+      const mockResponse: StudentConferenceResponse = {
+        ...responseData,
+        sectionReviews
+      };
+
+      const calculatedStatus = this.calculateOverallStatus(mockResponse);
+
+      // Save update to firestore
+      await updateDoc(responseRef, {
+        sectionReviews,
+        overallStatus: calculatedStatus,
+        updatedAt: now
+      });
+
+      // Send real notification to student
+      try {
+        const student = await getStudentById(studentId);
+        if (student?.email) {
+          const typeStr = calculatedStatus === 'FULLY_APPROVED' ? 'REPORT_APPROVED' : 'REPORT_REJECTED';
+          const msgStr = calculatedStatus === 'FULLY_APPROVED'
+            ? `Workbook Three-Way Conference kamu telah DISETUJUI PENUH oleh guru!`
+            : `Workbook Three-Way Conference kamu butuh revisi. Status: ${calculatedStatus === 'PARTIALLY_APPROVED' ? 'Disetujui Sebagian' : 'Perlu Revisi'}.`;
+
+          await sendNotification({
+            userId: student.email,
+            type: typeStr,
+            message: msgStr,
+            link: '/student/goal-setting'
+          });
+        }
+      } catch (notifErr) {
+        console.error('Failed to send review notification to student:', notifErr);
+      }
+
+    } catch (error) {
+      return handleFirestoreError(error, 'write', `${RESPONSES_COLLECTION}/${periodId}_${studentId}`);
     }
   }
 };

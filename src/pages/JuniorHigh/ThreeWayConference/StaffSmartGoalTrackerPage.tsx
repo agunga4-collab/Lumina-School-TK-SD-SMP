@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../../context/AuthContext';
 import { useAcademicYear } from '../../../context/AcademicYearContext';
 import { threeWayConferenceService } from '../../../services/threeWayConferenceService';
@@ -29,6 +29,16 @@ export default function StaffSmartGoalTrackerPage() {
   // Loading / Error
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+
+  const [searchParams] = useSearchParams();
+
+  // Set filters from URL params if present
+  React.useEffect(() => {
+    const studentIdParam = searchParams.get('studentId');
+    if (studentIdParam) {
+      setSearch(studentIdParam);
+    }
+  }, [searchParams]);
 
   // Filters State
   const [search, setSearch] = React.useState('');
@@ -246,7 +256,8 @@ export default function StaffSmartGoalTrackerPage() {
       const q = search.toLowerCase();
       const matchName = studentName.toLowerCase().includes(q);
       const matchNis = studentNis.toLowerCase().includes(q);
-      if (!matchName && !matchNis) return false;
+      const matchId = (entry.studentId || '').toLowerCase().includes(q);
+      if (!matchName && !matchNis && !matchId) return false;
     }
 
     // Grade filter

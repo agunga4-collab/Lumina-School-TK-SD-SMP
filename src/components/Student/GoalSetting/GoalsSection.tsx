@@ -7,6 +7,11 @@ interface GoalsSectionProps {
   goals: SmartGoal[];
   disabled: boolean;
   onGoalsChange: (updatedGoals: SmartGoal[]) => void;
+  reviews?: {
+    smartGoals?: {
+      [goalId: string]: { status: string; comment?: string };
+    };
+  };
 }
 
 const STRAND_CONFIGS: {
@@ -51,7 +56,7 @@ const STRAND_CONFIGS: {
   },
 ];
 
-export default function GoalsSection({ goals, disabled, onGoalsChange }: GoalsSectionProps) {
+export default function GoalsSection({ goals, disabled, onGoalsChange, reviews }: GoalsSectionProps) {
   
   // Local unique ID generator as safe fallback if crypto.randomUUID isn't defined
   const generateId = () => {
@@ -62,6 +67,7 @@ export default function GoalsSection({ goals, disabled, onGoalsChange }: GoalsSe
   };
 
   const handleAddGoal = (strand: ConferenceGoalStrand) => {
+    if (reviews) return; // Block adding during revision rounds
     const strandGoals = goals.filter(g => g.strand === strand);
     if (strandGoals.length >= 2) return; // Prompt maximum 2 goals
 
@@ -93,9 +99,13 @@ export default function GoalsSection({ goals, disabled, onGoalsChange }: GoalsSe
   };
 
   const handleRemoveGoal = (goalId: string) => {
+    if (reviews) return; // Block removing during revision rounds
     const filtered = goals.filter(g => g.id !== goalId);
     onGoalsChange(filtered);
   };
+
+  // Determine if adding goals is blocked due to reviews/revisions
+  const isAddBlocked = !!reviews;
 
   return (
     <div className="space-y-12 animate-in fade-in duration-300">
@@ -135,7 +145,7 @@ export default function GoalsSection({ goals, disabled, onGoalsChange }: GoalsSe
               </div>
 
               {/* Add Goal Button */}
-              {!disabled && strandGoals.length < 2 && (
+              {!disabled && !isAddBlocked && strandGoals.length < 2 && (
                 <button
                   type="button"
                   onClick={() => handleAddGoal(strand)}
@@ -152,7 +162,7 @@ export default function GoalsSection({ goals, disabled, onGoalsChange }: GoalsSe
                 <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">
                   No goals configured for this strand
                 </p>
-                {!disabled && (
+                {!disabled && !isAddBlocked && (
                   <button
                     type="button"
                     onClick={() => handleAddGoal(strand)}
@@ -171,6 +181,7 @@ export default function GoalsSection({ goals, disabled, onGoalsChange }: GoalsSe
                     disabled={disabled}
                     onUpdate={handleUpdateGoal}
                     onRemove={() => handleRemoveGoal(goal.id)}
+                    review={reviews?.smartGoals?.[goal.id]}
                   />
                 ))}
               </div>

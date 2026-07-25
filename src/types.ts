@@ -1833,6 +1833,14 @@ export interface UnitActivityItem {
   overcomingPlan: string;
 }
 
+export interface SectionReview {
+  status: 'NOT_REVIEWED' | 'APPROVED' | 'REVISION_REQUIRED';
+  comment?: string;
+  reviewedByUid?: string | null;
+  reviewedByName?: string | null;
+  reviewedAt?: number | null;
+}
+
 export interface StudentConferenceResponse {
   id: string; // ${periodId}_${studentId}
   periodId: string;
@@ -1862,6 +1870,23 @@ export interface StudentConferenceResponse {
   updatedAt: number;
   submittedAt?: number | null;
   submittedBy?: string | null;
+  
+  // New section-level teacher review fields
+  overallStatus?: 'DRAFT' | 'SUBMITTED' | 'PARTIALLY_APPROVED' | 'REVISION_REQUIRED' | 'FULLY_APPROVED';
+  sectionReviews?: {
+    aboutMe?: SectionReview;
+    strengths?: SectionReview;
+    growthAreas?: SectionReview;
+    selfExploration?: SectionReview;
+    smartGoals?: {
+      [goalId: string]: SectionReview;
+    };
+    extracurricular?: SectionReview;
+    karyaIlmiah?: SectionReview;
+  };
+  lastSubmittedAt?: number | null;
+  revisionRound?: number;
+  lastEditedAt?: number | null;
 }
 
 export interface MentorAssignment {

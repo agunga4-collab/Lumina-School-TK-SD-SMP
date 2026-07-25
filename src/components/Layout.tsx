@@ -509,7 +509,7 @@ export function Layout() {
                   <NavItem to="/self-exploration/my" icon={<Sparkles size={18} />} label="Self Exploration" />
                   <NavItem to="/student/goal-setting" icon={<Target size={18} />} label="Goal Setting" />
                   <NavItem to="/student/my-presentation" icon={<Presentation size={18} />} label="My Presentation" />
-                  <NavItem to="/student/smart-goal-tracker" icon={<TrendingUp size={18} />} label="SMART Goal Tracker" />
+                  {/* <NavItem to="/student/smart-goal-tracker" icon={<TrendingUp size={18} />} label="SMART Goal Tracker" /> */}
                   <NavItem to="/student/reports" icon={<FileText size={18} />} label="Rapor Saya" />
                 </>
              ) : currentUser.role === 'PARENT' ? (
@@ -591,7 +591,7 @@ export function Layout() {
                   {['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR'].includes(currentUser.role) && (
                     <>
                       <NavItem to="/junior-high/conference/workspace" icon={<Users size={18} />} label="3-Way Conf Workspace" />
-                      <NavItem to="/junior-high/conference/tracker" icon={<TrendingUp size={18} />} label="SMART Goal Tracker" />
+                      {/* <NavItem to="/junior-high/conference/tracker" icon={<TrendingUp size={18} />} label="SMART Goal Tracker" /> */}
                     </>
                   )}
                   {currentUser.role === 'SUPER_ADMIN' && (

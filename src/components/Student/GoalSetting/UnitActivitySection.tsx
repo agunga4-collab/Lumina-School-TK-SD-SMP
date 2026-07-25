@@ -7,6 +7,9 @@ interface UnitActivitySectionProps {
   unitActivities?: UnitActivityItem[];
   disabled: boolean;
   onChange: (field: string, value: any) => void;
+  reviews?: {
+    extracurricular?: { status: string; comment?: string };
+  };
 }
 
 const CATEGORIES = [
@@ -27,9 +30,12 @@ export default function UnitActivitySection({
   unitActivity,
   unitActivities = [],
   disabled,
-  onChange
+  onChange,
+  reviews
 }: UnitActivitySectionProps) {
   const [activeTab, setActiveTab] = React.useState<string>('Performing Arts');
+
+  const isSectionDisabled = disabled || (reviews?.extracurricular ? reviews.extracurricular.status !== 'REVISION_REQUIRED' : false);
 
   // Safely build/maintain exactly 4 blocks in state
   const currentActivities = React.useMemo(() => {
@@ -47,6 +53,7 @@ export default function UnitActivitySection({
   }, [unitActivities]);
 
   const handleItemChange = (category: string, field: 'activityName' | 'worries' | 'overcomingPlan', value: string) => {
+    if (isSectionDisabled) return;
     const updated = currentActivities.map(item => {
       if (item.category === category) {
         return { ...item, [field]: value };
@@ -79,6 +86,26 @@ export default function UnitActivitySection({
     }
   };
 
+  const renderFeedback = () => {
+    const rev = reviews?.extracurricular;
+    if (!rev || !rev.comment) return null;
+    
+    return (
+      <div className={`p-4 rounded-xl text-xs font-medium border ${
+        rev.status === 'APPROVED' 
+          ? 'bg-emerald-50 text-emerald-800 border-emerald-100' 
+          : rev.status === 'REVISION_REQUIRED' 
+            ? 'bg-rose-50 text-rose-800 border-rose-100 animate-pulse' 
+            : 'bg-gray-50 text-gray-700 border-gray-100'
+      }`}>
+        <p className="font-bold flex items-center gap-1 text-[10px] uppercase tracking-wider">
+          {rev.status === 'APPROVED' ? '✓ Disetujui Guru' : rev.status === 'REVISION_REQUIRED' ? '⚠ Perlu Revisi' : 'Reviewer'}
+        </p>
+        <p className="mt-1.5 leading-relaxed">{rev.comment}</p>
+      </div>
+    );
+  };
+
   return (
     <div className="bg-white rounded-[2rem] border border-gray-100 p-8 shadow-sm space-y-8 animate-in fade-in duration-300">
       
@@ -91,6 +118,9 @@ export default function UnitActivitySection({
           <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">Elective, Performing Arts, & Extracurricular Reflection</p>
         </div>
       </div>
+
+      {/* Extracurricular reviews feedback */}
+      {renderFeedback()}
 
       {/* Legacy Data Notice / Fallback */}
       {isLegacy && (
@@ -169,7 +199,7 @@ export default function UnitActivitySection({
           </label>
           <p className="text-xs text-gray-400 font-medium">Select your elective activity or course for {activeTab}.</p>
           <select
-            disabled={disabled}
+            disabled={isSectionDisabled}
             value={activeItem.activityName}
             onChange={(e) => handleItemChange(activeTab, 'activityName', e.target.value)}
             className="w-full p-4 bg-white focus:bg-white rounded-2xl border border-gray-200/60 focus:border-teal-500 outline-none shadow-sm transition-all duration-200 text-sm font-semibold text-gray-700 disabled:opacity-75"
@@ -190,7 +220,7 @@ export default function UnitActivitySection({
           </label>
           <p className="text-xs text-gray-400 font-medium">What challenges, skill gaps, or doubts are you concerned about for this activity?</p>
           <textarea
-            disabled={disabled}
+            disabled={isSectionDisabled}
             value={activeItem.worries}
             onChange={(e) => handleItemChange(activeTab, 'worries', e.target.value)}
             placeholder={`I'm worried about my skills or confidence in ${activeItem.activityName || activeTab}...`}
@@ -205,7 +235,7 @@ export default function UnitActivitySection({
           </label>
           <p className="text-xs text-gray-400 font-medium">What is your concrete step or approach to handle these worries?</p>
           <textarea
-            disabled={disabled}
+            disabled={isSectionDisabled}
             value={activeItem.overcomingPlan}
             onChange={(e) => handleItemChange(activeTab, 'overcomingPlan', e.target.value)}
             placeholder="My plan to overcome this and build confidence is..."

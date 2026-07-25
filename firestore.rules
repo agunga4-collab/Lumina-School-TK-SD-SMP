@@ -576,11 +576,20 @@ service cloud.firestore {
       allow list: if isActive() && isLinkedStudent(resource.data.studentId);
       allow create: if isActive() && (
         isJuniorHighStaff() ||
-        (isOwnStudentData(incoming().studentId) && responseId.split('_')[1] == incoming().studentId)
+        (
+          isOwnStudentData(incoming().studentId) &&
+          responseId.split('_')[1] == incoming().studentId &&
+          (!('sectionReviews' in incoming())) &&
+          (!('overallStatus' in incoming()) || incoming().overallStatus in ['DRAFT', 'SUBMITTED'])
+        )
       );
       allow update: if isActive() && (
         isJuniorHighStaff() ||
-        (isOwnStudentData(existing().studentId) && incoming().studentId == existing().studentId)
+        (
+          isOwnStudentData(existing().studentId) &&
+          incoming().studentId == existing().studentId &&
+          !incoming().diff(existing()).affectedKeys().hasAny(['sectionReviews', 'overallStatus'])
+        )
       );
       allow delete: if isActive() && (
         isJuniorHighStaff() ||

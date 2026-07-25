@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { X, Calendar, BookOpen, AlertCircle, Sparkles, Brain, Award, Heart, ShieldAlert, Loader2, UserPlus } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
+import { X, Calendar, BookOpen, AlertCircle, Sparkles, Brain, Award, Heart, ShieldAlert, Loader2, UserPlus, ClipboardList, CheckCircle2, Save, Check } from 'lucide-react';
 import { threeWayConferenceService } from '../../../services/threeWayConferenceService';
+import { auth } from '../../../lib/firebase';
 import type { Student, StudentConferenceResponse, MentorAssignment, SmartGoal } from '../../../types';
 
 interface ConferenceResponseDetailDialogProps {
@@ -24,13 +27,170 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
   assignment,
   onAssignMentorClick,
 }) => {
+  const navigate = useNavigate();
   const [response, setResponse] = useState<StudentConferenceResponse | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [seReference, setSeReference] = useState<any | null>(null);
   const [isLoadingSe, setIsLoadingSe] = useState<boolean>(false);
 
+  // Teacher Review States
+  const [isSavingReview, setIsSavingReview] = useState<boolean>(false);
+  const [reviewSuccessMsg, setReviewSuccessMsg] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [localReviews, setLocalReviews] = useState<{
+    reflectionStatus: 'APPROVED' | 'REVISION_REQUIRED';
+    reflectionComment: string;
+    extracurricularStatus: 'APPROVED' | 'REVISION_REQUIRED';
+    extracurricularComment: string;
+    smartGoals: Record<string, { status: 'APPROVED' | 'REVISION_REQUIRED'; comment: string }>;
+  }>({
+    reflectionStatus: 'APPROVED',
+    reflectionComment: '',
+    extracurricularStatus: 'APPROVED',
+    extracurricularComment: '',
+    smartGoals: {}
+  });
+
   useEffect(() => {
+    if (response) {
+      const existingReviews = (response.sectionReviews || {}) as any;
+      const goalsRev: Record<string, { status: 'APPROVED' | 'REVISION_REQUIRED'; comment: string }> = {};
+      
+      if (response.goals) {
+        response.goals.forEach(g => {
+          const id = g.id || '';
+          const existing = existingReviews.smartGoals?.[id];
+          goalsRev[id] = {
+            status: existing?.status || 'APPROVED',
+            comment: existing?.comment || ''
+          };
+        });
+      }
+
+      setLocalReviews({
+        reflectionStatus: existingReviews.reflection?.status || 'APPROVED',
+        reflectionComment: existingReviews.reflection?.comment || '',
+        extracurricularStatus: existingReviews.extracurricular?.status || 'APPROVED',
+        extracurricularComment: existingReviews.extracurricular?.comment || '',
+        smartGoals: goalsRev
+      });
+    }
+  }, [response]);
+
+  const handleSaveAllReviews = async () => {
+    if (!response || !student) return;
+    
+    // Check validation (REVISION_REQUIRED needs comments)
+    if (localReviews.reflectionStatus === 'REVISION_REQUIRED' && !localReviews.reflectionComment.trim()) {
+      setReviewError('Komentar wajib diisi jika bagian refleksi membutuhkan revisi.');
+      return;
+    }
+    if (localReviews.extracurricularStatus === 'REVISION_REQUIRED' && !localReviews.extracurricularComment.trim()) {
+      setReviewError('Komentar wajib diisi jika bagian extracurricular membutuhkan revisi.');
+      return;
+    }
+    
+    let hasGoalError = false;
+    Object.entries(localReviews.smartGoals).forEach(([id, val]) => {
+      const goalVal = val as { status: 'APPROVED' | 'REVISION_REQUIRED'; comment: string };
+      if (goalVal.status === 'REVISION_REQUIRED' && !goalVal.comment.trim()) {
+        hasGoalError = true;
+      }
+    });
+    if (hasGoalError) {
+      setReviewError('Komentar wajib diisi untuk setiap goal yang membutuhkan revisi.');
+      return;
+    }
+
+    try {
+      setIsSavingReview(true);
+      setReviewError(null);
+      setReviewSuccessMsg(null);
+
+      const authUser = auth.currentUser;
+      const uid = authUser?.uid || 'unknown-staff';
+      const email = authUser?.email || 'Staff';
+      const displayName = authUser?.displayName || email;
+
+      await threeWayConferenceService.saveTeacherConferenceReview(
+        periodId,
+        student.id,
+        localReviews,
+        uid,
+        displayName
+      );
+
+      setReviewSuccessMsg('Review & Status berhasil diperbarui!');
+      
+      // Reload current response state
+      const updatedResp = await threeWayConferenceService.getStudentConferenceResponse(periodId, student.id);
+      setResponse(updatedResp);
+    } catch (err: any) {
+      console.error('Failed to save reviews:', err);
+      setReviewError(err.message || 'Gagal menyimpan review.');
+    } finally {
+      setIsSavingReview(false);
+    }
+  };
+
+  const renderInlineReviewBox = (
+    title: string,
+    status: 'APPROVED' | 'REVISION_REQUIRED',
+    comment: string,
+    onStatusChange: (status: 'APPROVED' | 'REVISION_REQUIRED') => void,
+    onCommentChange: (comment: string) => void
+  ) => {
+    return (
+      <div className="bg-gray-100/50 rounded-2xl border border-gray-200 p-5 mt-4 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <span className="text-xs font-black uppercase tracking-wider text-gray-500">
+            Review: {title}
+          </span>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => onStatusChange('APPROVED')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
+                status === 'APPROVED'
+                  ? 'bg-emerald-50 border-emerald-500/30 text-emerald-700 shadow-sm'
+                  : 'bg-white border-gray-200 text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <CheckCircle2 size={14} /> Disetujui
+            </button>
+            <button
+              type="button"
+              onClick={() => onStatusChange('REVISION_REQUIRED')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
+                status === 'REVISION_REQUIRED'
+                  ? 'bg-rose-50 border-rose-500/30 text-rose-700 shadow-sm'
+                  : 'bg-white border-gray-200 text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <AlertCircle size={14} /> Butuh Revisi
+            </button>
+          </div>
+        </div>
+        <div>
+          <textarea
+            value={comment}
+            onChange={(e) => onCommentChange(e.target.value)}
+            placeholder={`Masukkan komentar guru / umpan balik untuk ${title.toLowerCase()}...`}
+            className="w-full min-h-[60px] p-3 text-xs font-medium bg-white border border-gray-200 rounded-xl outline-none focus:border-teal-500 transition shadow-sm leading-relaxed"
+          />
+          {status === 'REVISION_REQUIRED' && !comment.trim() && (
+            <p className="text-[10px] text-rose-500 font-bold mt-1">
+              * Komentar / alasan wajib ditulis bila memerlukan revisi.
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  useEffect(() => {
+    console.log('[Debug-DetailDialog] Dialog Open State:', isOpen, 'Student ID:', student?.id, 'Period ID:', periodId);
     if (isOpen && student && periodId) {
       const loadResponseAndReferences = async () => {
         setIsLoading(true);
@@ -38,8 +198,12 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
         setResponse(null);
         const responseId = `${periodId}_${student.id}`;
         try {
-          console.log(`[ViewResponse] Fetching response from path: studentConferenceResponses/${responseId}`);
+          console.log(`[ViewResponse] Fetching response with consistent ID: ${responseId}`);
           const resp = await threeWayConferenceService.getStudentConferenceResponse(periodId, student.id);
+          console.log('[Debug-DetailDialog] Response document exists:', !!resp);
+          if (resp) {
+            console.log('[Debug-DetailDialog] Response document keys:', Object.keys(resp));
+          }
           setResponse(resp);
 
           if (resp) {
@@ -190,16 +354,16 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
     });
   }
 
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto font-sans" aria-labelledby="detail-modal-title" role="dialog" aria-modal="true" id="conference-detail-modal">
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] overflow-y-auto font-sans" aria-labelledby="detail-modal-title" role="dialog" aria-modal="true" id="conference-detail-modal">
       <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
         {/* Backdrop */}
-        <div className="fixed inset-0 bg-gray-500/75 backdrop-blur-sm transition-opacity" aria-hidden="true" onClick={onClose} />
+        <div className="fixed inset-0 bg-gray-600/60 backdrop-blur-md transition-opacity z-40" aria-hidden="true" onClick={onClose} />
 
         <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
         {/* Panel Container */}
-        <div className="inline-block align-bottom bg-gray-50 rounded-2xl text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full border border-gray-100">
+        <div className="relative z-50 inline-block align-bottom bg-gray-50 rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full border border-gray-100">
           
           {/* Header */}
           <div className="bg-white px-6 py-4 border-b border-gray-100 flex items-center justify-between shadow-sm">
@@ -325,6 +489,14 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                   </div>
                 </div>
 
+                {renderInlineReviewBox(
+                  'Reflection',
+                  localReviews.reflectionStatus,
+                  localReviews.reflectionComment,
+                  (status) => setLocalReviews(prev => ({ ...prev, reflectionStatus: status })),
+                  (comment) => setLocalReviews(prev => ({ ...prev, reflectionComment: comment }))
+                )}
+
                 {/* SMART Goals Heading */}
                 <div className="pt-4 border-t border-gray-100">
                   <h3 className="text-base font-bold text-gray-900 tracking-tight mb-4">
@@ -410,6 +582,32 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                                     <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">{goal.evidence || '—'}</p>
                                   </div>
                                 </div>
+
+                                {goal.id && renderInlineReviewBox(
+                                  `SMART Goal: ${goal.goal}`,
+                                  localReviews.smartGoals[goal.id]?.status || 'APPROVED',
+                                  localReviews.smartGoals[goal.id]?.comment || '',
+                                  (status) => setLocalReviews(prev => ({
+                                    ...prev,
+                                    smartGoals: {
+                                      ...prev.smartGoals,
+                                      [goal.id!]: {
+                                        status,
+                                        comment: prev.smartGoals[goal.id!]?.comment || ''
+                                      }
+                                    }
+                                  })),
+                                  (comment) => setLocalReviews(prev => ({
+                                    ...prev,
+                                    smartGoals: {
+                                      ...prev.smartGoals,
+                                      [goal.id!]: {
+                                        status: prev.smartGoals[goal.id!]?.status || 'APPROVED',
+                                        comment
+                                      }
+                                    }
+                                  }))
+                                )}
                               </div>
                             ))}
                           </div>
@@ -536,13 +734,61 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                   </div>
                 </div>
 
+                {renderInlineReviewBox(
+                  'Extracurricular / Unit Activities',
+                  localReviews.extracurricularStatus,
+                  localReviews.extracurricularComment,
+                  (status) => setLocalReviews(prev => ({ ...prev, extracurricularStatus: status })),
+                  (comment) => setLocalReviews(prev => ({ ...prev, extracurricularComment: comment }))
+                )}
+
+                {/* Save Feedback status messages */}
+                {reviewSuccessMsg && (
+                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-xl text-xs font-bold flex items-center gap-2 animate-bounce">
+                    <CheckCircle2 size={16} className="text-emerald-500 animate-pulse" />
+                    {reviewSuccessMsg}
+                  </div>
+                )}
+                {reviewError && (
+                  <div className="bg-rose-50 border border-rose-200 text-rose-800 p-4 rounded-xl text-xs font-bold flex items-center gap-2">
+                    <AlertCircle size={16} className="text-rose-500" />
+                    {reviewError}
+                  </div>
+                )}
+
+                {/* Main submit button for teacher reviews */}
+                <div className="bg-blue-50/50 border border-blue-100 p-6 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="space-y-0.5 text-left">
+                    <h4 className="text-sm font-black text-blue-900 uppercase italic tracking-tight">Kirim Penilaian Guru</h4>
+                    <p className="text-[11px] text-blue-700/80 font-semibold">Tinjau semua umpan balik, lalu kirimkan keputusan persetujuan/revisi ke siswa.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSaveAllReviews}
+                    disabled={isSavingReview}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-xs font-black uppercase tracking-wider rounded-xl transition shadow-md cursor-pointer"
+                  >
+                    {isSavingReview ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Menyimpan...
+                      </>
+                    ) : (
+                      <>
+                        <Save className="h-4 w-4" />
+                        Simpan & Update Review
+                      </>
+                    )}
+                  </button>
+                </div>
+
               </div>
             )}
 
           </div>
 
           {/* Footer */}
-          <div className="bg-white px-6 py-4 border-t border-gray-100 flex justify-end">
+          <div className="bg-white px-6 py-4 border-t border-gray-100 flex justify-end items-center gap-3">
             <button
               id="close-detail-modal-footer-btn"
               type="button"
@@ -555,6 +801,7 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
 
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
