@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Loader2, Calendar, Settings, ShieldAlert, BookOpen, UserCheck } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAcademicYear } from '../../../context/AcademicYearContext';
 import { useAuth } from '../../../context/AuthContext';
 import { threeWayConferenceService } from '../../../services/threeWayConferenceService';
@@ -23,6 +23,9 @@ interface ConferenceWorkspaceRow {
 export default function TeacherConferenceWorkspace() {
   const { activeYear, activeSemester, isLoading: isYearLoading } = useAcademicYear();
   const { profile } = useAuth();
+  const [searchParams] = useSearchParams();
+  const initialStudentId = searchParams.get('studentId');
+  const initialClassId = searchParams.get('classId');
 
   // Active Period State
   const [activePeriod, setActivePeriod] = useState<ConferencePeriod | null>(null);
@@ -37,7 +40,7 @@ export default function TeacherConferenceWorkspace() {
   // Filters State
   const [search, setSearch] = useState<string>('');
   const [gradeFilter, setGradeFilter] = useState<string>('all');
-  const [classFilter, setClassFilter] = useState<string>('all');
+  const [classFilter, setClassFilter] = useState<string>(initialClassId || 'all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [mentorFilter, setMentorFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<string>('name_asc');
@@ -151,6 +154,20 @@ export default function TeacherConferenceWorkspace() {
   useEffect(() => {
     loadWorkspaceData();
   }, [loadWorkspaceData]);
+
+  // Auto-open student dialog if studentId query param exists and students loaded
+  useEffect(() => {
+    if (initialStudentId && students.length > 0 && !isDetailDialogOpen) {
+      const row = students.find(r => r.student.id === initialStudentId);
+      if (row) {
+        setSelectedStudentForDetail(row.student);
+        setSelectedClassNameForDetail(row.className);
+        setSelectedGradeForDetail(row.grade);
+        setSelectedAssignmentForDetail(row.assignment);
+        setIsDetailDialogOpen(true);
+      }
+    }
+  }, [initialStudentId, students, isDetailDialogOpen]);
 
   // Handle Dialog Actions
   const handleViewResponse = (studentId: string) => {

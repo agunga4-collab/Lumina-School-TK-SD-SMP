@@ -11,6 +11,7 @@ import { cn } from '../../lib/utils';
 import type { UserRole, UnitType, User } from '../../types';
 import KindergartenHeadDashboard from '../Kindergarten/HeadDashboard';
 import HeadDashboard from '../Dashboard/HeadDashboard';
+import TeacherDashboard from '../JuniorHigh/TeacherDashboard';
 
 export default function LuminaHome() {
   const { 
@@ -37,6 +38,10 @@ export default function LuminaHome() {
 
   if (activeUnit === 'JUNIOR_HIGH' && (userRole === 'HEAD_UNIT' || userRole === 'HEAD_JUNIOR' || userRole === 'SUPER_ADMIN')) {
     return <HeadDashboard />;
+  }
+
+  if (activeUnit === 'JUNIOR_HIGH' && (userRole === 'TEACHER' || userRole === 'BK_MENTOR')) {
+    return <TeacherDashboard />;
   }
 
   const isParent = userRole === 'PARENT';

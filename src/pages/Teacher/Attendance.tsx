@@ -5,7 +5,7 @@ import {
   Save, Calendar, ChevronRight, ChevronLeft, AlertTriangle, MessageSquare, 
   Settings2, BarChart3, Bell, RefreshCw, Layers, Trash2, ExternalLink
 } from 'lucide-react';
-import { useNavigate, useOutletContext } from 'react-router-dom';
+import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { db, auth, getActiveStudents } from '../../lib/firebase';
 import { collection, query, where, getDocs, setDoc, doc, serverTimestamp, getDoc, orderBy, deleteDoc, writeBatch } from 'firebase/firestore';
@@ -27,6 +27,7 @@ const mockStudents: StudentAttendance[] = [];
 
 export default function Attendance() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { activeUnit } = useOutletContext<{ activeUnit: UnitType }>();
   const { activeYear, activeSemester: contextSemester } = useAcademicYear();
 
@@ -52,8 +53,8 @@ export default function Attendance() {
     late: 0,
     attendanceRate: 0
   });
-  const [selectedClass, setSelectedClass] = React.useState('');
-  const [selectedDate, setSelectedDate] = React.useState(new Date().toISOString().split('T')[0]);
+  const [selectedClass, setSelectedClass] = React.useState(searchParams.get('classId') || '');
+  const [selectedDate, setSelectedDate] = React.useState(searchParams.get('date') || new Date().toISOString().split('T')[0]);
   
   const now = new Date();
   const [recapMonth, setRecapMonth] = React.useState((now.getMonth() + 1).toString().padStart(2, '0'));

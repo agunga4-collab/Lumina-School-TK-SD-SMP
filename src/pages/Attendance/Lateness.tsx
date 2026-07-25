@@ -11,7 +11,7 @@ import { db, getActiveStudents } from '../../lib/firebase';
 import { collection, query, where, getDocs, doc, setDoc, serverTimestamp, getDoc, deleteDoc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { toast } from 'sonner';
-import { useOutletContext } from 'react-router-dom';
+import { useOutletContext, useSearchParams } from 'react-router-dom';
 import { UnitType } from '../../types';
 
 import StudentSearch from '../../components/StudentSearch';
@@ -55,6 +55,7 @@ const JUNIOR_HIGH_REASONS = [
 ];
 
 export default function Lateness() {
+  const [searchParams] = useSearchParams();
   const { activeUnit } = useOutletContext<{ activeUnit: UnitType }>();
   const { activeYear } = useAcademicYear();
   const [records, setRecords] = React.useState<LatenessRecord[]>([]);
@@ -64,7 +65,7 @@ export default function Lateness() {
   const [saving, setSaving] = React.useState(false);
   const [searchTerm, setSearchTerm] = React.useState('');
   const [classes, setClasses] = React.useState<any[]>([]);
-  const [selectedClass, setSelectedClass] = React.useState('');
+  const [selectedClass, setSelectedClass] = React.useState(searchParams.get('classId') || '');
   const [mostFrequentDay, setMostFrequentDay] = React.useState('-');
   const [avgLateMinutes, setAvgLateMinutes] = React.useState('-');
   const [selectedDate, setSelectedDate] = React.useState<string>(() => {
