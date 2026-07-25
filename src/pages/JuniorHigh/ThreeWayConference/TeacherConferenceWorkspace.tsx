@@ -4,11 +4,12 @@ import { Link } from 'react-router-dom';
 import { useAcademicYear } from '../../../context/AcademicYearContext';
 import { useAuth } from '../../../context/AuthContext';
 import { threeWayConferenceService } from '../../../services/threeWayConferenceService';
+import { getClasses } from '../../../lib/firebase';
 import { ConferenceWorkspaceFilters } from '../../../components/JuniorHigh/ThreeWayConference/ConferenceWorkspaceFilters';
 import { ConferenceResponsesTable } from '../../../components/JuniorHigh/ThreeWayConference/ConferenceResponsesTable';
 import { MentorAssignmentDialog } from '../../../components/JuniorHigh/ThreeWayConference/MentorAssignmentDialog';
 import { ConferenceResponseDetailDialog } from '../../../components/JuniorHigh/ThreeWayConference/ConferenceResponseDetailDialog';
-import type { Student, StudentConferenceResponse, MentorAssignment, ConferencePeriod, User } from '../../../types';
+import type { Student, StudentConferenceResponse, MentorAssignment, ConferencePeriod, User, Class } from '../../../types';
 import { toast } from 'sonner';
 
 interface ConferenceWorkspaceRow {
@@ -47,9 +48,26 @@ export default function TeacherConferenceWorkspace() {
   const [isMentorDialogOpen, setIsMentorDialogOpen] = useState<boolean>(false);
 
   const [selectedStudentForDetail, setSelectedStudentForDetail] = useState<Student | null>(null);
-  const [selectedResponseForDetail, setSelectedResponseForDetail] = useState<StudentConferenceResponse | null>(null);
+  const [selectedClassNameForDetail, setSelectedClassNameForDetail] = useState<string>('');
+  const [selectedGradeForDetail, setSelectedGradeForDetail] = useState<string | number>('');
   const [selectedAssignmentForDetail, setSelectedAssignmentForDetail] = useState<MentorAssignment | null>(null);
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState<boolean>(false);
+
+  // Classes list state for filter options
+  const [classesList, setClassesList] = useState<Class[]>([]);
+
+  useEffect(() => {
+    const fetchClasses = async () => {
+      try {
+        const cls = await getClasses();
+        const jhClasses = cls.filter(c => c.unitId === 'JUNIOR_HIGH' || ['7', '8', '9', 7, 8, 9].includes(c.grade));
+        setClassesList(jhClasses);
+      } catch (err) {
+        console.error('Failed to load classes for filter:', err);
+      }
+    };
+    fetchClasses();
+  }, []);
 
   // Load Active Period
   useEffect(() => {
@@ -70,9 +88,30 @@ export default function TeacherConferenceWorkspace() {
     }
   }, [activeYear, activeSemester, isYearLoading]);
 
+  // Load Eligible Mentors independently when activePeriod changes
+  useEffect(() => {
+    const loadMentors = async () => {
+      if (!activePeriod) return;
+      try {
+        const mentorsList = await threeWayConferenceService.getEligibleJuniorHighMentors();
+        setEligibleMentors(mentorsList);
+      } catch (err: any) {
+        console.error('Failed to load eligible mentors:', err);
+      }
+    };
+    loadMentors();
+  }, [activePeriod]);
+
   // Load Students and Mentors Data
   const loadWorkspaceData = useCallback(async () => {
     if (!activePeriod) return;
+    
+    // JANGAN load data siswa jika gradeFilter === 'all' && classFilter === 'all'
+    if (gradeFilter === 'all' && classFilter === 'all') {
+      setStudents([]);
+      return;
+    }
+
     setIsLoadingData(true);
     setError(null);
     try {
@@ -80,7 +119,7 @@ export default function TeacherConferenceWorkspace() {
       let mentorsList: User[] = [];
 
       const results = await Promise.allSettled([
-        threeWayConferenceService.getConferenceWorkspaceStudents(activePeriod.id),
+        threeWayConferenceService.getConferenceWorkspaceStudents(activePeriod.id, activeYear, gradeFilter, classFilter),
         threeWayConferenceService.getEligibleJuniorHighMentors()
       ]);
 
@@ -94,7 +133,6 @@ export default function TeacherConferenceWorkspace() {
         mentorsList = results[1].value;
       } else {
         console.error('Failed to load eligible mentors:', results[1].reason);
-        toast.error('Failed to load eligible mentors list. Dropdown will be empty.');
       }
 
       setStudents(rowsList);
@@ -104,7 +142,7 @@ export default function TeacherConferenceWorkspace() {
     } finally {
       setIsLoadingData(false);
     }
-  }, [activePeriod]);
+  }, [activePeriod, activeYear, gradeFilter, classFilter]);
 
   useEffect(() => {
     loadWorkspaceData();
@@ -115,7 +153,8 @@ export default function TeacherConferenceWorkspace() {
     const row = students.find((r) => r.student.id === studentId);
     if (row) {
       setSelectedStudentForDetail(row.student);
-      setSelectedResponseForDetail(row.response);
+      setSelectedClassNameForDetail(row.className);
+      setSelectedGradeForDetail(row.grade);
       setSelectedAssignmentForDetail(row.assignment);
       setIsDetailDialogOpen(true);
     }
@@ -145,13 +184,13 @@ export default function TeacherConferenceWorkspace() {
     setSortBy('name_asc');
   };
 
-  // Extract unique filter dropdown values dynamically from current students list
+  // Extract unique filter dropdown values dynamically from master classes list
   const availableGrades = Array.from(
-    new Set(students.map((s) => s.grade).filter((g) => g !== undefined && g !== '—'))
+    new Set(classesList.map((c) => c.grade).filter((g) => g !== undefined && g !== null))
   ).sort();
 
   const availableClasses = Array.from(
-    new Set(students.map((s) => s.className).filter((c) => c !== undefined && c !== 'Unknown Class'))
+    new Set(classesList.map((c) => c.name).filter((n) => n !== undefined && n !== null))
   ).sort();
 
   const availableMentorsList = eligibleMentors.map((m) => ({
@@ -380,7 +419,15 @@ export default function TeacherConferenceWorkspace() {
           />
 
           {/* Table Container */}
-          {isLoadingData ? (
+          {gradeFilter === 'all' && classFilter === 'all' ? (
+            <div className="bg-white rounded-xl border border-gray-100 p-12 text-center shadow-sm space-y-4" id="select-grade-class-empty-state">
+              <BookOpen className="h-10 w-10 text-gray-300 mx-auto" />
+              <h3 className="text-base font-bold text-gray-800">Pilih Grade atau Class</h3>
+              <p className="text-sm text-gray-500 max-w-sm mx-auto leading-relaxed">
+                Silakan pilih Grade atau Class terlebih dahulu pada panel filter di atas untuk menampilkan daftar siswa.
+              </p>
+            </div>
+          ) : isLoadingData ? (
             <div className="flex flex-col items-center justify-center p-12 bg-white rounded-xl border border-gray-100 shadow-sm" id="table-loading-state">
               <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
               <p className="text-sm text-gray-500 mt-3 font-semibold">Loading students data...</p>
@@ -409,19 +456,24 @@ export default function TeacherConferenceWorkspace() {
       />
 
       {/* Response Detail Dialog (Read-only) */}
-      <ConferenceResponseDetailDialog
-        isOpen={isDetailDialogOpen}
-        onClose={() => {
-          setIsDetailDialogOpen(false);
-          setSelectedStudentForDetail(null);
-          setSelectedResponseForDetail(null);
-          setSelectedAssignmentForDetail(null);
-        }}
-        student={selectedStudentForDetail}
-        response={selectedResponseForDetail}
-        assignment={selectedAssignmentForDetail}
-        onAssignMentorClick={handleAssignMentorFromDetail}
-      />
+      {activePeriod && selectedStudentForDetail && (
+        <ConferenceResponseDetailDialog
+          isOpen={isDetailDialogOpen}
+          onClose={() => {
+            setIsDetailDialogOpen(false);
+            setSelectedStudentForDetail(null);
+            setSelectedClassNameForDetail('');
+            setSelectedGradeForDetail('');
+            setSelectedAssignmentForDetail(null);
+          }}
+          student={selectedStudentForDetail}
+          className={selectedClassNameForDetail}
+          grade={selectedGradeForDetail}
+          periodId={activePeriod.id}
+          assignment={selectedAssignmentForDetail}
+          onAssignMentorClick={handleAssignMentorFromDetail}
+        />
+      )}
 
     </div>
   );

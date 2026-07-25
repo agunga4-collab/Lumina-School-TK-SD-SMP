@@ -7,7 +7,9 @@ interface ConferenceResponseDetailDialogProps {
   isOpen: boolean;
   onClose: () => void;
   student: Student | null;
-  response: StudentConferenceResponse | null;
+  className: string;
+  grade: string | number;
+  periodId: string;
   assignment: MentorAssignment | null;
   onAssignMentorClick: () => void;
 }
@@ -16,35 +18,59 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
   isOpen,
   onClose,
   student,
-  response,
+  className,
+  grade,
+  periodId,
   assignment,
   onAssignMentorClick,
 }) => {
+  const [response, setResponse] = useState<StudentConferenceResponse | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
   const [seReference, setSeReference] = useState<any | null>(null);
   const [isLoadingSe, setIsLoadingSe] = useState<boolean>(false);
 
   useEffect(() => {
-    if (isOpen && student && response) {
-      const loadSeRef = async () => {
-        setIsLoadingSe(true);
+    if (isOpen && student && periodId) {
+      const loadResponseAndReferences = async () => {
+        setIsLoading(true);
+        setError(null);
+        setResponse(null);
+        const responseId = `${periodId}_${student.id}`;
         try {
-          const ref = await threeWayConferenceService.getStudentSelfExplorationReference(
-            student.id,
-            response.academicYear,
-            response.semester
-          );
-          setSeReference(ref);
-        } catch (err) {
-          console.warn('Failed to load SE reference:', err);
+          console.log(`[ViewResponse] Fetching response from path: studentConferenceResponses/${responseId}`);
+          const resp = await threeWayConferenceService.getStudentConferenceResponse(periodId, student.id);
+          setResponse(resp);
+
+          if (resp) {
+            setIsLoadingSe(true);
+            try {
+              const ref = await threeWayConferenceService.getStudentSelfExplorationReference(
+                student.id,
+                resp.academicYear,
+                resp.semester
+              );
+              setSeReference(ref);
+            } catch (err) {
+              console.warn('Failed to load SE reference:', err);
+            } finally {
+              setIsLoadingSe(false);
+            }
+          }
+        } catch (err: any) {
+          console.error(`[ViewResponse] Error loading response doc ID ${responseId} for period ${periodId}:`, err);
+          setError(`Failed to load response for ID ${responseId}. Please verify network connection or permissions.`);
         } finally {
-          setIsLoadingSe(false);
+          setIsLoading(false);
         }
       };
-      loadSeRef();
+      loadResponseAndReferences();
     } else {
+      setResponse(null);
       setSeReference(null);
+      setError(null);
     }
-  }, [isOpen, student, response]);
+  }, [isOpen, student, periodId]);
 
   if (!isOpen || !student) return null;
 
@@ -209,8 +235,8 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                   <h4 className="text-base font-bold text-gray-900">{student.name}</h4>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-1.5 text-xs text-gray-500 font-medium">
                     <span>ID / NIS: <strong className="text-gray-700 font-mono">{student.nis || student.id}</strong></span>
-                    <span>Class: <strong className="text-gray-700">{student.classId}</strong></span>
-                    <span>Grade: <strong className="text-gray-700">Grade {student.grade || '—'}</strong></span>
+                    <span>Class: <strong className="text-gray-700">{className}</strong></span>
+                    <span>Grade: <strong className="text-gray-700">Grade {grade}</strong></span>
                     {response?.academicYear && (
                       <span>Academic Year: <strong className="text-gray-700">{response.academicYear} (S{response.semester})</strong></span>
                     )}
@@ -249,13 +275,23 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
               </div>
             </div>
 
-            {/* Check if response exists */}
-            {!response ? (
-              <div className="bg-amber-50 border border-amber-100 rounded-xl p-6 text-center space-y-3" id="no-response-warning">
+            {/* Check loading/error/response exists */}
+            {isLoading ? (
+              <div className="flex flex-col items-center justify-center p-12 bg-white rounded-xl border border-gray-100 shadow-sm" id="detail-loading-state">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+                <p className="text-sm text-gray-500 mt-3 font-semibold">Loading student response...</p>
+              </div>
+            ) : error ? (
+              <div className="bg-red-50 border border-red-100 rounded-xl p-4 flex gap-3 text-red-700 text-sm" id="detail-error-state">
+                <ShieldAlert className="h-5 w-5 shrink-0 text-red-500" />
+                <p>{error}</p>
+              </div>
+            ) : !response ? (
+              <div className="bg-amber-50/50 border border-amber-100 rounded-xl p-8 text-center space-y-3" id="no-response-warning">
                 <AlertCircle className="h-8 w-8 text-amber-500 mx-auto" />
-                <h4 className="text-base font-bold text-amber-800">No Goal Setting response available yet</h4>
+                <h4 className="text-base font-bold text-amber-800">Siswa belum mengirim Goal Setting untuk periode ini.</h4>
                 <p className="text-sm text-amber-700 max-w-md mx-auto">
-                  This student has not started Goal Setting yet. You can still manage their mentor assignment from this panel.
+                  Siswa ini belum memulai Goal Setting atau mengklik Submit. Anda tetap dapat mengelola tugas mentor mereka melalui panel di atas.
                 </p>
               </div>
             ) : (

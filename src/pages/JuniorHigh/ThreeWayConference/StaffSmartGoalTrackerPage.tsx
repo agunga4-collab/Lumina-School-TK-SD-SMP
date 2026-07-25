@@ -97,6 +97,18 @@ export default function StaffSmartGoalTrackerPage() {
           setTrackerEntries(entries);
           setWorkspaceStudents(students);
           setEligibleMentors(mentors);
+
+          // Auto-backfill existing responses if tracker entries is currently 0
+          if (entries.length === 0) {
+            console.log(`[StaffTracker] Tracker entries are 0. Automatically running backfill for period ID: ${period.id}`);
+            const backfillResult = await threeWayConferenceService.syncExistingConferenceResponsesToTracker(period.id);
+            if (backfillResult.success && backfillResult.count > 0) {
+              console.log(`[StaffTracker] Backfill completed. Loaded ${backfillResult.count} entries.`);
+              const refreshedEntries = await threeWayConferenceService.getTrackerEntriesForPeriod(period.id);
+              setTrackerEntries(refreshedEntries);
+              toast.success(`Successfully synced ${backfillResult.count} student goal setting responses to the tracker.`);
+            }
+          }
         }
       } catch (err: any) {
         console.error('Failed to load staff tracker workspace:', err);

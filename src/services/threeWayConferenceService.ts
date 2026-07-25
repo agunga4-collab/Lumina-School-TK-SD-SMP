@@ -20,7 +20,8 @@ import type {
   Student,
   Class,
   TrackerSectionReview,
-  TrackerOverallStatus
+  TrackerOverallStatus,
+  Enrollment
 } from '../types';
 
 const PERIODS_COLLECTION = 'conferencePeriods';
@@ -372,6 +373,7 @@ export const threeWayConferenceService = {
       };
 
       await setDoc(responseRef, docPayload);
+      await this.syncResponseToTracker(periodId, studentId, docPayload);
     } catch (error) {
       return handleFirestoreError(error, 'write', `${RESPONSES_COLLECTION}/${periodId}_${studentId}`);
     }
@@ -469,6 +471,7 @@ export const threeWayConferenceService = {
       }
 
       await setDoc(responseRef, docPayload);
+      await this.syncResponseToTracker(periodId, studentId, docPayload);
     } catch (error) {
       return handleFirestoreError(error, 'write', `${RESPONSES_COLLECTION}/${periodId}_${studentId}`);
     }
@@ -649,7 +652,12 @@ export const threeWayConferenceService = {
   /**
    * Get all Junior High students merged with their response and mentor assignment for the specified period.
    */
-  async getConferenceWorkspaceStudents(periodId: string): Promise<Array<{
+  async getConferenceWorkspaceStudents(
+    periodId: string,
+    academicYear?: string,
+    gradeFilter?: string,
+    classFilter?: string
+  ): Promise<Array<{
     student: Student;
     response: StudentConferenceResponse | null;
     assignment: MentorAssignment | null;
@@ -657,46 +665,240 @@ export const threeWayConferenceService = {
     grade: string | number;
   }>> {
     try {
-      // 1. Fetch Junior High students
-      const allStudents = (await getStudents()) || [];
-      const jhStudents = allStudents.filter(s => {
-        const unit = s.unitId || s.currentUnit || '';
-        if (unit === 'JUNIOR_HIGH') return true;
-        if (s.grade && [7, 8, 9].includes(s.grade)) return true;
-        return false;
-      });
+      // 1. Resolve Academic Year
+      let activeYear = academicYear;
+      if (!activeYear) {
+        const periodDoc = await getDoc(doc(db, PERIODS_COLLECTION, periodId));
+        if (periodDoc.exists()) {
+          activeYear = periodDoc.data()?.academicYear || '';
+        }
+      }
+      if (!activeYear) {
+        throw new Error('Academic year could not be determined for period: ' + periodId);
+      }
 
-      // 2. Fetch classes
-      const classes = (await getClasses()) || [];
+      // 2. Fetch JUNIOR_HIGH classes
+      const classesList = (await getClasses()) || [];
+      const jhClasses = classesList.filter(c => c.unitId === 'JUNIOR_HIGH' || ['7', '8', '9', 7, 8, 9].includes(c.grade));
       const classMap = new Map<string, Class>();
-      classes.forEach(c => classMap.set(c.id, c));
+      jhClasses.forEach(c => classMap.set(c.id, c));
 
-      // 3. Fetch responses
+      // 3. Determine class filter targets
+      let targetClasses = [...jhClasses];
+      if (classFilter && classFilter !== 'all') {
+        targetClasses = jhClasses.filter(c => c.id === classFilter || c.name === classFilter);
+      } else if (gradeFilter && gradeFilter !== 'all') {
+        targetClasses = jhClasses.filter(c => String(c.grade) === String(gradeFilter));
+      }
+
+      // 4. Query active enrollments for target classes
+      const targetClassKeys: string[] = [];
+      targetClasses.forEach(c => {
+        if (c.id) targetClassKeys.push(c.id);
+        if (c.name && c.name !== c.id) targetClassKeys.push(c.name);
+      });
+      const uniqueClassKeys = Array.from(new Set(targetClassKeys));
+
+      if (uniqueClassKeys.length === 0) {
+        return [];
+      }
+
+      const enrollments: Enrollment[] = [];
+      const chunks = [];
+      for (let i = 0; i < uniqueClassKeys.length; i += 10) {
+        chunks.push(uniqueClassKeys.slice(i, i + 10));
+      }
+
+      for (const chunk of chunks) {
+        const eq = query(
+          collection(db, 'enrollments'),
+          where('academicYear', '==', activeYear),
+          where('status', '==', 'active'),
+          where('classId', 'in', chunk)
+        );
+        const eSnap = await getDocs(eq);
+        eSnap.docs.forEach(doc => {
+          enrollments.push(doc.data() as Enrollment);
+        });
+      }
+
+      // 5. Fetch enrolled students from master
+      const studentIds = Array.from(new Set(enrollments.map(e => e.studentId))).filter(Boolean);
+      if (studentIds.length === 0) return [];
+
+      const studentsMap = new Map<string, Student>();
+      const sChunks = [];
+      for (let i = 0; i < studentIds.length; i += 10) {
+        sChunks.push(studentIds.slice(i, i + 10));
+      }
+
+      for (const chunk of sChunks) {
+        const sq = query(collection(db, 'students'), where('__name__', 'in', chunk));
+        const sSnap = await getDocs(sq);
+        sSnap.docs.forEach(doc => {
+          const data = doc.data();
+          const name = data.name || data.fullName || '';
+          if (!name || name.trim() === '') {
+            console.warn(`[Audit] Master student record has empty name for ID: ${doc.id}`);
+            return;
+          }
+          studentsMap.set(doc.id, {
+            id: doc.id,
+            name,
+            ...data
+          } as Student);
+        });
+      }
+
+      // 6. Fetch responses and assignments
       const responses = await this.getConferenceResponsesForPeriod(periodId);
       const responseMap = new Map<string, StudentConferenceResponse>();
       responses.forEach(r => responseMap.set(r.studentId, r));
 
-      // 4. Fetch assignments
       const assignments = await this.getMentorAssignmentsForPeriod(periodId);
       const assignmentMap = new Map<string, MentorAssignment>();
       assignments.forEach(a => {
         assignmentMap.set(a.studentId, a);
       });
 
-      return jhStudents.map(s => {
-        const cls = classMap.get(s.classId);
-        const resp = responseMap.get(s.id) || null;
-        const assign = assignmentMap.get(s.id) || null;
-        return {
-          student: s,
+      // 7. Combine master data & details
+      const result: Array<{
+        student: Student;
+        response: StudentConferenceResponse | null;
+        assignment: MentorAssignment | null;
+        className: string;
+        grade: string | number;
+      }> = [];
+
+      enrollments.forEach(e => {
+        const stud = studentsMap.get(e.studentId);
+        if (!stud) {
+          console.warn(`[Audit] Master student record missing for enrolled student ID: ${e.studentId}`);
+          return;
+        }
+
+        const cls = classMap.get(e.classId) || jhClasses.find(c => c.name === e.classId || c.id === e.classId);
+        const resp = responseMap.get(e.studentId) || null;
+        const assign = assignmentMap.get(e.studentId) || null;
+
+        result.push({
+          student: stud,
           response: resp,
           assignment: assign,
-          className: cls?.name || 'Unknown Class',
-          grade: s.grade || cls?.grade || '—'
-        };
+          className: cls?.name || e.classId || 'Unknown Class',
+          grade: cls?.grade || stud.grade || '—'
+        });
       });
+
+      return result;
     } catch (error) {
       return handleFirestoreError(error, 'list', 'conferenceWorkspace');
+    }
+  },
+
+  /**
+   * Sync a specific student conference response to the tracker entries (idempotent)
+   */
+  async syncResponseToTracker(periodId: string, studentId: string, response: StudentConferenceResponse): Promise<void> {
+    try {
+      const goals = response.goals || [];
+      
+      // Fetch mentor assignment
+      let assignedMentorId = null;
+      let assignedMentorName = null;
+      try {
+        const assignment = await this.getMentorAssignment(periodId, studentId);
+        if (assignment && assignment.status === 'ACTIVE') {
+          assignedMentorId = assignment.mentorId || null;
+          assignedMentorName = assignment.mentorName || null;
+        }
+      } catch (e) {
+        console.warn('Could not fetch mentor assignment for tracker sync:', e);
+      }
+
+      for (const goal of goals) {
+        if (!goal.id) continue;
+        const entryId = `${periodId}_${studentId}_${goal.id}`;
+        const entryRef = doc(db, TRACKER_COLLECTION, entryId);
+        const entrySnap = await getDoc(entryRef);
+
+        if (entrySnap.exists()) {
+          const existing = entrySnap.data() as SmartGoalTrackerEntry;
+          const updatedEntry = {
+            ...existing,
+            goalStrand: goal.strand,
+            goalSnapshot: goal,
+            assignedMentorId: assignedMentorId || existing.assignedMentorId,
+            assignedMentorName: assignedMentorName || existing.assignedMentorName,
+            updatedAt: Date.now()
+          };
+          await setDoc(entryRef, updatedEntry);
+        } else {
+          const initialStatus = response.status === 'SUBMITTED' || response.status === 'CONFERENCE_COMPLETED' ? 'SUBMITTED' : 'DRAFT';
+          const sectionReviews = {
+            goal: { status: 'NOT_REVIEWED' as const, comment: '' },
+            actionPlan: { status: 'NOT_REVIEWED' as const, comment: '' },
+            progress: { status: 'NOT_REVIEWED' as const, comment: '' },
+            reflection: { status: 'NOT_REVIEWED' as const, comment: '' }
+          };
+          
+          const newEntry: SmartGoalTrackerEntry = {
+            id: entryId,
+            periodId,
+            studentId,
+            goalId: goal.id,
+            goalStrand: goal.strand,
+            goalSnapshot: goal,
+            entryDate: Date.now(),
+            actionsTaken: goal.actions || '',
+            progressMade: goal.evidence || '',
+            hinderingBehaviors: '',
+            improvementPlan: '',
+            mentorComment: null,
+            commentedBy: null,
+            commentedByName: null,
+            commentedAt: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            overallStatus: initialStatus,
+            sectionReviews,
+            assignedMentorId,
+            assignedMentorName,
+            submittedAt: initialStatus === 'SUBMITTED' ? Date.now() : null,
+            lastSubmittedAt: initialStatus === 'SUBMITTED' ? Date.now() : null,
+            revisionRound: 0,
+            editingStartedAt: null,
+            lastActiveAt: Date.now()
+          };
+          await setDoc(entryRef, newEntry);
+        }
+      }
+    } catch (err) {
+      console.error(`Failed to sync response to tracker for student ${studentId}:`, err);
+    }
+  },
+
+  /**
+   * Sync existing conference responses for a period to the tracker
+   */
+  async syncExistingConferenceResponsesToTracker(periodId: string): Promise<{ success: boolean; count: number }> {
+    try {
+      console.log(`[Sync] Starting sync of existing conference responses to tracker for period: ${periodId}`);
+      const q = query(collection(db, RESPONSES_COLLECTION), where('periodId', '==', periodId));
+      const snap = await getDocs(q);
+      
+      let count = 0;
+      for (const d of snap.docs) {
+        const resp = d.data() as StudentConferenceResponse;
+        await this.syncResponseToTracker(periodId, resp.studentId, resp);
+        count++;
+      }
+      
+      console.log(`[Sync] Completed sync of existing conference responses. Synced ${count} student responses.`);
+      return { success: true, count };
+    } catch (error) {
+      console.error('[Sync] Error syncing conference responses to tracker:', error);
+      return { success: false, count: 0 };
     }
   },
 
