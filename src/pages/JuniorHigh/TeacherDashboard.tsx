@@ -64,25 +64,43 @@ export default function TeacherDashboard() {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loadingNotifs, setLoadingNotifs] = useState<boolean>(false);
 
-  // Generate 14 school days
+  // School Holidays list
+  const [schoolHolidays, setSchoolHolidays] = useState<string[]>([]);
+
+  const todayStr = useMemo(() => {
+    return new Date().toISOString().split('T')[0];
+  }, []);
+
+  // Exclude weekend / holiday for checking today's attendance expectations
+  const isTodayWeekendOrHoliday = useMemo(() => {
+    const today = new Date();
+    const day = today.getDay();
+    if (day === 0 || day === 6) return true;
+    if (schoolHolidays.includes(todayStr)) return true;
+    return false;
+  }, [schoolHolidays, todayStr]);
+
+  // Generate 14 school days, excluding weekends, holidays, and dates before 20 July 2026 for 2026/2027
   const last14SchoolDays = useMemo(() => {
     const dates: string[] = [];
     const curr = new Date();
     let checked = 0;
-    while (dates.length < 14 && checked < 30) {
+    while (dates.length < 14 && checked < 35) {
       const day = curr.getDay();
-      if (day !== 0 && day !== 6) { // Exclude Sat/Sun
-        dates.push(curr.toISOString().split('T')[0]);
+      const dateStr = curr.toISOString().split('T')[0];
+      
+      const isWeekend = (day === 0 || day === 6);
+      const isHoliday = schoolHolidays.includes(dateStr);
+      const isBeforeCutoff = (activeYear === '2026/2027' && dateStr < '2026-07-20');
+
+      if (!isWeekend && !isHoliday && !isBeforeCutoff) {
+        dates.push(dateStr);
       }
       curr.setDate(curr.getDate() - 1);
       checked++;
     }
     return dates;
-  }, []);
-
-  const todayStr = useMemo(() => {
-    return new Date().toISOString().split('T')[0];
-  }, []);
+  }, [schoolHolidays, activeYear]);
 
   // Check roles, homeroom classes, and mentor assignments on mount / context change
   useEffect(() => {
@@ -136,6 +154,19 @@ export default function TeacherDashboard() {
           setActiveTab('GURU_KELAS'); // fallback
         }
 
+        // 4. Fetch School Holidays
+        try {
+          const holidaySnap = await getDocs(collection(db, 'school_holidays'));
+          const holidaysList = holidaySnap.docs.map(doc => {
+            const data = doc.data();
+            return data.date || doc.id;
+          }).filter((d): d is string => typeof d === 'string' && d !== '');
+          setSchoolHolidays(holidaysList);
+        } catch (err) {
+          console.warn('Failed to load school_holidays:', err);
+          setSchoolHolidays([]);
+        }
+
       } catch (err) {
         console.error('Error initializing teacher dashboard:', err);
         toast.error('Gagal memuat data awal dashboard.');
@@ -172,10 +203,17 @@ export default function TeacherDashboard() {
         }
 
         // B. Fetch attendance records
+        const currentClassEntity = homeroomClasses.find(c => c.id === selectedClassId);
+        const className = currentClassEntity?.name || selectedClassId;
+        const classIds = [selectedClassId];
+        if (className && className !== selectedClassId) {
+          classIds.push(className);
+        }
+
         const attRef = collection(db, 'attendance_records');
         const attQuery = query(
           attRef,
-          where('classId', '==', selectedClassId),
+          where('classId', 'in', classIds),
           where('academicYear', '==', activeYear),
           where('semester', '==', activeSemester)
         );
@@ -187,7 +225,7 @@ export default function TeacherDashboard() {
         const lateRef = collection(db, 'lateness_records');
         const lateQuery = query(
           lateRef,
-          where('classId', '==', selectedClassId),
+          where('classId', 'in', classIds),
           where('academicYear', '==', activeYear)
         );
         const lateSnap = await getDocs(lateQuery);
@@ -331,10 +369,29 @@ export default function TeacherDashboard() {
 
   // Calculations for Attendance Section
   const todayAttendanceIncompleteCount = useMemo(() => {
-    if (students.length === 0) return 0;
+    if (students.length === 0 || isTodayWeekendOrHoliday) {
+      if (isTodayWeekendOrHoliday) {
+        console.log('[DEBUG ATTENDANCE] Skipping today (Weekend/Holiday):', todayStr);
+      }
+      return 0;
+    }
     const todayRecords = attendanceRecords.filter(r => r.date === todayStr);
-    return Math.max(0, students.length - todayRecords.length);
-  }, [students, attendanceRecords, todayStr]);
+    const missingStudents = students.filter(student => {
+      const record = todayRecords.find(r => r.studentId === student.id);
+      return !(record && record.status && typeof record.status === 'string' && record.status.trim() !== '');
+    });
+
+    console.log('[DEBUG ATTENDANCE] Checking today:', {
+      classId: selectedClassId,
+      date: todayStr,
+      rosterCount: students.length,
+      recordsFound: todayRecords.length,
+      missingStatusCount: missingStudents.length,
+      missingStudents: missingStudents.map(s => s.name)
+    });
+
+    return missingStudents.length;
+  }, [students, attendanceRecords, todayStr, isTodayWeekendOrHoliday, selectedClassId]);
 
   const missedAttendanceDays = useMemo(() => {
     if (students.length === 0) return [];
@@ -344,16 +401,30 @@ export default function TeacherDashboard() {
 
     pastSchoolDays.forEach(dateStr => {
       const recordsForDay = attendanceRecords.filter(r => r.date === dateStr);
-      if (recordsForDay.length < students.length) {
+      const missingStudents = students.filter(student => {
+        const record = recordsForDay.find(r => r.studentId === student.id);
+        return !(record && record.status && typeof record.status === 'string' && record.status.trim() !== '');
+      });
+
+      console.log('[DEBUG ATTENDANCE] Checking past day:', {
+        classId: selectedClassId,
+        date: dateStr,
+        rosterCount: students.length,
+        recordsFound: recordsForDay.length,
+        missingStatusCount: missingStudents.length,
+        missingStudents: missingStudents.map(s => s.name)
+      });
+
+      if (missingStudents.length > 0) {
         missedList.push({
           date: dateStr,
-          unstatusCount: students.length - recordsForDay.length
+          unstatusCount: missingStudents.length
         });
       }
     });
 
     return missedList;
-  }, [students, attendanceRecords, last14SchoolDays, todayStr]);
+  }, [students, attendanceRecords, last14SchoolDays, todayStr, selectedClassId]);
 
   // Calculations for Tardiness Section
   const tardyStudentsList = useMemo(() => {
@@ -945,27 +1016,7 @@ export default function TeacherDashboard() {
                   )}
                 </div>
 
-                {/* HELPFUL QUICK STATS WIDGET */}
-                <div className="bg-gradient-to-br from-gray-900 to-slate-900 rounded-[2.5rem] p-8 text-white space-y-6">
-                  <div>
-                    <span className="px-3 py-1 rounded-full bg-white/10 text-[9px] font-black uppercase tracking-widest text-slate-300">Konstruksi</span>
-                    <h3 className="text-sm font-black text-white uppercase tracking-wider mt-3">Ringkasan Operasional</h3>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4 text-left">
-                    <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
-                      <p className="text-2xl font-black italic">{students.length}</p>
-                      <p className="text-[9px] text-gray-400 font-bold uppercase tracking-wider mt-1">Siswa Asuhan</p>
-                    </div>
-                    <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
-                      <p className="text-2xl font-black italic text-red-400">{combinedMtsCases.length}</p>
-                      <p className="text-[9px] text-gray-400 font-bold uppercase tracking-wider mt-1">Kasus MTSS</p>
-                    </div>
-                    <div className="bg-white/5 p-4 rounded-2xl border border-white/5 col-span-2">
-                      <p className="text-xl font-black italic text-amber-400">{twcPendingActions.length} Siswa</p>
-                      <p className="text-[9px] text-gray-400 font-bold uppercase tracking-wider mt-1">Tinjauan TWC Menunggu</p>
-                    </div>
-                  </div>
-                </div>
+
 
               </div>
 
