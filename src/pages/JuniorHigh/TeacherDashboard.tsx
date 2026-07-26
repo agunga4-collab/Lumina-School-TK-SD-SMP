@@ -232,11 +232,12 @@ export default function TeacherDashboard() {
         const attQuery = query(
           attRef,
           where('classId', 'in', classIds),
-          where('academicYear', '==', activeYear),
-          where('semester', '==', activeSemester)
+          where('academicYear', '==', activeYear)
         );
         const attSnap = await getDocs(attQuery);
-        const attList = attSnap.docs.map(doc => doc.data() as AttendanceRecord);
+        const attList = attSnap.docs
+          .map(doc => doc.data() as AttendanceRecord)
+          .filter(r => r.semester === undefined || r.semester === null || String(r.semester) === String(activeSemester));
         setAttendanceRecords(attList);
 
         // C. Fetch lateness records for the last 14 days
