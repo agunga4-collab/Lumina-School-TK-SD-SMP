@@ -446,6 +446,7 @@ export default function StudentGoalSettingPage() {
               goals={formData.goals}
               disabled={!isEditable}
               onGoalsChange={(updatedGoals) => handleFieldChange('goals', updatedGoals)}
+              onSaveDraft={handleSaveDraft}
               reviews={response?.sectionReviews}
             />
           )}

@@ -426,6 +426,11 @@ service cloud.firestore {
       allow write: if isAdmin() || isJuniorHighStaff();
     }
 
+    match /school_holidays/{holidayId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isJuniorHighStaff();
+    }
+
     match /observations/{observationId} {
       allow read: if isActive() && isTeacher();
       allow read: if isActive() && isJuniorHighStaff();
@@ -626,7 +631,8 @@ service cloud.firestore {
           isOwnStudentData(existing().studentId) &&
           incoming().diff(existing()).affectedKeys().hasOnly([
             'entryDate', 'actionsTaken', 'progressMade', 'hinderingBehaviors', 'improvementPlan', 'updatedAt',
-            'overallStatus', 'submittedAt', 'lastSubmittedAt', 'revisionRound', 'editingStartedAt', 'lastActiveAt'
+            'overallStatus', 'submittedAt', 'lastSubmittedAt', 'revisionRound', 'editingStartedAt', 'lastActiveAt',
+            'goalStrand', 'goalSnapshot', 'assignedMentorId', 'assignedMentorName'
           ]) &&
           !incoming().diff(existing()).affectedKeys().hasAny([
             'sectionReviews', 'mentorComment', 'commentedBy', 'commentedByName', 'commentedAt'

@@ -1,12 +1,14 @@
 import * as React from 'react';
-import { Target, Plus, Compass, Sparkles, Heart, Activity } from 'lucide-react';
+import { Target, Plus, Compass, Sparkles, Heart, Activity, Save } from 'lucide-react';
 import { SmartGoal, ConferenceGoalStrand } from '../../../types';
 import GoalEditor from './GoalEditor';
+import { toast } from 'sonner';
 
 interface GoalsSectionProps {
   goals: SmartGoal[];
   disabled: boolean;
   onGoalsChange: (updatedGoals: SmartGoal[]) => void;
+  onSaveDraft?: () => Promise<void>;
   reviews?: {
     smartGoals?: {
       [goalId: string]: { status: string; comment?: string };
@@ -56,7 +58,8 @@ const STRAND_CONFIGS: {
   },
 ];
 
-export default function GoalsSection({ goals, disabled, onGoalsChange, reviews }: GoalsSectionProps) {
+export default function GoalsSection({ goals, disabled, onGoalsChange, onSaveDraft, reviews }: GoalsSectionProps) {
+  const [localSaving, setLocalSaving] = React.useState<string | null>(null);
   
   // Local unique ID generator as safe fallback if crypto.randomUUID isn't defined
   const generateId = () => {
@@ -184,6 +187,30 @@ export default function GoalsSection({ goals, disabled, onGoalsChange, reviews }
                     review={reviews?.smartGoals?.[goal.id]}
                   />
                 ))}
+              </div>
+            )}
+
+            {/* Save button for this strand */}
+            {!disabled && onSaveDraft && (
+              <div className="flex justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setLocalSaving(strand);
+                    try {
+                      await onSaveDraft();
+                      toast.success(`Draft goal untuk ${title} berhasil disimpan!`);
+                    } catch (err: any) {
+                      toast.error(err.message || 'Gagal menyimpan draft.');
+                    } finally {
+                      setLocalSaving(null);
+                    }
+                  }}
+                  disabled={localSaving === strand}
+                  className="flex items-center gap-2 px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all duration-200 shadow-md shadow-emerald-100 disabled:opacity-50"
+                >
+                  <Save size={12} /> {localSaving === strand ? 'Menyimpan...' : 'Simpan Draft'}
+                </button>
               </div>
             )}
           </div>
