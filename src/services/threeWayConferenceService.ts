@@ -484,6 +484,10 @@ export const threeWayConferenceService = {
         overallStatus: existing ? (existing.overallStatus || 'DRAFT') : 'DRAFT',
       };
 
+      if (docPayload.sectionReviews === null || docPayload.sectionReviews === undefined) {
+        delete (docPayload as any).sectionReviews;
+      }
+
       await setDoc(responseRef, docPayload);
       await this.syncResponseToTracker(periodId, studentId, docPayload);
     } catch (error) {
@@ -624,6 +628,10 @@ export const threeWayConferenceService = {
       const validation = this.validateConferenceResponseForSubmission(docPayload);
       if (!validation.isValid) {
         throw new Error(validation.errors.join(' '));
+      }
+
+      if (docPayload.sectionReviews === null || docPayload.sectionReviews === undefined) {
+        delete (docPayload as any).sectionReviews;
       }
 
       await setDoc(responseRef, docPayload);

@@ -584,7 +584,7 @@ service cloud.firestore {
         (
           isOwnStudentData(incoming().studentId) &&
           responseId.split('_')[responseId.split('_').size() - 1] == incoming().studentId &&
-          (!('sectionReviews' in incoming())) &&
+          (!('sectionReviews' in incoming()) || incoming().sectionReviews == null) &&
           (!('overallStatus' in incoming()) || incoming().overallStatus in ['DRAFT', 'SUBMITTED'])
         )
       );
@@ -593,7 +593,15 @@ service cloud.firestore {
         (
           isOwnStudentData(existing().studentId) &&
           incoming().studentId == existing().studentId &&
-          !incoming().diff(existing()).affectedKeys().hasAny(['sectionReviews', 'overallStatus'])
+          (
+            !incoming().diff(existing()).affectedKeys().hasAny(['sectionReviews', 'overallStatus']) ||
+            (
+              (!('sectionReviews' in incoming()) || incoming().sectionReviews == null) &&
+              (!('sectionReviews' in existing()) || existing().sectionReviews == null) &&
+              (!('overallStatus' in incoming()) || incoming().overallStatus == 'DRAFT') &&
+              (!('overallStatus' in existing()) || existing().overallStatus == 'DRAFT')
+            )
+          )
         )
       );
       allow delete: if isActive() && (
