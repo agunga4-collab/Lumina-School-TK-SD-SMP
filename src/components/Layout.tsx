@@ -528,13 +528,17 @@ export function Layout() {
              {/* Render "Analisis Unit" first for Head Unit, Head Junior, and Super Admin roles */}
              {['HEAD_UNIT', 'HEAD_JUNIOR', 'SUPER_ADMIN'].includes(currentUser.role) && (
                 <>
-                  {currentUnit !== 'KINDERGARTEN' && (
-                    <NavItem 
-                      to={currentUnit === 'ELEMENTARY' ? '/dashboard/head-elementary' : '/'} 
-                      icon={<LayoutDashboard size={18} />} 
-                      label="Analisis Unit" 
-                    />
-                  )}
+                  <NavItem 
+                    to={
+                      currentUnit === 'ELEMENTARY' 
+                        ? '/dashboard/head-elementary' 
+                        : currentUnit === 'KINDERGARTEN' 
+                          ? '/dashboard/head-kindy' 
+                          : '/'
+                    } 
+                    icon={<LayoutDashboard size={18} />} 
+                    label="Analisis Unit" 
+                  />
                   <NavItem to="/child/passport" icon={<MapIcon size={18} />} label="Student Portfolio" />
                 </>
              )}
