@@ -5,7 +5,8 @@ import {
   ChevronRight, LayoutGrid, Heart, BookOpen, 
   Languages, Brain, Activity, Palette, Compass,
   Music, Film, Star, CheckCircle2, Loader2, Image as ImageIcon,
-  UserCheck, RefreshCw, AlertTriangle, HelpCircle, Check, Info, Trash2, ClipboardList
+  UserCheck, RefreshCw, AlertTriangle, HelpCircle, Check, Info, Trash2, ClipboardList,
+  Mic, MicOff
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
@@ -189,6 +190,20 @@ export default function Observation() {
   const [isSaving, setIsSaving] = React.useState(false);
   const [isUploadingGeneral, setIsUploadingGeneral] = React.useState(false);
   const [uploadProgress, setUploadProgress] = React.useState<Record<string, boolean>>({});
+
+  // Camera Modal States
+  const [activeCameraTarget, setActiveCameraTarget] = React.useState<{ type: 'general' | 'student'; studentId?: string } | null>(null);
+  const [cameraStream, setCameraStream] = React.useState<MediaStream | null>(null);
+  const [cameraDevices, setCameraDevices] = React.useState<InputDeviceInfo[]>([]);
+  const [selectedCameraDeviceId, setSelectedCameraDeviceId] = React.useState<string>('');
+  const [isCameraLoading, setIsCameraLoading] = React.useState<boolean>(false);
+  const videoRef = React.useRef<HTMLVideoElement | null>(null);
+
+  // Speech-to-Text States
+  const [activeSpeechStudentId, setActiveSpeechStudentId] = React.useState<string | null>(null);
+  const [speechLanguage, setSpeechLanguage] = React.useState<'id-ID' | 'en-US'>('id-ID');
+  const [isListening, setIsListening] = React.useState<boolean>(false);
+  const recognitionRef = React.useRef<any>(null);
 
   const isStudentInClass = (studClassId: string, activeClassObj: { id: string; name: string }) => {
     const sClass = (studClassId || '').trim().toLowerCase();
@@ -936,6 +951,309 @@ export default function Observation() {
     reader.readAsDataURL(file);
   };
 
+  const startCamera = async (deviceId?: string) => {
+    setIsCameraLoading(true);
+    try {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+      }
+
+      const constraints: MediaStreamConstraints = {
+        video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'environment' }
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      setCameraStream(stream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(e => console.error("Error playing video:", e));
+      }
+
+      const allDevices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = allDevices.filter(device => device.kind === 'videoinput') as InputDeviceInfo[];
+      setCameraDevices(videoDevices);
+      if (videoDevices.length > 0 && !deviceId) {
+        const activeTrack = stream.getVideoTracks()[0];
+        const settings = activeTrack ? activeTrack.getSettings() : null;
+        if (settings && settings.deviceId) {
+          setSelectedCameraDeviceId(settings.deviceId);
+        } else {
+          setSelectedCameraDeviceId(videoDevices[0].deviceId);
+        }
+      }
+    } catch (err: any) {
+      console.error("Error accessing camera:", err);
+      toast.error(`Gagal mengakses kamera: ${err.message || "Pastikan izin kamera diaktifkan."}`);
+      setActiveCameraTarget(null);
+    } finally {
+      setIsCameraLoading(false);
+    }
+  };
+
+  const stopCamera = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      setCameraStream(null);
+    }
+    setActiveCameraTarget(null);
+  };
+
+  const capturePhoto = async () => {
+    if (!videoRef.current || !activeCameraTarget) return;
+
+    try {
+      const video = videoRef.current;
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error("Could not create canvas context");
+      
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const base64 = canvas.toDataURL('image/jpeg', 0.85);
+
+      const targetType = activeCameraTarget.type;
+      const targetStudentId = activeCameraTarget.studentId;
+      
+      stopCamera();
+      
+      if (targetType === 'general') {
+        setIsUploadingGeneral(true);
+        toast.loading('Mengunggah foto kamera ke Google Drive...', { id: 'upload-general' });
+        
+        const response = await fetch('/api/observations/upload-photo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            base64,
+            type: 'general',
+            academicYear: activeYear || 'Unknown',
+            className: classes.find(c => c.id === selectedClassId)?.name || 'General',
+            observationDate,
+            uploadedBy: 'Lumina Teacher'
+          })
+        });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || 'Server error uploading file');
+        }
+
+        const resData = await response.json();
+        setGeneralPhoto(resData.metadata.previewUrl);
+        toast.success('Foto Kamera Kegiatan Utama berhasil disinkronisasi ke Google Drive! ✨', { id: 'upload-general' });
+        
+      } else if (targetType === 'student' && targetStudentId) {
+        const student = students.find(s => s.id === targetStudentId);
+        const studentName = student ? student.name : 'Siswa';
+
+        setUploadProgress(prev => ({ ...prev, [targetStudentId]: true }));
+        toast.loading(`Mengunggah foto kamera ${studentName} ke Google Drive...`, { id: `upload-${targetStudentId}` });
+
+        const response = await fetch('/api/observations/upload-photo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            base64,
+            type: 'student',
+            academicYear: activeYear || 'Unknown',
+            className: classes.find(c => c.id === selectedClassId)?.name || 'General',
+            studentId: targetStudentId,
+            studentName,
+            observationDate,
+            uploadedBy: 'Lumina Teacher'
+          })
+        });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || 'Server error uploading file');
+        }
+
+        const resData = await response.json();
+        updateStudentField(targetStudentId, 'photo', resData.metadata.previewUrl);
+        toast.success(`Foto kamera ${studentName} berhasil disinkronisasi ke Google Drive! 📸`, { id: `upload-${targetStudentId}` });
+      }
+    } catch (err: any) {
+      console.error("Gagal mengambil foto dari kamera:", err);
+      toast.error(`Gagal mengunggah foto kamera: ${err.message || String(err)}`);
+    } finally {
+      setIsUploadingGeneral(false);
+      if (activeCameraTarget?.studentId) {
+        setUploadProgress(prev => ({ ...prev, [activeCameraTarget.studentId!]: false }));
+      }
+    }
+  };
+
+  const toggleSpeechRecognition = (studentId: string) => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    
+    if (!SpeechRecognition) {
+      toast.error("Fitur Speech-to-Text tidak didukung di browser ini. Gunakan Google Chrome.");
+      return;
+    }
+
+    if (isListening && activeSpeechStudentId === studentId) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      setIsListening(false);
+      setActiveSpeechStudentId(null);
+      return;
+    }
+
+    if (isListening && recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = speechLanguage;
+
+    recognition.onstart = () => {
+      setIsListening(true);
+      setActiveSpeechStudentId(studentId);
+      toast.success(`Mendengarkan (${speechLanguage === 'id-ID' ? 'Bahasa Indonesia' : 'English'})... Silakan bicara.`);
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error("Speech recognition error:", event.error);
+      if (event.error !== 'no-speech') {
+        toast.error(`Speech-to-Text Error: ${event.error}`);
+      }
+      setIsListening(false);
+      setActiveSpeechStudentId(null);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      setActiveSpeechStudentId(null);
+    };
+
+    recognition.onresult = (event: any) => {
+      let finalTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript + ' ';
+        }
+      }
+
+      if (finalTranscript) {
+        setObservations(prev => {
+          const currentNotes = prev[studentId]?.notes || '';
+          const newNotes = currentNotes ? `${currentNotes.trim()} ${finalTranscript.trim()}` : finalTranscript.trim();
+          
+          const updated = {
+            ...prev,
+            [studentId]: {
+              ...prev[studentId],
+              notes: newNotes
+            }
+          };
+          localStorage.setItem('kg_observation_data', JSON.stringify(updated));
+          return updated;
+        });
+      }
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
+
+  const handleSaveStudent = async (studentId: string) => {
+    setIsSaving(true);
+    try {
+      const targetDate = observationDate;
+      const todayStr = formatDateLocal(new Date());
+      
+      const student = students.find(s => s.id === studentId);
+      if (!student) {
+        toast.error('Siswa tidak ditemukan.');
+        return;
+      }
+
+      const currentStudentObs = getStudentObs(observations, student);
+      
+      // Enrich with student's name
+      const enrichedStudentObs = {
+        ...currentStudentObs,
+        studentName: student.name
+      };
+
+      // Fetch the existing document from Firestore first to merge
+      const docId = `${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const docRef = doc(db, 'observations', docId);
+      
+      let existingObservations: Record<string, any> = {};
+      let existingGeneralPhoto = generalPhoto;
+
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const d = docSnap.data();
+        existingObservations = d.observations || {};
+        if (d.generalPhotoUrl) {
+          existingGeneralPhoto = d.generalPhotoUrl;
+        }
+      }
+
+      // Merge only this student's observation
+      const updatedObservations = {
+        ...observations, // merge with current state
+        ...existingObservations, // and with firestore
+        [studentId]: enrichedStudentObs
+      };
+
+      // Also support other id variations if necessary
+      if (student.oldLuminaId) {
+        updatedObservations[student.oldLuminaId] = enrichedStudentObs;
+      }
+      if (student.nis) {
+        updatedObservations[student.nis] = enrichedStudentObs;
+      }
+
+      // Save permanently to date-specific key in LocalStorage
+      const comboKeyDateSpecific = `kg_obs_hist_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const payloadLegacy = {
+        selectedActivity,
+        selectedDomain,
+        generalPhoto: existingGeneralPhoto,
+        observations: updatedObservations,
+        date: targetDate,
+        timestamp: Date.now()
+      };
+      
+      localStorage.setItem(comboKeyDateSpecific, JSON.stringify(payloadLegacy));
+      if (targetDate === todayStr) {
+        const comboKeyLegacy = `kg_obs_hist_${selectedActivity}_${selectedDomain}`;
+        localStorage.setItem(comboKeyLegacy, JSON.stringify(payloadLegacy));
+      }
+
+      // Save to Firestore
+      await setDoc(docRef, cleanFirestoreData({
+        id: docId,
+        activity: selectedActivity,
+        domain: selectedDomain,
+        date: targetDate,
+        generalPhotoUrl: existingGeneralPhoto,
+        observations: updatedObservations,
+        timestamp: Date.now(),
+        updatedAt: Date.now()
+      }), { merge: true });
+
+      // Update our local page observations state
+      setObservations(updatedObservations);
+
+      toast.success(`Observasi untuk ${student.name} berhasil disimpan ke sistem & Firestore! ✨`);
+    } catch (err: any) {
+      console.error("Gagal menyimpan data observasi siswa:", err);
+      toast.error(`Gagal menyimpan: ${err.message || String(err)}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleSaveAll = async () => {
     // 1. Mandatory check: general photo MUST escape empty or null values
     if (!generalPhoto) {
@@ -1224,10 +1542,10 @@ export default function Observation() {
                   className="space-y-3"
                 >
                   <div className="relative aspect-video rounded-2xl overflow-hidden group bg-gray-100 border border-gray-100 shadow-inner">
-                    <img src={generalPhoto} alt="General Activity" className="w-full h-full object-cover transition-transform group-hover:scale-105" crossOrigin="anonymous" referrerPolicy="no-referrer" />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                      <label className="p-2.5 bg-white/90 hover:bg-white text-gray-800 rounded-xl font-bold text-xs transition-transform hover:scale-105 flex items-center gap-1.5 shadow-md cursor-pointer">
-                        <RefreshCw size={14} className="text-emerald-600" /> Ganti
+                    <img src={generalPhoto} alt="General Activity" className="w-full h-full object-cover transition-transform group-hover:scale-105" referrerPolicy="no-referrer" />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 p-2">
+                      <label className="p-2 bg-white/90 hover:bg-white text-gray-800 rounded-xl font-bold text-[10px] transition-transform hover:scale-105 flex items-center gap-1 shadow-md cursor-pointer">
+                        <RefreshCw size={12} className="text-emerald-600" /> File
                         <input 
                           type="file" 
                           accept="image/*" 
@@ -1235,11 +1553,21 @@ export default function Observation() {
                           className="hidden" 
                         />
                       </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveCameraTarget({ type: 'general' });
+                          startCamera();
+                        }}
+                        className="p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-[10px] transition-transform hover:scale-105 flex items-center gap-1 shadow-md cursor-pointer"
+                      >
+                        <Camera size={12} /> Kamera
+                      </button>
                       <button 
                         onClick={clearGeneralPhoto}
-                        className="p-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-xs transition-transform hover:scale-105 flex items-center gap-1.5 shadow-md cursor-pointer"
+                        className="p-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-[10px] transition-transform hover:scale-105 flex items-center gap-1 shadow-md cursor-pointer"
                       >
-                        <Trash2 size={14} /> Hapus
+                        <Trash2 size={12} /> Hapus
                       </button>
                     </div>
                     <div className="absolute bottom-2 left-2 bg-rose-600 text-white px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-wider">
@@ -1267,23 +1595,36 @@ export default function Observation() {
                       Sesi ini tidak dapat disimpan sebelum Foto General diunggah.
                     </p>
                   </div>
-                  <label className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase tracking-widest px-5 py-2.5 rounded-xl shadow-lg shadow-rose-100 transition-all hover:scale-103 cursor-pointer">
-                    {isUploadingGeneral ? (
-                      <>
-                        <Loader2 className="animate-spin" size={14} /> Membaca...
-                      </>
-                    ) : (
-                      <>
-                        <Upload size={14} /> Unggah Foto Kegiatan
-                      </>
-                    )}
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      onChange={handleGeneralPhotoUpload} 
-                      className="hidden" 
-                    />
-                  </label>
+                  <div className="flex flex-col sm:flex-row gap-2.5 w-full justify-center">
+                    <label className="flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase tracking-widest px-5 py-2.5 rounded-xl shadow-lg shadow-rose-100 transition-all hover:scale-103 cursor-pointer flex-1">
+                      {isUploadingGeneral ? (
+                        <>
+                          <Loader2 className="animate-spin" size={14} /> Membaca...
+                        </>
+                      ) : (
+                        <>
+                          <Upload size={14} /> Unggah Foto Kegiatan
+                        </>
+                      )}
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        onChange={handleGeneralPhotoUpload} 
+                        className="hidden" 
+                      />
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveCameraTarget({ type: 'general' });
+                        startCamera();
+                      }}
+                      className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-widest px-5 py-2.5 rounded-xl shadow-lg shadow-emerald-100 transition-all hover:scale-103 cursor-pointer flex-1"
+                    >
+                      <Camera size={14} /> Ambil dari Kamera
+                    </button>
+                  </div>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -1401,6 +1742,21 @@ export default function Observation() {
                         {grades.find(g => g.id === obs.grading)?.label || 'Belum Dinilai'}
                       </span>
                     </div>
+
+                    {/* Individual Save Button */}
+                    <button
+                      type="button"
+                      onClick={() => handleSaveStudent(student.id)}
+                      disabled={isSaving}
+                      className="w-full flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-black uppercase tracking-widest py-2 px-3 rounded-xl transition-all active:scale-95 disabled:opacity-50 shadow-sm mt-1"
+                    >
+                      {isSaving ? (
+                        <Loader2 className="animate-spin" size={10} />
+                      ) : (
+                        <Save size={10} />
+                      )}
+                      <span>Simpan Siswa</span>
+                    </button>
                   </div>
 
                   {/* Middle block: grading metrics selector & notes */}
@@ -1436,9 +1792,46 @@ export default function Observation() {
                       </p>
                     </div>
 
-                    {/* Notes textarea */}
+                    {/* Notes textarea with Speech-to-Text */}
                     <div className="space-y-1">
-                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest leading-none">Catatan Pembelajaran (Opsional)</label>
+                      <div className="flex items-center justify-between">
+                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest leading-none">Catatan Pembelajaran (Opsional)</label>
+                        
+                        <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg px-2 py-0.5 shrink-0">
+                          <select
+                            value={speechLanguage}
+                            onChange={(e) => setSpeechLanguage(e.target.value as 'id-ID' | 'en-US')}
+                            className="bg-transparent text-[8px] font-bold text-gray-500 border-none outline-none p-0 focus:ring-0 cursor-pointer"
+                          >
+                            <option value="id-ID">🇮🇩 Indo</option>
+                            <option value="en-US">🇬🇧 English</option>
+                          </select>
+                          
+                          <button
+                            type="button"
+                            onClick={() => toggleSpeechRecognition(student.id)}
+                            className={cn(
+                              "flex items-center gap-1 text-[8.5px] font-extrabold px-1.5 py-0.5 rounded transition",
+                              isListening && activeSpeechStudentId === student.id
+                                ? "bg-rose-500 text-white animate-pulse"
+                                : "text-emerald-700 hover:bg-emerald-50"
+                            )}
+                          >
+                            {isListening && activeSpeechStudentId === student.id ? (
+                              <>
+                                <span className="w-1 h-1 rounded-full bg-white animate-ping" />
+                                <span>Stop</span>
+                              </>
+                            ) : (
+                              <>
+                                <Mic size={9} />
+                                <span>Bicara</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
                       <textarea 
                         rows={2}
                         className="w-full bg-gray-50 border border-gray-100 rounded-xl p-3 text-xs outline-none focus:ring-1 focus:ring-emerald-400 focus:bg-white transition-all text-gray-700 font-medium placeholder:italic"
@@ -1460,7 +1853,7 @@ export default function Observation() {
                       <div className="relative aspect-video md:aspect-square md:w-full rounded-2xl overflow-hidden bg-gray-50 border border-gray-100 flex items-center justify-center group shadow-inner">
                         {resolvedPhoto ? (
                           <>
-                            <img src={resolvedPhoto} alt={student.name} className="w-full h-full object-cover" crossOrigin="anonymous" referrerPolicy="no-referrer" />
+                            <img src={resolvedPhoto} alt={student.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                             {hasSpecificPhoto ? (
                               <button
                                 onClick={() => updateStudentField(student.id, 'photo', null)}
@@ -1481,10 +1874,10 @@ export default function Observation() {
                         {/* Glass overlay label specifying photo source */}
                         {resolvedPhoto && (
                           <div className={cn(
-                            "absolute bottom-1 right-1 px-1.5 py-0.5 rounded text-[8px] font-black tracking-wide uppercase shadow-sm",
-                            hasSpecificPhoto 
-                              ? "bg-emerald-600/90 text-white" 
-                              : "bg-gray-800/80 text-gray-200"
+                             "absolute bottom-1 right-1 px-1.5 py-0.5 rounded text-[8px] font-black tracking-wide uppercase shadow-sm",
+                             hasSpecificPhoto 
+                               ? "bg-emerald-600/90 text-white" 
+                               : "bg-gray-800/80 text-gray-200"
                           )}>
                             {hasSpecificPhoto ? "Foto Khusus" : "Foto Harian"}
                           </div>
@@ -1492,32 +1885,44 @@ export default function Observation() {
                       </div>
                     </div>
 
-                    {/* Native student-specific file uploader */}
-                    <label
-                      className={cn(
-                        "w-full py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all flex items-center justify-center gap-1.5 cursor-pointer",
-                        hasSpecificPhoto 
-                          ? "bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700" 
-                          : "bg-white hover:bg-gray-50 border-gray-200 text-gray-600"
-                      )}
-                    >
-                      {uploadProgress[student.id] ? (
-                        <>
-                          <Loader2 className="animate-spin" size={10} /> Membaca...
-                        </>
-                      ) : (
-                        <>
-                          <Camera size={10} /> 
-                          {hasSpecificPhoto ? "Ganti Foto Khusus" : "Unggah Foto Khusus"}
-                        </>
-                      )}
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        onChange={(e) => handleStudentPhotoUpload(student.id, e)} 
-                        className="hidden" 
-                      />
-                    </label>
+                    {/* Camera and File upload buttons */}
+                    <div className="flex gap-1.5 w-full">
+                      <label
+                        className={cn(
+                          "flex-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all flex items-center justify-center gap-1 cursor-pointer",
+                          hasSpecificPhoto 
+                            ? "bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700" 
+                            : "bg-white hover:bg-gray-50 border-gray-200 text-gray-600"
+                        )}
+                        title="Unggah file foto dari perangkat"
+                      >
+                        {uploadProgress[student.id] ? (
+                          <Loader2 className="animate-spin" size={10} />
+                        ) : (
+                          <Upload size={10} />
+                        )}
+                        <span className="ml-1">File</span>
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          onChange={(e) => handleStudentPhotoUpload(student.id, e)} 
+                          className="hidden" 
+                        />
+                      </label>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveCameraTarget({ type: 'student', studentId: student.id });
+                          startCamera();
+                        }}
+                        className="flex-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border bg-emerald-600 hover:bg-emerald-700 text-white transition-all flex items-center justify-center gap-1 cursor-pointer"
+                        title="Ambil foto langsung menggunakan kamera"
+                      >
+                        <Camera size={10} />
+                        <span className="ml-1">Kamera</span>
+                      </button>
+                    </div>
                     
                     {!hasSpecificPhoto && generalPhoto && (
                       <span className="text-[8px] text-gray-400 leading-none text-center block italic">
@@ -1953,7 +2358,7 @@ export default function Observation() {
                             >
                               <div className="w-24 h-24 rounded-2xl overflow-hidden bg-gray-50 border border-gray-100 shrink-0 flex items-center justify-center relative shadow-inner">
                                 {session.generalPhoto ? (
-                                  <img src={session.generalPhoto} alt={session.activity} className="w-full h-full object-cover group-hover:scale-105 transition-all duration-500" crossOrigin="anonymous" referrerPolicy="no-referrer" />
+                                  <img src={session.generalPhoto} alt={session.activity} className="w-full h-full object-cover group-hover:scale-105 transition-all duration-500" referrerPolicy="no-referrer" />
                                 ) : (
                                   <div className="text-center p-2 flex flex-col items-center justify-center gap-1">
                                     <ImageIcon size={22} className="text-gray-350 animate-pulse" />
@@ -2173,7 +2578,7 @@ export default function Observation() {
                         {/* Photo */}
                         <div className="w-full md:w-32 aspect-video md:aspect-square bg-gray-100 rounded-xl overflow-hidden shrink-0 border border-gray-100 flex items-center justify-center">
                           {entry.photo ? (
-                            <img src={entry.photo} alt={entry.date} className="w-full h-full object-cover" crossOrigin="anonymous" referrerPolicy="no-referrer" />
+                            <img src={entry.photo} alt={entry.date} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                           ) : (
                             <div className="text-center p-2 flex flex-col items-center justify-center gap-1">
                               <ImageIcon size={20} className="text-gray-305" />
@@ -2262,7 +2667,7 @@ export default function Observation() {
                   <div className="space-y-2">
                     <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider block">Foto Kegiatan Utama (General)</span>
                     <div className="aspect-video w-full max-h-[160px] rounded-2xl overflow-hidden bg-gray-100 border border-gray-200">
-                      <img src={selectedDetailSession.generalPhoto} alt="General session photo" className="w-full h-full object-cover" crossOrigin="anonymous" referrerPolicy="no-referrer" />
+                      <img src={selectedDetailSession.generalPhoto} alt="General session photo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     </div>
                   </div>
                 )}
@@ -2294,7 +2699,7 @@ export default function Observation() {
                             <div key={student.id} className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex gap-4">
                               <div className="w-16 h-16 rounded-xl overflow-hidden bg-gray-50 border border-gray-100 shrink-0 flex items-center justify-center">
                                 {studentPhoto ? (
-                                  <img src={studentPhoto} alt={student.name} className="w-full h-full object-cover" crossOrigin="anonymous" referrerPolicy="no-referrer" />
+                                  <img src={studentPhoto} alt={student.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                                 ) : (
                                   <div className="text-center p-1 font-black text-xs text-gray-300">
                                     {student.name.charAt(0)}
@@ -2360,6 +2765,94 @@ export default function Observation() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* CAMERA CAPTURE MODAL */}
+      {activeCameraTarget && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl border border-gray-100 flex flex-col">
+            
+            {/* Modal Header */}
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-gray-50">
+              <div className="flex items-center gap-2">
+                <Camera className="text-emerald-600" size={20} />
+                <h3 className="text-sm font-black text-gray-900 uppercase tracking-wider">
+                  Ambil Foto Kamera - {activeCameraTarget.type === 'general' ? 'Kegiatan Utama' : 'Khusus Siswa'}
+                </h3>
+              </div>
+              <button 
+                onClick={stopCamera}
+                className="p-1.5 hover:bg-gray-200 rounded-full text-gray-400 hover:text-gray-700 transition"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Video Viewport */}
+            <div className="relative aspect-video bg-black flex items-center justify-center">
+              {isCameraLoading && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-gray-900 text-white z-10">
+                  <Loader2 className="animate-spin text-emerald-500" size={32} />
+                  <span className="text-xs font-bold text-gray-400">Menghubungkan Kamera...</span>
+                </div>
+              )}
+              <video 
+                ref={videoRef}
+                autoPlay 
+                playsInline 
+                muted
+                className="w-full h-full object-cover"
+              />
+            </div>
+
+            {/* Modal Controls */}
+            <div className="p-5 bg-gray-50 border-t border-gray-100 space-y-4">
+              
+              {/* Camera Source Selector (if multiple cameras available) */}
+              {cameraDevices.length > 1 && (
+                <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs">
+                  <span className="font-bold text-gray-500">Pilih Kamera:</span>
+                  <select
+                    value={selectedCameraDeviceId}
+                    onChange={(e) => {
+                      const newId = e.target.value;
+                      setSelectedCameraDeviceId(newId);
+                      startCamera(newId);
+                    }}
+                    className="bg-transparent border-0 p-0 text-xs font-bold text-gray-800 focus:ring-0 outline-none cursor-pointer flex-1"
+                  >
+                    {cameraDevices.map(device => (
+                      <option key={device.deviceId} value={device.deviceId}>
+                        {device.label || `Kamera ${device.deviceId.substring(0, 5)}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={stopCamera}
+                  className="flex-1 py-3 border border-gray-200 hover:bg-gray-100 text-gray-700 font-extrabold text-xs uppercase tracking-wider rounded-xl transition active:scale-95"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={capturePhoto}
+                  disabled={isCameraLoading || !cameraStream}
+                  className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition active:scale-95 disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-md shadow-emerald-100"
+                >
+                  <CheckCircle2 size={15} />
+                  Ambil & Simpan
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
 
     </div>
   );
