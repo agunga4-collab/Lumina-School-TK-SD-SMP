@@ -6,7 +6,7 @@ import {
   Loader2, CheckCircle2, FileDown, Trash2, Send, RefreshCw, Upload
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   DEFAULT_STUDENTS, 
   getMonday, 
@@ -26,6 +26,11 @@ import { jsPDF } from 'jspdf';
 
 export default function WeeklyReview() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const paramClassId = searchParams.get('classId');
+  const paramDate = searchParams.get('date');
+  const paramStudentId = searchParams.get('studentId');
+
   const { activeYear } = useAcademicYear();
   const { getGoogleDriveToken } = useAuth();
 
@@ -53,7 +58,7 @@ export default function WeeklyReview() {
 
   // Class Selection states
   const [classes, setClasses] = React.useState<any[]>([]);
-  const [selectedClassId, setSelectedClassId] = React.useState<string>('');
+  const [selectedClassId, setSelectedClassId] = React.useState<string>(paramClassId || '');
   const [students, setStudents] = React.useState<any[]>(() => DEFAULT_STUDENTS);
   const [isLoadingClasses, setIsLoadingClasses] = React.useState(true);
 
@@ -273,7 +278,7 @@ export default function WeeklyReview() {
     return students.filter(student => isStudentInClass(student.classId, activeClassObj));
   }, [students, selectedClassId, activeClassObj]);
 
-  const [selectedStudentId, setSelectedStudentId] = React.useState<string>('');
+  const [selectedStudentId, setSelectedStudentId] = React.useState<string>(paramStudentId || '');
 
   React.useEffect(() => {
     if (filteredStudents.length > 0) {
@@ -286,12 +291,28 @@ export default function WeeklyReview() {
 
   // Load start and end date from sessionStorage or use current week's Mon-Fri
   const [startDateStr, setStartDateStr] = React.useState<string>(() => {
+    if (paramDate) {
+      const parsed = new Date(paramDate);
+      if (!isNaN(parsed.getTime())) {
+        const mon = getMonday(parsed);
+        return formatDateToKey(mon);
+      }
+    }
     const fromSession = sessionStorage.getItem('kindy_report_start');
     if (fromSession) return fromSession;
     const mon = getMonday(new Date());
     return formatDateToKey(mon);
   });
   const [endDateStr, setEndDateStr] = React.useState<string>(() => {
+    if (paramDate) {
+      const parsed = new Date(paramDate);
+      if (!isNaN(parsed.getTime())) {
+        const mon = getMonday(parsed);
+        const fri = new Date(mon);
+        fri.setDate(mon.getDate() + 4);
+        return formatDateToKey(fri);
+      }
+    }
     const fromSession = sessionStorage.getItem('kindy_report_end');
     if (fromSession) return fromSession;
     const mon = getMonday(new Date());

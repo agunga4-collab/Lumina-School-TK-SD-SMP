@@ -15,7 +15,7 @@ import { LuminaLogo } from './LuminaLogo';
 import { NotificationBell } from './NotificationBell';
 import { useBehaviorAlerts } from '../hooks/useBehaviorAlerts';
 import LuminaChat from './LuminaChat';
-import { collection, query, where, onSnapshot, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, getDoc, getDocs } from 'firebase/firestore';
 import { db, getParentStudentLinks, getStudentById } from '../lib/firebase';
 import { toast } from 'sonner';
 import type { Student } from '../types';
@@ -103,6 +103,30 @@ export function Layout() {
   useBehaviorAlerts();
 
   const currentUser = profile;
+  const [hasKindyClassAssignment, setHasKindyClassAssignment] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!currentUser || !activeYear) {
+      setHasKindyClassAssignment(false);
+      return;
+    }
+    const checkKindyClass = async () => {
+      try {
+        const q = query(
+          collection(db, 'classes'),
+          where('unitId', '==', 'KINDERGARTEN'),
+          where('academicYear', '==', activeYear),
+          where('homeroomTeacherId', '==', currentUser.uid)
+        );
+        const snap = await getDocs(q);
+        setHasKindyClassAssignment(!snap.empty);
+      } catch (err) {
+        console.error('Error checking kindy class assignment in layout:', err);
+        setHasKindyClassAssignment(false);
+      }
+    };
+    checkKindyClass();
+  }, [currentUser, activeYear]);
 
   // Use state for activeUnit so Super Admin and Parents can switch
   const [activeUnit, setActiveUnit] = React.useState<UnitType | null>(() => {
@@ -550,6 +574,9 @@ export function Layout() {
               {currentUnit === 'KINDERGARTEN' && (
                 <div className="space-y-1">
                   <NavSectionLabel label="Keseharian & Belajar" />
+                  {(['SUPER_ADMIN', 'HEAD_UNIT'].includes(currentUser.role) || hasKindyClassAssignment) && (
+                    <NavItem to="/kindy/dashboard" icon={<LayoutDashboard size={18} />} label="Dashboard" />
+                  )}
                   <NavItem to="/kindy/checklist" icon={<Smile size={18} />} label="Attendance & Emotional Checklist" />
                   <NavItem to="/kindy/observation" icon={<Camera size={18} />} label="Observation Data" />
                   <NavItem to="/kindy/weekly-summary" icon={<Sparkles size={18} />} label="Weekly Summary & AI" />

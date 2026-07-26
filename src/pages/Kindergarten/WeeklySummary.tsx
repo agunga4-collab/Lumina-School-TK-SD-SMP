@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   DEFAULT_STUDENTS, 
   aggregateKGWeeklyReportForPeriod, 
@@ -29,12 +29,16 @@ export function getSummaryKey(studentId: string, startDate: string, endDate: str
 
 export default function WeeklySummary() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const paramClassId = searchParams.get('classId');
+  const paramDate = searchParams.get('date');
+
   const { activeYear } = useAcademicYear();
   const { currentUser } = useOutletContext<{ currentUser: any }>() || {};
 
   // Class Selection states
   const [classes, setClasses] = React.useState<any[]>([]);
-  const [selectedClassId, setSelectedClassId] = React.useState<string>('');
+  const [selectedClassId, setSelectedClassId] = React.useState<string>(paramClassId || '');
   const [students, setStudents] = React.useState<any[]>(() => DEFAULT_STUDENTS);
   const [isLoadingClasses, setIsLoadingClasses] = React.useState(true);
 
@@ -310,10 +314,26 @@ export default function WeeklySummary() {
 
   // 1. Period states - Default to current week Monday to Friday
   const [startDateStr, setStartDateStr] = React.useState<string>(() => {
+    if (paramDate) {
+      const parsed = new Date(paramDate);
+      if (!isNaN(parsed.getTime())) {
+        const mon = getMonday(parsed);
+        return formatDateToKey(mon);
+      }
+    }
     const mon = getMonday(new Date());
     return formatDateToKey(mon);
   });
   const [endDateStr, setEndDateStr] = React.useState<string>(() => {
+    if (paramDate) {
+      const parsed = new Date(paramDate);
+      if (!isNaN(parsed.getTime())) {
+        const mon = getMonday(parsed);
+        const fri = new Date(mon);
+        fri.setDate(mon.getDate() + 4);
+        return formatDateToKey(fri);
+      }
+    }
     const mon = getMonday(new Date());
     const fri = new Date(mon);
     fri.setDate(mon.getDate() + 4);

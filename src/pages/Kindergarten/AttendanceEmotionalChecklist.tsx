@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { 
   CheckCircle2, Clock, AlertCircle, UserX, 
   Smile, Meh, Frown, Angry, Save, Calendar, Search, 
@@ -35,9 +36,13 @@ const getMonthlyStudentCell = (monthlyMap: any, student: any, dateStr: string) =
 
 export default function AttendanceEmotionalChecklist() {
   const { activeYear } = useAcademicYear();
+  const [searchParams] = useSearchParams();
+  const paramClassId = searchParams.get('classId');
+  const paramDate = searchParams.get('date');
+
   const [students, setStudents] = React.useState<any[]>(() => getStoredStudents());
   const [classes, setClasses] = React.useState<any[]>([]);
-  const [selectedClassId, setSelectedClassId] = React.useState<string>('');
+  const [selectedClassId, setSelectedClassId] = React.useState<string>(paramClassId || '');
 
   // Smart Paste states
   const [isImportModalOpen, setIsImportModalOpen] = React.useState(false);
@@ -107,7 +112,8 @@ export default function AttendanceEmotionalChecklist() {
         setClasses(fetchedClasses);
         
         if (fetchedClasses.length > 0) {
-          setSelectedClassId(fetchedClasses[0].id);
+          const defaultClass = paramClassId && fetchedClasses.some(c => c.id === paramClassId) ? paramClassId : fetchedClasses[0].id;
+          setSelectedClassId(defaultClass);
         }
 
         // 2. Fetch joined student list through caching system
@@ -130,7 +136,13 @@ export default function AttendanceEmotionalChecklist() {
     loadKindergartenData();
   }, [activeYear]);
 
-  const [selectedDate, setSelectedDate] = React.useState<Date>(new Date());
+  const [selectedDate, setSelectedDate] = React.useState<Date>(() => {
+    if (paramDate) {
+      const parsed = new Date(paramDate);
+      if (!isNaN(parsed.getTime())) return parsed;
+    }
+    return new Date();
+  });
   const [isSaving, setIsSaving] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
 

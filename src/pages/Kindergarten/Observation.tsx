@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Camera, Upload, Save, X, Sparkles, ArrowLeft,
@@ -111,9 +112,15 @@ const months = [
 
 export default function Observation() {
   const { activeYear } = useAcademicYear();
+  const [searchParams] = useSearchParams();
+  const paramClassId = searchParams.get('classId');
+  const paramDate = searchParams.get('date');
+  const paramActivity = searchParams.get('activity');
+  const paramDomain = searchParams.get('domain');
+
   const [students, setStudents] = React.useState<any[]>(() => getStoredStudents());
   const [classes, setClasses] = React.useState<any[]>([]);
-  const [selectedClassId, setSelectedClassId] = React.useState<string>('');
+  const [selectedClassId, setSelectedClassId] = React.useState<string>(paramClassId || '');
   const [isLoadingClasses, setIsLoadingClasses] = React.useState<boolean>(false);
 
   // View States
@@ -128,7 +135,7 @@ export default function Observation() {
   };
 
   // Date State for Observation Input
-  const [observationDate, setObservationDate] = React.useState<string>(() => formatDateLocal(new Date()));
+  const [observationDate, setObservationDate] = React.useState<string>(() => paramDate || formatDateLocal(new Date()));
   
   // Monthly Recap Filter States
   const [recapMonth, setRecapMonth] = React.useState<number>(() => new Date().getMonth() + 1);
@@ -162,8 +169,8 @@ export default function Observation() {
   const [selectedDetailCell, setSelectedDetailCell] = React.useState<{ student: any; domain: any; entries: any[] } | null>(null);
   const [selectedDetailSession, setSelectedDetailSession] = React.useState<any | null>(null);
 
-  const [selectedActivity, setSelectedActivity] = React.useState<KGActivity>('ART_EXPLORATIONS');
-  const [selectedDomain, setSelectedDomain] = React.useState<KGDomain>('SOSIAL_EMOSIONAL');
+  const [selectedActivity, setSelectedActivity] = React.useState<KGActivity>(() => (paramActivity as KGActivity) || 'ART_EXPLORATIONS');
+  const [selectedDomain, setSelectedDomain] = React.useState<KGDomain>(() => (paramDomain as KGDomain) || 'SOSIAL_EMOSIONAL');
   const [isImportOpen, setIsImportOpen] = React.useState<boolean>(false);
   
   // High fidelity general photo (Starts pre-filled with a beautiful school activity image)
@@ -272,7 +279,8 @@ export default function Observation() {
         setClasses(fetchedClasses);
         
         if (fetchedClasses.length > 0) {
-          setSelectedClassId(fetchedClasses[0].id);
+          const defaultClass = paramClassId && fetchedClasses.some(c => c.id === paramClassId) ? paramClassId : fetchedClasses[0].id;
+          setSelectedClassId(defaultClass);
         }
 
         // 2. Fetch Kindergarten Students from Cache
