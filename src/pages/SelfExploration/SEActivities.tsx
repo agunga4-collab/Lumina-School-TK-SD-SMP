@@ -154,7 +154,7 @@ export default function SEActivities() {
                <div key={act.id} className="group bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm hover:shadow-xl transition-all relative overflow-hidden">
                   {act.isProhibited && (
                     <div className="absolute top-0 right-0 bg-red-100 text-red-600 px-4 py-1 text-[8px] font-black uppercase tracking-widest rounded-bl-xl">
-                       Dilarang
+                       Mohon
                     </div>
                   )}
                   
@@ -269,7 +269,7 @@ export default function SEActivities() {
                            onChange={e => setFormData({...formData, isProhibited: e.target.checked})}
                            className="w-6 h-6 rounded-lg text-red-600 border-gray-200 focus:ring-red-600"
                         />
-                        <span className="text-xs font-bold text-gray-700 group-hover:text-red-600 transition-colors">Kegiatan ini dilarang (Blokir pilihan siswa)</span>
+                        <span className="text-xs font-bold text-gray-700 group-hover:text-red-600 transition-colors">Mohon Pilih Kegiatan Lain (Blokir pilihan siswa)</span>
                      </label>
                      <label className="flex items-center gap-3 cursor-pointer group">
                         <input 

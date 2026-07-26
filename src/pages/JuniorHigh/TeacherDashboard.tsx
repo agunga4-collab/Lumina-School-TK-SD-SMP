@@ -39,6 +39,10 @@ export default function TeacherDashboard() {
   // Master lists
   const [homeroomClasses, setHomeroomClasses] = useState<Class[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<string>('');
+  const selectedClassName = useMemo(() => {
+    const currentClassEntity = homeroomClasses.find(c => c.id === selectedClassId);
+    return currentClassEntity?.name || '';
+  }, [homeroomClasses, selectedClassId]);
   const [students, setStudents] = useState<Student[]>([]);
   const [activePeriod, setActivePeriod] = useState<any | null>(null);
 
@@ -203,8 +207,22 @@ export default function TeacherDashboard() {
         }
 
         // B. Fetch attendance records
+        let className = '';
         const currentClassEntity = homeroomClasses.find(c => c.id === selectedClassId);
-        const className = currentClassEntity?.name || selectedClassId;
+        if (currentClassEntity) {
+          className = currentClassEntity.name;
+        } else {
+          try {
+            const classDoc = await getDoc(doc(db, 'classes', selectedClassId));
+            if (classDoc.exists()) {
+              className = classDoc.data().name;
+            }
+          } catch (e) {
+            console.warn('Failed to fetch class name fallback:', e);
+          }
+        }
+        className = className || selectedClassId;
+
         const classIds = [selectedClassId];
         if (className && className !== selectedClassId) {
           classIds.push(className);
@@ -300,7 +318,7 @@ export default function TeacherDashboard() {
     };
 
     fetchClassDetails();
-  }, [selectedClassId, activeYear, activeSemester, activePeriod]);
+  }, [selectedClassId, activeYear, activeSemester, activePeriod, homeroomClasses]);
 
   // Fetch Mentor Tab details
   useEffect(() => {
@@ -601,21 +619,31 @@ export default function TeacherDashboard() {
         // ==========================================
         <div className="space-y-10">
           
-          {/* Class Selector Dropdown */}
-          {homeroomClasses.length > 1 && (
-            <div className="flex items-center gap-3 bg-white p-4 rounded-3xl border border-gray-100 shadow-sm w-fit">
-              <span className="text-[10px] font-black uppercase tracking-widest text-gray-400 pl-2">Pilih Kelas Asuhan:</span>
-              <select
-                value={selectedClassId}
-                onChange={(e) => setSelectedClassId(e.target.value)}
-                className="h-10 px-4 bg-gray-50 rounded-xl border-none font-black text-xs uppercase tracking-wider text-gray-700 focus:ring-2 focus:ring-blue-600"
-              >
-                {homeroomClasses.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
+          {/* Class Title Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm">
+            <div>
+              <h2 className="text-lg font-black text-gray-900 uppercase tracking-wider italic">
+                GURU KELAS - {selectedClassName.toUpperCase() || '...'}
+              </h2>
+              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-0.5">Unit Akademik Junior High</p>
             </div>
-          )}
+            
+            {/* Class Selector Dropdown */}
+            {homeroomClasses.length > 1 && (
+              <div className="flex items-center gap-3 bg-gray-50 px-4 py-2 rounded-2xl border border-gray-100">
+                <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Pilih Kelas:</span>
+                <select
+                  value={selectedClassId}
+                  onChange={(e) => setSelectedClassId(e.target.value)}
+                  className="h-8 px-2 bg-transparent rounded-lg border-none font-black text-xs uppercase tracking-wider text-gray-700 focus:ring-0"
+                >
+                  {homeroomClasses.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
 
           {loadingClassData ? (
             <div className="py-20 text-center space-y-4">
@@ -652,7 +680,15 @@ export default function TeacherDashboard() {
 
                   <div className="p-8 space-y-6">
                     {/* Today Attendance alert */}
-                    {todayAttendanceIncompleteCount > 0 ? (
+                    {isTodayWeekendOrHoliday ? (
+                      <div className="flex items-center gap-3 p-6 bg-gray-50 rounded-2xl border border-gray-200">
+                        <Info className="text-gray-400 shrink-0" size={18} />
+                        <div>
+                          <h4 className="text-xs font-black text-gray-700 uppercase tracking-wider">Tidak Ada Absensi Hari Ini</h4>
+                          <p className="text-xs text-gray-500 font-medium mt-1">Hari ini adalah akhir pekan atau hari libur sekolah.</p>
+                        </div>
+                      </div>
+                    ) : todayAttendanceIncompleteCount > 0 ? (
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 bg-amber-50 rounded-2xl border border-amber-100">
                         <div className="flex items-start gap-3">
                           <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={18} />
@@ -675,7 +711,7 @@ export default function TeacherDashboard() {
                         <CheckCircle2 className="text-emerald-600" size={18} />
                         <div>
                           <h4 className="text-xs font-black text-emerald-900 uppercase tracking-wider">Absensi Hari Ini Selesai</h4>
-                          <p className="text-xs text-emerald-700 font-medium mt-1">Semua siswa di kelas asuhan Anda telah tercatat hari ini.</p>
+                          <p className="text-xs text-emerald-700 font-medium mt-1">Semua siswa telah tercatat hari ini.</p>
                         </div>
                       </div>
                     )}

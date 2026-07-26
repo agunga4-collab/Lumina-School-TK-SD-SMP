@@ -250,7 +250,7 @@ export default function SEMy() {
                   <div className="w-10 h-10 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center">
                      <AlertCircle size={20} />
                   </div>
-                  <h3 className="font-black uppercase italic text-sm">Penting! Aturan Strand</h3>
+                  <h3 className="font-black uppercase italic text-sm">Mohon Perhatikan Info Berikut:</h3>
                </div>
                
                <div className="space-y-4">
@@ -263,7 +263,7 @@ export default function SEMy() {
                      <p className="text-xs font-bold text-gray-700 leading-relaxed">Pilih 1 strand per periode.</p>
                   </div>
                   <div className="p-4 bg-red-50 rounded-2xl border border-red-100">
-                     <p className="text-[10px] font-black uppercase text-red-600 tracking-widest mb-1">Dilarang!</p>
+                     <p className="text-[10px] font-black uppercase text-red-600 tracking-widest mb-1">Mohon Tidak Memilih SE Berikut:</p>
                      <p className="text-[10px] font-medium text-red-500 leading-relaxed italic">
                         Diamond Painting, Lego with Guide, Puzzles, Tennis Lapangan, Minecraft, dll.
                      </p>
