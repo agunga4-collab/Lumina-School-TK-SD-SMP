@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { 
   Trash2, ChevronDown, ChevronUp, AlertTriangle, 
-  HelpCircle, Calendar, Target, Shield 
+  HelpCircle, Calendar, Target, Shield, Save 
 } from 'lucide-react';
 import { SmartGoal } from '../../../types';
+import { toast } from 'sonner';
 
 interface GoalEditorProps {
   key?: string;
@@ -12,11 +13,13 @@ interface GoalEditorProps {
   onUpdate: (updatedGoal: SmartGoal) => void;
   onRemove: () => void;
   review?: { status: string; comment?: string };
+  onSaveDraft?: () => Promise<void>;
 }
 
-export default function GoalEditor({ goal, disabled, onUpdate, onRemove, review }: GoalEditorProps) {
+export default function GoalEditor({ goal, disabled, onUpdate, onRemove, review, onSaveDraft }: GoalEditorProps) {
   const [isSmartCollapsed, setIsSmartCollapsed] = React.useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
+  const [localSaving, setLocalSaving] = React.useState(false);
 
   const isGoalDisabled = disabled || (review ? review.status !== 'REVISION_REQUIRED' : false);
 
@@ -292,6 +295,30 @@ export default function GoalEditor({ goal, disabled, onUpdate, onRemove, review 
           />
         </div>
       </div>
+
+      {/* Save Draft Button inside individual Goal card */}
+      {!isGoalDisabled && onSaveDraft && (
+        <div className="flex justify-end pt-4 border-t border-gray-100">
+          <button
+            type="button"
+            onClick={async () => {
+              setLocalSaving(true);
+              try {
+                await onSaveDraft();
+                toast.success('Draft goal berhasil disimpan!');
+              } catch (err: any) {
+                toast.error(err.message || 'Gagal menyimpan draft.');
+              } finally {
+                setLocalSaving(false);
+              }
+            }}
+            disabled={localSaving}
+            className="flex items-center gap-2 px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all duration-200 shadow-md shadow-emerald-100 disabled:opacity-50"
+          >
+            <Save size={12} /> {localSaving ? 'Menyimpan...' : 'Simpan Draft Goal Ini'}
+          </button>
+        </div>
+      )}
 
     </div>
   );

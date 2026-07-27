@@ -70,7 +70,7 @@ export default function GoalsSection({ goals, disabled, onGoalsChange, onSaveDra
   };
 
   const handleAddGoal = (strand: ConferenceGoalStrand) => {
-    if (reviews) return; // Block adding during revision rounds
+    if (disabled) return;
     const strandGoals = goals.filter(g => g.strand === strand);
     if (strandGoals.length >= 2) return; // Prompt maximum 2 goals
 
@@ -102,13 +102,13 @@ export default function GoalsSection({ goals, disabled, onGoalsChange, onSaveDra
   };
 
   const handleRemoveGoal = (goalId: string) => {
-    if (reviews) return; // Block removing during revision rounds
+    if (disabled) return;
     const filtered = goals.filter(g => g.id !== goalId);
     onGoalsChange(filtered);
   };
 
   // Determine if adding goals is blocked due to reviews/revisions
-  const isAddBlocked = !!reviews;
+  const isAddBlocked = false;
 
   return (
     <div className="space-y-12 animate-in fade-in duration-300">
@@ -185,6 +185,7 @@ export default function GoalsSection({ goals, disabled, onGoalsChange, onSaveDra
                     onUpdate={handleUpdateGoal}
                     onRemove={() => handleRemoveGoal(goal.id)}
                     review={reviews?.smartGoals?.[goal.id]}
+                    onSaveDraft={onSaveDraft}
                   />
                 ))}
               </div>
