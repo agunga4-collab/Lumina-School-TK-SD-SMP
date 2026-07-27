@@ -164,7 +164,7 @@ service cloud.firestore {
         || (isSignedIn()
           && userId == request.auth.uid
           && incoming().role == existing().role
-          && incoming().status == existing().status
+          && (incoming().status == existing().status || (existing().status == 'ready' && incoming().status == 'active'))
           && isValidUser(incoming()));
     }
 
@@ -195,7 +195,14 @@ service cloud.firestore {
 
     match /classes/{classId} {
       allow read: if isActive();
-      allow write: if isAdmin() || isMTSSAcademicManager();
+      allow create, delete: if isAdmin() || isMTSSAcademicManager();
+      allow update: if isAdmin() || isMTSSAcademicManager() || (
+        isSignedIn() &&
+        existing().homeroomTeacherId is string &&
+        existing().homeroomTeacherId.startsWith('INVITE_') &&
+        incoming().homeroomTeacherId == request.auth.uid &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['homeroomTeacherId', 'homeroomTeacherName'])
+      );
     }
 
     match /systemConfig/{configId} {
