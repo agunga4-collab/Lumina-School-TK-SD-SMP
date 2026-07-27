@@ -685,61 +685,93 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
 
                     {/* Unit Activity */}
                     <div className="space-y-2.5 pt-3 border-t border-gray-100">
-                      <h4 className="text-xs font-black uppercase tracking-wider text-gray-400">Extracurricular / Unit Activities</h4>
-                      {response.unitActivities && response.unitActivities.length > 0 ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          {response.unitActivities.map((ua) => (
-                            <div key={ua.category} className="space-y-2 bg-gray-50 border border-gray-100 rounded-xl p-3 text-xs">
-                              <div className="flex justify-between items-center border-b border-gray-200/50 pb-1">
-                                <span className="font-black text-teal-800 uppercase text-[9px]">{ua.category}</span>
-                                <span className="text-[7px] font-black px-1 bg-teal-100 text-teal-700 rounded uppercase">Chosen</span>
+                      <h4 className="text-xs font-black uppercase tracking-wider text-gray-400">Unit Activity</h4>
+                      {(() => {
+                        const categories = ['Performing Arts', 'Arts & Makerspace', 'Physical Education', 'Digital Literacy'];
+                        
+                        // Check if we have any entries in unitActivities or if they are in seReference
+                        const hasActivities = (response.unitActivities && response.unitActivities.length > 0) || 
+                                              (seReference?.enrollment?.choices && seReference.enrollment.choices.length > 0);
+                                              
+                        if (!hasActivities) {
+                          if (response.unitActivityCategory) {
+                            return (
+                              <div className="space-y-2 bg-gray-50 border border-gray-100 rounded-xl p-4 text-xs">
+                                <div>
+                                  <span className="font-black text-gray-400 uppercase tracking-wider text-[9px]">Activity Choice</span>
+                                  <p className="text-gray-800 font-bold mt-0.5">{response.unitActivityCategory} &mdash; {response.unitActivityName}</p>
+                                </div>
+                                <div className="pt-2 border-t border-gray-200/50">
+                                  <span className="font-black text-gray-400 uppercase tracking-wider text-[9px]">Student Worries</span>
+                                  <p className="text-gray-700 font-medium mt-0.5 whitespace-pre-wrap">{response.unitActivityWorries}</p>
+                                </div>
+                                <div className="pt-2 border-t border-gray-200/50">
+                                  <span className="font-black text-gray-400 uppercase tracking-wider text-[9px]">Plan to Overcome</span>
+                                  <p className="text-gray-700 font-medium mt-0.5 whitespace-pre-wrap">{response.unitActivityOvercomingPlan}</p>
+                                </div>
                               </div>
-                              <div>
-                                <span className="font-black text-gray-400 uppercase tracking-wider text-[8px]">Activity Chosen</span>
-                                <p className="text-gray-800 font-bold mt-0.5">{ua.activityName || <em className="text-gray-300">None selected</em>}</p>
+                            );
+                          } else if (response.unitActivity) {
+                            return (
+                              <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 text-xs text-gray-700 font-semibold text-gray-800 whitespace-pre-wrap">
+                                {response.unitActivity}
                               </div>
-                              <div className="pt-1.5 border-t border-gray-200/30">
-                                <span className="font-black text-gray-400 uppercase tracking-wider text-[8px]">Student Worries</span>
-                                <p className="text-gray-700 font-medium mt-0.5 whitespace-pre-wrap">{ua.worries || <em className="text-gray-300">None</em>}</p>
-                              </div>
-                              <div className="pt-1.5 border-t border-gray-200/30">
-                                <span className="font-black text-gray-400 uppercase tracking-wider text-[8px]">Plan to Overcome</span>
-                                <p className="text-gray-700 font-medium mt-0.5 whitespace-pre-wrap">{ua.overcomingPlan || <em className="text-gray-300">None</em>}</p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : response.unitActivityCategory ? (
-                        <div className="space-y-2 bg-gray-50 border border-gray-100 rounded-xl p-4 text-xs">
-                          <div>
-                            <span className="font-black text-gray-400 uppercase tracking-wider text-[9px]">Activity Choice</span>
-                            <p className="text-gray-800 font-bold mt-0.5">{response.unitActivityCategory} &mdash; {response.unitActivityName}</p>
+                            );
+                          } else {
+                            return (
+                              <p className="text-xs text-gray-400 italic">
+                                No Unit Activity listed.
+                              </p>
+                            );
+                          }
+                        }
+
+                        // We have structured activities (either saved in response or as seReference choices)
+                        return (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {categories.map((cat) => {
+                              const ua = response.unitActivities?.find((item: any) => item.category === cat) || { category: cat, activityName: '', worries: '', overcomingPlan: '' };
+                              const seChoice = seReference?.enrollment?.choices?.find((c: any) => c.strand === cat);
+                              const resolvedActivityName = seChoice ? (seChoice.activityName || seChoice.customActivity || '') : '';
+                              const finalActivityName = resolvedActivityName || ua.activityName;
+                              
+                              return (
+                                <div key={cat} className="space-y-2 bg-gray-50 border border-gray-100 rounded-xl p-3 text-xs">
+                                  <div className="flex justify-between items-center border-b border-gray-200/50 pb-1">
+                                    <span className="font-black text-teal-800 uppercase text-[9px]">{cat}</span>
+                                    {seChoice ? (
+                                      <span className="text-[7px] font-black px-1.5 py-0.5 bg-teal-100 text-teal-700 rounded uppercase">From Self-Exploration</span>
+                                    ) : finalActivityName ? (
+                                      <span className="text-[7px] font-black px-1 bg-teal-100 text-teal-700 rounded uppercase">Chosen</span>
+                                    ) : (
+                                      <span className="text-[7px] font-black px-1 bg-amber-100 text-amber-700 rounded uppercase">Not Chosen</span>
+                                    )}
+                                  </div>
+                                  <div>
+                                    <span className="font-black text-gray-400 uppercase tracking-wider text-[8px]">Activity Chosen</span>
+                                    <p className="text-gray-800 font-bold mt-0.5">{finalActivityName || <em className="text-gray-300">None selected</em>}</p>
+                                  </div>
+                                  <div className="pt-1.5 border-t border-gray-200/30">
+                                    <span className="font-black text-gray-400 uppercase tracking-wider text-[8px]">Student Worries</span>
+                                    <p className="text-gray-700 font-medium mt-0.5 whitespace-pre-wrap">{ua.worries || <em className="text-gray-300">None</em>}</p>
+                                  </div>
+                                  <div className="pt-1.5 border-t border-gray-200/30">
+                                    <span className="font-black text-gray-400 uppercase tracking-wider text-[8px]">Plan to Overcome</span>
+                                    <p className="text-gray-700 font-medium mt-0.5 whitespace-pre-wrap">{ua.overcomingPlan || <em className="text-gray-300">None</em>}</p>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
-                          <div className="pt-2 border-t border-gray-200/50">
-                            <span className="font-black text-gray-400 uppercase tracking-wider text-[9px]">Student Worries</span>
-                            <p className="text-gray-700 font-medium mt-0.5 whitespace-pre-wrap">{response.unitActivityWorries}</p>
-                          </div>
-                          <div className="pt-2 border-t border-gray-200/50">
-                            <span className="font-black text-gray-400 uppercase tracking-wider text-[9px]">Plan to Overcome</span>
-                            <p className="text-gray-700 font-medium mt-0.5 whitespace-pre-wrap">{response.unitActivityOvercomingPlan}</p>
-                          </div>
-                        </div>
-                      ) : response.unitActivity ? (
-                        <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 text-xs text-gray-700 font-semibold text-gray-800 whitespace-pre-wrap">
-                          {response.unitActivity}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-gray-400 italic">
-                          No extracurricular activities listed.
-                        </p>
-                      )}
+                        );
+                      })()}
                     </div>
 
                   </div>
                 </div>
 
                 {renderInlineReviewBox(
-                  'Extracurricular / Unit Activities',
+                  'Self-Exploration, Karya Ilmiah, Unit Activity',
                   localReviews.extracurricularStatus,
                   localReviews.extracurricularComment,
                   (status) => setLocalReviews(prev => ({ ...prev, extracurricularStatus: status })),

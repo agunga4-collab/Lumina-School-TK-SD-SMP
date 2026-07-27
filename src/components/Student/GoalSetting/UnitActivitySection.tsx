@@ -115,7 +115,6 @@ export default function UnitActivitySection({
         </div>
         <div>
           <h2 className="text-xl font-black text-gray-900 uppercase italic tracking-tight">Unit Activity</h2>
-          <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">Elective, Performing Arts, & Extracurricular Reflection</p>
         </div>
       </div>
 

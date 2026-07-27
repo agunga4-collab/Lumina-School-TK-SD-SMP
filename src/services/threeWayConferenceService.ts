@@ -785,27 +785,48 @@ export const threeWayConferenceService = {
         targetPeriodLabel = finalPeriodDoc.data().label || '';
       }
 
-      if (!targetPeriodId) {
-        return null;
-      }
-
+      // Query seEnrollments by studentId to fetch all their records
       const qEnroll = query(
         collection(db, 'seEnrollments'),
-        where('periodId', '==', targetPeriodId),
         where('studentId', '==', resolvedStudentId)
       );
       const enrollSnap = await getDocs(qEnroll);
-      if (enrollSnap.empty) {
+      
+      let matchedEnrollment: any = null;
+      if (!enrollSnap.empty) {
+        // Try to find enrollment matching academicYear and semester
+        const semesterStr = String(semester);
+        const match = enrollSnap.docs.find(d => {
+          const data = d.data();
+          return data.academicYear === academicYear && String(data.semester) === semesterStr;
+        });
+
+        if (match) {
+          matchedEnrollment = { id: match.id, ...match.data() };
+        } else if (targetPeriodId) {
+          // Fallback: match by periodId
+          const matchByPeriod = enrollSnap.docs.find(d => d.data().periodId === targetPeriodId);
+          if (matchByPeriod) {
+            matchedEnrollment = { id: matchByPeriod.id, ...matchByPeriod.data() };
+          }
+        }
+        
+        // Final fallback: use the first one if nothing matches
+        if (!matchedEnrollment) {
+          matchedEnrollment = { id: enrollSnap.docs[0].id, ...enrollSnap.docs[0].data() };
+        }
+      }
+
+      if (!matchedEnrollment) {
         return {
-          periodLabel: targetPeriodLabel,
+          periodLabel: targetPeriodLabel || 'Active Semester',
           enrollment: null
         };
       }
 
-      const enrollDoc = enrollSnap.docs[0];
       return {
-        periodLabel: targetPeriodLabel,
-        enrollment: { id: enrollDoc.id, ...enrollDoc.data() }
+        periodLabel: targetPeriodLabel || matchedEnrollment.periodNumber || 'Active Semester',
+        enrollment: matchedEnrollment
       };
     } catch (err) {
       console.warn('Could not fetch student self exploration reference:', err);

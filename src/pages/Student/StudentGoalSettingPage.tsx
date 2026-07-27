@@ -107,6 +107,56 @@ export default function StudentGoalSettingPage() {
         const existingResponse = await threeWayConferenceService.getCurrentStudentConferenceResponse(activePeriod.id, studentId);
         setResponse(existingResponse);
 
+        // Fetch Self-Exploration References FIRST so we can merge it
+        setSeLoading(true);
+        const seRef = await threeWayConferenceService.getStudentSelfExplorationReference(studentId, activeYear, activeSemester);
+        setSelfExplorationRef(seRef);
+        setSeLoading(false);
+
+        // Build list of unit activities by merging Self Exploration choices if available
+        let initialUnitActivities: any[] = [];
+        if (existingResponse?.unitActivities && existingResponse.unitActivities.length > 0) {
+          initialUnitActivities = [...existingResponse.unitActivities];
+        }
+
+        const categories = ['Performing Arts', 'Arts & Makerspace', 'Physical Education', 'Digital Literacy'];
+        
+        if (seRef?.enrollment?.choices && seRef.enrollment.choices.length > 0) {
+          const seChoices = seRef.enrollment.choices;
+          categories.forEach(cat => {
+            const seChoice = seChoices.find((c: any) => c.strand === cat);
+            const resolvedActivityName = seChoice ? (seChoice.activityName || seChoice.customActivity || '') : '';
+            
+            const existingIdx = initialUnitActivities.findIndex(item => item.category === cat);
+            if (existingIdx >= 0) {
+              // Only overwrite or set if empty
+              if (resolvedActivityName && !initialUnitActivities[existingIdx].activityName) {
+                initialUnitActivities[existingIdx].activityName = resolvedActivityName;
+              }
+            } else {
+              initialUnitActivities.push({
+                category: cat,
+                activityName: resolvedActivityName,
+                worries: '',
+                overcomingPlan: ''
+              });
+            }
+          });
+        } else {
+          // If no Self-Exploration data, ensure we still have the 4 categories
+          categories.forEach(cat => {
+            const existingIdx = initialUnitActivities.findIndex(item => item.category === cat);
+            if (existingIdx < 0) {
+              initialUnitActivities.push({
+                category: cat,
+                activityName: '',
+                worries: '',
+                overcomingPlan: ''
+              });
+            }
+          });
+        }
+
         if (existingResponse) {
           setFormData({
             aboutMe: existingResponse.aboutMe || '',
@@ -114,15 +164,15 @@ export default function StudentGoalSettingPage() {
             areasForGrowth: existingResponse.areasForGrowth || '',
             goals: existingResponse.goals || [],
             unitActivity: existingResponse.unitActivity || '',
-            unitActivities: existingResponse.unitActivities || [],
+            unitActivities: initialUnitActivities,
           });
+        } else {
+          // Prefill empty response form data with initial unit activities
+          setFormData(prev => ({
+            ...prev,
+            unitActivities: initialUnitActivities,
+          }));
         }
-
-        // Fetch Self-Exploration References
-        setSeLoading(true);
-        const seRef = await threeWayConferenceService.getStudentSelfExplorationReference(studentId, activeYear, activeSemester);
-        setSelfExplorationRef(seRef);
-        setSeLoading(false);
 
         // Determine window/status constraints
         const now = Date.now();
