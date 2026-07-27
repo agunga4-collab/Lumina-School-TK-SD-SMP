@@ -188,6 +188,13 @@ interface LdssSelectionPanelProps {
 }
 
 function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
+  const location = useLocation();
+  const locState = location.state as {
+    initialClassId?: string;
+    initialStudentId?: string;
+    initialAge?: LdssAge;
+  } | null;
+
   // Dropdown options loading states
   const [classes, setClasses] = React.useState<Class[]>([]);
   const [students, setStudents] = React.useState<Student[]>([]);
@@ -223,6 +230,14 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
           (c) => c.unitId === "ELEMENTARY" && c.status !== "archived" && c.academicYear === activeYear
         );
         setClasses(elementaryClasses);
+
+        // Auto-select initial class from location state if available
+        if (locState?.initialClassId) {
+          const matchedClass = elementaryClasses.find(c => c.id === locState.initialClassId);
+          if (matchedClass) {
+            setSelectedClass(matchedClass);
+          }
+        }
       } catch (err) {
         console.error("Failed to load elementary classes for LDSS:", err);
       } finally {
@@ -230,7 +245,7 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
       }
     };
     loadClasses();
-  }, [activeYear]);
+  }, [activeYear, locState]);
 
   // Load Students when class changes
   React.useEffect(() => {
@@ -243,6 +258,17 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
         setLoadingStudents(true);
         const activeStudents = await getActiveStudents(selectedClass.id, activeYear);
         setStudents(activeStudents);
+
+        // Auto-select initial student and age from location state if available
+        if (locState?.initialStudentId && selectedClass.id === locState.initialClassId) {
+          const matchedStudent = activeStudents.find(s => s.id === locState.initialStudentId);
+          if (matchedStudent) {
+            setSelectedStudent(matchedStudent);
+          }
+        }
+        if (locState?.initialAge && selectedClass.id === locState.initialClassId) {
+          setSelectedAge(locState.initialAge);
+        }
       } catch (err) {
         console.error("Failed to load students for selected class:", err);
       } finally {
@@ -250,7 +276,7 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
       }
     };
     loadStudents();
-  }, [selectedClass, activeYear]);
+  }, [selectedClass, activeYear, locState]);
 
   // Click outside listener to close absolute dropdown portals
   React.useEffect(() => {

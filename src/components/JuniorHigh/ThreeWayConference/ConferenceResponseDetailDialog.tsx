@@ -633,32 +633,36 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                         <p className="text-xs text-gray-500 font-medium">
                           Period: <strong className="text-gray-700">{seReference.periodLabel || 'Active Semester'}</strong>
                         </p>
-                        <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 space-y-2.5">
-                          <div>
-                            <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Dream Career / Aspiration</span>
-                            <p className="text-sm font-semibold text-gray-800 mt-0.5">
-                              {seReference.enrollment.careerGoal || 'No dream career set'}
+                        <div className="space-y-2">
+                          {seReference.enrollment.choices && seReference.enrollment.choices.length > 0 ? (
+                            seReference.enrollment.choices.map((choice: any, idx: number) => (
+                              <div key={idx} className="p-3 bg-gray-50 border border-gray-100 rounded-xl space-y-1.5 text-xs">
+                                <div className="flex items-center justify-between border-b border-gray-200/40 pb-1">
+                                  <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider">Choice Slot {choice.slot || idx + 1}</span>
+                                  <span className="text-[8px] font-black px-1.5 py-0.5 bg-white border border-gray-200 rounded text-gray-500 uppercase">{choice.strand}</span>
+                                </div>
+                                <div>
+                                  <span className="block text-[8px] font-black text-gray-400 uppercase">Selected Activity</span>
+                                  <p className="font-bold text-gray-700 mt-0.5">{choice.activityName || choice.customActivity || '-'}</p>
+                                </div>
+                                {choice.finalTarget && (
+                                  <div>
+                                    <span className="block text-[8px] font-black text-gray-400 uppercase">Final Goal/Target</span>
+                                    <p className="text-[10px] text-gray-500 italic mt-0.5 leading-relaxed">"{choice.finalTarget}"</p>
+                                  </div>
+                                )}
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-xs text-gray-400 italic py-2">
+                              Self-Exploration has not been chosen yet.
                             </p>
-                          </div>
-                          <div>
-                            <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Top Skills / Interests</span>
-                            <div className="flex flex-wrap gap-1 mt-1">
-                              {Array.isArray(seReference.enrollment.skills) && seReference.enrollment.skills.length > 0 ? (
-                                seReference.enrollment.skills.map((skill: string) => (
-                                  <span key={skill} className="bg-gray-100 text-gray-700 text-[10px] font-bold px-2 py-0.5 rounded">
-                                    {skill}
-                                  </span>
-                                ))
-                              ) : (
-                                <span className="text-xs text-gray-400 italic">No skills listed</span>
-                              )}
-                            </div>
-                          </div>
+                          )}
                         </div>
                       </div>
                     ) : (
                       <p className="text-xs text-gray-400 italic py-2">
-                        No Self-Exploration references linked for this active period.
+                        Self-Exploration has not been chosen yet.
                       </p>
                     )}
                   </div>

@@ -121,14 +121,12 @@ export default function MTSSAcademicDashboard() {
   // Track modified status
   const [isSheetModified, setIsSheetModified] = useState<boolean>(false);
 
-  // Sync activeYear on mount or context change
+  const [selectedYear, setSelectedYear] = useState<string>('2026/2027');
+
+  // Sync setupYear when selectedYear changes
   useEffect(() => {
-    if (activeYear) {
-      setSetupYear(activeYear);
-    } else {
-      setSetupYear('2025/2026');
-    }
-  }, [activeYear]);
+    setSetupYear(selectedYear);
+  }, [selectedYear]);
 
   // Load elementary classes for Setup dropdown
   useEffect(() => {
@@ -136,7 +134,7 @@ export default function MTSSAcademicDashboard() {
       try {
         const allClasses = await getClasses() || [];
         const elementaryClasses = allClasses.filter(
-          c => c.unitId === 'ELEMENTARY' && c.status !== 'archived' && c.academicYear === activeYear
+          c => c.unitId === 'ELEMENTARY' && c.status !== 'archived' && c.academicYear === selectedYear
         );
         setClassesList(elementaryClasses);
         if (elementaryClasses.length > 0 && setupClassIds.length === 0) {
@@ -147,7 +145,7 @@ export default function MTSSAcademicDashboard() {
       }
     };
     loadClasses();
-  }, [activeYear]);
+  }, [selectedYear]);
 
   // Fetch all batch sheets from Firestore
   const loadBatchSheets = async () => {
@@ -264,17 +262,20 @@ export default function MTSSAcademicDashboard() {
 
   // Stats calculation
   const stats = React.useMemo(() => {
-    const total = cases.length;
-    const active = cases.filter(c => c.status !== 'Achieved').length;
-    const achieved = cases.filter(c => c.status === 'Achieved').length;
-    const tier2 = cases.filter(c => c.tier === 'Tier 2' && c.status !== 'Achieved').length;
-    const tier3 = cases.filter(c => c.tier === 'Tier 3' && c.status !== 'Achieved').length;
-    const sn = cases.filter(c => c.tier === 'SN' && c.status !== 'Achieved').length;
+    const validClassIds = classesList.map(c => c.id);
+    const yearCases = cases.filter(c => validClassIds.includes(c.classId));
 
-    const bahasaCount = cases.filter(c => c.subject === 'Bahasa Indonesia' && c.status !== 'Achieved').length;
-    const englishCount = cases.filter(c => c.subject === 'English' && c.status !== 'Achieved').length;
-    const numeracyCount = cases.filter(c => c.subject === 'Numeracy' && c.status !== 'Achieved').length;
-    const mengajiCount = cases.filter(c => c.subject === 'Mengaji' && c.status !== 'Achieved').length;
+    const total = yearCases.length;
+    const active = yearCases.filter(c => c.status !== 'Achieved').length;
+    const achieved = yearCases.filter(c => c.status === 'Achieved').length;
+    const tier2 = yearCases.filter(c => c.tier === 'Tier 2' && c.status !== 'Achieved').length;
+    const tier3 = yearCases.filter(c => c.tier === 'Tier 3' && c.status !== 'Achieved').length;
+    const sn = yearCases.filter(c => c.tier === 'SN' && c.status !== 'Achieved').length;
+
+    const bahasaCount = yearCases.filter(c => c.subject === 'Bahasa Indonesia' && c.status !== 'Achieved').length;
+    const englishCount = yearCases.filter(c => c.subject === 'English' && c.status !== 'Achieved').length;
+    const numeracyCount = yearCases.filter(c => c.subject === 'Numeracy' && c.status !== 'Achieved').length;
+    const mengajiCount = yearCases.filter(c => c.subject === 'Mengaji' && c.status !== 'Achieved').length;
 
     return {
       total,
@@ -290,11 +291,15 @@ export default function MTSSAcademicDashboard() {
         'Mengaji': mengajiCount
       }
     };
-  }, [cases, refreshKey]);
+  }, [cases, classesList, refreshKey]);
 
   // Filter cases
   const filteredCases = React.useMemo(() => {
+    const validClassIds = classesList.map(c => c.id);
     return cases.filter((c) => {
+      // Only include cases belonging to classes in the selected academic year
+      if (!validClassIds.includes(c.classId)) return false;
+
       const matchSearch = c.studentName?.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           c.studentId?.toLowerCase().includes(searchTerm.toLowerCase());
       const matchSubject = subjectFilter === 'All' || c.subject === subjectFilter;
@@ -309,7 +314,7 @@ export default function MTSSAcademicDashboard() {
 
       return matchSearch && matchSubject && matchTier && matchStatus;
     });
-  }, [cases, searchTerm, subjectFilter, tierFilter, statusFilter, refreshKey]);
+  }, [cases, classesList, searchTerm, subjectFilter, tierFilter, statusFilter, refreshKey]);
 
 
   // ==========================================
@@ -631,21 +636,36 @@ export default function MTSSAcademicDashboard() {
           <div className="space-y-2">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/25 text-emerald-300 text-[10px] font-black uppercase tracking-wider">
               <Sparkles size={12} />
-              SD Unit - Lazuardi GIS
+              SD Unit - Lazuardi GCS
             </div>
             <h1 className="text-2xl sm:text-3xl font-black tracking-tight flex items-center gap-2">
               <GraduationCap size={28} className="text-emerald-400" />
               MTSS Academic Elementary
             </h1>
           </div>
-          <button
-            onClick={handleManualSync}
-            disabled={isSyncing}
-            className="self-start md:self-auto flex items-center gap-1.5 bg-white/10 hover:bg-white/20 disabled:bg-white/5 border border-white/10 hover:border-white/20 text-white rounded-2xl px-4 py-2 text-xs font-bold transition-all cursor-pointer shadow-sm shrink-0"
-          >
-            <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
-            {isSyncing ? "Mensinkronisasikan..." : "Sinc Kasus Baru"}
-          </button>
+          
+          <div className="flex items-end gap-3 self-start md:self-auto shrink-0">
+            <div className="flex flex-col gap-1">
+              <span className="text-[9px] font-black uppercase tracking-widest text-emerald-300">Tahun Ajaran</span>
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(e.target.value)}
+                className="bg-emerald-900/50 text-white border border-emerald-700/60 rounded-xl px-3.5 py-2 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+              >
+                <option value="2025/2026" className="text-slate-800 font-bold">2025/2026</option>
+                <option value="2026/2027" className="text-slate-800 font-bold">2026/2027</option>
+              </select>
+            </div>
+
+            <button
+              onClick={handleManualSync}
+              disabled={isSyncing}
+              className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 disabled:bg-white/5 border border-white/10 hover:border-white/20 text-white rounded-xl px-4 py-2 text-xs font-bold transition-all cursor-pointer shadow-sm shrink-0 h-[38px]"
+            >
+              <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
+              {isSyncing ? "Mensinkronisasikan..." : "Sinc Kasus Baru"}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -872,11 +892,11 @@ export default function MTSSAcademicDashboard() {
                     <RefreshCw size={24} className="animate-spin text-slate-400" />
                     <span className="text-xs text-slate-450 italic">Memuat daftar spreadsheet...</span>
                   </div>
-                ) : batchSheets.length === 0 ? (
+                ) : batchSheets.filter(sheet => sheet.academicYear === selectedYear).length === 0 ? (
                   <div className="p-16 text-center border-2 border-dashed border-slate-200 rounded-3xl bg-slate-50 flex flex-col items-center justify-center gap-3">
                     <FileSpreadsheet size={48} className="text-slate-300" />
                     <p className="text-sm font-black text-slate-650 uppercase tracking-wider">Belum Ada Spreadsheet Tersimpan</p>
-                    <p className="text-xs text-slate-450 max-w-md">Catat progres bimbingan multi-siswa dengan mendesain lembar bimbingan baru sesuai kebutuhan kelompok atau kelas Anda.</p>
+                    <p className="text-xs text-slate-450 max-w-md">Catat progres bimbingan multi-siswa dengan mendesain lembar bimbingan baru sesuai kebutuhan kelompok atau kelas Anda untuk tahun ajaran {selectedYear}.</p>
                     <button
                       onClick={handleStartSetup}
                       className="mt-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-black uppercase tracking-wider py-2.5 px-5 rounded-xl shadow-sm transition-all cursor-pointer"
@@ -886,7 +906,7 @@ export default function MTSSAcademicDashboard() {
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {batchSheets.map((sheet) => (
+                    {batchSheets.filter(sheet => sheet.academicYear === selectedYear).map((sheet) => (
                       <div key={sheet.id} className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 hover:shadow transition-shadow flex flex-col justify-between space-y-4">
                         <div className="space-y-2">
                           <div className="flex justify-between items-start gap-2">

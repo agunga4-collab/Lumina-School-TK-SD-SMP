@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   BookOpen, Languages, Heart, Calculator, Search, 
@@ -63,16 +63,25 @@ export interface ElementaryStudent {
 
 export default function ElementaryLiteracyNumeracy() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { profile } = useAuth();
   const { activeYear } = useAcademicYear();
   
+  // Load state from location if available
+  const locState = location.state as {
+    initialClassId?: string;
+    initialArea?: ElementaryArea;
+    initialPeriod?: ElementaryPeriod;
+    searchQuery?: string;
+  } | null;
+
   // Filters State
-  const [selectedArea, setSelectedArea] = React.useState<ElementaryArea>('BAHASA_INDONESIA');
-  const [selectedClassId, setSelectedClassId] = React.useState<string>('');
+  const [selectedArea, setSelectedArea] = React.useState<ElementaryArea>(() => locState?.initialArea || 'BAHASA_INDONESIA');
+  const [selectedClassId, setSelectedClassId] = React.useState<string>(() => locState?.initialClassId || '');
   const [selectedGradeLevel, setSelectedGradeLevel] = React.useState<number>(1);
   const [selectedYear, setSelectedYear] = React.useState<string>(activeYear || '2025/2026');
-  const [selectedPeriod, setSelectedPeriod] = React.useState<ElementaryPeriod>('JUL_OCT');
-  const [searchQuery, setSearchQuery] = React.useState<string>('');
+  const [selectedPeriod, setSelectedPeriod] = React.useState<ElementaryPeriod>(() => locState?.initialPeriod || 'JUL_OCT');
+  const [searchQuery, setSearchQuery] = React.useState<string>(() => locState?.searchQuery || '');
   const [activeView, setActiveView] = React.useState<'input' | 'overview'>('input');
 
   // Loaded students & metadata
@@ -116,8 +125,8 @@ export default function ElementaryLiteracyNumeracy() {
         );
         setClasses(elementaryClasses);
 
-        let defaultClassId = '';
-        if (profile?.role === 'HOMEROOM_TEACHER') {
+        let defaultClassId = locState?.initialClassId || '';
+        if (!defaultClassId && profile?.role === 'HOMEROOM_TEACHER') {
           const homeroomClass = elementaryClasses.find(c => c.homeroomTeacherId === profile?.uid);
           if (homeroomClass) {
             defaultClassId = homeroomClass.id;

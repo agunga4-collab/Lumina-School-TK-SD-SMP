@@ -47,6 +47,7 @@ import ChildAttendance from './pages/Parent/Attendance';
 import LiteracyInput from './pages/LiteracyNumeracy/LiteracyInput';
 import LiteracyRecap from './pages/LiteracyNumeracy/LiteracyRecap';
 import ElementaryLiteracyNumeracy from './pages/Elementary/LiteracyNumeracy';
+import ElementaryTeacherDashboard from './pages/Elementary/TeacherDashboard';
 import JuniorHighLiteracyNumeracy from './pages/JuniorHigh/LiteracyNumeracy';
 import ConferencePeriodManagement from './pages/JuniorHigh/ThreeWayConference/ConferencePeriodManagement';
 import TeacherConferenceWorkspace from './pages/JuniorHigh/ThreeWayConference/TeacherConferenceWorkspace';
@@ -314,6 +315,11 @@ export default function App() {
           </Route>
           <Route path="elementary/literasi-numerasi" element={<ElementaryLiteracyNumeracy />} />
           <Route path="elementary/literasi-numerasi/input" element={<ElementaryLiteracyInputPage />} />
+          <Route path="elementary/dashboard" element={
+            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER']}>
+              <ElementaryTeacherDashboard />
+            </RoleGuard>
+          } />
           <Route path="elementary/mtss-academic" element={
             <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER']}>
               <MTSSAcademicDashboard />

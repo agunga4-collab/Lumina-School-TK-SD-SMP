@@ -104,10 +104,12 @@ export function Layout() {
 
   const currentUser = profile;
   const [hasKindyClassAssignment, setHasKindyClassAssignment] = React.useState(false);
+  const [hasElementaryClassAssignment, setHasElementaryClassAssignment] = React.useState(false);
 
   React.useEffect(() => {
     if (!currentUser || !activeYear) {
       setHasKindyClassAssignment(false);
+      setHasElementaryClassAssignment(false);
       return;
     }
     const checkKindyClass = async () => {
@@ -125,7 +127,23 @@ export function Layout() {
         setHasKindyClassAssignment(false);
       }
     };
+    const checkElementaryClass = async () => {
+      try {
+        const q = query(
+          collection(db, 'classes'),
+          where('unitId', '==', 'ELEMENTARY'),
+          where('academicYear', '==', activeYear),
+          where('homeroomTeacherId', '==', currentUser.uid)
+        );
+        const snap = await getDocs(q);
+        setHasElementaryClassAssignment(!snap.empty);
+      } catch (err) {
+        console.error('Error checking elementary class assignment in layout:', err);
+        setHasElementaryClassAssignment(false);
+      }
+    };
     checkKindyClass();
+    checkElementaryClass();
   }, [currentUser, activeYear]);
 
   // Use state for activeUnit so Super Admin and Parents can switch
@@ -588,6 +606,9 @@ export function Layout() {
               {currentUnit === 'ELEMENTARY' && (
                 <div className="space-y-1">
                   <NavSectionLabel label="Akademik" />
+                  {(['SUPER_ADMIN', 'HEAD_UNIT'].includes(currentUser.role) || hasElementaryClassAssignment) && (
+                    <NavItem to="/elementary/dashboard" icon={<LayoutDashboard size={18} />} label="Dashboard Guru Kelas" />
+                  )}
                   <NavItem to="/lateness" icon={<Clock size={18} />} label="Keterlambatan" />
                   <NavItem to="/attendance" icon={<CheckSquare size={18} />} label="Kehadiran" />
                   <NavItem to="/academic/learning-goals" icon={<Target size={18} />} label="Learning Goals" />
