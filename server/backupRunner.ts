@@ -1,5 +1,5 @@
 import express from "express";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { google } from "googleapis";
 
 export const backupRunnerRouter = express.Router();
@@ -1288,34 +1288,65 @@ backupRunnerRouter.post("/elementary-sync", async (req, res) => {
     return res.status(403).json({ error: "Hanya Guru, Admin Unit, atau Super Admin yang dapat menjalankan backup." });
   }
 
-  // 2. Load or initialize Elementary Backup Config
+  // 2. Validate unit = ELEMENTARY and check class existence
+  const classSnap = await db.collection("classes").doc(classId).get();
+  if (!classSnap.exists) {
+    return res.status(400).json({ error: `Kelas dengan ID ${classId} tidak ditemukan di Lumina.` });
+  }
+  const classDocData = classSnap.data() || {};
+  if (classDocData.unitId !== 'ELEMENTARY') {
+    return res.status(400).json({ error: `Unit kelas harus ELEMENTARY, tetapi ditemukan ${classDocData.unitId}.` });
+  }
+  const className = classDocData.name || classId;
+
+  // 3. Query Attendance Records from Lumina for this class and date (unit must be 'ELEMENTARY')
+  const recordsSnap = await db.collection("attendance_records")
+    .where("unit", "==", "ELEMENTARY")
+    .where("classId", "==", classId)
+    .where("date", "==", date)
+    .get();
+
+  const recordsToSync: any[] = recordsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  
+  if (recordsToSync.length === 0) {
+    return res.status(400).json({ error: "Tidak ada data kehadiran yang tersimpan di Lumina untuk kelas dan tanggal terpilih." });
+  }
+
+  // 4. Load or initialize Elementary Backup Config
   const configDocId = "elementary_attendance";
   const configRef = db.collection("system_backup_configs").doc(configDocId);
-  let configSnap = await configRef.get();
   
-  if (!configSnap.exists) {
-    console.log(`[BackupRunner-Elementary] Initializing default backup config for ELEMENTARY...`);
-    const newConfig = {
+  // Ambil sharedDriveId dari Junior High existing
+  const jhConfigSnap = await db.collection("system_backup_configs").doc("junior_high_attendance").get();
+  const jhConfig = jhConfigSnap.exists ? jhConfigSnap.data() : null;
+  const sharedDriveId = jhConfig?.sharedDriveId || "";
+
+  let configSnap = await configRef.get();
+  let config = configSnap.exists ? configSnap.data() : null;
+
+  if (!config || config.rootFolderId === '16xenPYfnKAE3zOSZ4H5Tauytsv_xPhGm' || config.rootFolderId !== '1GNFo6yDuM382KB-lDt2_5dnUWtZ8DUI_' || config.writeMode !== 'AUTO_STRUCTURE' || config.sharedDriveId !== sharedDriveId) {
+    console.log(`[BackupRunner-Elementary] Initializing/Updating backup config for ELEMENTARY...`);
+    const updatedConfig = {
       unit: 'ELEMENTARY',
       backupType: 'ATTENDANCE',
-      isEnabled: true,
-      schoolYear: '2026/2027',
-      rootFolderId: '16xenPYfnKAE3zOSZ4H5Tauytsv_xPhGm',
-      rootFolderName: 'ELEMENTARY ATTENDANCE',
-      writeMode: 'USE_EXISTING_FILES',
+      isEnabled: config ? (config.isEnabled !== undefined ? config.isEnabled : true) : true,
+      schoolYear: config ? (config.schoolYear || '2026/2027') : '2026/2027',
+      rootFolderId: '1GNFo6yDuM382KB-lDt2_5dnUWtZ8DUI_',
+      sharedDriveId: sharedDriveId,
+      writeMode: 'AUTO_STRUCTURE',
       updatedAt: Date.now(),
       updatedBy: decodedToken.uid
     };
-    await configRef.set(newConfig);
+    await configRef.set(updatedConfig, { merge: true });
     configSnap = await configRef.get();
+    config = configSnap.data();
   }
 
-  const config = configSnap.data() || {};
   if (!config.isEnabled) {
     return res.json({ success: true, message: "Backup Elementary dinonaktifkan." });
   }
 
-  // 3. Verify access to Google Drive Root Folder
+  // 5. Verify access to Google Drive Root Folder
   const auth = getGoogleAuth();
   if (!auth) {
     return res.status(500).json({ error: "Gagal menginisialisasi Google Auth di server." });
@@ -1327,16 +1358,168 @@ backupRunnerRouter.post("/elementary-sync", async (req, res) => {
     await driveClient.files.get({ fileId: config.rootFolderId, supportsAllDrives: true });
   } catch (driveErr: any) {
     console.error("[BackupRunner-Elementary] Root folder access validation failed:", driveErr);
-    return res.status(403).json({ error: "Folder backup Elementary tidak dapat diakses. Periksa izin Editor pada Google Drive." });
+    return res.status(400).json({ error: "Folder backup Elementary tidak dapat diakses. Periksa konfigurasi rootFolderId." });
   }
 
-  // 4. Resolve file mapping (Spreadsheet Map)
+  // 6. Resolve file mapping (Spreadsheet Map)
   const schoolYearId = schoolYear.replace(/\//g, '-');
   const mapDocId = `elementary_${schoolYearId}_${classId}`;
-  const mapSnap = await db.collection("attendance_backup_file_maps").doc(mapDocId).get();
+  let mapSnap = await db.collection("attendance_backup_file_maps").doc(mapDocId).get();
 
   if (!mapSnap.exists) {
-    return res.status(400).json({ error: "File backup Google Sheets untuk kelas ini belum dikonfigurasi." });
+    if (config.writeMode === 'AUTO_STRUCTURE') {
+      try {
+        console.log(`[BackupRunner-Elementary] AUTO_STRUCTURE enabled. Setting up folders...`);
+
+        // Display names
+        let displaySemesterName = `Semester ${semester}`;
+        let normSemesterVal = String(semester);
+        if (normSemesterVal === '1' || normSemesterVal === 'SEMESTER_1') {
+          displaySemesterName = 'Semester 1';
+          normSemesterVal = 'SEMESTER_1';
+        } else if (normSemesterVal === '2' || normSemesterVal === 'SEMESTER_2') {
+          displaySemesterName = 'Semester 2';
+          normSemesterVal = 'SEMESTER_2';
+        }
+
+        // Folder structure
+        const elementaryFolderId = await findOrCreateFolder(driveClient, 'Elementary', config.rootFolderId, config.sharedDriveId);
+        const academicYearFolderId = await findOrCreateFolder(driveClient, schoolYearId, elementaryFolderId, config.sharedDriveId);
+        const semesterFolderId = await findOrCreateFolder(driveClient, displaySemesterName, academicYearFolderId, config.sharedDriveId);
+
+        // Search for existing spreadsheet in the subfolder
+        const ssTitle = className;
+        const q = `name = '${ssTitle.replace(/'/g, "\\'")}' and '${semesterFolderId}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`;
+        const existingSS = await driveClient.files.list({
+          q,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+          driveId: config.sharedDriveId,
+          corpora: config.sharedDriveId ? 'drive' : undefined,
+          fields: 'files(id, name, webViewLink)',
+        });
+
+        let spreadsheetId = "";
+        let spreadsheetUrl = "";
+
+        if (existingSS.data.files && existingSS.data.files.length > 0) {
+          spreadsheetId = existingSS.data.files[0].id!;
+          spreadsheetUrl = existingSS.data.files[0].webViewLink!;
+          console.log(`[BackupRunner-Elementary] Found existing spreadsheet in subfolder: ${spreadsheetId}`);
+        } else {
+          console.log(`[BackupRunner-Elementary] Creating new spreadsheet in subfolder: ${ssTitle}`);
+          const fileResponse = await driveClient.files.create({
+            requestBody: {
+              name: ssTitle,
+              mimeType: 'application/vnd.google-apps.spreadsheet',
+              parents: [semesterFolderId]
+            },
+            supportsAllDrives: true,
+            fields: 'id, name, webViewLink'
+          });
+          spreadsheetId = fileResponse.data.id!;
+          spreadsheetUrl = fileResponse.data.webViewLink!;
+
+          // Init sheets: Metadata, Kehadiran Harian, Log
+          const ssMeta = await sheetsClient.spreadsheets.get({ spreadsheetId });
+          const defaultSheetId = ssMeta.data.sheets?.[0]?.properties?.sheetId;
+
+          const initRequests: any[] = [
+            { addSheet: { properties: { title: 'Metadata' } } },
+            { addSheet: { properties: { title: 'Kehadiran Harian' } } },
+            { addSheet: { properties: { title: 'Log' } } }
+          ];
+
+          if (defaultSheetId !== undefined) {
+            initRequests.push({ deleteSheet: { sheetId: defaultSheetId } });
+          }
+
+          await sheetsClient.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: { requests: initRequests }
+          });
+
+          // Metadata Headers
+          await sheetsClient.spreadsheets.values.update({
+            spreadsheetId,
+            range: 'Metadata!A1',
+            valueInputOption: 'RAW',
+            requestBody: {
+              values: [
+                ['Property', 'Value'],
+                ['Class', classId],
+                ['ClassName', className],
+                ['Year', schoolYear],
+                ['Semester', normSemesterVal]
+              ]
+            }
+          });
+
+          // Log Header
+          await sheetsClient.spreadsheets.values.update({
+            spreadsheetId,
+            range: 'Log!A1',
+            valueInputOption: 'RAW',
+            requestBody: {
+              values: [['Backup Key', 'Timestamp', 'Student ID', 'Student Name', 'Date', 'Status', 'Note', 'Updated By']]
+            }
+          });
+
+          // Kehadiran Harian Header
+          await sheetsClient.spreadsheets.values.update({
+            spreadsheetId,
+            range: 'Kehadiran Harian!A1',
+            valueInputOption: 'RAW',
+            requestBody: {
+              values: [['Student ID', 'Student Name']]
+            }
+          });
+        }
+
+        // Save mapping
+        const newMapData = {
+          unit: 'ELEMENTARY',
+          backupType: 'ATTENDANCE',
+          schoolYear: schoolYear,
+          semester: normSemesterVal,
+          classId: classId,
+          className: className,
+          rootFolderId: config.rootFolderId,
+          unitFolderId: elementaryFolderId,
+          academicYearFolderId: academicYearFolderId,
+          semesterFolderId: semesterFolderId,
+          spreadsheetId,
+          spreadsheetUrl,
+          sheetName: 'Kehadiran Harian',
+          active: true,
+          createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp()
+        };
+
+        await db.collection("attendance_backup_file_maps").doc(mapDocId).set(newMapData);
+        mapSnap = await db.collection("attendance_backup_file_maps").doc(mapDocId).get();
+        console.log(`[BackupRunner-Elementary] Automatic mapping saved successfully for ${mapDocId}`);
+
+      } catch (autoErr: any) {
+        console.error("[BackupRunner-Elementary] AUTO_STRUCTURE setup failed:", autoErr);
+        // Save detail error on job log
+        const jobDocId = `attendance_elementary_${schoolYearId}_${classId}_${date}`;
+        await db.collection("system_backup_jobs").doc(jobDocId).set({
+          id: jobDocId,
+          backupType: 'ATTENDANCE',
+          unit: 'ELEMENTARY',
+          status: 'FAILED',
+          lastErrorCode: autoErr.status || 'ERROR',
+          lastErrorMessage: `Gagal membuat struktur folder/file otomatis: ${autoErr.message || autoErr}`,
+          completedAt: Date.now(),
+          updatedAt: Date.now()
+        }, { merge: true });
+
+        return res.status(500).json({ error: `Gagal membuat struktur folder/file otomatis: ${autoErr.message || autoErr}` });
+      }
+    } else {
+      return res.status(400).json({ error: "File backup Google Sheets untuk kelas ini belum dikonfigurasi." });
+    }
   }
 
   const mapData = mapSnap.data() || {};
@@ -1354,18 +1537,7 @@ backupRunnerRouter.post("/elementary-sync", async (req, res) => {
     return res.status(403).json({ error: "Folder backup Elementary tidak dapat diakses. Periksa izin Editor pada Google Drive." });
   }
 
-  // 6. Query Attendance Records from Lumina for this class and date (unit must be 'ELEMENTARY')
-  const recordsSnap = await db.collection("attendance_records")
-    .where("unit", "==", "ELEMENTARY")
-    .where("classId", "==", classId)
-    .where("date", "==", date)
-    .get();
-
-  const recordsToSync = recordsSnap.docs.map(doc => doc.data());
-  
-  if (recordsToSync.length === 0) {
-    return res.status(400).json({ error: "Tidak ada data kehadiran yang tersimpan di Lumina untuk kelas dan tanggal terpilih." });
-  }
+  // 6. recordsToSync has already been fetched and validated in step 3
 
   // 7. Initialize Job document in Firestore
   const jobDocId = `attendance_elementary_${schoolYearId}_${classId}_${date}`;

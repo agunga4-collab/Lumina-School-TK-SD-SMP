@@ -433,6 +433,11 @@ service cloud.firestore {
       allow write: if isAdmin() || isJuniorHighStaff();
     }
 
+    match /system_backup_jobs/{jobId} {
+      allow get, list: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
     match /attendance_backup_file_maps/{mapId} {
       allow read: if isActive() || isAdmin();
       allow write: if isAdmin() || isJuniorHighStaff();

@@ -67,6 +67,8 @@ export default function Attendance() {
   const [elementaryBackupJob, setElementaryBackupJob] = React.useState<any | null>(null);
   const [attendanceType, setAttendanceType] = React.useState<'DAILY' | 'DHUHUR'>('DAILY');
   const [refreshTrigger, setRefreshTrigger] = React.useState(0);
+  const [threshold, setThreshold] = React.useState(3);
+  const [userProfile, setUserProfile] = React.useState<any>(null); // In real app, from AuthContext
 
   React.useEffect(() => {
     const loadFileMap = async () => {
@@ -108,6 +110,18 @@ export default function Attendance() {
       return;
     }
 
+    if (!userProfile) {
+      return;
+    }
+
+    const isUserAdmin = ['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'PRINCIPAL', 'VICE_PRINCIPAL'].includes(userProfile.role) ||
+                       ['agunga4@gmail.com', 'agunga4@lazuardi.sch.id'].includes(auth.currentUser?.email || '');
+
+    if (!isUserAdmin) {
+      setElementaryBackupJob(null);
+      return;
+    }
+
     const schoolYearId = activeAcademicYear.replace(/\//g, '-');
     const jobDocId = `attendance_elementary_${schoolYearId}_${selectedClass}_${selectedDate}`;
     const docRef = doc(db, 'system_backup_jobs', jobDocId);
@@ -119,15 +133,11 @@ export default function Attendance() {
         setElementaryBackupJob(null);
       }
     }, (err) => {
-      console.warn('Error listening to elementary backup job:', err);
+      // Ignore listening errors silently
     });
 
     return () => unsubscribe();
-  }, [activeUnit, selectedClass, selectedDate, activeAcademicYear]);
-
-  const [threshold, setThreshold] = React.useState(3);
-  const [userProfile, setUserProfile] = React.useState<any>(null); // In real app, from AuthContext
-
+  }, [activeUnit, selectedClass, selectedDate, activeAcademicYear, userProfile]);
   // Fetch classes for active unit
   React.useEffect(() => {
     const fetchClasses = async () => {
