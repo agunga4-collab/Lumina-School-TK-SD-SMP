@@ -1127,6 +1127,9 @@ app.post("/api/attendance/sync", async (req, res) => {
   }
 });
 
+import { backupRunnerRouter } from "./server/backupRunner";
+app.use("/api/backup", backupRunnerRouter);
+
 interface SyncBatchRequestBody {
   classId: string;
   date: string;

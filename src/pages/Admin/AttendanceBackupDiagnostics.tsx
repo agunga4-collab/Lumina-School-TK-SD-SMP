@@ -15,18 +15,123 @@ import {
   Send,
   History
 } from 'lucide-react';
-import { db } from '../../lib/firebase';
-import { collection, query, where, getDocs, orderBy, limit, getDoc, doc } from 'firebase/firestore';
+import { db, auth } from '../../lib/firebase';
+import { collection, query, where, getDocs, orderBy, limit, getDoc, doc, onSnapshot } from 'firebase/firestore';
 import { AttendanceRecord, AttendanceBackupFileMap, AttendanceBackupConfig } from '../../types';
 import { attendanceBackupRetryService } from '../../services/attendanceBackupRetryService';
 import { attendanceBackupConfigService } from '../../services/attendanceBackupConfigService';
 import { toast } from 'sonner';
+
+interface BackupJob {
+  id: string;
+  backupType: 'ATTENDANCE' | 'DHUHUR_ATTENDANCE';
+  unit: string;
+  status: 'IDLE' | 'PREPARING' | 'IN_PROGRESS' | 'COMPLETED' | 'PARTIAL' | 'RETRYING' | 'FAILED';
+  totalRows: number;
+  processedRows: number;
+  successRows: number;
+  failedRows: number;
+  currentBatch: number;
+  totalBatches: number;
+  spreadsheetId?: string;
+  spreadsheetUrl?: string;
+  lastErrorCode?: string;
+  lastErrorMessage?: string;
+  retryCount?: number;
+  nextRetryAt?: number;
+  startedAt?: number;
+  completedAt?: number;
+  updatedAt?: number;
+}
 
 const AttendanceBackupDiagnostics: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [fileMaps, setFileMaps] = useState<AttendanceBackupFileMap[]>([]);
   const [config, setConfig] = useState<AttendanceBackupConfig | null>(null);
+  
+  const [jobs, setJobs] = useState<{
+    attendance_junior_high: BackupJob | null;
+    dhuhur_junior_high: BackupJob | null;
+  }>({
+    attendance_junior_high: null,
+    dhuhur_junior_high: null
+  });
+  const [triggeringJob, setTriggeringJob] = useState<string | null>(null);
+
+  useEffect(() => {
+    const unsubDaily = onSnapshot(doc(db, "system_backup_jobs", "attendance_junior_high"), (snapshot) => {
+      if (snapshot.exists()) {
+        setJobs(prev => ({ ...prev, attendance_junior_high: snapshot.data() as BackupJob }));
+      } else {
+        setJobs(prev => ({ ...prev, attendance_junior_high: {
+          id: 'attendance_junior_high',
+          backupType: 'ATTENDANCE',
+          unit: 'JUNIOR_HIGH',
+          status: 'IDLE',
+          totalRows: 0,
+          processedRows: 0,
+          successRows: 0,
+          failedRows: 0,
+          currentBatch: 0,
+          totalBatches: 0
+        }}));
+      }
+    });
+
+    const unsubDhuhur = onSnapshot(doc(db, "system_backup_jobs", "dhuhur_junior_high"), (snapshot) => {
+      if (snapshot.exists()) {
+        setJobs(prev => ({ ...prev, dhuhur_junior_high: snapshot.data() as BackupJob }));
+      } else {
+        setJobs(prev => ({ ...prev, dhuhur_junior_high: {
+          id: 'dhuhur_junior_high',
+          backupType: 'DHUHUR_ATTENDANCE',
+          unit: 'JUNIOR_HIGH',
+          status: 'IDLE',
+          totalRows: 0,
+          processedRows: 0,
+          successRows: 0,
+          failedRows: 0,
+          currentBatch: 0,
+          totalBatches: 0
+        }}));
+      }
+    });
+
+    return () => {
+      unsubDaily();
+      unsubDhuhur();
+    };
+  }, []);
+
+  const handleTriggerJob = async (jobId: string, mode: 'START' | 'RETRY_FAILED' | 'REBUILD_ALL') => {
+    setTriggeringJob(jobId);
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (idToken) {
+        headers['Authorization'] = `Bearer ${idToken}`;
+      }
+
+      const response = await fetch('/api/backup/run-job', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ jobId, mode })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Gagal menjalankan job backup.');
+      }
+
+      toast.success('Job Backup Dimulai', { description: data.message });
+    } catch (error: any) {
+      console.error('Trigger backup job failed:', error);
+      toast.error('Gagal Memulai Backup', { description: error.message || 'Kesalahan sistem.' });
+    } finally {
+      setTriggeringJob(null);
+    }
+  };
   
   const [stats, setStats] = useState({
     total: 0,
@@ -140,6 +245,180 @@ const AttendanceBackupDiagnostics: React.FC = () => {
     }
   };
 
+  const renderBackupJobCard = (jobId: string, title: string, job: BackupJob | null) => {
+    if (!job) {
+      return (
+        <div className="p-6 rounded-2xl border border-gray-100 bg-gray-50/50 flex flex-col items-center justify-center min-h-[220px]">
+          <RefreshCw className="w-6 h-6 text-blue-500 animate-spin mb-2" />
+          <p className="text-xs text-gray-400 font-medium">Memuat status job...</p>
+        </div>
+      );
+    }
+
+    const {
+      status,
+      totalRows,
+      processedRows,
+      successRows,
+      failedRows,
+      currentBatch,
+      totalBatches,
+      spreadsheetUrl,
+      lastErrorCode,
+      lastErrorMessage,
+      retryCount,
+      nextRetryAt,
+      updatedAt
+    } = job;
+
+    const progressPercent = totalRows > 0 ? Math.round((processedRows / totalRows) * 100) : 0;
+
+    const badgeColors: Record<string, string> = {
+      IDLE: 'bg-gray-100 text-gray-600 border-gray-200',
+      PREPARING: 'bg-blue-50 text-blue-600 border-blue-100',
+      IN_PROGRESS: 'bg-indigo-50 text-indigo-600 border-indigo-100 animate-pulse',
+      RETRYING: 'bg-amber-50 text-amber-700 border-amber-200',
+      COMPLETED: 'bg-green-50 text-green-600 border-green-100',
+      PARTIAL: 'bg-orange-50 text-orange-600 border-orange-100',
+      FAILED: 'bg-red-50 text-red-600 border-red-100'
+    };
+
+    const isRunning = ['PREPARING', 'IN_PROGRESS', 'RETRYING'].includes(status);
+
+    return (
+      <div className="p-6 rounded-2xl border border-gray-100 bg-gray-50/30 flex flex-col justify-between space-y-6">
+        <div className="space-y-4">
+          <div className="flex items-start justify-between">
+            <div className="space-y-1">
+              <h3 className="font-extrabold text-gray-900 text-sm tracking-tight">{title}</h3>
+              <p className="text-[11px] text-gray-500 font-medium">Unit: JUNIOR_HIGH</p>
+            </div>
+            <span className={`text-[10px] font-black px-2.5 py-1 rounded-full border uppercase tracking-wider ${badgeColors[status] || badgeColors.IDLE}`}>
+              {status}
+            </span>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-gray-500 font-medium">
+                {status === 'IDLE' ? 'Belum dijalankan' : `${processedRows} dari ${totalRows} baris diproses`}
+              </span>
+              <span className="font-extrabold text-gray-900">{progressPercent}%</span>
+            </div>
+            <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-blue-600 rounded-full transition-all duration-500" 
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 pt-2">
+            <div className="p-3 bg-white rounded-xl border border-gray-100 shadow-sm text-center">
+              <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">Sukses</div>
+              <div className="text-lg font-black text-green-600">{successRows}</div>
+            </div>
+            <div className="p-3 bg-white rounded-xl border border-gray-100 shadow-sm text-center">
+              <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">Gagal</div>
+              <div className="text-lg font-black text-red-600">{failedRows}</div>
+            </div>
+          </div>
+
+          <div className="text-xs space-y-1 text-gray-500 font-medium">
+            {totalBatches > 0 && (
+              <div className="flex justify-between">
+                <span>Batch saat ini:</span>
+                <span className="font-bold text-gray-800">{currentBatch} dari {totalBatches}</span>
+              </div>
+            )}
+            {retryCount !== undefined && retryCount > 0 && (
+              <div className="flex justify-between text-amber-700 font-bold">
+                <span>Retries (Google Quota):</span>
+                <span>{retryCount} / 5</span>
+              </div>
+            )}
+            {nextRetryAt && status === 'RETRYING' && (
+              <div className="flex justify-between text-amber-600 italic">
+                <span>Retry berikutnya pada:</span>
+                <span>{new Date(nextRetryAt).toLocaleTimeString()}</span>
+              </div>
+            )}
+            {updatedAt && (
+              <div className="flex justify-between text-[10px] text-gray-400 pt-1">
+                <span>Terakhir diperbarui:</span>
+                <span>{new Date(updatedAt).toLocaleTimeString()}</span>
+              </div>
+            )}
+          </div>
+
+          {lastErrorMessage && (
+            <div className="p-3.5 rounded-xl border bg-red-50/50 border-red-100 text-xs text-red-700 leading-relaxed space-y-1">
+              <div className="font-extrabold flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 text-red-500" />
+                Detail Kesalahan:
+              </div>
+              <p className="font-medium text-red-600/90">{lastErrorMessage}</p>
+              {lastErrorCode && (
+                <div className="text-[10px] font-mono text-red-400">Kode Teknis: {lastErrorCode}</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-3 pt-2">
+          {status === 'IDLE' || status === 'FAILED' ? (
+            <button
+              onClick={() => handleTriggerJob(jobId, 'START')}
+              disabled={isRunning || triggeringJob === jobId}
+              className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-md shadow-blue-100 active:scale-95 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:pointer-events-none"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              {status === 'FAILED' ? 'Coba Lagi' : 'Mulai Backup'}
+            </button>
+          ) : status === 'PARTIAL' ? (
+            <button
+              onClick={() => handleTriggerJob(jobId, 'RETRY_FAILED')}
+              disabled={isRunning || triggeringJob === jobId}
+              className="flex-1 py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-xl font-bold text-xs shadow-md shadow-orange-100 active:scale-95 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:pointer-events-none"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Ulangi Data Gagal
+            </button>
+          ) : status === 'COMPLETED' ? (
+            <button
+              onClick={() => handleTriggerJob(jobId, 'REBUILD_ALL')}
+              disabled={isRunning || triggeringJob === jobId}
+              className="flex-1 py-2.5 bg-gray-800 hover:bg-gray-900 text-white rounded-xl font-bold text-xs shadow-md shadow-gray-100 active:scale-95 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:pointer-events-none"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Backup Ulang
+            </button>
+          ) : (
+            <button
+              disabled
+              className="flex-1 py-2.5 bg-gray-200 text-gray-400 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              Sedang Mencadangkan...
+            </button>
+          )}
+
+          {spreadsheetUrl && (
+            <a
+              href={spreadsheetUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="px-4 py-2.5 bg-green-50 text-green-600 border border-green-100 hover:bg-green-100/50 rounded-xl font-bold text-xs active:scale-95 transition-all flex items-center gap-1.5"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              Buka Google Sheet
+            </a>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
@@ -222,6 +501,19 @@ const AttendanceBackupDiagnostics: React.FC = () => {
           icon={<RefreshCw className="w-5 h-5 text-amber-500" />} 
           color="amber"
         />
+      </div>
+
+      {/* Google Sheets Backup Job Monitor */}
+      <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 space-y-6">
+        <div>
+          <h2 className="text-lg font-black text-gray-900 tracking-tight">Google Sheets Backup Monitor (Junior High)</h2>
+          <p className="text-xs text-gray-500 mt-1">Status sinkronisasi batch real-time dan kontrol pencadangan ke Google Sheets</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          {renderBackupJobCard('attendance_junior_high', 'Backup Kehadiran Harian', jobs.attendance_junior_high)}
+          {renderBackupJobCard('dhuhur_junior_high', 'Backup Kehadiran Shalat Dhuhur', jobs.dhuhur_junior_high)}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
