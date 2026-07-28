@@ -8,7 +8,7 @@ import {
 import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { db, auth, getActiveStudents } from '../../lib/firebase';
-import { collection, query, where, getDocs, setDoc, doc, serverTimestamp, getDoc, orderBy, deleteDoc, writeBatch } from 'firebase/firestore';
+import { collection, query, where, getDocs, setDoc, doc, serverTimestamp, getDoc, orderBy, deleteDoc, writeBatch, onSnapshot } from 'firebase/firestore';
 import { AttendanceStatus, AttendanceRecord, Student, UnitType, Class } from '../../types';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { attendanceSyncService, attendanceBackupConfigService } from '../../services/attendanceBackupConfigService';
@@ -64,6 +64,7 @@ export default function Attendance() {
   const [recapViewMode, setRecapViewMode] = React.useState<'SUMMARY' | 'MATRIX'>('SUMMARY');
   const [loadingRecap, setLoadingRecap] = React.useState(false);
   const [fileMap, setFileMap] = React.useState<any | null>(null);
+  const [elementaryBackupJob, setElementaryBackupJob] = React.useState<any | null>(null);
   const [attendanceType, setAttendanceType] = React.useState<'DAILY' | 'DHUHUR'>('DAILY');
   const [refreshTrigger, setRefreshTrigger] = React.useState(0);
 
@@ -85,12 +86,44 @@ export default function Attendance() {
         } else {
           setFileMap(null);
         }
+      } else if (activeAcademicYear && activeUnit === 'ELEMENTARY' && selectedClass) {
+        const mapId = `elementary_${activeAcademicYear.replace(/\//g, '-')}_${selectedClass}`;
+        const docRef = doc(db, 'attendance_backup_file_maps', mapId);
+        const snap = await getDoc(docRef);
+        if (snap.exists()) {
+          setFileMap(snap.data());
+        } else {
+          setFileMap(null);
+        }
       } else {
         setFileMap(null);
       }
     };
     loadFileMap();
   }, [selectedClass, activeAcademicYear, activeSemester, activeUnit, attendanceType]);
+
+  React.useEffect(() => {
+    if (activeUnit !== 'ELEMENTARY' || !selectedClass || !selectedDate || !activeAcademicYear) {
+      setElementaryBackupJob(null);
+      return;
+    }
+
+    const schoolYearId = activeAcademicYear.replace(/\//g, '-');
+    const jobDocId = `attendance_elementary_${schoolYearId}_${selectedClass}_${selectedDate}`;
+    const docRef = doc(db, 'system_backup_jobs', jobDocId);
+
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setElementaryBackupJob(docSnap.data());
+      } else {
+        setElementaryBackupJob(null);
+      }
+    }, (err) => {
+      console.warn('Error listening to elementary backup job:', err);
+    });
+
+    return () => unsubscribe();
+  }, [activeUnit, selectedClass, selectedDate, activeAcademicYear]);
 
   const [threshold, setThreshold] = React.useState(3);
   const [userProfile, setUserProfile] = React.useState<any>(null); // In real app, from AuthContext
@@ -227,6 +260,12 @@ export default function Attendance() {
         const recordsSnap = await getDocs(recordsQ);
         const recordsMap = new Map(recordsSnap.docs.map(d => [d.data().studentId, d.data().status]));
         const notesMap = new Map(recordsSnap.docs.map(d => [d.data().studentId, d.data().note]));
+
+        if (recordsSnap.size > 0) {
+          setLastSaved({ date: selectedDate, classId: selectedClass });
+        } else {
+          setLastSaved(null);
+        }
 
         if (studentList.length > 0) {
           setStudents(studentList.map(s => ({
@@ -517,12 +556,21 @@ export default function Attendance() {
           retryCount: 0
         };
 
-        // Save to Firestore
-        await setDoc(doc(db, 'attendance_records', recordId), {
+        // Save to Firestore with unit support
+        const recordData: any = {
           ...record,
           recordedAt: serverTimestamp(),
           updatedAt: serverTimestamp()
-        }, { merge: true });
+        };
+
+        if (activeUnit === 'ELEMENTARY') {
+          recordData.unit = 'ELEMENTARY';
+          recordData.schoolYear = activeAcademicYear;
+        } else if (activeUnit === 'JUNIOR_HIGH') {
+          recordData.unit = 'JUNIOR_HIGH';
+        }
+
+        await setDoc(doc(db, 'attendance_records', recordId), recordData, { merge: true });
         
         successCount++;
       }
@@ -635,6 +683,61 @@ export default function Attendance() {
           description: `Semua ${syncResult.summary.success} data berhasil diekspor ke Google Sheets.`
         });
       }
+
+    } catch (err: any) {
+      console.error('Backup error:', err);
+      toast.error('Gagal Ekspor Backup', {
+        description: err.message || 'Terjadi kesalahan saat mengekspor data ke Google Sheets.'
+      });
+    } finally {
+      setBackingUp(false);
+    }
+  };
+
+  const handleBackupElementaryGoogleSheets = async () => {
+    const unselectedCount = students.filter(s => s.status === null).length;
+    if (unselectedCount > 0) {
+      const confirmBackup = window.confirm(`${unselectedCount} siswa belum memiliki status kehadiran. Lanjutkan backup? (Hanya siswa dengan status kehadiran yang akan diekspor)`);
+      if (!confirmBackup) return;
+    }
+
+    const studentsToBackup = students.filter(s => s.status !== null);
+    if (studentsToBackup.length === 0) {
+      toast.error('Tidak ada data kehadiran yang siap diekspor.');
+      return;
+    }
+
+    setBackingUp(true);
+    try {
+      const user = auth.currentUser;
+      const idToken = await user?.getIdToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (idToken) {
+        headers['Authorization'] = `Bearer ${idToken}`;
+      }
+
+      const response = await fetch('/api/backup/elementary-sync', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          classId: selectedClass,
+          date: selectedDate,
+          schoolYear: activeAcademicYear,
+          semester: activeSemester,
+          mode: 'START'
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Gagal mengekspor data.');
+      }
+
+      const resData = await response.json();
+      toast.success('Backup Selesai', {
+        description: `Semua ${resData.summary?.success || 0} data berhasil diekspor ke Google Sheets.`
+      });
+      setRefreshTrigger(prev => prev + 1);
 
     } catch (err: any) {
       console.error('Backup error:', err);
@@ -1216,7 +1319,133 @@ export default function Attendance() {
                  Data Sudah Disimpan
                </div>
              )}
-             {activeUnit === 'JUNIOR_HIGH' ? (
+             {activeUnit === 'ELEMENTARY' ? (
+                <div className="w-full flex flex-col gap-4">
+                  {/* Warning if not saved to Lumina */}
+                  {!lastSaved || lastSaved.date !== selectedDate || lastSaved.classId !== selectedClass ? (
+                    <div className="text-red-500 font-semibold text-xs bg-red-50 border border-red-100 px-4 py-2.5 rounded-xl self-end">
+                      Simpan data ke Lumina terlebih dahulu sebelum melakukan backup Google Sheets.
+                    </div>
+                  ) : null}
+
+                  {/* Real-time backup progress information */}
+                  {elementaryBackupJob && (
+                    <div className="bg-gray-50 border border-gray-100 p-4 rounded-xl space-y-2 mt-2 w-full animate-in fade-in zoom-in-95 duration-200 text-left">
+                      <div className="flex items-center justify-between text-sm font-bold text-gray-700">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />
+                          <span>Status Backup Google Sheets</span>
+                        </div>
+                        <span className="text-gray-400 uppercase tracking-wider text-[11px]">
+                          {elementaryBackupJob.status}
+                        </span>
+                      </div>
+
+                      <div className="text-xs text-gray-600 space-y-1">
+                        {/* Status descriptions */}
+                        {(elementaryBackupJob.status === 'IN_PROGRESS' || elementaryBackupJob.status === 'PREPARING') && (
+                          <p className="font-semibold text-blue-600">
+                            [{elementaryBackupJob.processedRows || 0}] dari [{elementaryBackupJob.totalRows || 0}] data dibackup.
+                          </p>
+                        )}
+                        
+                        {elementaryBackupJob.status === 'COMPLETED' && (
+                          <p className="font-semibold text-emerald-600 flex items-center gap-1.5">
+                            <CheckCircle2 size={14} />
+                            Backup selesai: [{elementaryBackupJob.successRows || 0}] data tersimpan ke Google Sheets.
+                          </p>
+                        )}
+
+                        {elementaryBackupJob.status === 'PARTIAL' && (
+                          <div className="space-y-2">
+                            <p className="font-semibold text-amber-600">
+                              Backup selesai sebagian: [{elementaryBackupJob.successRows || 0}] berhasil, [{elementaryBackupJob.failedRows || 0}] perlu diulang.
+                            </p>
+                            <button
+                              onClick={handleBackupElementaryGoogleSheets}
+                              disabled={saving || backingUp}
+                              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg transition-all"
+                            >
+                              Ulangi Data Gagal
+                            </button>
+                          </div>
+                        )}
+
+                        {elementaryBackupJob.status === 'RETRYING' && elementaryBackupJob.nextRetryAt && (
+                          <p className="font-semibold text-purple-600">
+                            Kuota Google sedang penuh. Sistem akan mencoba lagi pada {new Date(elementaryBackupJob.nextRetryAt).toLocaleTimeString()}.
+                          </p>
+                        )}
+
+                        {elementaryBackupJob.status === 'FAILED' && (
+                          <div className="space-y-1">
+                            {elementaryBackupJob.lastErrorCode === 429 ? (
+                              <p className="font-semibold text-red-600">
+                                Kuota Google sedang penuh. Sistem akan mencoba lagi nanti.
+                              </p>
+                            ) : (
+                              <p className="font-semibold text-red-600">
+                                Backup gagal karena koneksi. Coba lagi saat jaringan stabil. (Detail: {elementaryBackupJob.lastErrorMessage || 'Koneksi terputus'})
+                              </p>
+                            )}
+                            <button
+                              onClick={handleBackupElementaryGoogleSheets}
+                              disabled={saving || backingUp}
+                              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg transition-all mt-1"
+                            >
+                              Coba Lagi
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Display Link if spreadsheetUrl is available */}
+                      {fileMap?.spreadsheetUrl && (
+                        <div className="pt-2 border-t border-gray-100 flex justify-between items-center">
+                          <a
+                            href={fileMap.spreadsheetUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:text-blue-800 font-bold text-xs flex items-center gap-1 hover:underline"
+                          >
+                            <ExternalLink size={12} />
+                            Buka Google Sheet ({fileMap.sheetName || 'Rekap'})
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Buttons controls */}
+                  <div className="flex justify-end items-center gap-4">
+                    <button 
+                      onClick={handleSaveFirestore}
+                      disabled={saving || backingUp || (elementaryBackupJob && ['IN_PROGRESS', 'PREPARING', 'RETRYING'].includes(elementaryBackupJob.status))}
+                      className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50"
+                    >
+                      {saving ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
+                      {saving ? 'Menyimpan...' : 'Simpan (Lumina)'}
+                    </button>
+                    <button 
+                      onClick={handleBackupElementaryGoogleSheets}
+                      disabled={saving || backingUp || !lastSaved || lastSaved.date !== selectedDate || lastSaved.classId !== selectedClass || (elementaryBackupJob && ['IN_PROGRESS', 'PREPARING', 'RETRYING'].includes(elementaryBackupJob.status))}
+                      className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-emerald-100 transition-all active:scale-95 disabled:opacity-50"
+                    >
+                      {backingUp || (elementaryBackupJob && ['IN_PROGRESS', 'PREPARING', 'RETRYING'].includes(elementaryBackupJob.status)) ? (
+                        <>
+                          <RefreshCw size={18} className="animate-spin" />
+                          <span>Backup Berlangsung…</span>
+                        </>
+                      ) : (
+                        <>
+                          <ExternalLink size={18} />
+                          <span>Back Up (Google Sheets)</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+             ) : activeUnit === 'JUNIOR_HIGH' ? (
                attendanceType === 'DHUHUR' ? (
                  <>
                    <button 

@@ -1247,3 +1247,377 @@ backupRunnerRouter.post("/run-job", async (req, res) => {
     message: `Job backup ${jobId} berhasil dimulai dengan mode: ${mode}`
   });
 });
+
+// Elementary Sync Route
+backupRunnerRouter.post("/elementary-sync", async (req, res) => {
+  const db = getFirestore();
+  const { classId, date, schoolYear, semester, mode } = req.body;
+
+  if (!classId || !date || !schoolYear || !semester) {
+    return res.status(400).json({ error: "Missing required fields: classId, date, schoolYear, semester." });
+  }
+
+  // 1. Authorization check
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Unauthorized. Bearer token required." });
+  }
+  const token = authHeader.split("Bearer ")[1];
+  
+  let decodedToken: any;
+  try {
+    const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+    decodedToken = await getAdminAuth().verifyIdToken(token);
+  } catch (err: any) {
+    return res.status(401).json({ error: `Authentication failed: ${err.message}` });
+  }
+
+  const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+  if (!userDoc.exists) {
+    return res.status(403).json({ error: "Access denied. User profile not found." });
+  }
+  const userData = userDoc.data() || {};
+  const userRole = userData.role || null;
+
+  // Validate roles
+  const email = decodedToken.email || "";
+  const isSuperAdmin = userRole === "SUPER_ADMIN" || email.toLowerCase().includes("agunga4@gmail.com") || email.toLowerCase().includes("agunga4@lazuardi.sch.id");
+  const isAuthorized = isSuperAdmin || ['HEAD_UNIT', 'HEAD_ELEMENTARY', 'TEACHER'].includes(userRole || "");
+
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "Hanya Guru, Admin Unit, atau Super Admin yang dapat menjalankan backup." });
+  }
+
+  // 2. Load or initialize Elementary Backup Config
+  const configDocId = "elementary_attendance";
+  const configRef = db.collection("system_backup_configs").doc(configDocId);
+  let configSnap = await configRef.get();
+  
+  if (!configSnap.exists) {
+    console.log(`[BackupRunner-Elementary] Initializing default backup config for ELEMENTARY...`);
+    const newConfig = {
+      unit: 'ELEMENTARY',
+      backupType: 'ATTENDANCE',
+      isEnabled: true,
+      schoolYear: '2026/2027',
+      rootFolderId: '16xenPYfnKAE3zOSZ4H5Tauytsv_xPhGm',
+      rootFolderName: 'ELEMENTARY ATTENDANCE',
+      writeMode: 'USE_EXISTING_FILES',
+      updatedAt: Date.now(),
+      updatedBy: decodedToken.uid
+    };
+    await configRef.set(newConfig);
+    configSnap = await configRef.get();
+  }
+
+  const config = configSnap.data() || {};
+  if (!config.isEnabled) {
+    return res.json({ success: true, message: "Backup Elementary dinonaktifkan." });
+  }
+
+  // 3. Verify access to Google Drive Root Folder
+  const auth = getGoogleAuth();
+  if (!auth) {
+    return res.status(500).json({ error: "Gagal menginisialisasi Google Auth di server." });
+  }
+  const driveClient = getDrive(auth);
+  const sheetsClient = getSheets(auth);
+
+  try {
+    await driveClient.files.get({ fileId: config.rootFolderId, supportsAllDrives: true });
+  } catch (driveErr: any) {
+    console.error("[BackupRunner-Elementary] Root folder access validation failed:", driveErr);
+    return res.status(403).json({ error: "Folder backup Elementary tidak dapat diakses. Periksa izin Editor pada Google Drive." });
+  }
+
+  // 4. Resolve file mapping (Spreadsheet Map)
+  const schoolYearId = schoolYear.replace(/\//g, '-');
+  const mapDocId = `elementary_${schoolYearId}_${classId}`;
+  const mapSnap = await db.collection("attendance_backup_file_maps").doc(mapDocId).get();
+
+  if (!mapSnap.exists) {
+    return res.status(400).json({ error: "File backup Google Sheets untuk kelas ini belum dikonfigurasi." });
+  }
+
+  const mapData = mapSnap.data() || {};
+  const { spreadsheetId, spreadsheetUrl, active, sheetName } = mapData;
+
+  if (!spreadsheetId) {
+    return res.status(400).json({ error: "File backup Google Sheets untuk kelas ini belum dikonfigurasi." });
+  }
+
+  // 5. Validate that target spreadsheet is accessible by backend
+  try {
+    await driveClient.files.get({ fileId: spreadsheetId, supportsAllDrives: true });
+  } catch (err) {
+    console.error("[BackupRunner-Elementary] Spreadsheet accessibility failed:", err);
+    return res.status(403).json({ error: "Folder backup Elementary tidak dapat diakses. Periksa izin Editor pada Google Drive." });
+  }
+
+  // 6. Query Attendance Records from Lumina for this class and date (unit must be 'ELEMENTARY')
+  const recordsSnap = await db.collection("attendance_records")
+    .where("unit", "==", "ELEMENTARY")
+    .where("classId", "==", classId)
+    .where("date", "==", date)
+    .get();
+
+  const recordsToSync = recordsSnap.docs.map(doc => doc.data());
+  
+  if (recordsToSync.length === 0) {
+    return res.status(400).json({ error: "Tidak ada data kehadiran yang tersimpan di Lumina untuk kelas dan tanggal terpilih." });
+  }
+
+  // 7. Initialize Job document in Firestore
+  const jobDocId = `attendance_elementary_${schoolYearId}_${classId}_${date}`;
+  const jobRef = db.collection("system_backup_jobs").doc(jobDocId);
+
+  const initialJobData = {
+    id: jobDocId,
+    backupType: 'ATTENDANCE',
+    unit: 'ELEMENTARY',
+    status: 'PREPARING',
+    totalRows: recordsToSync.length,
+    processedRows: 0,
+    successRows: 0,
+    failedRows: 0,
+    currentBatch: 0,
+    totalBatches: 1,
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+    createdBy: email,
+    spreadsheetId,
+    spreadsheetUrl,
+    sheetName: sheetName || 'Rekap'
+  };
+
+  await jobRef.set(initialJobData);
+
+  const batchSize = 50;
+  const totalRows = recordsToSync.length;
+  const batches = chunkArray(recordsToSync, batchSize);
+  const totalBatches = batches.length;
+
+  await jobRef.update({
+    status: 'IN_PROGRESS',
+    totalBatches,
+    updatedAt: Date.now()
+  });
+
+  let successRows = 0;
+  let failedRows = 0;
+  let processedRows = 0;
+
+  // Exponential backoff retry helper
+  const executeWithRetry = async (fn: () => Promise<any>, retries = 5, delay = 1000): Promise<any> => {
+    try {
+      return await fn();
+    } catch (err: any) {
+      if (retries > 0 && (err.status === 429 || err.code === 429)) {
+        const jitter = Math.random() * 500;
+        const nextDelay = delay * 2 + jitter;
+        console.warn(`[BackupRunner-Elementary] Google Rate Limit (429) hit. Retrying in ${nextDelay.toFixed(0)}ms...`);
+        
+        await jobRef.update({
+          status: 'RETRYING',
+          nextRetryAt: Date.now() + nextDelay,
+          updatedAt: Date.now()
+        });
+
+        await new Promise(resolve => setTimeout(resolve, nextDelay));
+        return executeWithRetry(fn, retries - 1, delay * 2);
+      }
+      throw err;
+    }
+  };
+
+  try {
+    const targetTab = sheetName || 'Rekap';
+
+    let currentValues: any[][] = [];
+    try {
+      const getResponse = await executeWithRetry(() => sheetsClient.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${targetTab}!A1:ZZ5000`
+      }));
+      currentValues = getResponse.data.values || [];
+    } catch (getErr: any) {
+      console.warn(`[BackupRunner-Elementary] Error fetching tab "${targetTab}", attempting to create it:`, getErr.message);
+      try {
+        await executeWithRetry(() => sheetsClient.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [{ addSheet: { properties: { title: targetTab } } }]
+          }
+        }));
+      } catch (addErr: any) {
+        console.error("[BackupRunner-Elementary] Failed to create sheet tab:", addErr.message);
+      }
+    }
+
+    let headerRow = currentValues[0] || ['Student ID', 'Student Name'];
+    let dateColIndex = headerRow.indexOf(date);
+    if (dateColIndex === -1) {
+      dateColIndex = headerRow.length;
+      headerRow.push(date);
+      await executeWithRetry(() => sheetsClient.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${targetTab}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [headerRow] }
+      }));
+    }
+
+    const studentRowMap = new Map<string, any[]>();
+    for (let i = 1; i < currentValues.length; i++) {
+      const r = currentValues[i];
+      if (r[0]) {
+        studentRowMap.set(r[0], r);
+      }
+    }
+
+    for (let bIndex = 0; bIndex < batches.length; bIndex++) {
+      const batch = batches[bIndex];
+      const batchRecords: any[] = [];
+
+      for (const record of batch) {
+        try {
+          const studentId = record.studentId;
+          const studentName = record.studentName;
+          
+          let row = studentRowMap.get(studentId);
+          if (!row) {
+            row = [studentId, studentName];
+          }
+          while (row.length < dateColIndex + 1) {
+            row.push('');
+          }
+          row[dateColIndex] = record.status;
+          studentRowMap.set(studentId, row);
+
+          batchRecords.push(record);
+          successRows++;
+        } catch (itemErr) {
+          failedRows++;
+        }
+      }
+
+      processedRows += batch.length;
+
+      const sortedRows = Array.from(studentRowMap.values()).sort((a, b) => {
+        return (a[1] || '').localeCompare(b[1] || '');
+      });
+      const finalRows = [headerRow, ...sortedRows];
+
+      await executeWithRetry(() => sheetsClient.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${targetTab}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: finalRows }
+      }));
+
+      let logValues: any[][] = [];
+      try {
+        const logResponse = await executeWithRetry(() => sheetsClient.spreadsheets.values.get({
+          spreadsheetId,
+          range: `Log!A1:H10000`
+        }));
+        logValues = logResponse.data.values || [];
+      } catch (logGetErr) {
+        try {
+          await executeWithRetry(() => sheetsClient.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+              requests: [{ addSheet: { properties: { title: 'Log' } } }]
+            }
+          }));
+          logValues = [['Backup Key', 'Timestamp', 'Student ID', 'Student Name', 'Date', 'Status', 'Note', 'Updated By']];
+        } catch (logAddErr) {
+          console.error("Failed to add Log sheet:", logAddErr);
+        }
+      }
+
+      const logHeader = logValues[0] || ['Backup Key', 'Timestamp', 'Student ID', 'Student Name', 'Date', 'Status', 'Note', 'Updated By'];
+      const logMap = new Map<string, any[]>();
+      for (let i = 1; i < logValues.length; i++) {
+        const row = logValues[i];
+        if (row[0]) {
+          logMap.set(row[0], row);
+        }
+      }
+
+      for (const record of batchRecords) {
+        const backupKey = `ELEMENTARY|ATTENDANCE|${schoolYear}|${classId}|${record.studentId}|${record.date}`;
+        logMap.set(backupKey, [
+          backupKey,
+          new Date().toISOString(),
+          record.studentId,
+          record.studentName,
+          record.date,
+          record.status,
+          record.note || "",
+          record.recordedBy || email
+        ]);
+      }
+
+      const finalLogRows = [logHeader, ...Array.from(logMap.values())];
+      await executeWithRetry(() => sheetsClient.spreadsheets.values.update({
+        spreadsheetId,
+        range: `Log!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: finalLogRows }
+      }));
+
+      const dbBatch = db.batch();
+      for (const record of batchRecords) {
+        const recordRef = db.collection("attendance_records").doc(record.id);
+        dbBatch.update(recordRef, {
+          syncStatus: 'SYNCED',
+          lastSyncAt: Date.now(),
+          syncError: null,
+          updatedAt: Date.now()
+        });
+      }
+      await dbBatch.commit();
+
+      await jobRef.update({
+        processedRows,
+        successRows,
+        failedRows,
+        currentBatch: bIndex + 1,
+        status: processedRows === totalRows ? (failedRows > 0 ? 'PARTIAL' : 'COMPLETED') : 'IN_PROGRESS',
+        updatedAt: Date.now()
+      });
+    }
+
+    const finalStatus = failedRows === 0 ? 'COMPLETED' : (successRows > 0 ? 'PARTIAL' : 'FAILED');
+    await jobRef.update({
+      status: finalStatus,
+      completedAt: Date.now(),
+      updatedAt: Date.now()
+    });
+
+    return res.json({
+      success: true,
+      jobId: jobDocId,
+      summary: {
+        total: totalRows,
+        success: successRows,
+        failed: failedRows
+      }
+    });
+
+  } catch (syncError: any) {
+    console.error("[BackupRunner-Elementary] Critical failure during backup execution:", syncError);
+    await jobRef.update({
+      status: 'FAILED',
+      lastErrorCode: syncError.status || 'ERROR',
+      lastErrorMessage: syncError.message || String(syncError),
+      completedAt: Date.now(),
+      updatedAt: Date.now()
+    });
+    return res.status(500).json({
+      error: syncError.message || "Terjadi kesalahan internal saat mengekspor data ke Google Sheets."
+    });
+  }
+});
+
