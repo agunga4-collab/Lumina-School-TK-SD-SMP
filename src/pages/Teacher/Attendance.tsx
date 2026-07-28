@@ -1155,9 +1155,6 @@ export default function Attendance() {
               <h2 className="text-base font-extrabold text-blue-900 flex items-center gap-2">
                 Kehadiran Shalat Dhuhur
               </h2>
-              <p className="text-xs text-blue-700/80 font-medium">
-                Pencatatan & Pemantauan Kehadiran Shalat Dhuhur Santri Junior High
-              </p>
             </div>
           </div>
           <span className="px-2.5 py-1 bg-blue-100 text-blue-800 text-[10px] font-black rounded-full uppercase tracking-widest whitespace-nowrap hidden sm:inline-block">
