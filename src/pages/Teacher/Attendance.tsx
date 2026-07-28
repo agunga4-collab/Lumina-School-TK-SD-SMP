@@ -6,6 +6,36 @@ import {
   Settings2, BarChart3, Bell, RefreshCw, Layers, Trash2, ExternalLink
 } from 'lucide-react';
 import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
+
+// Custom Mosque SVG Icon matching official Lucide path specification
+const Mosque = ({ size = 24, className, ...props }: { size?: number; className?: string; [key: string]: any }) => {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      {...props}
+    >
+      <path d="M20 21v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2H6a2 2 0 0 0-2 2v4" />
+      <path d="M2 21h20" />
+      <path d="M10 5a2 2 0 0 1 4 0v3h-4V5z" />
+      <path d="M12 2v3" />
+      <path d="M4 10h4v11H4V10z" />
+      <path d="M16 10h4v11h-4V10z" />
+      <path d="M6 6V10" />
+      <path d="M18 6V10" />
+      <path d="M6 3h0" />
+      <path d="M18 3h0" />
+    </svg>
+  );
+};
 import { cn } from '../../lib/utils';
 import { db, auth, getActiveStudents } from '../../lib/firebase';
 import { collection, query, where, getDocs, setDoc, doc, serverTimestamp, getDoc, orderBy, deleteDoc, writeBatch, onSnapshot } from 'firebase/firestore';
@@ -1095,18 +1125,53 @@ export default function Attendance() {
               setStudents([]);
             }}
             className={cn(
-              "pb-2 text-sm font-bold border-b-2 px-1 transition-all",
-              attendanceType === 'DHUHUR' ? "border-blue-600 text-blue-600" : "border-transparent text-gray-400 hover:text-gray-600"
+              "pb-2 text-sm font-bold border-b-2 px-3 transition-all flex items-center gap-2 relative group",
+              attendanceType === 'DHUHUR' 
+                ? "border-blue-600 text-blue-600 bg-blue-50/50 rounded-t-lg" 
+                : "border-transparent text-gray-400 hover:text-blue-500 hover:bg-blue-50/10 rounded-t-lg"
             )}
+            aria-label="Kehadiran Shalat Dhuhur"
           >
-            Kehadiran Shalat Dhuhur
+            <Mosque 
+              size={16} 
+              className={cn(
+                "transition-colors",
+                attendanceType === 'DHUHUR' ? "text-blue-600" : "text-gray-400 group-hover:text-blue-400"
+              )} 
+              aria-hidden="true"
+            />
+            <span className="truncate">Kehadiran Shalat Dhuhur</span>
           </button>
+        </div>
+      )}
+
+      {activeUnit === 'JUNIOR_HIGH' && attendanceType === 'DHUHUR' && (
+        <div className="bg-blue-50/40 border border-blue-100 rounded-2xl p-5 flex items-center justify-between gap-4 animate-in fade-in duration-300">
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 bg-blue-600 text-white rounded-xl flex items-center justify-center shadow-md shadow-blue-100">
+              <Mosque size={22} aria-label="Ikon Shalat Dhuhur" title="Ikon Shalat Dhuhur" />
+            </div>
+            <div>
+              <h2 className="text-base font-extrabold text-blue-900 flex items-center gap-2">
+                Kehadiran Shalat Dhuhur
+              </h2>
+              <p className="text-xs text-blue-700/80 font-medium">
+                Pencatatan & Pemantauan Kehadiran Shalat Dhuhur Santri Junior High
+              </p>
+            </div>
+          </div>
+          <span className="px-2.5 py-1 bg-blue-100 text-blue-800 text-[10px] font-black rounded-full uppercase tracking-widest whitespace-nowrap hidden sm:inline-block">
+            Sistem Shalat Dhuhur
+          </span>
         </div>
       )}
 
       {view === 'INPUT' && (
         <div className="space-y-6">
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-wrap items-center justify-between gap-4">
+          <div className={cn(
+            "p-6 rounded-2xl shadow-sm border flex flex-wrap items-center justify-between gap-4 transition-all",
+            attendanceType === 'DHUHUR' ? "bg-blue-50/10 border-blue-100 shadow-blue-50/10" : "bg-white border-gray-100"
+          )}>
              <div className="flex items-center gap-4">
                 <div className="flex flex-col">
                   <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Kelas</span>
@@ -1115,7 +1180,12 @@ export default function Attendance() {
                       value={selectedClass}
                       disabled={loadingClasses}
                       onChange={(e) => setSelectedClass(e.target.value)}
-                      className="bg-gray-50 border border-gray-200 rounded-lg pl-3 pr-8 py-1.5 text-sm font-bold outline-none cursor-pointer hover:border-blue-300 transition-colors appearance-none min-w-[120px]"
+                      className={cn(
+                        "bg-gray-50 border rounded-lg pl-3 pr-8 py-1.5 text-sm font-bold outline-none cursor-pointer transition-colors appearance-none min-w-[120px]",
+                        attendanceType === 'DHUHUR'
+                          ? "border-blue-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-blue-900"
+                          : "border-gray-200 hover:border-blue-300"
+                      )}
                     >
                       {loadingClasses ? (
                         <option>Loading...</option>
@@ -1147,7 +1217,12 @@ export default function Attendance() {
                       type="date"
                       value={selectedDate}
                       onChange={(e) => setSelectedDate(e.target.value)}
-                      className="px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-bold outline-none cursor-pointer hover:border-blue-300 transition-colors"
+                      className={cn(
+                        "px-3 py-1.5 bg-gray-50 border rounded-lg text-sm font-bold outline-none cursor-pointer transition-all",
+                        attendanceType === 'DHUHUR'
+                          ? "border-blue-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-blue-900"
+                          : "border-gray-200 hover:border-blue-300"
+                      )}
                      />
                      <button 
                        onClick={handleNextDate}
@@ -1324,7 +1399,12 @@ export default function Attendance() {
 
           <div className="flex justify-end items-center gap-4 pt-4">
              {lastSaved && lastSaved.date === selectedDate && lastSaved.classId === selectedClass && (
-               <div className="flex items-center gap-1.5 text-emerald-600 font-bold text-sm bg-emerald-50 px-4 py-2 rounded-xl border border-emerald-100 animate-in fade-in slide-in-from-right-2">
+               <div className={cn(
+                 "flex items-center gap-1.5 font-bold text-sm px-4 py-2 rounded-xl border animate-in fade-in slide-in-from-right-2",
+                 attendanceType === 'DHUHUR' 
+                   ? "text-blue-600 bg-blue-50 border-blue-100" 
+                   : "text-emerald-600 bg-emerald-50 border-emerald-100"
+               )}>
                  <CheckCircle2 size={16} />
                  Data Sudah Disimpan
                </div>
@@ -1461,18 +1541,28 @@ export default function Attendance() {
                    <button 
                     onClick={handleSaveDhuhurFirestore}
                     disabled={saving || backingUp}
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50"
+                    className="flex items-center gap-2 bg-blue-700 hover:bg-blue-800 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50"
                    >
-                      {saving ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
-                      {saving ? 'Menyimpan...' : 'Simpan (Lumina)'}
+                      {saving ? <RefreshCw size={18} className="animate-spin" /> : (
+                        <div className="flex items-center gap-1">
+                          <Save size={18} />
+                          <Mosque size={14} className="opacity-90" aria-label="Ikon Shalat Dhuhur" title="Ikon Shalat Dhuhur" />
+                        </div>
+                      )}
+                      <span>{saving ? 'Menyimpan...' : 'Simpan Kehadiran Dhuhur'}</span>
                    </button>
                    <button 
                     onClick={handleBackupDhuhurGoogleSheets}
                     disabled={saving || backingUp}
-                    className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-emerald-100 transition-all active:scale-95 disabled:opacity-50"
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50"
                    >
-                      {backingUp ? <RefreshCw size={18} className="animate-spin" /> : <ExternalLink size={18} />}
-                      {backingUp ? 'Mengekspor...' : 'Back Up (Google Sheets)'}
+                      {backingUp ? <RefreshCw size={18} className="animate-spin" /> : (
+                        <div className="flex items-center gap-1">
+                          <ExternalLink size={18} />
+                          <Mosque size={14} className="opacity-90" aria-label="Ikon Shalat Dhuhur" title="Ikon Shalat Dhuhur" />
+                        </div>
+                      )}
+                      <span>{backingUp ? 'Mengekspor...' : 'Back Up Dhuhur (Google Sheets)'}</span>
                    </button>
                  </>
                ) : (
