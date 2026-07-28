@@ -210,6 +210,11 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    match /systemSettings/{configId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     match /enrollments/{enrollmentId} {
       allow read: if isActive();
       allow write: if isAdmin() || isMTSSAcademicManager();

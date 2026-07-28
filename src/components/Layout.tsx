@@ -11,6 +11,7 @@ import { cn } from '../lib/utils';
 import type { UserRole, UnitType } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useAcademicYear } from '../context/AcademicYearContext';
+import { useMenuVisibility } from '../context/MenuVisibilityContext';
 import { LuminaLogo } from './LuminaLogo';
 import { NotificationBell } from './NotificationBell';
 import { useBehaviorAlerts } from '../hooks/useBehaviorAlerts';
@@ -23,6 +24,7 @@ import type { Student } from '../types';
 export function Layout() {
   const { profile, signOut } = useAuth();
   const { activeYear, activeSemester } = useAcademicYear();
+  const { isMenuVisible } = useMenuVisibility();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [pendingLXDCount, setPendingLXDCount] = React.useState(0);
@@ -552,12 +554,16 @@ export function Layout() {
                   <NavItem to="/student/goal-setting" icon={<Target size={18} />} label="Goal Setting" />
                   <NavItem to="/student/my-presentation" icon={<Presentation size={18} />} label="My Presentation" />
                   {/* <NavItem to="/student/smart-goal-tracker" icon={<TrendingUp size={18} />} label="SMART Goal Tracker" /> */}
-                  <NavItem to="/student/reports" icon={<FileText size={18} />} label="Rapor Saya" />
+                  {isMenuVisible(currentUnit, 'reportCards') && (
+                    <NavItem to="/student/reports" icon={<FileText size={18} />} label="Rapor Saya" />
+                  )}
                 </>
              ) : currentUser.role === 'PARENT' ? (
                 <>
                   <NavItem to="/parent/dashboard" icon={<Home size={18} />} label="Dashboard Ortu" />
-                  <NavItem to="/parent/reports" icon={<FileText size={18} />} label="Rapor Anak" />
+                  {isMenuVisible(currentUnit, 'reportCards') && (
+                    <NavItem to="/parent/reports" icon={<FileText size={18} />} label="Rapor Anak" />
+                  )}
                   <NavItem to="/parent/students" icon={<Users size={18} />} label="Data Siswa" />
                 </>
              ) : (
@@ -611,8 +617,12 @@ export function Layout() {
                   )}
                   <NavItem to="/lateness" icon={<Clock size={18} />} label="Keterlambatan" />
                   <NavItem to="/attendance" icon={<CheckSquare size={18} />} label="Kehadiran" />
-                  <NavItem to="/academic/learning-goals" icon={<Target size={18} />} label="Learning Goals" />
-                  <NavItem to="/academic/lxd" icon={<BookOpen size={18} />} label="LXD" />
+                  {isMenuVisible(currentUnit, 'learningGoals') && (
+                    <NavItem to="/academic/learning-goals" icon={<Target size={18} />} label="Learning Goals" />
+                  )}
+                  {isMenuVisible(currentUnit, 'lxd') && (
+                    <NavItem to="/academic/lxd" icon={<BookOpen size={18} />} label="LXD" />
+                  )}
                   <NavItem to="/elementary/literasi-numerasi" icon={<BookOpen size={18} />} label="Literasi & Numerasi" />
                   <NavItem to="/elementary/mtss-academic" icon={<GraduationCap size={18} />} label="MTSS Academic" />
                   <NavItem to="/elementary/ldss" icon={<ClipboardCheck size={18} />} label="LDSS" />
@@ -624,9 +634,13 @@ export function Layout() {
                   <NavSectionLabel label="Akademik & MTSS" />
                   <NavItem to="/lateness" icon={<Clock size={18} />} label="Tardiness" />
                   <NavItem to="/attendance" icon={<CheckSquare size={18} />} label="Kehadiran" />
-                  <NavItem to="/academic/learning-goals" icon={<Target size={18} />} label="Learning Goals" />
-                  <NavItem to="/academic/lxd" icon={<BookOpen size={18} />} label="LXD" />
-                  {(currentUser.role === 'HEAD_UNIT' || currentUser.role === 'SUPER_ADMIN') && (
+                  {isMenuVisible(currentUnit, 'learningGoals') && (
+                    <NavItem to="/academic/learning-goals" icon={<Target size={18} />} label="Learning Goals" />
+                  )}
+                  {isMenuVisible(currentUnit, 'lxd') && (
+                    <NavItem to="/academic/lxd" icon={<BookOpen size={18} />} label="LXD" />
+                  )}
+                  {isMenuVisible(currentUnit, 'lxd') && (currentUser.role === 'HEAD_UNIT' || currentUser.role === 'SUPER_ADMIN') && (
                     <NavItem 
                       to="/academic/lxd/approval-queue" 
                       icon={<ClipboardList size={18} />} 
@@ -634,8 +648,12 @@ export function Layout() {
                       badge={pendingLXDCount > 0 ? pendingLXDCount.toString() : undefined}
                     />
                   )}
-                  <NavItem to="/academic/buku-nilai" icon={<BarChart3 size={18} />} label="Buku Nilai" />
-                  <NavItem to="/academic/rapor" icon={<FileText size={18} />} label="Rapor" />
+                  {isMenuVisible(currentUnit, 'gradebook') && (
+                    <NavItem to="/academic/buku-nilai" icon={<BarChart3 size={18} />} label="Buku Nilai" />
+                  )}
+                  {isMenuVisible(currentUnit, 'reportCards') && (
+                    <NavItem to="/academic/rapor" icon={<FileText size={18} />} label="Rapor" />
+                  )}
                   <NavItem to="/junior-high/literasi-numerasi" icon={<BookOpen size={18} />} label="Literasi & Numerasi" />
                   <NavItem to="/self-exploration" icon={<Sparkles size={18} />} label="Self-Exploration" />
                   <NavItem to="/junior-high/behavior/mtss/overview" icon={<ShieldAlert size={18} />} label="MTSS Behavior" />

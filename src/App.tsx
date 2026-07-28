@@ -93,6 +93,7 @@ import ReportView from './pages/Academic/Reports/ReportView';
 import NotificationsPage from './pages/Notifications';
 import { useBehaviorAlerts } from './hooks/useBehaviorAlerts';
 import { LGBackupTestButton } from './components/Admin/LGBackupTestButton';
+import { MenuVisibilityGuard } from './components/MenuVisibilityGuard';
 
 import StudentDashboard from './pages/Student/StudentDashboard';
 import StudentReports from './pages/Student/StudentReports';
@@ -288,26 +289,88 @@ export default function App() {
           <Route path="lateness" element={<Lateness />} />
           <Route path="notifications" element={<NotificationsPage />} />
           <Route path="academic">
-             <Route path="learning-goals" element={<LearningGoalsPage />} />
-             <Route path="lxd" element={<LXDList />} />
-             <Route path="lxd/new" element={<LXDForm />} />
-             <Route path="lxd/edit/:id" element={<LXDForm />} />
+             <Route path="learning-goals" element={
+               <MenuVisibilityGuard menuKey="learningGoals">
+                 <LearningGoalsPage />
+               </MenuVisibilityGuard>
+             } />
+             <Route path="lxd" element={
+               <MenuVisibilityGuard menuKey="lxd">
+                 <LXDList />
+               </MenuVisibilityGuard>
+             } />
+             <Route path="lxd/new" element={
+               <MenuVisibilityGuard menuKey="lxd">
+                 <LXDForm />
+               </MenuVisibilityGuard>
+             } />
+             <Route path="lxd/edit/:id" element={
+               <MenuVisibilityGuard menuKey="lxd">
+                 <LXDForm />
+               </MenuVisibilityGuard>
+             } />
              <Route path="lxd/approval-queue" element={
                <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT']}>
-                 <LXDApprovalQueue />
+                 <MenuVisibilityGuard menuKey="lxd">
+                   <LXDApprovalQueue />
+                 </MenuVisibilityGuard>
                </RoleGuard>
              } />
-             <Route path="lxd/:id" element={<LXDDetailPage />} />
-             <Route path="buku-nilai" element={<AssessmentList />} />
-             <Route path="buku-nilai/rekap" element={<ClassRecap />} />
-             <Route path="buku-nilai/:id" element={<AssessmentDetail />} />
-             <Route path="buku-nilai/siswa/:studentId" element={<StudentAssessmentProfile />} />
-             <Route path="lxd/assess/new" element={<AssessmentForm />} />
-             <Route path="lxd/assess/edit/:id" element={<AssessmentForm />} />
-             <Route path="rapor" element={<ReportList />} />
-             <Route path="rapor/new" element={<ReportCreate />} />
-             <Route path="rapor/:id" element={<ReportInput />} />
-             <Route path="rapor/:id/preview" element={<ReportView />} />
+             <Route path="lxd/:id" element={
+               <MenuVisibilityGuard menuKey="lxd">
+                 <LXDDetailPage />
+               </MenuVisibilityGuard>
+             } />
+             <Route path="buku-nilai" element={
+               <MenuVisibilityGuard menuKey="gradebook">
+                 <AssessmentList />
+               </MenuVisibilityGuard>
+             } />
+             <Route path="buku-nilai/rekap" element={
+               <MenuVisibilityGuard menuKey="gradebook">
+                 <ClassRecap />
+               </MenuVisibilityGuard>
+             } />
+             <Route path="buku-nilai/:id" element={
+               <MenuVisibilityGuard menuKey="gradebook">
+                 <AssessmentDetail />
+               </MenuVisibilityGuard>
+             } />
+             <Route path="buku-nilai/siswa/:studentId" element={
+               <MenuVisibilityGuard menuKey="gradebook">
+                 <StudentAssessmentProfile />
+               </MenuVisibilityGuard>
+             } />
+             <Route path="lxd/assess/new" element={
+               <MenuVisibilityGuard menuKey="lxd">
+                 <AssessmentForm />
+               </MenuVisibilityGuard>
+             } />
+             <Route path="lxd/assess/edit/:id" element={
+               <MenuVisibilityGuard menuKey="lxd">
+                 <AssessmentForm />
+               </MenuVisibilityGuard>
+             } />
+             <Route path="rapor" element={
+               <MenuVisibilityGuard menuKey="reportCards">
+                 <ReportList />
+               </MenuVisibilityGuard>
+             } />
+             <Route path="rapor/new" element={
+               <MenuVisibilityGuard menuKey="reportCards">
+                 <ReportCreate />
+               </MenuVisibilityGuard>
+             } />
+             <Route path="rapor/:id" element={
+               <MenuVisibilityGuard menuKey="reportCards">
+                 <ReportInput />
+               </MenuVisibilityGuard>
+             } />
+             <Route path="rapor/:id/preview" element={
+               <MenuVisibilityGuard menuKey="reportCards">
+                 <ReportView />
+               </MenuVisibilityGuard>
+             } />
           </Route>
           <Route path="literacy">
             <Route path="input" element={<LiteracyInput />} />
@@ -486,7 +549,9 @@ export default function App() {
                 path="reports" 
                 element={
                   <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
-                    <StudentReports />
+                    <MenuVisibilityGuard menuKey="reportCards">
+                      <StudentReports />
+                    </MenuVisibilityGuard>
                   </RoleGuard>
                 } 
              />
@@ -507,7 +572,9 @@ export default function App() {
                 path="reports" 
                 element={
                   <RoleGuard roles={['PARENT', 'SUPER_ADMIN']}>
-                    <ParentReports />
+                    <MenuVisibilityGuard menuKey="reportCards">
+                      <ParentReports />
+                    </MenuVisibilityGuard>
                   </RoleGuard>
                 } 
              />
