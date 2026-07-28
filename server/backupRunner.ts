@@ -1603,90 +1603,83 @@ backupRunnerRouter.post("/elementary-sync", async (req, res) => {
   };
 
   try {
-    const targetTab = sheetName || 'Rekap';
+    const INDONESIAN_MONTHS = [
+      "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+      "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+    ];
 
-    let currentValues: any[][] = [];
-    try {
-      const getResponse = await executeWithRetry(() => sheetsClient.spreadsheets.values.get({
+    const dateParts = date.split('-');
+    const yearNum = parseInt(dateParts[0], 10);
+    const monthNum = parseInt(dateParts[1], 10);
+    const monthNameIndo = INDONESIAN_MONTHS[monthNum - 1];
+    const tabTitle = `${monthNameIndo} ${yearNum}`;
+
+    // Helper: update Rekap tab
+    const updateRekapTab = async (records: any[]) => {
+      const rekapResponse = await executeWithRetry(() => sheetsClient.spreadsheets.values.get({
         spreadsheetId,
-        range: `${targetTab}!A1:ZZ5000`
+        range: 'Rekap!A1:ZZ1000',
       }));
-      currentValues = getResponse.data.values || [];
-    } catch (getErr: any) {
-      console.warn(`[BackupRunner-Elementary] Error fetching tab "${targetTab}", attempting to create it:`, getErr.message);
-      try {
-        await executeWithRetry(() => sheetsClient.spreadsheets.batchUpdate({
-          spreadsheetId,
-          requestBody: {
-            requests: [{ addSheet: { properties: { title: targetTab } } }]
-          }
-        }));
-      } catch (addErr: any) {
-        console.error("[BackupRunner-Elementary] Failed to create sheet tab:", addErr.message);
-      }
-    }
+      const rekapRows = rekapResponse.data.values || [];
+      const rekapHeader = rekapRows[0] || ['Student ID', 'Student Name'];
 
-    let headerRow = currentValues[0] || ['Student ID', 'Student Name'];
-    let dateColIndex = headerRow.indexOf(date);
-    if (dateColIndex === -1) {
-      dateColIndex = headerRow.length;
-      headerRow.push(date);
-      await executeWithRetry(() => sheetsClient.spreadsheets.values.update({
-        spreadsheetId,
-        range: `${targetTab}!A1`,
-        valueInputOption: 'RAW',
-        requestBody: { values: [headerRow] }
-      }));
-    }
+      const recordsByDate = new Map<string, any[]>();
+      records.forEach(r => {
+        if (!recordsByDate.has(r.date)) {
+          recordsByDate.set(r.date, []);
+        }
+        recordsByDate.get(r.date)!.push(r);
+      });
 
-    const studentRowMap = new Map<string, any[]>();
-    for (let i = 1; i < currentValues.length; i++) {
-      const r = currentValues[i];
-      if (r[0]) {
-        studentRowMap.set(r[0], r);
-      }
-    }
-
-    for (let bIndex = 0; bIndex < batches.length; bIndex++) {
-      const batch = batches[bIndex];
-      const batchRecords: any[] = [];
-
-      for (const record of batch) {
-        try {
-          const studentId = record.studentId;
-          const studentName = record.studentName;
-          
-          let row = studentRowMap.get(studentId);
-          if (!row) {
-            row = [studentId, studentName];
-          }
-          while (row.length < dateColIndex + 1) {
-            row.push('');
-          }
-          row[dateColIndex] = record.status;
-          studentRowMap.set(studentId, row);
-
-          batchRecords.push(record);
-          successRows++;
-        } catch (itemErr) {
-          failedRows++;
+      const rekapStudentMap = new Map<string, any[]>();
+      for (let i = 1; i < rekapRows.length; i++) {
+        const row = rekapRows[i];
+        if (row[0]) {
+          rekapStudentMap.set(row[0], row);
         }
       }
 
-      processedRows += batch.length;
+      for (const [dVal, dRecords] of recordsByDate.entries()) {
+        let colIndex = rekapHeader.indexOf(dVal);
+        if (colIndex === -1) {
+          colIndex = rekapHeader.length;
+          rekapHeader.push(dVal);
+        }
 
-      const sortedRows = Array.from(studentRowMap.values()).sort((a, b) => {
+        for (const record of dRecords) {
+          const studentId = record.studentId;
+          let row = rekapStudentMap.get(studentId);
+          if (!row) {
+            row = [studentId, record.studentName || record.studentNameSnapshot || "Siswa Tanpa Nama"];
+          }
+          while (row.length < colIndex + 1) {
+            row.push('');
+          }
+          row[colIndex] = record.status;
+          rekapStudentMap.set(studentId, row);
+        }
+      }
+
+      for (const [sId, row] of rekapStudentMap.entries()) {
+        while (row.length < rekapHeader.length) {
+          row.push('');
+        }
+      }
+
+      const sortedRekapRows = Array.from(rekapStudentMap.values()).sort((a, b) => {
         return (a[1] || '').localeCompare(b[1] || '');
       });
-      const finalRows = [headerRow, ...sortedRows];
 
       await executeWithRetry(() => sheetsClient.spreadsheets.values.update({
         spreadsheetId,
-        range: `${targetTab}!A1`,
+        range: 'Rekap!A1',
         valueInputOption: 'RAW',
-        requestBody: { values: finalRows }
+        requestBody: { values: [rekapHeader, ...sortedRekapRows] }
       }));
+    };
 
+    // Helper: update Log tab
+    const updateLogTab = async (records: any[], isMigration = false) => {
       let logValues: any[][] = [];
       try {
         const logResponse = await executeWithRetry(() => sheetsClient.spreadsheets.values.get({
@@ -1695,17 +1688,7 @@ backupRunnerRouter.post("/elementary-sync", async (req, res) => {
         }));
         logValues = logResponse.data.values || [];
       } catch (logGetErr) {
-        try {
-          await executeWithRetry(() => sheetsClient.spreadsheets.batchUpdate({
-            spreadsheetId,
-            requestBody: {
-              requests: [{ addSheet: { properties: { title: 'Log' } } }]
-            }
-          }));
-          logValues = [['Backup Key', 'Timestamp', 'Student ID', 'Student Name', 'Date', 'Status', 'Note', 'Updated By']];
-        } catch (logAddErr) {
-          console.error("Failed to add Log sheet:", logAddErr);
-        }
+        logValues = [['Backup Key', 'Timestamp', 'Student ID', 'Student Name', 'Date', 'Status', 'Note', 'Updated By']];
       }
 
       const logHeader = logValues[0] || ['Backup Key', 'Timestamp', 'Student ID', 'Student Name', 'Date', 'Status', 'Note', 'Updated By'];
@@ -1717,17 +1700,20 @@ backupRunnerRouter.post("/elementary-sync", async (req, res) => {
         }
       }
 
-      for (const record of batchRecords) {
-        const backupKey = `ELEMENTARY|ATTENDANCE|${schoolYear}|${classId}|${record.studentId}|${record.date}`;
+      for (const record of records) {
+        const backupKey = isMigration 
+          ? `ELEMENTARY|MIGRATION|${schoolYear}|${classId}|${record.studentId}|${record.date}`
+          : `ELEMENTARY|ATTENDANCE|${schoolYear}|${classId}|${record.studentId}|${record.date}`;
+        
         logMap.set(backupKey, [
           backupKey,
           new Date().toISOString(),
           record.studentId,
-          record.studentName,
+          record.studentName || record.studentNameSnapshot || "Siswa Tanpa Nama",
           record.date,
           record.status,
-          record.note || "",
-          record.recordedBy || email
+          isMigration ? "Migrated from legacy tab" : (record.note || ""),
+          isMigration ? "Migration Script" : (record.recordedBy || email)
         ]);
       }
 
@@ -1738,9 +1724,277 @@ backupRunnerRouter.post("/elementary-sync", async (req, res) => {
         valueInputOption: 'RAW',
         requestBody: { values: finalLogRows }
       }));
+    };
 
+    // Helper: sync Monthly tab
+    const syncMonthlyTab = async (
+      mTabTitle: string,
+      yNum: number,
+      mNum: number,
+      newRecords: any[],
+      allMonthRecordsFromDb: any[]
+    ) => {
+      const ssCurrentInfo = await executeWithRetry(() => sheetsClient.spreadsheets.get({ spreadsheetId }));
+      const currentTitles = ssCurrentInfo.data.sheets?.map((s: any) => s.properties?.title || "") || [];
+      if (!currentTitles.includes(mTabTitle)) {
+        await executeWithRetry(() => sheetsClient.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [{ addSheet: { properties: { title: mTabTitle } } }]
+          }
+        }));
+      }
+
+      const studentsSnap = await db.collection("students").where("classId", "==", classId).get();
+      const sortedStudents = studentsSnap.docs.map((doc: any) => {
+        const d = doc.data();
+        return {
+          id: d.luminaId || d.nis || doc.id,
+          name: d.name || d.displayName || d.fullName || "Siswa Tanpa Nama"
+        };
+      }).sort((a: any, b: any) => a.name.localeCompare(b.name));
+
+      const recordMap = new Map<string, Map<string, string>>();
+
+      allMonthRecordsFromDb.forEach((data: any) => {
+        if (!recordMap.has(data.studentId)) {
+          recordMap.set(data.studentId, new Map());
+        }
+        recordMap.get(data.studentId)!.set(data.date, data.status);
+      });
+
+      newRecords.forEach((record: any) => {
+        if (!recordMap.has(record.studentId)) {
+          recordMap.set(record.studentId, new Map());
+        }
+        recordMap.get(record.studentId)!.set(record.date, record.status);
+      });
+
+      const totalDays = new Date(yNum, mNum, 0).getDate();
+      const header1 = [`REKAP KEHADIRAN ELEMENTARY — ${className}`];
+      const header2 = [`Tahun Ajaran: ${schoolYear} | Semester: ${semester}`];
+      const header3: string[] = [];
+      const header4 = ['No', 'Nama Siswa'];
+      for (let d = 1; d <= totalDays; d++) {
+        header4.push(String(d));
+      }
+      header4.push('H', 'S', 'I', 'A', 'Persentase Kehadiran');
+
+      const rows = [header1, header2, header3, header4];
+
+      sortedStudents.forEach((student: any, sIdx: number) => {
+        const rowNum = 5 + sIdx;
+        const studentRow = [
+          String(sIdx + 1),
+          student.name
+        ];
+
+        for (let d = 1; d <= totalDays; d++) {
+          const dayStr = String(d).padStart(2, '0');
+          const fullDate = `${yNum}-${String(mNum).padStart(2, '0')}-${dayStr}`;
+          const status = recordMap.get(student.id)?.get(fullDate) || '';
+          let code = '';
+          if (status === 'HADIR' || status === 'LATE') code = 'H';
+          else if (status === 'SAKIT') code = 'S';
+          else if (status === 'IZIN') code = 'I';
+          else if (status === 'ALPA') code = 'A';
+          studentRow.push(code);
+        }
+
+        const firstDateColLetter = 'C';
+        const lastDateColLetter = getColumnLetter(2 + totalDays - 1);
+        const colH_Letter = getColumnLetter(2 + totalDays);
+        const colS_Letter = getColumnLetter(2 + totalDays + 1);
+        const colI_Letter = getColumnLetter(2 + totalDays + 2);
+        const colA_Letter = getColumnLetter(2 + totalDays + 3);
+
+        studentRow.push(
+          `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "H")`,
+          `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "S")`,
+          `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "I")`,
+          `=COUNTIF(${firstDateColLetter}${rowNum}:${lastDateColLetter}${rowNum}, "A")`,
+          `=IF((${colH_Letter}${rowNum}+${colS_Letter}${rowNum}+${colI_Letter}${rowNum}+${colA_Letter}${rowNum})>0, ${colH_Letter}${rowNum}/(${colH_Letter}${rowNum}+${colS_Letter}${rowNum}+${colI_Letter}${rowNum}+${colA_Letter}${rowNum}), "")`
+        );
+
+        rows.push(studentRow);
+      });
+
+      await executeWithRetry(() => sheetsClient.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${mTabTitle}!A1`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: rows }
+      }));
+    };
+
+    // --- Legacy "Kehadiran Harian" Migration Check ---
+    const ssInfo = await executeWithRetry(() => sheetsClient.spreadsheets.get({ spreadsheetId }));
+    const sheetsList = ssInfo.data.sheets || [];
+    const sheetTitles = sheetsList.map((s: any) => s.properties?.title || "") || [];
+    const hasLegacyTab = sheetTitles.includes('Kehadiran Harian');
+    const hasRekapTab = sheetTitles.includes('Rekap');
+
+    if (!hasRekapTab) {
+      console.log(`[BackupRunner-Elementary] Rekap tab not found. Creating Rekap tab...`);
+      await executeWithRetry(() => sheetsClient.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [{ addSheet: { properties: { title: 'Rekap' } } }]
+        }
+      }));
+      await executeWithRetry(() => sheetsClient.spreadsheets.values.update({
+        spreadsheetId,
+        range: 'Rekap!A1',
+        valueInputOption: 'RAW',
+        requestBody: {
+          values: [['Student ID', 'Student Name']]
+        }
+      }));
+    }
+
+    if (hasLegacyTab) {
+      console.log(`[BackupRunner-Elementary] Legacy "Kehadiran Harian" tab detected. Initiating migration...`);
+      let legacyValues: any[][] = [];
+      try {
+        const getLegacy = await executeWithRetry(() => sheetsClient.spreadsheets.values.get({
+          spreadsheetId,
+          range: 'Kehadiran Harian!A1:ZZ5000'
+        }));
+        legacyValues = getLegacy.data.values || [];
+      } catch (err: any) {
+        console.warn("[BackupRunner-Elementary] Error getting legacy values:", err.message);
+      }
+
+      if (legacyValues.length > 0) {
+        const legacyHeader = legacyValues[0] || [];
+        const dateColumns: { colIndex: number, dateStr: string }[] = [];
+        for (let colIdx = 2; colIdx < legacyHeader.length; colIdx++) {
+          const cellVal = String(legacyHeader[colIdx]).trim();
+          if (/^\d{4}-\d{2}-\d{2}$/.test(cellVal)) {
+            dateColumns.push({ colIndex: colIdx, dateStr: cellVal });
+          }
+        }
+
+        if (dateColumns.length > 0) {
+          console.log(`[BackupRunner-Elementary] Found ${dateColumns.length} valid date columns in legacy tab.`);
+          const migrationRecords: any[] = [];
+          for (let rIdx = 1; rIdx < legacyValues.length; rIdx++) {
+            const row = legacyValues[rIdx];
+            const studentId = row[0];
+            const studentName = row[1] || "Siswa Tanpa Nama";
+            if (studentId) {
+              for (const col of dateColumns) {
+                const status = row[col.colIndex];
+                if (status) {
+                  migrationRecords.push({
+                    studentId,
+                    studentName,
+                    date: col.dateStr,
+                    status,
+                    recordedBy: 'Migration Script'
+                  });
+                }
+              }
+            }
+          }
+
+          if (migrationRecords.length > 0) {
+            console.log(`[BackupRunner-Elementary] Migrating ${migrationRecords.length} legacy records...`);
+            
+            // Populate Rekap tab with these records
+            await updateRekapTab(migrationRecords);
+
+            // Populate monthly tabs for these records
+            const recordsByMonth = new Map<string, any[]>();
+            migrationRecords.forEach(rec => {
+              const dParts = rec.date.split('-');
+              const y = parseInt(dParts[0], 10);
+              const m = parseInt(dParts[1], 10);
+              const mIndo = INDONESIAN_MONTHS[m - 1];
+              const mTabTitle = `${mIndo} ${y}`;
+              if (!recordsByMonth.has(mTabTitle)) {
+                recordsByMonth.set(mTabTitle, []);
+              }
+              recordsByMonth.get(mTabTitle)!.push(rec);
+            });
+
+            for (const [mTabTitle, mRecords] of recordsByMonth.entries()) {
+              const dParts = mRecords[0].date.split('-');
+              const yNum = parseInt(dParts[0], 10);
+              const mNum = parseInt(dParts[1], 10);
+              const monthPrefix = `${yNum}-${String(mNum).padStart(2, '0')}`;
+              
+              const monthlyRecordsSnap = await db.collection("attendance_records")
+                .where("classId", "==", classId)
+                .where("date", ">=", `${monthPrefix}-01`)
+                .where("date", "<=", `${monthPrefix}-31`)
+                .get();
+              const allMonthRecordsFromDb = monthlyRecordsSnap.docs.map((doc: any) => doc.data());
+
+              await syncMonthlyTab(mTabTitle, yNum, mNum, mRecords, allMonthRecordsFromDb);
+            }
+
+            // Write logs for migration
+            await updateLogTab(migrationRecords, true);
+
+            console.log("[BackupRunner-Elementary] Migration of legacy records completed successfully.");
+          }
+        }
+
+        // Keep legacy tab but write a clear notice in cell A1 and A2
+        console.log(`[BackupRunner-Elementary] Clearing data columns in legacy tab "Kehadiran Harian" and writing notice...`);
+        await executeWithRetry(() => sheetsClient.spreadsheets.values.update({
+          spreadsheetId,
+          range: 'Kehadiran Harian!A1:H10',
+          valueInputOption: 'RAW',
+          requestBody: {
+            values: [
+              ['Kehadiran Harian (Legacy)'],
+              ['Status:', 'Data telah dimigrasikan dengan aman ke Tab Bulanan.'],
+              ['Tanggal Migrasi:', new Date().toLocaleString("en-US", { timeZone: "Asia/Jakarta" })],
+              ['Catatan:', 'Jangan gunakan tab ini untuk backup baru. Tab ini dipertahankan hanya sebagai arsip kompatibilitas.']
+            ]
+          }
+        }));
+        
+        try {
+          await executeWithRetry(() => sheetsClient.spreadsheets.values.clear({
+            spreadsheetId,
+            range: 'Kehadiran Harian!C1:ZZ5000'
+          }));
+          await executeWithRetry(() => sheetsClient.spreadsheets.values.clear({
+            spreadsheetId,
+            range: 'Kehadiran Harian!A5:B5000'
+          }));
+        } catch (clearErr: any) {
+          console.warn("[BackupRunner-Elementary] Clear legacy tab error:", clearErr.message);
+        }
+      }
+    }
+
+    // --- Perform actual active date backup sync ---
+    // Update Rekap Tab
+    await updateRekapTab(recordsToSync);
+
+    // Update Monthly Tab
+    const monthPrefix = `${yearNum}-${String(monthNum).padStart(2, '0')}`;
+    const monthlyRecordsSnap = await db.collection("attendance_records")
+      .where("classId", "==", classId)
+      .where("date", ">=", `${monthPrefix}-01`)
+      .where("date", "<=", `${monthPrefix}-31`)
+      .get();
+    const allMonthRecordsFromDb = monthlyRecordsSnap.docs.map((doc: any) => doc.data());
+
+    await syncMonthlyTab(tabTitle, yearNum, monthNum, recordsToSync, allMonthRecordsFromDb);
+
+    // Update Log Tab
+    await updateLogTab(recordsToSync, false);
+
+    // Update Firestore sync status in batches
+    for (let bIndex = 0; bIndex < batches.length; bIndex++) {
+      const batch = batches[bIndex];
       const dbBatch = db.batch();
-      for (const record of batchRecords) {
+      for (const record of batch) {
         const recordRef = db.collection("attendance_records").doc(record.id);
         dbBatch.update(recordRef, {
           syncStatus: 'SYNCED',
@@ -1748,7 +2002,9 @@ backupRunnerRouter.post("/elementary-sync", async (req, res) => {
           syncError: null,
           updatedAt: Date.now()
         });
+        successRows++;
       }
+      processedRows += batch.length;
       await dbBatch.commit();
 
       await jobRef.update({
