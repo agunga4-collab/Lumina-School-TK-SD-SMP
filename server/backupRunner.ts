@@ -1,5 +1,5 @@
 import express from "express";
-import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { getFirestore, FieldValue, FieldPath } from "firebase-admin/firestore";
 import { google } from "googleapis";
 
 export const backupRunnerRouter = express.Router();
@@ -1745,14 +1745,75 @@ backupRunnerRouter.post("/elementary-sync", async (req, res) => {
         }));
       }
 
-      const studentsSnap = await db.collection("students").where("classId", "==", classId).get();
-      const sortedStudents = studentsSnap.docs.map((doc: any) => {
-        const d = doc.data();
-        return {
-          id: d.luminaId || d.nis || doc.id,
-          name: d.name || d.displayName || d.fullName || "Siswa Tanpa Nama"
-        };
-      }).sort((a: any, b: any) => a.name.localeCompare(b.name));
+      // Fetch students for the class robustly
+      const studentMap = new Map<string, string>(); // sId -> sName
+
+      // 1. Fetch from active enrollments (standard in Lumina)
+      const classKeys = [classId];
+      if (className && !classKeys.includes(className)) {
+        classKeys.push(className);
+      }
+      
+      try {
+        const enrollmentsSnap = await db.collection("enrollments")
+          .where("academicYear", "==", schoolYear)
+          .where("status", "==", "active")
+          .where("classId", "in", classKeys)
+          .get();
+
+        const studentIds = Array.from(new Set(enrollmentsSnap.docs.map(doc => doc.data().studentId).filter(Boolean)));
+
+        if (studentIds.length > 0) {
+          const chunks = chunkArray(studentIds, 10);
+          for (const chunk of chunks) {
+            const studentsSnap = await db.collection("students")
+              .where(FieldPath.documentId(), "in", chunk)
+              .get();
+            
+            studentsSnap.docs.forEach(doc => {
+              const d = doc.data();
+              const sId = d.luminaId || d.nis || doc.id;
+              const sName = d.name || d.displayName || d.fullName || "Siswa Tanpa Nama";
+              studentMap.set(sId, sName);
+            });
+          }
+        }
+      } catch (err: any) {
+        console.warn("[BackupRunner-Elementary] Error loading students via enrollments:", err.message);
+      }
+
+      // 2. Direct fallback: query students collection by classId
+      try {
+        const directStudentsSnap = await db.collection("students")
+          .where("classId", "in", classKeys)
+          .get();
+
+        directStudentsSnap.docs.forEach(doc => {
+          const d = doc.data();
+          const sId = d.luminaId || d.nis || doc.id;
+          const sName = d.name || d.displayName || d.fullName || "Siswa Tanpa Nama";
+          studentMap.set(sId, sName);
+        });
+      } catch (err: any) {
+        console.warn("[BackupRunner-Elementary] Error loading students directly:", err.message);
+      }
+
+      // 3. Absolute fallback: Parse records to find any student references (guarantees non-empty sheet)
+      if (studentMap.size === 0) {
+        allMonthRecordsFromDb.forEach((rec: any) => {
+          if (rec.studentId) {
+            studentMap.set(rec.studentId, rec.studentName || rec.studentNameSnapshot || "Siswa Tanpa Nama");
+          }
+        });
+        newRecords.forEach((rec: any) => {
+          if (rec.studentId) {
+            studentMap.set(rec.studentId, rec.studentName || rec.studentNameSnapshot || "Siswa Tanpa Nama");
+          }
+        });
+      }
+
+      const sortedStudents = Array.from(studentMap.entries()).map(([id, name]) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name));
 
       const recordMap = new Map<string, Map<string, string>>();
 
