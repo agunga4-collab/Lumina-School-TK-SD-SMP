@@ -1,60 +1,57 @@
 export type JuniorHighArea = 'BAHASA_INDONESIA' | 'ENGLISH_READING' | 'MENGAJI' | 'NUMERACY';
 
-export type JuniorHighPeriod = 'JUL_OCT' | 'NOV_FEB' | 'MAR_JUN';
+export type JuniorHighSessionKey = 'SEMESTER_1_START' | 'SEMESTER_1_END' | 'SEMESTER_2_START' | 'SEMESTER_2_END';
 
-export type JuniorHighSupportStatus = 'ON_TRACK' | 'MONITOR' | 'NEEDS_SUPPORT' | 'INTERVENTION_RECOMMENDED' | 'INCOMPLETE_DATA';
+// Alias for backwards-compatibility where JuniorHighPeriod is referenced
+export type JuniorHighPeriod = JuniorHighSessionKey;
 
 export interface JuniorHighProgressBase {
   id?: string;
+  unit: 'JUNIOR_HIGH';
   studentId: string;
   studentName: string;
   classId: string;
   gradeLevel: number;
   schoolYear: string;
+  sessionKey: JuniorHighSessionKey;
+  sessionLabel: string;
+  subjectArea: JuniorHighArea;
+  updatedBy: string;
+  updatedAt: any;
+  notes: string;
+  
+  // Backwards compatibility fields
   period: JuniorHighPeriod;
   area: JuniorHighArea;
   teacherId: string;
-  supportStatus: JuniorHighSupportStatus;
-  notes: string;
-  updatedAt: any;
+  supportStatus?: string;
 }
 
 export interface BahasaIndonesiaProgress extends JuniorHighProgressBase {
-  area: 'BAHASA_INDONESIA';
-  wordsRead: number;
-  errors: number;
-  wpm: number;
-  readingLevel: string;
-  comprehensionScore: number | 'N/A' | null;
-  libraryBorrowStatus: 'AKTIF' | 'BELUM_MEMINJAM';
-  oneDayOneBookStatus: 'AKTIF' | 'KURANG_AKTIF';
+  subjectArea: 'BAHASA_INDONESIA';
+  readingLevel: 'Perlu Pendampingan Intensif' | 'Perlu Penguatan Terarah' | 'Siap Berkembang' | 'Siap Lanjut' | '';
+  readingComprehension: number | '';
 }
 
 export interface EnglishReadingProgress extends JuniorHighProgressBase {
-  area: 'ENGLISH_READING';
-  wordsRead: number;
-  errors: number;
-  wpm: number;
-  readingLevel: string;
-  comprehensionScore: number | 'N/A' | null;
+  subjectArea: 'ENGLISH_READING';
+  wordsRead: number | '';
+  errors: number | '';
+  wpm: number | '';
+  readingLevel: 'IR+' | 'ER' | 'ER EN' | '';
+  comprehension: number | '';
 }
 
 export interface MengajiProgress extends JuniorHighProgressBase {
-  area: 'MENGAJI';
-  iqroCurrentLevel: number | string | null;
-  iqroCurrentCheckpoint: string; // e.g., "2/40"
-  targetIqroLevel: number | string | null;
-  completionStatus: 'ON_PROGRESS' | 'LULUS' | 'TIDAK_LULUS' | 'BELUM_DINILAI';
-  letterRecognitionNote: string;
-  tajwidNote: string;
+  subjectArea: 'MENGAJI';
+  level: 'Iqra 1' | 'Iqra 2' | 'Iqra 3' | 'Iqra 4' | 'Iqra 5' | 'Iqra 6' | 'Juz Amma' | 'Alquran' | '';
+  targetLevel: 'Iqra 1' | 'Iqra 2' | 'Iqra 3' | 'Iqra 4' | 'Iqra 5' | 'Iqra 6' | 'Juz Amma' | 'Alquran' | '';
 }
 
 export interface NumeracyProgress extends JuniorHighProgressBase {
-  area: 'NUMERACY';
-  mathLevel: string;
-  topic: string;
-  accuracy: number;
-  speed: number;
+  subjectArea: 'NUMERACY';
+  mathLevel: 'Trailhead' | 'Ascent' | 'Ridge' | 'Summit' | '';
+  accuracy: number | '';
 }
 
 export type JuniorHighProgressRecord =
@@ -70,32 +67,25 @@ export const JUNIOR_HIGH_AREAS: JuniorHighArea[] = [
   'NUMERACY'
 ];
 
-export const JUNIOR_HIGH_PERIODS: JuniorHighPeriod[] = [
-  'JUL_OCT',
-  'NOV_FEB',
-  'MAR_JUN'
-];
-
-export const JUNIOR_HIGH_SUPPORT_STATUSES: JuniorHighSupportStatus[] = [
-  'ON_TRACK',
-  'MONITOR',
-  'NEEDS_SUPPORT',
-  'INTERVENTION_RECOMMENDED',
-  'INCOMPLETE_DATA'
+export const JUNIOR_HIGH_SESSION_KEYS: JuniorHighSessionKey[] = [
+  'SEMESTER_1_START',
+  'SEMESTER_1_END',
+  'SEMESTER_2_START',
+  'SEMESTER_2_END'
 ];
 
 export function isBahasaIndonesiaProgress(record: JuniorHighProgressRecord): record is BahasaIndonesiaProgress {
-  return record.area === 'BAHASA_INDONESIA';
+  return record.subjectArea === 'BAHASA_INDONESIA' || record.area === 'BAHASA_INDONESIA';
 }
 
 export function isEnglishReadingProgress(record: JuniorHighProgressRecord): record is EnglishReadingProgress {
-  return record.area === 'ENGLISH_READING';
+  return record.subjectArea === 'ENGLISH_READING' || record.area === 'ENGLISH_READING';
 }
 
 export function isMengajiProgress(record: JuniorHighProgressRecord): record is MengajiProgress {
-  return record.area === 'MENGAJI';
+  return record.subjectArea === 'MENGAJI' || record.area === 'MENGAJI';
 }
 
 export function isNumeracyProgress(record: JuniorHighProgressRecord): record is NumeracyProgress {
-  return record.area === 'NUMERACY';
+  return record.subjectArea === 'NUMERACY' || record.area === 'NUMERACY';
 }

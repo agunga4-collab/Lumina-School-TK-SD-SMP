@@ -7,23 +7,22 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../../lib/firebase';
 import { 
-  JuniorHighPeriod, 
+  JuniorHighSessionKey, 
   JuniorHighProgressRecord 
 } from '../../../types/juniorHighLiteracyNumeracy';
 import { 
-  getAreaLabel, 
-  getSupportStatusLabel 
+  getAreaLabel,
+  getPeriodLabel
 } from '../../../constants/juniorHighLiteracyBenchmarks';
 import { 
-  Users, CheckCircle2, AlertTriangle, AlertCircle, Sparkles, 
-  Search, ShieldAlert, GraduationCap, ChevronRight, HelpCircle
+  Users, CheckCircle2, Search, HelpCircle, ChevronRight, BookOpen, Clock, Activity, FileText
 } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import StudentLiteracyHistoryDrawer from './StudentLiteracyHistoryDrawer';
 
 interface Props {
   schoolYear: string;
-  period: JuniorHighPeriod;
+  period: JuniorHighSessionKey;
 }
 
 export default function JuniorHighLiteracyOverview({ schoolYear, period }: Props) {
@@ -39,8 +38,9 @@ export default function JuniorHighLiteracyOverview({ schoolYear, period }: Props
       setLoading(true);
       const q = query(
         collection(db, 'junior_high_literacy_numeracy_records'),
+        where('unit', '==', 'JUNIOR_HIGH'),
         where('schoolYear', '==', schoolYear),
-        where('period', '==', period)
+        where('sessionKey', '==', period)
       );
       
       const snap = await getDocs(q);
@@ -65,47 +65,28 @@ export default function JuniorHighLiteracyOverview({ schoolYear, period }: Props
     const uniqueStudentIds = new Set(allRecords.map(r => r.studentId));
     const totalStudentsFilled = uniqueStudentIds.size;
 
-    let onTrackCount = 0;
-    let needsSupportCount = 0;
-    const followUpList: JuniorHighProgressRecord[] = [];
-
-    allRecords.forEach(rec => {
-      if (rec.supportStatus === 'ON_TRACK') {
-        onTrackCount++;
-      } else if (
-        rec.supportStatus === 'MONITOR' || 
-        rec.supportStatus === 'NEEDS_SUPPORT'
-      ) {
-        needsSupportCount++;
-        followUpList.push(rec);
-      }
-    });
-
     return {
       totalInputRecords: allRecords.length,
-      totalStudentsFilled,
-      onTrackCount,
-      needsSupportCount,
-      followUpList
+      totalStudentsFilled
     };
   }, [allRecords]);
 
-  // Handle click on follow-up student to launch history drawer
+  // Handle click on student to launch history drawer
   const handleStudentClick = (rec: JuniorHighProgressRecord) => {
     setSelectedStudent({
       id: rec.studentId,
       name: rec.studentName,
-      area: rec.area
+      area: rec.subjectArea || rec.area
     });
   };
 
-  // Filtered follow-up list search
-  const filteredFollowUpList = React.useMemo(() => {
-    return stats.followUpList.filter(rec => 
+  // Filtered list search
+  const filteredRecords = React.useMemo(() => {
+    return allRecords.filter(rec => 
       rec.studentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      getAreaLabel(rec.area).toLowerCase().includes(searchQuery.toLowerCase())
+      getAreaLabel(rec.subjectArea || rec.area).toLowerCase().includes(searchQuery.toLowerCase())
     );
-  }, [stats.followUpList, searchQuery]);
+  }, [allRecords, searchQuery]);
 
   if (loading) {
     return (
@@ -120,8 +101,8 @@ export default function JuniorHighLiteracyOverview({ schoolYear, period }: Props
     <div className="space-y-6">
       
       {/* KPI GRID CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {/* Card 1: Total Input */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* Card 1: Total Siswa Terdata */}
         <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm hover:shadow-md transition-all relative overflow-hidden group">
           <div className="absolute right-0 bottom-0 translate-x-3 translate-y-3 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity">
             <Users size={120} className="text-slate-900" />
@@ -131,7 +112,7 @@ export default function JuniorHighLiteracyOverview({ schoolYear, period }: Props
               <Users size={18} />
             </div>
             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-              SITUS TERDATA
+              SISWA SMP TERDATA
             </span>
           </div>
           <div className="mt-4">
@@ -139,12 +120,12 @@ export default function JuniorHighLiteracyOverview({ schoolYear, period }: Props
               {stats.totalStudentsFilled}
             </h4>
             <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase">
-              ({stats.totalInputRecords} Catatan Penilaian)
+              Siswa Terisi Sesi Ini
             </p>
           </div>
         </div>
 
-        {/* Card 2: Jumlah ON_TRACK */}
+        {/* Card 2: Jumlah Penilaian */}
         <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm hover:shadow-md transition-all relative overflow-hidden group">
           <div className="absolute right-0 bottom-0 translate-x-3 translate-y-3 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity">
             <CheckCircle2 size={120} className="text-emerald-900" />
@@ -154,58 +135,35 @@ export default function JuniorHighLiteracyOverview({ schoolYear, period }: Props
               <CheckCircle2 size={18} />
             </div>
             <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">
-              TIER 1 (ON TRACK)
+              TOTAL CATATAN PENILAIAN
             </span>
           </div>
           <div className="mt-4">
             <h4 className="text-2xl font-black text-emerald-600 tracking-tight leading-none">
-              {stats.onTrackCount}
+              {stats.totalInputRecords}
             </h4>
             <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase">
-              MENCAPAI TARGET PEMBELAJARAN
-            </p>
-          </div>
-        </div>
-
-        {/* Card 3: Jumlah NEEDS_SUPPORT */}
-        <div className="bg-gradient-to-tr from-rose-500/5 to-rose-600/0 border border-rose-100 rounded-3xl p-5 shadow-sm hover:shadow-md transition-all relative overflow-hidden group">
-          <div className="absolute right-0 bottom-0 translate-x-3 translate-y-3 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity">
-            <AlertTriangle size={120} className="text-rose-900" />
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-rose-50 text-rose-600 rounded-2xl">
-              <AlertTriangle size={18} />
-            </div>
-            <span className="text-[10px] font-black text-rose-600 uppercase tracking-widest">
-              BUTUH INTERVENSI (TIER 2 & TIER 3)
-            </span>
-          </div>
-          <div className="mt-4">
-            <h4 className="text-2xl font-black text-rose-600 tracking-tight leading-none">
-              {stats.needsSupportCount}
-            </h4>
-            <p className="text-[10px] text-rose-500 font-bold mt-1 uppercase">
-              BUTUH INTERVENSI EKSTRA
+              Catatan Tersimpan di Seluruh Area
             </p>
           </div>
         </div>
       </div>
 
-      {/* DETAILED FOLLOW-UP RADAR */}
+      {/* DETAILED RESULTS LIST */}
       <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
         
         {/* Section Title */}
-        <div className="p-5 border-b border-gray-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-red-50/10">
+        <div className="p-5 border-b border-gray-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/20">
           <div className="flex items-center gap-2">
-            <div className="bg-rose-500/10 text-rose-600 p-1.5 rounded-xl">
-              <AlertCircle size={15} />
+            <div className="bg-slate-500/10 text-slate-700 p-1.5 rounded-xl">
+              <BookOpen size={15} />
             </div>
             <div>
               <h3 className="text-xs font-black text-slate-900 uppercase tracking-widest">
-                Pemantauan Kelas & Prioritas Pendampingan (SMP)
+                Daftar Capaian Penilaian Siswa SMP — {getPeriodLabel(period).toUpperCase()}
               </h3>
               <p className="text-[10px] text-slate-400 font-bold">
-                Daftar siswa SMP dengan capaian di bawah benchmark minimum (Wajib Follow Up).
+                Rekapitulasi seluruh data penilaian semester aktif.
               </p>
             </div>
           </div>
@@ -223,13 +181,13 @@ export default function JuniorHighLiteracyOverview({ schoolYear, period }: Props
         </div>
 
         {/* Dynamic results list */}
-        {stats.followUpList.length === 0 ? (
+        {allRecords.length === 0 ? (
           <div className="flex flex-col items-center justify-center p-12 text-center text-slate-400 gap-2">
-            <Sparkles size={28} className="text-emerald-500" />
-            <p className="text-xs font-bold text-slate-700">Kinerja Siswa Luar Biasa!</p>
-            <p className="text-[10px] text-slate-400 max-w-sm">Semua siswa untuk periode dan tahun ajaran terpilih mencatatkan capaian target atau berada dalam zona 'On Track'.</p>
+            <HelpCircle size={28} className="text-slate-300" />
+            <p className="text-xs font-bold text-slate-700">Belum Ada Data Penilaian Sesi Ini</p>
+            <p className="text-[10px] text-slate-400 max-w-sm">Data pembelajaran untuk sesi {getPeriodLabel(period)} belum diinput oleh pengajar.</p>
           </div>
-        ) : filteredFollowUpList.length === 0 ? (
+        ) : filteredRecords.length === 0 ? (
           <div className="flex flex-col items-center justify-center p-12 text-center text-slate-400 gap-1">
             <Search size={22} className="text-slate-300" />
             <p className="text-xs font-bold">Tidak ada hasil pencarian yang cocok.</p>
@@ -242,42 +200,38 @@ export default function JuniorHighLiteracyOverview({ schoolYear, period }: Props
                   <th className="py-3 px-5">Nama Siswa</th>
                   <th className="py-3 px-4">Pelajaran</th>
                   <th className="py-3 px-4">Level Capaian</th>
-                  <th className="py-3 px-4 text-center">Benchmark Score / WPM</th>
-                  <th className="py-3 px-4">Catatan Hambatan</th>
+                  <th className="py-3 px-4 text-center">Score / Info Utama</th>
+                  <th className="py-3 px-4">Catatan</th>
                   <th className="py-3 px-5 text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs text-slate-700 font-medium">
-                {filteredFollowUpList.map((rec, idx) => {
+                {filteredRecords.map((rec, idx) => {
+                  const area = rec.subjectArea || rec.area;
                   return (
-                    <tr key={rec.id || idx} className="hover:bg-rose-50/10 transition-colors">
+                    <tr key={rec.id || idx} className="hover:bg-slate-50/20 transition-colors">
                       <td className="py-3.5 px-5 font-bold text-slate-950">
                         {rec.studentName}
                         <span className="text-[9px] text-slate-400 font-mono block mt-0.5">Kelas {rec.gradeLevel}</span>
                       </td>
                       <td className="py-3.5 px-4">
                         <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-lg text-[9px] font-bold uppercase tracking-wider">
-                          {getAreaLabel(rec.area)}
+                          {getAreaLabel(area)}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4 font-mono font-bold">
-                        {rec.area === 'MENGAJI' && (rec as any).iqroCurrentLevel ? `Iqro ${(rec as any).iqroCurrentLevel}` : ''}
-                        {(rec.area === 'BAHASA_INDONESIA' || rec.area === 'ENGLISH_READING') && (rec as any).readingLevel ? `Reading Level: ${(rec as any).readingLevel}` : ''}
-                        {rec.area === 'NUMERACY' && (rec as any).mathLevel ? `Math Level: ${(rec as any).mathLevel}` : ''}
+                      <td className="py-3.5 px-4 font-mono font-bold text-slate-800">
+                        {area === 'MENGAJI' && (rec as any).level ? `Level: ${(rec as any).level}` : ''}
+                        {area === 'BAHASA_INDONESIA' && (rec as any).readingLevel ? `Level: ${(rec as any).readingLevel}` : ''}
+                        {area === 'ENGLISH_READING' && (rec as any).readingLevel ? `Level: ${(rec as any).readingLevel}` : ''}
+                        {area === 'NUMERACY' && (rec as any).mathLevel ? `Level: ${(rec as any).mathLevel}` : ''}
                       </td>
                       <td className="py-3.5 px-4 text-center">
-                        <div className="flex flex-col items-center">
-                          <span className="font-mono text-slate-900 font-bold">
-                            {rec.area === 'MENGAJI' ? (rec as any).completionStatus : ''}
-                            {(rec.area === 'BAHASA_INDONESIA' || rec.area === 'ENGLISH_READING') ? `${(rec as any).wpm || 0} WPM` : ''}
-                            {rec.area === 'NUMERACY' ? `${(rec as any).accuracy || 0}% Acc` : ''}
-                          </span>
-                          {(rec.area === 'BAHASA_INDONESIA' || rec.area === 'ENGLISH_READING') && (
-                            <span className="text-[9px] text-slate-400 font-bold">
-                              (Comp: {(rec as any).comprehensionScore === 'N/A' || (rec as any).comprehensionScore === null ? 'N/A' : `${(rec as any).comprehensionScore || 0}%`})
-                            </span>
-                          )}
-                        </div>
+                        <span className="font-mono text-slate-900 font-bold">
+                          {area === 'MENGAJI' ? `Tgt: ${(rec as any).targetLevel || '-'}` : ''}
+                          {area === 'BAHASA_INDONESIA' ? `${(rec as any).readingComprehension || 0}%` : ''}
+                          {area === 'ENGLISH_READING' ? `${(rec as any).wpm || 0} WPM (Comp: ${(rec as any).comprehension || 0}%)` : ''}
+                          {area === 'NUMERACY' ? `${(rec as any).accuracy || 0}% Accuracy` : ''}
+                        </span>
                       </td>
                       <td className="py-3.5 px-4 max-w-[240px] truncate text-slate-500 italic text-[11px]">
                         {rec.notes ? `"${rec.notes}"` : '-'}

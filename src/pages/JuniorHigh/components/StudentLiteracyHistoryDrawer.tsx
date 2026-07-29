@@ -1,20 +1,18 @@
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  X, Calendar, ChevronRight, TrendingUp, TrendingDown, Minus, 
-  Award, AlertTriangle, BookOpen, Clock, Activity, HelpCircle
+  X, Calendar, ChevronRight, BookOpen, Clock, Activity, HelpCircle
 } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { 
   JuniorHighProgressRecord, 
   JuniorHighArea, 
-  JuniorHighPeriod 
+  JuniorHighSessionKey 
 } from '../../../types/juniorHighLiteracyNumeracy';
 import { juniorHighLiteracyService } from '../../../services/juniorHighLiteracyService';
 import { 
   getAreaLabel, 
-  getPeriodLabel, 
-  getSupportStatusLabel 
+  getPeriodLabel
 } from '../../../constants/juniorHighLiteracyBenchmarks';
 
 interface Props {
@@ -43,13 +41,15 @@ export default function StudentLiteracyHistoryDrawer({
         try {
           setLoading(true);
           const records = await juniorHighLiteracyService.getStudentHistory(studentId, schoolYear, area);
-          // Sort based on chronological period order
-          const periodOrder: Record<JuniorHighPeriod, number> = {
-            'JUL_OCT': 1,
-            'NOV_FEB': 2,
-            'MAR_JUN': 3
+          
+          // Sort based on chronological session order
+          const sessionOrder: Record<JuniorHighSessionKey, number> = {
+            'SEMESTER_1_START': 1,
+            'SEMESTER_1_END': 2,
+            'SEMESTER_2_START': 3,
+            'SEMESTER_2_END': 4
           };
-          records.sort((a, b) => (periodOrder[a.period] || 0) - (periodOrder[b.period] || 0));
+          records.sort((a, b) => (sessionOrder[a.sessionKey] || 0) - (sessionOrder[b.sessionKey] || 0));
           setHistory(records);
         } catch (err) {
           console.error("Error fetching student history:", err);
@@ -61,16 +61,16 @@ export default function StudentLiteracyHistoryDrawer({
     }
   }, [isOpen, studentId, schoolYear, area]);
 
-  // Organize by periods for side-by-side comparison
-  const recordByPeriod = React.useMemo(() => {
-    const map: Partial<Record<JuniorHighPeriod, JuniorHighProgressRecord>> = {};
+  // Organize by sessions for side-by-side comparison
+  const recordBySession = React.useMemo(() => {
+    const map: Partial<Record<JuniorHighSessionKey, JuniorHighProgressRecord>> = {};
     history.forEach(rec => {
-      map[rec.period] = rec;
+      map[rec.sessionKey] = rec;
     });
     return map;
   }, [history]);
 
-  const periods: JuniorHighPeriod[] = ['JUL_OCT', 'NOV_FEB', 'MAR_JUN'];
+  const sessions: JuniorHighSessionKey[] = ['SEMESTER_1_START', 'SEMESTER_1_END', 'SEMESTER_2_START', 'SEMESTER_2_END'];
 
   return (
     <AnimatePresence>
@@ -96,7 +96,7 @@ export default function StudentLiteracyHistoryDrawer({
             {/* Header */}
             <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-900 text-white">
               <div className="space-y-1">
-                <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">
+                <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">
                   RIWAYAT CAPAIAN SISWA (SMP)
                 </span>
                 <h3 className="text-base font-black tracking-tight truncate max-w-[280px]">
@@ -117,20 +117,20 @@ export default function StudentLiteracyHistoryDrawer({
             {/* Inner Content scrollable */}
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
               {/* Active Area Badge */}
-              <div className="p-4 bg-emerald-50 text-emerald-900 border border-emerald-100/30 rounded-2xl flex items-center gap-3">
-                <div className="bg-emerald-600 text-white p-2 rounded-xl">
+              <div className="p-4 bg-indigo-50 text-indigo-900 border border-indigo-100/30 rounded-2xl flex items-center gap-3">
+                <div className="bg-indigo-600 text-white p-2 rounded-xl">
                   <BookOpen size={16} />
                 </div>
                 <div>
-                  <p className="text-[9px] font-black text-emerald-700 uppercase tracking-wider">Mata Pelajaran Aktif</p>
+                  <p className="text-[9px] font-black text-indigo-700 uppercase tracking-wider">Mata Pelajaran Aktif</p>
                   <h4 className="text-xs font-black">{getAreaLabel(area)}</h4>
                 </div>
               </div>
 
               {loading ? (
                 <div className="flex flex-col items-center justify-center py-20 gap-3 text-slate-400">
-                  <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-[11px] font-black uppercase tracking-wider">Memuat riwayat periode...</span>
+                  <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-[11px] font-black uppercase tracking-wider">Memuat riwayat sesi...</span>
                 </div>
               ) : history.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-center gap-2 text-slate-400">
@@ -141,52 +141,57 @@ export default function StudentLiteracyHistoryDrawer({
               ) : (
                 <div className="space-y-6">
                   <h5 className="text-[10px] font-black tracking-widest text-slate-400 uppercase">
-                    Lini Masa Perkembangan (Chronological Journey)
+                    Lini Masa Perkembangan Semester
                   </h5>
 
-                  {/* Period Comparison timeline layout */}
+                  {/* Session Comparison timeline layout */}
                   <div className="relative border-l-2 border-slate-100 pl-6 ml-3 space-y-8">
-                    {periods.map((p) => {
-                      const record = recordByPeriod[p] as any;
+                    {sessions.map((sKey) => {
+                      const record = recordBySession[sKey] as any;
                       const hasRecord = !!record;
 
                       return (
-                        <div key={p} className="relative">
+                        <div key={sKey} className="relative">
                           {/* Chronological Indicator circle */}
                           <div className={cn(
                             "absolute -left-[31px] top-1.5 w-4 h-4 rounded-full border-2 bg-white flex items-center justify-center",
-                            hasRecord ? "border-emerald-500" : "border-slate-200"
+                            hasRecord ? "border-indigo-500" : "border-slate-200"
                           )}>
-                            {hasRecord && <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />}
+                            {hasRecord && <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full" />}
                           </div>
 
                           <div className="space-y-2">
                             <div className="flex items-center justify-between">
                               <span className="text-xs font-black text-slate-800 uppercase tracking-wide">
-                                {getPeriodLabel(p)}
+                                {getPeriodLabel(sKey)}
                               </span>
-                              {hasRecord && record.supportStatus && (
-                                <span className={cn(
-                                  "px-2 py-0.5 rounded-full text-[8px] font-black tracking-wider uppercase border",
-                                  record.supportStatus === 'ON_TRACK' && "bg-emerald-50 text-emerald-700 border-emerald-100",
-                                  record.supportStatus === 'MONITOR' && "bg-yellow-50 text-yellow-700 border-yellow-105",
-                                  record.supportStatus === 'NEEDS_SUPPORT' && "bg-orange-50 text-orange-700 border-orange-100",
-                                  record.supportStatus === 'INTERVENTION_RECOMMENDED' && "bg-red-50 text-red-700 border-red-100",
-                                  record.supportStatus === 'INCOMPLETE_DATA' && "bg-slate-50 text-slate-500 border-slate-100"
-                                )}>
-                                  {getSupportStatusLabel(record.supportStatus)}
-                                </span>
-                              )}
                             </div>
 
                             {!hasRecord ? (
                               <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl text-[10px] italic text-slate-400">
-                                Data belum dientri untuk periode ini.
+                                Data belum dientri untuk sesi ini.
                               </div>
                             ) : (
                               <div className="bg-slate-50/50 border border-slate-100 rounded-2xl p-4 space-y-3">
                                 {/* DYNAMIC METRIC DISPLAYS BASED ON AREA */}
-                                {(area === 'BAHASA_INDONESIA' || area === 'ENGLISH_READING') && (
+                                {area === 'BAHASA_INDONESIA' && (
+                                  <div className="grid grid-cols-1 gap-3 text-xs">
+                                    <div className="bg-white p-2.5 rounded-xl border border-slate-100">
+                                      <p className="text-[9px] text-slate-400 uppercase font-black">Level Membaca</p>
+                                      <span className="text-sm font-black text-slate-800 mt-0.5 block">{record.readingLevel || '-'}</span>
+                                      
+                                      <p className="text-[9px] text-slate-400 uppercase font-black mt-2">Pemahaman Bacaan</p>
+                                      <span className="text-sm font-black text-slate-800 block mt-0.5">
+                                        {record.readingComprehension !== undefined && record.readingComprehension !== '' && record.readingComprehension !== null 
+                                          ? `${record.readingComprehension}%` 
+                                          : '-'
+                                        }
+                                      </span>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {area === 'ENGLISH_READING' && (
                                   <div className="grid grid-cols-2 gap-3 text-xs">
                                     <div className="bg-white p-2.5 rounded-xl border border-slate-100">
                                       <p className="text-[9px] text-slate-400 uppercase font-black">Words per Minute</p>
@@ -203,7 +208,10 @@ export default function StudentLiteracyHistoryDrawer({
                                       <p className="text-[9px] text-slate-400 uppercase font-black">Comprehension</p>
                                       <div className="flex items-baseline gap-1 mt-0.5">
                                         <span className="text-sm font-black text-slate-800">
-                                          {record.comprehensionScore === 'N/A' || record.comprehensionScore === null ? 'N/A' : `${record.comprehensionScore || 0}%`}
+                                          {record.comprehension !== undefined && record.comprehension !== '' && record.comprehension !== null 
+                                            ? `${record.comprehension}%` 
+                                            : '-'
+                                          }
                                         </span>
                                       </div>
                                       <p className="text-[8px] text-slate-400 truncate font-semibold">
@@ -216,22 +224,16 @@ export default function StudentLiteracyHistoryDrawer({
                                 {area === 'MENGAJI' && (
                                   <div className="grid grid-cols-2 gap-3 text-xs">
                                     <div className="bg-white p-2.5 rounded-xl border border-slate-100">
-                                      <p className="text-[9px] text-slate-400 uppercase font-black">Iqro Level</p>
+                                      <p className="text-[9px] text-slate-400 uppercase font-black">Mengaji Level</p>
                                       <span className="text-sm font-black text-slate-800 block mt-0.5">
-                                        Iqro {record.iqroCurrentLevel || 1}
-                                      </span>
-                                      <span className="text-[8px] text-slate-400 font-semibold font-mono block">
-                                        Tgt: Iqro {record.targetIqroLevel || 6}
+                                        {record.level || '-'}
                                       </span>
                                     </div>
 
                                     <div className="bg-white p-2.5 rounded-xl border border-slate-100">
-                                      <p className="text-[9px] text-slate-400 uppercase font-black">Checkpoint / Status</p>
-                                      <span className="text-sm font-black text-slate-800 truncate block mt-0.5">
-                                        {record.iqroCurrentCheckpoint || '-'}
-                                      </span>
-                                      <span className="text-[8px] text-slate-400 font-bold tracking-wide uppercase">
-                                        {record.completionStatus || '-'}
+                                      <p className="text-[9px] text-slate-400 uppercase font-black">Target Level</p>
+                                      <span className="text-sm font-black text-slate-800 block mt-0.5">
+                                        {record.targetLevel || '-'}
                                       </span>
                                     </div>
                                   </div>
@@ -244,46 +246,23 @@ export default function StudentLiteracyHistoryDrawer({
                                       <span className="text-sm font-black text-slate-800 block mt-0.5 max-w-full truncate">
                                         {record.mathLevel || '-'}
                                       </span>
-                                      <span className="text-[8px] text-slate-400 font-bold block truncate">
-                                        {record.topic || 'No topic'}
-                                      </span>
                                     </div>
 
                                     <div className="bg-white p-2.5 rounded-xl border border-slate-100">
-                                      <p className="text-[9px] text-slate-400 uppercase font-black">Accuracy & Speed</p>
+                                      <p className="text-[9px] text-slate-400 uppercase font-black">Accuracy</p>
                                       <span className="text-sm font-black text-slate-800 block mt-0.5">
-                                        {record.accuracy || 0}%
-                                      </span>
-                                      <span className="text-[8px] text-slate-400 font-mono block">
-                                        {record.speed || 0} Detik
+                                        {record.accuracy !== undefined && record.accuracy !== '' && record.accuracy !== null 
+                                          ? `${record.accuracy}%` 
+                                          : '-'
+                                        }
                                       </span>
                                     </div>
-                                  </div>
-                                )}
-
-                                {/* Specific Metadata Details */}
-                                {area === 'BAHASA_INDONESIA' && (
-                                  <div className="flex gap-2 text-[9px] font-black text-slate-500 uppercase tracking-wider border-t border-slate-100 pt-2 font-mono">
-                                    <span>OB: {record.oneDayOneBookStatus === 'AKTIF' ? '✅ AKTIF' : '❌ NEGATIVE'}</span>
-                                    <span className="text-slate-300">|</span>
-                                    <span>LIB: {record.libraryBorrowStatus === 'AKTIF' ? '✅ AKTIF' : '❌ NEGATIVE'}</span>
-                                  </div>
-                                )}
-
-                                {area === 'MENGAJI' && (record.letterRecognitionNote || record.tajwidNote) && (
-                                  <div className="text-[10px] text-slate-500 uppercase tracking-wide border-t border-slate-100 pt-2 space-y-1">
-                                    {record.letterRecognitionNote && (
-                                      <p className="truncate"><span className="font-bold text-slate-700">Huruf:</span> {record.letterRecognitionNote}</p>
-                                    )}
-                                    {record.tajwidNote && (
-                                      <p className="truncate"><span className="font-bold text-slate-700">Tajwid:</span> {record.tajwidNote}</p>
-                                    )}
                                   </div>
                                 )}
 
                                 {/* Card Notes */}
                                 {record.notes && (
-                                  <div className="mt-2 text-[10px] text-slate-500 bg-white/60 p-2 rounded-lg border border-slate-105 italic">
+                                  <div className="mt-2 text-[10px] text-slate-500 bg-white/60 p-2 rounded-lg border border-slate-100 italic">
                                     "{record.notes}"
                                   </div>
                                 )}

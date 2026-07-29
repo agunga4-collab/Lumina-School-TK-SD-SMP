@@ -1,26 +1,31 @@
-import { JuniorHighPeriod, JuniorHighSupportStatus, JuniorHighArea } from '../types/juniorHighLiteracyNumeracy';
+import { JuniorHighSessionKey, JuniorHighArea } from '../types/juniorHighLiteracyNumeracy';
+
+export type JuniorHighSupportStatus = 'ON_TRACK' | 'MONITOR' | 'NEEDS_SUPPORT' | 'INTERVENTION_RECOMMENDED' | 'INCOMPLETE_DATA';
 
 export interface WpmRange {
   min: number;
   max: number;
 }
 
-// READING_WPM_BENCHMARKS[grade][period] adapted for Junior High (Grades 7, 8, 9)
-export const READING_WPM_BENCHMARKS: Record<number, Partial<Record<JuniorHighPeriod, WpmRange>>> = {
+// READING_WPM_BENCHMARKS[grade][sessionKey] adapted for Junior High (Grades 7, 8, 9)
+export const READING_WPM_BENCHMARKS: Record<number, Partial<Record<JuniorHighSessionKey, WpmRange>>> = {
   7: {
-    JUL_OCT: { min: 100, max: 130 },
-    NOV_FEB: { min: 110, max: 140 },
-    MAR_JUN: { min: 120, max: 150 },
+    SEMESTER_1_START: { min: 100, max: 130 },
+    SEMESTER_1_END: { min: 110, max: 140 },
+    SEMESTER_2_START: { min: 115, max: 145 },
+    SEMESTER_2_END: { min: 120, max: 150 },
   },
   8: {
-    JUL_OCT: { min: 110, max: 140 },
-    NOV_FEB: { min: 120, max: 150 },
-    MAR_JUN: { min: 130, max: 160 },
+    SEMESTER_1_START: { min: 110, max: 140 },
+    SEMESTER_1_END: { min: 120, max: 150 },
+    SEMESTER_2_START: { min: 125, max: 155 },
+    SEMESTER_2_END: { min: 130, max: 160 },
   },
   9: {
-    JUL_OCT: { min: 120, max: 150 },
-    NOV_FEB: { min: 130, max: 160 },
-    MAR_JUN: { min: 140, max: 170 },
+    SEMESTER_1_START: { min: 120, max: 150 },
+    SEMESTER_1_END: { min: 130, max: 160 },
+    SEMESTER_2_START: { min: 135, max: 165 },
+    SEMESTER_2_END: { min: 140, max: 170 },
   },
 };
 
@@ -34,21 +39,20 @@ export function calculateWpm(wordsRead: number, errors: number): number {
 }
 
 /**
- * Determines reading support status based on grade, period, calculated WPM, and comprehension score.
+ * Determines reading support status based on grade, sessionKey, calculated WPM, and comprehension score.
  */
 export function getReadingSupportStatus(
   grade: number,
-  period: JuniorHighPeriod,
+  sessionKey: JuniorHighSessionKey,
   wpm: number,
   comprehensionScore: number | 'N/A' | null
 ): JuniorHighSupportStatus {
-  if (isNaN(grade) || isNaN(wpm) || !period) {
+  if (isNaN(grade) || isNaN(wpm) || !sessionKey) {
     return 'INCOMPLETE_DATA';
   }
 
   const gradeBenchmarks = READING_WPM_BENCHMARKS[grade];
   if (!gradeBenchmarks) {
-    // If the grade is outside 7-9 (e.g., if a high schooler or other class is mapped), default to a baseline
     const fallbackBenchmark = { min: 110, max: 140 };
     let status: JuniorHighSupportStatus = 'ON_TRACK';
     if (wpm < fallbackBenchmark.min) {
@@ -65,7 +69,7 @@ export function getReadingSupportStatus(
     return status;
   }
 
-  const benchmark = gradeBenchmarks[period];
+  const benchmark = gradeBenchmarks[sessionKey];
   if (!benchmark) {
     return 'INCOMPLETE_DATA';
   }
@@ -76,7 +80,6 @@ export function getReadingSupportStatus(
     status = 'NEEDS_SUPPORT';
   }
 
-  // If comprehension score is poor (less than 70), status index downgrades at most to 'MONITOR'.
   if (comprehensionScore !== 'N/A' && comprehensionScore !== null && comprehensionScore !== undefined) {
     const compVal = Number(comprehensionScore);
     if (!isNaN(compVal) && compVal < 70) {
@@ -109,18 +112,20 @@ export function getMengajiSupportStatus(
 }
 
 /**
- * Translates JuniorHighPeriod to human-readable label.
+ * Translates JuniorHighSessionKey to human-readable label.
  */
-export function getPeriodLabel(period: JuniorHighPeriod): string {
-  switch (period) {
-    case 'JUL_OCT':
-      return 'Juli - Oktober';
-    case 'NOV_FEB':
-      return 'November - Februari';
-    case 'MAR_JUN':
-      return 'Maret - Juni';
+export function getPeriodLabel(sessionKey: JuniorHighSessionKey): string {
+  switch (sessionKey) {
+    case 'SEMESTER_1_START':
+      return 'Awal Semester 1';
+    case 'SEMESTER_1_END':
+      return 'Akhir Semester 1';
+    case 'SEMESTER_2_START':
+      return 'Awal Semester 2';
+    case 'SEMESTER_2_END':
+      return 'Akhir Semester 2';
     default:
-      return period;
+      return sessionKey;
   }
 }
 

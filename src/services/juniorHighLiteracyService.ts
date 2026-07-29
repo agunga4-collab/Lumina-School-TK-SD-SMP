@@ -7,18 +7,17 @@ import {
   getDocs,
   query,
   where,
-  writeBatch
+  writeBatch,
+  serverTimestamp
 } from 'firebase/firestore';
 import { db, handleFirestoreError } from '../lib/firebase.ts';
 import {
   JuniorHighProgressRecord,
   JuniorHighArea,
-  JuniorHighPeriod
+  JuniorHighSessionKey
 } from '../types/juniorHighLiteracyNumeracy';
 import {
   calculateWpm,
-  getReadingSupportStatus,
-  getMengajiSupportStatus
 } from '../constants/juniorHighLiteracyBenchmarks';
 
 const COLLECTION = 'junior_high_literacy_numeracy_records';
@@ -46,10 +45,11 @@ export const juniorHighLiteracyService = {
     try {
       const enriched = { ...record } as any;
 
-      // Auto-calculate WPM for Reading areas if wordsRead & errors are present
-      if (
-        (enriched.area === 'BAHASA_INDONESIA' || enriched.area === 'ENGLISH_READING')
-      ) {
+      // Ensure standard keys
+      enriched.unit = 'JUNIOR_HIGH';
+      
+      // Auto-calculate WPM for English Reading if wordsRead & errors are present
+      if (enriched.subjectArea === 'ENGLISH_READING') {
         const hasWords = enriched.wordsRead !== undefined && enriched.wordsRead !== null && enriched.wordsRead !== '';
         const hasErrs = enriched.errors !== undefined && enriched.errors !== null && enriched.errors !== '';
         
@@ -61,9 +61,14 @@ export const juniorHighLiteracyService = {
         }
       }
 
-      const docId = enriched.id || `${enriched.studentId}_${enriched.period}_${enriched.area}_${enriched.schoolYear.replace(/\//g, '-')}`;
+      // Backward-compatibility field mappings
+      enriched.period = enriched.sessionKey;
+      enriched.area = enriched.subjectArea;
+      enriched.teacherId = enriched.updatedBy;
+
+      const docId = enriched.id || `${enriched.studentId}_${enriched.sessionKey}_${enriched.subjectArea}_${enriched.schoolYear.replace(/\//g, '-')}`;
       enriched.id = docId;
-      enriched.updatedAt = Date.now();
+      enriched.updatedAt = serverTimestamp();
 
       const docRef = doc(db, COLLECTION, docId);
       await setDoc(docRef, sanitizeRecord(enriched), { merge: true });
@@ -88,9 +93,7 @@ export const juniorHighLiteracyService = {
       const existing = snap.data() as JuniorHighProgressRecord;
       const merged = { ...existing, ...payload } as any;
 
-      if (
-        (merged.area === 'BAHASA_INDONESIA' || merged.area === 'ENGLISH_READING')
-      ) {
+      if (merged.subjectArea === 'ENGLISH_READING') {
         const hasWords = merged.wordsRead !== undefined && merged.wordsRead !== null && merged.wordsRead !== '';
         const hasErrs = merged.errors !== undefined && merged.errors !== null && merged.errors !== '';
         
@@ -102,7 +105,7 @@ export const juniorHighLiteracyService = {
         }
       }
 
-      merged.updatedAt = Date.now();
+      merged.updatedAt = serverTimestamp();
 
       await updateDoc(docRef, sanitizeRecord(merged));
     } catch (error) {
@@ -111,30 +114,24 @@ export const juniorHighLiteracyService = {
   },
 
   /**
-   * Get progress records filtered by class and optional period and area
+   * Get progress records filtered by class, schoolYear, sessionKey, and subjectArea
    */
   async getRecordsByClass(
     schoolYear: string,
     gradeLevel: number,
     classId: string,
-    period?: JuniorHighPeriod,
-    area?: JuniorHighArea
+    sessionKey: JuniorHighSessionKey,
+    subjectArea: JuniorHighArea
   ): Promise<JuniorHighProgressRecord[]> {
     try {
-      let q = query(
+      const q = query(
         collection(db, COLLECTION),
+        where('unit', '==', 'JUNIOR_HIGH'),
         where('schoolYear', '==', schoolYear),
-        where('gradeLevel', '==', Number(gradeLevel)),
+        where('sessionKey', '==', sessionKey),
+        where('subjectArea', '==', subjectArea),
         where('classId', '==', classId)
       );
-
-      if (period) {
-        q = query(q, where('period', '==', period));
-      }
-
-      if (area) {
-        q = query(q, where('area', '==', area));
-      }
 
       const snap = await getDocs(q);
       const records: JuniorHighProgressRecord[] = [];
@@ -154,17 +151,21 @@ export const juniorHighLiteracyService = {
   async getStudentHistory(
     studentId: string,
     schoolYear?: string,
-    area?: JuniorHighArea
+    subjectArea?: JuniorHighArea
   ): Promise<JuniorHighProgressRecord[]> {
     try {
-      let q = query(collection(db, COLLECTION), where('studentId', '==', studentId));
+      let q = query(
+        collection(db, COLLECTION), 
+        where('unit', '==', 'JUNIOR_HIGH'),
+        where('studentId', '==', studentId)
+      );
 
       if (schoolYear) {
         q = query(q, where('schoolYear', '==', schoolYear));
       }
 
-      if (area) {
-        q = query(q, where('area', '==', area));
+      if (subjectArea) {
+        q = query(q, where('subjectArea', '==', subjectArea));
       }
 
       const snap = await getDocs(q);
@@ -189,9 +190,9 @@ export const juniorHighLiteracyService = {
       for (const record of records) {
         const enriched = { ...record } as any;
 
-        if (
-          (enriched.area === 'BAHASA_INDONESIA' || enriched.area === 'ENGLISH_READING')
-        ) {
+        enriched.unit = 'JUNIOR_HIGH';
+
+        if (enriched.subjectArea === 'ENGLISH_READING') {
           const hasWords = enriched.wordsRead !== undefined && enriched.wordsRead !== null && enriched.wordsRead !== '';
           const hasErrs = enriched.errors !== undefined && enriched.errors !== null && enriched.errors !== '';
           
@@ -203,9 +204,14 @@ export const juniorHighLiteracyService = {
           }
         }
 
-        const docId = enriched.id || `${enriched.studentId}_${enriched.period}_${enriched.area}_${enriched.schoolYear.replace(/\//g, '-')}`;
+        // Backward-compatibility field mappings
+        enriched.period = enriched.sessionKey;
+        enriched.area = enriched.subjectArea;
+        enriched.teacherId = enriched.updatedBy;
+
+        const docId = enriched.id || `${enriched.studentId}_${enriched.sessionKey}_${enriched.subjectArea}_${enriched.schoolYear.replace(/\//g, '-')}`;
         enriched.id = docId;
-        enriched.updatedAt = Date.now();
+        enriched.updatedAt = serverTimestamp();
 
         const docRef = doc(db, COLLECTION, docId);
         batch.set(docRef, sanitizeRecord(enriched), { merge: true });

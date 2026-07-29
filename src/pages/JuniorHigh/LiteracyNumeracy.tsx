@@ -2,56 +2,156 @@ import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  BookOpen, Languages, Heart, Calculator, Search, 
-  History, ChevronRight, Save, User as UserIcon, 
-  Calendar, RefreshCw, CheckCircle2, AlertCircle, FileText, X, Sparkles, Sliders,
-  HelpCircle, Info
+  BookOpen, Languages, Heart, BookMarked, Calculator, Search, 
+  History, Save, Calendar, RefreshCw, AlertCircle, FileText, X, HelpCircle
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
-import { db, handleFirestoreError, getStudents, getClasses, getActiveStudents } from '../../lib/firebase';
+import { getClasses, getActiveStudents, getStudents } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
-import { collection, query, where, getDocs, doc, setDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { ACADEMIC_YEARS } from '../../constants';
 import JuniorHighLiteracyOverview from './components/JuniorHighLiteracyOverview';
 import { juniorHighLiteracyService } from '../../services/juniorHighLiteracyService';
 import { 
   JuniorHighArea, 
-  JuniorHighPeriod, 
-  JuniorHighProgressRecord, 
-  JuniorHighSupportStatus 
+  JuniorHighSessionKey, 
+  JuniorHighProgressRecord 
 } from '../../types/juniorHighLiteracyNumeracy';
 import { 
   calculateWpm, 
-  getReadingSupportStatus, 
-  getMengajiSupportStatus, 
-  getSupportStatusLabel, 
   getAreaLabel, 
   getPeriodLabel 
 } from '../../constants/juniorHighLiteracyBenchmarks';
 
 // Selection lists in theme palette for SMP
-const AREAS: { id: JuniorHighArea; label: string; icon: React.ReactNode; colorClass: string; activeColor: string }[] = [
-  { id: 'BAHASA_INDONESIA', label: 'Bahasa Indonesia', icon: <BookOpen className="w-4 h-4" />, colorClass: 'text-blue-600 bg-blue-50 border-blue-100', activeColor: 'bg-blue-600 text-white' },
-  { id: 'ENGLISH_READING', label: 'English Reading', icon: <Languages className="w-4 h-4" />, colorClass: 'text-indigo-600 bg-indigo-50 border-indigo-100', activeColor: 'bg-indigo-600 text-white' },
-  { id: 'MENGAJI', label: 'Mengaji', icon: <Heart className="w-4 h-4" />, colorClass: 'text-emerald-600 bg-emerald-50 border-emerald-100', activeColor: 'bg-emerald-600 text-white' },
-  { id: 'NUMERACY', label: 'Numerasi (Math)', icon: <Calculator className="w-4 h-4" />, colorClass: 'text-purple-600 bg-purple-50 border-purple-100', activeColor: 'bg-purple-600 text-white' },
-];
+export interface JuniorHighAreaConfig {
+  id: JuniorHighArea;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  primaryColor: string;
+  primaryBg: string;
+  primaryBgHover: string;
+  softBg: string;
+  softBgHover: string;
+  borderActive: string;
+  borderSoft: string;
+  focusRing: string;
+  textDark: string;
+  textPrimary: string;
+  saveButtonActive: string;
+  headingBadge: string;
+}
 
-const PERIODS: { value: JuniorHighPeriod; label: string }[] = [
-  { value: 'JUL_OCT', label: 'Juli - Oktober' },
-  { value: 'NOV_FEB', label: 'November - Februari' },
-  { value: 'MAR_JUN', label: 'Maret - Juni' }
-];
-
-const READING_LEVEL_OPTIONS = ['IR+', 'IR', 'IR-', 'IR-EN', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'];
-
-const getRows = (val: string) => {
-  if (!val) return 1;
-  const lines = val.split('\n').length;
-  return Math.min(5, lines);
+export const JUNIOR_HIGH_AREA_CONFIGS: Record<JuniorHighArea, JuniorHighAreaConfig> = {
+  BAHASA_INDONESIA: {
+    id: 'BAHASA_INDONESIA',
+    label: 'Bahasa Indonesia',
+    icon: BookOpen,
+    primaryColor: 'text-blue-600',
+    primaryBg: 'bg-blue-600',
+    primaryBgHover: 'bg-blue-700',
+    softBg: 'bg-blue-50',
+    softBgHover: 'hover:bg-blue-100',
+    borderActive: 'border-blue-500',
+    borderSoft: 'border-blue-200',
+    focusRing: 'focus:ring-blue-600 focus:border-blue-500',
+    textDark: 'text-blue-900',
+    textPrimary: 'text-blue-600',
+    saveButtonActive: 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-500/10 focus:ring-blue-500',
+    headingBadge: 'bg-blue-50 text-blue-700 border-blue-200',
+  },
+  ENGLISH_READING: {
+    id: 'ENGLISH_READING',
+    label: 'English Reading',
+    icon: Languages,
+    primaryColor: 'text-violet-600',
+    primaryBg: 'bg-violet-600',
+    primaryBgHover: 'bg-violet-700',
+    softBg: 'bg-violet-50',
+    softBgHover: 'hover:bg-violet-100',
+    borderActive: 'border-violet-500',
+    borderSoft: 'border-violet-200',
+    focusRing: 'focus:ring-violet-600 focus:border-violet-500',
+    textDark: 'text-violet-900',
+    textPrimary: 'text-violet-600',
+    saveButtonActive: 'bg-violet-600 hover:bg-violet-700 text-white shadow-violet-500/10 focus:ring-violet-500',
+    headingBadge: 'bg-violet-50 text-violet-700 border-violet-200',
+  },
+  MENGAJI: {
+    id: 'MENGAJI',
+    label: 'Mengaji',
+    icon: BookMarked,
+    primaryColor: 'text-emerald-600',
+    primaryBg: 'bg-emerald-600',
+    primaryBgHover: 'bg-emerald-700',
+    softBg: 'bg-emerald-50',
+    softBgHover: 'hover:bg-emerald-100',
+    borderActive: 'border-emerald-500',
+    borderSoft: 'border-emerald-200',
+    focusRing: 'focus:ring-emerald-600 focus:border-emerald-500',
+    textDark: 'text-emerald-900',
+    textPrimary: 'text-emerald-600',
+    saveButtonActive: 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/10 focus:ring-emerald-500',
+    headingBadge: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  },
+  NUMERACY: {
+    id: 'NUMERACY',
+    label: 'Numerasi (Math)',
+    icon: Calculator,
+    primaryColor: 'text-amber-700',
+    primaryBg: 'bg-amber-600',
+    primaryBgHover: 'bg-amber-700',
+    softBg: 'bg-amber-50',
+    softBgHover: 'hover:bg-amber-100',
+    borderActive: 'border-amber-500',
+    borderSoft: 'border-amber-200',
+    focusRing: 'focus:ring-amber-600 focus:border-amber-500',
+    textDark: 'text-amber-900',
+    textPrimary: 'text-amber-700',
+    saveButtonActive: 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-500/10 focus:ring-amber-500',
+    headingBadge: 'bg-amber-50 text-amber-800 border-amber-200',
+  },
 };
+
+const PERIODS: { value: JuniorHighSessionKey; label: string }[] = [
+  { value: 'SEMESTER_1_START', label: 'Awal Semester 1' },
+  { value: 'SEMESTER_1_END', label: 'Akhir Semester 1' },
+  { value: 'SEMESTER_2_START', label: 'Awal Semester 2' },
+  { value: 'SEMESTER_2_END', label: 'Akhir Semester 2' }
+];
+
+const BAHASA_INDONESIA_LEVELS = [
+  'Perlu Pendampingan Intensif',
+  'Perlu Penguatan Terarah',
+  'Siap Berkembang',
+  'Siap Lanjut'
+];
+
+const ENGLISH_READING_LEVELS = [
+  'IR+',
+  'ER',
+  'ER EN'
+];
+
+const MENGAJI_LEVELS = [
+  'Iqra 1',
+  'Iqra 2',
+  'Iqra 3',
+  'Iqra 4',
+  'Iqra 5',
+  'Iqra 6',
+  'Juz Amma',
+  'Alquran'
+];
+
+const NUMERACY_LEVELS = [
+  'Trailhead',
+  'Ascent',
+  'Ridge',
+  'Summit'
+];
 
 export interface JuniorHighStudent {
   id: string; // NIS
@@ -61,7 +161,6 @@ export interface JuniorHighStudent {
 }
 
 export default function JuniorHighLiteracyNumeracy() {
-  const navigate = useNavigate();
   const { profile } = useAuth();
   const { activeYear } = useAcademicYear();
   
@@ -70,7 +169,7 @@ export default function JuniorHighLiteracyNumeracy() {
   const [selectedClassId, setSelectedClassId] = React.useState<string>('');
   const [selectedGradeLevel, setSelectedGradeLevel] = React.useState<number>(7);
   const [selectedYear, setSelectedYear] = React.useState<string>(activeYear || '2025/2026');
-  const [selectedPeriod, setSelectedPeriod] = React.useState<JuniorHighPeriod>('JUL_OCT');
+  const [selectedPeriod, setSelectedPeriod] = React.useState<JuniorHighSessionKey>('SEMESTER_1_START');
   const [searchQuery, setSearchQuery] = React.useState<string>('');
   const [activeView, setActiveView] = React.useState<'input' | 'overview'>('input');
 
@@ -81,21 +180,14 @@ export default function JuniorHighLiteracyNumeracy() {
   const [loadingStudents, setLoadingStudents] = React.useState<boolean>(false);
   const [isSaving, setIsSaving] = React.useState<boolean>(false);
 
-  // Per-student form record map linking student ID to draft values
+  const activeConfig = JUNIOR_HIGH_AREA_CONFIGS[selectedArea];
   const [studentRecords, setStudentRecords] = React.useState<Record<string, Partial<JuniorHighProgressRecord>>>({});
   const [modifiedIds, setModifiedIds] = React.useState<Set<string>>(new Set());
-
-  // Bulk input help
-  const [bulkTopic, setBulkTopic] = React.useState<string>('');
-  const [bulkMathLevel, setBulkMathLevel] = React.useState<string>('');
 
   // Class History modal
   const [showHistory, setShowHistory] = React.useState<boolean>(false);
   const [historyRecords, setHistoryRecords] = React.useState<JuniorHighProgressRecord[]>([]);
   const [loadingHistory, setLoadingHistory] = React.useState<boolean>(false);
-
-  // Track specifically clicked single student history drawer
-  const [selectedStudentForDrawer, setSelectedStudentForDrawer] = React.useState<{ id: string; name: string } | null>(null);
 
   // Sync default school year
   React.useEffect(() => {
@@ -150,7 +242,6 @@ export default function JuniorHighLiteracyNumeracy() {
         if (match) {
           setSelectedGradeLevel(Number(match[0]));
         } else {
-          // Default fallback for SMP
           setSelectedGradeLevel(7);
         }
       }
@@ -220,55 +311,53 @@ export default function JuniorHighLiteracyNumeracy() {
             initialStates[st.id] = { ...existing };
           } else {
             const base: Omit<JuniorHighProgressRecord, 'updatedAt'> = {
+              unit: 'JUNIOR_HIGH',
               studentId: st.id,
               studentName: st.name,
               classId: selectedClassId,
               gradeLevel: selectedGradeLevel,
               schoolYear: selectedYear,
+              sessionKey: selectedPeriod,
+              sessionLabel: getPeriodLabel(selectedPeriod),
+              subjectArea: selectedArea,
+              updatedBy: profile?.uid || profile?.id || 'unknown',
+              notes: '',
+              // Backward compatibility fields
               period: selectedPeriod,
               area: selectedArea,
-              teacherId: profile?.uid || profile?.id || 'unknown',
-              supportStatus: 'INCOMPLETE_DATA',
-              notes: ''
+              teacherId: profile?.uid || profile?.id || 'unknown'
             };
 
             if (selectedArea === 'BAHASA_INDONESIA') {
               initialStates[st.id] = {
                 ...base,
-                wordsRead: '',
-                errors: '',
-                wpm: '',
-                readingLevel: 'IR',
-                comprehensionScore: 'N/A',
-                libraryBorrowStatus: 'BELUM_MEMINJAM',
-                oneDayOneBookStatus: 'KURANG_AKTIF'
+                subjectArea: 'BAHASA_INDONESIA',
+                readingLevel: '',
+                readingComprehension: ''
               } as any;
             } else if (selectedArea === 'ENGLISH_READING') {
               initialStates[st.id] = {
                 ...base,
+                subjectArea: 'ENGLISH_READING',
                 wordsRead: '',
                 errors: '',
                 wpm: '',
-                readingLevel: 'IR',
-                comprehensionScore: 'N/A'
+                readingLevel: '',
+                comprehension: ''
               } as any;
             } else if (selectedArea === 'MENGAJI') {
               initialStates[st.id] = {
                 ...base,
-                iqroCurrentLevel: '',
-                iqroCurrentCheckpoint: '',
-                targetIqroLevel: '',
-                completionStatus: '',
-                letterRecognitionNote: '',
-                tajwidNote: ''
+                subjectArea: 'MENGAJI',
+                level: '',
+                targetLevel: ''
               } as any;
             } else if (selectedArea === 'NUMERACY') {
               initialStates[st.id] = {
                 ...base,
+                subjectArea: 'NUMERACY',
                 mathLevel: '',
-                topic: '',
-                accuracy: '',
-                speed: ''
+                accuracy: ''
               } as any;
             }
           }
@@ -288,27 +377,18 @@ export default function JuniorHighLiteracyNumeracy() {
     }
   }, [selectedYear, selectedGradeLevel, selectedClassId, selectedPeriod, selectedArea, classes, profile]);
 
-  // Handle cell changes with live status evaluation
+  // Handle cell changes
   const handleCellChange = (studentId: string, field: string, value: any) => {
     setStudentRecords(prev => {
       const current = prev[studentId] || {};
       const updated = { ...current, [field]: value } as any;
 
-      if (selectedArea === 'BAHASA_INDONESIA' || selectedArea === 'ENGLISH_READING') {
+      if (selectedArea === 'ENGLISH_READING') {
         const wordsRaw = field === 'wordsRead' ? value : updated.wordsRead;
         const errsRaw = field === 'errors' ? value : updated.errors;
 
         const hasWords = wordsRaw !== '' && wordsRaw !== undefined && wordsRaw !== null;
         const hasErrs = errsRaw !== '' && errsRaw !== undefined && errsRaw !== null;
-        
-        let comp: number | 'N/A' | null = 'N/A';
-        const currentComp = field === 'comprehensionScore' ? value : updated.comprehensionScore;
-        
-        if (currentComp === 'N/A' || currentComp === null || currentComp === '') {
-          comp = 'N/A';
-        } else {
-          comp = Number(currentComp);
-        }
         
         if (hasWords && hasErrs) {
           const wpmVal = calculateWpm(Number(wordsRaw), Number(errsRaw));
@@ -318,7 +398,6 @@ export default function JuniorHighLiteracyNumeracy() {
         }
         updated.wordsRead = wordsRaw;
         updated.errors = errsRaw;
-        updated.comprehensionScore = currentComp;
       }
 
       return {
@@ -334,51 +413,27 @@ export default function JuniorHighLiteracyNumeracy() {
     });
   };
 
-  // Pre-fill helpers
-  const applyBulkTopic = () => {
-    if (!bulkTopic.trim()) {
-      toast.error('Gunakan topik yang valid untuk bulk pre-fill');
-      return;
-    }
-    students.forEach(st => {
-      handleCellChange(st.id, 'topic', bulkTopic);
-    });
-    toast.success(`Berhasil menerapkan topik "${bulkTopic}" untuk seluruh siswa`);
-    setBulkTopic('');
-  };
-
-  const applyBulkMathLevel = () => {
-    if (!bulkMathLevel.trim()) {
-      toast.error('Gunakan level Matematika yang valid untuk bulk pre-fill');
-      return;
-    }
-    students.forEach(st => {
-      handleCellChange(st.id, 'mathLevel', bulkMathLevel);
-    });
-    toast.success(`Berhasil menerapkan level "${bulkMathLevel}" untuk seluruh siswa`);
-    setBulkMathLevel('');
-  };
-
-  const applyBulkTier1 = () => {
-    if (students.length === 0) {
-      toast.error('Tidak ada siswa di kelas ini');
-      return;
-    }
-    students.forEach(st => {
-      handleCellChange(st.id, 'supportStatus', 'ON_TRACK');
-    });
-    toast.success('Berhasil mengisi Tier 1 untuk seluruh siswa secara massal (belum disimpan, silakan simpan bila selesai)');
-  };
-
   // Unify validate & enrich record values before Firestore submission
   const validateAndEnrichRecord = (rawRecord: any) => {
     const rec = { ...rawRecord };
     
-    if (!rec.supportStatus) {
-      rec.supportStatus = 'INCOMPLETE_DATA';
-    }
+    rec.unit = 'JUNIOR_HIGH';
+    rec.sessionKey = selectedPeriod;
+    rec.sessionLabel = getPeriodLabel(selectedPeriod);
+    rec.subjectArea = selectedArea;
+    rec.updatedBy = profile?.uid || profile?.id || 'unknown';
 
-    if (selectedArea === 'BAHASA_INDONESIA' || selectedArea === 'ENGLISH_READING') {
+    // Backwards compatibility mappings
+    rec.period = selectedPeriod;
+    rec.area = selectedArea;
+    rec.teacherId = rec.updatedBy;
+
+    if (selectedArea === 'BAHASA_INDONESIA') {
+      rec.readingLevel = rec.readingLevel || '';
+      rec.readingComprehension = rec.readingComprehension !== '' && rec.readingComprehension !== undefined && rec.readingComprehension !== null
+        ? Math.min(100, Math.max(0, Number(rec.readingComprehension)))
+        : '';
+    } else if (selectedArea === 'ENGLISH_READING') {
       const hasWords = rec.wordsRead !== '' && rec.wordsRead !== undefined && rec.wordsRead !== null;
       const hasErrs = rec.errors !== '' && rec.errors !== undefined && rec.errors !== null;
       
@@ -387,33 +442,23 @@ export default function JuniorHighLiteracyNumeracy() {
         rec.errors = Number(rec.errors);
         rec.wpm = calculateWpm(rec.wordsRead, rec.errors);
       } else {
-        rec.wordsRead = null;
-        rec.errors = null;
-        rec.wpm = null;
+        rec.wordsRead = '';
+        rec.errors = '';
+        rec.wpm = '';
       }
       
-      const compRaw = rec.comprehensionScore;
-      if (compRaw === 'N/A') {
-        rec.comprehensionScore = 'N/A';
-      } else if (compRaw === '' || compRaw === null || compRaw === undefined) {
-        rec.comprehensionScore = null;
-      } else {
-        rec.comprehensionScore = Number(compRaw);
-      }
+      rec.readingLevel = rec.readingLevel || '';
+      rec.comprehension = rec.comprehension !== '' && rec.comprehension !== undefined && rec.comprehension !== null
+        ? Math.min(100, Math.max(0, Number(rec.comprehension)))
+        : '';
     } else if (selectedArea === 'MENGAJI') {
-      const parseVal = (val: any) => {
-        if (val === '' || val === null || val === undefined) return null;
-        const num = Number(val);
-        return isNaN(num) ? val : num;
-      };
-      rec.iqroCurrentLevel = parseVal(rec.iqroCurrentLevel);
-      rec.targetIqroLevel = parseVal(rec.targetIqroLevel);
-      rec.completionStatus = rec.completionStatus || '';
+      rec.level = rec.level || '';
+      rec.targetLevel = rec.targetLevel || '';
     } else if (selectedArea === 'NUMERACY') {
-      const hasAcc = rec.accuracy !== '' && rec.accuracy !== undefined && rec.accuracy !== null;
-      
-      rec.accuracy = hasAcc ? Number(rec.accuracy) : null;
-      rec.speed = null;
+      rec.mathLevel = rec.mathLevel || '';
+      rec.accuracy = rec.accuracy !== '' && rec.accuracy !== undefined && rec.accuracy !== null
+        ? Math.min(100, Math.max(0, Number(rec.accuracy)))
+        : '';
     }
 
     return rec;
@@ -495,28 +540,37 @@ export default function JuniorHighLiteracyNumeracy() {
   // Filter local student listing during search
   const filteredStudents = React.useMemo(() => {
     return students.filter(s => {
-      const matchSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase()) || s.id.includes(searchQuery);
-      return matchSearch;
+      return s.name.toLowerCase().includes(searchQuery.toLowerCase()) || s.id.includes(searchQuery);
     });
   }, [students, searchQuery]);
 
   // Statistics summaries
-  const { completedCount, needsSupportCount } = React.useMemo(() => {
+  const { completedCount } = React.useMemo(() => {
     let completed = 0;
-    let support = 0;
     filteredStudents.forEach(st => {
       const rec = studentRecords[st.id];
       if (rec) {
-        if (rec.supportStatus && rec.supportStatus !== 'INCOMPLETE_DATA') {
-          completed++;
-        }
-        if (rec.supportStatus === 'MONITOR' || rec.supportStatus === 'NEEDS_SUPPORT') {
-          support++;
+        if (selectedArea === 'BAHASA_INDONESIA') {
+          if (rec.readingLevel || (rec.readingComprehension !== '' && rec.readingComprehension !== undefined && rec.readingComprehension !== null)) {
+            completed++;
+          }
+        } else if (selectedArea === 'ENGLISH_READING') {
+          if (rec.readingLevel || (rec.comprehension !== '' && rec.comprehension !== undefined && rec.comprehension !== null)) {
+            completed++;
+          }
+        } else if (selectedArea === 'MENGAJI') {
+          if (rec.level || rec.targetLevel) {
+            completed++;
+          }
+        } else if (selectedArea === 'NUMERACY') {
+          if (rec.mathLevel || (rec.accuracy !== '' && rec.accuracy !== undefined && rec.accuracy !== null)) {
+            completed++;
+          }
         }
       }
     });
-    return { completedCount: completed, needsSupportCount: support };
-  }, [filteredStudents, studentRecords]);
+    return { completedCount: completed };
+  }, [filteredStudents, studentRecords, selectedArea]);
 
   return (
     <div className="space-y-6 pb-16">
@@ -524,21 +578,20 @@ export default function JuniorHighLiteracyNumeracy() {
       <header className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="px-2.5 py-0.5 text-[9px] uppercase tracking-widest font-black bg-indigo-50 text-indigo-700 rounded-lg">JUNIOR HIGH UNIT</span>
+            <span className="px-2.5 py-0.5 text-[9px] uppercase tracking-widest font-black bg-blue-50 text-blue-700 rounded-lg">JUNIOR HIGH UNIT</span>
             <span className="text-gray-300">•</span>
             <span className="text-xs font-bold text-gray-500">Pusat Penilaian Akademik SMP</span>
           </div>
           <h1 className="text-2xl font-black text-gray-950 tracking-tight flex items-center gap-2 italic uppercase">
             LUMINA LITERASI & NUMERASI SMP
           </h1>
-          <p className="text-gray-500 text-xs font-medium">Panel input pencatatan perkembangan Bahasa Indonesia, English, Mengaji, & Matematika siswa SMP.</p>
+          <p className="text-gray-500 text-xs font-medium">Panel input pencatatan perkembangan Bahasa Indonesia, English Reading, Mengaji, & Matematika siswa SMP.</p>
         </div>
         
         {/* FILTERS TOOLBAR */}
         <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
           {/* Class Select Dropdown */}
           <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-100 p-1.5 rounded-2xl text-xs font-bold text-gray-600">
-            <Sliders size={14} className="text-gray-400 ml-1" />
             <select 
               value={selectedClassId} 
               onChange={(e) => setSelectedClassId(e.target.value)}
@@ -568,7 +621,7 @@ export default function JuniorHighLiteracyNumeracy() {
           <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-100 p-1.5 rounded-2xl text-xs font-bold text-gray-600">
             <select 
               value={selectedPeriod} 
-              onChange={(e) => setSelectedPeriod(e.target.value as JuniorHighPeriod)}
+              onChange={(e) => setSelectedPeriod(e.target.value as JuniorHighSessionKey)}
               className="bg-transparent font-black text-gray-800 outline-none pr-1.5 cursor-pointer"
             >
               {PERIODS.map(p => (
@@ -629,19 +682,21 @@ export default function JuniorHighLiteracyNumeracy() {
         <div className="space-y-6">
           {/* AREA SELECTOR TABS */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            {AREAS.map((ar) => {
+            {Object.values(JUNIOR_HIGH_AREA_CONFIGS).map((ar) => {
               const isActive = selectedArea === ar.id;
+              const IconComponent = ar.icon;
               return (
                 <button
                   key={ar.id}
                   type="button"
                   onClick={() => setSelectedArea(ar.id)}
                   className={cn(
-                    "flex items-center justify-between p-4 rounded-2xl border transition-all text-left relative overflow-hidden cursor-pointer",
+                    "flex items-center justify-between p-4 rounded-2xl border transition-all duration-150 text-left relative overflow-hidden cursor-pointer",
                     isActive 
-                      ? "bg-slate-900 border-slate-900 text-white shadow-lg shadow-slate-950/5 font-extrabold" 
+                      ? `${ar.softBg} ${ar.borderActive} ${ar.textDark} ring-1 ${ar.borderActive} font-extrabold shadow-sm` 
                       : "bg-white border-gray-100 text-slate-700 hover:bg-slate-50/50"
                   )}
+                  aria-label={`Pilih Area ${ar.label}`}
                 >
                   <div className="space-y-1 z-10">
                     <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">
@@ -649,20 +704,17 @@ export default function JuniorHighLiteracyNumeracy() {
                     </span>
                     <span className="text-xs sm:text-sm block font-black">{ar.label}</span>
                   </div>
-                  <div className={cn("p-2 rounded-xl z-10", isActive ? "bg-white/10" : "bg-slate-50/80")}>
-                    {ar.icon}
+                  <div className={cn("p-2 rounded-xl z-10 transition-colors", isActive ? `${ar.primaryBg} text-white` : `${ar.softBg} ${ar.primaryColor}`)}>
+                    <IconComponent className="w-4 h-4" aria-hidden="true" />
                   </div>
                 </button>
               );
             })}
           </div>
 
-          {/* MINI OVERVIEW METRICS ROWS */}
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-            <div className={cn(
-              "bg-slate-900 text-white rounded-3xl p-5 flex items-center justify-between shadow-xl shadow-slate-900/10",
-              selectedArea === "NUMERACY" ? "md:col-span-6" : "md:col-span-12"
-            )}>
+          {/* MINI OVERVIEW METRICS ROW */}
+          <div className="grid grid-cols-1 gap-4">
+            <div className="bg-slate-900 text-white rounded-3xl p-5 flex items-center justify-between shadow-xl shadow-slate-900/10 col-span-12">
               <div className="space-y-1.5">
                 <span className="text-[10px] font-black tracking-widest text-[#9d9da6] uppercase">Rasio Entri Selesai</span>
                 <div className="flex items-baseline gap-2">
@@ -677,71 +729,25 @@ export default function JuniorHighLiteracyNumeracy() {
               <div className="h-10 w-px bg-slate-800 hidden sm:block"></div>
 
               <div className="text-right space-y-1">
-                <p className="text-[10px] font-black text-amber-450 uppercase tracking-widest flex items-center justify-end gap-1 font-mono">
-                  <AlertCircle size={10} className="text-amber-400" />
-                  NEEDS INTERVENTION
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center justify-end gap-1 font-mono">
+                  Sesi Aktif
                 </p>
-                <div className="text-3xl font-black text-amber-400 font-mono">{needsSupportCount}</div>
+                <div className="text-sm font-black text-emerald-400 font-mono uppercase">{getPeriodLabel(selectedPeriod)}</div>
               </div>
             </div>
-
-            {/* DYNAMIC BULK PREFILL TOOL */}
-            {selectedArea === "NUMERACY" && (
-              <div className="md:col-span-6 bg-slate-50 rounded-3xl p-5 border border-slate-200/50 flex flex-col justify-center gap-3">
-                <div className="flex items-center gap-2 text-slate-800 font-black text-[10px] uppercase tracking-wider">
-                  <Sparkles size={12} className="text-indigo-500" />
-                  Isi Massal Numerasi
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <div className="flex gap-1.5 items-center">
-                    <input
-                      type="text"
-                      placeholder="Contoh: Aljabar Linear"
-                      value={bulkTopic}
-                      onChange={e => setBulkTopic(e.target.value)}
-                      className="bg-white border border-gray-200 text-xs px-3 py-1.5 rounded-xl flex-grow font-medium text-slate-800"
-                    />
-                    <button
-                      type="button"
-                      onClick={applyBulkTopic}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] px-2.5 py-1.5 rounded-xl font-bold uppercase shrink-0 cursor-pointer"
-                    >
-                      Topik
-                    </button>
-                  </div>
-
-                  <div className="flex gap-1.5 items-center">
-                    <input
-                      type="text"
-                      placeholder="Contoh: Level SMP-3"
-                      value={bulkMathLevel}
-                      onChange={e => setBulkMathLevel(e.target.value)}
-                      className="bg-white border border-gray-200 text-xs px-3 py-1.5 rounded-xl flex-grow font-medium text-slate-800"
-                    />
-                    <button
-                      type="button"
-                      onClick={applyBulkMathLevel}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] px-2.5 py-1.5 rounded-xl font-bold uppercase shrink-0 cursor-pointer"
-                    >
-                      Level
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
 
-          {/* DYNAMIC STUDENTS ASSESSMENT SPREADSHEET TABLE */}
+          {/* ASSESSMENT SPREADSHEET TABLE */}
           <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
             {/* Table Search & Header */}
-            <div className="p-5 border-b border-gray-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="p-5 border-b border-gray-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/30">
               <div className="flex items-center gap-2">
-                <div className="p-1 px-2.5 bg-slate-50 text-slate-700 rounded-lg text-xs font-black">
+                <div className={cn("p-1 px-2.5 rounded-lg text-xs font-black border", activeConfig.headingBadge)}>
                   {filteredStudents.length} Siswa SMP
                 </div>
-                <h2 className="text-xs font-black text-slate-800 uppercase tracking-widest">
-                  SPREADSHEET PENILAIAN SMP: {getAreaLabel(selectedArea)} ({getPeriodLabel(selectedPeriod)})
+                <h2 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                  <span className={cn("w-1.5 h-4 rounded-full", activeConfig.primaryBg)} />
+                  SPREADSHEET PENILAIAN SMP: {getAreaLabel(selectedArea).toUpperCase()} — {getPeriodLabel(selectedPeriod).toUpperCase()}
                 </h2>
               </div>
 
@@ -752,7 +758,7 @@ export default function JuniorHighLiteracyNumeracy() {
                   placeholder="Cari siswa SMP..."
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-100 text-xs px-9 py-2 rounded-xl outline-none focus:ring-1 focus:ring-slate-900"
+                  className={cn("w-full bg-white border border-slate-200 text-xs px-9 py-2 rounded-xl outline-none focus:ring-1", activeConfig.focusRing)}
                 />
               </div>
             </div>
@@ -760,7 +766,7 @@ export default function JuniorHighLiteracyNumeracy() {
             {/* SPREADSHEET TABLE IMPLEMENTATION */}
             {loadingStudents ? (
               <div className="flex flex-col items-center justify-center py-20 space-y-3 text-slate-400">
-                <RefreshCw size={32} className="animate-spin text-indigo-600" />
+                <RefreshCw size={32} className={cn("animate-spin", activeConfig.textPrimary)} />
                 <span className="text-xs font-black uppercase tracking-wider">Mensinkronisasikan berkas siswa SMP...</span>
               </div>
             ) : filteredStudents.length === 0 ? (
@@ -774,63 +780,42 @@ export default function JuniorHighLiteracyNumeracy() {
                 <table className="w-full text-left border-collapse min-w-[900px]">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-100 text-[9px] font-black text-slate-400 uppercase tracking-wider">
-                      <th className="py-3 px-4 w-40 sticky left-0 bg-slate-50 z-10 border-r border-slate-100 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">Nama Siswa SMP</th>
+                      <th className="py-3 px-4 w-48 sticky left-0 bg-slate-50 z-10 border-r border-slate-100 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">Nama Siswa SMP</th>
                       
                       {/* DYNAMIC AREA COLS */}
                       {selectedArea === 'BAHASA_INDONESIA' && (
                         <>
-                          <th className="py-3 px-2 w-20 text-center">Words Read</th>
-                          <th className="py-3 px-2 w-20 text-center">Errors</th>
-                          <th className="py-3 px-2 w-16 text-center">WPM</th>
-                          <th className="py-3 px-2 w-28 text-center">Reading Level</th>
-                          <th className="py-3 px-2 w-28 text-center">Comprehension</th>
+                          <th className="py-3 px-4 text-center">Level Membaca</th>
+                          <th className="py-3 px-4 text-center">Pemahaman Bacaan</th>
                         </>
                       )}
 
                       {selectedArea === 'ENGLISH_READING' && (
                         <>
-                          <th className="py-3 px-2 w-20 text-center">Words Read</th>
-                          <th className="py-3 px-2 w-20 text-center">Errors</th>
-                          <th className="py-3 px-2 w-16 text-center">WPM</th>
-                          <th className="py-3 px-2 w-32 text-center">Reading Level</th>
-                          <th className="py-3 px-2 w-28 text-center">Comprehension</th>
+                          <th className="py-3 px-2 text-center w-24">Words Read</th>
+                          <th className="py-3 px-2 text-center w-24">Errors</th>
+                          <th className="py-3 px-2 text-center w-20">WPM</th>
+                          <th className="py-3 px-4 text-center">Reading Level</th>
+                          <th className="py-3 px-4 text-center">Comprehension</th>
                         </>
                       )}
 
                       {selectedArea === 'MENGAJI' && (
                         <>
-                          <th className="py-3 px-2 w-24 text-center">Level</th>
-                          <th className="py-3 px-2 w-28 text-center">Current Checkpoint</th>
-                          <th className="py-3 px-2 w-24 text-center">Target Level</th>
-                          <th className="py-3 px-2 w-32 text-center">Status Kelulusan</th>
-                          <th className="py-3 px-2 w-36 text-center">Catatan Huruf</th>
-                          <th className="py-3 px-2 w-36 text-center">Catatan Tajwid</th>
+                          <th className="py-3 px-4 text-center">Level</th>
+                          <th className="py-3 px-4 text-center">Target Level</th>
                         </>
                       )}
 
                       {selectedArea === 'NUMERACY' && (
                         <>
-                          <th className="py-3 px-2 w-28 text-center">Math Level</th>
-                          <th className="py-3 px-2 w-44 text-center">Topik</th>
-                          <th className="py-3 px-2 w-24 text-center">Accuracy (%)</th>
+                          <th className="py-3 px-4 text-center">Level Math</th>
+                          <th className="py-3 px-4 text-center">Accuracy (%)</th>
                         </>
                       )}
 
-                      <th className="py-3 px-4 w-32 text-center">
-                        <div className="flex flex-col items-center gap-1.5">
-                          <span>Intervensi</span>
-                          <button
-                            type="button"
-                            onClick={applyBulkTier1}
-                            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200/60 px-1.5 py-0.5 rounded-lg text-[8px] font-black tracking-wider uppercase transition-colors cursor-pointer whitespace-nowrap block"
-                            title="Set seluruh siswa menjadi Tier 1"
-                          >
-                            Set Tier 1 Semua
-                          </button>
-                        </div>
-                      </th>
-                      <th className="py-3 px-4 w-44 text-center">Catatan Tambahan</th>
-                      <th className="py-3 px-4 w-24 text-center">Aksi Save Baris</th>
+                      <th className="py-3 px-4 text-center w-64">Catatan Tambahan</th>
+                      <th className="py-3 px-4 text-center w-36">Aksi Simpan Baris</th>
                     </tr>
                   </thead>
                   
@@ -844,7 +829,7 @@ export default function JuniorHighLiteracyNumeracy() {
                           key={st.id}
                           className={cn(
                             "hover:bg-slate-50/50 transition-colors",
-                            isModified ? "bg-amber-50/20" : ""
+                            isModified ? "bg-amber-50/10" : ""
                           )}
                         >
                           {/* Name Column Fixed left */}
@@ -858,72 +843,33 @@ export default function JuniorHighLiteracyNumeracy() {
                           {/* --- BAHASA INDONESIA --- */}
                           {selectedArea === 'BAHASA_INDONESIA' && (
                             <>
-                              <td className="py-3 px-2 text-center">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  value={record.wordsRead ?? ''}
-                                  onChange={e => handleCellChange(st.id, 'wordsRead', e.target.value === '' ? '' : Number(e.target.value))}
-                                  className="w-16 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
-                                />
-                              </td>
-                              <td className="py-3 px-2 text-center">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  value={record.errors ?? ''}
-                                  onChange={e => handleCellChange(st.id, 'errors', e.target.value === '' ? '' : Number(e.target.value))}
-                                  className="w-16 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
-                                />
-                              </td>
-                              <td className="py-3 px-2 font-black text-slate-700 text-center">
-                                {(record.wpm !== undefined && record.wpm !== null && record.wpm !== '') ? record.wpm : '-'}
-                              </td>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-3 px-4 text-center">
                                 <select
-                                  value={record.readingLevel || 'IR'}
+                                  value={record.readingLevel || ''}
                                   onChange={e => handleCellChange(st.id, 'readingLevel', e.target.value)}
-                                  className="w-24 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold cursor-pointer"
+                                  className={cn("w-56 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold cursor-pointer text-xs focus:outline-none focus:ring-1 focus:bg-white", activeConfig.focusRing)}
                                 >
-                                  {READING_LEVEL_OPTIONS.map(lvl => (
+                                  <option value="">-- Pilih Level Membaca --</option>
+                                  {BAHASA_INDONESIA_LEVELS.map(lvl => (
                                     <option key={lvl} value={lvl}>{lvl}</option>
                                   ))}
                                 </select>
                               </td>
-                              <td className="py-3 px-2">
-                                <div className="flex items-center gap-1.5 justify-center">
-                                  <select
-                                    value={record.comprehensionScore === 'N/A' || record.comprehensionScore === null ? 'NA' : 'DATA'}
+                              <td className="py-3 px-4 text-center">
+                                <div className="flex items-center gap-0.5 justify-center">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    value={record.readingComprehension ?? ''}
                                     onChange={e => {
-                                      if (e.target.value === 'NA') {
-                                        handleCellChange(st.id, 'comprehensionScore', 'N/A');
-                                      } else {
-                                        handleCellChange(st.id, 'comprehensionScore', '');
-                                      }
+                                      const val = e.target.value === '' ? '' : Math.min(100, Math.max(0, Number(e.target.value)));
+                                      handleCellChange(st.id, 'readingComprehension', val);
                                     }}
-                                    className="bg-slate-50 border border-slate-200 rounded-lg px-1 py-1 text-[10px] font-bold cursor-pointer outline-none"
-                                  >
-                                    <option value="DATA">Data</option>
-                                    <option value="NA">N/A</option>
-                                  </select>
-                                  <div className="flex items-center gap-0.5">
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      max="100"
-                                      disabled={record.comprehensionScore === 'N/A' || record.comprehensionScore === null}
-                                      value={(record.comprehensionScore === 'N/A' || record.comprehensionScore === null || record.comprehensionScore === undefined) ? '' : record.comprehensionScore}
-                                      onChange={e => handleCellChange(st.id, 'comprehensionScore', e.target.value === '' ? '' : Number(e.target.value))}
-                                      className={cn(
-                                        "w-11 border rounded-lg px-1 py-1 text-center font-bold text-[11px]",
-                                        (record.comprehensionScore === 'N/A' || record.comprehensionScore === null) 
-                                          ? "bg-slate-100 border-slate-200 text-slate-300 cursor-not-allowed" 
-                                          : "bg-slate-50/60 border-slate-200 text-slate-800"
-                                      )}
-                                      placeholder={record.comprehensionScore === 'N/A' || record.comprehensionScore === null ? 'N/A' : ''}
-                                    />
-                                    <span className="text-[9px] text-slate-400 font-bold">%</span>
-                                  </div>
+                                    className={cn("w-24 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold focus:outline-none focus:ring-1 focus:bg-white", activeConfig.focusRing)}
+                                    placeholder="0-100"
+                                  />
+                                  <span className="text-[10px] text-slate-400 font-bold">%</span>
                                 </div>
                               </td>
                             </>
@@ -938,7 +884,7 @@ export default function JuniorHighLiteracyNumeracy() {
                                   min="0"
                                   value={record.wordsRead ?? ''}
                                   onChange={e => handleCellChange(st.id, 'wordsRead', e.target.value === '' ? '' : Number(e.target.value))}
-                                  className="w-16 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
+                                  className={cn("w-20 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold focus:outline-none focus:ring-1 focus:bg-white", activeConfig.focusRing)}
                                 />
                               </td>
                               <td className="py-3 px-2 text-center">
@@ -947,57 +893,39 @@ export default function JuniorHighLiteracyNumeracy() {
                                   min="0"
                                   value={record.errors ?? ''}
                                   onChange={e => handleCellChange(st.id, 'errors', e.target.value === '' ? '' : Number(e.target.value))}
-                                  className="w-16 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
+                                  className={cn("w-20 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold focus:outline-none focus:ring-1 focus:bg-white", activeConfig.focusRing)}
                                 />
                               </td>
                               <td className="py-3 px-2 font-black text-slate-700 text-center">
                                 {(record.wpm !== undefined && record.wpm !== null && record.wpm !== '') ? record.wpm : '-'}
                               </td>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-3 px-4 text-center">
                                 <select
-                                  value={record.readingLevel || 'IR'}
+                                  value={record.readingLevel || ''}
                                   onChange={e => handleCellChange(st.id, 'readingLevel', e.target.value)}
-                                  className="w-28 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold cursor-pointer"
+                                  className={cn("w-36 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold cursor-pointer text-xs focus:outline-none focus:ring-1 focus:bg-white", activeConfig.focusRing)}
                                 >
-                                  {READING_LEVEL_OPTIONS.map(lvl => (
+                                  <option value="">-- Pilih Level --</option>
+                                  {ENGLISH_READING_LEVELS.map(lvl => (
                                     <option key={lvl} value={lvl}>{lvl}</option>
                                   ))}
                                 </select>
                               </td>
-                              <td className="py-3 px-2">
-                                <div className="flex items-center gap-1.5 justify-center">
-                                  <select
-                                    value={record.comprehensionScore === 'N/A' || record.comprehensionScore === null ? 'NA' : 'DATA'}
+                              <td className="py-3 px-4 text-center">
+                                <div className="flex items-center gap-0.5 justify-center">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    value={record.comprehension ?? ''}
                                     onChange={e => {
-                                      if (e.target.value === 'NA') {
-                                        handleCellChange(st.id, 'comprehensionScore', 'N/A');
-                                      } else {
-                                        handleCellChange(st.id, 'comprehensionScore', '');
-                                      }
+                                      const val = e.target.value === '' ? '' : Math.min(100, Math.max(0, Number(e.target.value)));
+                                      handleCellChange(st.id, 'comprehension', val);
                                     }}
-                                    className="bg-slate-50 border border-slate-200 rounded-lg px-1 py-1 text-[10px] font-bold cursor-pointer outline-none"
-                                  >
-                                    <option value="DATA">Data</option>
-                                    <option value="NA">N/A</option>
-                                  </select>
-                                  <div className="flex items-center gap-0.5">
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      max="100"
-                                      disabled={record.comprehensionScore === 'N/A' || record.comprehensionScore === null}
-                                      value={(record.comprehensionScore === 'N/A' || record.comprehensionScore === null || record.comprehensionScore === undefined) ? '' : record.comprehensionScore}
-                                      onChange={e => handleCellChange(st.id, 'comprehensionScore', e.target.value === '' ? '' : Number(e.target.value))}
-                                      className={cn(
-                                        "w-11 border rounded-lg px-1 py-1 text-center font-bold text-[11px]",
-                                        (record.comprehensionScore === 'N/A' || record.comprehensionScore === null) 
-                                          ? "bg-slate-100 border-slate-200 text-slate-300 cursor-not-allowed" 
-                                          : "bg-slate-50/60 border-slate-200 text-slate-800"
-                                      )}
-                                      placeholder={record.comprehensionScore === 'N/A' || record.comprehensionScore === null ? 'N/A' : ''}
-                                    />
-                                    <span className="text-[9px] text-slate-400 font-bold">%</span>
-                                  </div>
+                                    className={cn("w-24 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold focus:outline-none focus:ring-1 focus:bg-white", activeConfig.focusRing)}
+                                    placeholder="0-100"
+                                  />
+                                  <span className="text-[10px] text-slate-400 font-bold">%</span>
                                 </div>
                               </td>
                             </>
@@ -1006,97 +934,61 @@ export default function JuniorHighLiteracyNumeracy() {
                           {/* --- MENGAJI --- */}
                           {selectedArea === 'MENGAJI' && (
                             <>
-                              <td className="py-3 px-2 text-center">
-                                <input
-                                  type="text"
-                                  placeholder=""
-                                  value={record.iqroCurrentLevel ?? ''}
-                                  onChange={e => handleCellChange(st.id, 'iqroCurrentLevel', e.target.value)}
-                                  className="w-16 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
-                                />
-                              </td>
-                              <td className="py-3 px-2 text-center">
-                                <textarea
-                                  rows={getRows(record.iqroCurrentCheckpoint || '')}
-                                  placeholder=""
-                                  value={record.iqroCurrentCheckpoint || ''}
-                                  onChange={e => handleCellChange(st.id, 'iqroCurrentCheckpoint', e.target.value)}
-                                  className="w-24 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold text-center resize-y text-[11px] focus:ring-1 focus:ring-slate-900 focus:bg-white"
-                                />
-                              </td>
-                              <td className="py-3 px-2 text-center">
-                                <input
-                                  type="text"
-                                  placeholder=""
-                                  value={record.targetIqroLevel ?? ''}
-                                  onChange={e => handleCellChange(st.id, 'targetIqroLevel', e.target.value)}
-                                  className="w-16 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
-                                />
-                              </td>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-3 px-4 text-center">
                                 <select
-                                  value={record.completionStatus || ''}
-                                  onChange={e => handleCellChange(st.id, 'completionStatus', e.target.value)}
-                                  className="w-28 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold cursor-pointer text-[10px]"
+                                  value={record.level || ''}
+                                  onChange={e => handleCellChange(st.id, 'level', e.target.value)}
+                                  className={cn("w-40 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold cursor-pointer text-xs focus:outline-none focus:ring-1 focus:bg-white", activeConfig.focusRing)}
                                 >
-                                  <option value="">-- Pilih --</option>
-                                  <option value="BELUM_DINILAI">Belum Dinilai</option>
-                                  <option value="ON_PROGRESS">On Progress</option>
-                                  <option value="LULUS">Lulus</option>
-                                  <option value="TIDAK_LULUS">Belum Lulus</option>
+                                  <option value="">-- Pilih Level --</option>
+                                  {MENGAJI_LEVELS.map(lvl => (
+                                    <option key={lvl} value={lvl}>{lvl}</option>
+                                  ))}
                                 </select>
                               </td>
-                              <td className="py-3 px-2 text-center">
-                                <textarea
-                                  rows={getRows(record.letterRecognitionNote || '')}
-                                  placeholder=""
-                                  value={record.letterRecognitionNote || ''}
-                                  onChange={e => handleCellChange(st.id, 'letterRecognitionNote', e.target.value)}
-                                  className="w-32 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-medium text-[11px] resize-y focus:ring-1 focus:ring-slate-900 focus:bg-white"
-                                />
-                              </td>
-                              <td className="py-3 px-2 text-center">
-                                <textarea
-                                  rows={getRows(record.tajwidNote || '')}
-                                  placeholder=""
-                                  value={record.tajwidNote || ''}
-                                  onChange={e => handleCellChange(st.id, 'tajwidNote', e.target.value)}
-                                  className="w-32 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-medium text-[11px] resize-y focus:ring-1 focus:ring-slate-900 focus:bg-white"
-                                />
+                              <td className="py-3 px-4 text-center">
+                                <select
+                                  value={record.targetLevel || ''}
+                                  onChange={e => handleCellChange(st.id, 'targetLevel', e.target.value)}
+                                  className={cn("w-40 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold cursor-pointer text-xs focus:outline-none focus:ring-1 focus:bg-white", activeConfig.focusRing)}
+                                >
+                                  <option value="">-- Pilih Target --</option>
+                                  {MENGAJI_LEVELS.map(lvl => (
+                                    <option key={lvl} value={lvl}>{lvl}</option>
+                                  ))}
+                                </select>
                               </td>
                             </>
                           )}
 
-                          {/* --- NUMERACY (MATH) --- */}
+                          {/* --- NUMERACY --- */}
                           {selectedArea === 'NUMERACY' && (
                             <>
-                              <td className="py-3 px-2 text-center">
-                                <input
-                                  type="text"
-                                  placeholder="Level"
+                              <td className="py-3 px-4 text-center">
+                                <select
                                   value={record.mathLevel || ''}
                                   onChange={e => handleCellChange(st.id, 'mathLevel', e.target.value)}
-                                  className="w-24 bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-1 font-bold text-center"
-                                />
+                                  className={cn("w-44 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold cursor-pointer text-xs focus:outline-none focus:ring-1 focus:bg-white", activeConfig.focusRing)}
+                                >
+                                  <option value="">-- Pilih Level Math --</option>
+                                  {NUMERACY_LEVELS.map(lvl => (
+                                    <option key={lvl} value={lvl}>{lvl}</option>
+                                  ))}
+                                </select>
                               </td>
-                              <td className="py-3 px-2 text-center">
-                                <textarea
-                                  rows={getRows(record.topic || '')}
-                                  placeholder=""
-                                  value={record.topic || ''}
-                                  onChange={e => handleCellChange(st.id, 'topic', e.target.value)}
-                                  className="w-40 bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-1 font-medium text-[11px] resize-y focus:ring-1 focus:ring-slate-900 focus:bg-white"
-                                />
-                              </td>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-3 px-4 text-center">
                                 <div className="flex items-center gap-0.5 justify-center">
                                   <input
                                     type="number"
                                     min="0"
                                     max="100"
                                     value={record.accuracy ?? ''}
-                                    onChange={e => handleCellChange(st.id, 'accuracy', e.target.value === '' ? '' : Number(e.target.value))}
-                                    className="w-14 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
+                                    onChange={e => {
+                                      const val = e.target.value === '' ? '' : Math.min(100, Math.max(0, Number(e.target.value)));
+                                      handleCellChange(st.id, 'accuracy', val);
+                                    }}
+                                    className={cn("w-24 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold focus:outline-none focus:ring-1 focus:bg-white", activeConfig.focusRing)}
+                                    placeholder="0-100"
                                   />
                                   <span className="text-[10px] text-slate-400 font-bold">%</span>
                                 </div>
@@ -1104,36 +996,14 @@ export default function JuniorHighLiteracyNumeracy() {
                             </>
                           )}
 
-                          {/* INTERVENSI SELECT dropdown */}
-                          <td className="py-3 px-4 text-center font-bold">
-                            <select
-                              value={record.supportStatus || 'INCOMPLETE_DATA'}
-                              onChange={e => handleCellChange(st.id, 'supportStatus', e.target.value)}
-                              className={cn(
-                                "text-[11px] font-black tracking-wider uppercase rounded-xl px-2.5 py-1 text-center outline-none cursor-pointer border w-36 transition-colors",
-                                record.supportStatus === 'ON_TRACK' && "bg-emerald-50 text-emerald-700 border-emerald-200 focus:ring-1 focus:ring-emerald-500",
-                                record.supportStatus === 'MONITOR' && "bg-yellow-50 text-yellow-700 border-yellow-200 focus:ring-1 focus:ring-yellow-500",
-                                record.supportStatus === 'NEEDS_SUPPORT' && "bg-orange-50 text-orange-700 border-orange-200 focus:ring-1 focus:ring-orange-500",
-                                record.supportStatus === 'INTERVENTION_RECOMMENDED' && "bg-purple-50 text-purple-700 border-purple-200 focus:ring-1 focus:ring-purple-500",
-                                (record.supportStatus === 'INCOMPLETE_DATA' || !record.supportStatus) && "bg-slate-50 text-slate-500 border-slate-200 focus:ring-1 focus:ring-slate-400"
-                              )}
-                            >
-                              <option value="INCOMPLETE_DATA">Belum diisi</option>
-                              <option value="ON_TRACK">Tier 1</option>
-                              <option value="MONITOR">Tier 2</option>
-                              <option value="NEEDS_SUPPORT">Tier 3</option>
-                              <option value="INTERVENTION_RECOMMENDED">SN (Special Needs)</option>
-                            </select>
-                          </td>
-
-                          {/* LOCAL NOTES */}
+                          {/* CATATAN TAMBAHAN */}
                           <td className="py-3 px-4">
                             <textarea
-                              rows={getRows(record.notes || '')}
+                              rows={1}
                               placeholder="Ketik catatan di sini..."
                               value={record.notes || ''}
                               onChange={e => handleCellChange(st.id, 'notes', e.target.value)}
-                              className="w-44 bg-slate-50/60 hover:bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-[11px] outline-none font-medium resize-y focus:ring-1 focus:ring-slate-900 focus:bg-white"
+                              className={cn("w-full bg-slate-50/60 hover:bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-[11px] outline-none font-medium resize-y focus:ring-1 focus:bg-white min-h-[32px]", activeConfig.focusRing)}
                             />
                           </td>
 
@@ -1143,10 +1013,10 @@ export default function JuniorHighLiteracyNumeracy() {
                               type="button"
                               onClick={() => handleSaveRow(st.id)}
                               className={cn(
-                                "flex items-center gap-1.5 justify-center mx-auto px-3 py-1.5 rounded-xl text-[10px] uppercase font-black tracking-wider transition-all cursor-pointer",
+                                "flex items-center gap-1.5 justify-center mx-auto px-4 py-1.5 rounded-xl text-[10px] uppercase font-black tracking-wider transition-all duration-150 cursor-pointer w-full focus:outline-none focus:ring-2",
                                 isModified 
-                                  ? "bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-500/10" 
-                                  : "bg-slate-100 hover:bg-slate-200 text-slate-700"
+                                  ? activeConfig.saveButtonActive
+                                  : `${activeConfig.softBg} hover:${activeConfig.softBgHover} ${activeConfig.textPrimary}`
                               )}
                             >
                               <Save size={11} />
@@ -1161,10 +1031,9 @@ export default function JuniorHighLiteracyNumeracy() {
               </div>
             )}
 
-            {/* MASTER BOTTOM MULTI ACTION SECTION */}
+            {/* MASTER BOTTOM ACTIONS */}
             <div className="p-5 bg-slate-50/50 border-t border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
-                <HelpCircle size={13} className="text-slate-400" />
                 Draft baris ditandai oranye muda jika ada perubahan. Gunakan tombol 'Simpan Semua' untuk sinkronisasi massal satu kelas.
               </div>
 
@@ -1173,7 +1042,6 @@ export default function JuniorHighLiteracyNumeracy() {
                   type="button"
                   onClick={() => {
                     if (window.confirm('Apakah Anda yakin ingin membuang semua draf dan mengambil ulang data terbaru dari Firestore?')) {
-                      // Trigger reloading
                       setSelectedClassId('');
                       setTimeout(() => setSelectedClassId(selectedClassId), 50);
                       toast.success('Draft berhasil dibatalkan');
@@ -1187,7 +1055,12 @@ export default function JuniorHighLiteracyNumeracy() {
                   type="button"
                   onClick={handleSaveAll}
                   disabled={isSaving || students.length === 0}
-                  className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-lg shadow-emerald-600/15 transition-all cursor-pointer"
+                  className={cn(
+                    "flex items-center justify-center gap-2 text-white px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-150 cursor-pointer shadow-md",
+                    isSaving || students.length === 0
+                      ? "bg-slate-300 text-slate-500 cursor-not-allowed"
+                      : `${activeConfig.primaryBg} hover:${activeConfig.primaryBgHover} shadow-${selectedArea === 'BAHASA_INDONESIA' ? 'blue' : selectedArea === 'ENGLISH_READING' ? 'violet' : selectedArea === 'MENGAJI' ? 'emerald' : 'amber'}-550/15`
+                  )}
                 >
                   {isSaving ? (
                     <>
@@ -1199,8 +1072,7 @@ export default function JuniorHighLiteracyNumeracy() {
                       <Save size={14} />
                       SIMPAN SEMUA ({filteredStudents.length} SISWA SMP)
                     </>
-                  )
-                  }
+                  )}
                 </button>
               </div>
             </div>
@@ -1209,7 +1081,7 @@ export default function JuniorHighLiteracyNumeracy() {
         </div>
       )}
 
-      {/* CLASS HISTORY MODAL SUMMARY DIAGRAM */}
+      {/* CLASS HISTORY MODAL SUMMARY */}
       <AnimatePresence>
         {showHistory && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -1227,9 +1099,9 @@ export default function JuniorHighLiteracyNumeracy() {
                     <span className="text-slate-900">{classes.find(c => c.id === selectedClassId)?.name || 'SMP'}</span>
                   </div>
                   <h3 className="text-base font-black text-slate-950 uppercase tracking-wider italic">
-                    Ringkasan Penilaian {getAreaLabel(selectedArea)} (SMP)
+                    Ringkasan Penilaian {getAreaLabel(selectedArea).toUpperCase()} (SMP)
                   </h3>
-                  <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-1">Periode: {getPeriodLabel(selectedPeriod)}</p>
+                  <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-1">Sesi: {getPeriodLabel(selectedPeriod)}</p>
                 </div>
                 <button 
                   type="button"
@@ -1250,7 +1122,7 @@ export default function JuniorHighLiteracyNumeracy() {
                   <div className="flex flex-col items-center justify-center py-20 text-gray-400 text-center">
                     <FileText size={40} className="text-gray-200 mb-3" />
                     <p className="text-xs font-black uppercase tracking-widest">Belum ada data terekam</p>
-                    <p className="text-[10px] text-gray-400 mt-1 max-w-xs leading-normal">Belum ada siswa di kelas SMP ini yang dinilai untuk area dan periode terpilih.</p>
+                    <p className="text-[10px] text-gray-400 mt-1 max-w-xs leading-normal">Belum ada siswa di kelas SMP ini yang dinilai untuk area dan sesi terpilih.</p>
                   </div>
                 ) : (
                   <div className="overflow-x-auto rounded-2xl border border-gray-100">
@@ -1259,8 +1131,16 @@ export default function JuniorHighLiteracyNumeracy() {
                         <tr className="bg-slate-50 border-b border-gray-100 text-slate-500 uppercase tracking-wider font-black text-[9px]">
                           <th className="py-3 px-4">Nama Siswa SMP</th>
                           
-                          {/* BI & ENG COLUMNS */}
-                          {(selectedArea === 'BAHASA_INDONESIA' || selectedArea === 'ENGLISH_READING') && (
+                          {/* BI COLUMNS */}
+                          {selectedArea === 'BAHASA_INDONESIA' && (
+                            <>
+                              <th className="py-3 px-4 text-center">Level Membaca</th>
+                              <th className="py-3 px-4 text-center">Pemahaman Bacaan</th>
+                            </>
+                          )}
+
+                          {/* ENG COLUMNS */}
+                          {selectedArea === 'ENGLISH_READING' && (
                             <>
                               <th className="py-3 px-4 text-center">Words Read</th>
                               <th className="py-3 px-4 text-center">Errors</th>
@@ -1274,9 +1154,7 @@ export default function JuniorHighLiteracyNumeracy() {
                           {selectedArea === 'MENGAJI' && (
                             <>
                               <th className="py-3 px-4 text-center">Level</th>
-                              <th className="py-3 px-4 text-center">Checkpoint</th>
                               <th className="py-3 px-4 text-center">Target Level</th>
-                              <th className="py-3 px-4 text-center">Status Kelulusan</th>
                             </>
                           )}
 
@@ -1284,12 +1162,10 @@ export default function JuniorHighLiteracyNumeracy() {
                           {selectedArea === 'NUMERACY' && (
                             <>
                               <th className="py-3 px-4 text-center">Math Level</th>
-                              <th className="py-3 px-4 text-center">Topik</th>
                               <th className="py-3 px-4 text-center">Akurasi</th>
                             </>
                           )}
 
-                          <th className="py-3 px-4 text-center">Intervensi</th>
                           <th className="py-3 px-4 text-center">Terakhir Update</th>
                         </tr>
                       </thead>
@@ -1303,8 +1179,20 @@ export default function JuniorHighLiteracyNumeracy() {
                                 <div className="text-[9px] text-gray-400 mt-0.5">NIS: {student.id}</div>
                               </td>
 
-                              {/* BI & ENG RECORDS */}
-                              {(selectedArea === 'BAHASA_INDONESIA' || selectedArea === 'ENGLISH_READING') && (
+                              {/* BI RECORDS */}
+                              {selectedArea === 'BAHASA_INDONESIA' && (
+                                <>
+                                  <td className="py-3.5 px-4 text-center font-bold">{(record as any)?.readingLevel || '-'}</td>
+                                  <td className="py-3.5 px-4 text-center font-bold">
+                                    {(record as any)?.readingComprehension !== undefined && (record as any)?.readingComprehension !== '' && (record as any)?.readingComprehension !== null ? (
+                                      `${(record as any)?.readingComprehension}%`
+                                    ) : '-'}
+                                  </td>
+                                </>
+                              )}
+
+                              {/* ENG RECORDS */}
+                              {selectedArea === 'ENGLISH_READING' && (
                                 <>
                                   <td className="py-3.5 px-4 text-center font-bold">{(record as any)?.wordsRead !== undefined && (record as any)?.wordsRead !== null ? (record as any)?.wordsRead : '-'}</td>
                                   <td className="py-3.5 px-4 text-center text-red-500 font-bold">{(record as any)?.errors !== undefined && (record as any)?.errors !== null ? (record as any)?.errors : '-'}</td>
@@ -1315,8 +1203,8 @@ export default function JuniorHighLiteracyNumeracy() {
                                     ) : '-'}
                                   </td>
                                   <td className="py-3.5 px-4 text-center font-bold">
-                                    {(record as any)?.comprehensionScore !== undefined && (record as any)?.comprehensionScore !== null ? (
-                                      `${(record as any)?.comprehensionScore}%`
+                                    {(record as any)?.comprehension !== undefined && (record as any)?.comprehension !== '' && (record as any)?.comprehension !== null ? (
+                                      `${(record as any)?.comprehension}%`
                                     ) : '-'}
                                   </td>
                                 </>
@@ -1325,10 +1213,8 @@ export default function JuniorHighLiteracyNumeracy() {
                               {/* MENGAJI RECORDS */}
                               {selectedArea === 'MENGAJI' && (
                                 <>
-                                  <td className="py-3.5 px-4 text-center font-black text-slate-800">{(record as any)?.iqroCurrentLevel || '-'}</td>
-                                  <td className="py-3.5 px-4 text-center font-bold">{(record as any)?.iqroCurrentCheckpoint || '-'}</td>
-                                  <td className="py-3.5 px-4 text-center font-bold">{(record as any)?.targetIqroLevel || '-'}</td>
-                                  <td className="py-3.5 px-4 text-center text-[10px] font-black text-indigo-600">{(record as any)?.completionStatus || '-'}</td>
+                                  <td className="py-3.5 px-4 text-center font-black text-slate-800">{(record as any)?.level || '-'}</td>
+                                  <td className="py-3.5 px-4 text-center font-bold">{(record as any)?.targetLevel || '-'}</td>
                                 </>
                               )}
 
@@ -1336,25 +1222,9 @@ export default function JuniorHighLiteracyNumeracy() {
                               {selectedArea === 'NUMERACY' && (
                                 <>
                                   <td className="py-3.5 px-4 text-center font-bold">{(record as any)?.mathLevel || '-'}</td>
-                                  <td className="py-3.5 px-4 text-center text-slate-600 max-w-[124px] truncate">{(record as any)?.topic || '-'}</td>
-                                  <td className="py-3.5 px-4 text-center font-extrabold text-[#7c3aed]">{(record as any)?.accuracy !== undefined && (record as any)?.accuracy !== null ? `${(record as any)?.accuracy}%` : '-'}</td>
+                                  <td className="py-3.5 px-4 text-center font-extrabold text-[#7c3aed]">{(record as any)?.accuracy !== undefined && (record as any)?.accuracy !== '' && (record as any)?.accuracy !== null ? `${(record as any)?.accuracy}%` : '-'}</td>
                                 </>
                               )}
-
-                              <td className="py-3.5 px-4 text-center">
-                                <span
-                                  className={cn(
-                                    "px-2 py-0.5 rounded-lg text-[9px] font-extrabold tracking-wider uppercase border inline-block whitespace-nowrap",
-                                    record?.supportStatus === 'ON_TRACK' && "bg-emerald-50 text-emerald-700 border-emerald-100",
-                                    record?.supportStatus === 'MONITOR' && "bg-yellow-50 text-yellow-700 border-yellow-105",
-                                    record?.supportStatus === 'NEEDS_SUPPORT' && "bg-orange-50 text-orange-700 border-orange-100",
-                                    record?.supportStatus === 'INTERVENTION_RECOMMENDED' && "bg-red-50 text-red-700 border-red-100",
-                                    (!record?.supportStatus || record?.supportStatus === 'INCOMPLETE_DATA') && "bg-slate-50 text-slate-500 border-slate-100"
-                                  )}
-                                >
-                                  {getSupportStatusLabel(record?.supportStatus || 'INCOMPLETE_DATA')}
-                                </span>
-                              </td>
 
                               <td className="py-3.5 px-4 text-center text-[10px] text-gray-400 font-bold">
                                 {record?.updatedAt ? new Date(record.updatedAt).toLocaleDateString('id-ID') : '-'}
@@ -1363,15 +1233,15 @@ export default function JuniorHighLiteracyNumeracy() {
                           );
                         })}
                       </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </motion.div>
+            </table>
           </div>
         )}
-      </AnimatePresence>
+      </div>
+    </motion.div>
+  </div>
+)}
+</AnimatePresence>
 
-    </div>
-  );
+</div>
+);
 }
