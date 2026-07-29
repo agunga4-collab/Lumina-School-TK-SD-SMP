@@ -74,7 +74,8 @@ export default function JuniorHighLatenessAndViolations() {
   // Master Data State
   const [classes, setClasses] = React.useState<any[]>([]);
   const [students, setStudents] = React.useState<any[]>([]);
-  const [loadingMetadata, setLoadingMetadata] = React.useState(true);
+  const [loadingClasses, setLoadingClasses] = React.useState(true);
+  const loadingMetadata = loadingClasses;
 
   // Common selected date & class
   const [selectedClassId, setSelectedClassId] = React.useState<string>(searchParams.get('classId') || '');
@@ -161,30 +162,82 @@ export default function JuniorHighLatenessAndViolations() {
   // ----------------------------------------------------
   // INITIAL LOAD & CONFIG SEEDING
   // ----------------------------------------------------
+  const classesCacheRef = React.useRef<Map<string, any[]>>(new Map());
+
+  // Dedicated function to fetch Junior High active classes for a specific academic year
+  const getActiveJuniorHighClasses = React.useCallback(async (academicYear: string) => {
+    const cacheKey = `unit:JUNIOR_HIGH,academicYear:${academicYear}`;
+    if (classesCacheRef.current.has(cacheKey)) {
+      return classesCacheRef.current.get(cacheKey) || [];
+    }
+
+    const q = query(
+      collection(db, 'classes'),
+      where('unitId', '==', 'JUNIOR_HIGH'),
+      where('academicYear', '==', academicYear)
+    );
+    const snap = await getDocs(q);
+    const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+    
+    // Sort classes alphabetically
+    list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    // status aktif bila field status tersedia
+    const filteredList = list.filter((c: any) => {
+      if (c.status !== undefined) {
+        return c.status === 'active' || c.status === true;
+      }
+      if (c.active !== undefined) {
+        return c.active === true;
+      }
+      return true;
+    });
+
+    classesCacheRef.current.set(cacheKey, filteredList);
+    return filteredList;
+  }, []);
+
+  // Hook/Effect triggered when activeYear changes
   React.useEffect(() => {
-    async function initMetadata() {
-      setLoadingMetadata(true);
+    let isMounted = true;
+    async function loadYearClasses() {
+      if (!activeYear) return;
+      
+      // 1. Kosongkan class list lama
+      setClasses([]);
+      // 2. Tampilkan loading pada dropdown
+      setLoadingClasses(true);
+      // 4. Set class filter ke 'all'
+      setRekapClassFilter('all');
+
       try {
-        // 1. Load Classes for Junior High
-        const classesQuery = query(collection(db, 'classes'), where('unitId', '==', 'JUNIOR_HIGH'));
-        const classesSnap = await getDocs(classesQuery);
-        const classesList = classesSnap.docs.map(d => ({ id: d.id, ...d.data() as any }));
-        // Sort classes alphabetically
-        classesList.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-        setClasses(classesList);
-        if (classesList.length > 0 && !selectedClassId) {
-          setSelectedClassId(classesList[0].id);
+        // 3. Ambil kelas untuk tahun baru
+        const classesList = await getActiveJuniorHighClasses(activeYear);
+        
+        if (isMounted) {
+          setClasses(classesList);
+          
+          // Bersihkan selectedClassId jika tidak ada lagi pada daftar kelas periode aktif
+          if (selectedClassId && !classesList.some(c => c.id === selectedClassId)) {
+            setSelectedClassId(classesList[0]?.id || '');
+          } else if (!selectedClassId && classesList.length > 0) {
+            setSelectedClassId(classesList[0].id);
+          }
+
+          setLoadingClasses(false);
         }
       } catch (err) {
-        console.error('Error loading initial metadata:', err);
-        toast.error('Gagal memuat metadata sekolah.');
-      } finally {
-        setLoadingMetadata(false);
+        console.error('Error loading academic year classes:', err);
+        if (isMounted) {
+          setLoadingClasses(false);
+          toast.error(`Gagal memuat kelas untuk tahun ajaran ${activeYear}.`);
+        }
       }
     }
 
-    initMetadata();
-  }, []);
+    loadYearClasses();
+    return () => { isMounted = false; };
+  }, [activeYear, getActiveJuniorHighClasses]);
 
   // Whenever selectedClassId changes, fetch students list
   React.useEffect(() => {
@@ -612,20 +665,124 @@ export default function JuniorHighLatenessAndViolations() {
   // ----------------------------------------------------
   // TAB 3: RECAP & LEADERBOARD LOGIC
   // ----------------------------------------------------
+  const normalizeTardinessRecord = React.useCallback((r: any) => {
+    // Normalize date to YYYY-MM-DD
+    let normDate = '';
+    const rawDate = r.date || r.attendanceDate || r.recordDate || r.createdAt;
+    if (rawDate) {
+      if (typeof rawDate === 'string') {
+        if (rawDate.includes('-')) {
+          normDate = rawDate.split('T')[0];
+        } else if (rawDate.includes('/')) {
+          const parts = rawDate.split('/');
+          if (parts[0].length === 4) {
+            normDate = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+          } else {
+            normDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+          }
+        }
+      } else if (rawDate.seconds !== undefined && rawDate.nanoseconds !== undefined) {
+        // Firestore Timestamp
+        const d = new Date(rawDate.seconds * 1000);
+        const formatter = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'Asia/Jakarta',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        });
+        normDate = formatter.format(d);
+      } else if (rawDate instanceof Date) {
+        const formatter = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'Asia/Jakarta',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        });
+        normDate = formatter.format(rawDate);
+      }
+    }
+
+    if (!normDate) {
+      normDate = getCurrentDateStr();
+    }
+
+    const studentId = r.studentId || '';
+    const studentName = r.studentName || r.name || 'Siswa';
+    const classId = r.classId || '';
+    const className = r.className || r.class || 'Kelas Lain';
+    const arrivalTime = r.arrivalTime || r.time || r.arrivalAt || '00:00';
+    const reason = r.reason || r.notes || r.description || '';
+    const unitId = r.unitId || r.unit || '';
+
+    return {
+      id: r.id || '',
+      studentId,
+      studentName,
+      classId,
+      className,
+      date: normDate,
+      arrivalTime,
+      reason,
+      academicYear: r.academicYear,
+      semester: r.semester ? Number(r.semester) : undefined,
+      unitId
+    };
+  }, []);
+
+  const isJuniorHighRecord = React.useCallback((r: any, classesList: any[]) => {
+    // 1. If explicit unitId/unit exists
+    const u = (r.unitId || r.unit || '').toUpperCase();
+    if (u) {
+      return u === 'JUNIOR_HIGH';
+    }
+
+    // 2. Try matching with known active classes
+    if (r.classId && classesList.some(c => c.id === r.classId)) {
+      return true;
+    }
+
+    // 3. Fallback name-based detection
+    const nameLower = (r.className || r.class || '').toLowerCase();
+    const idLower = (r.classId || '').toLowerCase();
+    
+    const isSmp = nameLower.includes('smp') || 
+                  nameLower.includes('junior') || 
+                  nameLower.includes('al-jazari') || 
+                  nameLower.includes('al jazari') ||
+                  nameLower.includes('grade 7') || 
+                  nameLower.includes('grade 8') || 
+                  nameLower.includes('grade 9') ||
+                  nameLower.includes('kelas 7') || 
+                  nameLower.includes('kelas 8') || 
+                  nameLower.includes('kelas 9') ||
+                  /\b(7|8|9)\b/.test(nameLower) ||
+                  /\b(7|8|9)\b/.test(idLower) ||
+                  nameLower.startsWith('7') ||
+                  nameLower.startsWith('8') ||
+                  nameLower.startsWith('9');
+
+    if (isSmp) return true;
+
+    return false;
+  }, []);
+
   const fetchRekapData = async () => {
+    if (!rekapAcademicYear) return;
     setLoadingRekap(true);
     setRekapError(null);
     try {
-      // Query lateness records for Junior High
+      // Query lateness records for selected date range
       const latenessQ = query(
         collection(db, 'lateness_records'),
-        where('unitId', '==', 'JUNIOR_HIGH')
+        where('date', '>=', rekapStartDate),
+        where('date', '<=', rekapEndDate)
       );
 
-      // Query minor violations for Junior High
+      // Query minor violations for selected date range
       const violationQ = query(
         collection(db, 'minor_violations'),
-        where('unit', '==', 'JUNIOR_HIGH')
+        where('date', '>=', rekapStartDate),
+        where('date', '<=', rekapEndDate)
       );
 
       const [latenessSnap, violationSnap] = await Promise.all([
@@ -636,12 +793,42 @@ export default function JuniorHighLatenessAndViolations() {
       const rawLateness = latenessSnap.docs.map(d => ({ id: d.id, ...d.data() as any }));
       const rawViolations = violationSnap.docs.map(d => ({ id: d.id, ...d.data() as any }));
 
-      setRekapLatenessData(rawLateness);
-      setRekapViolationData(rawViolations);
-    } catch (err) {
-      console.error('Error fetching rekap data:', err);
-      setRekapError('Gagal memuat data rekap.');
-      toast.error('Gagal mengambil data rekap.');
+      // Normalisasi data Tardiness dengan adapter
+      const normalizedLateness = rawLateness.map(normalizeTardinessRecord).filter(r => isJuniorHighRecord(r, classes));
+      
+      // Filter minor violations to unit == 'JUNIOR_HIGH'
+      const juniorHighViolations = rawViolations.filter(v => 
+        (v.unit || v.unitId || '').toUpperCase() === 'JUNIOR_HIGH' || 
+        classes.some(c => c.id === v.classId)
+      );
+
+      setRekapLatenessData(normalizedLateness);
+      setRekapViolationData(juniorHighViolations);
+
+      console.log('Rekap fetch successful:', {
+        activeAcademicYear: rekapAcademicYear,
+        semester: rekapSemester,
+        startDate: rekapStartDate,
+        endDate: rekapEndDate,
+        selectedClassId: rekapClassFilter,
+        collections: ['lateness_records', 'minor_violations'],
+        rawLatenessCount: rawLateness.length,
+        normalizedLatenessCount: normalizedLateness.length,
+        rawViolationsCount: rawViolations.length,
+        filteredViolationsCount: juniorHighViolations.length
+      });
+
+    } catch (err: any) {
+      console.error('Error fetching rekap data:', {
+        activeAcademicYear: rekapAcademicYear,
+        semester: rekapSemester,
+        startDate: rekapStartDate,
+        endDate: rekapEndDate,
+        selectedClassId: rekapClassFilter,
+        error: err?.message || err
+      });
+      setRekapError('Data keterlambatan tidak dapat dimuat. Coba muat ulang.');
+      toast.error('Data keterlambatan tidak dapat dimuat. Coba muat ulang.');
     } finally {
       setLoadingRekap(false);
     }
@@ -649,37 +836,53 @@ export default function JuniorHighLatenessAndViolations() {
 
   // Safe and reactive filter on retrieved collections
   const filteredLateness = React.useMemo(() => {
+    if (rekapDataType === 'violations') return [];
     return rekapLatenessData.filter(r => {
       // 1. Date range filter
       if (r.date < rekapStartDate || r.date > rekapEndDate) return false;
+      
       // 2. Class filter
-      if (rekapClassFilter !== 'all' && r.classId !== rekapClassFilter) return false;
+      if (rekapClassFilter !== 'all') {
+        const classObj = classes.find(c => c.id === rekapClassFilter);
+        const matchesId = r.classId === rekapClassFilter;
+        const matchesName = classObj && r.className && r.className.toLowerCase() === classObj.name.toLowerCase();
+        if (!matchesId && !matchesName) return false;
+      }
+
       // 3. Academic Year & Semester if fields exist on record, else pass
       if (r.academicYear && r.academicYear !== rekapAcademicYear) return false;
       if (r.semester && Number(r.semester) !== Number(rekapSemester)) return false;
       return true;
     });
-  }, [rekapLatenessData, rekapStartDate, rekapEndDate, rekapClassFilter, rekapAcademicYear, rekapSemester]);
+  }, [rekapLatenessData, rekapStartDate, rekapEndDate, rekapClassFilter, rekapAcademicYear, rekapSemester, rekapDataType, classes]);
 
   const filteredViolations = React.useMemo(() => {
+    if (rekapDataType === 'lateness') return [];
     return rekapViolationData.filter(r => {
       // 1. Date range filter
       if (r.date < rekapStartDate || r.date > rekapEndDate) return false;
+      
       // 2. Class filter
-      if (rekapClassFilter !== 'all' && r.classId !== rekapClassFilter) return false;
+      if (rekapClassFilter !== 'all') {
+        const classObj = classes.find(c => c.id === rekapClassFilter);
+        const matchesId = r.classId === rekapClassFilter;
+        const matchesName = classObj && r.className && r.className.toLowerCase() === classObj.name.toLowerCase();
+        if (!matchesId && !matchesName) return false;
+      }
+
       // 3. Academic Year & Semester must match
       if (r.academicYear && r.academicYear !== rekapAcademicYear) return false;
       if (r.semester && Number(r.semester) !== Number(rekapSemester)) return false;
       return true;
     });
-  }, [rekapViolationData, rekapStartDate, rekapEndDate, rekapClassFilter, rekapAcademicYear, rekapSemester]);
+  }, [rekapViolationData, rekapStartDate, rekapEndDate, rekapClassFilter, rekapAcademicYear, rekapSemester, rekapDataType, classes]);
 
   // Trigger rekap fetch on tab mount or filter changes
   React.useEffect(() => {
-    if (activeTab === 'rekap') {
+    if (activeTab === 'rekap' && !loadingClasses) {
       fetchRekapData();
     }
-  }, [activeTab, rekapStartDate, rekapEndDate, rekapClassFilter, rekapAcademicYear, rekapSemester]);
+  }, [activeTab, rekapStartDate, rekapEndDate, rekapClassFilter, rekapAcademicYear, rekapSemester, loadingClasses]);
 
   const handleApplyRekapFilters = () => {
     fetchRekapData();
@@ -1684,6 +1887,13 @@ export default function JuniorHighLatenessAndViolations() {
       {activeTab === 'rekap' && !isStudentOrParent && (
         <div className="space-y-6">
           
+          {rekapError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-2xl text-xs font-semibold flex items-center gap-2 shadow-sm animate-fade-in">
+              <AlertCircle size={16} className="text-red-500 shrink-0" />
+              <span>{rekapError}</span>
+            </div>
+          )}
+          
           {/* Controls / Filter Panel Card */}
           <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-5">
             <h3 className="font-black text-gray-900 text-sm flex items-center gap-2">
@@ -1717,17 +1927,29 @@ export default function JuniorHighLatenessAndViolations() {
 
               {/* Class filter */}
               <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Kelas</label>
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Kelas ({rekapAcademicYear})</label>
                 <select
                   value={rekapClassFilter}
                   onChange={(e) => setRekapClassFilter(e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-100 rounded-xl px-3.5 py-2.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-violet-500/15 cursor-pointer"
+                  disabled={loadingClasses}
+                  className="w-full bg-gray-50 border border-gray-100 rounded-xl px-3.5 py-2.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-violet-500/15 cursor-pointer disabled:opacity-50"
                 >
-                  <option value="all">Semua Kelas</option>
-                  {classes.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
+                  {loadingClasses ? (
+                    <option value="all">Memuat kelas {rekapAcademicYear}...</option>
+                  ) : (
+                    <>
+                      <option value="all">Semua Kelas</option>
+                      {classes.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </>
+                  )}
                 </select>
+                {!loadingClasses && classes.length === 0 && (
+                  <p className="text-[10px] text-amber-600 font-bold mt-1 leading-normal">
+                    Belum ada kelas Junior High untuk tahun ajaran {rekapAcademicYear}.
+                  </p>
+                )}
               </div>
 
               {/* Data Type filter */}
@@ -1798,7 +2020,11 @@ export default function JuniorHighLatenessAndViolations() {
             >
               <div>
                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Total Keterlambatan</p>
-                <p className="text-xl font-black text-blue-600 mt-1">{rekapMetrics.totalLateness}x</p>
+                {loadingRekap ? (
+                  <div className="h-6 w-16 bg-gray-100 animate-pulse rounded mt-2" />
+                ) : (
+                  <p className="text-xl font-black text-blue-600 mt-1">{rekapMetrics.totalLateness}x</p>
+                )}
               </div>
               <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl">
                 <Clock size={20} />
@@ -1815,7 +2041,11 @@ export default function JuniorHighLatenessAndViolations() {
             >
               <div>
                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Total Pelanggaran Ringan</p>
-                <p className="text-xl font-black text-amber-600 mt-1">{rekapMetrics.totalViolations}x</p>
+                {loadingRekap ? (
+                  <div className="h-6 w-16 bg-gray-100 animate-pulse rounded mt-2" />
+                ) : (
+                  <p className="text-xl font-black text-amber-600 mt-1">{rekapMetrics.totalViolations}x</p>
+                )}
               </div>
               <div className="p-3 bg-amber-50 text-amber-500 rounded-2xl">
                 <ClipboardList size={20} />
@@ -1826,7 +2056,11 @@ export default function JuniorHighLatenessAndViolations() {
             <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
               <div className="max-w-[70%]">
                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa dengan Catatan Terbanyak</p>
-                <p className="text-xs font-bold text-gray-700 mt-1 truncate leading-relaxed">{rekapMetrics.topStudent}</p>
+                {loadingRekap ? (
+                  <div className="h-4 w-32 bg-gray-100 animate-pulse rounded mt-2" />
+                ) : (
+                  <p className="text-xs font-bold text-gray-700 mt-1 truncate leading-relaxed">{rekapMetrics.topStudent}</p>
+                )}
               </div>
               <div className="p-3 bg-violet-50 text-violet-600 rounded-2xl">
                 <User size={20} />
@@ -1837,7 +2071,11 @@ export default function JuniorHighLatenessAndViolations() {
             <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
               <div className="max-w-[70%]">
                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Kelas dengan Catatan Terbanyak</p>
-                <p className="text-xs font-bold text-gray-700 mt-1 truncate leading-relaxed">{rekapMetrics.topClass}</p>
+                {loadingRekap ? (
+                  <div className="h-4 w-32 bg-gray-100 animate-pulse rounded mt-2" />
+                ) : (
+                  <p className="text-xs font-bold text-gray-700 mt-1 truncate leading-relaxed">{rekapMetrics.topClass}</p>
+                )}
               </div>
               <div className="p-3 bg-gray-50 text-gray-500 rounded-2xl">
                 <LayoutDashboard size={20} />
@@ -1874,9 +2112,13 @@ export default function JuniorHighLatenessAndViolations() {
                       contentStyle={{ background: '#ffffff', borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
                       itemStyle={{ fontWeight: 'bold', fontSize: '11px' }}
                     />
-                    <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'black', textTransform: 'uppercase', letterSpacing: '0.05em' }} />
-                    <Bar dataKey="Keterlambatan" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="Pelanggaran Ringan" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                     <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'black', textTransform: 'uppercase', letterSpacing: '0.05em' }} />
+                    {(rekapDataType === 'all' || rekapDataType === 'lateness') && (
+                      <Bar dataKey="Keterlambatan" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    )}
+                    {(rekapDataType === 'all' || rekapDataType === 'violations') && (
+                      <Bar dataKey="Pelanggaran Ringan" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                    )}
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -1911,9 +2153,15 @@ export default function JuniorHighLatenessAndViolations() {
                       <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Urutan</th>
                       <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa</th>
                       <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Kelas</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Jumlah Keterlambatan</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Jumlah Pelanggaran Ringan</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Total Akumulasi</th>
+                      {(rekapDataType === 'all' || rekapDataType === 'lateness') && (
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Jumlah Keterlambatan</th>
+                      )}
+                      {(rekapDataType === 'all' || rekapDataType === 'violations') && (
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Jumlah Pelanggaran Ringan</th>
+                      )}
+                      {rekapDataType === 'all' && (
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Total Akumulasi</th>
+                      )}
                       <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Terakhir Tercatat</th>
                       <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Aksi</th>
                     </tr>
@@ -1932,27 +2180,33 @@ export default function JuniorHighLatenessAndViolations() {
                             {item.className}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-center">
-                          <span className={cn(
-                            "text-xs font-bold px-2 py-0.5 rounded-md",
-                            item.latenessCount > 0 ? "text-blue-600 bg-blue-50" : "text-gray-300"
-                          )}>
-                            {item.latenessCount}x
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          <span className={cn(
-                            "text-xs font-bold px-2 py-0.5 rounded-md",
-                            item.violationCount > 0 ? "text-amber-600 bg-amber-50" : "text-gray-300"
-                          )}>
-                            {item.violationCount}x
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          <span className="text-xs font-black text-violet-600 bg-violet-50 px-2.5 py-1 rounded-md">
-                            {item.totalCount} Catatan
-                          </span>
-                        </td>
+                        {(rekapDataType === 'all' || rekapDataType === 'lateness') && (
+                          <td className="px-6 py-4 text-center">
+                            <span className={cn(
+                              "text-xs font-bold px-2 py-0.5 rounded-md",
+                              item.latenessCount > 0 ? "text-blue-600 bg-blue-50" : "text-gray-300"
+                            )}>
+                              {item.latenessCount}x
+                            </span>
+                          </td>
+                        )}
+                        {(rekapDataType === 'all' || rekapDataType === 'violations') && (
+                          <td className="px-6 py-4 text-center">
+                            <span className={cn(
+                              "text-xs font-bold px-2 py-0.5 rounded-md",
+                              item.violationCount > 0 ? "text-amber-600 bg-amber-50" : "text-gray-300"
+                            )}>
+                              {item.violationCount}x
+                            </span>
+                          </td>
+                        )}
+                        {rekapDataType === 'all' && (
+                          <td className="px-6 py-4 text-center">
+                            <span className="text-xs font-black text-violet-600 bg-violet-50 px-2.5 py-1 rounded-md">
+                              {item.totalCount} Catatan
+                            </span>
+                          </td>
+                        )}
                         <td className="px-6 py-4">
                           <p className="text-xs text-gray-500 font-medium">{item.lastRecordedDate}</p>
                         </td>
