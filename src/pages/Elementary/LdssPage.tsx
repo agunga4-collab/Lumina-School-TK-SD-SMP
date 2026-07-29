@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { useAcademicYear } from "../../context/AcademicYearContext";
 import { getClasses, getActiveStudents } from "../../lib/firebase";
-import { Class, Student, LdssAge, LdssTemplate } from "../../types";
+import { Class, Student, LdssAge, LdssTemplate, LdssSessionAssessment } from "../../types";
 import {
   ClipboardCheck,
   Settings,
@@ -22,10 +22,43 @@ import {
   Activity,
   FileText,
   AlertTriangle,
-  Loader2
+  Loader2,
+  Trash2,
+  TrendingUp,
+  X,
+  Plus,
+  Pencil,
+  CheckCircle2,
+  CalendarDays,
+  Play,
+  Eye
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { getAllLdssTemplates, seedLdssTemplateAge6, seedLdssTemplateAge7, seedLdssTemplateAge8, seedLdssTemplateAge9, seedLdssTemplateAge10, seedLdssTemplateAge11, seedLdssTemplateAge12 } from "../../services/ldssTemplateService";
+import {
+  getAllLdssTemplates,
+  seedLdssTemplateAge6,
+  seedLdssTemplateAge7,
+  seedLdssTemplateAge8,
+  seedLdssTemplateAge9,
+  seedLdssTemplateAge10,
+  seedLdssTemplateAge11,
+  seedLdssTemplateAge12,
+  getLdssSettings,
+  saveLdssSettings,
+  getClassLdssSessions,
+  deleteLdssDraft,
+  LdssSettings
+} from "../../services/ldssTemplateService";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as ChartTooltip,
+  Legend as ChartLegend
+} from "recharts";
 import { SEED_DOMAINS_USIA_6 } from "../../data/ldssSeedData6";
 import { SEED_DOMAINS_USIA_7 } from "../../data/ldssSeedData7";
 import { SEED_DOMAINS_USIA_8 } from "../../data/ldssSeedData8";
@@ -188,6 +221,8 @@ interface LdssSelectionPanelProps {
 }
 
 function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
+  const { profile } = useAuth();
+  const userEmail = profile?.email || "teacher@lazuardi.sch.id";
   const location = useLocation();
   const locState = location.state as {
     initialClassId?: string;
@@ -218,6 +253,64 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
   const classDropdownRef = React.useRef<HTMLDivElement>(null);
   const studentDropdownRef = React.useRef<HTMLDivElement>(null);
   const ageDropdownRef = React.useRef<HTMLDivElement>(null);
+
+  // NEW: LDSS settings and class sessions tracking
+  const [ldssSettings, setLdssSettings] = React.useState<LdssSettings | null>(null);
+  const [classSessions, setClassSessions] = React.useState<LdssSessionAssessment[]>([]);
+  const [loadingSessions, setLoadingSessions] = React.useState(false);
+
+  // NEW: Chart controls
+  const [chartStudentId, setChartStudentId] = React.useState<string>("");
+  const [checkedDomains, setCheckedDomains] = React.useState<Record<string, boolean>>({});
+
+  // Age calculation helper
+  const calculateStudentAge = (birthDateString?: string): LdssAge => {
+    if (!birthDateString) return 6;
+    const birthDate = new Date(birthDateString);
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const m = today.getMonth() - birthDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+    if (age < 6) return 6;
+    if (age > 12) return 12;
+    return age as LdssAge;
+  };
+
+  // Load global period settings
+  const fetchSettings = async () => {
+    try {
+      const s = await getLdssSettings();
+      setLdssSettings(s);
+    } catch (err) {
+      console.error("Failed to fetch global settings:", err);
+    }
+  };
+
+  // Load class sessions
+  const fetchClassSessions = async () => {
+    if (!selectedClass) return;
+    try {
+      setLoadingSessions(true);
+      const data = await getClassLdssSessions(selectedClass.id, activeYear);
+      setClassSessions(data);
+    } catch (err) {
+      console.error("Failed to fetch class sessions:", err);
+    } finally {
+      setLoadingSessions(false);
+    }
+  };
+
+  React.useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  React.useEffect(() => {
+    if (selectedClass) {
+      fetchClassSessions();
+    }
+  }, [selectedClass, activeYear]);
 
   // Load Classes when activeYear changes
   React.useEffect(() => {
@@ -309,11 +402,15 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
     setSelectedStudent(null);
     setSelectedAge(null);
     setIsClassDropdownOpen(false);
+    setChartStudentId("");
   };
 
   const handleStudentSelect = (std: Student) => {
     setSelectedStudent(std);
     // Keep selectedAge if already set to allow quick consecutive assessment
+    if (!selectedAge) {
+      setSelectedAge(calculateStudentAge(std.birthDate));
+    }
     setStudentSearch("");
     setIsStudentDropdownOpen(false);
   };
@@ -323,7 +420,9 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
     const currentIndex = students.findIndex((s) => s.id === selectedStudent.id);
     if (currentIndex === -1) return;
     const prevIndex = (currentIndex - 1 + students.length) % students.length;
-    setSelectedStudent(students[prevIndex]);
+    const nextStd = students[prevIndex];
+    setSelectedStudent(nextStd);
+    setSelectedAge(calculateStudentAge(nextStd.birthDate));
   };
 
   const handleNextStudent = () => {
@@ -331,7 +430,9 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
     const currentIndex = students.findIndex((s) => s.id === selectedStudent.id);
     if (currentIndex === -1) return;
     const nextIndex = (currentIndex + 1) % students.length;
-    setSelectedStudent(students[nextIndex]);
+    const nextStd = students[nextIndex];
+    setSelectedStudent(nextStd);
+    setSelectedAge(calculateStudentAge(nextStd.birthDate));
   };
 
   const handleAgeSelect = (age: LdssAge) => {
@@ -339,285 +440,543 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
     setIsAgeDropdownOpen(false);
   };
 
+  // NEW: Delete draft click handler
+  const handleDeleteDraft = async (sessionId: string) => {
+    if (!confirm("Apakah Anda yakin ingin menghapus draft asesmen ini secara permanen?")) return;
+    try {
+      await deleteLdssDraft(
+        sessionId,
+        profile?.uid || "",
+        profile?.role || "",
+        [selectedClass?.id || ""]
+      );
+      alert("Draft asesmen berhasil dihapus.");
+      fetchClassSessions();
+    } catch (err: any) {
+      console.error("Error deleting draft:", err);
+      alert(err.message || "Gagal menghapus draft.");
+    }
+  };
+
+  // Compile Chart data for the selected chart student
+  const chartDataAndDomains = React.useMemo(() => {
+    if (!chartStudentId || classSessions.length === 0) return { data: [], domains: [] };
+
+    // Get completed sessions for this student
+    const studentCompleted = classSessions.filter(
+      (s) => s.studentId === chartStudentId && s.status?.toUpperCase() === "COMPLETED"
+    );
+
+    if (studentCompleted.length === 0) return { data: [], domains: [] };
+
+    // Group by period key
+    const p1 = studentCompleted.find((s) => s.periodKey === "LDSS_1");
+    const p2 = studentCompleted.find((s) => s.periodKey === "LDSS_2");
+    const p3 = studentCompleted.find((s) => s.periodKey === "LDSS_3");
+
+    // Gather all domain keys
+    const domainKeysSet = new Set<string>();
+    studentCompleted.forEach((s) => {
+      if (s.domainScores) {
+        Object.keys(s.domainScores).forEach((k) => domainKeysSet.add(k));
+      }
+    });
+    const domains = Array.from(domainKeysSet);
+
+    // Build charts coordinates
+    const data = [
+      { name: "LDSS 1", ...p1?.domainScores },
+      { name: "LDSS 2", ...p2?.domainScores },
+      { name: "LDSS 3", ...p3?.domainScores },
+    ];
+
+    return { data, domains };
+  }, [chartStudentId, classSessions]);
+
+  // Set default checked domains once domains are loaded
+  React.useEffect(() => {
+    if (chartDataAndDomains.domains.length > 0) {
+      const initial: Record<string, boolean> = {};
+      chartDataAndDomains.domains.forEach((d, i) => {
+        // Check first 5 domains by default to avoid a cluttered initial graph
+        initial[d] = i < 5;
+      });
+      setCheckedDomains(initial);
+    }
+  }, [chartDataAndDomains.domains]);
+
+  const hasCompletedSessions = React.useMemo(() => {
+    return classSessions.some((s) => s.status?.toUpperCase() === "COMPLETED");
+  }, [classSessions]);
+
+  // Students with completed assessments
+  const completedStudents = React.useMemo(() => {
+    const ids = new Set(classSessions.filter(s => s.status?.toUpperCase() === "COMPLETED").map(s => s.studentId));
+    return students.filter(s => ids.has(s.id));
+  }, [students, classSessions]);
+
+  // Auto-select chart student
+  React.useEffect(() => {
+    if (completedStudents.length > 0 && !chartStudentId) {
+      setChartStudentId(completedStudents[0].id);
+    }
+  }, [completedStudents, chartStudentId]);
+
   return (
     <div className="space-y-6">
-      {/* Selection Panel Grid Layout */}
-      <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm relative z-40">
-        <h3 className="text-sm font-black text-gray-800 uppercase tracking-widest mb-4">
-          Pilihan Kriteria Screening
-        </h3>
+      {/* Active Form Mode with Back button */}
+      {selectedClass && selectedStudent && selectedAge ? (() => {
+        const activePeriodKey = ldssSettings?.activePeriodKey || "LDSS_1";
+        const studentActiveSession = classSessions.find(
+          s => s.studentId === selectedStudent.id && s.periodKey === activePeriodKey
+        );
+        const isCompleted = studentActiveSession?.status?.toUpperCase() === "COMPLETED";
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Dropdown 1: Pilih Kelas */}
-          <div ref={classDropdownRef} className="relative space-y-1.5 text-left">
-            <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider ml-1">
-              Pilih Kelas
-            </label>
-            <button
-              type="button"
-              onClick={() => !loadingClasses && setIsClassDropdownOpen(!isClassDropdownOpen)}
-              className="w-full px-4 py-3 bg-white border border-gray-150 rounded-xl text-xs font-bold text-gray-800 shadow-sm hover:bg-slate-50 flex items-center justify-between cursor-pointer focus:ring-2 focus:ring-indigo-100 transition-all h-[44px]"
-            >
-              <span className="truncate">
-                {loadingClasses
-                  ? "Memuat Kelas..."
-                  : selectedClass
-                  ? `${selectedClass.name} (${selectedClass.academicYear})`
-                  : "Pilih Kelas"}
-              </span>
-              <ChevronDown size={14} className="text-gray-400 shrink-0" />
-            </button>
-
-            {/* Float Portal Dropdown */}
-            <AnimatePresence>
-              {isClassDropdownOpen && (
-                <motion.div
-                  initial={{ opacity: 0, y: 5 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 5 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute z-50 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-60 overflow-y-auto"
-                >
-                  {classes.length === 0 ? (
-                    <div className="px-4 py-3 text-xs text-gray-400 italic text-center font-semibold">
-                      Tidak ada kelas aktif ditemukan.
-                    </div>
-                  ) : (
-                    <div className="py-1">
-                      {classes.map((c) => (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={() => handleClassSelect(c)}
-                          className={`w-full px-4 py-2.5 text-left text-xs font-bold flex items-center justify-between hover:bg-indigo-50/50 transition-colors ${
-                            selectedClass?.id === c.id
-                              ? "bg-indigo-50/30 text-indigo-600"
-                              : "text-gray-700"
-                          }`}
-                        >
-                          <span>
-                            {c.name} ({c.academicYear})
-                          </span>
-                          {selectedClass?.id === c.id && (
-                            <Check size={14} className="text-indigo-600" />
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          {/* Dropdown 2: Pilih Siswa with navigation buttons */}
-          <div ref={studentDropdownRef} className="relative space-y-1.5 text-left">
-            <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider ml-1">
-              Pilih Siswa
-            </label>
-            <div className="flex items-center gap-1.5">
+        return (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
               <button
-                type="button"
-                disabled={!selectedStudent || students.length <= 1}
-                onClick={handlePrevStudent}
-                className={`p-2.5 bg-white border border-gray-150 rounded-xl text-gray-600 hover:bg-slate-50 hover:text-indigo-600 focus:ring-2 focus:ring-indigo-100 transition-all h-[44px] w-[44px] flex items-center justify-center shrink-0 shadow-sm cursor-pointer disabled:bg-slate-50 disabled:border-gray-100 disabled:text-gray-300 disabled:cursor-not-allowed`}
-                title="Siswa Sebelumnya"
+                onClick={() => {
+                  setSelectedStudent(null);
+                  setSelectedAge(null);
+                }}
+                className="px-4 py-2 bg-white border border-gray-150 hover:bg-slate-50 text-xs font-black text-slate-700 rounded-xl flex items-center gap-2 shadow-sm cursor-pointer transition-all"
               >
                 <ChevronLeft size={16} className="stroke-[2.5]" />
+                <span>Kembali ke Rekap Kelas</span>
               </button>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-400">
+                <span>Siswa: <strong className="text-gray-800">{selectedStudent.name}</strong></span>
+                <span className="text-gray-200">|</span>
+                {isCompleted || ldssSettings?.status === 'CLOSED' ? (
+                  <span>Usia: <strong className="text-gray-800">{selectedAge} Tahun</strong></span>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <span>Usia:</span>
+                    <select
+                      value={selectedAge}
+                      onChange={(e) => setSelectedAge(Number(e.target.value) as LdssAge)}
+                      className="bg-slate-50 hover:bg-slate-100 border border-gray-200 rounded-lg px-2 py-1 text-xs font-black text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer transition-all"
+                    >
+                      {[6, 7, 8, 9, 10, 11, 12].map((a) => (
+                        <option key={a} value={a}>
+                          {a} Tahun
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+            </div>
 
-              <div className="flex-1 min-w-0">
+            <LdssAssessmentForm
+              student={selectedStudent}
+              classInfo={selectedClass}
+              age={selectedAge}
+              academicYear={activeYear}
+              periodKey={ldssSettings?.activePeriodKey}
+              periodLabel={ldssSettings?.activePeriodLabel}
+              periodStatus={ldssSettings?.status}
+              onSaveOrComplete={fetchClassSessions}
+            />
+          </div>
+        );
+      })() : (
+        /* Class Overview Dashboard Mode */
+        <div className="space-y-6">
+          {/* Criteria Selection Header */}
+          <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm relative z-45">
+            <h3 className="text-sm font-black text-gray-800 uppercase tracking-widest mb-4">
+              Pilihan Kriteria Screening
+            </h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Dropdown 1: Pilih Kelas */}
+              <div ref={classDropdownRef} className="relative space-y-1.5 text-left">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider ml-1">
+                  Pilih Kelas
+                </label>
                 <button
                   type="button"
-                  disabled={!selectedClass}
-                  onClick={() => setIsStudentDropdownOpen(!isStudentDropdownOpen)}
-                  className={`w-full px-3.5 py-3 bg-white border rounded-xl text-xs font-bold shadow-sm flex items-center justify-between transition-all h-[44px] ${
-                    !selectedClass
-                      ? "bg-slate-50 border-gray-100 text-gray-400 cursor-not-allowed"
-                      : "border-gray-150 text-gray-800 hover:bg-slate-50 cursor-pointer focus:ring-2 focus:ring-indigo-100"
-                  }`}
+                  onClick={() => !loadingClasses && setIsClassDropdownOpen(!isClassDropdownOpen)}
+                  className="w-full px-4 py-3 bg-white border border-gray-150 rounded-xl text-xs font-bold text-gray-800 shadow-sm hover:bg-slate-50 flex items-center justify-between cursor-pointer focus:ring-2 focus:ring-indigo-100 transition-all h-[44px]"
                 >
                   <span className="truncate">
-                    {loadingStudents
-                      ? "Memuat Siswa..."
-                      : selectedStudent
-                      ? selectedStudent.name
-                      : !selectedClass
-                      ? "Pilih kelas terlebih dahulu"
-                      : "Pilih Siswa"}
+                    {loadingClasses
+                      ? "Memuat Kelas..."
+                      : selectedClass
+                      ? `${selectedClass.name} (${selectedClass.academicYear})`
+                      : "Pilih Kelas"}
                   </span>
                   <ChevronDown size={14} className="text-gray-400 shrink-0" />
                 </button>
-              </div>
 
-              <button
-                type="button"
-                disabled={!selectedStudent || students.length <= 1}
-                onClick={handleNextStudent}
-                className={`p-2.5 bg-white border border-gray-150 rounded-xl text-gray-600 hover:bg-slate-50 hover:text-indigo-600 focus:ring-2 focus:ring-indigo-100 transition-all h-[44px] w-[44px] flex items-center justify-center shrink-0 shadow-sm cursor-pointer disabled:bg-slate-50 disabled:border-gray-100 disabled:text-gray-300 disabled:cursor-not-allowed`}
-                title="Siswa Berikutnya"
-              >
-                <ChevronRight size={16} className="stroke-[2.5]" />
-              </button>
-            </div>
-
-            {/* Float Portal Dropdown with Search, Max Height & Internal Scroll */}
-            <AnimatePresence>
-              {isStudentDropdownOpen && selectedClass && (
-                <motion.div
-                  initial={{ opacity: 0, y: 5 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 5 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute z-50 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl flex flex-col max-h-72"
-                >
-                  {/* Search Header inside dropdown */}
-                  <div className="p-2 border-b border-gray-100 sticky top-0 bg-white z-10">
-                    <div className="relative">
-                      <input
-                        type="text"
-                        placeholder="Cari siswa..."
-                        value={studentSearch}
-                        onChange={(e) => setStudentSearch(e.target.value)}
-                        className="w-full pl-8 pr-4 py-1.5 bg-slate-50 border border-gray-150 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                        onClick={(e) => e.stopPropagation()} // Prevent closing dropdown on input click
-                      />
-                      <Search size={12} className="absolute left-2.5 top-2.5 text-gray-400" />
-                    </div>
-                  </div>
-
-                  {/* Scrollable list */}
-                  <div className="overflow-y-auto flex-1 max-h-56 py-1">
-                    {filteredStudents.length === 0 ? (
-                      <div className="px-4 py-4 text-xs text-gray-400 italic text-center font-semibold">
-                        Siswa tidak ditemukan.
-                      </div>
-                    ) : (
-                      filteredStudents.map((s) => (
-                        <button
-                          key={s.id}
-                          type="button"
-                          onClick={() => handleStudentSelect(s)}
-                          className={`w-full px-4 py-2.5 text-left text-xs font-bold flex items-center justify-between hover:bg-indigo-50/50 transition-colors ${
-                            selectedStudent?.id === s.id
-                              ? "bg-indigo-50/30 text-indigo-600"
-                              : "text-gray-700"
-                          }`}
-                        >
-                          <span className="truncate">{s.name}</span>
-                          {selectedStudent?.id === s.id && (
-                            <Check size={14} className="text-indigo-600" />
-                          )}
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          {/* Dropdown 3: Pilih Usia */}
-          <div ref={ageDropdownRef} className="relative space-y-1.5 text-left">
-            <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider ml-1">
-              Pilih Usia
-            </label>
-            <button
-              type="button"
-              disabled={!selectedStudent}
-              onClick={() => setIsAgeDropdownOpen(!isAgeDropdownOpen)}
-              className={`w-full px-4 py-3 bg-white border rounded-xl text-xs font-bold shadow-sm flex items-center justify-between transition-all h-[44px] ${
-                !selectedStudent
-                  ? "bg-slate-50 border-gray-100 text-gray-400 cursor-not-allowed"
-                  : "border-gray-150 text-gray-800 hover:bg-slate-50 cursor-pointer focus:ring-2 focus:ring-indigo-100"
-              }`}
-            >
-              <span className="truncate">
-                {selectedAge ? `Usia ${selectedAge} Tahun` : "Pilih Usia"}
-              </span>
-              <ChevronDown size={14} className="text-gray-400 shrink-0" />
-            </button>
-
-            {/* Read-only helper text */}
-            <p className="text-[10px] text-slate-400 font-bold ml-1 flex items-center gap-1 mt-1">
-              <Info size={11} className="text-slate-400 shrink-0" />
-              Pilih usia instrumen sesuai kebutuhan screening.
-            </p>
-
-            {/* Float Portal Dropdown */}
-            <AnimatePresence>
-              {isAgeDropdownOpen && selectedStudent && (
-                <motion.div
-                  initial={{ opacity: 0, y: 5 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 5 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute z-50 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-60 overflow-y-auto py-1"
-                >
-                  {agesList.map((age) => (
-                    <button
-                      key={age}
-                      type="button"
-                      onClick={() => handleAgeSelect(age)}
-                      className={`w-full px-4 py-2.5 text-left text-xs font-bold flex items-center justify-between hover:bg-indigo-50/50 transition-colors ${
-                        selectedAge === age
-                          ? "bg-indigo-50/30 text-indigo-600"
-                          : "text-gray-700"
-                      }`}
+                <AnimatePresence>
+                  {isClassDropdownOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 5 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute z-50 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-60 overflow-y-auto"
                     >
-                      <span>Usia {age} Tahun</span>
-                      {selectedAge === age && (
-                        <Check size={14} className="text-indigo-600" />
+                      {classes.length === 0 ? (
+                        <div className="px-4 py-3 text-xs text-gray-400 italic text-center font-semibold">
+                          Tidak ada kelas aktif ditemukan.
+                        </div>
+                      ) : (
+                        <div className="py-1">
+                          {classes.map((c) => (
+                            <button
+                              key={c.id}
+                              type="button"
+                              onClick={() => handleClassSelect(c)}
+                              className={`w-full px-4 py-2.5 text-left text-xs font-bold flex items-center justify-between hover:bg-indigo-50/50 transition-colors ${
+                                selectedClass?.id === c.id
+                                  ? "bg-indigo-50/30 text-indigo-600"
+                                  : "text-gray-700"
+                              }`}
+                            >
+                              <span>
+                                {c.name} ({c.academicYear})
+                              </span>
+                              {selectedClass?.id === c.id && (
+                                <Check size={14} className="text-indigo-600" />
+                              )}
+                            </button>
+                          ))}
+                        </div>
                       )}
-                    </button>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        </div>
-      </div>
-
-      {/* Placeholder / Empty State showing assessment detail card */}
-      <div className="relative z-10">
-        <AnimatePresence mode="wait">
-          {selectedClass && selectedStudent && selectedAge ? (
-            <motion.div
-              key="ldss-filled-form"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.25 }}
-              className="w-full"
-            >
-              <LdssAssessmentForm
-                student={selectedStudent}
-                classInfo={selectedClass}
-                age={selectedAge}
-                academicYear={activeYear}
-              />
-            </motion.div>
-          ) : (
-            <motion.div
-              key="ldss-empty-placeholder"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="bg-white rounded-3xl border border-dashed border-gray-200 p-12 shadow-sm text-center flex flex-col items-center justify-center text-slate-400 space-y-4"
-            >
-              <div className="p-4 bg-slate-50 rounded-2xl text-slate-400 border border-slate-100">
-                <User size={24} />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
-              <div className="space-y-1 max-w-sm">
-                <p className="text-sm font-black text-gray-700">Asesmen LDSS Siswa</p>
-                <p className="text-xs text-gray-400 font-medium leading-relaxed">
-                  Silakan tentukan pilihan Kelas, Siswa, dan Usia di atas untuk memulai atau meninjau screening instrumen.
+
+              {/* Disabled/Helper info for Student Selection when class not loaded */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-gray-100 flex items-center gap-3 md:col-span-2">
+                <Info size={18} className="text-indigo-500 shrink-0" />
+                <p className="text-xs font-bold text-slate-500 leading-relaxed text-left">
+                  {selectedClass 
+                    ? `Kelas ${selectedClass.name} aktif dipilih. Di bawah adalah rekapitulasi 3 kali screening tahun ini. Anda dapat memulai atau mengubah draft untuk masing-masing siswa langsung dari tabel.`
+                    : "Pilih Kelas terlebih dahulu untuk melihat tabel tracking dan grafik perkembangan seluruh siswa."}
                 </p>
               </div>
-            </motion.div>
+            </div>
+          </div>
+
+          {selectedClass ? (
+            <div className="space-y-6">
+              {/* Table Card */}
+              <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden text-left">
+                <div className="px-6 py-5 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <h3 className="text-base font-black text-gray-950 tracking-tight flex items-center gap-2">
+                      <ClipboardCheck className="text-indigo-600 shrink-0" size={18} />
+                      Status Pengisian LDSS Kelas: {selectedClass.name}
+                    </h3>
+                    <p className="text-xs text-slate-400 font-bold">
+                      Tabel pelacakan asesmen berkala untuk tiga periode (LDSS 1, LDSS 2, LDSS 3) tahun ajaran aktif.
+                    </p>
+                  </div>
+                  {ldssSettings && (
+                    <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-100 text-indigo-800 px-3 py-1.5 rounded-xl text-xs font-black w-fit">
+                      <CalendarDays size={14} className="text-indigo-600" />
+                      <span>Periode Aktif: {ldssSettings.activePeriodLabel} • {ldssSettings.status === 'OPEN' ? 'TERBUKA' : 'DITUTUP'}</span>
+                    </div>
+                  )}
+                </div>
+
+                {loadingSessions || loadingStudents ? (
+                  <div className="p-16 text-center flex flex-col items-center justify-center space-y-3">
+                    <Loader2 className="animate-spin text-indigo-600" size={32} />
+                    <p className="text-xs text-slate-400 font-bold">Memuat rekapitulasi data kelas...</p>
+                  </div>
+                ) : students.length === 0 ? (
+                  <div className="p-16 text-center text-slate-400 italic text-xs font-semibold">
+                    Tidak ada siswa aktif ditemukan di kelas ini.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-50 border-b border-gray-100 text-[10px] font-black text-gray-400 uppercase tracking-wider">
+                        <tr>
+                          <th className="py-3 px-4 w-12 text-center">No</th>
+                          <th className="py-3 px-4 min-w-[180px]">Nama Siswa</th>
+                          <th className="py-3 px-4 w-20 text-center">Usia</th>
+                          <th className="py-3 px-4 text-center">LDSS 1</th>
+                          <th className="py-3 px-4 text-center">LDSS 2</th>
+                          <th className="py-3 px-4 text-center">LDSS 3</th>
+                          <th className="py-3 px-4 min-w-[140px]">Terakhir Diperbarui</th>
+                          <th className="py-3 px-4 text-center w-36">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {students.map((student, idx) => {
+                          const computedAge = calculateStudentAge(student.birthDate);
+                          
+                          // Find assessments
+                          const s1 = classSessions.find(s => s.studentId === student.id && s.periodKey === "LDSS_1");
+                          const s2 = classSessions.find(s => s.studentId === student.id && s.periodKey === "LDSS_2");
+                          const s3 = classSessions.find(s => s.studentId === student.id && s.periodKey === "LDSS_3");
+
+                          // Find active period session and determine action state
+                          const activePeriodKey = ldssSettings?.activePeriodKey || "LDSS_1";
+                          const activeSession = classSessions.find(s => s.studentId === student.id && s.periodKey === activePeriodKey);
+
+                          // Last updated session
+                          const allStudSessions = [s1, s2, s3].filter(Boolean) as LdssSessionAssessment[];
+                          allStudSessions.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+                          const latestSession = allStudSessions[0];
+
+                          const renderPeriodStatus = (sess: LdssSessionAssessment | undefined) => {
+                            if (!sess) {
+                              return (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-500 border border-slate-200 rounded-full text-[10px] font-bold">
+                                  Belum Diisi
+                                </span>
+                              );
+                            }
+                            
+                            const isCompleted = sess.status?.toUpperCase() === "COMPLETED";
+                            if (isCompleted) {
+                              const percent = sess.scoringSummary?.percentCompleted || 0;
+                              return (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[10px] font-bold">
+                                  <CheckCircle2 size={10} className="text-emerald-600 shrink-0" />
+                                  Selesai ({percent}%)
+                                </span>
+                              );
+                            } else {
+                              const percent = sess.scoringSummary?.percentCompleted || 0;
+                              const isMyDraft = sess.createdByUid === profile?.uid;
+                              return (
+                                <div className="inline-flex items-center gap-1.5">
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-[10px] font-bold">
+                                    <Pencil size={10} className="text-amber-500 shrink-0" />
+                                    Draf ({percent}%)
+                                  </span>
+                                  {isMyDraft && (
+                                    <button
+                                      onClick={() => handleDeleteDraft(sess.id)}
+                                      className="p-1 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-rose-100"
+                                      title="Hapus Draft Milik Saya"
+                                    >
+                                      <Trash2 size={12} />
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            }
+                          };
+
+                          const teacherAge = activeSession?.instrumentAge || latestSession?.instrumentAge;
+
+                          return (
+                            <tr key={student.id} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="py-3.5 px-4 text-center font-bold text-slate-400">{idx + 1}</td>
+                              <td className="py-3.5 px-4 font-black text-slate-800">{student.name}</td>
+                              <td className="py-3.5 px-4 text-center font-bold text-slate-600">
+                                {teacherAge ? (
+                                  `${teacherAge} Th`
+                                ) : (
+                                  <span className="text-slate-400 font-semibold italic">Belum diisi</span>
+                                )}
+                              </td>
+                              <td className="py-3.5 px-4 text-center">{renderPeriodStatus(s1)}</td>
+                              <td className="py-3.5 px-4 text-center">{renderPeriodStatus(s2)}</td>
+                              <td className="py-3.5 px-4 text-center">{renderPeriodStatus(s3)}</td>
+                              <td className="py-3.5 px-4 text-slate-400 font-bold">
+                                {latestSession 
+                                  ? `${new Date(latestSession.updatedAt).toLocaleDateString("id-ID")} - ${latestSession.updatedBy?.name || latestSession.createdBy?.name || "Guru"}`
+                                  : "-"
+                                }
+                              </td>
+                              <td className="py-3.5 px-4 text-center">
+                                <button
+                                  onClick={() => {
+                                    setSelectedStudent(student);
+                                    // Use active session instrument age, fallback to latest or computed age
+                                    setSelectedAge(activeSession?.instrumentAge || latestSession?.instrumentAge || computedAge);
+                                  }}
+                                  className={`px-3 py-1.5 rounded-xl text-[11px] font-black tracking-wide flex items-center justify-center gap-1 w-full border transition-all cursor-pointer ${
+                                    activeSession?.status?.toUpperCase() === "COMPLETED"
+                                      ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-250"
+                                      : activeSession
+                                      ? "bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-sm"
+                                      : ldssSettings?.status === "CLOSED"
+                                      ? "bg-slate-50 text-slate-400 border-slate-100 cursor-not-allowed"
+                                      : "bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-650 shadow-sm"
+                                  }`}
+                                  disabled={!activeSession && ldssSettings?.status === "CLOSED"}
+                                >
+                                  {activeSession?.status?.toUpperCase() === "COMPLETED" ? (
+                                    <>
+                                      <Eye size={12} />
+                                      <span>Tinjau</span>
+                                    </>
+                                  ) : activeSession ? (
+                                    <>
+                                      <Pencil size={12} />
+                                      <span>Edit Draf</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Plus size={12} />
+                                      <span>Mulai</span>
+                                    </>
+                                  )}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Progress Chart Card */}
+              <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm text-left space-y-6">
+                <div className="border-b border-gray-100 pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <h3 className="text-base font-black text-gray-950 tracking-tight flex items-center gap-2">
+                      <TrendingUp className="text-indigo-600 shrink-0" size={18} />
+                      Perkembangan LDSS Kelas / Siswa
+                    </h3>
+                    <p className="text-xs text-slate-400 font-bold">
+                      Grafik tren perkembangan skor pencapaian per domain/komponen dalam satu tahun ajaran (diambil dari data Lengkap).
+                    </p>
+                  </div>
+
+                  {completedStudents.length > 0 && (
+                    <div className="flex items-center gap-2 text-xs font-bold">
+                      <span className="text-slate-400 font-bold whitespace-nowrap">Pilih Siswa:</span>
+                      <select
+                        value={chartStudentId}
+                        onChange={(e) => setChartStudentId(e.target.value)}
+                        className="bg-slate-50 border border-gray-150 rounded-xl px-3 py-2 text-xs font-black text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-150 h-[38px] cursor-pointer"
+                      >
+                        {completedStudents.map((cs) => (
+                          <option key={cs.id} value={cs.id}>
+                            {cs.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                {!hasCompletedSessions ? (
+                  <div className="py-12 px-6 rounded-2xl bg-slate-50/50 border border-dashed border-gray-150 text-center flex flex-col items-center justify-center text-slate-400 space-y-3">
+                    <div className="p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
+                      <TrendingUp size={20} className="text-slate-300" />
+                    </div>
+                    <div className="max-w-xs space-y-0.5">
+                      <p className="text-xs font-black text-slate-600">Grafik Tidak Tersedia</p>
+                      <p className="text-[11px] font-semibold leading-relaxed">
+                        Belum ada data asesmen dengan status <strong className="text-slate-500">Selesai (Completed)</strong> di kelas ini. Grafik akan aktif secara otomatis setelah asesmen difinalisasi.
+                      </p>
+                    </div>
+                  </div>
+                ) : chartDataAndDomains.data.length === 0 ? (
+                  <div className="text-center text-slate-400 py-12 text-xs font-semibold">
+                    Silakan tentukan pilihan siswa yang memiliki asesmen Selesai untuk memplot grafik.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+                    {/* Checkboxes selector on the left (1 column) */}
+                    <div className="space-y-3 lg:border-r border-gray-100 lg:pr-6 max-h-80 overflow-y-auto">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider sticky top-0 bg-white pb-1.5 z-10 border-b border-gray-50">
+                        Filter Domain ({chartDataAndDomains.domains.length})
+                      </p>
+                      <div className="space-y-1.5">
+                        {chartDataAndDomains.domains.map((domKey) => {
+                          const capitalizedName = domKey.replace(/_/g, " ").replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase());
+                          return (
+                            <label key={domKey} className="flex items-start gap-2.5 px-2 py-1.5 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors text-[11px] font-bold text-slate-600">
+                              <input
+                                type="checkbox"
+                                checked={!!checkedDomains[domKey]}
+                                onChange={() => setCheckedDomains(prev => ({ ...prev, [domKey]: !prev[domKey] }))}
+                                className="mt-0.5 h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                              />
+                              <span className="leading-tight truncate">{capitalizedName}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Interactive Chart on the right (3 columns) */}
+                    <div className="lg:col-span-3 h-[320px] w-full min-w-0">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart
+                          data={chartDataAndDomains.data}
+                          margin={{ top: 10, right: 30, left: -20, bottom: 5 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                          <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 11, fontWeight: 'bold', fill: '#94a3b8' }} />
+                          <YAxis domain={[0, 100]} tickLine={false} axisLine={false} tick={{ fontSize: 11, fontWeight: 'bold', fill: '#94a3b8' }} unit="%" />
+                          <ChartTooltip
+                            contentStyle={{ backgroundColor: "#ffffff", borderRadius: "16px", border: "1px solid #e2e8f0", boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.05)", fontSize: "11px", fontWeight: "600" }}
+                            formatter={(value: any, name: string) => [`${value}%`, name.replace(/_/g, " ").toUpperCase()]}
+                          />
+                          <ChartLegend wrapperStyle={{ fontSize: "10px", fontWeight: "bold", paddingTop: "15px" }} />
+                          {chartDataAndDomains.domains.map((domKey, idx) => {
+                            if (!checkedDomains[domKey]) return null;
+                            const colors = [
+                              "#6366f1", // Indigo
+                              "#10b981", // Emerald
+                              "#f59e0b", // Amber
+                              "#ef4444", // Rose
+                              "#8b5cf6", // Violet
+                              "#06b6d4", // Cyan
+                              "#ec4899", // Pink
+                              "#14b8a6", // Teal
+                              "#f97316", // Orange
+                              "#22c55e", // Green
+                              "#3b82f6", // Blue
+                              "#eab308", // Yellow
+                            ];
+                            const strokeColor = colors[idx % colors.length];
+                            const labelName = domKey.replace(/_/g, " ").toUpperCase();
+                            return (
+                              <Line
+                                key={domKey}
+                                type="monotone"
+                                dataKey={domKey}
+                                name={labelName}
+                                stroke={strokeColor}
+                                strokeWidth={2.5}
+                                activeDot={{ r: 6 }}
+                                connectNulls
+                              />
+                            );
+                          })}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            /* Empty state selection card when no class is selected */
+            <div className="bg-white rounded-3xl border border-dashed border-gray-200 p-12 shadow-sm text-center flex flex-col items-center justify-center text-slate-400 space-y-4">
+              <div className="p-4 bg-slate-50 rounded-2xl text-slate-400 border border-slate-100">
+                <GraduationCap size={24} className="text-indigo-500" />
+              </div>
+              <div className="space-y-1 max-w-sm">
+                <p className="text-sm font-black text-gray-700">Rekapitulasi Kelas Elementary</p>
+                <p className="text-xs text-gray-400 font-medium leading-relaxed">
+                  Silakan pilih salah satu Kelas di atas untuk menampilkan daftar pengisian LDSS 1, 2, 3 dan melacak kemajuan siswa.
+                </p>
+              </div>
+            </div>
           )}
-        </AnimatePresence>
-      </div>
+        </div>
+      )}
     </div>
   );
 }

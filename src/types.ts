@@ -724,6 +724,7 @@ export interface Student {
   grade?: number;
   academicYear?: string;
   email?: string;
+  birthDate?: string;
 }
 
 export interface Enrollment {
@@ -1755,7 +1756,7 @@ export type LdssSessionAssessment = {
   academicYearLabel: string;
   instrumentAge: LdssAge;
   assessmentDate: string; // YYYY-MM-DD, wajib
-  status: 'draft' | 'completed';
+  status: 'draft' | 'completed' | 'DRAFT' | 'COMPLETED';
   responses: Record<string, LdssSessionResponse>;
   sectionProgress: Record<string, LdssSessionProgress>;
   generalNotes: string;
@@ -1785,6 +1786,17 @@ export type LdssSessionAssessment = {
     name?: string;
     reopenedAt: string;
   }[] | null;
+
+  // New period tracking & schema minimal attributes
+  periodKey?: 'LDSS_1' | 'LDSS_2' | 'LDSS_3';
+  periodLabel?: 'LDSS 1' | 'LDSS 2' | 'LDSS 3';
+  unit?: 'ELEMENTARY';
+  academicYear?: string;
+  studentName?: string;
+  studentAge?: number;
+  domainScores?: Record<string, number | null>;
+  createdByUid?: string;
+  createdByName?: string;
 };
 
 // --- Three-Way Conference & SMART Goal Tracker Types ---

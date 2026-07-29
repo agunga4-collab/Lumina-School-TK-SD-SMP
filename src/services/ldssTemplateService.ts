@@ -7,7 +7,8 @@ import {
   query, 
   where, 
   writeBatch,
-  runTransaction
+  runTransaction,
+  deleteDoc
 } from "firebase/firestore";
 import { db, handleFirestoreError } from "../lib/firebase";
 import { LdssTemplate, LdssAge, LdssTemplateStatus, LdssAssessment, LdssSessionAssessment } from "../types";
@@ -627,6 +628,122 @@ export async function saveLdssSession(session: LdssSessionAssessment): Promise<v
   } catch (error) {
     handleFirestoreError(error, "write", `ldss_assessments/${session.id}`);
     throw error;
+  }
+}
+
+export interface LdssSettings {
+  activePeriodKey: 'LDSS_1' | 'LDSS_2' | 'LDSS_3';
+  activePeriodLabel: 'LDSS 1' | 'LDSS 2' | 'LDSS 3';
+  status: 'OPEN' | 'CLOSED';
+}
+
+const SETTINGS_COLLECTION = "ldss_settings";
+const SETTINGS_DOC_ID = "global";
+
+/**
+ * Fetch global LDSS period settings from Firestore
+ */
+export async function getLdssSettings(): Promise<LdssSettings> {
+  try {
+    const docRef = doc(db, SETTINGS_COLLECTION, SETTINGS_DOC_ID);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      return docSnap.data() as LdssSettings;
+    }
+    return {
+      activePeriodKey: 'LDSS_1',
+      activePeriodLabel: 'LDSS 1',
+      status: 'OPEN',
+    };
+  } catch (error) {
+    console.error("Failed to fetch LDSS settings, returning default:", error);
+    return {
+      activePeriodKey: 'LDSS_1',
+      activePeriodLabel: 'LDSS 1',
+      status: 'OPEN',
+    };
+  }
+}
+
+/**
+ * Save global LDSS period settings to Firestore (Admin only)
+ */
+export async function saveLdssSettings(settings: LdssSettings): Promise<void> {
+  try {
+    const docRef = doc(db, SETTINGS_COLLECTION, SETTINGS_DOC_ID);
+    await setDoc(docRef, settings);
+  } catch (error) {
+    handleFirestoreError(error, "write", `${SETTINGS_COLLECTION}/${SETTINGS_DOC_ID}`);
+    throw error;
+  }
+}
+
+/**
+ * Delete an LDSS draft assessment session with strict security rules
+ */
+export async function deleteLdssDraft(
+  sessionId: string,
+  currentUserId: string,
+  userRole: string,
+  userClasses: string[]
+): Promise<void> {
+  try {
+    const docRef = doc(db, "ldss_assessments", sessionId);
+    const docSnap = await getDoc(docRef);
+    if (!docSnap.exists()) {
+      throw new Error("Draft tidak ditemukan.");
+    }
+    const data = docSnap.data();
+
+    const createdByUid = data.createdByUid || data.createdBy?.uid;
+    const status = (data.status || "").toUpperCase();
+    const unit = (data.unit || data.unitId || "").toUpperCase();
+    const classId = data.classId;
+
+    if (createdByUid !== currentUserId) {
+      throw new Error("Anda tidak memiliki izin untuk menghapus draft ini.");
+    }
+    if (status !== 'DRAFT') {
+      throw new Error("Hanya draft yang dapat dihapus.");
+    }
+    if (unit !== 'ELEMENTARY') {
+      throw new Error("Penghapusan hanya diizinkan untuk unit ELEMENTARY.");
+    }
+
+    const isAdminUser = userRole === "SUPER_ADMIN" || userRole === "HEAD_UNIT";
+    if (!isAdminUser && userClasses && !userClasses.includes(classId)) {
+      throw new Error("Anda tidak memiliki akses ke kelas ini.");
+    }
+
+    await deleteDoc(docRef);
+  } catch (error) {
+    handleFirestoreError(error, "delete", `ldss_assessments/${sessionId}`);
+    throw error;
+  }
+}
+
+/**
+ * Fetch all session assessments for a class and academic year
+ */
+export async function getClassLdssSessions(
+  classId: string,
+  academicYear: string
+): Promise<LdssSessionAssessment[]> {
+  try {
+    const q = query(
+      collection(db, "ldss_assessments"),
+      where("classId", "==", classId),
+      where("academicYearId", "==", academicYear)
+    );
+    const querySnapshot = await getDocs(q);
+    const sessions: LdssSessionAssessment[] = [];
+    querySnapshot.forEach((docSnap) => {
+      sessions.push({ id: docSnap.id, ...docSnap.data() } as LdssSessionAssessment);
+    });
+    return sessions;
+  } catch (error) {
+    console.error("Failed to fetch class LDSS sessions:", error);
+    return [];
   }
 }
 

@@ -205,13 +205,21 @@ interface LdssAssessmentFormProps {
   classInfo: Class;
   age: LdssAge;
   academicYear: string;
+  periodKey?: 'LDSS_1' | 'LDSS_2' | 'LDSS_3';
+  periodLabel?: 'LDSS 1' | 'LDSS 2' | 'LDSS 3';
+  periodStatus?: 'OPEN' | 'CLOSED';
+  onSaveOrComplete?: () => void;
 }
 
 export default function LdssAssessmentForm({
   student,
   classInfo,
   age,
-  academicYear
+  academicYear,
+  periodKey,
+  periodLabel,
+  periodStatus = 'OPEN',
+  onSaveOrComplete
 }: LdssAssessmentFormProps) {
   const { profile } = useAuth();
   const userEmail = profile?.email || "teacher@lazuardi.sch.id";
@@ -245,7 +253,7 @@ export default function LdssAssessmentForm({
   const [pendingRecoveryData, setPendingRecoveryData] = React.useState<any>(null);
 
   // Read-only checker
-  const isReadOnly = activeSession?.status === "completed";
+  const isReadOnly = activeSession?.status?.toUpperCase() === "COMPLETED" || activeSession?.status === "completed" || periodStatus === "CLOSED";
 
   // Loading and Initializing Data
   React.useEffect(() => {
@@ -270,20 +278,22 @@ export default function LdssAssessmentForm({
         const existingSessions = await getStudentLdssSessions(student.id, age, academicYear);
         setSessions(existingSessions);
 
-        // 3. Find any session that has status 'draft'
-        const draftSession = existingSessions.find((s) => s.status === "draft");
+        // 3. Find any session that matches the periodKey
+        const targetPeriodKey = periodKey || "LDSS_1";
+        const matchedSession = existingSessions.find(
+          (s) => s.periodKey === targetPeriodKey || (s.periodLabel && s.periodLabel.replace(" ", "_") === targetPeriodKey)
+        );
 
-        if (draftSession) {
-          // If there is a draft, we set it as the active session and prompt the user to continue or start a new session
-          setActiveSession(draftSession);
-          setShowSessionSelector(true);
+        if (matchedSession) {
+          setActiveSession(matchedSession);
+          setShowSessionSelector(false);
 
           const initialScores: Record<string, "YA" | "TIDAK" | null> = {};
           const initialNotes: Record<string, string> = {};
 
           template.domains.forEach((domain) => {
             domain.indicators.forEach((ind) => {
-              const resp = draftSession.responses?.[ind.id];
+              const resp = matchedSession.responses?.[ind.id];
               initialScores[ind.id] = resp?.score !== undefined ? resp.score : null;
               initialNotes[ind.id] = resp?.note || "";
             });
@@ -291,83 +301,128 @@ export default function LdssAssessmentForm({
 
           setScores(initialScores);
           setNotes(initialNotes);
-          setGeneralNotes(draftSession.generalNotes || "");
+          setGeneralNotes(matchedSession.generalNotes || "");
 
-          // Check for local storage recovery
-          const localDraftStr = sessionStorage.getItem(`ldss_draft_${draftSession.id}`);
-          if (localDraftStr) {
-            const localDraft = JSON.parse(localDraftStr);
-            const hasDiff = JSON.stringify(localDraft.scores) !== JSON.stringify(initialScores) ||
-                            JSON.stringify(localDraft.notes) !== JSON.stringify(initialNotes) ||
-                            localDraft.generalNotes !== draftSession.generalNotes;
-            if (hasDiff) {
-              setPendingRecoveryData(localDraft);
-              setShowRecoveryBanner(true);
+          // Check for local storage recovery if draft
+          const isSessionDraft = (matchedSession.status || "").toUpperCase() === "DRAFT" || matchedSession.status === "draft";
+          if (isSessionDraft) {
+            const localDraftStr = sessionStorage.getItem(`ldss_draft_${matchedSession.id}`);
+            if (localDraftStr) {
+              const localDraft = JSON.parse(localDraftStr);
+              const hasDiff = JSON.stringify(localDraft.scores) !== JSON.stringify(initialScores) ||
+                              JSON.stringify(localDraft.notes) !== JSON.stringify(initialNotes) ||
+                              localDraft.generalNotes !== matchedSession.generalNotes;
+              if (hasDiff) {
+                setPendingRecoveryData(localDraft);
+                setShowRecoveryBanner(true);
+              }
             }
           }
 
           setIsFormInitialized(true);
         } else {
-          // If there is no draft, we automatically initialize a new draft session state
-          const sessionId = generateLdssSessionId();
-          const today = new Date().toISOString().split("T")[0];
-
-          const sectionProgress: Record<string, LdssSessionProgress> = {};
-          template.domains.forEach((d) => {
-            sectionProgress[d.id] = {
-              completed: 0,
-              total: d.indicators.length,
-              percent: 0,
+          // If no session for this period and period is closed, initialize a dummy read-only state
+          if (periodStatus === "CLOSED") {
+            const dummySession: LdssSessionAssessment = {
+              id: "closed-temp",
+              studentId: student.id,
+              studentNameSnapshot: student.name,
+              classId: classInfo.id,
+              classNameSnapshot: classInfo.name,
+              unitId: "ELEMENTARY",
+              academicYearId: academicYear,
+              academicYearLabel: `Tahun Ajaran ${academicYear}`,
+              instrumentAge: age,
+              assessmentDate: new Date().toISOString().split("T")[0],
+              status: "COMPLETED",
+              responses: {},
+              sectionProgress: {},
+              generalNotes: "Periode ini ditutup dan tidak ada pengisian sebelumnya.",
+              scoringSummary: { totalYes: 0, totalNo: 0, totalBlank: 0, percentCompleted: 0 },
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              createdBy: { email: "", uid: "", name: "" },
+              templateVersion: template.version,
             };
-          });
+            setActiveSession(dummySession);
+            setScores({});
+            setNotes({});
+            setGeneralNotes("");
+            setIsFormInitialized(true);
+            setShowSessionSelector(false);
+          } else {
+            // Automatically initialize a new draft session for this period
+            const sessionId = generateLdssSessionId();
+            const today = new Date().toISOString().split("T")[0];
 
-          const initialScores: Record<string, "YA" | "TIDAK" | null> = {};
-          const initialNotes: Record<string, string> = {};
-
-          template.domains.forEach((domain) => {
-            domain.indicators.forEach((ind) => {
-              initialScores[ind.id] = null;
-              initialNotes[ind.id] = "";
+            const sectionProgress: Record<string, LdssSessionProgress> = {};
+            template.domains.forEach((d) => {
+              sectionProgress[d.id] = {
+                completed: 0,
+                total: d.indicators.length,
+                percent: 0,
+              };
             });
-          });
 
-          const newSession: LdssSessionAssessment = {
-            id: sessionId,
-            studentId: student.id,
-            studentNameSnapshot: student.name,
-            classId: classInfo.id,
-            classNameSnapshot: classInfo.name,
-            unitId: student.currentUnit || "elementary",
-            academicYearId: academicYear,
-            academicYearLabel: `Tahun Ajaran ${academicYear}`,
-            instrumentAge: age,
-            assessmentDate: today,
-            status: "draft",
-            responses: {},
-            sectionProgress,
-            generalNotes: "",
-            scoringSummary: {
-              totalYes: 0,
-              totalNo: 0,
-              totalBlank: template.domains.reduce((sum, d) => sum + d.indicators.length, 0),
-              percentCompleted: 0,
-            },
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            createdBy: {
-              email: userEmail,
-              uid: profile?.uid,
-              name: profile?.displayName || userEmail,
-            },
-            templateVersion: template.version,
-          };
+            const initialScores: Record<string, "YA" | "TIDAK" | null> = {};
+            const initialNotes: Record<string, string> = {};
 
-          setActiveSession(newSession);
-          setScores(initialScores);
-          setNotes(initialNotes);
-          setGeneralNotes("");
-          setIsFormInitialized(true);
-          setShowSessionSelector(false);
+            template.domains.forEach((domain) => {
+              domain.indicators.forEach((ind) => {
+                initialScores[ind.id] = null;
+                initialNotes[ind.id] = "";
+              });
+            });
+
+            const newSession: LdssSessionAssessment = {
+              id: sessionId,
+              studentId: student.id,
+              studentNameSnapshot: student.name,
+              classId: classInfo.id,
+              classNameSnapshot: classInfo.name,
+              unitId: "ELEMENTARY",
+              academicYearId: academicYear,
+              academicYearLabel: `Tahun Ajaran ${academicYear}`,
+              instrumentAge: age,
+              assessmentDate: today,
+              status: "DRAFT",
+              responses: {},
+              sectionProgress,
+              generalNotes: "",
+              scoringSummary: {
+                totalYes: 0,
+                totalNo: 0,
+                totalBlank: template.domains.reduce((sum, d) => sum + d.indicators.length, 0),
+                percentCompleted: 0,
+              },
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              createdBy: {
+                email: userEmail,
+                uid: profile?.uid,
+                name: profile?.displayName || userEmail,
+              },
+              templateVersion: template.version,
+
+              // Minimal schema & period properties
+              unit: "ELEMENTARY",
+              academicYear: academicYear,
+              studentName: student.name,
+              studentAge: age,
+              periodKey: targetPeriodKey,
+              periodLabel: periodLabel || (targetPeriodKey === 'LDSS_1' ? 'LDSS 1' : targetPeriodKey === 'LDSS_2' ? 'LDSS 2' : 'LDSS 3'),
+              createdByUid: profile?.uid || "",
+              createdByName: profile?.displayName || userEmail,
+              domainScores: {},
+            };
+
+            setActiveSession(newSession);
+            setScores(initialScores);
+            setNotes(initialNotes);
+            setGeneralNotes("");
+            setIsFormInitialized(true);
+            setShowSessionSelector(false);
+          }
         }
 
         // Expand first domain by default
@@ -382,7 +437,7 @@ export default function LdssAssessmentForm({
     };
 
     initializeForm();
-  }, [student.id, age, academicYear]);
+  }, [student.id, age, academicYear, periodKey, periodStatus]);
 
   // Handle auto-saving to local storage for recovery (fail-safe)
   React.useEffect(() => {
@@ -649,6 +704,43 @@ export default function LdssAssessmentForm({
     };
   }, [activeTemplate, scores]);
 
+  // Helper to compute domain scores dynamically
+  const computeDomainScores = () => {
+    if (!activeTemplate) return {};
+    const domainScores: Record<string, number | null> = {};
+    activeTemplate.domains.forEach((dom) => {
+      let answeredCount = 0;
+      let yesCount = 0;
+      dom.indicators.forEach((ind) => {
+        const val = scores[ind.id];
+        if (val === "YA" || val === "TIDAK") {
+          answeredCount++;
+          if (val === "YA") yesCount++;
+        }
+      });
+      domainScores[dom.id] = answeredCount > 0 ? Math.round((yesCount / answeredCount) * 100) : null;
+    });
+    return domainScores;
+  };
+
+  // Helper to construct minimal schema and period tracking fields
+  const getMinimalSchemaFields = (session: LdssSessionAssessment, targetStatus: 'DRAFT' | 'COMPLETED') => {
+    const targetPeriodKey = periodKey || "LDSS_1";
+    const domainScores = computeDomainScores();
+    return {
+      periodKey: targetPeriodKey,
+      periodLabel: periodLabel || (targetPeriodKey === 'LDSS_1' ? 'LDSS 1' : targetPeriodKey === 'LDSS_2' ? 'LDSS 2' : 'LDSS 3'),
+      unit: 'ELEMENTARY' as const,
+      academicYear: academicYear,
+      studentName: student.name,
+      studentAge: age,
+      createdByUid: session.createdByUid || profile?.uid || "",
+      createdByName: session.createdByName || profile?.displayName || userEmail,
+      domainScores,
+      status: targetStatus,
+    };
+  };
+
   // Save single domain (partial save per domain accordion)
   const handleSaveSection = async (domainId: string, domainName: string) => {
     if (!activeSession || !activeTemplate) return;
@@ -696,7 +788,8 @@ export default function LdssAssessmentForm({
           email: userEmail,
           uid: profile?.uid,
           name: profile?.displayName || userEmail
-        }
+        },
+        ...getMinimalSchemaFields(activeSession, 'DRAFT')
       };
 
       await saveLdssSession(updatedSession);
@@ -715,6 +808,7 @@ export default function LdssAssessmentForm({
       setTimeout(() => {
         setSaveSectionSuccess((prev) => ({ ...prev, [domainId]: false }));
       }, 4000);
+      onSaveOrComplete?.();
     } catch (err) {
       console.error("Error saving section:", err);
       alert(`Gagal menyimpan bagian ${domainName}. Silakan coba lagi.`);
@@ -770,7 +864,8 @@ export default function LdssAssessmentForm({
           email: userEmail,
           uid: profile?.uid,
           name: profile?.displayName || userEmail
-        }
+        },
+        ...getMinimalSchemaFields(activeSession, 'DRAFT')
       };
 
       await saveLdssSession(updatedSession);
@@ -787,6 +882,7 @@ export default function LdssAssessmentForm({
 
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 4000);
+      onSaveOrComplete?.();
     } catch (err) {
       console.error("Error saving draft:", err);
       alert("Gagal menyimpan draf asesmen. Silakan coba lagi.");
@@ -834,7 +930,6 @@ export default function LdssAssessmentForm({
 
         const finalizedSession: LdssSessionAssessment = {
           ...activeSession,
-          status: "completed",
           responses,
           sectionProgress,
           generalNotes,
@@ -845,7 +940,8 @@ export default function LdssAssessmentForm({
             email: userEmail,
             uid: profile?.uid,
             name: profile?.displayName || userEmail
-          }
+          },
+          ...getMinimalSchemaFields(activeSession, 'COMPLETED')
         };
 
         await saveLdssSession(finalizedSession);
@@ -865,6 +961,7 @@ export default function LdssAssessmentForm({
 
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 4000);
+        onSaveOrComplete?.();
       } catch (err) {
         console.error("Error finalizing session:", err);
         alert("Gagal menyelesaikan asesmen. Silakan coba lagi.");
@@ -964,6 +1061,12 @@ export default function LdssAssessmentForm({
 
   return (
     <div className="space-y-6 text-left">
+      {periodStatus === "CLOSED" && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-2xl flex items-center gap-2.5 text-xs font-semibold">
+          <AlertTriangle className="text-amber-600 shrink-0" size={16} />
+          <span>Periode {periodLabel || "ini"} saat ini sedang ditutup. Anda hanya dapat melihat data.</span>
+        </div>
+      )}
       
       {/* Session Control Panel (Fail-safe, multi-session selector & date tracker) */}
       <div className="bg-slate-50 rounded-3xl border border-gray-150 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
