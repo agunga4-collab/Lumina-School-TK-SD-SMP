@@ -19,7 +19,7 @@ export default function CreateCase() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { profile } = useAuth();
-  const { activeYear } = useAcademicYear();
+  const { activeYear, activeSemester } = useAcademicYear();
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [activeCases, setActiveCases] = React.useState<any[]>([]);
   const [loadingCases, setLoadingCases] = React.useState(false);
@@ -33,7 +33,7 @@ export default function CreateCase() {
     studentName: '',
     studentId: '',
     classId: '',
-    academicYear: '2026/2027',
+    academicYear: activeYear || '',
     tier: 'Tier 1' as MTSSTier,
     status: 'OPEN' as MTSSStatus,
     date: new Date().toISOString().split('T')[0],
@@ -49,7 +49,7 @@ export default function CreateCase() {
   });
 
   React.useEffect(() => {
-    if (activeYear && activeYear === '2026/2027') {
+    if (activeYear) {
       setFormData(prev => ({ ...prev, academicYear: activeYear }));
     }
   }, [activeYear]);
@@ -184,6 +184,7 @@ export default function CreateCase() {
           studentName: formData.studentName,
           classId: formData.classId,
           academicYear: formData.academicYear,
+          semester: String(activeSemester),
           tier: formData.tier,
           status: formData.status,
           picId: targetPicId,

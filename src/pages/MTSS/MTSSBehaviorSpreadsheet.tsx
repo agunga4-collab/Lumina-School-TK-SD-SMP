@@ -128,14 +128,18 @@ export default function MTSSBehaviorSpreadsheet() {
     );
     const unsubscribeCases = onSnapshot(casesQuery, (snapshot) => {
       const casesList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as MTSSCase[];
-      setCases(casesList);
+      // Client-side semester filter for resilience with older/partially formatted case records
+      const filteredCases = casesList.filter(c => 
+        !filters.semester || !c.semester || String(c.semester) === String(filters.semester)
+      );
+      setCases(filteredCases);
     }, (err) => {
       handleFirestoreError(err, 'list', 'behaviorCases');
     });
 
     loadMetadata();
     return () => unsubscribeCases();
-  }, [profile, filters.academicYear]);
+  }, [profile, filters.academicYear, filters.semester]);
 
   // 2. Fetch students roster dynamically for selected class
   React.useEffect(() => {

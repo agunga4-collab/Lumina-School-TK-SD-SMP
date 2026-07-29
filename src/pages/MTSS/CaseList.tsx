@@ -6,7 +6,7 @@ import {
   Activity, ShieldAlert, RefreshCw, FileText,
   PlusCircle, History
 } from 'lucide-react';
-import { useNavigate, Link, useOutletContext } from 'react-router-dom';
+import { useNavigate, Link, useOutletContext, useSearchParams } from 'react-router-dom';
 import { cn, formatDate } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { collection, query, onSnapshot, where } from 'firebase/firestore';
@@ -18,14 +18,17 @@ export default function CaseList() {
   const { profile } = useAuth();
   const navigate = useNavigate();
   const { filters } = useOutletContext<{ filters: any; setFilters: any }>();
+  const [searchParams] = useSearchParams();
   
   // Local filter states
-  const [searchTerm, setSearchTerm] = React.useState('');
-  const [gradeFilter, setGradeFilter] = React.useState<string>('all');
-  const [classFilter, setClassFilter] = React.useState<string>('all');
-  const [tierFilter, setTierFilter] = React.useState<string>('all');
-  const [statusFilter, setStatusFilter] = React.useState<string>('all');
-  const [showOnlyActive, setShowOnlyActive] = React.useState(false);
+  const [searchTerm, setSearchTerm] = React.useState(searchParams.get('search') || '');
+  const [gradeFilter, setGradeFilter] = React.useState<string>(searchParams.get('grade') || 'all');
+  const [classFilter, setClassFilter] = React.useState<string>(searchParams.get('class') || 'all');
+  const [tierFilter, setTierFilter] = React.useState<string>(searchParams.get('tier') || 'all');
+  const [statusFilter, setStatusFilter] = React.useState<string>(searchParams.get('status') || 'all');
+  const [showOnlyActive, setShowOnlyActive] = React.useState(searchParams.get('showOnlyActive') === 'true');
+  const [needFollowupFilter, setNeedFollowupFilter] = React.useState(searchParams.get('needFollowup') === 'true');
+  const [newCasesFilter, setNewCasesFilter] = React.useState(searchParams.get('newCases') === 'true');
   const [activeLaporSiswaId, setActiveLaporSiswaId] = React.useState<string | null>(null);
   
   // Data states
@@ -224,9 +227,29 @@ export default function CaseList() {
         }
       }
 
+      if (needFollowupFilter) {
+        if (!studentCase || studentCase.status === 'CLOSED') {
+          return false;
+        }
+        const lastUpdated = studentCase.lastUpdatedAt || studentCase.createdAt || 0;
+        if (Date.now() - lastUpdated <= (7 * 86400000)) {
+          return false;
+        }
+      }
+
+      if (newCasesFilter) {
+        if (!studentCase) {
+          return false;
+        }
+        const created = studentCase.createdAt || 0;
+        if (Date.now() - created > (7 * 86400000)) {
+          return false;
+        }
+      }
+
       return true;
     }).sort((a, b) => a.name.localeCompare(b.name));
-  }, [students, classes, cases, searchTerm, gradeFilter, tierFilter, statusFilter, showOnlyActive, filters.semester]);
+  }, [students, classes, cases, searchTerm, gradeFilter, tierFilter, statusFilter, showOnlyActive, needFollowupFilter, newCasesFilter, filters.semester]);
 
   // Calculate statistics based on Junior High scope
   const activeCasesList = cases.filter(c => 
@@ -422,6 +445,32 @@ export default function CaseList() {
               />
               <span className="text-[9px] font-black text-gray-500 uppercase tracking-wider">
                 Cases Only
+              </span>
+            </label>
+
+            {/* Need Follow Up checkbox */}
+            <label className="flex items-center gap-1.5 h-8 px-2.5 bg-gray-50 rounded-lg select-none hover:bg-gray-100 transition-colors cursor-pointer">
+              <input 
+                type="checkbox" 
+                checked={needFollowupFilter}
+                onChange={(e) => setNeedFollowupFilter(e.target.checked)}
+                className="w-3 h-3 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+              <span className="text-[9px] font-black text-gray-500 uppercase tracking-wider">
+                Perlu Tindak Lanjut
+              </span>
+            </label>
+
+            {/* New Cases checkbox */}
+            <label className="flex items-center gap-1.5 h-8 px-2.5 bg-gray-50 rounded-lg select-none hover:bg-gray-100 transition-colors cursor-pointer">
+              <input 
+                type="checkbox" 
+                checked={newCasesFilter}
+                onChange={(e) => setNewCasesFilter(e.target.checked)}
+                className="w-3 h-3 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+              <span className="text-[9px] font-black text-gray-500 uppercase tracking-wider">
+                Kasus Baru
               </span>
             </label>
           </div>

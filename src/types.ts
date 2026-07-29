@@ -577,6 +577,7 @@ export interface MTSSCase {
   studentName: string;
   classId: string;
   academicYear: string;
+  semester?: string;
   tier: MTSSTier;
   status: MTSSStatus;
   picId: string; // PIC Guru pengampu saat ini

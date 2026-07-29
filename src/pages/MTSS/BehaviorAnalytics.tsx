@@ -174,8 +174,8 @@ export default function BehaviorAnalytics() {
   // Reset Filters
   const handleReset = () => {
     setFilters({
-      academicYear: activeYear || '2025/2026',
-      semester: String(activeSemester || '2') as any,
+      academicYear: activeYear,
+      semester: String(activeSemester) as any,
       dateRange: {
         start: Date.now() - (30 * 24 * 60 * 60 * 1000),
         end: Date.now()
@@ -259,7 +259,7 @@ export default function BehaviorAnalytics() {
              label="Tahun Ajaran" 
              value={filters.academicYear} 
              onChange={(v) => setFilters(f => ({ ...f, academicYear: v }))}
-             options={Array.from(new Set(['2024/2025', '2025/2026', activeYear].filter(Boolean)))}
+             options={Array.from(new Set(['2024/2025', '2025/2026', '2026/2027', activeYear].filter(Boolean)))}
            />
            <FilterGroup 
              label="Semester" 

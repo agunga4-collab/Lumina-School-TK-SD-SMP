@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
+import { useAcademicYear } from '../../context/AcademicYearContext';
 import { toast } from 'sonner';
 import { 
   getTeachers, getStudentsByClass, getActiveCaseForStudent,
@@ -68,6 +69,7 @@ const Modal = ({ isOpen, onClose, title, children, footer, width = "max-w-3xl" }
 // --- Form 1: Lapor Kasus Baru ---
 export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { isOpen: boolean, onClose: () => void, onSuccess: (caseId: string) => void, initialStudentId?: string }) => {
   const { profile } = useAuth();
+  const { activeYear, activeSemester } = useAcademicYear();
   const [loading, setLoading] = React.useState(false);
   const [students, setStudents] = React.useState<Student[]>([]);
   const [teachers, setTeachers] = React.useState<AppUser[]>([]);
@@ -233,7 +235,8 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
         studentId: formData.studentId,
         studentName,
         classId,
-        academicYear: '2025/2026',
+        academicYear: activeYear || '2026/2027',
+        semester: String(activeSemester || '1'),
         tier: 'Tier 1',
         status: 'OPEN',
         picId: profile?.uid || '',
