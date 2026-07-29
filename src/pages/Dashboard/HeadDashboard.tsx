@@ -248,7 +248,7 @@ export default function HeadDashboard() {
     
     // 2. Add LATE records from attendance_records that don't already have an entry in lateness_records
     const attendanceLates = attendanceRecords
-      .filter(r => r.status === 'LATE' && isStudentFiltered(r.studentId))
+      .filter(r => r.status === 'LATE' && isStudentFiltered(r.studentId) && (!r.academicYear || r.academicYear === selectedYear))
       .map(r => {
         const key = `${r.studentId}_${r.date}`;
         if (existingKeys.has(key)) return null;
@@ -414,7 +414,7 @@ export default function HeadDashboard() {
   const todayCases = useMemo(() => {
     const tStart = new Date(todayStr + 'T00:00:00').getTime();
     const tEnd = new Date(todayStr + 'T23:59:59.999').getTime();
-    const casesToday = behaviorCases.filter(c => c.createdAt >= tStart && c.createdAt <= tEnd && isStudentFiltered(c.studentId));
+    const casesToday = behaviorCases.filter(c => c.academicYear === selectedYear && c.createdAt >= tStart && c.createdAt <= tEnd && isStudentFiltered(c.studentId));
     
     return {
       total: casesToday.length,
@@ -423,11 +423,11 @@ export default function HeadDashboard() {
       closed: casesToday.filter(c => c.status === 'CLOSED').length,
       raw: casesToday
     };
-  }, [behaviorCases, isStudentFiltered, todayStr]);
+  }, [behaviorCases, isStudentFiltered, todayStr, selectedYear]);
 
   // 4. Incident Report Hari Ini (Concerns logged today)
   const todayIncidents = useMemo(() => {
-    const jhCaseIds = new Set(behaviorCases.filter(c => isStudentFiltered(c.studentId)).map(c => c.id));
+    const jhCaseIds = new Set(behaviorCases.filter(c => c.academicYear === selectedYear && isStudentFiltered(c.studentId)).map(c => c.id));
     const incidents = concerns.filter(con => {
       if (!jhCaseIds.has(con.caseId)) return false;
       const conDate = con.date || (con.createdAt ? new Date(con.createdAt).toISOString().split('T')[0] : '');
@@ -449,15 +449,15 @@ export default function HeadDashboard() {
 
   // 5. Follow-up Hari Ini (Pending reviews & stagnant cases)
   const todayFollowUps = useMemo(() => {
-    const activeCaseIds = new Set(behaviorCases.filter(c => isStudentFiltered(c.studentId)).map(c => c.id));
+    const activeCaseIds = new Set(behaviorCases.filter(c => c.academicYear === selectedYear && isStudentFiltered(c.studentId)).map(c => c.id));
     const pendingConcerns = concerns.filter(con => {
       if (!activeCaseIds.has(con.caseId)) return false;
       return !con.isDone && con.nextStepDueDate && con.nextStepDueDate <= todayStr;
     });
 
     const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
-    const stagnantAcademic = academicCases.filter(c => c.status !== 'CLOSED' && c.updatedAt < fourteenDaysAgo && isStudentFiltered(c.studentId));
-    const stagnantBehavior = behaviorCases.filter(c => c.status !== 'CLOSED' && c.lastUpdatedAt < fourteenDaysAgo && isStudentFiltered(c.studentId));
+    const stagnantAcademic = academicCases.filter(c => c.academicYear === selectedYear && c.status !== 'CLOSED' && c.updatedAt < fourteenDaysAgo && isStudentFiltered(c.studentId));
+    const stagnantBehavior = behaviorCases.filter(c => c.academicYear === selectedYear && c.status !== 'CLOSED' && c.lastUpdatedAt < fourteenDaysAgo && isStudentFiltered(c.studentId));
 
     return {
       pendingConcerns,
@@ -465,7 +465,7 @@ export default function HeadDashboard() {
       stagnantBehavior,
       total: pendingConcerns.length + stagnantAcademic.length + stagnantBehavior.length
     };
-  }, [concerns, behaviorCases, academicCases, isStudentFiltered, todayStr]);
+  }, [concerns, behaviorCases, academicCases, isStudentFiltered, todayStr, selectedYear]);
 
   // 6. Data Belum Lengkap
   const incompleteData = useMemo(() => {
@@ -473,10 +473,10 @@ export default function HeadDashboard() {
     
     // Goal missing mentor
     const mentorsMap = new Set(mentorAssignments.filter(asg => asg.status === 'ACTIVE').map(asg => asg.studentId));
-    const goalsNoMentor = goalResponses.filter(r => (r.goals || []).length > 0 && !mentorsMap.has(r.studentId) && isStudentFiltered(r.studentId));
+    const goalsNoMentor = filteredGoalsResponses.filter(r => (r.goals || []).length > 0 && !mentorsMap.has(r.studentId));
 
     // No goal check-ins
-    const responsesWithGoals = goalResponses.filter(r => (r.goals || []).length > 0 && isStudentFiltered(r.studentId));
+    const responsesWithGoals = filteredGoalsResponses.filter(r => (r.goals || []).length > 0);
     const studentsCheckedIn = new Set(filteredGoalTrackers.map(t => t.studentId));
     const goalsNoCheckIn = responsesWithGoals.filter(r => !studentsCheckedIn.has(r.studentId));
 
@@ -486,7 +486,7 @@ export default function HeadDashboard() {
       goalsNoCheckIn,
       total: uncompletedClasses.length + goalsNoMentor.length + goalsNoCheckIn.length
     };
-  }, [todayClassAttendance, goalResponses, mentorAssignments, filteredGoalTrackers, isStudentFiltered]);
+  }, [todayClassAttendance, filteredGoalsResponses, mentorAssignments, filteredGoalTrackers]);
 
   const allIncompleteToday = useMemo(() => {
     const list: any[] = [];
