@@ -15,6 +15,7 @@ import { useOutletContext, useSearchParams } from 'react-router-dom';
 import { UnitType } from '../../types';
 
 import StudentSearch from '../../components/StudentSearch';
+import JuniorHighLatenessAndViolations from './JuniorHighLatenessAndViolations';
 
 interface LatenessRecord {
   id: string;
@@ -57,6 +58,12 @@ const JUNIOR_HIGH_REASONS = [
 export default function Lateness() {
   const [searchParams] = useSearchParams();
   const { activeUnit } = useOutletContext<{ activeUnit: UnitType }>();
+
+  const currentUnit: string = activeUnit;
+  if (currentUnit === 'JUNIOR_HIGH') {
+    return <JuniorHighLatenessAndViolations />;
+  }
+
   const { activeYear } = useAcademicYear();
   const [records, setRecords] = React.useState<LatenessRecord[]>([]);
   const [classStudentsList, setClassStudentsList] = React.useState<LatenessRecord[]>([]);

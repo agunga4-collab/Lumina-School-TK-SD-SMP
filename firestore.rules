@@ -428,6 +428,17 @@ service cloud.firestore {
       allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
     }
 
+    match /minor_violations/{violationId} {
+      allow read: if isActive() && (isTeacher() || isJuniorHighStaff() || isAdmin());
+      allow read: if isActive() && isLinkedStudent(existing().studentId);
+      allow write: if isActive() && (isTeacher() || isJuniorHighStaff() || isAdmin());
+    }
+
+    match /minor_violation_types/{typeId} {
+      allow read: if true;
+      allow write: if isActive() && (isJuniorHighStaff() || isAdmin());
+    }
+
     match /system_backup_configs/{configId} {
       allow read: if isActive() || isAdmin();
       allow write: if isAdmin() || isJuniorHighStaff();

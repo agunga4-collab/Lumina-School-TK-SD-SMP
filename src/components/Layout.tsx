@@ -632,7 +632,7 @@ export function Layout() {
               {currentUnit === 'JUNIOR_HIGH' && (
                 <div className="space-y-1">
                   <NavSectionLabel label="Akademik & MTSS" />
-                  <NavItem to="/lateness" icon={<Clock size={18} />} label="Tardiness" />
+                  <NavItem to="/lateness" icon={<Clock size={18} />} label="Keterlambatan & Pelanggaran Ringan" />
                   <NavItem to="/attendance" icon={<CheckSquare size={18} />} label="Kehadiran" />
                   {isMenuVisible(currentUnit, 'learningGoals') && (
                     <NavItem to="/academic/learning-goals" icon={<Target size={18} />} label="Learning Goals" />
