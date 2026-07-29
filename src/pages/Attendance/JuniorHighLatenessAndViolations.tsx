@@ -57,25 +57,6 @@ const getFormattedDateLong = (dateStr: string) => {
   return d.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 };
 
-// Seed Violation Types
-interface ViolationType {
-  id: string;
-  label: string;
-  active: boolean;
-}
-
-const DEFAULT_VIOLATION_TYPES: ViolationType[] = [
-  { id: 'seragam', label: 'Seragam tidak sesuai', active: true },
-  { id: 'atribut', label: 'Atribut sekolah tidak lengkap', active: true },
-  { id: 'rambut', label: 'Rambut/penampilan belum sesuai ketentuan', active: true },
-  { id: 'barang', label: 'Membawa barang tidak sesuai ketentuan', active: true },
-  { id: 'perlengkapan', label: 'Tidak membawa perlengkapan belajar', active: true },
-  { id: 'ketertiban', label: 'Mengganggu ketertiban kelas', active: true },
-  { id: 'instruksi', label: 'Tidak mengikuti instruksi kelas', active: true },
-  { id: 'perangkat', label: 'Penggunaan perangkat tidak sesuai aturan', active: true },
-  { id: 'lainnya', label: 'Lainnya', active: true }
-];
-
 export default function JuniorHighLatenessAndViolations() {
   const navigate = useNavigate();
   const [searchParams, setSearchParamsState] = useSearchParams();
@@ -93,9 +74,7 @@ export default function JuniorHighLatenessAndViolations() {
   // Master Data State
   const [classes, setClasses] = React.useState<any[]>([]);
   const [students, setStudents] = React.useState<any[]>([]);
-  const [violationTypes, setViolationTypes] = React.useState<ViolationType[]>([]);
   const [loadingMetadata, setLoadingMetadata] = React.useState(true);
-  const [showTypeManager, setShowTypeManager] = React.useState(false);
 
   // Common selected date & class
   const [selectedClassId, setSelectedClassId] = React.useState<string>(searchParams.get('classId') || '');
@@ -131,7 +110,7 @@ export default function JuniorHighLatenessAndViolations() {
   // ----------------------------------------------------
   const [violationDate, setViolationDate] = React.useState<string>(getCurrentDateStr());
   const [selectedViolationStudentId, setSelectedViolationStudentId] = React.useState('');
-  const [selectedViolationTypeId, setSelectedViolationTypeId] = React.useState('');
+  const [violationType, setViolationType] = React.useState('');
   const [violationNotes, setViolationNotes] = React.useState('');
   const [savingViolation, setSavingViolation] = React.useState(false);
   const [loadingTodayViolations, setLoadingTodayViolations] = React.useState(false);
@@ -143,7 +122,7 @@ export default function JuniorHighLatenessAndViolations() {
 
   // Inline edit states for saved violations
   const [editingViolationId, setEditingViolationId] = React.useState<string | null>(null);
-  const [editingViolationTypeId, setEditingViolationTypeId] = React.useState('');
+  const [editingViolationType, setEditingViolationType] = React.useState('');
   const [editingViolationNotes, setEditingViolationNotes] = React.useState('');
   const [updatingViolationId, setUpdatingViolationId] = React.useState<string | null>(null);
 
@@ -166,6 +145,13 @@ export default function JuniorHighLatenessAndViolations() {
   const [loadingRekap, setLoadingRekap] = React.useState(false);
   const [rekapLatenessData, setRekapLatenessData] = React.useState<any[]>([]);
   const [rekapViolationData, setRekapViolationData] = React.useState<any[]>([]);
+  const [rekapError, setRekapError] = React.useState<string | null>(null);
+
+  // Sync rekapAcademicYear & rekapSemester with activeYear & activeSemester
+  React.useEffect(() => {
+    if (activeYear) setRekapAcademicYear(activeYear);
+    if (activeSemester) setRekapSemester(activeSemester);
+  }, [activeYear, activeSemester]);
 
   // Selected student timeline modal
   const [selectedTimelineStudent, setSelectedTimelineStudent] = React.useState<any | null>(null);
@@ -189,27 +175,6 @@ export default function JuniorHighLatenessAndViolations() {
         if (classesList.length > 0 && !selectedClassId) {
           setSelectedClassId(classesList[0].id);
         }
-
-        // 2. Load and Seed Violation Types
-        const typesQuery = collection(db, 'minor_violation_types');
-        const typesSnap = await getDocs(typesQuery);
-        if (typesSnap.empty) {
-          // Seed initial types
-          const batchPromises = DEFAULT_VIOLATION_TYPES.map(vt => 
-            setDoc(doc(db, 'minor_violation_types', vt.id), vt)
-          );
-          await Promise.all(batchPromises);
-          setViolationTypes(DEFAULT_VIOLATION_TYPES);
-        } else {
-          const fetchedTypes = typesSnap.docs.map(d => d.data() as ViolationType);
-          // Sort types so 'Lainnya' is always at the end
-          fetchedTypes.sort((a, b) => {
-            if (a.id === 'lainnya') return 1;
-            if (b.id === 'lainnya') return -1;
-            return a.label.localeCompare(b.label);
-          });
-          setViolationTypes(fetchedTypes);
-        }
       } catch (err) {
         console.error('Error loading initial metadata:', err);
         toast.error('Gagal memuat metadata sekolah.');
@@ -220,56 +185,6 @@ export default function JuniorHighLatenessAndViolations() {
 
     initMetadata();
   }, []);
-
-  // Sync with Firestore on Violation Types change
-  React.useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'minor_violation_types'), (snap) => {
-      const fetchedTypes = snap.docs.map(d => d.data() as ViolationType);
-      fetchedTypes.sort((a, b) => {
-        if (a.id === 'lainnya') return 1;
-        if (b.id === 'lainnya') return -1;
-        return a.label.localeCompare(b.label);
-      });
-      setViolationTypes(fetchedTypes);
-    });
-    return unsub;
-  }, []);
-
-  // Toggle Violation Type Active State
-  const handleToggleTypeActive = async (typeId: string, currentStatus: boolean) => {
-    if (['SUPER_ADMIN', 'HEAD_UNIT'].includes(currentUserRole)) {
-      try {
-        await updateDoc(doc(db, 'minor_violation_types', typeId), {
-          active: !currentStatus
-        });
-        toast.success(`Kategori berhasil ${!currentStatus ? 'diaktifkan' : 'dinonaktifkan'}.`);
-      } catch (err) {
-        console.error('Error updating violation type status:', err);
-        toast.error('Gagal mengupdate status kategori.');
-      }
-    } else {
-      toast.error('Hanya Admin yang dapat mengelola master kategori.');
-    }
-  };
-
-  // Add Custom Violation Type
-  const [newTypeName, setNewTypeName] = React.useState('');
-  const handleAddViolationType = async () => {
-    if (!newTypeName.trim()) return;
-    try {
-      const customId = newTypeName.toLowerCase().replace(/[^a-z0-9]/g, '-');
-      await setDoc(doc(db, 'minor_violation_types', customId), {
-        id: customId,
-        label: newTypeName,
-        active: true
-      });
-      setNewTypeName('');
-      toast.success('Kategori baru berhasil ditambahkan.');
-    } catch (err) {
-      console.error('Error adding custom violation type:', err);
-      toast.error('Gagal menambahkan kategori.');
-    }
-  };
 
   // Whenever selectedClassId changes, fetch students list
   React.useEffect(() => {
@@ -556,14 +471,8 @@ export default function JuniorHighLatenessAndViolations() {
       toast.error('Pilih siswa terlebih dahulu.');
       return;
     }
-    if (!selectedViolationTypeId) {
-      toast.error('Pilih jenis pelanggaran ringan.');
-      return;
-    }
-
-    // Validation for "Lainnya" category
-    if (selectedViolationTypeId === 'lainnya' && !violationNotes.trim()) {
-      toast.error("Keterangan Singkat wajib diisi jika Anda memilih kategori 'Lainnya'.");
+    if (!violationType.trim()) {
+      toast.error('Isi jenis pelanggaran terlebih dahulu.');
       return;
     }
 
@@ -571,10 +480,10 @@ export default function JuniorHighLatenessAndViolations() {
     try {
       const studentObj = students.find(s => s.id === selectedViolationStudentId);
       const classObj = classes.find(c => c.id === selectedClassId);
-      const typeObj = violationTypes.find(t => t.id === selectedViolationTypeId);
 
       if (!studentObj) {
         toast.error('Siswa tidak ditemukan.');
+        setSavingViolation(false);
         return;
       }
 
@@ -585,8 +494,7 @@ export default function JuniorHighLatenessAndViolations() {
         classId: selectedClassId,
         className: classObj?.name || 'Kelas Lain',
         date: violationDate,
-        violationTypeId: selectedViolationTypeId,
-        violationTypeLabel: typeObj?.label || 'Lainnya',
+        violationType: violationType.trim(),
         notes: violationNotes.trim(),
         recordedByUid: profile?.uid || 'system',
         recordedByName: profile?.displayName || 'Guru / Staff',
@@ -608,7 +516,7 @@ export default function JuniorHighLatenessAndViolations() {
       // Reset student selection and inputs, KEEP date and class
       setSelectedViolationStudentId('');
       setStudentSearchInput('');
-      setSelectedViolationTypeId('');
+      setViolationType('');
       setViolationNotes('');
     } catch (err) {
       console.error('Error saving minor violation:', err);
@@ -620,12 +528,14 @@ export default function JuniorHighLatenessAndViolations() {
 
   // Update minor violation
   const handleUpdateViolation = async (violationId: string) => {
+    if (!editingViolationType.trim()) {
+      toast.error('Jenis pelanggaran wajib diisi.');
+      return;
+    }
     setUpdatingViolationId(violationId);
     try {
-      const typeObj = violationTypes.find(t => t.id === editingViolationTypeId);
       await updateDoc(doc(db, 'minor_violations', violationId), {
-        violationTypeId: editingViolationTypeId,
-        violationTypeLabel: typeObj?.label || 'Lainnya',
+        violationType: editingViolationType.trim(),
         notes: editingViolationNotes,
         updatedAt: serverTimestamp()
       });
@@ -670,16 +580,25 @@ export default function JuniorHighLatenessAndViolations() {
     
     // Most frequent violation type today
     const typeCounts: Record<string, number> = {};
+    const originalLabels: Record<string, string> = {}; // to preserve original casing
+
     todayViolations.forEach(v => {
-      typeCounts[v.violationTypeLabel] = (typeCounts[v.violationTypeLabel] || 0) + 1;
+      const typeStr = (v.violationType || '').trim();
+      if (typeStr) {
+        const normalized = typeStr.toLowerCase();
+        typeCounts[normalized] = (typeCounts[normalized] || 0) + 1;
+        if (!originalLabels[normalized]) {
+          originalLabels[normalized] = typeStr;
+        }
+      }
     });
 
     let mostFreqType = '-';
     let maxCount = 0;
-    Object.entries(typeCounts).forEach(([label, count]) => {
+    Object.entries(typeCounts).forEach(([norm, count]) => {
       if (count > maxCount) {
         maxCount = count;
-        mostFreqType = label;
+        mostFreqType = originalLabels[norm];
       }
     });
 
@@ -695,25 +614,18 @@ export default function JuniorHighLatenessAndViolations() {
   // ----------------------------------------------------
   const fetchRekapData = async () => {
     setLoadingRekap(true);
+    setRekapError(null);
     try {
-      // Query lateness records for the selected filters
-      let latenessQ = query(
+      // Query lateness records for Junior High
+      const latenessQ = query(
         collection(db, 'lateness_records'),
-        where('date', '>=', rekapStartDate),
-        where('date', '<=', rekapEndDate),
-        where('unitId', '==', 'JUNIOR_HIGH'),
-        where('academicYear', '==', rekapAcademicYear),
-        where('semester', '==', Number(rekapSemester))
+        where('unitId', '==', 'JUNIOR_HIGH')
       );
 
-      // Query minor violations for the selected filters
-      let violationQ = query(
+      // Query minor violations for Junior High
+      const violationQ = query(
         collection(db, 'minor_violations'),
-        where('date', '>=', rekapStartDate),
-        where('date', '<=', rekapEndDate),
-        where('unit', '==', 'JUNIOR_HIGH'),
-        where('academicYear', '==', rekapAcademicYear),
-        where('semester', '==', Number(rekapSemester))
+        where('unit', '==', 'JUNIOR_HIGH')
       );
 
       const [latenessSnap, violationSnap] = await Promise.all([
@@ -728,18 +640,46 @@ export default function JuniorHighLatenessAndViolations() {
       setRekapViolationData(rawViolations);
     } catch (err) {
       console.error('Error fetching rekap data:', err);
-      toast.error('Gagal mengambil data rekap disiplin.');
+      setRekapError('Gagal memuat data rekap.');
+      toast.error('Gagal mengambil data rekap.');
     } finally {
       setLoadingRekap(false);
     }
   };
 
-  // Trigger rekap fetch on tab mount or manual refresh
+  // Safe and reactive filter on retrieved collections
+  const filteredLateness = React.useMemo(() => {
+    return rekapLatenessData.filter(r => {
+      // 1. Date range filter
+      if (r.date < rekapStartDate || r.date > rekapEndDate) return false;
+      // 2. Class filter
+      if (rekapClassFilter !== 'all' && r.classId !== rekapClassFilter) return false;
+      // 3. Academic Year & Semester if fields exist on record, else pass
+      if (r.academicYear && r.academicYear !== rekapAcademicYear) return false;
+      if (r.semester && Number(r.semester) !== Number(rekapSemester)) return false;
+      return true;
+    });
+  }, [rekapLatenessData, rekapStartDate, rekapEndDate, rekapClassFilter, rekapAcademicYear, rekapSemester]);
+
+  const filteredViolations = React.useMemo(() => {
+    return rekapViolationData.filter(r => {
+      // 1. Date range filter
+      if (r.date < rekapStartDate || r.date > rekapEndDate) return false;
+      // 2. Class filter
+      if (rekapClassFilter !== 'all' && r.classId !== rekapClassFilter) return false;
+      // 3. Academic Year & Semester must match
+      if (r.academicYear && r.academicYear !== rekapAcademicYear) return false;
+      if (r.semester && Number(r.semester) !== Number(rekapSemester)) return false;
+      return true;
+    });
+  }, [rekapViolationData, rekapStartDate, rekapEndDate, rekapClassFilter, rekapAcademicYear, rekapSemester]);
+
+  // Trigger rekap fetch on tab mount or filter changes
   React.useEffect(() => {
-    if (activeTab === 'rekap' && rekapAcademicYear) {
+    if (activeTab === 'rekap') {
       fetchRekapData();
     }
-  }, [activeTab, rekapAcademicYear, rekapSemester]);
+  }, [activeTab, rekapStartDate, rekapEndDate, rekapClassFilter, rekapAcademicYear, rekapSemester]);
 
   const handleApplyRekapFilters = () => {
     fetchRekapData();
@@ -760,12 +700,6 @@ export default function JuniorHighLatenessAndViolations() {
 
   // Compile Leaderboard from filtered records
   const leaderboardList = React.useMemo(() => {
-    const classFilter = rekapClassFilter;
-    
-    // Filter records by class if specified
-    const filteredLateness = rekapLatenessData.filter(r => classFilter === 'all' || r.classId === classFilter);
-    const filteredViolations = rekapViolationData.filter(r => classFilter === 'all' || r.classId === classFilter);
-
     const studentMap: Record<string, {
       studentId: string;
       studentName: string;
@@ -798,32 +732,29 @@ export default function JuniorHighLatenessAndViolations() {
     };
 
     // Aggregate lateness
-    filteredLateness.forEach(r => {
-      if (!r.studentId) return;
-      touchStudent(r.studentId, r.studentName, r.className || 'Kelas Lain', r.classId, r.date);
-      studentMap[r.studentId].latenessCount++;
-      studentMap[r.studentId].totalCount++;
-    });
+    if (rekapDataType === 'all' || rekapDataType === 'lateness') {
+      filteredLateness.forEach(r => {
+        if (!r.studentId) return;
+        touchStudent(r.studentId, r.studentName, r.className || 'Kelas Lain', r.classId, r.date);
+        studentMap[r.studentId].latenessCount++;
+        studentMap[r.studentId].totalCount++;
+      });
+    }
 
     // Aggregate violations
-    filteredViolations.forEach(r => {
-      if (!r.studentId) return;
-      touchStudent(r.studentId, r.studentName, r.className || 'Kelas Lain', r.classId, r.date);
-      studentMap[r.studentId].violationCount++;
-      studentMap[r.studentId].totalCount++;
-    });
+    if (rekapDataType === 'all' || rekapDataType === 'violations') {
+      filteredViolations.forEach(r => {
+        if (!r.studentId) return;
+        touchStudent(r.studentId, r.studentName, r.className || 'Kelas Lain', r.classId, r.date);
+        studentMap[r.studentId].violationCount++;
+        studentMap[r.studentId].totalCount++;
+      });
+    }
 
-    // Convert map to array and sort descending
+    // Convert map to array
     const result = Object.values(studentMap);
 
-    // Apply active data type filter at aggregate level
-    let finalResult = result.filter(item => {
-      if (rekapDataType === 'lateness') return item.latenessCount > 0;
-      if (rekapDataType === 'violations') return item.violationCount > 0;
-      return item.totalCount > 0;
-    });
-
-    finalResult.sort((a, b) => {
+    result.sort((a, b) => {
       const scoreA = rekapDataType === 'lateness' ? a.latenessCount : rekapDataType === 'violations' ? a.violationCount : a.totalCount;
       const scoreB = rekapDataType === 'lateness' ? b.latenessCount : rekapDataType === 'violations' ? b.violationCount : b.totalCount;
       
@@ -833,14 +764,14 @@ export default function JuniorHighLatenessAndViolations() {
       return b.lastRecordedDate.localeCompare(a.lastRecordedDate); // Tied -> most recent first
     });
 
-    return finalResult;
-  }, [rekapLatenessData, rekapViolationData, rekapClassFilter, rekapDataType]);
+    return result;
+  }, [filteredLateness, filteredViolations, rekapDataType]);
 
   // Aggregate Metrics for cards
   const rekapMetrics = React.useMemo(() => {
     const list = leaderboardList;
-    const totalLateness = rekapLatenessData.filter(r => rekapClassFilter === 'all' || r.classId === rekapClassFilter).length;
-    const totalViolations = rekapViolationData.filter(r => rekapClassFilter === 'all' || r.classId === rekapClassFilter).length;
+    const totalLateness = filteredLateness.length;
+    const totalViolations = filteredViolations.length;
     
     let maxStudentName = '-';
     let maxStudentCount = 0;
@@ -854,12 +785,16 @@ export default function JuniorHighLatenessAndViolations() {
 
     // Find class with most records
     const classCounts: Record<string, number> = {};
-    rekapLatenessData.forEach(r => {
-      if (r.className) classCounts[r.className] = (classCounts[r.className] || 0) + 1;
-    });
-    rekapViolationData.forEach(r => {
-      if (r.className) classCounts[r.className] = (classCounts[r.className] || 0) + 1;
-    });
+    if (rekapDataType === 'all' || rekapDataType === 'lateness') {
+      filteredLateness.forEach(r => {
+        if (r.className) classCounts[r.className] = (classCounts[r.className] || 0) + 1;
+      });
+    }
+    if (rekapDataType === 'all' || rekapDataType === 'violations') {
+      filteredViolations.forEach(r => {
+        if (r.className) classCounts[r.className] = (classCounts[r.className] || 0) + 1;
+      });
+    }
 
     let maxClassName = '-';
     let maxClassCount = 0;
@@ -876,7 +811,7 @@ export default function JuniorHighLatenessAndViolations() {
       topStudent: maxStudentCount > 0 ? `${maxStudentName} (${maxStudentCount}x)` : '-',
       topClass: maxClassCount > 0 ? `${maxClassName} (${maxClassCount}x)` : '-'
     };
-  }, [leaderboardList, rekapLatenessData, rekapViolationData, rekapClassFilter, rekapDataType]);
+  }, [leaderboardList, filteredLateness, filteredViolations, rekapDataType]);
 
   // Chart Data compilation (Catatan per Kelas)
   const chartData = React.useMemo(() => {
@@ -887,51 +822,37 @@ export default function JuniorHighLatenessAndViolations() {
       classesMap[c.id] = { name: c.name, Keterlambatan: 0, 'Pelanggaran Ringan': 0 };
     });
 
-    rekapLatenessData.forEach(r => {
-      if (r.classId && classesMap[r.classId]) {
-        classesMap[r.classId].Keterlambatan++;
-      }
-    });
+    if (rekapDataType === 'all' || rekapDataType === 'lateness') {
+      filteredLateness.forEach(r => {
+        if (r.classId && classesMap[r.classId]) {
+          classesMap[r.classId].Keterlambatan++;
+        }
+      });
+    }
 
-    rekapViolationData.forEach(v => {
-      if (v.classId && classesMap[v.classId]) {
-        classesMap[v.classId]['Pelanggaran Ringan']++;
-      }
-    });
+    if (rekapDataType === 'all' || rekapDataType === 'violations') {
+      filteredViolations.forEach(v => {
+        if (v.classId && classesMap[v.classId]) {
+          classesMap[v.classId]['Pelanggaran Ringan']++;
+        }
+      });
+    }
 
     return Object.values(classesMap);
-  }, [classes, rekapLatenessData, rekapViolationData]);
+  }, [classes, filteredLateness, filteredViolations, rekapDataType]);
 
-  // Open Student History Timeline
-  const handleOpenStudentHistory = async (student: any) => {
+  // Open Student History Timeline derived from currently filtered active dataset
+  const handleOpenStudentHistory = (student: any) => {
     setSelectedTimelineStudent(student);
     setLoadingTimeline(true);
     try {
-      // Fetch all historical records for this student in range
-      const latenessQ = query(
-        collection(db, 'lateness_records'),
-        where('studentId', '==', student.studentId),
-        where('date', '>=', rekapStartDate),
-        where('date', '<=', rekapEndDate)
-      );
-
-      const violationQ = query(
-        collection(db, 'minor_violations'),
-        where('studentId', '==', student.studentId),
-        where('date', '>=', rekapStartDate),
-        where('date', '<=', rekapEndDate)
-      );
-
-      const [lateSnap, violSnap] = await Promise.all([
-        getDocs(latenessQ),
-        getDocs(violationQ)
-      ]);
-
       const historyList: any[] = [];
-      lateSnap.docs.forEach(d => {
-        const data = d.data();
+      const studentLateness = filteredLateness.filter(r => r.studentId === student.studentId);
+      const studentViolations = filteredViolations.filter(r => r.studentId === student.studentId);
+
+      studentLateness.forEach(data => {
         historyList.push({
-          id: d.id,
+          id: data.id,
           type: 'lateness',
           title: 'Keterlambatan',
           timeLabel: data.arrivalTime || 'Tiba',
@@ -943,14 +864,13 @@ export default function JuniorHighLatenessAndViolations() {
         });
       });
 
-      violSnap.docs.forEach(d => {
-        const data = d.data();
+      studentViolations.forEach(data => {
         historyList.push({
-          id: d.id,
+          id: data.id,
           type: 'violation',
           title: 'Pelanggaran Ringan',
           timeLabel: 'Pelanggaran',
-          category: data.violationTypeLabel,
+          category: data.violationType || 'Pelanggaran',
           reason: data.notes || 'Tanpa keterangan',
           recordedBy: data.recordedByName || 'Guru / Staff',
           date: data.date,
@@ -1432,7 +1352,6 @@ export default function JuniorHighLatenessAndViolations() {
                     </div>
                     <div>
                       <h2 className="font-black text-gray-900 text-sm">Catat Pelanggaran Ringan</h2>
-                      <p className="text-xs text-gray-400 mt-0.5">Membantu pembiasaan disiplin positif siswa secara operasional</p>
                     </div>
                   </div>
 
@@ -1518,16 +1437,15 @@ export default function JuniorHighLatenessAndViolations() {
                     {/* Violation Type Selector */}
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Jenis Pelanggaran *</label>
-                      <select
-                        value={selectedViolationTypeId}
-                        onChange={(e) => setSelectedViolationTypeId(e.target.value)}
-                        className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 font-bold cursor-pointer"
-                      >
-                        <option value="">-- Pilih Kategori --</option>
-                        {violationTypes.filter(t => t.active).map(t => (
-                          <option key={t.id} value={t.id}>{t.label}</option>
-                        ))}
-                      </select>
+                      <input
+                        type="text"
+                        placeholder="Contoh: Seragam tidak lengkap"
+                        value={violationType}
+                        onChange={(e) => setViolationType(e.target.value.slice(0, 100))}
+                        className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 font-bold"
+                        maxLength={100}
+                        required
+                      />
                     </div>
                   </div>
 
@@ -1535,12 +1453,12 @@ export default function JuniorHighLatenessAndViolations() {
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
                       <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">
-                        Keterangan Singkat {selectedViolationTypeId === 'lainnya' && '*'}
+                        Keterangan Singkat
                       </label>
                       <span className="text-[10px] font-bold text-gray-400">{violationNotes.length}/300</span>
                     </div>
                     <textarea
-                      placeholder={selectedViolationTypeId === 'lainnya' ? "Tulis keterangan pelanggaran (Wajib)..." : "Tulis catatan tambahan di sini (Opsional)..."}
+                      placeholder="Tulis catatan tambahan di sini (Opsional)..."
                       value={violationNotes}
                       onChange={(e) => setViolationNotes(e.target.value.slice(0, 300))}
                       rows={3}
@@ -1646,18 +1564,16 @@ export default function JuniorHighLatenessAndViolations() {
                             </td>
                             <td className="px-5 py-4">
                               {editingViolationId === record.id ? (
-                                <select
-                                  value={editingViolationTypeId}
-                                  onChange={(e) => setEditingViolationTypeId(e.target.value)}
-                                  className="bg-transparent border-b border-gray-200 outline-none text-xs font-bold text-gray-700 py-1"
-                                >
-                                  {violationTypes.map(t => (
-                                    <option key={t.id} value={t.id}>{t.label}</option>
-                                  ))}
-                                </select>
+                                <input
+                                  type="text"
+                                  value={editingViolationType}
+                                  onChange={(e) => setEditingViolationType(e.target.value.slice(0, 100))}
+                                  className="bg-transparent border-b border-gray-300 focus:border-amber-500 outline-none text-xs font-bold text-gray-700 py-1 w-full"
+                                  maxLength={100}
+                                />
                               ) : (
                                 <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-100">
-                                  {record.violationTypeLabel}
+                                  {record.violationType}
                                 </span>
                               )}
                             </td>
@@ -1701,7 +1617,7 @@ export default function JuniorHighLatenessAndViolations() {
                                   <button
                                     onClick={() => {
                                       setEditingViolationId(record.id);
-                                      setEditingViolationTypeId(record.violationTypeId || 'lainnya');
+                                      setEditingViolationType(record.violationType || '');
                                       setEditingViolationNotes(record.notes || '');
                                     }}
                                     className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all"
@@ -1751,83 +1667,11 @@ export default function JuniorHighLatenessAndViolations() {
                     <User size={18} className="text-gray-300" />
                   </div>
                   <div className="p-4 bg-gray-50/50 rounded-2xl border border-gray-50">
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Kategori Terbanyak</p>
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Jenis Pelanggaran Terbanyak</p>
                     <p className="text-xs font-bold text-gray-800 mt-1 break-words leading-relaxed">{violationTodayStats.mostFreqType}</p>
                   </div>
                 </div>
               </div>
-
-              {/* Master Category Manager (Admin only button/collapsible) */}
-              {['SUPER_ADMIN', 'HEAD_UNIT'].includes(currentUserRole) && (
-                <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4">
-                  <button
-                    type="button"
-                    onClick={() => setShowTypeManager(!showTypeManager)}
-                    className="w-full flex items-center justify-between font-black text-xs text-gray-700 uppercase tracking-wider hover:text-amber-500 cursor-pointer"
-                  >
-                    <span className="flex items-center gap-2">
-                      <Settings size={14} />
-                      Master Data Kategori
-                    </span>
-                    <ChevronRight size={14} className={cn("transition-transform", showTypeManager && "rotate-90")} />
-                  </button>
-
-                  <AnimatePresence>
-                    {showTypeManager && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        className="space-y-4 overflow-hidden pt-2"
-                      >
-                        <p className="text-[10px] text-gray-400 font-medium">Aktifkan atau nonaktifkan kategori pelanggaran ringan di sini. Perubahan langsung tersimpan.</p>
-                        
-                        {/* Categories List */}
-                        <div className="space-y-2 max-h-48 overflow-y-auto divide-y divide-gray-50">
-                          {violationTypes.map(t => (
-                            <div key={t.id} className="flex items-center justify-between py-2 text-xs">
-                              <span className={cn("font-medium", !t.active && "text-gray-400 line-through")}>{t.label}</span>
-                              <button
-                                type="button"
-                                onClick={() => handleToggleTypeActive(t.id, t.active)}
-                                className={cn(
-                                  "px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider border cursor-pointer",
-                                  t.active 
-                                    ? "bg-emerald-50 text-emerald-700 border-emerald-100 hover:bg-emerald-100" 
-                                    : "bg-gray-50 text-gray-400 border-gray-100 hover:bg-gray-100"
-                                )}
-                              >
-                                {t.active ? 'Aktif' : 'Nonaktif'}
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Add Kategori Form */}
-                        <div className="pt-2 border-t border-gray-100 space-y-2">
-                          <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block">Tambah Kategori Baru</label>
-                          <div className="flex gap-1.5">
-                            <input
-                              type="text"
-                              placeholder="Kategori baru..."
-                              value={newTypeName}
-                              onChange={(e) => setNewTypeName(e.target.value)}
-                              className="flex-1 bg-gray-50 border border-gray-100 rounded-lg px-2.5 py-1.5 text-xs font-medium outline-none focus:ring-1 focus:ring-amber-500"
-                            />
-                            <button
-                              type="button"
-                              onClick={handleAddViolationType}
-                              className="bg-amber-500 text-white p-1.5 rounded-lg hover:bg-amber-600 transition-all cursor-pointer"
-                            >
-                              <Plus size={16} />
-                            </button>
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              )}
 
             </div>
           </div>
@@ -1844,7 +1688,7 @@ export default function JuniorHighLatenessAndViolations() {
           <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-5">
             <h3 className="font-black text-gray-900 text-sm flex items-center gap-2">
               <Filter size={16} className="text-violet-600" />
-              Filter Rekap Disiplin
+              Filter Rekap Keterlambatan dan Pelanggaran Ringan
             </h3>
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -2001,72 +1845,42 @@ export default function JuniorHighLatenessAndViolations() {
             </div>
           </div>
 
-          {/* Visual Chart and Main Leaderboard Table Section */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
-            
-            {/* Chart (2 cols) */}
-            <div className="lg:col-span-2 bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
-              <div>
-                <h3 className="font-black text-gray-900 text-sm">Pola Catatan Disiplin per Kelas</h3>
-                <p className="text-xs text-gray-400 mt-0.5">Komparasi data keterlambatan dan pelanggaran ringan antar kelas</p>
-              </div>
-
-              {loadingRekap ? (
-                <div className="h-64 flex flex-col items-center justify-center gap-2 text-gray-400">
-                  <Loader2 size={24} className="animate-spin text-violet-500" />
-                  <p className="text-xs font-medium">Menyusun data pola...</p>
-                </div>
-              ) : chartData.length === 0 ? (
-                <div className="h-64 flex items-center justify-center text-gray-400 italic text-xs">
-                  Tidak ada data untuk rentang filter saat ini
-                </div>
-              ) : (
-                <div className="h-64 w-full text-xs">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={chartData}
-                      margin={{ top: 10, right: 10, left: -20, bottom: 5 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                      <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: '#9ca3af', fontWeight: 'bold' }} />
-                      <YAxis tickLine={false} axisLine={false} tick={{ fill: '#9ca3af', fontWeight: 'bold' }} />
-                      <Tooltip 
-                        contentStyle={{ background: '#ffffff', borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                        itemStyle={{ fontWeight: 'bold', fontSize: '11px' }}
-                      />
-                      <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'black', textTransform: 'uppercase', letterSpacing: '0.05em' }} />
-                      <Bar dataKey="Keterlambatan" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="Pelanggaran Ringan" fill="#f59e0b" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
+          {/* Visual Chart Section */}
+          <div className="w-full bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6 animate-fade-in">
+            <div>
+              <h3 className="font-black text-gray-900 text-sm">Pola Catatan per Kelas</h3>
             </div>
 
-            {/* Simple Help / Guide Panel (1 col) */}
-            <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
-              <div className="p-3 bg-violet-50 text-violet-600 rounded-2xl w-fit">
-                <ShieldAlert size={20} />
+            {loadingRekap ? (
+              <div className="h-64 flex flex-col items-center justify-center gap-2 text-gray-400">
+                <Loader2 size={24} className="animate-spin text-violet-500" />
+                <p className="text-xs font-medium">Menyusun data pola...</p>
               </div>
-              <h3 className="font-black text-gray-900 text-sm">Disiplin Positif & Pembinaan</h3>
-              <p className="text-xs text-gray-500 leading-relaxed">
-                Halaman ini ditujukan untuk memetakan pembiasaan disiplin siswa SMP demi penanganan dan pembinaan kasus yang objektif.
-              </p>
-              <div className="space-y-2 pt-2 text-xs">
-                <div className="flex gap-2.5 items-start">
-                  <span className="p-1 bg-blue-50 text-blue-600 rounded font-black text-[10px]">1</span>
-                  <p className="text-gray-600 font-medium">Bahas rekap bersama BK atau wali kelas dalam pertemuan evaluasi.</p>
-                </div>
-                <div className="flex gap-2.5 items-start">
-                  <span className="p-1 bg-amber-50 text-amber-50 rounded font-black text-[10px]">2</span>
-                  <p className="text-gray-600 font-medium">Buka timeline siswa untuk memverifikasi pola sebelum memanggil orang tua.</p>
-                </div>
-                <div className="flex gap-2.5 items-start">
-                  <span className="p-1 bg-violet-50 text-violet-600 rounded font-black text-[10px]">3</span>
-                  <p className="text-gray-600 font-medium">Bila diperlukan, buat Catatan Kasus MTSS Behavior secara formal melalui portofolio siswa.</p>
-                </div>
+            ) : chartData.length === 0 ? (
+              <div className="h-64 flex items-center justify-center text-gray-400 italic text-xs">
+                Tidak ada data untuk rentang filter saat ini
               </div>
-            </div>
+            ) : (
+              <div className="h-64 w-full text-xs">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={chartData}
+                    margin={{ top: 10, right: 10, left: -20, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                    <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: '#9ca3af', fontWeight: 'bold' }} />
+                    <YAxis tickLine={false} axisLine={false} tick={{ fill: '#9ca3af', fontWeight: 'bold' }} />
+                    <Tooltip 
+                      contentStyle={{ background: '#ffffff', borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                      itemStyle={{ fontWeight: 'bold', fontSize: '11px' }}
+                    />
+                    <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'black', textTransform: 'uppercase', letterSpacing: '0.05em' }} />
+                    <Bar dataKey="Keterlambatan" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="Pelanggaran Ringan" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </div>
 
           {/* Main Leaderboard Table */}
@@ -2074,7 +1888,6 @@ export default function JuniorHighLatenessAndViolations() {
             <div className="p-6 border-b border-gray-50 flex items-center justify-between">
               <div>
                 <h2 className="font-black text-gray-900 text-sm">Tabel Rekapitulasi Catatan Siswa</h2>
-                <p className="text-xs text-gray-400 mt-0.5">Siswa diurutkan berdasarkan akumulasi frekuensi catatan disiplin terbanyak</p>
               </div>
               <span className="bg-violet-50 text-violet-700 text-xs font-black px-3 py-1 rounded-full uppercase tracking-wider">
                 {leaderboardList.length} Siswa Terdata
@@ -2089,7 +1902,7 @@ export default function JuniorHighLatenessAndViolations() {
                 </div>
               ) : leaderboardList.length === 0 ? (
                 <div className="p-12 text-center text-gray-400">
-                  <p className="text-sm italic">Tidak ada catatan disiplin yang cocok dengan filter aktif.</p>
+                  <p className="text-sm italic">Tidak ada catatan yang cocok dengan filter aktif.</p>
                 </div>
               ) : (
                 <table className="w-full text-left">
@@ -2190,7 +2003,7 @@ export default function JuniorHighLatenessAndViolations() {
               <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-violet-50/10">
                 <div>
                   <span className="text-[9px] font-black text-violet-600 uppercase tracking-widest bg-violet-50 px-2.5 py-1 rounded-full">
-                    Kombinasi Log Disiplin
+                    Log Keterlambatan & Pelanggaran Ringan
                   </span>
                   <h3 className="text-lg font-black text-gray-900 mt-2">{selectedTimelineStudent.studentName}</h3>
                   <p className="text-xs text-gray-400 mt-0.5">Kelas: {selectedTimelineStudent.className} • Periode: {rekapAcademicYear} SM {rekapSemester}</p>
@@ -2260,22 +2073,14 @@ export default function JuniorHighLatenessAndViolations() {
               </div>
 
               {/* Panel Footer Actions */}
-              <div className="p-6 border-t border-gray-100 bg-gray-50/50 flex flex-col sm:flex-row gap-3">
+              <div className="p-6 border-t border-gray-100 bg-gray-50/50">
                 <button
                   type="button"
                   onClick={handleOpenPortfolio}
-                  className="flex-1 flex items-center justify-center gap-1 bg-white hover:bg-gray-100 text-gray-700 font-black px-4 py-3 rounded-2xl border border-gray-200 text-xs uppercase tracking-wider cursor-pointer"
+                  className="w-full flex items-center justify-center gap-2 bg-violet-600 hover:bg-violet-700 text-white font-black px-4 py-3 rounded-2xl shadow-lg shadow-violet-100 text-xs uppercase tracking-wider cursor-pointer"
                 >
                   <BookOpen size={14} />
                   Buka Student Portfolio
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleCreateMTSSCase(selectedTimelineStudent.studentId)}
-                  className="flex-1 flex items-center justify-center gap-1 bg-violet-600 hover:bg-violet-700 text-white font-black px-4 py-3 rounded-2xl shadow-lg shadow-violet-100 text-xs uppercase tracking-wider cursor-pointer"
-                >
-                  <ShieldAlert size={14} />
-                  Buat Catatan MTSS Behavior
                 </button>
               </div>
             </motion.div>
