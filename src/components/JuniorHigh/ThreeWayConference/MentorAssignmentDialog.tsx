@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { X, UserPlus, ShieldAlert, Loader2, RefreshCw, Trash2, User } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { X, UserPlus, ShieldAlert, Loader2, RefreshCw, Trash2, UserCheck, Calendar } from 'lucide-react';
 import { threeWayConferenceService } from '../../../services/threeWayConferenceService';
 import { MentorAssignmentHistory } from './MentorAssignmentHistory';
 import type { Student, MentorAssignment, User as AppUser } from '../../../types';
+import { toast } from 'sonner';
 
 interface MentorAssignmentDialogProps {
   isOpen: boolean;
@@ -21,47 +23,105 @@ export const MentorAssignmentDialog: React.FC<MentorAssignmentDialogProps> = ({
 }) => {
   const [eligibleMentors, setEligibleMentors] = useState<AppUser[]>([]);
   const [selectedMentorId, setSelectedMentorId] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [noteOrReason, setNoteOrReason] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [isLoadingMentors, setIsLoadingMentors] = useState<boolean>(false);
+  const [studentResponse, setStudentResponse] = useState<any | null>(null);
   const [showRemovalConfirm, setShowRemovalConfirm] = useState<boolean>(false);
   const [removalReason, setRemovalReason] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const activeMentor = currentAssignment?.status !== 'REMOVED' ? currentAssignment : null;
 
-  // Load eligible mentors on open
+  // Prevent background body scroll when open
   useEffect(() => {
     if (isOpen) {
-      const loadMentors = async () => {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isOpen]);
+
+  // Handle escape key to close dialog
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen && !isSubmitting) {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, onClose, isSubmitting]);
+
+  // Focus the search input when open
+  useEffect(() => {
+    if (isOpen) {
+      const timer = setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen]);
+
+  // Load eligible mentors and request response details on open
+  useEffect(() => {
+    if (isOpen && student) {
+      const loadDetails = async () => {
         setIsLoadingMentors(true);
         setError(null);
         try {
+          // 1. Fetch eligible mentors
           const mentors = await threeWayConferenceService.getEligibleJuniorHighMentors();
           setEligibleMentors(mentors);
+          
           if (activeMentor) {
-            setSelectedMentorId(activeMentor.mentorId);
+            setSelectedMentorId(activeMentor.mentorId || '');
           } else {
             setSelectedMentorId('');
           }
           setNoteOrReason('');
           setRemovalReason('');
           setShowRemovalConfirm(false);
+          setSearchQuery('');
+
+          // 2. Fetch student conference response details
+          const periodId = currentAssignment?.periodId || window.location.pathname.split('/').pop() || '';
+          if (periodId && periodId !== 'workspace') {
+            const resp = await threeWayConferenceService.getStudentConferenceResponse(periodId, student.id);
+            setStudentResponse(resp);
+          } else {
+            setStudentResponse(null);
+          }
         } catch (err: any) {
-          setError(err.message || 'Failed to load eligible mentor teachers.');
+          setError(err.message || 'Gagal memuat detail data assignment.');
         } finally {
           setIsLoadingMentors(false);
         }
       };
-      loadMentors();
+      loadDetails();
     }
-  }, [isOpen, activeMentor]);
+  }, [isOpen, student, activeMentor, currentAssignment]);
 
   if (!isOpen || !student) return null;
 
+  // Filter & Sort Mentors
+  const filteredMentors = eligibleMentors
+    .filter((m) => {
+      const name = (m.displayName || m.email || '').toLowerCase();
+      return name.includes(searchQuery.toLowerCase());
+    })
+    .sort((a, b) => (a.displayName || '').localeCompare(b.displayName || ''));
+
   const handleAssign = async () => {
     if (!selectedMentorId) {
-      setError('Please select a mentor teacher.');
+      setError('Harap pilih guru mentor terlebih dahulu.');
       return;
     }
 
@@ -70,8 +130,7 @@ export const MentorAssignmentDialog: React.FC<MentorAssignmentDialogProps> = ({
     try {
       const periodId = currentAssignment?.periodId || window.location.pathname.split('/').pop() || '';
       if (!periodId || periodId === 'workspace') {
-        // Fallback or dynamically fetch period ID
-        throw new Error('Could not resolve active conference period ID. Please try again.');
+        throw new Error('Gagal mendeteksi Periode Konferensi aktif. Harap muat ulang halaman.');
       }
 
       if (activeMentor) {
@@ -91,10 +150,12 @@ export const MentorAssignmentDialog: React.FC<MentorAssignmentDialogProps> = ({
           noteOrReason
         );
       }
+      
+      toast.success('Mentor berhasil ditugaskan.');
       onSaveSuccess();
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Failed to update mentor assignment.');
+      setError(err.message || 'Gagal menyimpan penugasan mentor.');
     } finally {
       setIsSubmitting(false);
     }
@@ -105,45 +166,60 @@ export const MentorAssignmentDialog: React.FC<MentorAssignmentDialogProps> = ({
     setError(null);
     try {
       const periodId = currentAssignment?.periodId || '';
-      if (!periodId) throw new Error('Missing Period ID');
+      if (!periodId) throw new Error('ID Periode Konferensi tidak ditemukan.');
 
       await threeWayConferenceService.removeMentorFromStudent(
         periodId,
         student.id,
         removalReason
       );
+      
+      toast.success('Penugasan mentor berhasil dihapus.');
       onSaveSuccess();
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Failed to remove mentor.');
+      setError(err.message || 'Gagal menghapus penugasan mentor.');
     } finally {
       setIsSubmitting(false);
       setShowRemovalConfirm(false);
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true" id="mentor-assignment-modal">
-      <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-        {/* Backdrop overlay */}
-        <div className="fixed inset-0 bg-gray-500/75 backdrop-blur-sm transition-opacity" aria-hidden="true" onClick={onClose} />
+  const handleOverlayClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget && !isSubmitting) {
+      onClose();
+    }
+  };
 
-        {/* Modal panel container */}
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true" id="mentor-assignment-modal">
+      <div className="flex items-center justify-center min-h-screen px-4 py-6 text-center sm:block sm:p-0">
+        
+        {/* Backdrop overlay */}
+        <div 
+          className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm transition-opacity" 
+          aria-hidden="true" 
+          onClick={handleOverlayClick} 
+        />
+
+        {/* Trick to center modal in desktop */}
         <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
-        <div className="inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full border border-gray-100">
+        {/* Modal content */}
+        <div className="inline-block align-middle bg-white rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all my-8 sm:align-middle sm:max-w-xl sm:w-full border border-gray-100">
           
           {/* Header */}
-          <div className="bg-gray-50/70 px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <div className="bg-gray-50/80 px-6 py-4 border-b border-gray-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <UserPlus className="h-5 w-5 text-blue-600" />
-              <h3 className="text-lg font-bold text-gray-900" id="modal-title">
-                {activeMentor ? 'Change Mentor Assignment' : 'Assign Mentor Teacher'}
+              <h3 className="text-base font-bold text-gray-900" id="modal-title">
+                {activeMentor ? 'Ganti Mentor' : 'Assign Mentor'}
               </h3>
             </div>
             <button
               onClick={onClose}
-              className="text-gray-400 hover:text-gray-500 hover:bg-gray-100 p-1.5 rounded-lg transition"
+              disabled={isSubmitting}
+              className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 p-1.5 rounded-lg transition disabled:opacity-50"
               id="close-assignment-modal-btn"
             >
               <X className="h-5 w-5" />
@@ -151,20 +227,68 @@ export const MentorAssignmentDialog: React.FC<MentorAssignmentDialogProps> = ({
           </div>
 
           {/* Body */}
-          <div className="px-6 py-5 space-y-6 max-h-[75vh] overflow-y-auto">
-            {/* Student card info */}
+          <div className="px-6 py-5 space-y-5 max-h-[70vh] overflow-y-auto">
+            {/* Student identity card */}
             <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-4 flex items-start gap-3">
-              <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-sm">
+              <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-base uppercase shrink-0">
                 {student.name.charAt(0)}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-base font-bold text-gray-900 truncate">{student.name}</p>
-                <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-xs text-gray-500 font-medium">
-                  <span>ID / NIS: <strong className="text-gray-700 font-mono">{student.nis || student.id}</strong></span>
-                  <span>•</span>
-                  <span>Class: <strong className="text-gray-700">{student.classId}</strong></span>
-                </div>
+                <p className="text-sm font-black text-gray-900 truncate">{student.name}</p>
+                <p className="text-xs text-gray-500 font-mono mt-0.5">
+                  NIS: <span className="font-bold text-gray-700">{student.nis || student.id}</span>
+                </p>
               </div>
+            </div>
+
+            {/* Request Details Metadata */}
+            <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 grid grid-cols-2 gap-4 text-xs">
+              <div>
+                <span className="text-gray-400 font-bold uppercase tracking-wider block text-[10px]">Kelas</span>
+                <span className="text-gray-900 font-semibold text-sm">{studentResponse?.className || student.classId || '—'}</span>
+              </div>
+              <div>
+                <span className="text-gray-400 font-bold uppercase tracking-wider block text-[10px]">Status Request</span>
+                <span className="text-gray-900 font-semibold text-sm">
+                  {studentResponse?.status === 'SUBMITTED' ? (
+                    <span className="text-blue-600 font-bold">Submitted</span>
+                  ) : studentResponse?.status === 'CONFERENCE_COMPLETED' ? (
+                    <span className="text-emerald-600 font-bold">Completed</span>
+                  ) : studentResponse?.status === 'DRAFT' ? (
+                    <span className="text-amber-600 font-bold">Draft</span>
+                  ) : (
+                    <span className="text-gray-500">Not Started</span>
+                  )}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-400 font-bold uppercase tracking-wider block text-[10px]">Jumlah Goals</span>
+                <span className="text-gray-900 font-semibold text-sm">{studentResponse?.goals?.length || 0} Goal(s)</span>
+              </div>
+              <div>
+                <span className="text-gray-400 font-bold uppercase tracking-wider block text-[10px]">Waktu Request Dibuat</span>
+                <span className="text-gray-900 font-semibold text-sm flex items-center gap-1 mt-0.5">
+                  <Calendar className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                  {studentResponse?.createdAt ? new Date(studentResponse.createdAt).toLocaleDateString('id-ID', {
+                    day: '2-digit',
+                    month: 'short',
+                    year: 'numeric'
+                  }) : '—'}
+                </span>
+              </div>
+              {activeMentor && (
+                <div className="col-span-2 border-t border-gray-100 pt-2.5 mt-1">
+                  <span className="text-gray-400 font-bold uppercase tracking-wider block text-[10px]">Mentor Saat Ini</span>
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className="h-6 w-6 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 text-[10px] font-bold uppercase">
+                      {activeMentor.mentorName?.charAt(0) || 'M'}
+                    </div>
+                    <span className="text-gray-900 font-bold text-xs">
+                      {activeMentor.mentorName} <span className="font-normal text-gray-500">({activeMentor.mentorEmail})</span>
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
 
             {error && (
@@ -179,22 +303,21 @@ export const MentorAssignmentDialog: React.FC<MentorAssignmentDialogProps> = ({
               <div className="space-y-4 bg-red-50/30 border border-red-100 rounded-xl p-5" id="removal-confirm-container">
                 <div className="flex items-center gap-2 text-red-700">
                   <ShieldAlert className="h-5 w-5" />
-                  <h4 className="font-bold text-sm uppercase tracking-wider">Confirm Mentor Removal</h4>
+                  <h4 className="font-bold text-sm uppercase tracking-wider">Konfirmasi Hapus Mentor</h4>
                 </div>
                 <p className="text-sm text-gray-600 leading-relaxed">
-                  Are you sure you want to remove <strong className="text-gray-900">{activeMentor?.mentorName}</strong> as mentor for <strong className="text-gray-900">{student.name}</strong>?
-                  This will change their status to <strong className="text-gray-900">Unassigned</strong> but will preserve the historical tracking logs.
+                  Apakah Anda yakin ingin menghapus <strong className="text-gray-900">{activeMentor?.mentorName}</strong> sebagai mentor untuk <strong className="text-gray-900">{student.name}</strong>? Status siswa akan kembali menjadi <strong className="text-gray-900">Unassigned</strong>.
                 </p>
                 <div>
                   <label htmlFor="removal-reason-input" className="block text-xs font-bold text-red-700 uppercase tracking-wider mb-1.5">
-                    Reason for Removal (Optional)
+                    Alasan Penghapusan (Opsional)
                   </label>
                   <textarea
                     id="removal-reason-input"
                     rows={2}
                     value={removalReason}
                     onChange={(e) => setRemovalReason(e.target.value)}
-                    placeholder="Provide a brief explanation for removing this mentor assignment..."
+                    placeholder="Tuliskan penjelasan singkat menghapus mentor..."
                     className="block w-full px-3 py-2 border border-red-200 rounded-lg text-sm placeholder-red-400/70 focus:outline-none focus:ring-1 focus:ring-red-500 focus:border-red-500 bg-white"
                   />
                 </div>
@@ -205,7 +328,7 @@ export const MentorAssignmentDialog: React.FC<MentorAssignmentDialogProps> = ({
                     onClick={() => setShowRemovalConfirm(false)}
                     className="px-4 py-2 border border-gray-200 rounded-lg text-xs font-bold text-gray-700 bg-white hover:bg-gray-50 transition"
                   >
-                    Cancel
+                    Batal
                   </button>
                   <button
                     id="confirm-removal-btn"
@@ -217,51 +340,95 @@ export const MentorAssignmentDialog: React.FC<MentorAssignmentDialogProps> = ({
                     {isSubmitting ? (
                       <>
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        Removing...
+                        Menghapus...
                       </>
                     ) : (
                       <>
                         <Trash2 className="h-3.5 w-3.5" />
-                        Confirm Removal
+                        Hapus Penugasan
                       </>
                     )}
                   </button>
                 </div>
               </div>
             ) : (
-              /* Regular Assignment / Reassignment Form */
+              /* Regular Assignment Form */
               <div className="space-y-4">
-                {/* Select Mentor */}
-                <div>
-                  <label htmlFor="mentor-teacher-select" className="block text-xs font-bold text-gray-600 uppercase tracking-wider mb-1.5">
-                    Choose Eligible Mentor Teacher
+                {/* Search Field */}
+                <div className="space-y-1.5">
+                  <label htmlFor="mentor-search-input" className="block text-xs font-bold text-gray-600 uppercase tracking-wider">
+                    Cari & Pilih Mentor
                   </label>
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    id="mentor-search-input"
+                    placeholder="Cari nama mentor..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="block w-full px-3.5 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+
+                {/* scrollable list of eligible mentors */}
+                <div className="border border-gray-100 rounded-xl max-h-56 overflow-y-auto divide-y divide-gray-50 bg-white" id="mentor-list-container">
                   {isLoadingMentors ? (
-                    <div className="flex items-center gap-2 py-2 text-sm text-gray-500">
+                    <div className="flex items-center justify-center py-10 text-xs text-gray-400 gap-2">
                       <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-                      Loading eligible junior high staff...
+                      <span>Memuat daftar mentor...</span>
+                    </div>
+                  ) : filteredMentors.length === 0 ? (
+                    <div className="text-center py-10 text-xs text-gray-400">
+                      Tidak ada mentor Junior High yang dapat dipilih.
                     </div>
                   ) : (
-                    <select
-                      id="mentor-teacher-select"
-                      value={selectedMentorId}
-                      onChange={(e) => setSelectedMentorId(e.target.value)}
-                      className="block w-full py-2.5 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                    >
-                      <option value="">-- Select Teacher --</option>
-                      {eligibleMentors.map((m) => (
-                        <option key={m.uid} value={m.uid}>
-                          {m.displayName} ({m.email} - {m.role})
-                        </option>
-                      ))}
-                    </select>
+                    filteredMentors.map((m) => {
+                      const isSelected = selectedMentorId === m.uid;
+                      return (
+                        <button
+                          key={m.uid}
+                          type="button"
+                          onClick={() => setSelectedMentorId(m.uid)}
+                          className={`w-full text-left px-4 py-3 flex items-center justify-between transition ${
+                            isSelected ? 'bg-blue-50/70 hover:bg-blue-50' : 'hover:bg-gray-50/50'
+                          }`}
+                          id={`mentor-option-${m.uid}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-xs uppercase shrink-0">
+                              {m.photoURL ? (
+                                <img src={m.photoURL} alt={m.displayName} className="h-8 w-8 rounded-full object-cover" referrerPolicy="no-referrer" />
+                              ) : (
+                                (m.displayName || m.email || '?').charAt(0)
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <p className={`text-xs font-bold truncate ${isSelected ? 'text-blue-900' : 'text-gray-900'}`}>
+                                {m.displayName || m.email}
+                              </p>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <span className="text-[9px] font-black tracking-wide text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded uppercase">
+                                  {m.role === 'SUPER_ADMIN' ? 'Super Admin' : m.role.replace('_', ' ')}
+                                </span>
+                                <span className="text-[9px] font-black tracking-wide text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded uppercase">
+                                  Junior High
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          {isSelected && (
+                            <div className="h-2 w-2 rounded-full bg-blue-600 mr-1" />
+                          )}
+                        </button>
+                      );
+                    })
                   )}
                 </div>
 
                 {/* Assignment Note / Reason */}
-                <div>
-                  <label htmlFor="assignment-note-textarea" className="block text-xs font-bold text-gray-600 uppercase tracking-wider mb-1.5">
-                    {activeMentor ? 'Reason for Reassignment' : 'Assignment Note / Remark (Optional)'}
+                <div className="space-y-1.5">
+                  <label htmlFor="assignment-note-textarea" className="block text-xs font-bold text-gray-600 uppercase tracking-wider">
+                    {activeMentor ? 'Alasan Ganti Mentor' : 'Catatan Penugasan (Opsional)'}
                   </label>
                   <textarea
                     id="assignment-note-textarea"
@@ -270,8 +437,8 @@ export const MentorAssignmentDialog: React.FC<MentorAssignmentDialogProps> = ({
                     onChange={(e) => setNoteOrReason(e.target.value)}
                     placeholder={
                       activeMentor
-                        ? 'Why are you changing mentor for this student? (Required for logging)'
-                        : 'Any optional notes regarding this initial assignment...'
+                        ? 'Tuliskan alasan mengapa Anda mengubah penugasan mentor untuk siswa ini...'
+                        : 'Tuliskan instruksi atau catatan khusus jika ada...'
                     }
                     className="block w-full px-3 py-2 border border-gray-200 rounded-lg text-sm placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                   />
@@ -279,9 +446,9 @@ export const MentorAssignmentDialog: React.FC<MentorAssignmentDialogProps> = ({
 
                 {/* Removal Option for Current Assignments */}
                 {activeMentor && (
-                  <div className="pt-3 border-t border-gray-100 flex items-center justify-between" id="remove-assignment-box">
+                  <div className="pt-3 border-t border-gray-100 flex items-center justify-between animate-fade-in" id="remove-assignment-box">
                     <div className="text-xs text-gray-500">
-                      <span>Current Mentor: </span>
+                      <span>Mentor saat ini: </span>
                       <strong className="text-gray-700">{activeMentor.mentorName}</strong>
                     </div>
                     <button
@@ -291,7 +458,7 @@ export const MentorAssignmentDialog: React.FC<MentorAssignmentDialogProps> = ({
                       className="inline-flex items-center gap-1 text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100/70 border border-red-100 px-3 py-1.5 rounded-lg transition"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
-                      Remove Mentor
+                      Hapus Mentor
                     </button>
                   </div>
                 )}
@@ -299,7 +466,7 @@ export const MentorAssignmentDialog: React.FC<MentorAssignmentDialogProps> = ({
             )}
 
             {/* Read-only History Timeline */}
-            {currentAssignment && (
+            {currentAssignment && !showRemovalConfirm && (
               <div className="pt-5 border-t border-gray-100">
                 <MentorAssignmentHistory assignment={currentAssignment} />
               </div>
@@ -313,9 +480,10 @@ export const MentorAssignmentDialog: React.FC<MentorAssignmentDialogProps> = ({
                 id="cancel-assignment-dialog-btn"
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 border border-gray-200 rounded-lg text-xs font-bold text-gray-700 bg-white hover:bg-gray-50 transition"
+                disabled={isSubmitting}
+                className="px-4 py-2 border border-gray-200 rounded-lg text-xs font-bold text-gray-700 bg-white hover:bg-gray-50 transition disabled:opacity-50"
               >
-                Cancel
+                Batal
               </button>
               <button
                 id="submit-assignment-btn"
@@ -327,12 +495,12 @@ export const MentorAssignmentDialog: React.FC<MentorAssignmentDialogProps> = ({
                 {isSubmitting ? (
                   <>
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Saving...
+                    Menyimpan...
                   </>
                 ) : (
                   <>
                     {activeMentor ? <RefreshCw className="h-3.5 w-3.5" /> : <UserPlus className="h-3.5 w-3.5" />}
-                    {activeMentor ? 'Change Assignment' : 'Assign Mentor'}
+                    {activeMentor ? 'Simpan Perubahan' : 'Tugaskan Mentor'}
                   </>
                 )}
               </button>
@@ -340,6 +508,7 @@ export const MentorAssignmentDialog: React.FC<MentorAssignmentDialogProps> = ({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

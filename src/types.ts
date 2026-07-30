@@ -1900,6 +1900,15 @@ export interface StudentConferenceResponse {
   lastSubmittedAt?: number | null;
   revisionRound?: number;
   lastEditedAt?: number | null;
+
+  // Assignment-related fields
+  unit?: 'JUNIOR_HIGH' | 'ELEMENTARY';
+  mentorId?: string | null;
+  mentorName?: string | null;
+  mentorRole?: string | null;
+  assignedAt?: number | null;
+  assignedByUid?: string | null;
+  assignedByName?: string | null;
 }
 
 export interface MentorAssignment {
@@ -1911,9 +1920,9 @@ export interface MentorAssignment {
   studentName: string;
   classId: string;
   className: string;
-  mentorId: string;
-  mentorName: string;
-  mentorEmail: string;
+  mentorId: string | null;
+  mentorName: string | null;
+  mentorEmail: string | null;
   status: 'ACTIVE' | 'REASSIGNED' | 'REMOVED';
   assignedBy: string;
   assignedByName: string;
@@ -1932,8 +1941,10 @@ export interface MentorAssignment {
     actionAt: number;
     reason: string | null;
   }>;
+  unit?: 'JUNIOR_HIGH' | 'ELEMENTARY';
+  mentorRole?: string | null;
+  assignedByUid?: string | null;
 }
-
 export type TrackerSectionStatus = 'NOT_REVIEWED' | 'APPROVED' | 'REVISION_REQUIRED';
 
 export interface TrackerSectionReview {

@@ -1232,6 +1232,7 @@ export const threeWayConferenceService = {
 
       const assignmentId = this.getMentorAssignmentId(periodId, studentId);
       const assignmentRef = doc(db, ASSIGNMENTS_COLLECTION, assignmentId);
+      const responseId = this.getConferenceResponseId(periodId, studentId);
 
       await runTransaction(db, async (transaction) => {
         // 1. Get current staff user
@@ -1239,6 +1240,10 @@ export const threeWayConferenceService = {
         const staffSnap = await transaction.get(staffRef);
         if (!staffSnap.exists()) throw new Error('Staff profile not found');
         const staffData = staffSnap.data() as User;
+
+        if (staffData.status !== 'active') {
+          throw new Error('Unauthorized: Staff profile is inactive.');
+        }
 
         // 2. Get student details
         const studentRef = doc(db, 'students', studentId);
@@ -1253,6 +1258,11 @@ export const threeWayConferenceService = {
           const classSnap = await transaction.get(classRef);
           if (classSnap.exists()) {
             className = classSnap.data().name || 'Unknown Class';
+            const classData = classSnap.data() as Class;
+            const isJHClass = classData.unitId === 'JUNIOR_HIGH' || ['7', '8', '9', 7, 8, 9].includes(classData.grade);
+            if (!isJHClass) {
+              throw new Error('Unauthorized: Lintas unit tidak diperbolehkan. Target request bukan JUNIOR_HIGH.');
+            }
           }
         }
 
@@ -1270,6 +1280,22 @@ export const threeWayConferenceService = {
           throw new Error('Invalid Mentor: Selected user is not an eligible mentor.');
         }
 
+        // Unit user access checks
+        const staffAssigned = (staffData as any).assignedUnits || [];
+        const hasStaffJHAccess = staffData.unitId === 'JUNIOR_HIGH' || staffAssigned.includes('JUNIOR_HIGH') || staffData.role === 'SUPER_ADMIN';
+        if (!hasStaffJHAccess) {
+          throw new Error('Unauthorized: Lintas unit tidak diperbolehkan.');
+        }
+
+        if (mentorData.status !== 'active') {
+          throw new Error('Invalid Mentor: Selected mentor is inactive.');
+        }
+        const mentorAssigned = (mentorData as any).assignedUnits || [];
+        const hasMentorJHAccess = mentorData.unitId === 'JUNIOR_HIGH' || mentorAssigned.includes('JUNIOR_HIGH') || mentorData.role === 'SUPER_ADMIN';
+        if (!hasMentorJHAccess) {
+          throw new Error('Invalid Mentor: Selected mentor must have Junior High access.');
+        }
+
         // 5. Get period details
         const periodRef = doc(db, PERIODS_COLLECTION, periodId);
         const periodSnap = await transaction.get(periodRef);
@@ -1279,8 +1305,9 @@ export const threeWayConferenceService = {
         // 6. Check existing assignment to preserve history
         const assignmentSnap = await transaction.get(assignmentRef);
         let existingHistory = [];
+        let existingData: MentorAssignment | null = null;
         if (assignmentSnap.exists()) {
-          const existingData = assignmentSnap.data() as MentorAssignment;
+          existingData = assignmentSnap.data() as MentorAssignment;
           existingHistory = existingData.assignmentHistory || [];
         }
 
@@ -1307,11 +1334,14 @@ export const threeWayConferenceService = {
           studentName: studentData.name || '',
           classId: studentData.classId || '',
           className,
+          unit: 'JUNIOR_HIGH',
           mentorId,
           mentorName: mentorData.displayName || '',
           mentorEmail: mentorData.email || '',
+          mentorRole: mentorData.role || '',
           status: 'ACTIVE',
           assignedBy: assignmentSnap.exists() ? (assignmentSnap.data() as MentorAssignment).assignedBy : currentUid,
+          assignedByUid: assignmentSnap.exists() ? ((assignmentSnap.data() as any).assignedByUid || (assignmentSnap.data() as MentorAssignment).assignedBy) : currentUid,
           assignedByName: assignmentSnap.exists() ? (assignmentSnap.data() as MentorAssignment).assignedByName : staffData.displayName || '',
           assignedAt: assignmentSnap.exists() ? (assignmentSnap.data() as MentorAssignment).assignedAt : now,
           updatedBy: currentUid,
@@ -1321,7 +1351,64 @@ export const threeWayConferenceService = {
           assignmentHistory: updatedHistory
         };
 
+        // Write to assignments
         transaction.set(assignmentRef, newAssignment);
+
+        // Write/Update studentConferenceResponse doc
+        const responseRef = doc(db, RESPONSES_COLLECTION, responseId);
+        const responseSnap = await transaction.get(responseRef);
+        const responseData = {
+          unit: 'JUNIOR_HIGH' as const,
+          mentorId,
+          mentorName: mentorData.displayName || '',
+          mentorRole: mentorData.role || '',
+          assignedAt: now,
+          assignedByUid: currentUid,
+          assignedByName: staffData.displayName || '',
+          updatedAt: now
+        };
+
+        if (responseSnap.exists()) {
+          transaction.update(responseRef, responseData);
+        } else {
+          const newResponse = {
+            id: responseId,
+            periodId,
+            studentId,
+            studentName: studentData.name || '',
+            studentLuminaId: studentData.nis || studentId,
+            classId: studentData.classId || '',
+            className,
+            gradeLevel: studentData.grade || 0,
+            academicYear: periodData.academicYear,
+            semester: periodData.semester as (1 | 2),
+            status: 'DRAFT' as const,
+            aboutMe: '',
+            strengths: '',
+            areasForGrowth: '',
+            goals: [],
+            selfExplorationReferenceId: null,
+            karyaIlmiahReferenceId: null,
+            createdAt: now,
+            ...responseData
+          };
+          transaction.set(responseRef, newResponse);
+        }
+
+        // Add Audit Log
+        const auditId = doc(collection(db, 'mentorAssignmentAudits')).id;
+        const auditRef = doc(db, 'mentorAssignmentAudits', auditId);
+        const auditEntry = {
+          action: 'MENTOR_ASSIGNED',
+          conferenceRequestId: responseId,
+          unit: 'JUNIOR_HIGH',
+          previousMentorId: existingData?.mentorId || null,
+          newMentorId: mentorId,
+          performedByUid: currentUid,
+          performedByName: staffData.displayName || '',
+          createdAt: now
+        };
+        transaction.set(auditRef, auditEntry);
       });
     } catch (error) {
       return handleFirestoreError(error, 'create', `${ASSIGNMENTS_COLLECTION}/${periodId}_${studentId}`);
@@ -1338,6 +1425,7 @@ export const threeWayConferenceService = {
 
       const assignmentId = this.getMentorAssignmentId(periodId, studentId);
       const assignmentRef = doc(db, ASSIGNMENTS_COLLECTION, assignmentId);
+      const responseId = this.getConferenceResponseId(periodId, studentId);
 
       await runTransaction(db, async (transaction) => {
         const assignmentSnap = await transaction.get(assignmentRef);
@@ -1352,6 +1440,10 @@ export const threeWayConferenceService = {
         if (!staffSnap.exists()) throw new Error('Staff profile not found');
         const staffData = staffSnap.data() as User;
 
+        if (staffData.status !== 'active') {
+          throw new Error('Unauthorized: Staff profile is inactive.');
+        }
+
         // 2. Get mentor details
         const mentorRef = doc(db, 'users', mentorId);
         const mentorSnap = await transaction.get(mentorRef);
@@ -1364,6 +1456,22 @@ export const threeWayConferenceService = {
         }
         if (!eligibleRoles.includes(mentorData.role)) {
           throw new Error('Invalid Mentor: Selected user is not an eligible mentor.');
+        }
+
+        // Unit user access checks
+        const staffAssigned = (staffData as any).assignedUnits || [];
+        const hasStaffJHAccess = staffData.unitId === 'JUNIOR_HIGH' || staffAssigned.includes('JUNIOR_HIGH') || staffData.role === 'SUPER_ADMIN';
+        if (!hasStaffJHAccess) {
+          throw new Error('Unauthorized: Lintas unit tidak diperbolehkan.');
+        }
+
+        if (mentorData.status !== 'active') {
+          throw new Error('Invalid Mentor: Selected mentor is inactive.');
+        }
+        const mentorAssigned = (mentorData as any).assignedUnits || [];
+        const hasMentorJHAccess = mentorData.unitId === 'JUNIOR_HIGH' || mentorAssigned.includes('JUNIOR_HIGH') || mentorData.role === 'SUPER_ADMIN';
+        if (!hasMentorJHAccess) {
+          throw new Error('Invalid Mentor: Selected mentor must have Junior High access.');
         }
 
         const now = Date.now();
@@ -1385,6 +1493,7 @@ export const threeWayConferenceService = {
           mentorId,
           mentorName: mentorData.displayName || '',
           mentorEmail: mentorData.email || '',
+          mentorRole: mentorData.role || '',
           status: 'ACTIVE',
           updatedBy: currentUid,
           updatedAt: now,
@@ -1393,6 +1502,36 @@ export const threeWayConferenceService = {
         };
 
         transaction.update(assignmentRef, updatedAssignment);
+
+        // Update response doc
+        const responseRef = doc(db, RESPONSES_COLLECTION, responseId);
+        const responseSnap = await transaction.get(responseRef);
+        if (responseSnap.exists()) {
+          transaction.update(responseRef, {
+            mentorId,
+            mentorName: mentorData.displayName || '',
+            mentorRole: mentorData.role || '',
+            assignedAt: now,
+            assignedByUid: currentUid,
+            assignedByName: staffData.displayName || '',
+            updatedAt: now
+          });
+        }
+
+        // Add Audit Log
+        const auditId = doc(collection(db, 'mentorAssignmentAudits')).id;
+        const auditRef = doc(db, 'mentorAssignmentAudits', auditId);
+        const auditEntry = {
+          action: 'MENTOR_REASSIGNED',
+          conferenceRequestId: responseId,
+          unit: 'JUNIOR_HIGH',
+          previousMentorId: existingData.mentorId || null,
+          newMentorId: mentorId,
+          performedByUid: currentUid,
+          performedByName: staffData.displayName || '',
+          createdAt: now
+        };
+        transaction.set(auditRef, auditEntry);
       });
     } catch (error) {
       return handleFirestoreError(error, 'update', `${ASSIGNMENTS_COLLECTION}/${periodId}_${studentId}`);
@@ -1409,6 +1548,7 @@ export const threeWayConferenceService = {
 
       const assignmentId = this.getMentorAssignmentId(periodId, studentId);
       const assignmentRef = doc(db, ASSIGNMENTS_COLLECTION, assignmentId);
+      const responseId = this.getConferenceResponseId(periodId, studentId);
 
       await runTransaction(db, async (transaction) => {
         const assignmentSnap = await transaction.get(assignmentRef);
@@ -1423,9 +1563,20 @@ export const threeWayConferenceService = {
         if (!staffSnap.exists()) throw new Error('Staff profile not found');
         const staffData = staffSnap.data() as User;
 
+        if (staffData.status !== 'active') {
+          throw new Error('Unauthorized: Staff profile is inactive.');
+        }
+
         const eligibleRoles = ['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR'];
         if (!eligibleRoles.includes(staffData.role)) {
           throw new Error('Unauthorized: Role not allowed to manage mentor assignments.');
+        }
+
+        // Unit user access checks
+        const staffAssigned = (staffData as any).assignedUnits || [];
+        const hasStaffJHAccess = staffData.unitId === 'JUNIOR_HIGH' || staffAssigned.includes('JUNIOR_HIGH') || staffData.role === 'SUPER_ADMIN';
+        if (!hasStaffJHAccess) {
+          throw new Error('Unauthorized: Lintas unit tidak diperbolehkan.');
         }
 
         const now = Date.now();
@@ -1447,6 +1598,7 @@ export const threeWayConferenceService = {
           mentorId: null,
           mentorName: null,
           mentorEmail: null,
+          mentorRole: null,
           status: 'REMOVED',
           updatedBy: currentUid,
           updatedAt: now,
@@ -1455,6 +1607,36 @@ export const threeWayConferenceService = {
         };
 
         transaction.update(assignmentRef, updatedAssignment);
+
+        // Update response doc
+        const responseRef = doc(db, RESPONSES_COLLECTION, responseId);
+        const responseSnap = await transaction.get(responseRef);
+        if (responseSnap.exists()) {
+          transaction.update(responseRef, {
+            mentorId: null,
+            mentorName: null,
+            mentorRole: null,
+            assignedAt: null,
+            assignedByUid: null,
+            assignedByName: null,
+            updatedAt: now
+          });
+        }
+
+        // Add Audit Log
+        const auditId = doc(collection(db, 'mentorAssignmentAudits')).id;
+        const auditRef = doc(db, 'mentorAssignmentAudits', auditId);
+        const auditEntry = {
+          action: 'MENTOR_REASSIGNED',
+          conferenceRequestId: responseId,
+          unit: 'JUNIOR_HIGH',
+          previousMentorId: existingData.mentorId || null,
+          newMentorId: '',
+          performedByUid: currentUid,
+          performedByName: staffData.displayName || '',
+          createdAt: now
+        };
+        transaction.set(auditRef, auditEntry);
       });
     } catch (error) {
       return handleFirestoreError(error, 'update', `${ASSIGNMENTS_COLLECTION}/${periodId}_${studentId}`);

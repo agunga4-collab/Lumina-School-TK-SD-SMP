@@ -169,14 +169,25 @@ export const ConferenceResponsesTable: React.FC<ConferenceResponsesTableProps> =
                     {/* Assigned Mentor */}
                     <td className="px-6 py-4 whitespace-nowrap">
                       {mentorName ? (
-                        <div className="flex flex-col">
-                          <span className="font-semibold text-gray-800 text-xs flex items-center gap-1.5 bg-blue-50/50 text-blue-800 border border-blue-100/50 px-2 py-0.5 rounded-md w-fit">
-                            <UserCheck className="h-3.5 w-3.5" />
-                            {mentorName}
-                          </span>
-                          {row.assignment?.mentorEmail && (
-                            <span className="text-[10px] text-gray-400 font-mono mt-0.5">{row.assignment.mentorEmail}</span>
-                          )}
+                        <div className="flex items-center gap-2">
+                          <div className="h-6 w-6 rounded-full bg-blue-100 flex items-center justify-center text-blue-800 text-[10px] font-bold uppercase shrink-0">
+                            {row.assignment?.mentorPhotoURL ? (
+                              <img src={row.assignment.mentorPhotoURL} alt={mentorName} className="h-6 w-6 rounded-full object-cover" referrerPolicy="no-referrer" />
+                            ) : (
+                              mentorName.charAt(0)
+                            )}
+                          </div>
+                          <div className="flex flex-col max-w-[150px]">
+                            <span 
+                              className="font-semibold text-gray-800 text-xs flex items-center gap-1.5 bg-blue-50/50 text-blue-800 border border-blue-100/50 px-2 py-0.5 rounded-md w-fit truncate"
+                              title={mentorName}
+                            >
+                              {mentorName}
+                            </span>
+                            {row.assignment?.mentorEmail && (
+                              <span className="text-[10px] text-gray-400 font-mono mt-0.5 truncate" title={row.assignment.mentorEmail}>{row.assignment.mentorEmail}</span>
+                            )}
+                          </div>
                         </div>
                       ) : (
                         <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-semibold bg-gray-50 text-gray-500 border border-gray-100">
@@ -218,7 +229,7 @@ export const ConferenceResponsesTable: React.FC<ConferenceResponsesTableProps> =
                           {mentorName ? (
                             <>
                               <UserCheck className="h-3.5 w-3.5" />
-                              Change Mentor
+                              Ganti Mentor
                             </>
                           ) : (
                             <>

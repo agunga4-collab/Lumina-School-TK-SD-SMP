@@ -647,10 +647,18 @@ service cloud.firestore {
       allow list: if isActive() && isStudent() && currentUserExists() && ('luminaId' in currentUser()) && resource.data.studentId == currentUser().luminaId;
       allow create: if isJHConferenceStaff() && 
         incoming().studentId is string && 
-        incoming().periodId is string;
+        incoming().periodId is string &&
+        incoming().unit == 'JUNIOR_HIGH';
       allow update: if isJHConferenceStaff() && 
         incoming().studentId == existing().studentId && 
-        incoming().periodId == existing().periodId;
+        incoming().periodId == existing().periodId &&
+        (!('unit' in existing()) || existing().unit == 'JUNIOR_HIGH');
+    }
+
+    match /mentorAssignmentAudits/{auditId} {
+      allow read: if isActive() && isJHConferenceStaff();
+      allow create: if isActive() && isJHConferenceStaff() && 
+        incoming().unit == 'JUNIOR_HIGH';
     }
 
     match /smartGoalTrackerEntries/{entryId} {
