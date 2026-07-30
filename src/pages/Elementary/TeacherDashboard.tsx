@@ -6,6 +6,7 @@ import {
   Calendar, ArrowRight, BookOpen, AlertCircle, RefreshCw, ChevronDown, 
   Users, Layers, ClipboardCheck, Info, UserX, AlertOctagon, HelpCircle
 } from 'lucide-react';
+import { isTeacherAssignedToClass } from '../../services/classTeacherAssignmentService';
 import { cn } from '../../lib/utils';
 import { db, getClasses, getActiveStudents } from '../../lib/firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
@@ -175,8 +176,8 @@ export default function ElementaryTeacherDashboard() {
         );
 
         if (!isUserAdmin) {
-          // Standard teacher only sees their assigned homeroom classes
-          elementaryClasses = elementaryClasses.filter(c => c.homeroomTeacherId === profile.uid);
+          // Standard teacher only sees their assigned classes (homeroom or GPK)
+          elementaryClasses = elementaryClasses.filter(c => isTeacherAssignedToClass(c, profile.uid));
         }
 
         setHomeroomClasses(elementaryClasses);

@@ -56,8 +56,9 @@ import {
   db,
 } from "../../lib/firebase";
 import { auth, writeBatch, doc } from "../../lib/firebase";
-import { User, RoleInvite, UserRole, UnitType, Class, PromptTemplate } from "../../types";
+import { User, RoleInvite, UserRole, UnitType, Class, PromptTemplate, ClassTeacherAssignment } from "../../types";
 import { cn } from "../../lib/utils";
+import { getClassTeacherAssignments } from "../../services/classTeacherAssignmentService.ts";
 import MenuVisibilitySettings from "../../components/Admin/MenuVisibilitySettings";
 
 const getGradeOptions = (unitId: string): string[] => {
@@ -965,6 +966,64 @@ export default function SuperAdminPage() {
     teacherSignatureUrl: "",
   });
 
+  const [classTeacherAssignments, setClassTeacherAssignments] = React.useState<ClassTeacherAssignment[]>([]);
+  const [pendingHomeroom, setPendingHomeroom] = React.useState<ClassTeacherAssignment | null>(null);
+  const [gpkSearchQuery, setGpkSearchQuery] = React.useState("");
+  const [isGpkDropdownOpen, setIsGpkDropdownOpen] = React.useState(false);
+
+  const eligibleGpkList = React.useMemo(() => {
+    const assignedIds = classTeacherAssignments.map(a => a.userId);
+    return teachers.filter(t => {
+      const matchSearch = (t.displayName || "").toLowerCase().includes(gpkSearchQuery.toLowerCase()) || 
+                          (t.email || "").toLowerCase().includes(gpkSearchQuery.toLowerCase());
+      return matchSearch && !assignedIds.includes(t.uid);
+    });
+  }, [teachers, classTeacherAssignments, gpkSearchQuery]);
+
+  const handleSelectHomeroom = (teacherId: string) => {
+    if (!teacherId) return;
+    const teacher = teachers.find(t => t.uid === teacherId);
+    if (!teacher) return;
+    
+    const existingHomeroom = classTeacherAssignments.find(a => a.role === 'HOMEROOM_TEACHER');
+    
+    const newHomeroom: ClassTeacherAssignment = {
+      userId: teacher.uid,
+      displayName: teacher.displayName || 'Wali Kelas',
+      email: teacher.email || null,
+      role: 'HOMEROOM_TEACHER',
+      unitId: teacher.unitId || classFormData.unitId,
+      isPrimary: true,
+      assignedAt: Date.now(),
+      assignedBy: 'ADMIN'
+    };
+    
+    if (existingHomeroom) {
+      if (existingHomeroom.userId === teacher.uid) return;
+      setPendingHomeroom(newHomeroom);
+    } else {
+      setClassTeacherAssignments([
+        newHomeroom,
+        ...classTeacherAssignments.filter(a => a.role !== 'HOMEROOM_TEACHER')
+      ]);
+      setClassFormData(prev => ({ ...prev, homeroomTeacherId: teacher.uid }));
+    }
+  };
+
+  const confirmHomeroomChange = () => {
+    if (!pendingHomeroom) return;
+    setClassTeacherAssignments([
+      pendingHomeroom,
+      ...classTeacherAssignments.filter(a => a.userId !== pendingHomeroom.userId && a.role !== 'HOMEROOM_TEACHER')
+    ]);
+    setClassFormData(prev => ({ ...prev, homeroomTeacherId: pendingHomeroom.userId }));
+    setPendingHomeroom(null);
+  };
+
+  const cancelHomeroomChange = () => {
+    setPendingHomeroom(null);
+  };
+
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -1281,19 +1340,34 @@ export default function SuperAdminPage() {
     setFormLoading(true);
     try {
       const fullClassName = `${classFormData.grade} ${classFormData.className}`;
-      const teacher = teachers.find(
-        (t) => t.uid === classFormData.homeroomTeacherId,
-      );
+      
+      const homeroom = classTeacherAssignments.find(a => a.role === 'HOMEROOM_TEACHER' && a.isPrimary);
+      if (!homeroom) {
+        alert("Wali Kelas wajib ditentukan!");
+        setFormLoading(false);
+        return;
+      }
+
+      const nonUnitTeacher = classTeacherAssignments.find(a => {
+        const normUnit = (u: string) => u?.toUpperCase().replace('_', '') || '';
+        return a.unitId && normUnit(a.unitId) !== normUnit(classFormData.unitId) && !a.userId.startsWith('INVITE_') && !a.userId.startsWith('INVITE:');
+      });
+      if (nonUnitTeacher) {
+        alert(`Pengajar ${nonUnitTeacher.displayName} tidak berada dalam unit yang sama dengan kelas.`);
+        setFormLoading(false);
+        return;
+      }
 
       const classData = {
         name: fullClassName,
         grade: classFormData.grade,
         unitId: classFormData.unitId,
         academicYear: classFormData.academicYear,
-        homeroomTeacherId: classFormData.homeroomTeacherId || null,
-        homeroomTeacherName: teacher?.displayName ? teacher.displayName.replace(/^\s*\(UNDANGAN\)\s*/i, "") : null,
+        homeroomTeacherId: homeroom.userId,
+        homeroomTeacherName: homeroom.displayName.replace(/^\s*\(UNDANGAN\)\s*/i, ""),
         teacherSignatureUrl: classFormData.teacherSignatureUrl || null,
         status: "active" as const,
+        teacherAssignments: classTeacherAssignments,
       };
 
       if (editingId && (activeTab === "classes" || activeTab === "CLASSES")) {
@@ -1312,6 +1386,10 @@ export default function SuperAdminPage() {
         unitId: "JUNIOR_HIGH",
         teacherSignatureUrl: "",
       });
+      setClassTeacherAssignments([]);
+      setPendingHomeroom(null);
+      setGpkSearchQuery("");
+      setIsGpkDropdownOpen(false);
       fetchData();
       alert("Kelas berhasil disimpan!");
     } catch (error: any) {
@@ -2971,6 +3049,10 @@ export default function SuperAdminPage() {
                         unitId: defaultUnit,
                         teacherSignatureUrl: "",
                       });
+                      setClassTeacherAssignments([]);
+                      setPendingHomeroom(null);
+                      setGpkSearchQuery("");
+                      setIsGpkDropdownOpen(false);
                       setIsClassModalOpen(true);
                     }}
                     className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold tracking-wide flex items-center gap-1.5 transition-all shadow-sm cursor-pointer h-[38px] shrink-0"
@@ -3237,6 +3319,11 @@ export default function SuperAdminPage() {
                                       unitId: cls.unitId,
                                       teacherSignatureUrl: cls.teacherSignatureUrl || "",
                                     });
+                                    const normAssignments = getClassTeacherAssignments(cls);
+                                    setClassTeacherAssignments(normAssignments);
+                                    setPendingHomeroom(null);
+                                    setGpkSearchQuery("");
+                                    setIsGpkDropdownOpen(false);
                                     setIsClassModalOpen(true);
                                   }}
                                   className="p-2 text-gray-400 hover:text-blue-600 hover:bg-white rounded-xl shadow-sm"
@@ -6693,27 +6780,178 @@ export default function SuperAdminPage() {
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
-                  Wali Kelas
-                </label>
-                <select
-                  value={classFormData.homeroomTeacherId}
-                  onChange={(e) =>
-                    setClassFormData({
-                      ...classFormData,
-                      homeroomTeacherId: e.target.value,
-                    })
-                  }
-                  className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
-                >
-                  <option value="">Pilih Wali Kelas</option>
-                  {teachers.map((t) => (
-                    <option key={t.uid} value={t.uid}>
-                      {t.displayName} ({t.email})
-                    </option>
-                  ))}
-                </select>
+              {/* TIM PENGAJAR KELAS */}
+              <div className="bg-slate-50/50 rounded-3xl p-6 border border-slate-100 space-y-6">
+                <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                  <Users size={16} className="text-blue-500" />
+                  Tim Pengajar Kelas
+                </h3>
+
+                {/* BAGIAN 1 - WALI KELAS */}
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                      Wali Kelas
+                    </label>
+                    <span className="text-[10px] text-red-500 font-bold bg-red-50 px-2 py-0.5 rounded-full">Wajib</span>
+                  </div>
+                  
+                  <select
+                    value={classTeacherAssignments.find(a => a.role === 'HOMEROOM_TEACHER' && a.isPrimary)?.userId || ""}
+                    onChange={(e) => handleSelectHomeroom(e.target.value)}
+                    className="w-full px-5 py-4 bg-white border border-gray-150 rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="">Pilih Wali Kelas Utama</option>
+                    {teachers.map((t) => (
+                      <option key={t.uid} value={t.uid}>
+                        {t.displayName} ({t.role || 'TEACHER'}) - {t.unitId || 'ALL'}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* Pending Homeroom Confirmation */}
+                  {pendingHomeroom && (
+                    <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl space-y-3">
+                      <p className="text-xs font-bold text-amber-800 flex items-start gap-1.5 leading-relaxed">
+                        <AlertTriangle size={14} className="shrink-0 mt-0.5 text-amber-600" />
+                        Ganti Wali Kelas menjadi {pendingHomeroom.displayName}? Jangan khawatir, Wali Kelas lama tidak akan terhapus jika Anda menyimpannya sebagai GPK.
+                      </p>
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={cancelHomeroomChange}
+                          className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-amber-200 text-amber-800 rounded-xl text-[10px] font-black uppercase tracking-wider"
+                        >
+                          Batal
+                        </button>
+                        <button
+                          type="button"
+                          onClick={confirmHomeroomChange}
+                          className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider"
+                        >
+                          Ya, Ganti
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Current Homeroom Row */}
+                  {classTeacherAssignments.some(a => a.role === 'HOMEROOM_TEACHER') && (
+                    <div className="flex items-center justify-between p-3.5 bg-blue-50/50 border border-blue-100 rounded-2xl">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-xs uppercase">
+                          {classTeacherAssignments.find(a => a.role === 'HOMEROOM_TEACHER')?.displayName.charAt(0)}
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-slate-800 leading-none">
+                            {classTeacherAssignments.find(a => a.role === 'HOMEROOM_TEACHER')?.displayName}
+                          </p>
+                          <p className="text-[10px] font-bold text-blue-600 uppercase mt-1">
+                            Homeroom Teacher (Wali Kelas)
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* BAGIAN 2 - GURU PENDAMPING KHUSUS (GPK) */}
+                <div className="space-y-3 pt-4 border-t border-slate-100">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                      Guru Pendamping Khusus (GPK)
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-bold">Opsional</span>
+                  </div>
+
+                  {/* Search GPK Dropdown */}
+                  <div className="relative">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Cari GPK..."
+                        value={gpkSearchQuery}
+                        onChange={(e) => {
+                          setGpkSearchQuery(e.target.value);
+                          setIsGpkDropdownOpen(true);
+                        }}
+                        onFocus={() => setIsGpkDropdownOpen(true)}
+                        className="w-full pl-11 pr-5 py-4 bg-white border border-gray-150 rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
+                      />
+                      <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+                    </div>
+                    {isGpkDropdownOpen && gpkSearchQuery && (
+                      <div className="absolute left-0 right-0 mt-2 max-h-48 overflow-y-auto bg-white border border-gray-150 rounded-2xl shadow-xl z-50">
+                        {eligibleGpkList.length === 0 ? (
+                          <div className="p-4 text-xs font-semibold text-gray-400 text-center">Tidak ada pengajar yang cocok</div>
+                        ) : (
+                          eligibleGpkList.map(t => (
+                            <button
+                              key={t.uid}
+                              type="button"
+                              onClick={() => {
+                                const newGpk: ClassTeacherAssignment = {
+                                  userId: t.uid,
+                                  displayName: t.displayName || 'Guru',
+                                  email: t.email || null,
+                                  role: 'GPK',
+                                  unitId: t.unitId || classFormData.unitId,
+                                  isPrimary: false,
+                                  assignedAt: Date.now(),
+                                  assignedBy: 'ADMIN'
+                                };
+                                setClassTeacherAssignments([...classTeacherAssignments, newGpk]);
+                                setGpkSearchQuery("");
+                                setIsGpkDropdownOpen(false);
+                              }}
+                              className="w-full px-4 py-3 text-left hover:bg-gray-50 text-sm font-bold text-gray-700 border-b border-gray-100 last:border-b-0 flex items-center justify-between"
+                            >
+                              <span>{t.displayName} <span className="text-xs font-normal text-gray-400">({t.email})</span></span>
+                              <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-1 rounded-md uppercase font-black">{t.role || 'TEACHER'}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* List of GPK Assigned */}
+                  <div className="space-y-2 mt-2">
+                    {classTeacherAssignments.filter(a => a.role === 'GPK').length === 0 ? (
+                      <p className="text-xs font-semibold text-gray-400 py-2 italic text-center">
+                        Belum ada GPK ditugaskan ke kelas ini.
+                      </p>
+                    ) : (
+                      classTeacherAssignments.filter(a => a.role === 'GPK').map(a => (
+                        <div key={a.userId} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-150 rounded-2xl">
+                          <div className="flex items-center gap-3">
+                            <div className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 font-bold text-xs uppercase">
+                              {a.displayName.charAt(0)}
+                            </div>
+                            <div>
+                              <p className="text-xs font-black text-slate-800 leading-none">
+                                {a.displayName}
+                              </p>
+                              <p className="text-[10px] font-bold text-slate-500 mt-1 uppercase">
+                                GPK
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setClassTeacherAssignments(classTeacherAssignments.filter(x => x.userId !== a.userId));
+                            }}
+                            className="p-1.5 hover:bg-white text-gray-400 hover:text-red-500 rounded-lg shadow-sm border border-transparent hover:border-gray-150 transition-all cursor-pointer"
+                            title="Hapus GPK"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
               </div>
 
               <div className="space-y-2">

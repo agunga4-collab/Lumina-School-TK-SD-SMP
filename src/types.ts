@@ -678,18 +678,41 @@ export interface InterventionPlan {
   createdAt: number;
 }
 
+export type ClassTeacherRole =
+  | 'HOMEROOM_TEACHER'
+  | 'GPK';
+
+export interface ClassTeacherAssignment {
+  userId: string;
+  displayName: string;
+  email: string | null;
+  role: ClassTeacherRole;
+  unitId: string;
+  isPrimary: boolean;
+  assignedAt: number;
+  assignedBy: string;
+}
+
 export interface Class {
   id: string; // e.g. "JUNIOR_HIGH_2025-2026_7-Baiji"
   name: string; // "7 Baiji"
   grade: string; // "7"
   unitId: string;
   academicYear: string;
-  homeroomTeacherId?: string;
-  homeroomTeacherName?: string;
+  homeroomTeacherId?: string | null;
+  homeroomTeacherName?: string | null;
   status: 'active' | 'archived';
   createdAt: number;
   updatedAt: number;
   teacherSignatureUrl?: string | null;
+
+  // Canonical source of truth untuk assignment guru kelas.
+  teacherAssignments?: ClassTeacherAssignment[];
+
+  // Fields denormalized untuk query Firestore.
+  assignedTeacherIds?: string[];
+  homeroomTeacherIds?: string[];
+  gpkTeacherIds?: string[];
 }
 
 export type UserRole = 

@@ -22,7 +22,8 @@ import {
 import {
   getOralReadingFluencyRiskLevel,
   isJuniorHighOrfGrade,
-  parseGradeFromClassName
+  parseGradeFromClassName,
+  isOralReadingFluencyRiskApplicable
 } from '../config/oralReadingFluencyRiskThresholds';
 
 const COLLECTION = 'junior_high_literacy_numeracy_records';
@@ -51,11 +52,10 @@ function sanitizeRecord(record: any): any {
  * - Metric: WPM
  */
 async function enrichOrfRisk(enriched: any): Promise<void> {
-  const isJh = enriched.unit === 'JUNIOR_HIGH';
+  const isJh = enriched.unit === 'JUNIOR_HIGH' || enriched.unit === 'JUNIORHIGH';
   const isReading = enriched.subjectArea === 'ENGLISH_READING' || enriched.area === 'ENGLISH_READING';
-  const isSpring3 = enriched.sessionKey === 'SPRING_ASSESSMENT_3' || enriched.period === 'SPRING_ASSESSMENT_3';
 
-  if (isJh && isReading && isSpring3) {
+  if (isJh && isReading) {
     let resolvedGrade: number | null = null;
     
     // 1. Enrollment siswa untuk `academicYear` milik assessment
@@ -113,7 +113,14 @@ async function enrichOrfRisk(enriched: any): Promise<void> {
       wpmVal = Number(enriched.wpm);
     }
 
-    if (isJuniorHighOrfGrade(resolvedGrade) && wpmVal !== null) {
+    const isApplicable = isOralReadingFluencyRiskApplicable({
+      unitId: enriched.unit,
+      grade: resolvedGrade,
+      assessmentType: enriched.subjectArea || enriched.area,
+      wpm: wpmVal,
+    });
+
+    if (isApplicable && wpmVal !== null) {
       const risk = getOralReadingFluencyRiskLevel(resolvedGrade, wpmVal);
       enriched.riskLevel = risk;
       enriched.riskBenchmark = 'SPRING_ASSESSMENT_3';
@@ -138,11 +145,10 @@ async function enrichOrfRisk(enriched: any): Promise<void> {
  */
 function enrichOnRead(record: any): any {
   if (!record) return record;
-  const isJh = record.unit === 'JUNIOR_HIGH';
+  const isJh = record.unit === 'JUNIOR_HIGH' || record.unit === 'JUNIORHIGH';
   const isReading = record.subjectArea === 'ENGLISH_READING' || record.area === 'ENGLISH_READING';
-  const isSpring3 = record.sessionKey === 'SPRING_ASSESSMENT_3' || record.period === 'SPRING_ASSESSMENT_3';
 
-  if (isJh && isReading && isSpring3) {
+  if (isJh && isReading) {
     if (record.riskLevel !== undefined && record.riskLevel !== null) {
       return record;
     }
@@ -157,7 +163,14 @@ function enrichOnRead(record: any): any {
       wpmVal = Number(record.wpm);
     }
 
-    if (isJuniorHighOrfGrade(gradeNum) && wpmVal !== null) {
+    const isApplicable = isOralReadingFluencyRiskApplicable({
+      unitId: record.unit,
+      grade: gradeNum,
+      assessmentType: record.subjectArea || record.area,
+      wpm: wpmVal,
+    });
+
+    if (isApplicable && wpmVal !== null) {
       record.riskLevel = getOralReadingFluencyRiskLevel(gradeNum, wpmVal);
       record.riskBenchmark = 'SPRING_ASSESSMENT_3';
       record.riskGrade = gradeNum;

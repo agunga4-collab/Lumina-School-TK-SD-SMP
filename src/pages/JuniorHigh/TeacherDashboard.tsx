@@ -114,13 +114,28 @@ export default function TeacherDashboard() {
       try {
         // 1. Check Homeroom classes
         const classesRef = collection(db, 'classes');
-        const homeroomQuery = query(
+        const qAssigned = query(
+          classesRef,
+          where('academicYear', '==', activeYear),
+          where('assignedTeacherIds', 'array-contains', currentUser.uid)
+        );
+        const qLegacy = query(
           classesRef,
           where('academicYear', '==', activeYear),
           where('homeroomTeacherId', '==', currentUser.uid)
         );
-        const homeroomSnap = await getDocs(homeroomQuery);
-        const classesList = homeroomSnap.docs.map(d => ({ id: d.id, ...d.data() } as Class));
+        const [snapAssigned, snapLegacy] = await Promise.all([
+          getDocs(qAssigned),
+          getDocs(qLegacy)
+        ]);
+        const classesMap = new Map<string, Class>();
+        snapLegacy.docs.forEach(d => {
+          classesMap.set(d.id, { id: d.id, ...d.data() } as Class);
+        });
+        snapAssigned.docs.forEach(d => {
+          classesMap.set(d.id, { id: d.id, ...d.data() } as Class);
+        });
+        const classesList = Array.from(classesMap.values());
         setHomeroomClasses(classesList);
         const isHomeroomTeacher = classesList.length > 0;
         setHasHomeroom(isHomeroomTeacher);

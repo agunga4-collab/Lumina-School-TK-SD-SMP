@@ -7,6 +7,7 @@ import {
   Calendar, RefreshCw, CheckCircle2, AlertCircle, FileText, X, Sparkles, Sliders,
   HelpCircle, Info, Lock
 } from 'lucide-react';
+import { isTeacherAssignedToClass } from '../../services/classTeacherAssignmentService';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { db, handleFirestoreError, getStudents, getClasses, getActiveStudents } from '../../lib/firebase';
@@ -126,8 +127,8 @@ export default function ElementaryLiteracyNumeracy() {
         setClasses(elementaryClasses);
 
         let defaultClassId = locState?.initialClassId || '';
-        if (!defaultClassId && profile?.role === 'HOMEROOM_TEACHER') {
-          const homeroomClass = elementaryClasses.find(c => c.homeroomTeacherId === profile?.uid);
+        if (!defaultClassId && (profile?.role === 'HOMEROOM_TEACHER' || profile?.role === 'TEACHER')) {
+          const homeroomClass = elementaryClasses.find(c => isTeacherAssignedToClass(c, profile?.uid));
           if (homeroomClass) {
             defaultClassId = homeroomClass.id;
           }

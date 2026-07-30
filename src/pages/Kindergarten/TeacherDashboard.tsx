@@ -5,6 +5,7 @@ import {
   Smile, Camera, History, FileText, LayoutGrid, ChevronDown, RefreshCw, X
 } from 'lucide-react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
+import { isTeacherAssignedToClass } from '../../services/classTeacherAssignmentService';
 import { cn } from '../../lib/utils';
 import { db } from '../../lib/firebase';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
@@ -191,7 +192,7 @@ export default function TeacherDashboard() {
         const isAuditor = ['SUPER_ADMIN', 'HEAD_UNIT'].includes(currentUser.role);
         const filteredClasses = isAuditor 
           ? fetchedClasses 
-          : fetchedClasses.filter(c => c.homeroomTeacherId === currentUser.uid);
+          : fetchedClasses.filter(c => isTeacherAssignedToClass(c, currentUser.uid));
 
         setClasses(filteredClasses);
 

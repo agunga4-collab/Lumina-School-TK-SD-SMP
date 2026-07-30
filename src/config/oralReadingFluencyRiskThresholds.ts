@@ -42,6 +42,25 @@ export function isJuniorHighOrfGrade(
   return grade === 7 || grade === 8 || grade === 9;
 }
 
+export function isOralReadingFluencyRiskApplicable(input: {
+  unitId: string | null | undefined;
+  grade: number | null | undefined;
+  assessmentType: string | null | undefined;
+  wpm: number | null | undefined;
+}): boolean {
+  const isJh = input.unitId === 'JUNIOR_HIGH' || input.unitId === 'JUNIORHIGH';
+  const isReading = input.assessmentType === 'ENGLISH_READING' || input.assessmentType === 'ORAL_READING_FLUENCY';
+  return (
+    isJh &&
+    isJuniorHighOrfGrade(input.grade) &&
+    isReading &&
+    input.wpm !== null &&
+    input.wpm !== undefined &&
+    Number.isFinite(input.wpm) &&
+    Number(input.wpm) >= 0
+  );
+}
+
 export function getOralReadingFluencyRiskLevel(
   grade: number | null | undefined,
   wpm: number | null | undefined

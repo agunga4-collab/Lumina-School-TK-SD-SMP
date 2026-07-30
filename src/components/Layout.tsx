@@ -116,14 +116,20 @@ export function Layout() {
     }
     const checkKindyClass = async () => {
       try {
-        const q = query(
+        const qAssigned = query(
+          collection(db, 'classes'),
+          where('unitId', '==', 'KINDERGARTEN'),
+          where('academicYear', '==', activeYear),
+          where('assignedTeacherIds', 'array-contains', currentUser.uid)
+        );
+        const qLegacy = query(
           collection(db, 'classes'),
           where('unitId', '==', 'KINDERGARTEN'),
           where('academicYear', '==', activeYear),
           where('homeroomTeacherId', '==', currentUser.uid)
         );
-        const snap = await getDocs(q);
-        setHasKindyClassAssignment(!snap.empty);
+        const [snapAssigned, snapLegacy] = await Promise.all([getDocs(qAssigned), getDocs(qLegacy)]);
+        setHasKindyClassAssignment(!snapAssigned.empty || !snapLegacy.empty);
       } catch (err) {
         console.error('Error checking kindy class assignment in layout:', err);
         setHasKindyClassAssignment(false);
@@ -131,14 +137,20 @@ export function Layout() {
     };
     const checkElementaryClass = async () => {
       try {
-        const q = query(
+        const qAssigned = query(
+          collection(db, 'classes'),
+          where('unitId', '==', 'ELEMENTARY'),
+          where('academicYear', '==', activeYear),
+          where('assignedTeacherIds', 'array-contains', currentUser.uid)
+        );
+        const qLegacy = query(
           collection(db, 'classes'),
           where('unitId', '==', 'ELEMENTARY'),
           where('academicYear', '==', activeYear),
           where('homeroomTeacherId', '==', currentUser.uid)
         );
-        const snap = await getDocs(q);
-        setHasElementaryClassAssignment(!snap.empty);
+        const [snapAssigned, snapLegacy] = await Promise.all([getDocs(qAssigned), getDocs(qLegacy)]);
+        setHasElementaryClassAssignment(!snapAssigned.empty || !snapLegacy.empty);
       } catch (err) {
         console.error('Error checking elementary class assignment in layout:', err);
         setHasElementaryClassAssignment(false);

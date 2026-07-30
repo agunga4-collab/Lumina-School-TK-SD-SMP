@@ -5,6 +5,7 @@ import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'fire
 import { initializeFirestore, doc, getDoc, setDoc, updateDoc, getDocFromServer, collection, query, where, getDocs, limit, writeBatch, deleteDoc, orderBy, documentId } from 'firebase/firestore';
 export { doc, writeBatch };
 import { mtssSnapshotTriggerService } from '../services/mtssSnapshotTriggerService.ts';
+import { validateTeacherAssignments, buildTeacherAssignmentIndexes, getClassTeacherAssignments } from '../services/classTeacherAssignmentService.ts';
 import firebaseConfig from '../../firebase-applet-config.json' with { type: 'json' };
 import type { 
   User as AppUser, 
@@ -218,14 +219,102 @@ export async function createUserOnboarding(user: any): Promise<AppUser> {
 
     // Link newly created UID to any class that was previously assigned using the invite placeholder
     try {
-      const classesQuery = query(collection(db, 'classes'), where('homeroomTeacherId', '==', `INVITE_${inviteWithId.id}`));
-      const classesSnap = await getDocs(classesQuery);
-      classesSnap.docs.forEach(d => {
-        console.log(`[createUserOnboarding] [FIRESTORE BATCH WRITE] Preparing update classes/${d.id} homeroomTeacherId -> ${user.uid}`);
-        batch.update(d.ref, { 
-          homeroomTeacherId: user.uid,
-          homeroomTeacherName: profile.displayName // Update to real name without "(UNDANGAN)"
+      const invitePlaceholders = [
+        `INVITE_${inviteWithId.id}`,
+        `INVITE:${inviteWithId.id}`
+      ];
+      
+      const classDocs: any[] = [];
+      const seenIds = new Set<string>();
+      
+      for (const placeholder of invitePlaceholders) {
+        const q1 = query(collection(db, 'classes'), where('assignedTeacherIds', 'array-contains', placeholder));
+        const q2 = query(collection(db, 'classes'), where('homeroomTeacherId', '==', placeholder));
+        const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+        
+        [...snap1.docs, ...snap2.docs].forEach(d => {
+          if (!seenIds.has(d.id)) {
+            seenIds.add(d.id);
+            classDocs.push({ id: d.id, ref: d.ref, data: d.data() });
+          }
         });
+      }
+
+      classDocs.forEach(cDoc => {
+        const classData = cDoc.data;
+        let changed = false;
+        
+        let homeroomTeacherId = classData.homeroomTeacherId;
+        let homeroomTeacherName = classData.homeroomTeacherName;
+        
+        // Handle legacy homeroomTeacherId
+        if (invitePlaceholders.includes(homeroomTeacherId || '')) {
+          homeroomTeacherId = user.uid;
+          homeroomTeacherName = profile.displayName;
+          changed = true;
+        }
+        
+        // Normalize and map teacherAssignments
+        let assignments = classData.teacherAssignments || [];
+        if (assignments.length === 0 && classData.homeroomTeacherId) {
+          assignments = [{
+            userId: classData.homeroomTeacherId,
+            displayName: classData.homeroomTeacherName ?? 'Wali Kelas',
+            email: null,
+            role: 'HOMEROOM_TEACHER',
+            unitId: classData.unitId,
+            isPrimary: true,
+            assignedAt: classData.updatedAt ?? classData.createdAt ?? Date.now(),
+            assignedBy: 'LEGACY_MIGRATION'
+          }];
+        }
+        
+        const updatedAssignments = assignments.map((a: any) => {
+          if (invitePlaceholders.includes(a.userId)) {
+            changed = true;
+            return {
+              ...a,
+              userId: user.uid,
+              displayName: profile.displayName,
+              email: profile.email || a.email,
+              assignedAt: Date.now()
+            };
+          }
+          return a;
+        });
+        
+        if (changed) {
+          // Rebuild indices
+          const assignedTeacherIds: string[] = [];
+          const homeroomTeacherIds: string[] = [];
+          const gpkTeacherIds: string[] = [];
+          
+          updatedAssignments.forEach((a: any) => {
+            if (!assignedTeacherIds.includes(a.userId)) {
+              assignedTeacherIds.push(a.userId);
+            }
+            if (a.role === 'HOMEROOM_TEACHER') {
+              if (!homeroomTeacherIds.includes(a.userId)) {
+                homeroomTeacherIds.push(a.userId);
+              }
+            } else if (a.role === 'GPK') {
+              if (!gpkTeacherIds.includes(a.userId)) {
+                gpkTeacherIds.push(a.userId);
+              }
+            }
+          });
+          
+          console.log(`[createUserOnboarding] [FIRESTORE BATCH WRITE] Preparing update classes/${cDoc.id} assignedTeacherIds and teacherAssignments`);
+          batch.update(cDoc.ref, {
+            homeroomTeacherId,
+            homeroomTeacherName,
+            teacherAssignments: updatedAssignments,
+            assignedTeacherIds,
+            homeroomTeacherIds,
+            gpkTeacherIds,
+            updatedAt: Date.now()
+          });
+        }
       });
     } catch (err) {
       console.warn("[Onboarding] Failed to link classes to new user UID:", err);
@@ -2198,14 +2287,22 @@ function cleanUndefinedForFirestore<T extends object>(obj: T): T {
 
 export async function addClass(classData: Omit<Class, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
   try {
-    // Generate ID: unit_year_name (sanitized)
     const sanitizedName = classData.name.replace(/\s+/g, '-');
     const id = `${classData.unitId}_${classData.academicYear.replace(/\//g, '-')}_${sanitizedName}`;
     
+    const assignments = getClassTeacherAssignments(classData as Class);
+    const validation = validateTeacherAssignments(assignments, classData.unitId);
+    if (!validation.isValid) {
+      throw new Error(validation.error);
+    }
+    
+    const indexes = buildTeacherAssignmentIndexes(assignments);
     const docRef = doc(db, 'classes', id);
     const now = Date.now();
     await setDoc(docRef, cleanUndefinedForFirestore({
       ...classData,
+      teacherAssignments: assignments,
+      ...indexes,
       id,
       createdAt: now,
       updatedAt: now
@@ -2218,8 +2315,27 @@ export async function addClass(classData: Omit<Class, 'id' | 'createdAt' | 'upda
 
 export async function updateClass(id: string, updates: Partial<Class>): Promise<void> {
   try {
+    let finalUpdates = { ...updates };
+    const classSnap = await getDoc(doc(db, 'classes', id));
+    if (classSnap.exists()) {
+      const currentClass = { id, ...classSnap.data() } as Class;
+      if ('teacherAssignments' in updates || 'homeroomTeacherId' in updates) {
+        const mergedClass = { ...currentClass, ...updates };
+        const assignments = getClassTeacherAssignments(mergedClass);
+        const validation = validateTeacherAssignments(assignments, mergedClass.unitId);
+        if (!validation.isValid) {
+          throw new Error(validation.error);
+        }
+        const indexes = buildTeacherAssignmentIndexes(assignments);
+        finalUpdates = {
+          ...finalUpdates,
+          teacherAssignments: assignments,
+          ...indexes
+        };
+      }
+    }
     await updateDoc(doc(db, 'classes', id), cleanUndefinedForFirestore({
-      ...updates,
+      ...finalUpdates,
       updatedAt: Date.now()
     }));
   } catch (err: any) {

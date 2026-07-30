@@ -14,12 +14,14 @@ import { toast } from 'sonner';
 import { ACADEMIC_YEARS } from '../../constants';
 import JuniorHighLiteracyOverview from './components/JuniorHighLiteracyOverview';
 import { juniorHighLiteracyService } from '../../services/juniorHighLiteracyService';
+import { isTeacherAssignedToClass } from '../../services/classTeacherAssignmentService';
 import { 
   getOralReadingFluencyRiskLevel,
   isJuniorHighOrfGrade,
   parseGradeFromClassName,
   OralReadingRiskLevel,
-  JuniorHighOrfGrade
+  JuniorHighOrfGrade,
+  isOralReadingFluencyRiskApplicable
 } from '../../config/oralReadingFluencyRiskThresholds';
 import { 
   JuniorHighArea, 
@@ -177,15 +179,6 @@ const renderRiskLevelBadge = (record: any, selectedPeriod: string, selectedGrade
     );
   }
 
-  const isSpring3 = selectedPeriod === 'SPRING_ASSESSMENT_3';
-  if (!isSpring3) {
-    return (
-      <span className="text-[10px] font-bold uppercase text-slate-400">
-        Tidak berlaku untuk periode ini
-      </span>
-    );
-  }
-
   const grade = record.gradeLevel || parseGradeFromClassName(st.className) || selectedGradeLevel;
   if (!grade) {
     return (
@@ -289,8 +282,8 @@ export default function JuniorHighLiteracyNumeracy() {
         setClasses(juniorHighClasses);
 
         let defaultClassId = '';
-        if (profile?.role === 'HOMEROOM_TEACHER') {
-          const homeroomClass = juniorHighClasses.find(c => c.homeroomTeacherId === profile?.uid);
+        if (profile?.role === 'HOMEROOM_TEACHER' || profile?.role === 'TEACHER') {
+          const homeroomClass = juniorHighClasses.find(c => isTeacherAssignedToClass(c, profile?.uid));
           if (homeroomClass) {
             defaultClassId = homeroomClass.id;
           }
@@ -480,10 +473,17 @@ export default function JuniorHighLiteracyNumeracy() {
         updated.wordsRead = wordsRaw;
         updated.errors = errsRaw;
 
-        // Auto-calculate live Risk Level if in English Reading & Spring Assessment 3
+        // Auto-calculate live Risk Level if in English Reading
         const studentGrade = updated.gradeLevel || selectedGradeLevel;
         const wpmVal = (updated.wpm !== '' && updated.wpm !== undefined && updated.wpm !== null) ? Number(updated.wpm) : null;
-        if (selectedPeriod === 'SPRING_ASSESSMENT_3' && isJuniorHighOrfGrade(studentGrade) && wpmVal !== null) {
+        const isApplicable = isOralReadingFluencyRiskApplicable({
+          unitId: 'JUNIOR_HIGH',
+          grade: studentGrade,
+          assessmentType: selectedArea,
+          wpm: wpmVal,
+        });
+
+        if (isApplicable && wpmVal !== null) {
           updated.riskLevel = getOralReadingFluencyRiskLevel(studentGrade, wpmVal);
           updated.riskBenchmark = 'SPRING_ASSESSMENT_3';
           updated.riskGrade = studentGrade;
@@ -543,10 +543,17 @@ export default function JuniorHighLiteracyNumeracy() {
         rec.wpm = '';
       }
       
-      // Auto-calculate live Risk Level if in English Reading & Spring Assessment 3
+      // Auto-calculate live Risk Level if in English Reading
       const studentGrade = rec.gradeLevel || selectedGradeLevel;
       const wpmVal = (rec.wpm !== '' && rec.wpm !== undefined && rec.wpm !== null) ? Number(rec.wpm) : null;
-      if (selectedPeriod === 'SPRING_ASSESSMENT_3' && isJuniorHighOrfGrade(studentGrade) && wpmVal !== null) {
+      const isApplicable = isOralReadingFluencyRiskApplicable({
+        unitId: 'JUNIOR_HIGH',
+        grade: studentGrade,
+        assessmentType: selectedArea,
+        wpm: wpmVal,
+      });
+
+      if (isApplicable && wpmVal !== null) {
         rec.riskLevel = getOralReadingFluencyRiskLevel(studentGrade, wpmVal);
         rec.riskBenchmark = 'SPRING_ASSESSMENT_3';
         rec.riskGrade = studentGrade;
@@ -913,8 +920,11 @@ export default function JuniorHighLiteracyNumeracy() {
                               <div className="relative group inline-block ml-1">
                                 <Info size={14} className="text-slate-400 hover:text-slate-600 cursor-help" />
                                 <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-72 bg-slate-800 text-white text-[10px] leading-relaxed p-3 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 pointer-events-none font-medium normal-case">
-                                  <div className="font-bold border-b border-slate-700 pb-1 mb-1.5 text-xs text-center text-indigo-300">Spring Assessment 3 Benchmarks</div>
-                                  <div className="space-y-1">
+                                  <div className="font-bold border-b border-slate-700 pb-1 mb-1.5 text-xs text-center text-indigo-300">Oral Reading Fluency Benchmarks</div>
+                                  <p className="mb-2 text-slate-300">
+                                    Risk Level dihitung otomatis dari WPM untuk Oral Reading Fluency SMP Grade 7–9, menggunakan benchmark Spring Assessment 3.
+                                  </p>
+                                  <div className="space-y-1 border-t border-slate-700/50 pt-1.5">
                                     <div className="flex justify-between"><span className="font-black">Grade 7:</span> <span>High (0-119) | Med (120-146) | Low (147+)</span></div>
                                     <div className="flex justify-between"><span className="font-black">Grade 8:</span> <span>High (0-121) | Med (122-146) | Low (147+)</span></div>
                                     <div className="flex justify-between"><span className="font-black">Grade 9:</span> <span>High (0-121) | Med (122-146) | Low (147+)</span></div>
