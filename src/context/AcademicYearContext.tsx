@@ -12,8 +12,8 @@ interface AcademicYearContextType {
 const AcademicYearContext = React.createContext<AcademicYearContextType | undefined>(undefined);
 
 export function AcademicYearProvider({ children }: { children: React.ReactNode }) {
-  const [activeYear, setActiveYear] = React.useState<string>('2025/2026');
-  const [activeSemester, setActiveSemester] = React.useState<number>(2);
+  const [activeYear, setActiveYear] = React.useState<string>('2026/2027');
+  const [activeSemester, setActiveSemester] = React.useState<number>(1);
   const [isLoading, setIsLoading] = React.useState<boolean>(true);
 
   React.useEffect(() => {
@@ -29,8 +29,8 @@ export function AcademicYearProvider({ children }: { children: React.ReactNode }
           setActiveSemester(Number(data.activeSemester));
         }
       } else {
-        setActiveYear('2025/2026');
-        setActiveSemester(2);
+        setActiveYear('2026/2027');
+        setActiveSemester(1);
       }
       setIsLoading(false);
     }, (error) => {

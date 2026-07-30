@@ -8,12 +8,10 @@ import {
   History, PlusCircle, CheckCircle, HelpCircle, ClipboardCheck
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { createMTSSCase, addMTSSConcern, getStudentActiveBehaviorCases, getTeachers, getStudentById } from '../../lib/firebase';
+import { createMTSSCase, addMTSSConcern, getStudentActiveBehaviorCases, getTeachers, getStudentById, getClasses, getActiveStudents } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import type { MTSSTier, MTSSStatus } from '../../types';
-
-import StudentSearch from '../../components/StudentSearch';
 
 export default function CreateCase() {
   const navigate = useNavigate();
@@ -26,6 +24,9 @@ export default function CreateCase() {
   const [reportingMode, setReportingMode] = React.useState<'NEW' | 'EXISTING'>('NEW');
   const [selectedCaseId, setSelectedCaseId] = React.useState<string>('');
   const [teachers, setTeachers] = React.useState<any[]>([]);
+  const [classesList, setClassesList] = React.useState<any[]>([]);
+  const [studentsList, setStudentsList] = React.useState<any[]>([]);
+  const [loadingStudents, setLoadingStudents] = React.useState(false);
 
   const qStudentId = searchParams.get('studentId');
 
@@ -66,6 +67,25 @@ export default function CreateCase() {
     fetchTeachers();
   }, []);
 
+  React.useEffect(() => {
+    const fetchClasses = async () => {
+      try {
+        const classesData = await getClasses();
+        const jhClasses = (classesData || []).filter(c => 
+          c.unitId === 'JUNIOR_HIGH' && 
+          c.academicYear === activeYear && 
+          c.status !== 'archived'
+        );
+        setClassesList(jhClasses);
+      } catch (err) {
+        console.error("Error loading classes:", err);
+      }
+    };
+    if (activeYear) {
+      fetchClasses();
+    }
+  }, [activeYear]);
+
   // Pre-fill reporter/PIC with currently logged-in user once teachers list is loaded
   React.useEffect(() => {
     if (profile && !formData.nextStepPicId) {
@@ -77,27 +97,106 @@ export default function CreateCase() {
     }
   }, [profile, teachers]);
 
-  // Handle studentId from query parameters
+  // Handle studentId from query parameters once classesList is loaded
   React.useEffect(() => {
-    if (qStudentId) {
-      getStudentById(qStudentId).then(student => {
+    if (qStudentId && classesList.length > 0) {
+      getStudentById(qStudentId).then(async (student) => {
         if (student) {
-          handleStudentSelect(student);
+          let resolvedClassId = student.classId;
+          if (resolvedClassId) {
+            const foundClass = classesList.find(c => c.id === resolvedClassId || c.name.toLowerCase() === resolvedClassId.toLowerCase());
+            if (foundClass) resolvedClassId = foundClass.id;
+          }
+
+          setFormData(prev => ({ 
+            ...prev, 
+            studentName: student.name || '',
+            studentId: student.id,
+            classId: resolvedClassId || student.classId || prev.classId
+          }));
+
+          if (resolvedClassId) {
+            setLoadingStudents(true);
+            try {
+              const students = await getActiveStudents(resolvedClassId, activeYear);
+              setStudentsList(students || []);
+            } catch (err) {
+              console.error("Error fetching students for query param student:", err);
+            } finally {
+              setLoadingStudents(false);
+            }
+          }
+
+          setLoadingCases(true);
+          try {
+            const cases = await getStudentActiveBehaviorCases(student.id);
+            setActiveCases(cases || []);
+            const urlMode = searchParams.get('mode');
+            if (urlMode === 'NEW' || urlMode === 'EXISTING') {
+              setReportingMode(urlMode as 'NEW' | 'EXISTING');
+            } else {
+              setReportingMode('NEW');
+            }
+            if (cases && cases.length > 0) {
+              setSelectedCaseId(cases[0].id);
+            } else {
+              setSelectedCaseId('');
+            }
+          } catch (err) {
+            console.error("Error loading active cases:", err);
+          } finally {
+            setLoadingCases(false);
+          }
         }
       }).catch(err => {
         console.error("Error loading student from query param:", err);
       });
     }
-  }, [qStudentId]);
+  }, [qStudentId, classesList, activeYear]);
 
-  const handleStudentSelect = async (student: any) => {
+  const handleClassChange = async (classId: string) => {
     setFormData(prev => ({ 
       ...prev, 
-      studentName: student.name,
-      studentId: student.id,
-      classId: student.className || prev.classId
+      classId: classId,
+      studentId: '',
+      studentName: ''
     }));
-    
+    setActiveCases([]);
+    setReportingMode('NEW');
+    setSelectedCaseId('');
+    setStudentsList([]);
+
+    if (classId) {
+      setLoadingStudents(true);
+      try {
+        const students = await getActiveStudents(classId, activeYear);
+        setStudentsList(students || []);
+      } catch (err) {
+        console.error("Error loading students for class:", err);
+      } finally {
+        setLoadingStudents(false);
+      }
+    }
+  };
+
+  const handleStudentDropdownChange = async (studentId: string) => {
+    if (!studentId) {
+      setFormData(prev => ({ ...prev, studentId: '', studentName: '' }));
+      setActiveCases([]);
+      setReportingMode('NEW');
+      setSelectedCaseId('');
+      return;
+    }
+
+    const student = studentsList.find(s => s.id === studentId);
+    if (!student) return;
+
+    setFormData(prev => ({
+      ...prev,
+      studentId: student.id,
+      studentName: student.name || ''
+    }));
+
     setLoadingCases(true);
     try {
       const cases = await getStudentActiveBehaviorCases(student.id);
@@ -106,7 +205,7 @@ export default function CreateCase() {
       if (urlMode === 'NEW' || urlMode === 'EXISTING') {
         setReportingMode(urlMode as 'NEW' | 'EXISTING');
       } else {
-        setReportingMode('NEW'); // ALWAYS default to a NEW case as requested by the user
+        setReportingMode('NEW');
       }
       if (cases && cases.length > 0) {
         setSelectedCaseId(cases[0].id);
@@ -114,7 +213,7 @@ export default function CreateCase() {
         setSelectedCaseId('');
       }
     } catch (err) {
-      console.error("Error loading active cases:", err);
+      console.error("Error loading active cases for student:", err);
     } finally {
       setLoadingCases(false);
     }
@@ -130,6 +229,7 @@ export default function CreateCase() {
     setActiveCases([]);
     setReportingMode('NEW');
     setSelectedCaseId('');
+    setStudentsList([]);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -249,44 +349,46 @@ export default function CreateCase() {
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Cari & Pilih Siswa</label>
-                <StudentSearch 
-                  placeholder="Ketik nama lengkap atau panggilan..."
-                  onSelect={handleStudentSelect}
-                />
-                {formData.studentName && (
-                  <div className="mt-2 px-4 py-2 bg-blue-50 rounded-xl flex items-center justify-between">
-                    <span className="text-xs font-bold text-blue-700">Terpilih: {formData.studentName}</span>
-                    <button 
-                      type="button"
-                      onClick={handleStudentClear}
-                      className="text-blue-400 hover:text-blue-600"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                )}
-              </div>
-              <div className="space-y-2">
                 <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Kelas</label>
                 <div className="relative">
                   <select
                     required
                     disabled={reportingMode === 'EXISTING'}
                     className="w-full px-6 py-4 rounded-2xl bg-gray-50 border border-transparent focus:bg-white focus:border-blue-300 focus:ring-4 focus:ring-blue-50 outline-none transition-all font-bold text-sm appearance-none cursor-pointer disabled:opacity-60"
-                    value={formData.classId}
-                    onChange={e => setFormData(prev => ({ ...prev, classId: e.target.value }))}
+                    value={
+                      classesList.find(c => c.id === formData.classId || c.name === formData.classId)?.id || formData.classId
+                    }
+                    onChange={e => handleClassChange(e.target.value)}
                   >
                     <option value="">Pilih Kelas</option>
-                    <option value="7-A">7-A</option>
-                    <option value="7-B">7-B</option>
-                    <option value="7-C">7-C</option>
-                    <option value="8-A">8-A</option>
-                    <option value="8-B">8-B</option>
-                    <option value="9-A">9-A</option>
-                    <option value="9-B">9-B</option>
+                    {classesList.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
                   </select>
                   <ChevronLeft className="absolute right-4 top-1/2 -translate-y-1/2 rotate-[-90deg] text-gray-400 pointer-events-none" size={18} />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Pilih Siswa</label>
+                <div className="relative">
+                  <select
+                    required
+                    disabled={reportingMode === 'EXISTING' || !formData.classId || loadingStudents}
+                    className="w-full px-6 py-4 rounded-2xl bg-gray-50 border border-transparent focus:bg-white focus:border-blue-300 focus:ring-4 focus:ring-blue-50 outline-none transition-all font-bold text-sm appearance-none cursor-pointer disabled:opacity-60"
+                    value={formData.studentId}
+                    onChange={e => handleStudentDropdownChange(e.target.value)}
+                  >
+                    <option value="">{loadingStudents ? "Memuat daftar siswa..." : !formData.classId ? "Pilih kelas terlebih dahulu" : "Pilih Siswa"}</option>
+                    {studentsList.map(s => (
+                      <option key={s.id} value={s.id}>{s.name || s.fullName}</option>
+                    ))}
+                  </select>
+                  {loadingStudents ? (
+                    <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 animate-spin text-gray-400" size={18} />
+                  ) : (
+                    <ChevronLeft className="absolute right-4 top-1/2 -translate-y-1/2 rotate-[-90deg] text-gray-400 pointer-events-none" size={18} />
+                  )}
                 </div>
               </div>
             </div>

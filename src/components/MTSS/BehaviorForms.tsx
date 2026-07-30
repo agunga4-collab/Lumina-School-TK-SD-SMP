@@ -394,6 +394,8 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
               <StudentSearch 
                 placeholder="Cari nama atau panggilan..."
                 onSelect={(student) => handleStudentSelect(student)}
+                unitId="JUNIOR_HIGH"
+                academicYear={activeYear}
               />
               {formData.studentId && selectedStudent && (
                 <div className="mt-2 px-4 py-3 bg-blue-50 rounded-xl border border-blue-100 flex items-center justify-between">
