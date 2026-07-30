@@ -47,7 +47,8 @@ export default function StudentLiteracyHistoryDrawer({
             'SEMESTER_1_START': 1,
             'SEMESTER_1_END': 2,
             'SEMESTER_2_START': 3,
-            'SEMESTER_2_END': 4
+            'SEMESTER_2_END': 4,
+            'SPRING_ASSESSMENT_3': 5
           };
           records.sort((a, b) => (sessionOrder[a.sessionKey] || 0) - (sessionOrder[b.sessionKey] || 0));
           setHistory(records);
@@ -70,7 +71,7 @@ export default function StudentLiteracyHistoryDrawer({
     return map;
   }, [history]);
 
-  const sessions: JuniorHighSessionKey[] = ['SEMESTER_1_START', 'SEMESTER_1_END', 'SEMESTER_2_START', 'SEMESTER_2_END'];
+  const sessions: JuniorHighSessionKey[] = ['SEMESTER_1_START', 'SEMESTER_1_END', 'SEMESTER_2_START', 'SEMESTER_2_END', 'SPRING_ASSESSMENT_3'];
 
   return (
     <AnimatePresence>

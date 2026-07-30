@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   BookOpen, Languages, Heart, BookMarked, Calculator, Search, 
-  History, Save, Calendar, RefreshCw, AlertCircle, FileText, X, HelpCircle
+  History, Save, Calendar, RefreshCw, AlertCircle, FileText, X, HelpCircle, Info
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
@@ -14,6 +14,13 @@ import { toast } from 'sonner';
 import { ACADEMIC_YEARS } from '../../constants';
 import JuniorHighLiteracyOverview from './components/JuniorHighLiteracyOverview';
 import { juniorHighLiteracyService } from '../../services/juniorHighLiteracyService';
+import { 
+  getOralReadingFluencyRiskLevel,
+  isJuniorHighOrfGrade,
+  parseGradeFromClassName,
+  OralReadingRiskLevel,
+  JuniorHighOrfGrade
+} from '../../config/oralReadingFluencyRiskThresholds';
 import { 
   JuniorHighArea, 
   JuniorHighSessionKey, 
@@ -119,7 +126,8 @@ const PERIODS: { value: JuniorHighSessionKey; label: string }[] = [
   { value: 'SEMESTER_1_START', label: 'Awal Semester 1' },
   { value: 'SEMESTER_1_END', label: 'Akhir Semester 1' },
   { value: 'SEMESTER_2_START', label: 'Awal Semester 2' },
-  { value: 'SEMESTER_2_END', label: 'Akhir Semester 2' }
+  { value: 'SEMESTER_2_END', label: 'Akhir Semester 2' },
+  { value: 'SPRING_ASSESSMENT_3', label: 'Spring Assessment 3' }
 ];
 
 const BAHASA_INDONESIA_LEVELS = [
@@ -159,6 +167,79 @@ export interface JuniorHighStudent {
   classId: string;
   className: string;
 }
+
+const renderRiskLevelBadge = (record: any, selectedPeriod: string, selectedGradeLevel: number, st: any) => {
+  if (!record) {
+    return (
+      <span className="text-[10px] font-bold uppercase text-slate-400">
+        —
+      </span>
+    );
+  }
+
+  const isSpring3 = selectedPeriod === 'SPRING_ASSESSMENT_3';
+  if (!isSpring3) {
+    return (
+      <span className="text-[10px] font-bold uppercase text-slate-400">
+        Tidak berlaku untuk periode ini
+      </span>
+    );
+  }
+
+  const grade = record.gradeLevel || parseGradeFromClassName(st.className) || selectedGradeLevel;
+  if (!grade) {
+    return (
+      <span className="inline-flex items-center px-2 py-1 rounded-md text-[10px] font-bold uppercase bg-slate-100 text-slate-500 border border-slate-200">
+        Grade tidak tersedia
+      </span>
+    );
+  }
+
+  if (grade !== 7 && grade !== 8 && grade !== 9) {
+    return (
+      <span className="inline-flex items-center px-2 py-1 rounded-md text-[10px] font-bold uppercase bg-slate-100 text-slate-500 border border-slate-200">
+        Benchmark tidak tersedia untuk grade ini.
+      </span>
+    );
+  }
+
+  const wpmVal = (record.wpm !== undefined && record.wpm !== null && record.wpm !== '') ? Number(record.wpm) : null;
+  if (wpmVal === null) {
+    return (
+      <span className="inline-flex items-center px-2 py-1 rounded-md text-[10px] font-bold uppercase bg-slate-100 text-slate-500 border border-slate-200">
+        Belum dinilai
+      </span>
+    );
+  }
+
+  const risk = record.riskLevel || getOralReadingFluencyRiskLevel(grade, wpmVal);
+
+  if (risk === 'HIGH_RISK') {
+    return (
+      <span className="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-black uppercase bg-red-50 text-red-700 border border-red-200 shadow-sm">
+        High Risk
+      </span>
+    );
+  } else if (risk === 'MEDIUM_RISK') {
+    return (
+      <span className="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-black uppercase bg-amber-50 text-amber-700 border border-amber-200 shadow-sm">
+        Medium Risk
+      </span>
+    );
+  } else if (risk === 'LOW_RISK') {
+    return (
+      <span className="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-black uppercase bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm">
+        Low Risk
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center px-2 py-1 rounded-md text-[10px] font-bold uppercase bg-slate-100 text-slate-500 border border-slate-200">
+      Belum dinilai
+    </span>
+  );
+};
 
 export default function JuniorHighLiteracyNumeracy() {
   const { profile } = useAuth();
@@ -398,6 +479,21 @@ export default function JuniorHighLiteracyNumeracy() {
         }
         updated.wordsRead = wordsRaw;
         updated.errors = errsRaw;
+
+        // Auto-calculate live Risk Level if in English Reading & Spring Assessment 3
+        const studentGrade = updated.gradeLevel || selectedGradeLevel;
+        const wpmVal = (updated.wpm !== '' && updated.wpm !== undefined && updated.wpm !== null) ? Number(updated.wpm) : null;
+        if (selectedPeriod === 'SPRING_ASSESSMENT_3' && isJuniorHighOrfGrade(studentGrade) && wpmVal !== null) {
+          updated.riskLevel = getOralReadingFluencyRiskLevel(studentGrade, wpmVal);
+          updated.riskBenchmark = 'SPRING_ASSESSMENT_3';
+          updated.riskGrade = studentGrade;
+          updated.riskCalculatedAt = Date.now();
+        } else {
+          updated.riskLevel = null;
+          updated.riskBenchmark = null;
+          updated.riskGrade = null;
+          updated.riskCalculatedAt = null;
+        }
       }
 
       return {
@@ -445,6 +541,21 @@ export default function JuniorHighLiteracyNumeracy() {
         rec.wordsRead = '';
         rec.errors = '';
         rec.wpm = '';
+      }
+      
+      // Auto-calculate live Risk Level if in English Reading & Spring Assessment 3
+      const studentGrade = rec.gradeLevel || selectedGradeLevel;
+      const wpmVal = (rec.wpm !== '' && rec.wpm !== undefined && rec.wpm !== null) ? Number(rec.wpm) : null;
+      if (selectedPeriod === 'SPRING_ASSESSMENT_3' && isJuniorHighOrfGrade(studentGrade) && wpmVal !== null) {
+        rec.riskLevel = getOralReadingFluencyRiskLevel(studentGrade, wpmVal);
+        rec.riskBenchmark = 'SPRING_ASSESSMENT_3';
+        rec.riskGrade = studentGrade;
+        rec.riskCalculatedAt = Date.now();
+      } else {
+        rec.riskLevel = null;
+        rec.riskBenchmark = null;
+        rec.riskGrade = null;
+        rec.riskCalculatedAt = null;
       }
       
       rec.readingLevel = rec.readingLevel || '';
@@ -792,9 +903,26 @@ export default function JuniorHighLiteracyNumeracy() {
 
                       {selectedArea === 'ENGLISH_READING' && (
                         <>
+                          <th className="py-3 px-2 text-center w-24">Grade</th>
                           <th className="py-3 px-2 text-center w-24">Words Read</th>
                           <th className="py-3 px-2 text-center w-24">Errors</th>
                           <th className="py-3 px-2 text-center w-20">WPM</th>
+                          <th className="py-3 px-6 text-center w-48 relative">
+                            <div className="flex items-center justify-center gap-1">
+                              <span>Risk Level</span>
+                              <div className="relative group inline-block ml-1">
+                                <Info size={14} className="text-slate-400 hover:text-slate-600 cursor-help" />
+                                <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-72 bg-slate-800 text-white text-[10px] leading-relaxed p-3 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 pointer-events-none font-medium normal-case">
+                                  <div className="font-bold border-b border-slate-700 pb-1 mb-1.5 text-xs text-center text-indigo-300">Spring Assessment 3 Benchmarks</div>
+                                  <div className="space-y-1">
+                                    <div className="flex justify-between"><span className="font-black">Grade 7:</span> <span>High (0-119) | Med (120-146) | Low (147+)</span></div>
+                                    <div className="flex justify-between"><span className="font-black">Grade 8:</span> <span>High (0-121) | Med (122-146) | Low (147+)</span></div>
+                                    <div className="flex justify-between"><span className="font-black">Grade 9:</span> <span>High (0-121) | Med (122-146) | Low (147+)</span></div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </th>
                           <th className="py-3 px-4 text-center">Reading Level</th>
                           <th className="py-3 px-4 text-center">Comprehension</th>
                         </>
@@ -878,6 +1006,9 @@ export default function JuniorHighLiteracyNumeracy() {
                           {/* --- ENGLISH READING --- */}
                           {selectedArea === 'ENGLISH_READING' && (
                             <>
+                              <td className="py-3 px-2 text-center text-xs font-bold text-slate-500">
+                                {record.gradeLevel || parseGradeFromClassName(st.className) || selectedGradeLevel ? `Grade ${record.gradeLevel || parseGradeFromClassName(st.className) || selectedGradeLevel}` : 'Grade tidak tersedia'}
+                              </td>
                               <td className="py-3 px-2 text-center">
                                 <input
                                   type="number"
@@ -898,6 +1029,9 @@ export default function JuniorHighLiteracyNumeracy() {
                               </td>
                               <td className="py-3 px-2 font-black text-slate-700 text-center">
                                 {(record.wpm !== undefined && record.wpm !== null && record.wpm !== '') ? record.wpm : '-'}
+                              </td>
+                              <td className="py-3 px-4 text-center">
+                                {renderRiskLevelBadge(record, selectedPeriod, selectedGradeLevel, st)}
                               </td>
                               <td className="py-3 px-4 text-center">
                                 <select
@@ -1145,6 +1279,7 @@ export default function JuniorHighLiteracyNumeracy() {
                               <th className="py-3 px-4 text-center">Words Read</th>
                               <th className="py-3 px-4 text-center">Errors</th>
                               <th className="py-3 px-4 text-center">WPM</th>
+                              <th className="py-3 px-4 text-center">Risk Level</th>
                               <th className="py-3 px-4 text-center">Reading Level</th>
                               <th className="py-3 px-4 text-center">Comprehension</th>
                             </>
@@ -1197,6 +1332,9 @@ export default function JuniorHighLiteracyNumeracy() {
                                   <td className="py-3.5 px-4 text-center font-bold">{(record as any)?.wordsRead !== undefined && (record as any)?.wordsRead !== null ? (record as any)?.wordsRead : '-'}</td>
                                   <td className="py-3.5 px-4 text-center text-red-500 font-bold">{(record as any)?.errors !== undefined && (record as any)?.errors !== null ? (record as any)?.errors : '-'}</td>
                                   <td className="py-3.5 px-4 text-center text-emerald-600 font-extrabold">{(record as any)?.wpm !== undefined && (record as any)?.wpm !== null ? `${(record as any)?.wpm} wpm` : '-'}</td>
+                                  <td className="py-3.5 px-4 text-center">
+                                    {renderRiskLevelBadge(record, selectedPeriod, selectedGradeLevel, student)}
+                                  </td>
                                   <td className="py-3.5 px-4 text-center font-black">
                                     {(record as any)?.readingLevel ? (
                                       <span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded text-[9px] font-black">{(record as any)?.readingLevel}</span>

@@ -19,6 +19,11 @@ import {
 import {
   calculateWpm,
 } from '../constants/juniorHighLiteracyBenchmarks';
+import {
+  getOralReadingFluencyRiskLevel,
+  isJuniorHighOrfGrade,
+  parseGradeFromClassName
+} from '../config/oralReadingFluencyRiskThresholds';
 
 const COLLECTION = 'junior_high_literacy_numeracy_records';
 
@@ -35,6 +40,130 @@ function sanitizeRecord(record: any): any {
     }
   }
   return cleaned;
+}
+
+/**
+ * Enriches the record with Oral Reading Fluency risk levels if all conditions are met:
+ * - Unit: JUNIOR_HIGH
+ * - Grade: 7, 8, 9
+ * - Assessment: Spring Assessment 3
+ * - Domain/assessment: Oral Reading Fluency (subjectArea: ENGLISH_READING)
+ * - Metric: WPM
+ */
+async function enrichOrfRisk(enriched: any): Promise<void> {
+  const isJh = enriched.unit === 'JUNIOR_HIGH';
+  const isReading = enriched.subjectArea === 'ENGLISH_READING' || enriched.area === 'ENGLISH_READING';
+  const isSpring3 = enriched.sessionKey === 'SPRING_ASSESSMENT_3' || enriched.period === 'SPRING_ASSESSMENT_3';
+
+  if (isJh && isReading && isSpring3) {
+    let resolvedGrade: number | null = null;
+    
+    // 1. Enrollment siswa untuk `academicYear` milik assessment
+    try {
+      const academicYear = enriched.schoolYear;
+      const studentId = enriched.studentId;
+      if (studentId && academicYear) {
+        const qEnroll = query(
+          collection(db, 'enrollments'),
+          where('academicYear', '==', academicYear),
+          where('studentId', '==', studentId),
+          where('status', '==', 'active')
+        );
+        const enrollSnap = await getDocs(qEnroll);
+        if (!enrollSnap.empty) {
+          const enrollData = enrollSnap.docs[0].data();
+          const classId = enrollData.classId;
+          
+          // 2. Structured field grade pada class record yang terkait enrollment tersebut
+          if (classId) {
+            const classSnap = await getDoc(doc(db, 'classes', classId));
+            if (classSnap.exists()) {
+              const classData = classSnap.data();
+              if (classData && classData.grade) {
+                const gradeNum = parseInt(classData.grade, 10);
+                if (gradeNum === 7 || gradeNum === 8 || gradeNum === 9) {
+                  resolvedGrade = gradeNum;
+                }
+              }
+              if (!resolvedGrade && classData && classData.name) {
+                resolvedGrade = parseGradeFromClassName(classData.name);
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Error resolving grade from enrollment/class:', err);
+    }
+
+    // 3. Structured field grade pada student snapshot bila memang disimpan bersama assessment (enriched.gradeLevel)
+    if (!resolvedGrade && enriched.gradeLevel) {
+      const gradeNum = Number(enriched.gradeLevel);
+      if (gradeNum === 7 || gradeNum === 8 || gradeNum === 9) {
+        resolvedGrade = gradeNum;
+      }
+    }
+
+    const hasWords = enriched.wordsRead !== undefined && enriched.wordsRead !== null && enriched.wordsRead !== '';
+    const hasErrs = enriched.errors !== undefined && enriched.errors !== null && enriched.errors !== '';
+    let wpmVal: number | null = null;
+    if (hasWords && hasErrs) {
+      wpmVal = calculateWpm(Number(enriched.wordsRead), Number(enriched.errors));
+    } else if (enriched.wpm !== undefined && enriched.wpm !== null && enriched.wpm !== '') {
+      wpmVal = Number(enriched.wpm);
+    }
+
+    if (isJuniorHighOrfGrade(resolvedGrade) && wpmVal !== null) {
+      const risk = getOralReadingFluencyRiskLevel(resolvedGrade, wpmVal);
+      enriched.riskLevel = risk;
+      enriched.riskBenchmark = 'SPRING_ASSESSMENT_3';
+      enriched.riskGrade = resolvedGrade;
+      enriched.riskCalculatedAt = Date.now();
+    } else {
+      enriched.riskLevel = null;
+      enriched.riskBenchmark = null;
+      enriched.riskGrade = null;
+      enriched.riskCalculatedAt = null;
+    }
+  } else {
+    enriched.riskLevel = null;
+    enriched.riskBenchmark = null;
+    enriched.riskGrade = null;
+    enriched.riskCalculatedAt = null;
+  }
+}
+
+/**
+ * Computes ORF risk level on-read for historical records if conditions are met.
+ */
+function enrichOnRead(record: any): any {
+  if (!record) return record;
+  const isJh = record.unit === 'JUNIOR_HIGH';
+  const isReading = record.subjectArea === 'ENGLISH_READING' || record.area === 'ENGLISH_READING';
+  const isSpring3 = record.sessionKey === 'SPRING_ASSESSMENT_3' || record.period === 'SPRING_ASSESSMENT_3';
+
+  if (isJh && isReading && isSpring3) {
+    if (record.riskLevel !== undefined && record.riskLevel !== null) {
+      return record;
+    }
+
+    const gradeNum = Number(record.gradeLevel);
+    const hasWords = record.wordsRead !== undefined && record.wordsRead !== null && record.wordsRead !== '';
+    const hasErrs = record.errors !== undefined && record.errors !== null && record.errors !== '';
+    let wpmVal: number | null = null;
+    if (hasWords && hasErrs) {
+      wpmVal = calculateWpm(Number(record.wordsRead), Number(record.errors));
+    } else if (record.wpm !== undefined && record.wpm !== null && record.wpm !== '') {
+      wpmVal = Number(record.wpm);
+    }
+
+    if (isJuniorHighOrfGrade(gradeNum) && wpmVal !== null) {
+      record.riskLevel = getOralReadingFluencyRiskLevel(gradeNum, wpmVal);
+      record.riskBenchmark = 'SPRING_ASSESSMENT_3';
+      record.riskGrade = gradeNum;
+    }
+  }
+  return record;
 }
 
 export const juniorHighLiteracyService = {
@@ -60,6 +189,9 @@ export const juniorHighLiteracyService = {
           enriched.wpm = null;
         }
       }
+
+      // Enrich with ORF Risk level if conditions met
+      await enrichOrfRisk(enriched);
 
       // Backward-compatibility field mappings
       enriched.period = enriched.sessionKey;
@@ -105,6 +237,9 @@ export const juniorHighLiteracyService = {
         }
       }
 
+      // Enrich with ORF Risk level if conditions met
+      await enrichOrfRisk(merged);
+
       merged.updatedAt = serverTimestamp();
 
       await updateDoc(docRef, sanitizeRecord(merged));
@@ -136,7 +271,7 @@ export const juniorHighLiteracyService = {
       const snap = await getDocs(q);
       const records: JuniorHighProgressRecord[] = [];
       snap.forEach((docSnap) => {
-        records.push(docSnap.data() as JuniorHighProgressRecord);
+        records.push(enrichOnRead(docSnap.data()) as JuniorHighProgressRecord);
       });
 
       return records;
@@ -171,7 +306,7 @@ export const juniorHighLiteracyService = {
       const snap = await getDocs(q);
       const records: JuniorHighProgressRecord[] = [];
       snap.forEach((docSnap) => {
-        records.push(docSnap.data() as JuniorHighProgressRecord);
+        records.push(enrichOnRead(docSnap.data()) as JuniorHighProgressRecord);
       });
 
       return records;
@@ -203,6 +338,9 @@ export const juniorHighLiteracyService = {
             enriched.wpm = null;
           }
         }
+
+        // Enrich with ORF Risk level if conditions met
+        await enrichOrfRisk(enriched);
 
         // Backward-compatibility field mappings
         enriched.period = enriched.sessionKey;

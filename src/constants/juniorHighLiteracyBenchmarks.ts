@@ -124,6 +124,8 @@ export function getPeriodLabel(sessionKey: JuniorHighSessionKey): string {
       return 'Awal Semester 2';
     case 'SEMESTER_2_END':
       return 'Akhir Semester 2';
+    case 'SPRING_ASSESSMENT_3':
+      return 'Spring Assessment 3';
     default:
       return sessionKey;
   }

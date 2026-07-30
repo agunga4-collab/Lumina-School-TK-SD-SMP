@@ -1,6 +1,8 @@
+import { OralReadingRiskLevel, JuniorHighOrfGrade } from '../config/oralReadingFluencyRiskThresholds';
+
 export type JuniorHighArea = 'BAHASA_INDONESIA' | 'ENGLISH_READING' | 'MENGAJI' | 'NUMERACY';
 
-export type JuniorHighSessionKey = 'SEMESTER_1_START' | 'SEMESTER_1_END' | 'SEMESTER_2_START' | 'SEMESTER_2_END';
+export type JuniorHighSessionKey = 'SEMESTER_1_START' | 'SEMESTER_1_END' | 'SEMESTER_2_START' | 'SEMESTER_2_END' | 'SPRING_ASSESSMENT_3';
 
 // Alias for backwards-compatibility where JuniorHighPeriod is referenced
 export type JuniorHighPeriod = JuniorHighSessionKey;
@@ -40,6 +42,11 @@ export interface EnglishReadingProgress extends JuniorHighProgressBase {
   wpm: number | '';
   readingLevel: 'IR+' | 'ER' | 'ER EN' | '';
   comprehension: number | '';
+  
+  riskLevel?: OralReadingRiskLevel | null;
+  riskBenchmark?: 'SPRING_ASSESSMENT_3' | null;
+  riskGrade?: JuniorHighOrfGrade | null;
+  riskCalculatedAt?: number | null;
 }
 
 export interface MengajiProgress extends JuniorHighProgressBase {
@@ -71,7 +78,8 @@ export const JUNIOR_HIGH_SESSION_KEYS: JuniorHighSessionKey[] = [
   'SEMESTER_1_START',
   'SEMESTER_1_END',
   'SEMESTER_2_START',
-  'SEMESTER_2_END'
+  'SEMESTER_2_END',
+  'SPRING_ASSESSMENT_3'
 ];
 
 export function isBahasaIndonesiaProgress(record: JuniorHighProgressRecord): record is BahasaIndonesiaProgress {
