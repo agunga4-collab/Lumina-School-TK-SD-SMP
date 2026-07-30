@@ -69,6 +69,12 @@ export default function StudentGoalSettingPage() {
   // Confirmation Modal
   const [showSubmitModal, setShowSubmitModal] = React.useState(false);
 
+  // Revision Modal states
+  const [showRevisionModal, setShowRevisionModal] = React.useState(false);
+  const [revisionReason, setRevisionReason] = React.useState('');
+  const [isSubmittingRevision, setIsSubmittingRevision] = React.useState(false);
+  const [showHistoryPanel, setShowHistoryPanel] = React.useState(false);
+
   // Validation Error List (For submit feedback)
   const [validationErrors, setValidationErrors] = React.useState<string[]>([]);
 
@@ -178,55 +184,43 @@ export default function StudentGoalSettingPage() {
         const now = Date.now();
         const { status, goalSettingOpenDate, goalSettingCloseDate } = activePeriod;
 
-        const reviews = existingResponse?.sectionReviews;
-        const hasRevisionRequired = reviews && (
-          Object.values(reviews).some((v: any) => v && v.status === 'REVISION_REQUIRED') ||
-          (reviews.smartGoals && Object.values(reviews.smartGoals).some((g: any) => g?.status === 'REVISION_REQUIRED'))
-        );
+        const dbStatus = existingResponse?.status || 'DRAFT';
 
-        if (existingResponse && existingResponse.status === 'CONFERENCE_COMPLETED') {
-          setPeriodState({
-            status: 'READ_ONLY_STATUS',
-            message: `Your response has been completed and is now read-only.`,
-            isEditable: false
-          });
-        } else if (existingResponse && existingResponse.status === 'SUBMITTED' && !hasRevisionRequired) {
-          setPeriodState({
-            status: 'READ_ONLY_STATUS',
-            message: `Your response has been submitted and is currently under review.`,
-            isEditable: false
-          });
-        } else if (existingResponse && existingResponse.status === 'SUBMITTED' && hasRevisionRequired) {
-          setPeriodState({
-            status: 'EDITABLE',
-            message: `Your workbook requires revisions. Please edit the highlighted sections and re-submit.`,
-            isEditable: true
-          });
-        } else if (status !== 'OPEN') {
-          setPeriodState({
-            status: 'READ_ONLY_STATUS',
-            message: `Goal Setting is not active for this period (Status: ${status}).`,
-            isEditable: false
-          });
+        let isEditable = true;
+        let msg = '';
+
+        if (status !== 'OPEN') {
+          isEditable = false;
+          msg = `Goal Setting is not active for this period (Status: ${status}).`;
         } else if (goalSettingOpenDate && now < goalSettingOpenDate) {
           const openDateStr = new Date(goalSettingOpenDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
-          setPeriodState({
-            status: 'BEFORE_OPEN',
-            message: `Goal Setting opens on ${openDateStr}.`,
-            isEditable: false
-          });
+          isEditable = false;
+          msg = `Goal Setting opens on ${openDateStr}.`;
         } else if (goalSettingCloseDate && now > goalSettingCloseDate) {
-          setPeriodState({
-            status: 'AFTER_CLOSE',
-            message: `The Goal Setting window has closed.`,
-            isEditable: false
-          });
+          isEditable = false;
+          msg = `The Goal Setting window has closed.`;
+        } else if (dbStatus === 'SUBMITTED') {
+          isEditable = false;
+          msg = `Workbook Anda sudah dikirim dan sedang dalam peninjauan oleh guru.`;
+        } else if (dbStatus === 'APPROVED') {
+          isEditable = false;
+          msg = `Workbook Anda telah disetujui oleh guru.`;
+        } else if (dbStatus === 'CONFERENCE_COMPLETED') {
+          isEditable = false;
+          msg = `Workbook Anda telah diselesaikan (Conference Completed).`;
+        } else if (dbStatus === 'RETURNED') {
+          isEditable = true;
+          msg = `Workbook Anda telah dikembalikan oleh guru untuk direvisi. Silakan lakukan perubahan dan kirim kembali.`;
         } else {
-          setPeriodState({
-            status: 'EDITABLE',
-            isEditable: true
-          });
+          isEditable = true;
+          msg = '';
         }
+
+        setPeriodState({
+          status: isEditable ? 'EDITABLE' : 'READ_ONLY_STATUS',
+          message: msg,
+          isEditable: isEditable
+        });
       } else {
         setPeriodState({
           status: 'NO_PERIOD',
@@ -422,6 +416,129 @@ export default function StudentGoalSettingPage() {
             <p className="text-xs font-black uppercase tracking-wider">Goal Setting Status Warning</p>
             <p className="text-xs font-medium mt-1">{periodState.message}</p>
           </div>
+        </div>
+      )}
+
+      {/* Workbook Status Banner */}
+      {response && (
+        <div className="bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm space-y-4 animate-in slide-in-from-top duration-300">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="flex items-center gap-3">
+              <div className={`w-3 h-3 rounded-full ${
+                response.status === 'APPROVED' ? 'bg-emerald-500 animate-pulse' :
+                response.status === 'SUBMITTED' ? 'bg-amber-500 animate-pulse' :
+                response.status === 'RETURNED' ? 'bg-rose-500' : 'bg-gray-400'
+              }`} />
+              <div>
+                <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Status Workbook</span>
+                <h4 className="text-sm font-black text-gray-800 uppercase italic tracking-tight">
+                  {response.status === 'DRAFT' && 'Draft (Belum Dikirim)'}
+                  {response.status === 'SUBMITTED' && 'Submitted (Menunggu Review Guru)'}
+                  {response.status === 'RETURNED' && 'Returned (Butuh Revisi)'}
+                  {response.status === 'APPROVED' && 'Approved (Sudah Disetujui Guru)'}
+                  {response.status === 'CONFERENCE_COMPLETED' && 'Conference Completed'}
+                </h4>
+              </div>
+            </div>
+
+            <div className="flex gap-2 w-full sm:w-auto justify-end">
+              {/* Show "Request Revision" if status is SUBMITTED or APPROVED */}
+              {(response.status === 'SUBMITTED' || response.status === 'APPROVED') && (
+                <button
+                  type="button"
+                  onClick={() => setShowRevisionModal(true)}
+                  disabled={response.revisionRequest?.status === 'PENDING'}
+                  className="px-4 py-2 border border-blue-200 text-blue-600 bg-blue-50/50 hover:bg-blue-50 text-[10px] font-black uppercase tracking-wider rounded-xl transition shadow-sm disabled:opacity-50"
+                >
+                  {response.revisionRequest?.status === 'PENDING' ? 'Permintaan Revisi Pending' : 'Ajukan Permintaan Revisi'}
+                </button>
+              )}
+              
+              <button
+                type="button"
+                onClick={() => setShowHistoryPanel(!showHistoryPanel)}
+                className="px-4 py-2 border border-gray-200 text-gray-600 bg-white hover:bg-gray-50 text-[10px] font-black uppercase tracking-wider rounded-xl transition shadow-sm"
+              >
+                {showHistoryPanel ? 'Sembunyikan Log Status' : 'Lihat Log Status'}
+              </button>
+            </div>
+          </div>
+
+          {/* If there's an active pending revision request */}
+          {response.revisionRequest && response.revisionRequest.status === 'PENDING' && (
+            <div className="p-4 bg-amber-50/50 border border-amber-100 rounded-xl text-xs font-semibold text-amber-800 flex items-start gap-2.5">
+              <AlertTriangle size={16} className="text-amber-500 mt-0.5" />
+              <div>
+                <p className="font-black uppercase tracking-wider text-[9px] text-amber-700">Permintaan Revisi Sedang Menunggu Persetujuan Guru</p>
+                <p className="mt-0.5 text-gray-600">Alasan diajukan: <span className="italic">"{response.revisionRequest.reason}"</span></p>
+                <p className="text-[10px] text-gray-400 mt-1">Diajukan pada {new Date(response.revisionRequest.requestedAt || 0).toLocaleString()}</p>
+              </div>
+            </div>
+          )}
+
+          {/* If revision was DECLINED */}
+          {response.revisionRequest && response.revisionRequest.status === 'DECLINED' && (
+            <div className="p-4 bg-rose-50/50 border border-rose-100 rounded-xl text-xs font-semibold text-rose-800 flex items-start gap-2.5">
+              <AlertTriangle size={16} className="text-rose-500 mt-0.5" />
+              <div>
+                <p className="font-black uppercase tracking-wider text-[9px] text-rose-700">Permintaan Revisi Belum Disetujui Oleh Guru</p>
+                <p className="mt-0.5 text-gray-600">Catatan guru: <span className="italic">"{response.revisionRequest.teacherNote}"</span></p>
+                <p className="text-[10px] text-gray-400 mt-1">Ditolak pada {new Date(response.revisionRequest.respondedAt || 0).toLocaleString()}</p>
+              </div>
+            </div>
+          )}
+
+          {/* If returned by teacher (via direct action or responded request) */}
+          {response.status === 'RETURNED' && response.revisionRequest?.teacherNote && (
+            <div className="p-4 bg-rose-50 border border-rose-100 rounded-xl text-xs font-semibold text-rose-800 flex items-start gap-2.5">
+              <AlertTriangle size={16} className="text-rose-600 mt-0.5" />
+              <div>
+                <p className="font-black uppercase tracking-wider text-[9px] text-rose-700">Catatan Revisi Dari Guru</p>
+                <p className="mt-0.5 text-gray-700">Pesan: <span className="font-bold">"{response.revisionRequest.teacherNote}"</span></p>
+                <p className="text-[10px] text-gray-400 mt-1">Dikembalikan pada {new Date(response.revisionRequest.respondedAt || 0).toLocaleString()}</p>
+              </div>
+            </div>
+          )}
+
+          {/* History Panel */}
+          {showHistoryPanel && (
+            <div className="border-t border-gray-100 pt-5 space-y-4 animate-in slide-in-from-top duration-300">
+              <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Riwayat Status Workbook & Audit Trail</h5>
+              
+              {!response.statusHistory || response.statusHistory.length === 0 ? (
+                <p className="text-xs text-gray-400 font-semibold italic">Belum ada riwayat aktivitas yang tercatat.</p>
+              ) : (
+                <div className="relative border-l border-gray-200 pl-5 ml-2.5 space-y-6">
+                  {response.statusHistory.map((item, idx) => (
+                    <div key={idx} className="relative">
+                      {/* Timeline Dot */}
+                      <span className="absolute -left-[26px] top-1.5 flex h-3 w-3 items-center justify-center rounded-full bg-blue-500 ring-4 ring-white" />
+                      
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <span className="font-black text-gray-800">
+                            {item.performedByName} ({item.performedByRole})
+                          </span>
+                          <span className="text-[10px] text-gray-400">
+                            {new Date(item.createdAt).toLocaleString()}
+                          </span>
+                          <span className="text-[9px] font-black px-1.5 py-0.5 bg-gray-100 rounded text-gray-600 uppercase tracking-wide">
+                            {item.action.replace(/_/g, ' ')}
+                          </span>
+                        </div>
+                        
+                        {item.note && (
+                          <p className="text-xs font-semibold text-gray-600 bg-gray-50 p-2.5 rounded-xl border border-gray-100 mt-1 max-w-xl italic leading-relaxed">
+                            "{item.note}"
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -755,6 +872,73 @@ export default function StudentGoalSettingPage() {
                 className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors shadow-md shadow-indigo-100"
               >
                 Submit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Revision Request Dialog Modal */}
+      {showRevisionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-white rounded-[2.5rem] border border-gray-100 shadow-2xl p-8 max-w-md w-full space-y-6 animate-in zoom-in duration-200">
+            <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+              <ClipboardCheck size={24} />
+            </div>
+            
+            <div className="space-y-2">
+              <h3 className="text-xl font-black text-gray-900 uppercase italic tracking-tight">Ajukan Permintaan Revisi</h3>
+              <p className="text-xs text-gray-400 font-bold leading-relaxed">
+                Tuliskan alasan valid mengapa Anda memerlukan perubahan pada workbook ini. Guru akan meninjau dan menentukan persetujuan pembukaan revisi.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-wider text-gray-500">Alasan Pengajuan *</label>
+              <textarea
+                value={revisionReason}
+                onChange={(e) => setRevisionReason(e.target.value)}
+                placeholder="Tuliskan alasan lengkap Anda di sini (minimal 10 karakter)..."
+                className="w-full min-h-[100px] p-4 text-xs font-semibold bg-gray-50 border border-gray-100 rounded-2xl focus:border-blue-500 outline-none transition leading-relaxed"
+              />
+              {revisionReason.trim().length < 10 && (
+                <p className="text-[10px] text-rose-500 font-bold">* Alasan minimal harus terdiri dari 10 karakter.</p>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isSubmittingRevision}
+                onClick={() => {
+                  setShowRevisionModal(false);
+                  setRevisionReason('');
+                }}
+                className="px-6 py-3 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={isSubmittingRevision || revisionReason.trim().length < 10}
+                onClick={async () => {
+                  if (!period || !studentId) return;
+                  try {
+                    setIsSubmittingRevision(true);
+                    await threeWayConferenceService.requestRevision(period.id, studentId, revisionReason);
+                    toast.success('Permintaan revisi berhasil diajukan ke guru.');
+                    setShowRevisionModal(false);
+                    setRevisionReason('');
+                    await fetchData();
+                  } catch (err: any) {
+                    toast.error(err.message || 'Gagal mengajukan permintaan revisi.');
+                  } finally {
+                    setIsSubmittingRevision(false);
+                  }
+                }}
+                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors shadow-md shadow-blue-100 disabled:opacity-50"
+              >
+                {isSubmittingRevision ? 'Mengirim...' : 'Kirim Permintaan'}
               </button>
             </div>
           </div>

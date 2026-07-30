@@ -471,6 +471,7 @@ export default function TeacherConferenceWorkspace() {
           setSelectedStudentForMentor(null);
           setSelectedAssignmentForMentor(null);
         }}
+        periodId={activePeriod?.id || ''}
         student={selectedStudentForMentor}
         currentAssignment={selectedAssignmentForMentor}
         onSaveSuccess={loadWorkspaceData}

@@ -1854,6 +1854,28 @@ export interface SectionReview {
   reviewedAt?: number | null;
 }
 
+export type WorkbookStatus = 'DRAFT' | 'SUBMITTED' | 'RETURNED' | 'APPROVED' | 'CONFERENCE_COMPLETED';
+
+export type WorkbookStatusHistoryAction =
+  | 'DRAFT_SAVED'
+  | 'SUBMITTED'
+  | 'REVISION_REQUESTED'
+  | 'RETURNED_BY_TEACHER'
+  | 'REVISION_DECLINED'
+  | 'APPROVED'
+  | 'CONFERENCE_COMPLETED';
+
+export interface WorkbookStatusHistory {
+  fromStatus: WorkbookStatus | null;
+  toStatus: WorkbookStatus;
+  action: WorkbookStatusHistoryAction;
+  performedByUid: string;
+  performedByName: string;
+  performedByRole: 'STUDENT' | 'TEACHER' | 'ADMIN';
+  note: string | null;
+  createdAt: number;
+}
+
 export interface StudentConferenceResponse {
   id: string; // ${periodId}_${studentId}
   periodId: string;
@@ -1865,7 +1887,7 @@ export interface StudentConferenceResponse {
   gradeLevel: number;
   academicYear: string;
   semester: 1 | 2;
-  status: 'DRAFT' | 'SUBMITTED' | 'CONFERENCE_COMPLETED';
+  status: WorkbookStatus;
   aboutMe: string;
   strengths: string;
   areasForGrowth: string;
@@ -1900,6 +1922,17 @@ export interface StudentConferenceResponse {
   lastSubmittedAt?: number | null;
   revisionRound?: number;
   lastEditedAt?: number | null;
+  lastEditedByUid?: string | null;
+
+  revisionRequest?: {
+    status: 'NONE' | 'PENDING' | 'RETURNED' | 'DECLINED';
+    reason: string | null;
+    requestedAt: number | null;
+    respondedAt: number | null;
+    respondedByUid: string | null;
+    teacherNote: string | null;
+  };
+  statusHistory?: WorkbookStatusHistory[];
 
   // Assignment-related fields
   unit?: 'JUNIOR_HIGH' | 'ELEMENTARY';

@@ -5,6 +5,7 @@ import { X, Calendar, BookOpen, AlertCircle, Sparkles, Brain, Award, Heart, Shie
 import { threeWayConferenceService } from '../../../services/threeWayConferenceService';
 import { auth } from '../../../lib/firebase';
 import type { Student, StudentConferenceResponse, MentorAssignment, SmartGoal } from '../../../types';
+import { toast } from 'sonner';
 
 interface ConferenceResponseDetailDialogProps {
   isOpen: boolean;
@@ -40,6 +41,12 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [savingSections, setSavingSections] = useState<Record<string, boolean>>({});
   const [successSections, setSuccessSections] = useState<Record<string, boolean>>({});
+
+  // Workflow & Revision request states
+  const [teacherNote, setTeacherNote] = useState<string>('');
+  const [isReturningWorkbook, setIsReturningWorkbook] = useState<boolean>(false);
+  const [showDirectReturnForm, setShowDirectReturnForm] = useState<boolean>(false);
+  const [showTeacherHistoryPanel, setShowTeacherHistoryPanel] = useState<boolean>(false);
 
   const [localReviews, setLocalReviews] = useState<{
     reflectionStatus: 'APPROVED' | 'REVISION_REQUIRED';
@@ -428,6 +435,18 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
             Draft
           </span>
         );
+      case 'RETURNED':
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+            Returned
+          </span>
+        );
+      case 'APPROVED':
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            Approved
+          </span>
+        );
       case 'SUBMITTED':
         return (
           <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
@@ -627,7 +646,195 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
             ) : (
               /* Core Student Content Section */
               <div className="space-y-6">
-                
+
+                {/* Workflow & Revision Request Panel */}
+                <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm space-y-4">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div className="space-y-1">
+                      <h4 className="text-sm font-black text-gray-800 uppercase italic tracking-tight">Status & Alur Kerja Workbook</h4>
+                      <div className="flex items-center gap-2 text-xs text-gray-500 font-medium">
+                        <span>Status saat ini:</span>
+                        {getStatusBadge(response.status)}
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2 w-full sm:w-auto justify-end">
+                      {response.status !== 'DRAFT' && response.status !== 'RETURNED' && (
+                        <button
+                          type="button"
+                          onClick={() => setShowDirectReturnForm(!showDirectReturnForm)}
+                          className="px-3.5 py-1.5 border border-rose-200 text-rose-700 bg-rose-50/50 hover:bg-rose-50 text-[10px] font-black uppercase tracking-wider rounded-lg transition shadow-sm"
+                        >
+                          {showDirectReturnForm ? 'Batal Mengembalikan' : 'Kembalikan Workbook (Return)'}
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => setShowTeacherHistoryPanel(!showTeacherHistoryPanel)}
+                        className="px-3.5 py-1.5 border border-gray-200 text-gray-600 bg-white hover:bg-gray-50 text-[10px] font-black uppercase tracking-wider rounded-lg transition shadow-sm"
+                      >
+                        {showTeacherHistoryPanel ? 'Sembunyikan Riwayat' : 'Lihat Riwayat Status'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Direct Return Workbook Form */}
+                  {showDirectReturnForm && (
+                    <div className="p-4 bg-rose-50/30 border border-rose-100 rounded-xl space-y-3 animate-in slide-in-from-top duration-200">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black uppercase tracking-wider text-rose-800">Catatan Pengembalian ke Siswa *</label>
+                        <textarea
+                          value={teacherNote}
+                          onChange={(e) => setTeacherNote(e.target.value)}
+                          placeholder="Masukkan catatan revisi atau instruksi perbaikan untuk siswa..."
+                          className="w-full min-h-[80px] p-3 text-xs font-semibold bg-white border border-gray-200 rounded-xl focus:border-rose-500 outline-none transition"
+                        />
+                      </div>
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          disabled={isReturningWorkbook || !teacherNote.trim()}
+                          onClick={async () => {
+                            try {
+                              setIsReturningWorkbook(true);
+                              setReviewError(null);
+                              await threeWayConferenceService.respondToRevisionRequest(periodId, student.id, 'RETURN', teacherNote);
+                              toast.success('Workbook berhasil dikembalikan ke siswa.');
+                              setTeacherNote('');
+                              setShowDirectReturnForm(false);
+                              // Reload current response state
+                              const updatedResp = await threeWayConferenceService.getStudentConferenceResponse(periodId, student.id);
+                              setResponse(updatedResp);
+                            } catch (err: any) {
+                              setReviewError(err.message || 'Gagal mengembalikan workbook.');
+                            } finally {
+                              setIsReturningWorkbook(false);
+                            }
+                          }}
+                          className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black uppercase tracking-wider rounded-lg transition disabled:opacity-50 shadow-sm cursor-pointer"
+                        >
+                          {isReturningWorkbook ? 'Mengembalikan...' : 'Konfirmasi Kembalikan Workbook'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Active Pending Student Revision Request */}
+                  {response.revisionRequest && response.revisionRequest.status === 'PENDING' && (
+                    <div className="p-5 bg-blue-50 border border-blue-100 rounded-xl space-y-4 animate-in pulse">
+                      <div className="flex items-start gap-2.5">
+                        <AlertCircle className="text-blue-600 mt-0.5 shrink-0" size={18} />
+                        <div className="space-y-1">
+                          <h5 className="text-xs font-black text-blue-900 uppercase tracking-wider">Siswa Mengajukan Permintaan Revisi Workbook</h5>
+                          <p className="text-xs font-semibold text-gray-700">
+                            Alasan: <span className="italic">"{response.revisionRequest.reason}"</span>
+                          </p>
+                          <p className="text-[10px] text-gray-400">Diajukan pada {new Date(response.revisionRequest.requestedAt || 0).toLocaleString()}</p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 pt-2 border-t border-blue-100">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black uppercase tracking-wider text-gray-500">Pesan / Catatan Balasan Guru *</label>
+                          <textarea
+                            value={teacherNote}
+                            onChange={(e) => setTeacherNote(e.target.value)}
+                            placeholder="Tuliskan catatan persetujuan atau alasan penolakan permintaan revisi..."
+                            className="w-full min-h-[80px] p-3 text-xs font-semibold bg-white border border-gray-200 rounded-xl focus:border-blue-500 outline-none transition"
+                          />
+                        </div>
+
+                        <div className="flex justify-end gap-3">
+                          <button
+                            type="button"
+                            disabled={isReturningWorkbook || !teacherNote.trim()}
+                            onClick={async () => {
+                              try {
+                                setIsReturningWorkbook(true);
+                                setReviewError(null);
+                                await threeWayConferenceService.respondToRevisionRequest(periodId, student.id, 'DECLINE', teacherNote);
+                                toast.success('Permintaan revisi berhasil ditolak.');
+                                setTeacherNote('');
+                                // Reload current response state
+                                const updatedResp = await threeWayConferenceService.getStudentConferenceResponse(periodId, student.id);
+                                setResponse(updatedResp);
+                              } catch (err: any) {
+                                setReviewError(err.message || 'Gagal merespons permintaan revisi.');
+                              } finally {
+                                setIsReturningWorkbook(false);
+                              }
+                            }}
+                            className="px-4 py-2 border border-rose-200 text-rose-700 bg-white hover:bg-rose-50 text-xs font-black uppercase tracking-wider rounded-lg transition disabled:opacity-50"
+                          >
+                            Tolak Permintaan
+                          </button>
+                          
+                          <button
+                            type="button"
+                            disabled={isReturningWorkbook || !teacherNote.trim()}
+                            onClick={async () => {
+                              try {
+                                setIsReturningWorkbook(true);
+                                setReviewError(null);
+                                await threeWayConferenceService.respondToRevisionRequest(periodId, student.id, 'RETURN', teacherNote);
+                                toast.success('Permintaan revisi disetujui. Workbook telah dikembalikan.');
+                                setTeacherNote('');
+                                // Reload current response state
+                                const updatedResp = await threeWayConferenceService.getStudentConferenceResponse(periodId, student.id);
+                                setResponse(updatedResp);
+                              } catch (err: any) {
+                                setReviewError(err.message || 'Gagal menyetujui permintaan revisi.');
+                              } finally {
+                                setIsReturningWorkbook(false);
+                              }
+                            }}
+                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black uppercase tracking-wider rounded-lg transition disabled:opacity-50 shadow-md shadow-blue-100"
+                          >
+                            Setujui & Kembalikan (Return)
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Audit Trail / History timeline */}
+                  {showTeacherHistoryPanel && (
+                    <div className="border-t border-gray-100 pt-4 space-y-4 animate-in slide-in-from-top duration-200">
+                      <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Riwayat Status Workbook (Audit Trail)</h5>
+                      {!response.statusHistory || response.statusHistory.length === 0 ? (
+                        <p className="text-xs text-gray-400 font-semibold italic">Belum ada riwayat aktivitas yang tercatat.</p>
+                      ) : (
+                        <div className="relative border-l border-gray-200 pl-5 ml-2.5 space-y-5">
+                          {response.statusHistory.map((item, idx) => (
+                            <div key={idx} className="relative">
+                              <span className="absolute -left-[26px] top-1.5 flex h-3 w-3 items-center justify-center rounded-full bg-blue-500 ring-4 ring-white" />
+                              <div className="space-y-1">
+                                <div className="flex flex-wrap items-center gap-2 text-xs">
+                                  <span className="font-black text-gray-800">
+                                    {item.performedByName} ({item.performedByRole})
+                                  </span>
+                                  <span className="text-[10px] text-gray-400">
+                                    {new Date(item.createdAt).toLocaleString()}
+                                  </span>
+                                  <span className="text-[9px] font-black px-1.5 py-0.5 bg-gray-100 rounded text-gray-600 uppercase tracking-wide">
+                                    {item.action.replace(/_/g, ' ')}
+                                  </span>
+                                </div>
+                                {item.note && (
+                                  <p className="text-xs font-semibold text-gray-600 bg-gray-50 p-2.5 rounded-xl border border-gray-100 mt-1 max-w-xl italic leading-relaxed">
+                                    "{item.note}"
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 {/* About Me & Reflections Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4" id="reflections-grid">
                   {/* About Me */}

@@ -412,28 +412,34 @@ export const threeWayConferenceService = {
       const existingSnap = await getDoc(responseRef);
       let existing: StudentConferenceResponse | null = null;
       let existingReviews: any = null;
-      let isRevision = false;
-
-      if (existingSnap.exists()) {
-        existing = existingSnap.data() as StudentConferenceResponse;
-        existingReviews = existing.sectionReviews || null;
-        if (existing.status !== 'DRAFT') {
-          // Check if revision is required
-          const hasRevision = existingReviews && (
-            Object.values(existingReviews).some((v: any) => v && v.status === 'REVISION_REQUIRED') ||
-            (existingReviews.smartGoals && Object.values(existingReviews.smartGoals).some((g: any) => g?.status === 'REVISION_REQUIRED'))
-          );
-          if (!hasRevision) {
-            throw new Error('Submitted or completed responses cannot be edited.');
-          }
-          isRevision = true;
-        }
-      }
+      let status: 'DRAFT' | 'RETURNED' = 'DRAFT';
+      let statusHistory: any[] = [];
 
       // Fetch trusted student details
       const studentData = await getStudentById(studentId);
       if (!studentData) {
         throw new Error('Student record not found.');
+      }
+
+      if (existingSnap.exists()) {
+        existing = existingSnap.data() as StudentConferenceResponse;
+        existingReviews = existing.sectionReviews || null;
+        statusHistory = existing.statusHistory || [];
+        if (existing.status !== 'DRAFT' && existing.status !== 'RETURNED') {
+          throw new Error('Hanya workbook berstatus Draft atau Returned yang dapat diedit.');
+        }
+        status = existing.status as 'DRAFT' | 'RETURNED';
+      } else {
+        statusHistory = [{
+          fromStatus: null,
+          toStatus: 'DRAFT',
+          action: 'DRAFT_SAVED',
+          performedByUid: studentId,
+          performedByName: studentData.name || 'Student',
+          performedByRole: 'STUDENT',
+          note: 'Workbook pertama kali disimpan sebagai draft.',
+          createdAt: now
+        }];
       }
 
       let className = studentData.classId || '';
@@ -460,7 +466,7 @@ export const threeWayConferenceService = {
         gradeLevel: studentData.grade || 0,
         academicYear: period.academicYear,
         semester: period.semester as 1 | 2,
-        status: isRevision ? 'SUBMITTED' : 'DRAFT',
+        status: status,
         aboutMe: responsePayload.aboutMe || '',
         strengths: responsePayload.strengths || '',
         areasForGrowth: responsePayload.areasForGrowth || '',
@@ -482,6 +488,8 @@ export const threeWayConferenceService = {
         revisionRound: existing ? (existing.revisionRound || 0) : 0,
         sectionReviews: existingReviews,
         overallStatus: existing ? (existing.overallStatus || 'DRAFT') : 'DRAFT',
+        statusHistory: statusHistory,
+        revisionRequest: existing ? (existing.revisionRequest || undefined) : undefined,
       };
 
       if (docPayload.sectionReviews === null || docPayload.sectionReviews === undefined) {
@@ -527,23 +535,18 @@ export const threeWayConferenceService = {
       let isRevision = false;
       let existingReviews: any = null;
       let revisionRound = 0;
+      let existingStatusHistory: any[] = [];
 
       if (existingSnap.exists()) {
         existing = existingSnap.data() as StudentConferenceResponse;
         existingReviews = existing.sectionReviews || null;
         revisionRound = existing.revisionRound || 0;
+        existingStatusHistory = existing.statusHistory || [];
         
-        if (existing.status !== 'DRAFT') {
-          // Check if indeed revision is required
-          const hasRevision = existingReviews && (
-            Object.values(existingReviews).some((v: any) => v && v.status === 'REVISION_REQUIRED') ||
-            (existingReviews.smartGoals && Object.values(existingReviews.smartGoals).some((g: any) => g?.status === 'REVISION_REQUIRED'))
-          );
-          if (!hasRevision) {
-            throw new Error('Submitted or completed responses cannot be edited.');
-          }
-          isRevision = true;
+        if (existing.status !== 'DRAFT' && existing.status !== 'RETURNED') {
+          throw new Error('Hanya workbook berstatus Draft atau Returned yang dapat dikirim.');
         }
+        isRevision = existing.status === 'RETURNED';
       }
 
       // Fetch trusted student details
@@ -587,6 +590,30 @@ export const threeWayConferenceService = {
         }
       }
 
+      // Add SUBMITTED status history
+      const historyItem = {
+        fromStatus: existing ? existing.status : null,
+        toStatus: 'SUBMITTED' as const,
+        action: 'SUBMITTED' as const,
+        performedByUid: studentId,
+        performedByName: studentData.name || 'Student',
+        performedByRole: 'STUDENT' as const,
+        note: isRevision ? 'Siswa mengirimkan revisi workbook.' : 'Siswa mengirimkan workbook.',
+        createdAt: nowTime
+      };
+      const statusHistory = [...existingStatusHistory, historyItem];
+
+      // Update revision request if exists and pending
+      let revisionRequest = existing?.revisionRequest || undefined;
+      if (revisionRequest && revisionRequest.status === 'PENDING') {
+        revisionRequest = {
+          ...revisionRequest,
+          status: 'RETURNED',
+          respondedAt: nowTime,
+          respondedByUid: studentId
+        };
+      }
+
       const docPayload: StudentConferenceResponse = {
         id: responseId,
         periodId,
@@ -619,6 +646,8 @@ export const threeWayConferenceService = {
         lastSubmittedAt: nowTime,
         revisionRound,
         sectionReviews: updatedReviews,
+        statusHistory,
+        revisionRequest
       };
 
       // Recalculate overall status
@@ -2327,10 +2356,29 @@ export const threeWayConferenceService = {
 
       const calculatedStatus = this.calculateOverallStatus(mockResponse);
 
+      let nextStatus = responseData.status;
+      let updatedHistory = responseData.statusHistory || [];
+      if (calculatedStatus === 'FULLY_APPROVED' && responseData.status !== 'APPROVED') {
+        nextStatus = 'APPROVED';
+        const historyItem = {
+          fromStatus: responseData.status,
+          toStatus: 'APPROVED' as const,
+          action: 'APPROVED' as const,
+          performedByUid: currentUserUid,
+          performedByName: currentUserName,
+          performedByRole: 'TEACHER' as const,
+          note: 'Workbook disetujui penuh oleh guru setelah penilaian selesai.',
+          createdAt: now
+        };
+        updatedHistory = [...updatedHistory, historyItem];
+      }
+
       // Save update to firestore
       await updateDoc(responseRef, {
         sectionReviews,
         overallStatus: calculatedStatus,
+        status: nextStatus,
+        statusHistory: updatedHistory,
         updatedAt: now
       });
 
@@ -2354,6 +2402,159 @@ export const threeWayConferenceService = {
         console.error('Failed to send review notification to student:', notifErr);
       }
 
+    } catch (error) {
+      return handleFirestoreError(error, 'write', `${RESPONSES_COLLECTION}/${periodId}_${studentId}`);
+    }
+  },
+
+  /**
+   * Request revision for student workbook (from student side)
+   */
+  async requestRevision(periodId: string, studentId: string, reason: string): Promise<void> {
+    try {
+      const currentUid = auth.currentUser?.uid;
+      if (!currentUid) throw new Error('Unauthorized');
+      
+      const responseId = this.getConferenceResponseId(periodId, studentId);
+      const responseRef = doc(db, RESPONSES_COLLECTION, responseId);
+      
+      await runTransaction(db, async (transaction) => {
+        const responseSnap = await transaction.get(responseRef);
+        if (!responseSnap.exists()) {
+          throw new Error('Workbook response not found.');
+        }
+        
+        const responseData = responseSnap.data() as StudentConferenceResponse;
+        
+        if (responseData.status !== 'SUBMITTED' && responseData.status !== 'APPROVED' && responseData.status !== 'CONFERENCE_COMPLETED') {
+          throw new Error('Permintaan revisi hanya dapat diajukan saat status workbook Sudah Dikirim atau Disetujui.');
+        }
+        
+        if (responseData.revisionRequest?.status === 'PENDING') {
+          throw new Error('Anda sudah memiliki permintaan revisi yang sedang menunggu persetujuan guru.');
+        }
+
+        const now = Date.now();
+        const studentData = await getStudentById(studentId);
+        const userName = studentData?.name || auth.currentUser?.displayName || 'Student';
+
+        const historyItem = {
+          fromStatus: responseData.status,
+          toStatus: responseData.status,
+          action: 'REVISION_REQUESTED' as const,
+          performedByUid: currentUid,
+          performedByName: userName,
+          performedByRole: 'STUDENT' as const,
+          note: reason,
+          createdAt: now
+        };
+
+        const updatedHistory = [...(responseData.statusHistory || []), historyItem];
+
+        const revisionRequest = {
+          status: 'PENDING' as const,
+          reason,
+          requestedAt: now,
+          respondedAt: null,
+          respondedByUid: null,
+          teacherNote: null
+        };
+
+        transaction.update(responseRef, {
+          revisionRequest,
+          statusHistory: updatedHistory,
+          lastEditedAt: now,
+          lastEditedByUid: currentUid
+        });
+
+        const assignment = await this.getMentorAssignment(periodId, studentId);
+        if (assignment && assignment.mentorEmail) {
+          await sendNotification({
+            userId: assignment.mentorEmail,
+            type: 'REVISION_REQUESTED' as any,
+            message: `${userName} mengajukan permintaan revisi untuk workbook mereka.`,
+            link: `/junior-high/conference/workspace`
+          });
+        }
+      });
+    } catch (error) {
+      return handleFirestoreError(error, 'write', `${RESPONSES_COLLECTION}/${periodId}_${studentId}`);
+    }
+  },
+
+  /**
+   * Teacher responds to a student revision request or returns workbook
+   */
+  async respondToRevisionRequest(
+    periodId: string,
+    studentId: string,
+    action: 'RETURN' | 'DECLINE',
+    teacherNote: string
+  ): Promise<void> {
+    try {
+      const currentUid = auth.currentUser?.uid;
+      if (!currentUid) throw new Error('Unauthorized');
+      
+      const responseId = this.getConferenceResponseId(periodId, studentId);
+      const responseRef = doc(db, RESPONSES_COLLECTION, responseId);
+      
+      await runTransaction(db, async (transaction) => {
+        const responseSnap = await transaction.get(responseRef);
+        if (!responseSnap.exists()) {
+          throw new Error('Workbook response not found.');
+        }
+        
+        const responseData = responseSnap.data() as StudentConferenceResponse;
+        const now = Date.now();
+        const teacherName = auth.currentUser?.displayName || auth.currentUser?.email || 'Teacher';
+
+        const nextStatus = action === 'RETURN' ? 'RETURNED' : responseData.status;
+        const actionType = action === 'RETURN' ? ('RETURNED_BY_TEACHER' as const) : ('REVISION_DECLINED' as const);
+
+        const historyItem = {
+          fromStatus: responseData.status,
+          toStatus: nextStatus as any,
+          action: actionType,
+          performedByUid: currentUid,
+          performedByName: teacherName,
+          performedByRole: 'TEACHER' as const,
+          note: teacherNote,
+          createdAt: now
+        };
+
+        const updatedHistory = [...(responseData.statusHistory || []), historyItem];
+
+        const revisionRequest = {
+          status: action === 'RETURN' ? ('RETURNED' as const) : ('DECLINED' as const),
+          reason: responseData.revisionRequest?.reason || 'Guru mengembalikan workbook untuk revisi.',
+          requestedAt: responseData.revisionRequest?.requestedAt || now,
+          respondedAt: now,
+          respondedByUid: currentUid,
+          teacherNote
+        };
+
+        const updatePayload: any = {
+          status: nextStatus,
+          revisionRequest,
+          statusHistory: updatedHistory,
+          lastEditedAt: now,
+          lastEditedByUid: currentUid
+        };
+
+        transaction.update(responseRef, updatePayload);
+
+        const studentData = await getStudentById(studentId);
+        if (studentData && studentData.email) {
+          await sendNotification({
+            userId: studentData.email,
+            type: 'REVISION_RESPONDED' as any,
+            message: action === 'RETURN' 
+              ? `Workbook Anda telah dikembalikan untuk revisi: "${teacherNote}"`
+              : `Permintaan revisi workbook Anda ditolak: "${teacherNote}"`,
+            link: `/student/goal-setting`
+          });
+        }
+      });
     } catch (error) {
       return handleFirestoreError(error, 'write', `${RESPONSES_COLLECTION}/${periodId}_${studentId}`);
     }
