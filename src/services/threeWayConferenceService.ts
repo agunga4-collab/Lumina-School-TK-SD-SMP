@@ -2574,5 +2574,114 @@ export const threeWayConferenceService = {
     } catch (error) {
       return handleFirestoreError(error, 'write', `${RESPONSES_COLLECTION}/${periodId}_${studentId}`);
     }
+  },
+
+  /**
+   * Secure service to retrieve a conference presentation payload for a specific viewer with strict access control validation.
+   */
+  async getConferencePresentationForViewer(
+    conferenceId: string,
+    viewer: User
+  ): Promise<{ conference: StudentConferenceResponse; student: Student }> {
+    try {
+      if (!viewer || viewer.status !== 'active') {
+        throw new Error('Anda tidak memiliki akses untuk membuka presentasi ini.');
+      }
+
+      // 1. Fetch conference response record
+      const confRef = doc(db, RESPONSES_COLLECTION, conferenceId);
+      const confSnap = await getDoc(confRef);
+      if (!confSnap.exists()) {
+        throw new Error('Presentasi tidak ditemukan');
+      }
+      const conference = confSnap.data() as StudentConferenceResponse;
+
+      // 2. Validate unit of the student / conference is JUNIOR_HIGH
+      const isJuniorHigh = conference.unit === 'JUNIOR_HIGH' || 
+                           (conference.gradeLevel && [7, 8, 9, '7', '8', '9'].includes(String(conference.gradeLevel)));
+      if (!isJuniorHigh) {
+        throw new Error('Anda tidak memiliki akses untuk membuka presentasi ini.');
+      }
+
+      // 3. Resolve student master record
+      const student = await getStudentById(conference.studentId);
+      if (!student) {
+        throw new Error('Data siswa untuk conference ini tidak ditemukan.');
+      }
+
+      // 4. Role-based access control validation
+      const role = viewer.role;
+
+      if (role === 'SUPER_ADMIN') {
+        return { conference, student };
+      }
+
+      if (role === 'STUDENT') {
+        if (conference.studentId !== viewer.luminaId) {
+          throw new Error('Anda tidak memiliki akses untuk membuka presentasi ini.');
+        }
+        return { conference, student };
+      }
+
+      if (['HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'BKMENTOR'].includes(role)) {
+        return { conference, student };
+      }
+
+      if (role === 'TEACHER') {
+        // Strict checks for general TEACHER role:
+        
+        // A. Is assigned mentor?
+        const isAssignedMentor = conference.mentorId === viewer.uid;
+        if (isAssignedMentor) {
+          return { conference, student };
+        }
+
+        // B. Is assigned mentor via mentorAssignments subcollection?
+        const assignRef = doc(db, ASSIGNMENTS_COLLECTION, conferenceId);
+        const assignSnap = await getDoc(assignRef);
+        if (assignSnap.exists()) {
+          const assignData = assignSnap.data();
+          if (assignData.mentorId === viewer.uid && assignData.status !== 'REMOVED') {
+            return { conference, student };
+          }
+        }
+
+        // C. Is homeroom teacher (wali kelas) of the student for the year of conference?
+        const eq = query(
+          collection(db, 'enrollments'),
+          where('studentId', '==', conference.studentId),
+          where('academicYear', '==', conference.academicYear),
+          where('status', '==', 'active')
+        );
+        const eSnap = await getDocs(eq);
+        if (!eSnap.empty) {
+          for (const enrollmentDoc of eSnap.docs) {
+            const eData = enrollmentDoc.data();
+            const classDoc = await getDoc(doc(db, 'classes', eData.classId));
+            if (classDoc.exists()) {
+              const cData = classDoc.data();
+              if (cData.homeroomTeacherId === viewer.uid) {
+                return { conference, student };
+              }
+            }
+          }
+        }
+
+        // D. Check existing teacher class accessibility (from existing policy)
+        if (viewer.classId && student.classId && viewer.classId === student.classId) {
+          return { conference, student };
+        }
+
+        throw new Error('Anda tidak memiliki akses untuk membuka presentasi ini.');
+      }
+
+      throw new Error('Anda tidak memiliki akses untuk membuka presentasi ini.');
+    } catch (error: any) {
+      if (error.message && (error.message.includes('akses') || error.message.includes('ditemukan'))) {
+        throw error;
+      }
+      return handleFirestoreError(error, 'get', `${RESPONSES_COLLECTION}/${conferenceId}`);
+    }
   }
 };
+

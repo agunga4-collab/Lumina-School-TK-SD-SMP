@@ -1,5 +1,5 @@
 import React from 'react';
-import { Eye, UserPlus, UserCheck, Calendar } from 'lucide-react';
+import { Eye, UserPlus, UserCheck, Calendar, Tv } from 'lucide-react';
 import type { Student, StudentConferenceResponse, MentorAssignment } from '../../../types';
 
 interface ConferenceWorkspaceRow {
@@ -14,12 +14,14 @@ interface ConferenceResponsesTableProps {
   rows: ConferenceWorkspaceRow[];
   onViewResponse: (studentId: string) => void;
   onAssignMentor: (student: Student, assignment: MentorAssignment | null) => void;
+  onPresentConference?: (studentId: string) => void;
 }
 
 export const ConferenceResponsesTable: React.FC<ConferenceResponsesTableProps> = ({
   rows,
   onViewResponse,
   onAssignMentor,
+  onPresentConference,
 }) => {
   const getStatusBadge = (status: 'NOT_STARTED' | 'DRAFT' | 'SUBMITTED' | 'CONFERENCE_COMPLETED') => {
     switch (status) {
@@ -211,6 +213,18 @@ export const ConferenceResponsesTable: React.FC<ConferenceResponsesTableProps> =
                     {/* Actions */}
                     <td className="px-6 py-4 whitespace-nowrap text-right">
                       <div className="flex items-center justify-end gap-2.5">
+                        {onPresentConference && (
+                          <button
+                            id={`btn-teacher-present-${row.student.id}`}
+                            onClick={() => onPresentConference(row.student.id)}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-teal-200 text-xs font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 transition shadow-sm"
+                            title="Presentasikan Student Slides"
+                          >
+                            <Tv className="h-3.5 w-3.5" />
+                            Presentasikan
+                          </button>
+                        )}
+
                         <button
                           id={`view-resp-btn-${row.student.id}`}
                           onClick={() => onViewResponse(row.student.id)}

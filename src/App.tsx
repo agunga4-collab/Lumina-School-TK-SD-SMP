@@ -51,6 +51,7 @@ import ElementaryTeacherDashboard from './pages/Elementary/TeacherDashboard';
 import JuniorHighLiteracyNumeracy from './pages/JuniorHigh/LiteracyNumeracy';
 import ConferencePeriodManagement from './pages/JuniorHigh/ThreeWayConference/ConferencePeriodManagement';
 import TeacherConferenceWorkspace from './pages/JuniorHigh/ThreeWayConference/TeacherConferenceWorkspace';
+import TeacherPresentationPage from './pages/JuniorHigh/ThreeWayConference/TeacherPresentationPage';
 import ElementaryLiteracyInputPage from './pages/Elementary/ElementaryLiteracyInputPage';
 import MTSSAcademicDashboard from './pages/Elementary/MTSSAcademicDashboard';
 import LdssPage from './pages/Elementary/LdssPage';
@@ -433,6 +434,11 @@ export default function App() {
             <Route path="conference/tracker" element={
               <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR']}>
                 <StaffSmartGoalTrackerPage />
+              </RoleGuard>
+            } />
+            <Route path="conference/presentation/:conferenceId" element={
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR']}>
+                <TeacherPresentationPage />
               </RoleGuard>
             } />
             <Route path="three-way-conference/settings" element={<Navigate to="/junior-high/conference/admin" replace />} />

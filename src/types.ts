@@ -2027,6 +2027,9 @@ export interface SmartGoalTrackerEntry {
   lastActiveAt?: number | null;
 }
 
+export type ThreeWayConference = StudentConferenceResponse;
+
+
 
 
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Loader2, Calendar, Settings, ShieldAlert, BookOpen, UserCheck } from 'lucide-react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { useAcademicYear } from '../../../context/AcademicYearContext';
 import { useAuth } from '../../../context/AuthContext';
 import { threeWayConferenceService } from '../../../services/threeWayConferenceService';
@@ -21,6 +21,7 @@ interface ConferenceWorkspaceRow {
 }
 
 export default function TeacherConferenceWorkspace() {
+  const navigate = useNavigate();
   const { activeYear, activeSemester, isLoading: isYearLoading } = useAcademicYear();
   const { profile } = useAuth();
   const [searchParams] = useSearchParams();
@@ -179,6 +180,12 @@ export default function TeacherConferenceWorkspace() {
       setSelectedAssignmentForDetail(row.assignment);
       setIsDetailDialogOpen(true);
     }
+  };
+
+  const handlePresentConference = (studentId: string) => {
+    if (!activePeriod) return;
+    const responseId = threeWayConferenceService.getConferenceResponseId(activePeriod.id, studentId);
+    navigate(`/conference/presentation/${responseId}`);
   };
 
   const handleAssignMentor = (student: Student, assignment: MentorAssignment | null) => {
@@ -458,6 +465,7 @@ export default function TeacherConferenceWorkspace() {
               rows={sortedStudents}
               onViewResponse={handleViewResponse}
               onAssignMentor={handleAssignMentor}
+              onPresentConference={handlePresentConference}
             />
           )}
         </div>
