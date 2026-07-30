@@ -2017,6 +2017,12 @@ export const threeWayConferenceService = {
       extracurricularStatus: 'APPROVED' | 'REVISION_REQUIRED';
       extracurricularComment: string;
       smartGoals: Record<string, { status: 'APPROVED' | 'REVISION_REQUIRED'; comment: string }>;
+      selfExplorationStatus?: 'APPROVED' | 'REVISION_REQUIRED';
+      selfExplorationComment?: string;
+      karyaIlmiahStatus?: 'APPROVED' | 'REVISION_REQUIRED';
+      karyaIlmiahComment?: string;
+      unitActivityStatus?: 'APPROVED' | 'REVISION_REQUIRED';
+      unitActivityComment?: string;
     },
     currentUserUid: string,
     currentUserName: string
@@ -2030,40 +2036,84 @@ export const threeWayConferenceService = {
       }
       const responseData = snap.data() as StudentConferenceResponse;
       const now = Date.now();
+      
+      const existingReviews = responseData.sectionReviews || {};
+
+      // 1. Reflection (aboutMe, strengths, growthAreas)
+      const reflectionStatus = reviewPayload.reflectionStatus;
+      const reflectionComment = reviewPayload.reflectionComment;
+
+      // 2. Self-Exploration
+      const selfExplorationStatus = reviewPayload.selfExplorationStatus !== undefined
+        ? reviewPayload.selfExplorationStatus
+        : (existingReviews.selfExploration?.status || reviewPayload.extracurricularStatus);
+      const selfExplorationComment = reviewPayload.selfExplorationComment !== undefined
+        ? reviewPayload.selfExplorationComment
+        : (existingReviews.selfExploration?.comment || reviewPayload.extracurricularComment);
+
+      // 3. Karya Ilmiah
+      const karyaIlmiahStatus = reviewPayload.karyaIlmiahStatus !== undefined
+        ? reviewPayload.karyaIlmiahStatus
+        : (existingReviews.karyaIlmiah?.status || reviewPayload.extracurricularStatus);
+      const karyaIlmiahComment = reviewPayload.karyaIlmiahComment !== undefined
+        ? reviewPayload.karyaIlmiahComment
+        : (existingReviews.karyaIlmiah?.comment || reviewPayload.extracurricularComment);
+
+      // 4. Unit Activity (stored in extracurricular for overallStatus mapping)
+      const extracurricularStatus = reviewPayload.unitActivityStatus !== undefined
+        ? reviewPayload.unitActivityStatus
+        : (reviewPayload.extracurricularStatus !== undefined ? reviewPayload.extracurricularStatus : (existingReviews.extracurricular?.status || 'APPROVED'));
+      const extracurricularComment = reviewPayload.unitActivityComment !== undefined
+        ? reviewPayload.unitActivityComment
+        : (reviewPayload.extracurricularComment !== undefined ? reviewPayload.extracurricularComment : (existingReviews.extracurricular?.comment || ''));
 
       // Build sectionReviews structured payload
       const sectionReviews: any = {
         aboutMe: {
-          status: reviewPayload.reflectionStatus,
-          comment: reviewPayload.reflectionComment,
+          status: reflectionStatus,
+          comment: reflectionComment,
           reviewedByUid: currentUserUid,
           reviewedByName: currentUserName,
           reviewedAt: now
         },
         strengths: {
-          status: reviewPayload.reflectionStatus,
-          comment: reviewPayload.reflectionComment,
+          status: reflectionStatus,
+          comment: reflectionComment,
           reviewedByUid: currentUserUid,
           reviewedByName: currentUserName,
           reviewedAt: now
         },
         growthAreas: {
-          status: reviewPayload.reflectionStatus,
-          comment: reviewPayload.reflectionComment,
+          status: reflectionStatus,
+          comment: reflectionComment,
           reviewedByUid: currentUserUid,
           reviewedByName: currentUserName,
           reviewedAt: now
         },
         reflection: { // key for student UI component lock
-          status: reviewPayload.reflectionStatus,
-          comment: reviewPayload.reflectionComment,
+          status: reflectionStatus,
+          comment: reflectionComment,
           reviewedByUid: currentUserUid,
           reviewedByName: currentUserName,
           reviewedAt: now
         },
-        extracurricular: {
-          status: reviewPayload.extracurricularStatus,
-          comment: reviewPayload.extracurricularComment,
+        selfExploration: {
+          status: selfExplorationStatus,
+          comment: selfExplorationComment,
+          reviewedByUid: currentUserUid,
+          reviewedByName: currentUserName,
+          reviewedAt: now
+        },
+        karyaIlmiah: {
+          status: karyaIlmiahStatus,
+          comment: karyaIlmiahComment,
+          reviewedByUid: currentUserUid,
+          reviewedByName: currentUserName,
+          reviewedAt: now
+        },
+        extracurricular: { // Maps to Unit Activity
+          status: extracurricularStatus,
+          comment: extracurricularComment,
           reviewedByUid: currentUserUid,
           reviewedByName: currentUserName,
           reviewedAt: now
@@ -2071,7 +2121,10 @@ export const threeWayConferenceService = {
         smartGoals: {}
       };
 
-      // Map goals reviews
+      // Map goals reviews (preserve existing reviews if not updated)
+      const existingGoalsReviews = existingReviews.smartGoals || {};
+      sectionReviews.smartGoals = { ...existingGoalsReviews };
+
       if (reviewPayload.smartGoals) {
         Object.entries(reviewPayload.smartGoals).forEach(([goalId, val]) => {
           sectionReviews.smartGoals[goalId] = {

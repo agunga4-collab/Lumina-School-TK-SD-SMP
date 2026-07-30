@@ -38,15 +38,30 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
   const [isSavingReview, setIsSavingReview] = useState<boolean>(false);
   const [reviewSuccessMsg, setReviewSuccessMsg] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [savingSections, setSavingSections] = useState<Record<string, boolean>>({});
+  const [successSections, setSuccessSections] = useState<Record<string, boolean>>({});
+
   const [localReviews, setLocalReviews] = useState<{
     reflectionStatus: 'APPROVED' | 'REVISION_REQUIRED';
     reflectionComment: string;
+    selfExplorationStatus: 'APPROVED' | 'REVISION_REQUIRED';
+    selfExplorationComment: string;
+    karyaIlmiahStatus: 'APPROVED' | 'REVISION_REQUIRED';
+    karyaIlmiahComment: string;
+    unitActivityStatus: 'APPROVED' | 'REVISION_REQUIRED';
+    unitActivityComment: string;
     extracurricularStatus: 'APPROVED' | 'REVISION_REQUIRED';
     extracurricularComment: string;
     smartGoals: Record<string, { status: 'APPROVED' | 'REVISION_REQUIRED'; comment: string }>;
   }>({
     reflectionStatus: 'APPROVED',
     reflectionComment: '',
+    selfExplorationStatus: 'APPROVED',
+    selfExplorationComment: '',
+    karyaIlmiahStatus: 'APPROVED',
+    karyaIlmiahComment: '',
+    unitActivityStatus: 'APPROVED',
+    unitActivityComment: '',
     extracurricularStatus: 'APPROVED',
     extracurricularComment: '',
     smartGoals: {}
@@ -71,12 +86,105 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
       setLocalReviews({
         reflectionStatus: existingReviews.reflection?.status || 'APPROVED',
         reflectionComment: existingReviews.reflection?.comment || '',
+        selfExplorationStatus: existingReviews.selfExploration?.status || existingReviews.extracurricular?.status || 'APPROVED',
+        selfExplorationComment: existingReviews.selfExploration?.comment || existingReviews.extracurricular?.comment || '',
+        karyaIlmiahStatus: existingReviews.karyaIlmiah?.status || existingReviews.extracurricular?.status || 'APPROVED',
+        karyaIlmiahComment: existingReviews.karyaIlmiah?.comment || existingReviews.extracurricular?.comment || '',
+        unitActivityStatus: existingReviews.unitActivity?.status || existingReviews.extracurricular?.status || 'APPROVED',
+        unitActivityComment: existingReviews.unitActivity?.comment || existingReviews.extracurricular?.comment || '',
         extracurricularStatus: existingReviews.extracurricular?.status || 'APPROVED',
         extracurricularComment: existingReviews.extracurricular?.comment || '',
         smartGoals: goalsRev
       });
     }
   }, [response]);
+
+  const handleSaveSection = async (
+    sectionKey: 'reflection' | 'smartGoals' | 'selfExploration' | 'karyaIlmiah' | 'unitActivity',
+    goalId?: string
+  ) => {
+    if (!response || !student) return;
+
+    const saveId = goalId ? `goal_${goalId}` : sectionKey;
+
+    // Validate specific section
+    if (sectionKey === 'reflection') {
+      if (localReviews.reflectionStatus === 'REVISION_REQUIRED' && !localReviews.reflectionComment.trim()) {
+        setReviewError('Komentar wajib diisi jika bagian refleksi membutuhkan revisi.');
+        return;
+      }
+    } else if (sectionKey === 'selfExploration') {
+      if (localReviews.selfExplorationStatus === 'REVISION_REQUIRED' && !localReviews.selfExplorationComment.trim()) {
+        setReviewError('Komentar wajib diisi jika bagian Self-Exploration membutuhkan revisi.');
+        return;
+      }
+    } else if (sectionKey === 'karyaIlmiah') {
+      if (localReviews.karyaIlmiahStatus === 'REVISION_REQUIRED' && !localReviews.karyaIlmiahComment.trim()) {
+        setReviewError('Komentar wajib diisi jika bagian Karya Ilmiah membutuhkan revisi.');
+        return;
+      }
+    } else if (sectionKey === 'unitActivity') {
+      if (localReviews.unitActivityStatus === 'REVISION_REQUIRED' && !localReviews.unitActivityComment.trim()) {
+        setReviewError('Komentar wajib diisi jika bagian Unit Activity membutuhkan revisi.');
+        return;
+      }
+    } else if (sectionKey === 'smartGoals' && goalId) {
+      const gRev = localReviews.smartGoals[goalId];
+      if (gRev?.status === 'REVISION_REQUIRED' && !gRev.comment.trim()) {
+        setReviewError('Komentar wajib diisi jika SMART Goal membutuhkan revisi.');
+        return;
+      }
+    }
+
+    try {
+      setSavingSections(prev => ({ ...prev, [saveId]: true }));
+      setReviewError(null);
+      setReviewSuccessMsg(null);
+
+      const authUser = auth.currentUser;
+      const uid = authUser?.uid || 'unknown-staff';
+      const email = authUser?.email || 'Staff';
+      const displayName = authUser?.displayName || email;
+
+      const extracurricularStatus = sectionKey === 'unitActivity' ? localReviews.unitActivityStatus : localReviews.extracurricularStatus;
+      const extracurricularComment = sectionKey === 'unitActivity' ? localReviews.unitActivityComment : localReviews.extracurricularComment;
+
+      await threeWayConferenceService.saveTeacherConferenceReview(
+        periodId,
+        student.id,
+        {
+          reflectionStatus: localReviews.reflectionStatus,
+          reflectionComment: localReviews.reflectionComment,
+          extracurricularStatus,
+          extracurricularComment,
+          selfExplorationStatus: localReviews.selfExplorationStatus,
+          selfExplorationComment: localReviews.selfExplorationComment,
+          karyaIlmiahStatus: localReviews.karyaIlmiahStatus,
+          karyaIlmiahComment: localReviews.karyaIlmiahComment,
+          unitActivityStatus: localReviews.unitActivityStatus,
+          unitActivityComment: localReviews.unitActivityComment,
+          smartGoals: localReviews.smartGoals
+        },
+        uid,
+        displayName
+      );
+
+      setSuccessSections(prev => ({ ...prev, [saveId]: true }));
+      setReviewSuccessMsg('Bagian ini berhasil disimpan!');
+      setTimeout(() => {
+        setSuccessSections(prev => ({ ...prev, [saveId]: false }));
+      }, 3000);
+
+      // Reload current response state
+      const updatedResp = await threeWayConferenceService.getStudentConferenceResponse(periodId, student.id);
+      setResponse(updatedResp);
+    } catch (err: any) {
+      console.error('Failed to save section review:', err);
+      setReviewError(err.message || 'Gagal menyimpan review bagian.');
+    } finally {
+      setSavingSections(prev => ({ ...prev, [saveId]: false }));
+    }
+  };
 
   const handleSaveAllReviews = async () => {
     if (!response || !student) return;
@@ -86,8 +194,16 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
       setReviewError('Komentar wajib diisi jika bagian refleksi membutuhkan revisi.');
       return;
     }
-    if (localReviews.extracurricularStatus === 'REVISION_REQUIRED' && !localReviews.extracurricularComment.trim()) {
-      setReviewError('Komentar wajib diisi jika bagian extracurricular membutuhkan revisi.');
+    if (localReviews.selfExplorationStatus === 'REVISION_REQUIRED' && !localReviews.selfExplorationComment.trim()) {
+      setReviewError('Komentar wajib diisi jika bagian Self-Exploration membutuhkan revisi.');
+      return;
+    }
+    if (localReviews.karyaIlmiahStatus === 'REVISION_REQUIRED' && !localReviews.karyaIlmiahComment.trim()) {
+      setReviewError('Komentar wajib diisi jika bagian Karya Ilmiah membutuhkan revisi.');
+      return;
+    }
+    if (localReviews.unitActivityStatus === 'REVISION_REQUIRED' && !localReviews.unitActivityComment.trim()) {
+      setReviewError('Komentar wajib diisi jika bagian Unit Activity membutuhkan revisi.');
       return;
     }
     
@@ -116,12 +232,24 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
       await threeWayConferenceService.saveTeacherConferenceReview(
         periodId,
         student.id,
-        localReviews,
+        {
+          reflectionStatus: localReviews.reflectionStatus,
+          reflectionComment: localReviews.reflectionComment,
+          extracurricularStatus: localReviews.unitActivityStatus,
+          extracurricularComment: localReviews.unitActivityComment,
+          selfExplorationStatus: localReviews.selfExplorationStatus,
+          selfExplorationComment: localReviews.selfExplorationComment,
+          karyaIlmiahStatus: localReviews.karyaIlmiahStatus,
+          karyaIlmiahComment: localReviews.karyaIlmiahComment,
+          unitActivityStatus: localReviews.unitActivityStatus,
+          unitActivityComment: localReviews.unitActivityComment,
+          smartGoals: localReviews.smartGoals
+        },
         uid,
         displayName
       );
 
-      setReviewSuccessMsg('Review & Status berhasil diperbarui!');
+      setReviewSuccessMsg('Semua Review & Status berhasil diperbarui!');
       
       // Reload current response state
       const updatedResp = await threeWayConferenceService.getStudentConferenceResponse(periodId, student.id);
@@ -139,12 +267,18 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
     status: 'APPROVED' | 'REVISION_REQUIRED',
     comment: string,
     onStatusChange: (status: 'APPROVED' | 'REVISION_REQUIRED') => void,
-    onCommentChange: (comment: string) => void
+    onCommentChange: (comment: string) => void,
+    onSave?: () => void,
+    saveId?: string
   ) => {
+    const isSaving = saveId ? !!savingSections[saveId] : false;
+    const isSuccess = saveId ? !!successSections[saveId] : false;
+
     return (
       <div className="bg-gray-100/50 rounded-2xl border border-gray-200 p-5 mt-4 space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <span className="text-xs font-black uppercase tracking-wider text-gray-500">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-200/20 pb-3">
+          <span className="text-xs font-black uppercase tracking-wider text-gray-500 flex items-center gap-1.5">
+            <ClipboardList className="h-4 w-4 text-blue-600" />
             Review: {title}
           </span>
           <div className="flex gap-2">
@@ -185,6 +319,38 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
             </p>
           )}
         </div>
+
+        {onSave && (
+          <div className="flex justify-end pt-2 border-t border-gray-200/20">
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={isSaving || (status === 'REVISION_REQUIRED' && !comment.trim())}
+              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition shadow-sm border ${
+                isSuccess
+                  ? 'bg-emerald-600 hover:bg-emerald-700 border-transparent text-white'
+                  : 'bg-blue-600 hover:bg-blue-700 border-transparent text-white disabled:bg-gray-100 disabled:text-gray-400 disabled:border-gray-200'
+              }`}
+            >
+              {isSaving ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Menyimpan...
+                </>
+              ) : isSuccess ? (
+                <>
+                  <Check className="h-3.5 w-3.5" />
+                  Berhasil Disimpan!
+                </>
+              ) : (
+                <>
+                  <Save className="h-3.5 w-3.5" />
+                  Simpan Bagian Ini
+                </>
+              )}
+            </button>
+          </div>
+        )}
       </div>
     );
   };
@@ -494,7 +660,9 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                   localReviews.reflectionStatus,
                   localReviews.reflectionComment,
                   (status) => setLocalReviews(prev => ({ ...prev, reflectionStatus: status })),
-                  (comment) => setLocalReviews(prev => ({ ...prev, reflectionComment: comment }))
+                  (comment) => setLocalReviews(prev => ({ ...prev, reflectionComment: comment })),
+                  () => handleSaveSection('reflection'),
+                  'reflection'
                 )}
 
                 {/* SMART Goals Heading */}
@@ -606,7 +774,9 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                                         comment
                                       }
                                     }
-                                  }))
+                                  })),
+                                  () => handleSaveSection('smartGoals', goal.id),
+                                  `goal_${goal.id}`
                                 )}
                               </div>
                             ))}
@@ -616,13 +786,15 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                     ))}
                   </div>
                 </div>
-
                 {/* Read-only References (Self-Exploration, Karya Ilmiah, Unit Activity) */}
-                <div className="pt-4 border-t border-gray-100 grid grid-cols-1 md:grid-cols-2 gap-4" id="reference-cards-grid">
+                <div className="pt-4 border-t border-gray-100 space-y-6" id="reference-cards-list">
                   
                   {/* Self-Exploration Card */}
-                  <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm space-y-3">
-                    <h4 className="text-xs font-black uppercase tracking-wider text-gray-400">Self-Exploration Reference</h4>
+                  <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm space-y-4">
+                    <div>
+                      <h4 className="text-sm font-bold text-gray-900 tracking-tight">Self-Exploration Reference</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">Data pilihan aktivitas Self-Exploration siswa.</p>
+                    </div>
                     {isLoadingSe ? (
                       <div className="flex items-center gap-2 text-xs text-gray-500 py-4">
                         <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
@@ -633,10 +805,10 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                         <p className="text-xs text-gray-500 font-medium">
                           Period: <strong className="text-gray-700">{seReference.periodLabel || 'Active Semester'}</strong>
                         </p>
-                        <div className="space-y-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           {seReference.enrollment.choices && seReference.enrollment.choices.length > 0 ? (
                             seReference.enrollment.choices.map((choice: any, idx: number) => (
-                              <div key={idx} className="p-3 bg-gray-50 border border-gray-100 rounded-xl space-y-1.5 text-xs">
+                              <div key={idx} className="p-3 bg-gray-50 border border-gray-100 rounded-xl space-y-1.5 text-xs" id={`se-choice-${idx}`}>
                                 <div className="flex items-center justify-between border-b border-gray-200/40 pb-1">
                                   <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider">Choice Slot {choice.slot || idx + 1}</span>
                                   <span className="text-[8px] font-black px-1.5 py-0.5 bg-white border border-gray-200 rounded text-gray-500 uppercase">{choice.strand}</span>
@@ -665,31 +837,57 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                         Self-Exploration has not been chosen yet.
                       </p>
                     )}
+
+                    {/* Self-Exploration Review Box */}
+                    {renderInlineReviewBox(
+                      'Self-Exploration Reference',
+                      localReviews.selfExplorationStatus,
+                      localReviews.selfExplorationComment,
+                      (status) => setLocalReviews(prev => ({ ...prev, selfExplorationStatus: status })),
+                      (comment) => setLocalReviews(prev => ({ ...prev, selfExplorationComment: comment })),
+                      () => handleSaveSection('selfExploration'),
+                      'selfExploration'
+                    )}
                   </div>
 
-                  {/* Grade 9 Karya Ilmiah and Unit Activity */}
+                  {/* Grade 9 Karya Ilmiah Card */}
                   <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm space-y-4">
-                    {/* Karya Ilmiah */}
-                    <div className="space-y-1.5">
-                      <h4 className="text-xs font-black uppercase tracking-wider text-gray-400">Karya Ilmiah Reference (Grade 9)</h4>
-                      {student.grade === 9 && response.karyaIlmiahReferenceId ? (
-                        <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 text-xs text-gray-700">
-                          Linked Research Proposal ID: <strong className="text-gray-800 font-mono">{response.karyaIlmiahReferenceId}</strong>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-gray-400 italic">
-                          {student.grade === 9 ? 'No Karya Ilmiah topic has been linked yet.' : 'Only applicable for Grade 9 students.'}
-                        </p>
-                      )}
+                    <div>
+                      <h4 className="text-sm font-bold text-gray-900 tracking-tight">Karya Ilmiah Reference (Grade 9)</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">Rujukan proposal karya ilmiah bagi siswa Kelas 9.</p>
                     </div>
+                    {student.grade === 9 && response.karyaIlmiahReferenceId ? (
+                      <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 text-xs text-gray-700">
+                        Linked Research Proposal ID: <strong className="text-gray-800 font-mono">{response.karyaIlmiahReferenceId}</strong>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400 italic">
+                        {student.grade === 9 ? 'No Karya Ilmiah topic has been linked yet.' : 'Only applicable for Grade 9 students.'}
+                      </p>
+                    )}
 
-                    {/* Unit Activity */}
-                    <div className="space-y-2.5 pt-3 border-t border-gray-100">
-                      <h4 className="text-xs font-black uppercase tracking-wider text-gray-400">Unit Activity</h4>
+                    {/* Karya Ilmiah Review Box */}
+                    {renderInlineReviewBox(
+                      'Karya Ilmiah',
+                      localReviews.karyaIlmiahStatus,
+                      localReviews.karyaIlmiahComment,
+                      (status) => setLocalReviews(prev => ({ ...prev, karyaIlmiahStatus: status })),
+                      (comment) => setLocalReviews(prev => ({ ...prev, karyaIlmiahComment: comment })),
+                      () => handleSaveSection('karyaIlmiah'),
+                      'karyaIlmiah'
+                    )}
+                  </div>
+
+                  {/* Unit Activity Card */}
+                  <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm space-y-4">
+                    <div>
+                      <h4 className="text-sm font-bold text-gray-900 tracking-tight">Unit Activity</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">Rencana aktivitas unit, kekhawatiran siswa, dan rencana mengatasinya.</p>
+                    </div>
+                    <div>
                       {(() => {
                         const categories = ['Performing Arts', 'Arts & Makerspace', 'Physical Education', 'Digital Literacy'];
                         
-                        // Check if we have any entries in unitActivities or if they are in seReference
                         const hasActivities = (response.unitActivities && response.unitActivities.length > 0) || 
                                               (seReference?.enrollment?.choices && seReference.enrollment.choices.length > 0);
                                               
@@ -726,7 +924,6 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                           }
                         }
 
-                        // We have structured activities (either saved in response or as seReference choices)
                         return (
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                             {categories.map((cat) => {
@@ -736,7 +933,7 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                               const finalActivityName = resolvedActivityName || ua.activityName;
                               
                               return (
-                                <div key={cat} className="space-y-2 bg-gray-50 border border-gray-100 rounded-xl p-3 text-xs">
+                                <div key={cat} className="space-y-2 bg-gray-50 border border-gray-100 rounded-xl p-3 text-xs" id={`ua-cat-${cat.replace(/\s+/g, '-').toLowerCase()}`}>
                                   <div className="flex justify-between items-center border-b border-gray-200/50 pb-1">
                                     <span className="font-black text-teal-800 uppercase text-[9px]">{cat}</span>
                                     {seChoice ? (
@@ -767,16 +964,19 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                       })()}
                     </div>
 
+                    {/* Unit Activity Review Box */}
+                    {renderInlineReviewBox(
+                      'Unit Activity',
+                      localReviews.unitActivityStatus,
+                      localReviews.unitActivityComment,
+                      (status) => setLocalReviews(prev => ({ ...prev, unitActivityStatus: status })),
+                      (comment) => setLocalReviews(prev => ({ ...prev, unitActivityComment: comment })),
+                      () => handleSaveSection('unitActivity'),
+                      'unitActivity'
+                    )}
                   </div>
-                </div>
 
-                {renderInlineReviewBox(
-                  'Self-Exploration, Karya Ilmiah, Unit Activity',
-                  localReviews.extracurricularStatus,
-                  localReviews.extracurricularComment,
-                  (status) => setLocalReviews(prev => ({ ...prev, extracurricularStatus: status })),
-                  (comment) => setLocalReviews(prev => ({ ...prev, extracurricularComment: comment }))
-                )}
+                </div>
 
                 {/* Save Feedback status messages */}
                 {reviewSuccessMsg && (
