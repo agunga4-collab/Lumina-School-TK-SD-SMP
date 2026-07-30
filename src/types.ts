@@ -1888,6 +1888,7 @@ export interface StudentConferenceResponse {
   academicYear: string;
   semester: 1 | 2;
   status: WorkbookStatus;
+  presentationTheme?: 'LAZUARDI' | 'OCEAN' | 'COBALT' | 'BLOOM' | 'EARTH';
   aboutMe: string;
   strengths: string;
   areasForGrowth: string;

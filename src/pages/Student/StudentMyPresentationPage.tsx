@@ -5,12 +5,13 @@ import { getStudentById } from '../../lib/firebase';
 import { threeWayConferenceService } from '../../services/threeWayConferenceService';
 import { Student, ConferencePeriod, StudentConferenceResponse } from '../../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { Loader2, Tv, AlertCircle, ArrowLeft, ArrowRight, Play, X, Compass, Award, ExternalLink } from 'lucide-react';
+import { Loader2, Tv, X, Play } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { cn } from '../../lib/utils';
 
 // Sub-components
 import { PresentationHeader } from '../../components/Student/MyPresentation/PresentationHeader';
-import { PresentationSlide, SlideData } from '../../components/Student/MyPresentation/PresentationSlide';
+import { PresentationSlide, SlideData, PRESENTATION_THEMES } from '../../components/Student/MyPresentation/PresentationSlide';
 import { PresentationControls } from '../../components/Student/MyPresentation/PresentationControls';
 import { PresentationProgress } from '../../components/Student/MyPresentation/PresentationProgress';
 import { PresentationEmptyState } from '../../components/Student/MyPresentation/PresentationEmptyState';
@@ -28,6 +29,9 @@ export default function StudentMyPresentationPage() {
   const [period, setPeriod] = React.useState<ConferencePeriod | null>(null);
   const [response, setResponse] = React.useState<StudentConferenceResponse | null>(null);
   const [selfExplorationRef, setSelfExplorationRef] = React.useState<any>(null);
+
+  // Theme Settings
+  const [selectedTheme, setSelectedTheme] = React.useState<'LAZUARDI' | 'OCEAN' | 'COBALT' | 'BLOOM' | 'EARTH'>('LAZUARDI');
 
   // Presentation Mode State
   const [isPresentMode, setIsPresentMode] = React.useState(false);
@@ -56,6 +60,10 @@ export default function StudentMyPresentationPage() {
         // Fetch existing response
         const existingResponse = await threeWayConferenceService.getCurrentStudentConferenceResponse(activePeriod.id, studentId);
         setResponse(existingResponse);
+
+        if (existingResponse?.presentationTheme) {
+          setSelectedTheme(existingResponse.presentationTheme);
+        }
 
         // Fetch Self-Exploration References
         const seRef = await threeWayConferenceService.getStudentSelfExplorationReference(studentId, activeYear, activeSemester);
@@ -173,7 +181,7 @@ export default function StudentMyPresentationPage() {
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         setCurrentSlideIndex(prev => Math.max(0, prev - 1));
-      } else if (e.key === 'ArrowRight') {
+      } else if (e.key === 'ArrowRight' || e.key === ' ' || e.code === 'Space') {
         e.preventDefault();
         setCurrentSlideIndex(prev => Math.min(slides.length - 1, prev + 1));
       } else if (e.key === 'Escape') {
@@ -204,6 +212,17 @@ export default function StudentMyPresentationPage() {
     navigate('/student/goal-setting');
   };
 
+  const handleSelectTheme = async (themeKey: 'LAZUARDI' | 'OCEAN' | 'COBALT' | 'BLOOM' | 'EARTH') => {
+    setSelectedTheme(themeKey);
+    if (period && studentId) {
+      try {
+        await threeWayConferenceService.savePresentationTheme(period.id, studentId, themeKey);
+      } catch (err) {
+        console.error('Error saving presentation theme:', err);
+      }
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
@@ -225,9 +244,10 @@ export default function StudentMyPresentationPage() {
   }
 
   const currentSlide = slides[currentSlideIndex];
+  const activeTheme = PRESENTATION_THEMES[selectedTheme];
 
   return (
-    <div className="min-h-screen bg-gray-50/50 p-6 md:p-8 space-y-8 max-w-5xl mx-auto">
+    <div className="min-h-screen p-6 md:p-8 space-y-8 max-w-5xl mx-auto">
       {/* Normal Preview Mode */}
       {!isPresentMode ? (
         <motion.div
@@ -241,6 +261,36 @@ export default function StudentMyPresentationPage() {
             status={response.status}
             onBackToGoalSetting={handleBackToGoalSetting}
           />
+
+          {/* Theme Selector Panel */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-white border border-gray-100 rounded-2xl shadow-sm">
+            <div className="space-y-0.5">
+              <h4 className="text-xs font-black text-gray-900 uppercase tracking-widest">Presentation Theme</h4>
+              <p className="text-[10px] text-gray-400 font-medium">Select an authentic style identity for your slides.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {(['LAZUARDI', 'OCEAN', 'COBALT', 'BLOOM', 'EARTH'] as const).map((themeKey) => {
+                const th = PRESENTATION_THEMES[themeKey];
+                const isSelected = selectedTheme === themeKey;
+                return (
+                  <button
+                    key={themeKey}
+                    id={`btn-theme-${themeKey.toLowerCase()}`}
+                    onClick={() => handleSelectTheme(themeKey)}
+                    className={cn(
+                      "flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-extrabold border transition-all cursor-pointer",
+                      isSelected
+                        ? "bg-slate-900 text-white border-slate-900 shadow-sm"
+                        : "bg-gray-50 hover:bg-gray-100 text-gray-600 border-gray-200"
+                    )}
+                  >
+                    <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: th.primary }} />
+                    <span>{th.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
           {/* Central Stage */}
           {currentSlide && (
@@ -266,17 +316,19 @@ export default function StudentMyPresentationPage() {
                     unitActivity={response.unitActivity || ''}
                     selfExplorationRef={selfExplorationRef}
                     status={response.status}
+                    themeId={selectedTheme}
                   />
                 </motion.div>
               </AnimatePresence>
             </div>
           )}
 
-          {/* Slide progress dots and label */}
+          {/* Slide progress nodes and label */}
           <PresentationProgress
             currentSlideIndex={currentSlideIndex}
-            totalSlides={slides.length}
+            slides={slides}
             onSelectSlide={setCurrentSlideIndex}
+            themeId={selectedTheme}
           />
 
           {/* Navigation Controls */}
@@ -288,23 +340,30 @@ export default function StudentMyPresentationPage() {
             onNext={handleNext}
             onTogglePresentMode={handleTogglePresentMode}
             onBackToGoalSetting={handleBackToGoalSetting}
+            themeId={selectedTheme}
           />
         </motion.div>
       ) : (
-        /* Present Mode: Focused, full-screen-like backdrop overlay */
-        <div className="fixed inset-0 bg-gray-950 z-50 flex flex-col justify-between p-6 select-none animate-in fade-in duration-300">
-          {/* Top Info Bar */}
-          <div className="flex items-center justify-between border-b border-gray-900 pb-4 max-w-4xl mx-auto w-full">
+        /* Present Mode: Focused, full-screen layout aligning with the 3-layer spec */
+        <div 
+          className="fixed inset-0 z-50 flex flex-col justify-between p-6 md:p-8 select-none animate-in fade-in duration-300 overflow-hidden"
+          style={{ backgroundColor: activeTheme.bg }}
+        >
+          {/* Layer 1: Top Bar */}
+          <div className="w-full max-w-5xl mx-auto flex items-center justify-between border-b border-white/10 pb-4 shrink-0">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-950/50 text-blue-400 rounded-xl">
+              <div 
+                className="p-2 rounded-xl shadow-sm"
+                style={{ backgroundColor: activeTheme.badgeBg, color: activeTheme.primary }}
+              >
                 <Tv size={20} />
               </div>
               <div className="text-left">
                 <h4 className="text-sm font-black text-white tracking-tight uppercase">
                   {student?.name || response.studentName}
                 </h4>
-                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
-                  Active Presentation Mode
+                <p className="text-[10px] font-bold uppercase tracking-widest text-teal-400">
+                  Three-Way Conference • Presentation Mode
                 </p>
               </div>
             </div>
@@ -312,59 +371,58 @@ export default function StudentMyPresentationPage() {
             <button
               id="btn-close-present-top"
               onClick={() => setIsPresentMode(false)}
-              className="p-2 text-gray-400 hover:text-white hover:bg-gray-900 rounded-xl transition-all cursor-pointer"
+              className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-xl transition-all cursor-pointer"
               title="Exit Present Mode (Esc)"
             >
               <X size={20} />
             </button>
           </div>
 
-          {/* Central Active Slide Stage */}
-          <div className="flex-1 flex items-center justify-center py-8 max-w-4xl mx-auto w-full">
-            <AnimatePresence mode="wait">
-              {currentSlide && (
-                <motion.div
-                  key={currentSlideIndex}
-                  initial={{ opacity: 0, scale: 0.98 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.98 }}
-                  transition={{ duration: 0.2 }}
-                  className="w-full max-w-3xl"
-                >
-                  <PresentationSlide
-                    slide={currentSlide}
-                    studentName={response.studentName || student?.name || ''}
-                    className={response.className || ''}
-                    gradeLevel={response.gradeLevel || student?.grade || 0}
-                    academicYear={response.academicYear || activeYear}
-                    semester={response.semester || activeSemester}
-                    aboutMe={response.aboutMe || ''}
-                    strengths={response.strengths || ''}
-                    areasForGrowth={response.areasForGrowth || ''}
-                    unitActivity={response.unitActivity || ''}
-                    selfExplorationRef={selfExplorationRef}
-                    status={response.status}
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
+          {/* Layer 2: Slide Stage (16:9 safe frame) */}
+          <div className="flex-1 w-full max-w-5xl mx-auto flex items-center justify-center my-6 overflow-hidden">
+            <div className="w-full aspect-video max-h-[60vh] flex flex-col justify-between rounded-[2rem] shadow-2xl border border-white/5 overflow-hidden">
+              <AnimatePresence mode="wait">
+                {currentSlide && (
+                  <motion.div
+                    key={currentSlideIndex}
+                    initial={{ opacity: 0, scale: 0.98 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.98 }}
+                    transition={{ duration: 0.2 }}
+                    className="w-full h-full"
+                  >
+                    <PresentationSlide
+                      slide={currentSlide}
+                      studentName={response.studentName || student?.name || ''}
+                      className={response.className || ''}
+                      gradeLevel={response.gradeLevel || student?.grade || 0}
+                      academicYear={response.academicYear || activeYear}
+                      semester={response.semester || activeSemester}
+                      aboutMe={response.aboutMe || ''}
+                      strengths={response.strengths || ''}
+                      areasForGrowth={response.areasForGrowth || ''}
+                      unitActivity={response.unitActivity || ''}
+                      selfExplorationRef={selfExplorationRef}
+                      status={response.status}
+                      themeId={selectedTheme}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
 
-          {/* Bottom Progress & Control Bar */}
-          <div className="space-y-4 max-w-4xl mx-auto w-full">
-            <div className="flex justify-center gap-2">
-              {Array.from({ length: slides.length }).map((_, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setCurrentSlideIndex(idx)}
-                  className={`h-1.5 rounded-full transition-all duration-300 cursor-pointer ${
-                    idx === currentSlideIndex ? 'w-6 bg-blue-500' : 'w-1.5 bg-gray-800 hover:bg-gray-700'
-                  }`}
-                  title={`Go to slide ${idx + 1}`}
-                />
-              ))}
-            </div>
+          {/* Layer 3: Bottom Control Bar & Progress Rail */}
+          <div className="w-full max-w-5xl mx-auto space-y-4 shrink-0">
+            {/* Integrated Progress Rail */}
+            <PresentationProgress
+              currentSlideIndex={currentSlideIndex}
+              slides={slides}
+              onSelectSlide={setCurrentSlideIndex}
+              themeId={selectedTheme}
+            />
 
+            {/* Navigational Controls */}
             <PresentationControls
               currentSlideIndex={currentSlideIndex}
               totalSlides={slides.length}
@@ -372,6 +430,7 @@ export default function StudentMyPresentationPage() {
               onPrevious={handlePrevious}
               onNext={handleNext}
               onTogglePresentMode={handleTogglePresentMode}
+              themeId={selectedTheme}
             />
           </div>
         </div>

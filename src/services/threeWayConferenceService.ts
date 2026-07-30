@@ -864,6 +864,22 @@ export const threeWayConferenceService = {
   },
 
   /**
+   * Save the presentation theme selection
+   */
+  async savePresentationTheme(periodId: string, studentId: string, theme: 'LAZUARDI' | 'OCEAN' | 'COBALT' | 'BLOOM' | 'EARTH'): Promise<void> {
+    try {
+      const id = this.getConferenceResponseId(periodId, studentId);
+      const docRef = doc(db, RESPONSES_COLLECTION, id);
+      await updateDoc(docRef, {
+        presentationTheme: theme,
+        updatedAt: Date.now()
+      });
+    } catch (error) {
+      return handleFirestoreError(error, 'update', `${RESPONSES_COLLECTION}/${periodId}_${studentId}`);
+    }
+  },
+
+  /**
    * Get Student Presentation Data for a specific period
    */
   async getStudentPresentationData(periodId: string, studentId: string): Promise<StudentConferenceResponse | null> {
