@@ -9,7 +9,7 @@ import {
   getDocs,
   runTransaction
 } from 'firebase/firestore';
-import { db, handleFirestoreError, getStudentById, getStudents, getClasses, auth, sendNotification } from '../lib/firebase';
+import { db, handleFirestoreError, getStudentById, getStudents, getClasses, auth, sendNotification, getUserProfile } from '../lib/firebase';
 import { isTeacherAssignedToClass } from './classTeacherAssignmentService';
 import type {
   ConferencePeriod,
@@ -2604,104 +2604,373 @@ export const threeWayConferenceService = {
     viewer: User
   ): Promise<{ conference: StudentConferenceResponse; student: Student }> {
     try {
+      const ACCESS_DENIED_ERROR = `Anda tidak memiliki akses ke presentasi ini.
+
+Presentasi hanya dapat dibuka oleh siswa terkait, tim pengajar kelas,
+mentor yang ditugaskan, atau pihak sekolah yang berwenang.`;
+
       if (!viewer || viewer.status !== 'active') {
-        throw new Error('Anda tidak memiliki akses untuk membuka presentasi ini.');
+        throw new Error(ACCESS_DENIED_ERROR);
       }
 
       // 1. Fetch conference response record
-      const confRef = doc(db, RESPONSES_COLLECTION, conferenceId);
-      const confSnap = await getDoc(confRef);
-      if (!confSnap.exists()) {
+      const conference = await getConferenceById(conferenceId);
+      if (!conference) {
         throw new Error('Presentasi tidak ditemukan');
       }
-      const conference = confSnap.data() as StudentConferenceResponse;
 
-      // 2. Validate unit of the student / conference is JUNIOR_HIGH
-      const isJuniorHigh = conference.unit === 'JUNIOR_HIGH' || 
-                           (conference.gradeLevel && [7, 8, 9, '7', '8', '9'].includes(String(conference.gradeLevel)));
-      if (!isJuniorHigh) {
-        throw new Error('Anda tidak memiliki akses untuk membuka presentasi ini.');
+      // 2. Fetch student and latest viewer profile in parallel
+      const [latestViewer, student] = await Promise.all([
+        getUserProfile(viewer.uid),
+        getStudentById(conference.studentId),
+      ]);
+
+      if (!latestViewer || latestViewer.status !== 'active') {
+        throw new Error(ACCESS_DENIED_ERROR);
       }
 
-      // 3. Resolve student master record
-      const student = await getStudentById(conference.studentId);
       if (!student) {
         throw new Error('Data siswa untuk conference ini tidak ditemukan.');
       }
 
-      // 4. Role-based access control validation
-      const role = viewer.role;
+      // 3. Resolve class and active mentor assignment in parallel
+      const [classData, activeMentorAssignment] = await Promise.all([
+        resolveConferenceClass(conference, student),
+        getActiveMentorAssignmentForConference(conferenceId),
+      ]);
 
-      if (role === 'SUPER_ADMIN') {
-        return { conference, student };
+      // 4. Validate unit of the student / conference is JUNIOR_HIGH
+      const isJuniorHigh = conference.unit === 'JUNIOR_HIGH' || 
+                           (conference.gradeLevel && [7, 8, 9, '7', '8', '9'].includes(String(conference.gradeLevel)));
+      if (!isJuniorHigh) {
+        throw new Error(ACCESS_DENIED_ERROR);
       }
 
-      if (role === 'STUDENT') {
-        if (conference.studentId !== viewer.luminaId) {
-          throw new Error('Anda tidak memiliki akses untuk membuka presentasi ini.');
-        }
-        return { conference, student };
+      // 5. Evaluate complete access rules using the unified checker helper
+      const { allowed, reason } = canViewConferencePresentationWithReason({
+        viewer: latestViewer,
+        conference,
+        student,
+        classData,
+        activeMentorAssignment,
+      });
+
+      // Temporary debug logging for development-only (safely handles potential nulls)
+      console.debug('[ConferencePresentationAccess]', {
+        conferenceId,
+        viewerUid: latestViewer.uid,
+        viewerRole: latestViewer.role,
+        conferenceStudentId: conference.studentId,
+        resolvedClassId: classData?.id ?? null,
+        homeroomTeacherId: classData?.homeroomTeacherId ?? null,
+        assignedTeacherIds: getClassTeacherIds(classData),
+        activeMentorId: activeMentorAssignment?.mentorId ?? null,
+        decision: allowed ? 'ALLOW' : 'DENY',
+        reason,
+      });
+
+      if (!allowed) {
+        throw new Error(ACCESS_DENIED_ERROR);
       }
 
-      if (['HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'BKMENTOR'].includes(role)) {
-        return { conference, student };
-      }
-
-      if (role === 'TEACHER') {
-        // Strict checks for general TEACHER role:
-        
-        // A. Is assigned mentor?
-        const isAssignedMentor = conference.mentorId === viewer.uid;
-        if (isAssignedMentor) {
-          return { conference, student };
-        }
-
-        // B. Is assigned mentor via mentorAssignments subcollection?
-        const assignRef = doc(db, ASSIGNMENTS_COLLECTION, conferenceId);
-        const assignSnap = await getDoc(assignRef);
-        if (assignSnap.exists()) {
-          const assignData = assignSnap.data();
-          if (assignData.mentorId === viewer.uid && assignData.status !== 'REMOVED') {
-            return { conference, student };
-          }
-        }
-
-        // C. Is homeroom teacher (wali kelas) or GPK of the student for the year of conference?
-        const eq = query(
-          collection(db, 'enrollments'),
-          where('studentId', '==', conference.studentId),
-          where('academicYear', '==', conference.academicYear),
-          where('status', '==', 'active')
-        );
-        const eSnap = await getDocs(eq);
-        if (!eSnap.empty) {
-          for (const enrollmentDoc of eSnap.docs) {
-            const eData = enrollmentDoc.data();
-            const classDoc = await getDoc(doc(db, 'classes', eData.classId));
-            if (classDoc.exists()) {
-              const cData = classDoc.data() as Class;
-              if (cData.homeroomTeacherId === viewer.uid || isTeacherAssignedToClass(cData, viewer.uid)) {
-                return { conference, student };
-              }
-            }
-          }
-        }
-
-        // D. Check existing teacher class accessibility (from existing policy)
-        if (viewer.classId && student.classId && viewer.classId === student.classId) {
-          return { conference, student };
-        }
-
-        throw new Error('Anda tidak memiliki akses untuk membuka presentasi ini.');
-      }
-
-      throw new Error('Anda tidak memiliki akses untuk membuka presentasi ini.');
+      return { conference, student };
     } catch (error: any) {
-      if (error.message && (error.message.includes('akses') || error.message.includes('ditemukan'))) {
+      if (error.message && (error.message.includes('akses') || error.message.includes('ditemukan') || error.message.includes('tidak memiliki akses'))) {
         throw error;
       }
       return handleFirestoreError(error, 'get', `${RESPONSES_COLLECTION}/${conferenceId}`);
     }
   }
 };
+
+/**
+ * Helper to get teacher IDs assigned to a class, using canonical fallbacks.
+ */
+export function getClassTeacherIds(classData?: Class | null): string[] {
+  if (!classData) return [];
+
+  if (Array.isArray(classData.assignedTeacherIds)) {
+    return classData.assignedTeacherIds.filter(Boolean);
+  }
+
+  if (Array.isArray(classData.teacherAssignments)) {
+    return classData.teacherAssignments
+      .map((assignment) => assignment.userId)
+      .filter(Boolean);
+  }
+
+  return classData.homeroomTeacherId
+    ? [classData.homeroomTeacherId]
+    : [];
+}
+
+/**
+ * Robustly resolve the Class document.
+ */
+export async function resolveConferenceClass(
+  conference: StudentConferenceResponse,
+  student: Student | null
+): Promise<Class | null> {
+  const candidateIds = Array.from(new Set([
+    conference.classId,
+    student?.classId,
+    (conference as any).classDocumentId,
+    (student as any).classDocumentId,
+  ].filter(Boolean) as string[]));
+
+  // 1. Direct document lookup for candidate IDs
+  for (const id of candidateIds) {
+    try {
+      const classRef = doc(db, 'classes', id);
+      const classSnap = await getDoc(classRef);
+      if (classSnap.exists()) {
+        return { id: classSnap.id, ...classSnap.data() } as Class;
+      }
+    } catch (e) {
+      // Ignore
+    }
+  }
+
+  // 2. Fallback query by class name (since classId/student.classId sometimes is class name)
+  if (candidateIds.length > 0) {
+    try {
+      const q = query(
+        collection(db, 'classes'),
+        where('name', 'in', candidateIds)
+      );
+      const qSnap = await getDocs(q);
+      if (!qSnap.empty) {
+        const docSnap = qSnap.docs[0];
+        return { id: docSnap.id, ...docSnap.data() } as Class;
+      }
+    } catch (e) {
+      // Ignore
+    }
+  }
+
+  // 3. Fallback: Search in enrollments
+  if (conference.studentId && conference.academicYear) {
+    try {
+      const eq = query(
+        collection(db, 'enrollments'),
+        where('studentId', '==', conference.studentId),
+        where('academicYear', '==', conference.academicYear),
+        where('status', '==', 'active')
+      );
+      const eSnap = await getDocs(eq);
+      if (!eSnap.empty) {
+        const eData = eSnap.docs[0].data() as Enrollment;
+        if (eData.classId) {
+          const classRef = doc(db, 'classes', eData.classId);
+          const classSnap = await getDoc(classRef);
+          if (classSnap.exists()) {
+            return { id: classSnap.id, ...classSnap.data() } as Class;
+          }
+        }
+      }
+    } catch (e) {
+      // Ignore
+    }
+  }
+
+  // 4. Fallback: Search any enrollment for this student
+  if (conference.studentId) {
+    try {
+      const eq = query(
+        collection(db, 'enrollments'),
+        where('studentId', '==', conference.studentId)
+      );
+      const eSnap = await getDocs(eq);
+      if (!eSnap.empty) {
+        for (const edoc of eSnap.docs) {
+          const eData = edoc.data() as Enrollment;
+          if (eData.classId) {
+            const classRef = doc(db, 'classes', eData.classId);
+            const classSnap = await getDoc(classRef);
+            if (classSnap.exists()) {
+              return { id: classSnap.id, ...classSnap.data() } as Class;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // Ignore
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Fetch Conference Response safely.
+ */
+async function getConferenceById(conferenceId: string): Promise<StudentConferenceResponse | null> {
+  const confRef = doc(db, RESPONSES_COLLECTION, conferenceId);
+  const confSnap = await getDoc(confRef);
+  if (confSnap.exists()) {
+    return confSnap.data() as StudentConferenceResponse;
+  }
+  return null;
+}
+
+/**
+ * Fetch active Mentor Assignment for a conference.
+ */
+async function getActiveMentorAssignmentForConference(conferenceId: string): Promise<MentorAssignment | null> {
+  const docRef = doc(db, ASSIGNMENTS_COLLECTION, conferenceId);
+  const snap = await getDoc(docRef);
+  if (snap.exists()) {
+    return snap.data() as MentorAssignment;
+  }
+  return null;
+}
+
+/**
+ * Check if BK mentor is allowed for this conference.
+ */
+function isBkMentorAllowedForConference(
+  viewer: User,
+  conference: StudentConferenceResponse
+): boolean {
+  return true;
+}
+
+/**
+ * Check if user's assigned unit or main unit scope aligns with the student/conference unit.
+ */
+export function hasValidUnitScope(
+  viewer: User,
+  conference: StudentConferenceResponse,
+  student: Student | null,
+  classData: Class | null
+): boolean {
+  const normRole = (viewer.role || '').replace(/_/g, '');
+  if (normRole === 'SUPERADMIN') return true;
+
+  const viewerUnit = (viewer.unitId || '').toUpperCase();
+  if (!viewerUnit) return false;
+
+  const targetUnits: string[] = [];
+  if (conference.unit) targetUnits.push(conference.unit.toUpperCase());
+  if (student?.unitId) targetUnits.push(student.unitId.toUpperCase());
+  if (student?.currentUnit) targetUnits.push(student.currentUnit.toUpperCase());
+  if (classData?.unitId) targetUnits.push(classData.unitId.toUpperCase());
+
+  const gradeStr = String(conference.gradeLevel || student?.grade || '').trim();
+  if (gradeStr) {
+    if (['7', '8', '9'].includes(gradeStr)) {
+      targetUnits.push('JUNIOR_HIGH');
+    } else if (['1', '2', '3', '4', '5', '6'].includes(gradeStr)) {
+      targetUnits.push('ELEMENTARY');
+    }
+  }
+
+  if (targetUnits.length === 0) {
+    return true; 
+  }
+
+  const cleanViewerUnit = viewerUnit.replace(/_/g, '');
+  return targetUnits.some(t => {
+    const cleanTargetUnit = t.replace(/_/g, '');
+    return cleanTargetUnit === cleanViewerUnit;
+  });
+}
+
+export type PresentationViewerAccessInput = {
+  viewer: User;
+  conference: StudentConferenceResponse;
+  student: Student | null;
+  classData: Class | null;
+  activeMentorAssignment: MentorAssignment | null;
+};
+
+/**
+ * Verifies view access with an explicit reason for debug auditing.
+ */
+export function canViewConferencePresentationWithReason({
+  viewer,
+  conference,
+  student,
+  classData,
+  activeMentorAssignment,
+}: PresentationViewerAccessInput): { allowed: boolean; reason: string } {
+  const viewerId = viewer.uid;
+
+  // 1. Student pemilik presentasi.
+  const isStudentOwner =
+    viewer.role === 'STUDENT' &&
+    (
+      viewer.luminaId === conference.studentId ||
+      viewer.luminaId === conference.studentLuminaId ||
+      viewerId === conference.studentId
+    );
+
+  if (isStudentOwner) {
+    return { allowed: true, reason: 'STUDENT_OWNER' };
+  }
+
+  // 2. Admin/head sesuai scope existing.
+  const hasAdministrativeAccess =
+    ['SUPERADMIN', 'HEADUNIT', 'HEADJUNIOR'].includes((viewer.role || '').replace(/_/g, '')) &&
+    hasValidUnitScope(viewer, conference, student, classData);
+
+  if (hasAdministrativeAccess) {
+    return { allowed: true, reason: 'SCOPED_ADMIN' };
+  }
+
+  // 3. Guru tim kelas: Wali Kelas atau GPK.
+  const teacherIds = getClassTeacherIds(classData);
+
+  const isAssignedClassTeacher =
+    teacherIds.includes(viewerId);
+
+  if (isAssignedClassTeacher) {
+    return { allowed: true, reason: 'CLASS_TEACHER' };
+  }
+
+  // 4. Kompatibilitas class legacy.
+  const isLegacyHomeroomTeacher =
+    classData?.homeroomTeacherId === viewerId;
+
+  if (isLegacyHomeroomTeacher) {
+    return { allowed: true, reason: 'LEGACY_HOMEROOM_TEACHER' };
+  }
+
+  // 5. Mentor yang memang ditugaskan ke conference.
+  const isAssignedConferenceMentor =
+    ['ACTIVE', 'ASSIGNED'].includes(activeMentorAssignment?.status || '') &&
+    activeMentorAssignment?.mentorId === viewerId;
+
+  if (isAssignedConferenceMentor) {
+    return { allowed: true, reason: 'ASSIGNED_CONFERENCE_MENTOR' };
+  }
+
+  // 6. Fallback bila field conference lama sudah mengandung mentor ID.
+  const isLegacyConferenceMentor =
+    conference.mentorId === viewerId ||
+    (conference as any).assignedMentorId === viewerId;
+
+  if (isLegacyConferenceMentor) {
+    return { allowed: true, reason: 'LEGACY_CONFERENCE_MENTOR' };
+  }
+
+  // 7. BK Mentor hanya bila policy existing mengizinkan dan unit sesuai.
+  const isAuthorizedBkMentor =
+    ['BKMENTOR', 'BK_MENTOR'].includes((viewer.role || '').replace(/_/g, '')) &&
+    hasValidUnitScope(viewer, conference, student, classData) &&
+    isBkMentorAllowedForConference(viewer, conference);
+
+  if (isAuthorizedBkMentor) {
+    return { allowed: true, reason: 'AUTHORIZED_BK_MENTOR' };
+  }
+
+  return { allowed: false, reason: 'NO_MATCH' };
+}
+
+/**
+ * Standard access checker function.
+ */
+export function canViewConferencePresentation(input: PresentationViewerAccessInput): boolean {
+  return canViewConferencePresentationWithReason(input).allowed;
+}
 

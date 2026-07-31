@@ -115,7 +115,7 @@ export default function TeacherPresentationPage() {
               className="w-full py-3 bg-gray-50 hover:bg-gray-100 text-gray-600 rounded-xl font-bold transition-all flex items-center justify-center gap-2"
             >
               <ArrowLeft size={14} />
-              <span>Kembali ke Workspace</span>
+              <span>Kembali ke Conference Workspace</span>
             </button>
           </div>
         </div>
