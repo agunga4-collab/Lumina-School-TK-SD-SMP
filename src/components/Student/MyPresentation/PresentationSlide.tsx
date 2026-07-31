@@ -332,9 +332,6 @@ export function PresentationSlide({
                   Class: {className || '-'}
                 </span>
                 <span className="px-4 py-2 rounded-2xl border bg-white/40 backdrop-blur-sm shadow-sm" style={{ borderColor: theme.cardBorder, color: theme.textSecondary }}>
-                  Grade: {gradeLevel}
-                </span>
-                <span className="px-4 py-2 rounded-2xl border bg-white/40 backdrop-blur-sm shadow-sm" style={{ borderColor: theme.cardBorder, color: theme.textSecondary }}>
                   Year: {academicYear}
                 </span>
                 <span className="px-4 py-2 rounded-2xl border bg-white/40 backdrop-blur-sm shadow-sm" style={{ borderColor: theme.cardBorder, color: theme.textSecondary }}>

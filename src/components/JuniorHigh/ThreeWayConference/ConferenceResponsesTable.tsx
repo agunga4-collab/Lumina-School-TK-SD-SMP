@@ -96,12 +96,17 @@ export const ConferenceResponsesTable: React.FC<ConferenceResponsesTableProps> =
   };
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden" id="conference-table-card">
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm" id="conference-table-card">
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-100" id="conference-responses-table">
           <thead className="bg-gray-50/70 text-xs font-bold text-gray-500 uppercase tracking-wider">
             <tr>
-              <th scope="col" className="px-6 py-4 text-left font-semibold">Student</th>
+              <th 
+                scope="col" 
+                className="sticky left-0 z-30 px-6 py-4 text-left font-semibold w-[220px] md:w-[300px] min-w-[220px] md:min-w-[300px] bg-slate-50 border-r border-gray-100 shadow-[4px_0_12px_-12px_rgba(15,23,42,0.34)]"
+              >
+                Student
+              </th>
               <th scope="col" className="px-4 py-4 text-left font-semibold">Grade</th>
               <th scope="col" className="px-4 py-4 text-left font-semibold">Class</th>
               <th scope="col" className="px-4 py-4 text-left font-semibold">Response Status</th>
@@ -128,12 +133,14 @@ export const ConferenceResponsesTable: React.FC<ConferenceResponsesTableProps> =
                 const uniqueStrands: string[] = Array.from(new Set(goals.map(g => g.strand as string)));
 
                 return (
-                  <tr key={row.student.id} className="hover:bg-gray-50/40 transition" id={`row-${row.student.id}`}>
+                  <tr key={row.student.id} className="group hover:bg-slate-50/40 transition" id={`row-${row.student.id}`}>
                     {/* Student Column */}
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex flex-col">
-                        <span className="font-semibold text-gray-900">{row.student.name}</span>
-                        <span className="text-xs text-gray-500 font-mono">NIS: {row.student.nis || row.student.id}</span>
+                    <td 
+                      className="sticky left-0 z-20 px-6 py-4 w-[220px] md:w-[300px] min-w-[220px] md:min-w-[300px] bg-white group-hover:bg-slate-50 border-r border-gray-100 shadow-[4px_0_12px_-12px_rgba(15,23,42,0.34)] transition-colors"
+                    >
+                      <div className="flex flex-col max-w-[200px] md:max-w-[280px] whitespace-normal">
+                        <span className="font-semibold text-gray-900 text-sm md:text-base line-clamp-2 break-words leading-snug">{row.student.name}</span>
+                        <span className="text-xs text-gray-500 font-mono truncate mt-1">NIS: {row.student.nis || row.student.id}</span>
                       </div>
                     </td>
 
