@@ -44,6 +44,7 @@ export function ThreeWayConferencePresentationViewer({
   // Presentation Mode State
   const [isPresentMode, setIsPresentMode] = React.useState(false);
   const [currentSlideIndex, setCurrentSlideIndex] = React.useState(0);
+  const [textSize, setTextSize] = React.useState<'NORMAL' | 'LARGE' | 'XLARGE'>('NORMAL');
 
   // Fetch references (e.g. self-exploration reference data)
   const fetchReferences = React.useCallback(async () => {
@@ -165,15 +166,6 @@ export function ThreeWayConferencePresentationViewer({
       });
     } else if (conference.unitActivity && conference.unitActivity.trim()) {
       list.push({ type: 'UNIT_ACTIVITY', title: 'My Unit Activity' });
-    }
-
-    // 12. Commitment (Only if goals exist)
-    if (goals.length > 0) {
-      const nearestGoals = [...goals]
-        .filter(g => g.targetDate !== null)
-        .sort((a, b) => (a.targetDate || 0) - (b.targetDate || 0))
-        .slice(0, 3);
-      list.push({ type: 'COMMITMENT', title: 'My Commitment', goals: nearestGoals });
     }
 
     // 13. Conference Notes (Only for Submitted or Completed)
@@ -345,21 +337,62 @@ export function ThreeWayConferencePresentationViewer({
               </p>
             </div>
 
-            <div className="flex items-center gap-2 self-start md:self-center">
-              <span className="text-xs font-mono font-bold text-gray-400 uppercase tracking-widest">
-                Status:
-              </span>
-              <span
-                id="presentation-status-badge"
-                className={cn(
-                  "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold uppercase tracking-wider border",
-                  conference.status === 'DRAFT'
-                    ? "bg-amber-50 text-amber-700 border-amber-200"
-                    : "bg-emerald-50 text-emerald-700 border-emerald-200"
-                )}
-              >
-                {conference.status}
-              </span>
+            <div className="flex items-center gap-4 self-start md:self-center">
+              <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl border border-gray-200/50" id="preview-text-size-controls">
+                <button
+                  onClick={() => setTextSize('NORMAL')}
+                  className={cn(
+                    "px-2.5 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer",
+                    textSize === 'NORMAL'
+                      ? "bg-white text-gray-900 shadow-sm"
+                      : "text-gray-500 hover:text-gray-900 hover:bg-white/40"
+                  )}
+                  title="Normal Font Size"
+                >
+                  A
+                </button>
+                <button
+                  onClick={() => setTextSize('LARGE')}
+                  className={cn(
+                    "px-2.5 py-1 rounded-lg text-xs font-black transition-all cursor-pointer",
+                    textSize === 'LARGE'
+                      ? "bg-white text-gray-900 shadow-sm"
+                      : "text-gray-500 hover:text-gray-900 hover:bg-white/40"
+                  )}
+                  title="Large Font Size"
+                >
+                  A+
+                </button>
+                <button
+                  onClick={() => setTextSize('XLARGE')}
+                  className={cn(
+                    "px-2.5 py-1 rounded-lg text-sm font-black transition-all cursor-pointer",
+                    textSize === 'XLARGE'
+                      ? "bg-white text-gray-900 shadow-sm"
+                      : "text-gray-500 hover:text-gray-900 hover:bg-white/40"
+                  )}
+                  title="Extra Large Font Size"
+                >
+                  A++
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono font-bold text-gray-400 uppercase tracking-widest">
+                  Status:
+                </span>
+                <span
+                  id="presentation-status-badge"
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold uppercase tracking-wider border",
+                    conference.status === 'DRAFT'
+                      ? "bg-amber-50 text-amber-700 border-amber-200"
+                      : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                  )}
+                >
+                  {conference.status}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -420,6 +453,7 @@ export function ThreeWayConferencePresentationViewer({
                     selfExplorationRef={selfExplorationRef}
                     status={conference.status as any}
                     themeId={selectedTheme}
+                    textSize={textSize}
                   />
                 </motion.div>
               </AnimatePresence>
@@ -496,19 +530,63 @@ export function ThreeWayConferencePresentationViewer({
               </div>
             </div>
 
-            <button
-              id="btn-close-present-top"
-              onClick={() => setIsPresentMode(false)}
-              className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-xl transition-all cursor-pointer"
-              title="Exit Present Mode (Esc)"
-            >
-              <X size={20} />
-            </button>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10" id="present-text-size-controls">
+                <button
+                  onClick={() => setTextSize('NORMAL')}
+                  className={cn(
+                    "px-2.5 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer",
+                    textSize === 'NORMAL'
+                      ? "bg-white text-slate-950 shadow-sm"
+                      : "text-white/60 hover:text-white hover:bg-white/5"
+                  )}
+                  title="Normal Font Size"
+                >
+                  A
+                </button>
+                <button
+                  onClick={() => setTextSize('LARGE')}
+                  className={cn(
+                    "px-2.5 py-1 rounded-lg text-xs font-black transition-all cursor-pointer",
+                    textSize === 'LARGE'
+                      ? "bg-white text-slate-950 shadow-sm"
+                      : "text-white/60 hover:text-white hover:bg-white/5"
+                  )}
+                  title="Large Font Size"
+                >
+                  A+
+                </button>
+                <button
+                  onClick={() => setTextSize('XLARGE')}
+                  className={cn(
+                    "px-2.5 py-1 rounded-lg text-sm font-black transition-all cursor-pointer",
+                    textSize === 'XLARGE'
+                      ? "bg-white text-slate-950 shadow-sm"
+                      : "text-white/60 hover:text-white hover:bg-white/5"
+                  )}
+                  title="Extra Large Font Size"
+                >
+                  A++
+                </button>
+              </div>
+
+              <button
+                id="btn-close-present-top"
+                onClick={() => setIsPresentMode(false)}
+                className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-xl transition-all cursor-pointer"
+                title="Exit Present Mode (Esc)"
+              >
+                <X size={20} />
+              </button>
+            </div>
           </div>
 
           {/* Slide Stage frame */}
-          <div className="flex-1 w-full max-w-5xl mx-auto flex items-center justify-center my-6 overflow-hidden">
-            <div className="w-full aspect-video max-h-[60vh] flex flex-col justify-between rounded-[2rem] shadow-2xl border border-white/5 overflow-hidden">
+          <div className="flex-1 w-full flex items-center justify-center my-4 overflow-hidden shrink-0">
+            <div 
+              style={{ width: 'min(96vw, 1720px)', minHeight: 'min(72vh, 920px)' }}
+              className="flex flex-col justify-between rounded-[2rem] shadow-2xl border border-white/5 overflow-hidden"
+            >
               <AnimatePresence mode="wait">
                 {currentSlide && (
                   <motion.div
@@ -533,6 +611,7 @@ export function ThreeWayConferencePresentationViewer({
                       selfExplorationRef={selfExplorationRef}
                       status={conference.status as any}
                       themeId={selectedTheme}
+                      textSize={textSize}
                     />
                   </motion.div>
                 )}

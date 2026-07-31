@@ -131,6 +131,7 @@ interface PresentationSlideProps {
   selfExplorationRef: any;
   status: 'DRAFT' | 'SUBMITTED' | 'CONFERENCE_COMPLETED';
   themeId?: ThemePalette['id'];
+  textSize?: 'NORMAL' | 'LARGE' | 'XLARGE';
 }
 
 function formatDate(timestamp: number | null | undefined): string {
@@ -260,7 +261,8 @@ export function PresentationSlide({
   unitActivity,
   selfExplorationRef,
   status,
-  themeId = 'LAZUARDI'
+  themeId = 'LAZUARDI',
+  textSize = 'NORMAL'
 }: PresentationSlideProps) {
   const theme = PRESENTATION_THEMES[themeId];
 
@@ -707,13 +709,43 @@ export function PresentationSlide({
     }
   };
 
+  const textScaleClass = {
+    NORMAL: 'presentation-text-normal',
+    LARGE: 'presentation-text-large',
+    XLARGE: 'presentation-text-xlarge'
+  }[textSize || 'NORMAL'];
+
   return (
     <div 
-      className="rounded-[2rem] border overflow-hidden min-h-[420px] flex flex-col justify-between transition-all duration-300"
+      className={cn(
+        "rounded-[2rem] border overflow-hidden transition-all duration-300 w-full h-full flex flex-col justify-between",
+        textScaleClass
+      )}
       style={{ backgroundColor: theme.slideBg, borderColor: theme.cardBorder, boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)' }}
       id={`presentation-slide-${slide.type.toLowerCase()}`}
     >
-      <div className="flex-1 overflow-y-auto max-h-[60vh] md:max-h-[70vh]">
+      <style>{`
+        .presentation-text-large .text-xs { font-size: 0.875rem !important; }
+        .presentation-text-large .text-sm { font-size: 1rem !important; }
+        .presentation-text-large .text-base { font-size: 1.125rem !important; }
+        .presentation-text-large .text-lg { font-size: 1.25rem !important; }
+        .presentation-text-large .text-xl { font-size: 1.5rem !important; }
+        .presentation-text-large .text-2xl { font-size: 1.875rem !important; }
+        .presentation-text-large .text-3xl { font-size: 2.25rem !important; }
+        .presentation-text-large .text-4xl { font-size: 3rem !important; }
+        .presentation-text-large .text-5xl { font-size: 3.75rem !important; }
+
+        .presentation-text-xlarge .text-xs { font-size: 1rem !important; }
+        .presentation-text-xlarge .text-sm { font-size: 1.125rem !important; }
+        .presentation-text-xlarge .text-base { font-size: 1.25rem !important; }
+        .presentation-text-xlarge .text-lg { font-size: 1.5rem !important; }
+        .presentation-text-xlarge .text-xl { font-size: 1.875rem !important; }
+        .presentation-text-xlarge .text-2xl { font-size: 2.25rem !important; }
+        .presentation-text-xlarge .text-3xl { font-size: 3rem !important; }
+        .presentation-text-xlarge .text-4xl { font-size: 3.75rem !important; }
+        .presentation-text-xlarge .text-5xl { font-size: 4.5rem !important; }
+      `}</style>
+      <div className="flex-1 overflow-y-auto w-full h-full">
         {renderContent()}
       </div>
     </div>

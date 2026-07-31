@@ -289,6 +289,7 @@ export default function App() {
           </Route>
           <Route path="lateness" element={<Lateness />} />
           <Route path="notifications" element={<NotificationsPage />} />
+          <Route path="conference/presentation/:conferenceId" element={<TeacherPresentationPage />} />
           <Route path="academic">
              <Route path="learning-goals" element={
                <MenuVisibilityGuard menuKey="learningGoals">
@@ -436,11 +437,7 @@ export default function App() {
                 <StaffSmartGoalTrackerPage />
               </RoleGuard>
             } />
-            <Route path="conference/presentation/:conferenceId" element={
-              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR']}>
-                <TeacherPresentationPage />
-              </RoleGuard>
-            } />
+
             <Route path="three-way-conference/settings" element={<Navigate to="/junior-high/conference/admin" replace />} />
             <Route path="three-way-conference/workspace" element={<Navigate to="/junior-high/conference/workspace" replace />} />
             <Route path="behavior/mtss" element={

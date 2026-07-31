@@ -10,6 +10,7 @@ import {
   runTransaction
 } from 'firebase/firestore';
 import { db, handleFirestoreError, getStudentById, getStudents, getClasses, auth, sendNotification } from '../lib/firebase';
+import { isTeacherAssignedToClass } from './classTeacherAssignmentService';
 import type {
   ConferencePeriod,
   StudentConferenceResponse,
@@ -787,6 +788,10 @@ export const threeWayConferenceService = {
       }
     });
 
+    if (response.gradeLevel === 9 && (!response.karyaIlmiahReferenceId || !response.karyaIlmiahReferenceId.trim())) {
+      errors.push('Karya Ilmiah Reference is required for Grade 9 students.');
+    }
+
     return {
       isValid: errors.length === 0,
       errors
@@ -1280,9 +1285,23 @@ export const threeWayConferenceService = {
       const responseId = this.getConferenceResponseId(periodId, studentId);
 
       await runTransaction(db, async (transaction) => {
-        // 1. Get current staff user
+        // --- 1. ALL READS FIRST ---
         const staffRef = doc(db, 'users', currentUid);
-        const staffSnap = await transaction.get(staffRef);
+        const studentRef = doc(db, 'students', studentId);
+        const mentorRef = doc(db, 'users', mentorId);
+        const periodRef = doc(db, PERIODS_COLLECTION, periodId);
+        const responseRef = doc(db, RESPONSES_COLLECTION, responseId);
+
+        // Fetch primary Snaps concurrently before any write
+        const [staffSnap, studentSnap, mentorSnap, periodSnap, assignmentSnap, responseSnap] = await Promise.all([
+          transaction.get(staffRef),
+          transaction.get(studentRef),
+          transaction.get(mentorRef),
+          transaction.get(periodRef),
+          transaction.get(assignmentRef),
+          transaction.get(responseRef)
+        ]);
+
         if (!staffSnap.exists()) throw new Error('Staff profile not found');
         const staffData = staffSnap.data() as User;
 
@@ -1290,13 +1309,10 @@ export const threeWayConferenceService = {
           throw new Error('Unauthorized: Staff profile is inactive.');
         }
 
-        // 2. Get student details
-        const studentRef = doc(db, 'students', studentId);
-        const studentSnap = await transaction.get(studentRef);
         if (!studentSnap.exists()) throw new Error('Student not found');
         const studentData = studentSnap.data() as Student;
 
-        // 3. Get class details
+        // Fetch class details if classId exists (strictly before writes!)
         let className = 'Unknown Class';
         if (studentData.classId) {
           const classRef = doc(db, 'classes', studentData.classId);
@@ -1311,9 +1327,6 @@ export const threeWayConferenceService = {
           }
         }
 
-        // 4. Get mentor details
-        const mentorRef = doc(db, 'users', mentorId);
-        const mentorSnap = await transaction.get(mentorRef);
         if (!mentorSnap.exists()) throw new Error('Mentor not found');
         const mentorData = mentorSnap.data() as User;
 
@@ -1341,14 +1354,10 @@ export const threeWayConferenceService = {
           throw new Error('Invalid Mentor: Selected mentor must have Junior High access.');
         }
 
-        // 5. Get period details
-        const periodRef = doc(db, PERIODS_COLLECTION, periodId);
-        const periodSnap = await transaction.get(periodRef);
         if (!periodSnap.exists()) throw new Error('Conference period not found');
         const periodData = periodSnap.data() as ConferencePeriod;
 
-        // 6. Check existing assignment to preserve history
-        const assignmentSnap = await transaction.get(assignmentRef);
+        // --- 2. CALCULATE VALUES ---
         let existingHistory = [];
         let existingData: MentorAssignment | null = null;
         if (assignmentSnap.exists()) {
@@ -1396,12 +1405,6 @@ export const threeWayConferenceService = {
           assignmentHistory: updatedHistory
         };
 
-        // Write to assignments
-        transaction.set(assignmentRef, newAssignment);
-
-        // Write/Update studentConferenceResponse doc
-        const responseRef = doc(db, RESPONSES_COLLECTION, responseId);
-        const responseSnap = await transaction.get(responseRef);
         const responseData = {
           unit: 'JUNIOR_HIGH' as const,
           mentorId,
@@ -1413,6 +1416,11 @@ export const threeWayConferenceService = {
           updatedAt: now
         };
 
+        // --- 3. ALL WRITES LAST ---
+        // Write to assignments
+        transaction.set(assignmentRef, newAssignment);
+
+        // Write/Update studentConferenceResponse doc
         if (responseSnap.exists()) {
           transaction.update(responseRef, responseData);
         } else {
@@ -1473,15 +1481,23 @@ export const threeWayConferenceService = {
       const responseId = this.getConferenceResponseId(periodId, studentId);
 
       await runTransaction(db, async (transaction) => {
-        const assignmentSnap = await transaction.get(assignmentRef);
+        // --- 1. ALL READS FIRST ---
+        const staffRef = doc(db, 'users', currentUid);
+        const mentorRef = doc(db, 'users', mentorId);
+        const responseRef = doc(db, RESPONSES_COLLECTION, responseId);
+
+        const [assignmentSnap, staffSnap, mentorSnap, responseSnap] = await Promise.all([
+          transaction.get(assignmentRef),
+          transaction.get(staffRef),
+          transaction.get(mentorRef),
+          transaction.get(responseRef)
+        ]);
+
         if (!assignmentSnap.exists()) {
           throw new Error('Mentor assignment does not exist.');
         }
         const existingData = assignmentSnap.data() as MentorAssignment;
 
-        // 1. Get current staff user
-        const staffRef = doc(db, 'users', currentUid);
-        const staffSnap = await transaction.get(staffRef);
         if (!staffSnap.exists()) throw new Error('Staff profile not found');
         const staffData = staffSnap.data() as User;
 
@@ -1489,12 +1505,10 @@ export const threeWayConferenceService = {
           throw new Error('Unauthorized: Staff profile is inactive.');
         }
 
-        // 2. Get mentor details
-        const mentorRef = doc(db, 'users', mentorId);
-        const mentorSnap = await transaction.get(mentorRef);
         if (!mentorSnap.exists()) throw new Error('Mentor not found');
         const mentorData = mentorSnap.data() as User;
 
+        // --- 2. VALIDATIONS & CALCULATIONS ---
         const eligibleRoles = ['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR'];
         if (!eligibleRoles.includes(staffData.role)) {
           throw new Error('Unauthorized: Role not allowed to manage mentor assignments.');
@@ -1546,11 +1560,10 @@ export const threeWayConferenceService = {
           assignmentHistory: updatedHistory
         };
 
+        // --- 3. ALL WRITES LAST ---
         transaction.update(assignmentRef, updatedAssignment);
 
         // Update response doc
-        const responseRef = doc(db, RESPONSES_COLLECTION, responseId);
-        const responseSnap = await transaction.get(responseRef);
         if (responseSnap.exists()) {
           transaction.update(responseRef, {
             mentorId,
@@ -1596,15 +1609,21 @@ export const threeWayConferenceService = {
       const responseId = this.getConferenceResponseId(periodId, studentId);
 
       await runTransaction(db, async (transaction) => {
-        const assignmentSnap = await transaction.get(assignmentRef);
+        // --- 1. ALL READS FIRST ---
+        const staffRef = doc(db, 'users', currentUid);
+        const responseRef = doc(db, RESPONSES_COLLECTION, responseId);
+
+        const [assignmentSnap, staffSnap, responseSnap] = await Promise.all([
+          transaction.get(assignmentRef),
+          transaction.get(staffRef),
+          transaction.get(responseRef)
+        ]);
+
         if (!assignmentSnap.exists()) {
           throw new Error('Mentor assignment does not exist.');
         }
         const existingData = assignmentSnap.data() as MentorAssignment;
 
-        // 1. Get current staff user
-        const staffRef = doc(db, 'users', currentUid);
-        const staffSnap = await transaction.get(staffRef);
         if (!staffSnap.exists()) throw new Error('Staff profile not found');
         const staffData = staffSnap.data() as User;
 
@@ -1612,6 +1631,7 @@ export const threeWayConferenceService = {
           throw new Error('Unauthorized: Staff profile is inactive.');
         }
 
+        // --- 2. VALIDATIONS & CALCULATIONS ---
         const eligibleRoles = ['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR'];
         if (!eligibleRoles.includes(staffData.role)) {
           throw new Error('Unauthorized: Role not allowed to manage mentor assignments.');
@@ -1651,11 +1671,10 @@ export const threeWayConferenceService = {
           assignmentHistory: updatedHistory
         };
 
+        // --- 3. ALL WRITES LAST ---
         transaction.update(assignmentRef, updatedAssignment);
 
         // Update response doc
-        const responseRef = doc(db, RESPONSES_COLLECTION, responseId);
-        const responseSnap = await transaction.get(responseRef);
         if (responseSnap.exists()) {
           transaction.update(responseRef, {
             mentorId: null,
@@ -2434,6 +2453,11 @@ export const threeWayConferenceService = {
       const responseId = this.getConferenceResponseId(periodId, studentId);
       const responseRef = doc(db, RESPONSES_COLLECTION, responseId);
       
+      const assignment = await this.getMentorAssignment(periodId, studentId);
+      const studentData = await getStudentById(studentId);
+      const userName = studentData?.name || auth.currentUser?.displayName || 'Student';
+      const now = Date.now();
+
       await runTransaction(db, async (transaction) => {
         const responseSnap = await transaction.get(responseRef);
         if (!responseSnap.exists()) {
@@ -2449,10 +2473,6 @@ export const threeWayConferenceService = {
         if (responseData.revisionRequest?.status === 'PENDING') {
           throw new Error('Anda sudah memiliki permintaan revisi yang sedang menunggu persetujuan guru.');
         }
-
-        const now = Date.now();
-        const studentData = await getStudentById(studentId);
-        const userName = studentData?.name || auth.currentUser?.displayName || 'Student';
 
         const historyItem = {
           fromStatus: responseData.status,
@@ -2482,17 +2502,17 @@ export const threeWayConferenceService = {
           lastEditedAt: now,
           lastEditedByUid: currentUid
         });
-
-        const assignment = await this.getMentorAssignment(periodId, studentId);
-        if (assignment && assignment.mentorEmail) {
-          await sendNotification({
-            userId: assignment.mentorEmail,
-            type: 'REVISION_REQUESTED' as any,
-            message: `${userName} mengajukan permintaan revisi untuk workbook mereka.`,
-            link: `/junior-high/conference/workspace`
-          });
-        }
       });
+
+      // Send notification after successful transaction
+      if (assignment && assignment.mentorEmail) {
+        await sendNotification({
+          userId: assignment.mentorEmail,
+          type: 'REVISION_REQUESTED' as any,
+          message: `${userName} mengajukan permintaan revisi untuk workbook mereka.`,
+          link: `/junior-high/conference/workspace`
+        });
+      }
     } catch (error) {
       return handleFirestoreError(error, 'write', `${RESPONSES_COLLECTION}/${periodId}_${studentId}`);
     }
@@ -2646,7 +2666,7 @@ export const threeWayConferenceService = {
           }
         }
 
-        // C. Is homeroom teacher (wali kelas) of the student for the year of conference?
+        // C. Is homeroom teacher (wali kelas) or GPK of the student for the year of conference?
         const eq = query(
           collection(db, 'enrollments'),
           where('studentId', '==', conference.studentId),
@@ -2659,8 +2679,8 @@ export const threeWayConferenceService = {
             const eData = enrollmentDoc.data();
             const classDoc = await getDoc(doc(db, 'classes', eData.classId));
             if (classDoc.exists()) {
-              const cData = classDoc.data();
-              if (cData.homeroomTeacherId === viewer.uid) {
+              const cData = classDoc.data() as Class;
+              if (cData.homeroomTeacherId === viewer.uid || isTeacherAssignedToClass(cData, viewer.uid)) {
                 return { conference, student };
               }
             }

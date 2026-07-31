@@ -12,6 +12,7 @@ import ReflectionSection from '../../components/Student/GoalSetting/ReflectionSe
 import GoalsSection from '../../components/Student/GoalSetting/GoalsSection';
 import SelfExplorationReferenceSection from '../../components/Student/GoalSetting/SelfExplorationReferenceSection';
 import UnitActivitySection from '../../components/Student/GoalSetting/UnitActivitySection';
+import KaryaIlmiahSection from '../../components/Student/GoalSetting/KaryaIlmiahSection';
 
 // Icons
 import { 
@@ -19,7 +20,7 @@ import {
   Save, Send, ChevronRight, Target, Sparkles, ClipboardCheck
 } from 'lucide-react';
 
-const STEPS = [
+const STEPS_STATIC = [
   { id: 'profile', name: 'Profile' },
   { id: 'reflection', name: 'Reflection' },
   { id: 'goals', name: 'Goals' },
@@ -51,6 +52,7 @@ export default function StudentGoalSettingPage() {
     goals: SmartGoal[];
     unitActivity: string;
     unitActivities: UnitActivityItem[];
+    karyaIlmiahReferenceId: string;
   }>({
     aboutMe: '',
     strengths: '',
@@ -58,7 +60,23 @@ export default function StudentGoalSettingPage() {
     goals: [],
     unitActivity: '',
     unitActivities: [],
+    karyaIlmiahReferenceId: '',
   });
+
+  const steps = React.useMemo(() => {
+    const list = [
+      { id: 'profile', name: 'Profile' },
+      { id: 'reflection', name: 'Reflection' },
+      { id: 'goals', name: 'Goals' },
+      { id: 'self-exploration', name: 'Self-Exploration' },
+    ];
+    if (student?.grade === 9 || response?.gradeLevel === 9) {
+      list.push({ id: 'karya-ilmiah', name: 'Karya Ilmiah' });
+    }
+    list.push({ id: 'unit-activity', name: 'Unit Activity' });
+    list.push({ id: 'review', name: 'Review & Submit' });
+    return list;
+  }, [student?.grade, response?.gradeLevel]);
 
   // Track if we have unsaved local changes
   const [isDirty, setIsDirty] = React.useState(false);
@@ -171,6 +189,7 @@ export default function StudentGoalSettingPage() {
             goals: existingResponse.goals || [],
             unitActivity: existingResponse.unitActivity || '',
             unitActivities: initialUnitActivities,
+            karyaIlmiahReferenceId: existingResponse.karyaIlmiahReferenceId || '',
           });
         } else {
           // Prefill empty response form data with initial unit activities
@@ -265,6 +284,7 @@ export default function StudentGoalSettingPage() {
         unitActivities: formData.unitActivities,
         selfExplorationReferenceId: selfExplorationRef?.enrollment?.id || null,
         selfExplorationSnapshot: selfExplorationRef?.enrollment || null,
+        karyaIlmiahReferenceId: formData.karyaIlmiahReferenceId || null,
       };
 
       await threeWayConferenceService.saveStudentConferenceDraft(period.id, studentId, payload);
@@ -298,6 +318,7 @@ export default function StudentGoalSettingPage() {
         unitActivities: formData.unitActivities,
         selfExplorationReferenceId: selfExplorationRef?.enrollment?.id || null,
         selfExplorationSnapshot: selfExplorationRef?.enrollment || null,
+        karyaIlmiahReferenceId: formData.karyaIlmiahReferenceId || null,
       };
 
       await threeWayConferenceService.submitStudentConferenceResponse(period.id, studentId, payload);
@@ -306,7 +327,7 @@ export default function StudentGoalSettingPage() {
 
       // Reload
       await fetchData();
-      setCurrentStepIdx(STEPS.length - 1); // Go to final step to see submitted review
+      setCurrentStepIdx(steps.length - 1); // Go to final step to see submitted review
     } catch (err: any) {
       toast.error(err.message || 'Submission failed.');
     } finally {
@@ -323,6 +344,8 @@ export default function StudentGoalSettingPage() {
       goals: formData.goals,
       unitActivity: formData.unitActivity,
       unitActivities: formData.unitActivities,
+      gradeLevel: student?.grade || response?.gradeLevel || 0,
+      karyaIlmiahReferenceId: formData.karyaIlmiahReferenceId || null,
     };
 
     const validation = threeWayConferenceService.validateConferenceResponseForSubmission(payload);
@@ -370,7 +393,7 @@ export default function StudentGoalSettingPage() {
     );
   }
 
-  const activeStep = STEPS[currentStepIdx];
+  const activeStep = steps[currentStepIdx] || steps[0];
   const isEditable = periodState.isEditable;
 
   return (
@@ -548,7 +571,7 @@ export default function StudentGoalSettingPage() {
         {/* Navigation Sidebar / Stepper (Left-Side) */}
         <div className="lg:col-span-3 space-y-3 bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm">
           <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-3 mb-2">Workbook Navigation</p>
-          {STEPS.map((step, idx) => {
+          {steps.map((step, idx) => {
             const isActive = idx === currentStepIdx;
             const isCompleted = idx < currentStepIdx;
 
@@ -624,6 +647,16 @@ export default function StudentGoalSettingPage() {
               loading={seLoading}
               referenceData={selfExplorationRef}
               grade={student?.grade || response?.gradeLevel}
+            />
+          )}
+
+          {/* STEP: Karya Ilmiah (Conditional for Grade 9) */}
+          {activeStep.id === 'karya-ilmiah' && (
+            <KaryaIlmiahSection
+              karyaIlmiahReferenceId={formData.karyaIlmiahReferenceId}
+              disabled={!isEditable}
+              onChange={handleFieldChange}
+              reviews={response?.sectionReviews}
             />
           )}
 
@@ -739,6 +772,16 @@ export default function StudentGoalSettingPage() {
                     </p>
                   </div>
 
+                  {/* Karya Ilmiah Preview */}
+                  {(student?.grade === 9 || response?.gradeLevel === 9) && (
+                    <div className="space-y-2 border-t border-gray-100 pt-6">
+                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Karya Ilmiah Reference (Grade 9)</h4>
+                      <p className="text-sm font-semibold text-gray-700 leading-relaxed bg-gray-50 p-5 rounded-2xl border border-gray-100 whitespace-pre-wrap">
+                        {formData.karyaIlmiahReferenceId || <em className="text-gray-300">No Karya Ilmiah reference provided</em>}
+                      </p>
+                    </div>
+                  )}
+
                   {/* Unit Activity */}
                   <div className="space-y-4 border-t border-gray-100 pt-6">
                     <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">My Unit Activities</h4>
@@ -813,7 +856,7 @@ export default function StudentGoalSettingPage() {
               )}
 
               {/* Next Step / Validation Trigger */}
-              {currentStepIdx < STEPS.length - 1 ? (
+              {currentStepIdx < steps.length - 1 ? (
                 <button
                   type="button"
                   onClick={() => {

@@ -280,6 +280,20 @@ export function Layout() {
 
   const currentUnit = activeUnit || (currentUser.unitId as UnitType) || 'JUNIOR_HIGH';
 
+  if (location.pathname.includes('/conference/presentation/')) {
+    return (
+      <main className="min-h-screen bg-gray-50/50 w-full" id="presentation-layout-wrapper">
+        <Outlet context={{ 
+          currentUser, 
+          activeUnit: currentUnit, 
+          selectedStudentId, 
+          setSelectedStudentId,
+          parentStudents
+        }} />
+      </main>
+    );
+  }
+
   const getUnitName = (unit: UnitType) => {
     switch(unit) {
       case 'KINDERGARTEN': return 'Lumina Kindergarten';
