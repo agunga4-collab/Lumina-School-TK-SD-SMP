@@ -13,6 +13,21 @@ import { PresentationSlide, SlideData, PRESENTATION_THEMES } from './Presentatio
 import { PresentationControls } from './PresentationControls';
 import { PresentationProgress } from './PresentationProgress';
 
+function parseBulletPoints(text: string): string[] {
+  if (!text) return [];
+  const lines = text.split(/\r?\n/);
+  const items: string[] = [];
+  for (const line of lines) {
+    let clean = line.trim();
+    if (!clean) continue;
+    clean = clean.replace(/^(?:[-*•]|\d+\.)\s*/, '').trim();
+    if (clean) {
+      items.push(clean);
+    }
+  }
+  return items;
+}
+
 export interface PresentationViewerProps {
   conference: ThreeWayConference | null;
   student: Student | null;
@@ -109,7 +124,28 @@ export function ThreeWayConferencePresentationViewer({
 
     // 3. My Strengths
     if (conference.strengths && conference.strengths.trim()) {
-      list.push({ type: 'STRENGTHS', title: 'My Strengths' });
+      const parsedStrengths = parseBulletPoints(conference.strengths);
+      if (parsedStrengths.length > 4) {
+        const chunkSize = 4;
+        for (let i = 0; i < parsedStrengths.length; i += chunkSize) {
+          const chunk = parsedStrengths.slice(i, i + chunkSize);
+          list.push({
+            type: 'STRENGTHS',
+            title: `My Strengths (${Math.floor(i / chunkSize) + 1})`,
+            strengthsList: chunk,
+            strengthIndex: i,
+            totalStrengths: parsedStrengths.length
+          });
+        }
+      } else {
+        list.push({
+          type: 'STRENGTHS',
+          title: 'My Strengths',
+          strengthsList: parsedStrengths,
+          strengthIndex: 0,
+          totalStrengths: parsedStrengths.length
+        });
+      }
     }
 
     // 4. My Areas for Growth
@@ -124,17 +160,30 @@ export function ThreeWayConferencePresentationViewer({
     const rationalGoals = goals.filter(g => g.strand === 'RATIONAL');
     const materialGoals = goals.filter(g => g.strand === 'MATERIAL_PHYSICAL');
 
+    const addGoalsByStrand = (strandGoals: any[], title: string, strand: 'SPIRITUAL' | 'IMAGINAL' | 'RATIONAL' | 'MATERIAL') => {
+      strandGoals.forEach((goal, idx) => {
+        list.push({
+          type: 'GOAL_STRAND',
+          title: title,
+          strand: strand,
+          singleGoal: goal,
+          goalIndex: idx,
+          totalGoals: strandGoals.length
+        });
+      });
+    };
+
     if (spiritualGoals.length > 0) {
-      list.push({ type: 'GOAL_STRAND', title: 'Spiritual Goals', strand: 'SPIRITUAL', goals: spiritualGoals });
+      addGoalsByStrand(spiritualGoals, 'Spiritual Goals', 'SPIRITUAL');
     }
     if (imaginalGoals.length > 0) {
-      list.push({ type: 'GOAL_STRAND', title: 'Imaginal Goals', strand: 'IMAGINAL', goals: imaginalGoals });
+      addGoalsByStrand(imaginalGoals, 'Imaginal Goals', 'IMAGINAL');
     }
     if (rationalGoals.length > 0) {
-      list.push({ type: 'GOAL_STRAND', title: 'Rational Goals', strand: 'RATIONAL', goals: rationalGoals });
+      addGoalsByStrand(rationalGoals, 'Rational Goals', 'RATIONAL');
     }
     if (materialGoals.length > 0) {
-      list.push({ type: 'GOAL_STRAND', title: 'Material/Physical Goals', strand: 'MATERIAL', goals: materialGoals });
+      addGoalsByStrand(materialGoals, 'Material/Physical Goals', 'MATERIAL');
     }
 
     // 9. Self-Exploration
@@ -430,7 +479,7 @@ export function ThreeWayConferencePresentationViewer({
 
           {/* Central Slide Stage */}
           {currentSlide && (
-            <div className="relative">
+            <div className="relative w-full h-[540px] md:h-[620px] lg:h-[680px]">
               <AnimatePresence mode="wait">
                 <motion.div
                   key={currentSlideIndex}
@@ -438,6 +487,7 @@ export function ThreeWayConferencePresentationViewer({
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -10 }}
                   transition={{ duration: 0.2 }}
+                  className="w-full h-full"
                 >
                   <PresentationSlide
                     slide={currentSlide}
@@ -584,7 +634,7 @@ export function ThreeWayConferencePresentationViewer({
           {/* Slide Stage frame */}
           <div className="flex-1 w-full flex items-center justify-center my-4 overflow-hidden shrink-0">
             <div 
-              style={{ width: 'min(96vw, 1720px)', minHeight: 'min(72vh, 920px)' }}
+              style={{ width: 'min(96vw, 1720px)', height: 'min(72vh, 880px)' }}
               className="flex flex-col justify-between rounded-[2rem] shadow-2xl border border-white/5 overflow-hidden"
             >
               <AnimatePresence mode="wait">
