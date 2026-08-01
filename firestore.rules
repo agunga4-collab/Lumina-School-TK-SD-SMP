@@ -364,6 +364,11 @@ service cloud.firestore {
       allow write: if isTeacher() || isAdmin() || isJuniorHighStaff();
     }
 
+    match /elementaryLiteracyNumeracySheetConfigs/{configId} {
+      allow read: if isActive() && (isTeacher() || isAdmin() || isJuniorHighStaff());
+      allow write: if isAdmin();
+    }
+
     match /selfExploration/{studentId} {
       allow read: if isActive() &&
         ((isStudent() && studentId == request.auth.uid) || isJuniorHighStaff() || isLinkedStudent(studentId));

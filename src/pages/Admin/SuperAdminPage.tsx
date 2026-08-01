@@ -60,6 +60,7 @@ import { User, RoleInvite, UserRole, UnitType, Class, PromptTemplate, ClassTeach
 import { cn } from "../../lib/utils";
 import { getClassTeacherAssignments } from "../../services/classTeacherAssignmentService.ts";
 import MenuVisibilitySettings from "../../components/Admin/MenuVisibilitySettings";
+import ElementarySheetsConfig from "../../components/Admin/ElementarySheetsConfig";
 
 const getGradeOptions = (unitId: string): string[] => {
   if (unitId === "KINDERGARTEN") return ["Pra TK", "TK A", "TK B"];
@@ -85,7 +86,7 @@ export default function SuperAdminPage() {
     "STAFF" | "STUDENT" | "PARENT" | "CLASSES" | "LOGO" | "PROMPTS" | "KNOWLEDGE_BASE" | "PENDING"
   >("STAFF");
   const [activeMenu, setActiveMenu] = React.useState<
-    "overview" | "user-undangan" | "user-pending" | "kelas" | "ai-prompts" | "ai-knowledge" | "ai-logo" | "import-massal" | "import-sync" | "sistem-reset" | "academic-year" | "reconcile-siswa" | "conflict-siswa"
+    "overview" | "user-undangan" | "user-pending" | "kelas" | "elementary-sheets-config" | "ai-prompts" | "ai-knowledge" | "ai-logo" | "import-massal" | "import-sync" | "sistem-reset" | "academic-year" | "reconcile-siswa" | "conflict-siswa"
   >("overview");
   const [collapsedGroups, setCollapsedGroups] = React.useState<Record<string, boolean>>({
     USER: false,
@@ -2382,6 +2383,23 @@ export default function SuperAdminPage() {
               <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-slate-900 text-slate-500 border border-slate-850">
                 {counts.CLASSES}
               </span>
+            </button>
+            <button
+              onClick={() => {
+                setActiveMenu("elementary-sheets-config");
+                setIsMobileSidebarOpen(false);
+              }}
+              className={cn(
+                "w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-left flex items-center justify-between transition-all",
+                activeMenu === "elementary-sheets-config"
+                  ? "bg-slate-900 text-white font-bold border border-slate-800"
+                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200"
+              )}
+            >
+              <div className="flex items-center gap-2.5 flex-1 select-none">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                <span>Config Literasi SD</span>
+              </div>
             </button>
           </div>
         )}
@@ -5120,6 +5138,13 @@ export default function SuperAdminPage() {
                 </button>
               </div>
             </div>
+          )}
+
+          {activeMenu === "elementary-sheets-config" && (
+            <ElementarySheetsConfig 
+              classes={classes}
+              currentAcademicYear={activeYear}
+            />
           )}
 
           {activeMenu === "sistem-reset" && (

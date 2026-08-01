@@ -8,6 +8,8 @@ import fs from "fs";
 import { google } from "googleapis";
 import { Readable } from "stream";
 import type { LGBackupStatus, LGBackupSummary, LGBackupLog } from "./src/types";
+import { resolveAcademicYearAndPeriod } from "./src/utils/academicYearResolver";
+import crypto from "crypto";
 
 const app = express();
 app.use(express.json({ limit: "50mb" }));
@@ -4384,61 +4386,84 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
 
     console.log("[SyncParents] Starting comprehensive synchronization...");
 
-    // 1. Get all student placeholders from roleInvites
-    const studentsSnap = await db.collection("roleInvites")
-      .where("role", "==", "STUDENT")
-      .get();
-    const roleInviteStudents = studentsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-
-    // 2. Get all students directly from students collection
+    // 1. Get all students from students collection (canonical master list)
     const studentsCollSnap = await db.collection("students").get();
     const studentsCollList = studentsCollSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
 
-    // Combine lists, preferring students collection since it's the core system of record
-    const allStudentsMap = new Map<string, any>();
-    
-    // First, seed with role invites
-    roleInviteStudents.forEach(s => {
-      const parentEmail = String(s.parentEmail || "").trim().toLowerCase();
+    // Create maps of active students to track their parent emails and canonical IDs
+    const activeStudentsMap = new Map<string, any>(); // key: studentId/luminaId -> student data
+    const studentEmailToLuminaId = new Map<string, string>(); // key: student email -> luminaId
+
+    studentsCollList.forEach(s => {
       const luminaId = String(s.luminaId || s.id || "").trim();
+      if (luminaId) {
+        activeStudentsMap.set(luminaId, s);
+        if (s.email) {
+          studentEmailToLuminaId.set(String(s.email).trim().toLowerCase(), luminaId);
+        }
+      }
+    });
+
+    // 2. Get all student placeholders from roleInvites
+    const invitesSnap = await db.collection("roleInvites")
+      .where("role", "==", "STUDENT")
+      .get();
+    const roleInviteStudents = invitesSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+
+    // Build the final map of studentId -> parent details
+    const studentParentMap = new Map<string, { parentEmail: string; name: string; unitId: string; fatherName?: string; motherName?: string }>();
+
+    // First, seed with active students collection (absolute source of truth)
+    studentsCollList.forEach(s => {
+      const luminaId = String(s.luminaId || s.id || "").trim();
+      const parentEmail = String(s.parentEmail || "").trim().toLowerCase();
       if (luminaId && parentEmail) {
-        allStudentsMap.set(luminaId, {
-          id: s.id,
-          luminaId,
+        studentParentMap.set(luminaId, {
           parentEmail,
-          name: s.name || "Siswa",
-          unitId: s.unitId || "JUNIOR_HIGH"
+          name: s.name || s.fullName || "Siswa",
+          unitId: s.unitId || "KINDERGARTEN",
+          fatherName: s.fatherName || "",
+          motherName: s.motherName || ""
         });
       }
     });
 
-    // Overwrite/Add with active students collection (more up-to-date and covers all school levels like Kindergarten)
-    studentsCollList.forEach(s => {
-      const parentEmail = String(s.parentEmail || "").trim().toLowerCase();
+    // Then process roleInvites STUDENT records, but ONLY for students who are not already in the students collection.
+    // If a student is in the students collection and their parentEmail is cleared, we DO NOT sync a parent for them.
+    roleInviteStudents.forEach(s => {
       const luminaId = String(s.luminaId || s.id || "").trim();
-      if (luminaId) {
-        if (parentEmail) {
-          allStudentsMap.set(luminaId, {
-            id: s.id,
-            luminaId,
-            parentEmail,
-            name: s.name || s.fullName || "Siswa",
-            unitId: s.unitId || "KINDERGARTEN",
-            fatherName: s.fatherName || "",
-            motherName: s.motherName || ""
-          });
-        } else {
-          // If parentEmail is removed/cleared in the active students collection,
-          // make sure we don't sync any parent for this student.
-          allStudentsMap.delete(luminaId);
-        }
+      const parentEmail = String(s.parentEmail || "").trim().toLowerCase();
+      const studentEmail = String(s.email || "").trim().toLowerCase();
+
+      if (!parentEmail) return;
+
+      // Resolve student's canonical ID in our master list if possible
+      let canonicalId = luminaId;
+      if (!activeStudentsMap.has(canonicalId) && studentEmail && studentEmailToLuminaId.has(studentEmail)) {
+        canonicalId = studentEmailToLuminaId.get(studentEmail)!;
+      }
+
+      // If this student is already in our master list, we respect the master record (which has no parentEmail or a different one)
+      if (activeStudentsMap.has(canonicalId)) {
+        return;
+      }
+
+      // If the student is NOT in students collection yet (it is a pending invitation), we can use the invite's parentEmail
+      if (canonicalId) {
+        studentParentMap.set(canonicalId, {
+          parentEmail,
+          name: s.name || "Siswa",
+          unitId: s.unitId || "JUNIOR_HIGH",
+          fatherName: "",
+          motherName: ""
+        });
       }
     });
 
     // 3. Map parentEmail to list of student luminaIds
     const parentMap: Record<string, { name: string; linkedStudents: string[]; unitId: string }> = {};
 
-    for (const [luminaId, s] of allStudentsMap.entries()) {
+    for (const [luminaId, s] of studentParentMap.entries()) {
       const parentEmail = s.parentEmail;
       if (parentEmail && luminaId) {
         if (!parentMap[parentEmail]) {
@@ -4458,24 +4483,58 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
       }
     }
 
+    const batch = db.batch();
     let createdInvites = 0;
     let updatedInvites = 0;
+    let deletedInvites = 0;
     let updatedUsers = 0;
     let syncedLinks = 0;
 
+    // A. Clean up old/orphaned PARENT invitations from roleInvites
+    // If a parent's email is no longer associated with any active student, they shouldn't have active invitations
+    const parentInvitesSnap = await db.collection("roleInvites")
+      .where("role", "==", "PARENT")
+      .get();
+
+    for (const doc of parentInvitesSnap.docs) {
+      const inviteData = doc.data();
+      const inviteEmail = String(inviteData.email || "").trim().toLowerCase();
+      if (inviteEmail && !parentMap[inviteEmail]) {
+        // Delete parent invitations that are no longer linked to any student
+        batch.delete(doc.ref);
+        deletedInvites++;
+      }
+    }
+
+    // B. Clean up parentStudentLinks collection
+    // Any existing link document that is no longer active should be deleted to prevent stale state
+    const parentLinksSnap = await db.collection("parentStudentLinks").get();
+    for (const doc of parentLinksSnap.docs) {
+      const linkData = doc.data();
+      const pEmail = String(linkData.parentEmail || linkData.parentId || "").trim().toLowerCase();
+      const sId = String(linkData.studentId || "").trim();
+
+      if (pEmail) {
+        if (!parentMap[pEmail]) {
+          batch.delete(doc.ref);
+        } else if (sId && !parentMap[pEmail].linkedStudents.includes(sId)) {
+          batch.delete(doc.ref);
+        }
+      }
+    }
+
+    // C. Create or update PARENT invitations for active parent emails
     for (const [email, info] of Object.entries(parentMap)) {
       const emailClean = email.toLowerCase().trim();
       if (!emailClean) continue;
 
-      // A. Sync roleInvites for PARENT role
-      const parentSnap = await db.collection("roleInvites")
-        .where("email", "==", emailClean)
-        .where("role", "==", "PARENT")
-        .limit(1)
-        .get();
+      // Find if parent invite already exists
+      const existingInviteDoc = parentInvitesSnap.docs.find(d => String(d.data().email || "").toLowerCase().trim() === emailClean);
 
-      if (parentSnap.empty) {
-        await db.collection("roleInvites").add({
+      if (!existingInviteDoc) {
+        // Create new invitation
+        const newInviteRef = db.collection("roleInvites").doc();
+        batch.set(newInviteRef, {
           email: emailClean,
           name: info.name,
           role: "PARENT",
@@ -4486,13 +4545,13 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
         });
         createdInvites++;
       } else {
-        const parentDoc = parentSnap.docs[0];
-        const currentData = parentDoc.data();
+        // Update existing invitation if children list or name changed
+        const currentData = existingInviteDoc.data();
         const currentLinked = Array.isArray(currentData.linkedStudents) ? currentData.linkedStudents : [];
         const newLinked = Array.from(new Set([...currentLinked, ...info.linkedStudents].map(id => String(id))));
-        
+
         if (newLinked.length !== currentLinked.length || currentData.name !== info.name) {
-          await parentDoc.ref.update({
+          batch.update(existingInviteDoc.ref, {
             linkedStudents: newLinked,
             name: currentData.name || info.name,
             updatedAt: FieldValue.serverTimestamp()
@@ -4501,39 +4560,9 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
         }
       }
 
-      // B. Sync users collection for active registered parent profiles (also update GUEST/pending to PARENT/active)
-      const userSnap = await db.collection("users")
-        .where("email", "==", emailClean)
-        .get();
-
-      if (!userSnap.empty) {
-        for (const userDoc of userSnap.docs) {
-          const userData = userDoc.data();
-          const currentLinked = Array.isArray(userData.linkedStudents) ? userData.linkedStudents : [];
-          const newLinked = Array.from(new Set([...currentLinked, ...info.linkedStudents].map(id => String(id))));
-          
-          const updates: any = {};
-          if (userData.role === 'GUEST') {
-            updates.role = 'PARENT';
-          }
-          if (userData.status === 'pending') {
-            updates.status = 'active';
-          }
-          
-          if (newLinked.length !== currentLinked.length || updates.role || updates.status) {
-            await userDoc.ref.update({
-              ...updates,
-              linkedStudents: newLinked,
-              updatedAt: FieldValue.serverTimestamp()
-            });
-            updatedUsers++;
-          }
-        }
-      }
-
-      // C. Update/Replace parentStudentLinks document (docId = parentEmail)
+      // D. Sync parentStudentLinks document (consolidated docId = parentEmail)
       const linkDocRef = db.collection("parentStudentLinks").doc(emailClean);
-      await linkDocRef.set({
+      batch.set(linkDocRef, {
         parentId: emailClean,
         parentEmail: emailClean,
         studentIds: info.linkedStudents,
@@ -4541,10 +4570,11 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
         createdBy: "system_admin_sync"
       }, { merge: true });
 
-      // D. Update sub parentStudentLinks documents (docId = `${parentEmail}_${luminaId}`)
+      // E. Sync parentStudentLinks individual documents (docId = `${parentEmail}_${luminaId}`)
       for (const luminaId of info.linkedStudents) {
         const individualLinkId = `${emailClean}_${luminaId}`;
-        await db.collection("parentStudentLinks").doc(individualLinkId).set({
+        const individualLinkRef = db.collection("parentStudentLinks").doc(individualLinkId);
+        batch.set(individualLinkRef, {
           parentEmail: emailClean,
           studentId: luminaId,
           unitId: info.unitId,
@@ -4555,10 +4585,50 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
       }
     }
 
+    // F. Sync users collection for active registered parent profiles
+    const usersSnap = await db.collection("users").get();
+    for (const userDoc of usersSnap.docs) {
+      const userData = userDoc.data();
+      const uEmail = String(userData.email || "").trim().toLowerCase();
+
+      if (uEmail) {
+        const info = parentMap[uEmail];
+        const currentLinked = Array.isArray(userData.linkedStudents) ? userData.linkedStudents : [];
+        
+        if (userData.role === 'PARENT') {
+          if (info) {
+            // Update linked students for active parents
+            const newLinked = Array.from(new Set([...currentLinked, ...info.linkedStudents].map(id => String(id))));
+            if (newLinked.length !== currentLinked.length) {
+              batch.update(userDoc.ref, {
+                linkedStudents: newLinked,
+                updatedAt: FieldValue.serverTimestamp()
+              });
+              updatedUsers++;
+            }
+          } else {
+            // Parent has no active students left
+            if (currentLinked.length > 0) {
+              batch.update(userDoc.ref, {
+                linkedStudents: [],
+                updatedAt: FieldValue.serverTimestamp()
+              });
+              updatedUsers++;
+            }
+          }
+        }
+      }
+    }
+
+    await batch.commit();
+
+    console.log(`[SyncParents] Finished. Created: ${createdInvites}, Updated: ${updatedInvites}, Deleted: ${deletedInvites}, Synced Links: ${syncedLinks}`);
+
     res.json({
       success: true,
       createdInvites,
       updatedInvites,
+      deletedInvites,
       updatedUsers,
       syncedLinks,
       totalParents: Object.keys(parentMap).length
@@ -5322,7 +5392,2117 @@ app.post("/api/kindergarten/generate-sel-comment", async (req, res) => {
   }
 });
 
-// API: Health Check
+// ==========================================
+// GOOGLE SHEETS LITERASI & NUMERASI SD INTEGRATION
+// ==========================================
+
+function extractSpreadsheetId(urlOrId: string): string {
+  if (!urlOrId) return "";
+  const matches = urlOrId.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  return matches ? matches[1] : urlOrId.trim();
+}
+
+function getHeaderIndices(headers: string[]) {
+  const indices: Record<string, number> = {};
+  headers.forEach((h, idx) => {
+    const clean = (h || "").toString().toLowerCase().trim();
+    if (clean === "luminaid" || clean.includes("luminaid") || clean.includes("id siswa") || clean.includes("student id") || clean === "id" || clean === "nis") {
+      indices.studentId = idx;
+    } else if (clean.includes("namasiswa") || clean.includes("nama siswa") || clean.includes("nama") || clean.includes("name")) {
+      indices.studentName = idx;
+    } else if (clean.includes("topik") || clean.includes("topic") || clean.includes("materi")) {
+      indices.topic = idx;
+    } else if (clean === "level" || clean.includes("math level") || clean.includes("level matematika") || clean.includes("reading level") || clean.includes("reading_level") || clean.includes("jilid iqro") || clean.includes("iqro level") || clean === "jilid" || clean.includes("jilid_iqro")) {
+      indices.level = idx;
+      indices.mathLevel = idx;
+      indices.readingLevel = idx;
+      indices.iqroCurrentLevel = idx;
+    } else if (clean === "accuracypercent" || clean.includes("accuracy") || clean.includes("akurasi") || clean.includes("comprehension") || clean.includes("pemahaman") || clean.includes("target")) {
+      indices.accuracy = idx;
+      indices.comprehensionScore = idx;
+      indices.targetIqroLevel = idx;
+    } else if (clean.includes("kecepatan") || clean.includes("speed")) {
+      indices.speed = idx;
+    } else if (clean.includes("words read") || clean.includes("words_read") || clean.includes("kata dibaca")) {
+      indices.wordsRead = idx;
+    } else if (clean.includes("errors") || clean.includes("error") || clean.includes("salah") || clean.includes("kesalahan")) {
+      indices.errors = idx;
+    } else if (clean.includes("perpustakaan") || clean.includes("library") || clean.includes("pinjam")) {
+      indices.libraryBorrowStatus = idx;
+    } else if (clean.includes("odob") || clean.includes("one day one book") || clean.includes("one_day_one_book")) {
+      indices.oneDayOneBookStatus = idx;
+    } else if (clean.includes("halaman") || clean.includes("checkpoint") || clean.includes("iqrocurrentcheckpoint")) {
+      indices.iqroCurrentCheckpoint = idx;
+    } else if (clean.includes("lulus") || clean.includes("completion")) {
+      indices.completionStatus = idx;
+    } else if (clean.includes("huruf") || clean.includes("recognition")) {
+      indices.letterRecognitionNote = idx;
+    } else if (clean.includes("tajwid")) {
+      indices.tajwidNote = idx;
+    } else if (clean.includes("intervensi") || clean.includes("intervention") || clean.includes("tier")) {
+      indices.intervention = idx;
+    } else if (clean.includes("catatan") || clean.includes("note") || clean.includes("keterangan")) {
+      indices.notes = idx;
+    } else if (clean.includes("updatedat") || clean.includes("updated_at") || clean.includes("diubah")) {
+      indices.updatedAt = idx;
+    }
+  });
+  return indices;
+}
+
+async function checkElementaryAuth(req: any, res: any) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    return null;
+  }
+  const token = authHeader.split("Bearer ")[1];
+  let decodedToken: any;
+  try {
+    const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+    decodedToken = await getAdminAuth().verifyIdToken(token);
+  } catch (authErr: any) {
+    res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    return null;
+  }
+
+  const db = getAdminDb();
+  if (!db) {
+    res.status(500).json({ error: "Firestore is not online." });
+    return null;
+  }
+
+  const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+  if (!userDoc.exists) {
+    res.status(403).json({ error: "Access denied. User profile not found." });
+    return null;
+  }
+  const userData = userDoc.data() || {};
+  const userRole = userData.role || null;
+
+  const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
+  const isElementaryUnit = userData.unitId === 'ELEMENTARY' || (Array.isArray(userData.assignedUnits) && userData.assignedUnits.includes('ELEMENTARY'));
+  const isAuthorized = isSuperAdmin || (['HEAD_UNIT', 'TEACHER'].includes(userRole || "") && isElementaryUnit);
+
+  if (!isAuthorized) {
+    res.status(403).json({ error: "Access denied. Active Elementary role/unit required." });
+    return null;
+  }
+
+  return { decodedToken, db, userData, userRole };
+}
+
+// Endpoint: Resolve Academic Year and Period based on Server/School time
+app.get("/api/elementary/sheets/resolve-period", (req, res) => {
+  try {
+    const timezone = (req.query.timezone as string) || "Asia/Jakarta";
+    const dateStr = req.query.date as string;
+    const date = dateStr ? new Date(dateStr) : new Date();
+    const resolved = resolveAcademicYearAndPeriod(date, timezone);
+    res.json(resolved);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Shared Helper: Create fully compliant Multi-Tab Google Spreadsheet for Elementary Literacy & Numeracy
+async function createUnifiedMultiTabSpreadsheet(db: any, decodedToken: any, classId: string, academicYear: string, tabsMap?: Record<string, string>) {
+  // Load class details
+  const classSnap = await db.collection("classes").doc(classId).get();
+  if (!classSnap.exists) {
+    throw new Error("Kelas tidak ditemukan.");
+  }
+  const classData = classSnap.data() || {};
+  const className = classData.name || classId;
+
+  // Resolve Student list robustly
+  const classKeys = [classId];
+  if (classData.name && !classKeys.includes(classData.name)) classKeys.push(classData.name);
+  if (classData.classId && !classKeys.includes(classData.classId)) classKeys.push(classData.classId);
+
+  const enrollments: any[] = [];
+  for (const key of classKeys) {
+    const enrollSnap = await db.collection("enrollments")
+      .where("academicYear", "==", academicYear)
+      .where("classId", "==", key)
+      .where("status", "==", "active")
+      .get();
+    enrollSnap.docs.forEach((doc: any) => {
+      const data = doc.data();
+      if (!enrollments.some(e => e.studentId === data.studentId)) {
+        enrollments.push(data);
+      }
+    });
+  }
+
+  const studentsList: { id: string; name: string }[] = [];
+  if (enrollments.length > 0) {
+    const chunks = [];
+    const studentIds = enrollments.map(e => e.studentId);
+    for (let i = 0; i < studentIds.length; i += 10) {
+      chunks.push(studentIds.slice(i, i + 10));
+    }
+    for (const chunk of chunks) {
+      const studentsSnap = await db.collection("students")
+        .where("__name__", "in", chunk)
+        .get();
+      studentsSnap.docs.forEach((doc: any) => {
+        const data = doc.data();
+        studentsList.push({
+          id: doc.id,
+          name: data.name || data.fullName || 'Siswa Tanpa Nama'
+        });
+      });
+    }
+  }
+  studentsList.sort((a, b) => a.name.localeCompare(b.name));
+
+  const sheetsInstance = getSheets();
+  const driveInstance = getDrive();
+  if (!sheetsInstance || !driveInstance) {
+    throw new Error("Google API Service Account is not fully configured.");
+  }
+
+  const title = `LUMINA Literasi Numerasi SD - ${className} (${academicYear.replace(/\//g, '-')})`;
+  
+  // Default Tabs Map if not provided
+  const actualTabs = tabsMap || {
+    P1_NUMERACY: "P1 Numerasi",
+    P1_BAHASA_INDONESIA: "P1 Bahasa Indonesia",
+    P1_ENGLISH_READING: "P1 English Reading",
+    P1_MENGAJI: "P1 Mengaji",
+    P2_NUMERACY: "P2 Numerasi",
+    P2_BAHASA_INDONESIA: "P2 Bahasa Indonesia",
+    P2_ENGLISH_READING: "P2 English Reading",
+    P2_MENGAJI: "P2 Mengaji",
+    P3_NUMERACY: "P3 Numerasi",
+    P3_BAHASA_INDONESIA: "P3 Bahasa Indonesia",
+    P3_ENGLISH_READING: "P3 English Reading",
+    P3_MENGAJI: "P3 Mengaji"
+  };
+
+  const sheetsSpecs = [
+    { properties: { title: "README" } },
+    { properties: { title: "DAFTAR_SISWA" } },
+    ...Object.entries(actualTabs).map(([_, tabName]) => ({
+      properties: { title: String(tabName) }
+    }))
+  ];
+
+  // Create the spreadsheet
+  const createResponse = await sheetsInstance.spreadsheets.create({
+    requestBody: {
+      properties: { title },
+      sheets: sheetsSpecs
+    }
+  });
+
+  const spreadsheetId = createResponse.data.spreadsheetId;
+  const spreadsheetUrl = createResponse.data.spreadsheetUrl;
+
+  if (!spreadsheetId) {
+    throw new Error("Gagal membuat berkas Google Spreadsheet baru.");
+  }
+
+  // Get sheetId mapping
+  const sheetsInfo = createResponse.data.sheets || [];
+  const sheetIdMap: Record<string, number> = {};
+  sheetsInfo.forEach((s: any) => {
+    if (s.properties?.title && s.properties?.sheetId !== undefined) {
+      sheetIdMap[s.properties.title] = s.properties.sheetId;
+    }
+  });
+
+  const readmeSheetId = sheetIdMap["README"];
+  const daftarSiswaSheetId = sheetIdMap["DAFTAR_SISWA"];
+
+  // Prepare README content
+  const readmeRows = [
+    ["PANDUAN TEMPLATE GOOGLE SHEET LITERASI & NUMERASI SD (LUMINA)"],
+    ["Aplikasi: LUMINA Literasi & Numerasi Elementary (SD)"],
+    [`Kelas: ${className} | Tahun Ajaran: ${academicYear}`],
+    [""],
+    ["--- PETUNJUK UMUM ---"],
+    ["1. Spreadsheet ini digunakan sebagai satu-satunya sumber data resmi sinkronisasi untuk Kelas & Tahun Ajaran tersebut."],
+    ["2. Terdapat 2 Tab Utama:"],
+    ["   - README: Halaman panduan ini."],
+    ["   - DAFTAR_SISWA: Berisi master data siswa aktif dan non-aktif."],
+    ["3. Terdapat 12 Tab Input Periode:"],
+    ["   - P1 / P2 / P3 untuk 4 area: Numerasi, Bahasa Indonesia, English Reading, dan Mengaji."],
+    [""],
+    ["--- ATURAN OPERASIONAL PENTING (ROSTER DAN INPUT DATA) ---"],
+    ["1. DAFTAR_SISWA:"],
+    ["   - luminaId: NIS / ID unik siswa (plain text, wajib diisi dan unik)."],
+    ["   - namaSiswa: Nama lengkap siswa aktif (wajib diisi)."],
+    ["   - kelas: Harus sama dengan nama kelas di sistem (e.g. '" + className + "')."],
+    ["   - status: Diisi hanya dengan 'AKTIF' atau 'NONAKTIF'."],
+    ["2. ROSTER OTOMATIS:"],
+    ["   - Daftar siswa (ID dan Nama) di seluruh 12 Tab Input Periode akan otomatis terisi menggunakan formula FILTER dari DAFTAR_SISWA."],
+    ["   - Urutan nama di tab pengisian sangat bergantung pada urutan di DAFTAR_SISWA."],
+    ["3. ATURAN PENTING GURU:"],
+    ["   - Jangan mensortir (sort) atau menyaring (filter) baris di tab DAFTAR_SISWA setelah periode pengisian berjalan, karena dapat merusak korespondensi baris data."],
+    ["   - Jangan memindahkan baris siswa atau menyisipkan siswa di tengah-tengah daftar."],
+    ["   - Siswa baru WAJIB ditambahkan di baris paling bawah pada tab DAFTAR_SISWA."],
+    ["   - Jangan mengubah Lumina ID / NIS siswa setelah guru mulai menginput nilai di tab pengisian."],
+    ["   - Untuk siswa yang keluar/pindah kelas, cukup ubah status-nya di DAFTAR_SISWA menjadi 'NONAKTIF'. JANGAN MENGHAPUS baris siswa tersebut karena akan menggeser urutan baris nilai!"],
+    ["4. AREA INPUT NILAI:"],
+    ["   - Guru HANYA diperbolehkan mengedit Kolom C sampai G (level, topik, accuracyPercent, intervensi, catatan)."],
+    ["   - Kolom A:B (Lumina ID & Nama) dan Kolom H (updatedAt) serta baris header 1-4 dilindungi (Protected Range) agar tidak terubah secara tidak sengaja."],
+    ["   - Kolom accuracyPercent menerima nilai angka desimal/bulat antara 0 sampai 100."],
+    ["   - Kolom intervensi wajib dipilih melalui dropdown: BELUM_DIISI, TIER_1, TIER_2, TIER_3."],
+    ["5. SINKRONISASI:"],
+    ["   - Setelah guru selesai melakukan pemutakhiran data, silakan lakukan sinkronisasi dari dashboard web LUMINA."]
+  ];
+
+  // Prepare DAFTAR_SISWA content
+  const daftarSiswaRows = [
+    ["luminaId", "namaSiswa", "kelas", "status"]
+  ];
+  studentsList.forEach(st => {
+    daftarSiswaRows.push([st.id, st.name, className, "AKTIF"]);
+  });
+
+  // Prepare write commands for metadata tabs (README, DAFTAR_SISWA)
+  const dataToWrite = [
+    {
+      range: "README!A1",
+      values: readmeRows
+    },
+    {
+      range: "DAFTAR_SISWA!A1",
+      values: daftarSiswaRows
+    }
+  ];
+
+  // Prepare 12 Input Tabs
+  Object.entries(actualTabs).forEach(([key, tabName]) => {
+    // Generate Row 1 based on subject area
+    let areaLabel = "Literasi / Numerasi";
+    if (key.includes("NUMERACY")) areaLabel = "Numerasi";
+    else if (key.includes("BAHASA_INDONESIA")) areaLabel = "Bahasa Indonesia";
+    else if (key.includes("ENGLISH_READING")) areaLabel = "English Reading";
+    else if (key.includes("MENGAJI")) areaLabel = "Mengaji";
+
+    const periodLabel = key.includes("P1") ? "Periode 1 (P1)" : (key.includes("P2") ? "Periode 2 (P2)" : "Periode 3 (P3)");
+
+    const inputTabRows = [
+      [`${periodLabel} - ${areaLabel}`],
+      [`Kelas: ${className} | Tahun Ajaran: ${academicYear}`],
+      [`Petunjuk: Guru HANYA mengisi kolom C sampai G. Kolom A, B, H, dan baris 1-4 dilindungi.`],
+      ["luminaId", "namaSiswa", "level", "topik", "accuracyPercent", "intervensi", "catatan", "updatedAt"],
+      [`=IFERROR(FILTER('DAFTAR_SISWA'!A2:B, 'DAFTAR_SISWA'!C2:C="${className}", 'DAFTAR_SISWA'!D2:D="AKTIF", 'DAFTAR_SISWA'!A2:A<>""), "")`]
+    ];
+
+    dataToWrite.push({
+      range: `${tabName}!A1`,
+      values: inputTabRows
+    });
+  });
+
+  // Write all values (USER_ENTERED is crucial for formula parsing!)
+  await sheetsInstance.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: "USER_ENTERED",
+      data: dataToWrite
+    }
+  });
+
+  // Apply beautiful styling, frozen rows, validations, conditional formats, and protections
+  const batchRequests: any[] = [];
+
+  // 1. Format README sheet
+  if (readmeSheetId !== undefined) {
+    batchRequests.push({
+      repeatCell: {
+        range: { sheetId: readmeSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 1 },
+        cell: {
+          userEnteredFormat: {
+            textFormat: { bold: true, fontSize: 14, color: { red: 0.1, green: 0.2, blue: 0.5 } }
+          }
+        },
+        fields: "userEnteredFormat(textFormat)"
+      }
+    });
+  }
+
+  // 2. Format DAFTAR_SISWA sheet
+  if (daftarSiswaSheetId !== undefined) {
+    batchRequests.push(
+      {
+        repeatCell: {
+          range: { sheetId: daftarSiswaSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 4 },
+          cell: {
+            userEnteredFormat: {
+              backgroundColor: { red: 0.15, green: 0.2, blue: 0.3 },
+              textFormat: { bold: true, fontSize: 10, color: { red: 1, green: 1, blue: 1 } },
+              horizontalAlignment: "CENTER"
+            }
+          },
+          fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
+        }
+      },
+      {
+        updateSheetProperties: {
+          properties: { sheetId: daftarSiswaSheetId, gridProperties: { frozenRowCount: 1 } },
+          fields: "gridProperties.frozenRowCount"
+        }
+      },
+      {
+        addProtectedRange: {
+          protectedRange: {
+            range: { sheetId: daftarSiswaSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 4 },
+            description: "Proteksi Header DAFTAR_SISWA",
+            warningOnly: false,
+            editors: { users: [] }
+          }
+        }
+      }
+    );
+  }
+
+  // 3. Format each of the 12 input tabs
+  Object.entries(actualTabs).forEach(([key, tabName]) => {
+    const sheetId = sheetIdMap[tabName];
+    if (sheetId === undefined) return;
+
+    // Merge titles
+    batchRequests.push(
+      {
+        mergeCells: {
+          range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 8 },
+          mergeType: "MERGE_ALL"
+        }
+      },
+      {
+        mergeCells: {
+          range: { sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: 8 },
+          mergeType: "MERGE_ALL"
+        }
+      },
+      {
+        mergeCells: {
+          range: { sheetId, startRowIndex: 2, endRowIndex: 3, startColumnIndex: 0, endColumnIndex: 8 },
+          mergeType: "MERGE_ALL"
+        }
+      }
+    );
+
+    // Format top rows
+    batchRequests.push(
+      // Row 1 Title
+      {
+        repeatCell: {
+          range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 8 },
+          cell: {
+            userEnteredFormat: {
+              backgroundColor: { red: 0.1, green: 0.2, blue: 0.45 },
+              textFormat: { bold: true, fontSize: 12, color: { red: 1, green: 1, blue: 1 } },
+              horizontalAlignment: "CENTER",
+              verticalAlignment: "MIDDLE"
+            }
+          },
+          fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
+        }
+      },
+      // Row 2 Subtitle
+      {
+        repeatCell: {
+          range: { sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: 8 },
+          cell: {
+            userEnteredFormat: {
+              backgroundColor: { red: 0.9, green: 0.93, blue: 0.98 },
+              textFormat: { bold: true, fontSize: 10, color: { red: 0.1, green: 0.15, blue: 0.3 } },
+              horizontalAlignment: "CENTER",
+              verticalAlignment: "MIDDLE"
+            }
+          },
+          fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
+        }
+      },
+      // Row 3 Instruction
+      {
+        repeatCell: {
+          range: { sheetId, startRowIndex: 2, endRowIndex: 3, startColumnIndex: 0, endColumnIndex: 8 },
+          cell: {
+            userEnteredFormat: {
+              backgroundColor: { red: 0.97, green: 0.97, blue: 0.97 },
+              textFormat: { italic: true, fontSize: 9, color: { red: 0.4, green: 0.4, blue: 0.4 } },
+              horizontalAlignment: "CENTER",
+              verticalAlignment: "MIDDLE"
+            }
+          },
+          fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
+        }
+      },
+      // Row 4 Header Row
+      {
+        repeatCell: {
+          range: { sheetId, startRowIndex: 3, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: 8 },
+          cell: {
+            userEnteredFormat: {
+              backgroundColor: { red: 0.15, green: 0.2, blue: 0.3 },
+              textFormat: { bold: true, fontSize: 10, color: { red: 1, green: 1, blue: 1 } },
+              horizontalAlignment: "CENTER",
+              verticalAlignment: "MIDDLE"
+            }
+          },
+          fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
+        }
+      }
+    );
+
+    // Apply soft backgrounds to display/formula columns A:B and H (starting row 5)
+    batchRequests.push(
+      // A:B (Index 0 to 2) - Soft slate blue
+      {
+        repeatCell: {
+          range: { sheetId, startRowIndex: 4, endRowIndex: 150, startColumnIndex: 0, endColumnIndex: 2 },
+          cell: {
+            userEnteredFormat: {
+              backgroundColor: { red: 0.95, green: 0.96, blue: 0.98 },
+              textFormat: { color: { red: 0.2, green: 0.3, blue: 0.4 } }
+            }
+          },
+          fields: "userEnteredFormat(backgroundColor,textFormat)"
+        }
+      },
+      // H (Index 7 to 8) - Soft slate magenta/purple
+      {
+        repeatCell: {
+          range: { sheetId, startRowIndex: 4, endRowIndex: 150, startColumnIndex: 7, endColumnIndex: 8 },
+          cell: {
+            userEnteredFormat: {
+              backgroundColor: { red: 0.97, green: 0.96, blue: 0.97 },
+              textFormat: { color: { red: 0.4, green: 0.3, blue: 0.4 } }
+            }
+          },
+          fields: "userEnteredFormat(backgroundColor,textFormat)"
+        }
+      }
+    );
+
+    // Set frozen rows 1-4
+    batchRequests.push({
+      updateSheetProperties: {
+        properties: { sheetId, gridProperties: { frozenRowCount: 4 } },
+        fields: "gridProperties.frozenRowCount"
+      }
+    });
+
+    // Basic auto-filter on Row 4
+    batchRequests.push({
+      setBasicFilter: {
+        filter: {
+          range: { sheetId, startRowIndex: 3, endRowIndex: 150, startColumnIndex: 0, endColumnIndex: 8 }
+        }
+      }
+    });
+
+    // Validations: Intervensi (Column F / Index 5)
+    batchRequests.push({
+      setDataValidation: {
+        range: { sheetId, startRowIndex: 4, endRowIndex: 150, startColumnIndex: 5, endColumnIndex: 6 },
+        rule: {
+          condition: {
+            type: "ONE_OF_LIST",
+            values: [
+              { userEnteredValue: "BELUM_DIISI" },
+              { userEnteredValue: "TIER_1" },
+              { userEnteredValue: "TIER_2" },
+              { userEnteredValue: "TIER_3" }
+            ]
+          },
+          showCustomUi: true,
+          strict: true
+        }
+      }
+    });
+
+    // Validations: accuracyPercent (Column E / Index 4)
+    batchRequests.push({
+      setDataValidation: {
+        range: { sheetId, startRowIndex: 4, endRowIndex: 150, startColumnIndex: 4, endColumnIndex: 5 },
+        rule: {
+          condition: {
+            type: "NUMBER_BETWEEN",
+            values: [
+              { userEnteredValue: "0" },
+              { userEnteredValue: "100" }
+            ]
+          },
+          inputMessage: "Akurasi harus berupa angka antara 0 sampai 100",
+          showCustomUi: true,
+          strict: true
+        }
+      }
+    });
+
+    // Conditional formats for Intervensi values
+    const conditionalFormatRanges = [{ sheetId, startRowIndex: 4, endRowIndex: 150, startColumnIndex: 5, endColumnIndex: 6 }];
+    batchRequests.push(
+      {
+        addConditionalFormatRule: {
+          rule: {
+            ranges: conditionalFormatRanges,
+            booleanRule: {
+              condition: { type: "TEXT_EQ", values: [{ userEnteredValue: "BELUM_DIISI" }] },
+              format: {
+                backgroundColor: { red: 0.95, green: 0.95, blue: 0.95 },
+                textFormat: { foregroundColor: { red: 0.4, green: 0.4, blue: 0.4 } }
+              }
+            }
+          },
+          index: 0
+        }
+      },
+      {
+        addConditionalFormatRule: {
+          rule: {
+            ranges: conditionalFormatRanges,
+            booleanRule: {
+              condition: { type: "TEXT_EQ", values: [{ userEnteredValue: "TIER_1" }] },
+              format: {
+                backgroundColor: { red: 0.85, green: 0.95, blue: 0.85 },
+                textFormat: { foregroundColor: { red: 0.1, green: 0.4, blue: 0.1 }, bold: true }
+              }
+            }
+          },
+          index: 1
+        }
+      },
+      {
+        addConditionalFormatRule: {
+          rule: {
+            ranges: conditionalFormatRanges,
+            booleanRule: {
+              condition: { type: "TEXT_EQ", values: [{ userEnteredValue: "TIER_2" }] },
+              format: {
+                backgroundColor: { red: 0.99, green: 0.95, blue: 0.8 },
+                textFormat: { foregroundColor: { red: 0.5, green: 0.4, blue: 0 }, bold: true }
+              }
+            }
+          },
+          index: 2
+        }
+      },
+      {
+        addConditionalFormatRule: {
+          rule: {
+            ranges: conditionalFormatRanges,
+            booleanRule: {
+              condition: { type: "TEXT_EQ", values: [{ userEnteredValue: "TIER_3" }] },
+              format: {
+                backgroundColor: { red: 0.98, green: 0.85, blue: 0.85 },
+                textFormat: { foregroundColor: { red: 0.6, green: 0.1, blue: 0.1 }, bold: true }
+              }
+            }
+          },
+          index: 3
+        }
+      }
+    );
+
+    // Protections
+    batchRequests.push(
+      // Proteksi Row 1-4
+      {
+        addProtectedRange: {
+          protectedRange: {
+            range: { sheetId, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: 8 },
+            description: "Proteksi Header & Petunjuk",
+            warningOnly: false,
+            editors: { users: [] }
+          }
+        }
+      },
+      // Proteksi Kolom A:B (Roster)
+      {
+        addProtectedRange: {
+          protectedRange: {
+            range: { sheetId, startRowIndex: 4, endRowIndex: 150, startColumnIndex: 0, endColumnIndex: 2 },
+            description: "Proteksi Roster Otomatis A:B",
+            warningOnly: false,
+            editors: { users: [] }
+          }
+        }
+      },
+      // Proteksi Kolom H (updatedAt)
+      {
+        addProtectedRange: {
+          protectedRange: {
+            range: { sheetId, startRowIndex: 4, endRowIndex: 150, startColumnIndex: 7, endColumnIndex: 8 },
+            description: "Proteksi kolom updatedAt H",
+            warningOnly: false,
+            editors: { users: [] }
+          }
+        }
+      }
+    );
+  });
+
+  // Execute styling & protection requests
+  if (batchRequests.length > 0) {
+    try {
+      await sheetsInstance.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: { requests: batchRequests }
+      });
+    } catch (fmtErr) {
+      console.warn("Formatting template spreadsheet failed, continuing with unformatted sheet:", fmtErr);
+    }
+  }
+
+  // Grant Editor access to active user
+  if (decodedToken.email) {
+    try {
+      await driveInstance.permissions.create({
+        fileId: spreadsheetId,
+        requestBody: {
+          type: "user",
+          role: "writer",
+          emailAddress: decodedToken.email
+        },
+        sendNotificationEmail: true
+      });
+    } catch (permErr: any) {
+      console.error("Failed to share Spreadsheet with user:", permErr);
+    }
+  }
+
+  return {
+    spreadsheetId,
+    spreadsheetUrl,
+    title
+  };
+}
+
+// Endpoint: Test access, tab existence, and header validity for all 12 combinations
+app.post("/api/elementary/sheets/test-connection", async (req, res) => {
+  try {
+    const authResult = await checkElementaryAuth(req, res);
+    if (!authResult) return;
+
+    const { spreadsheetUrl, tabs } = req.body;
+    if (!spreadsheetUrl || !tabs || typeof tabs !== "object") {
+      return res.status(400).json({ error: "Parameter spreadsheetUrl dan tabs wajib disediakan." });
+    }
+
+    const spreadsheetId = extractSpreadsheetId(spreadsheetUrl);
+    if (!spreadsheetId) {
+      return res.status(400).json({ error: "Format URL Google Sheet tidak valid." });
+    }
+
+    const sheetsInstance = getSheets();
+    if (!sheetsInstance) {
+      return res.status(500).json({ error: "Google API Service Account is not fully configured." });
+    }
+
+    // Verify read access by fetching spreadsheet metadata
+    let meta;
+    try {
+      meta = await sheetsInstance.spreadsheets.get({ spreadsheetId });
+    } catch (err: any) {
+      return res.status(400).json({
+        success: false,
+        error: `Gagal mengakses spreadsheet. Detail: ${err.message}`
+      });
+    }
+
+    const existingSheets = meta.data.sheets?.map(s => s.properties?.title) || [];
+    const results: Record<string, any> = {};
+
+    for (const [key, tabName] of Object.entries(tabs)) {
+      if (!tabName) {
+        results[key] = { exists: false, headersValid: false, error: "Nama tab kosong di konfigurasi." };
+        continue;
+      }
+
+      const exists = existingSheets.includes(tabName);
+      if (!exists) {
+        results[key] = { exists: false, headersValid: false, error: `Tab "${tabName}" tidak ditemukan di Spreadsheet.` };
+        continue;
+      }
+
+      try {
+        const response = await sheetsInstance.spreadsheets.values.get({
+          spreadsheetId,
+          range: `${tabName}!A4:Z4`
+        });
+        const rows = response.data.values || [];
+        if (rows.length === 0 || rows[0].length === 0) {
+          results[key] = { exists: true, headersValid: false, error: "Baris header (baris 4) kosong." };
+          continue;
+        }
+
+        const headers = rows[0].map(h => (h || "").toString());
+        const indices = getHeaderIndices(headers);
+
+        if (indices.studentId === undefined) {
+          results[key] = {
+            exists: true,
+            headersValid: false,
+            error: "Kolom unik 'ID Siswa' atau 'NIS' tidak ditemukan di baris ke-4."
+          };
+        } else {
+          results[key] = { exists: true, headersValid: true };
+        }
+      } catch (err: any) {
+        results[key] = { exists: true, headersValid: false, error: `Gagal membaca header tab: ${err.message}` };
+      }
+    }
+
+    res.json({
+      success: true,
+      spreadsheetId,
+      results
+    });
+  } catch (err: any) {
+    console.error("[TestConnection] Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint: Create a full multi-tab template for all 12 combinations pre-filled
+app.post("/api/elementary/sheets/create-full-template", async (req, res) => {
+  try {
+    const authResult = await checkElementaryAuth(req, res);
+    if (!authResult) return;
+    const { decodedToken, db } = authResult;
+
+    const { classId, academicYear, tabs } = req.body;
+    if (!classId || !academicYear || !tabs || typeof tabs !== "object") {
+      return res.status(400).json({ error: "Parameter classId, academicYear, dan tabs wajib disediakan." });
+    }
+
+    const result = await createUnifiedMultiTabSpreadsheet(db, decodedToken, classId, academicYear, tabs);
+    res.json(result);
+  } catch (err: any) {
+    console.error("[CreateFullTemplate] Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint: Generate a copyable Google Sheet template with students pre-filled
+app.post("/api/elementary/sheets/create-template", async (req, res) => {
+  try {
+    const authResult = await checkElementaryAuth(req, res);
+    if (!authResult) return;
+    const { decodedToken, db } = authResult;
+
+    const { classId, academicYear } = req.body;
+    if (!classId || !academicYear) {
+      return res.status(400).json({ error: "Parameter classId dan academicYear wajib disediakan." });
+    }
+
+    const result = await createUnifiedMultiTabSpreadsheet(db, decodedToken, classId, academicYear);
+    res.json(result);
+  } catch (err: any) {
+    console.error("[SheetsCreateTemplate] Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Helper function to validate and map a single row for secure transaction sync
+function parseAndValidateSheetRow(
+  area: string,
+  row: any[],
+  indices: Record<string, number>,
+  studentsMap: Record<string, string>,
+  classId: string,
+  academicYear: string,
+  rowIndex: number,
+  periodId: string,
+  existingMap: Record<string, any>,
+  seenLuminaIds: Set<string>,
+  isForceSync: boolean,
+  studentsGradeMap: Record<string, number>
+) {
+  const excelRow = rowIndex + 5; // Rows start at index 4 (row 5)
+
+  // Standard 8 columns:
+  // 0: luminaId | 1: namaSiswa | 2: level | 3: topik | 4: accuracyPercent | 5: intervensi | 6: catatan | 7: updatedAt
+  const valLevel = (row[2] || "").toString().trim();
+  const valTopic = (row[3] || "").toString().trim();
+  const valAcc = (row[4] || "").toString().trim();
+  const valIntervention = (row[5] || "").toString().trim();
+  const valNotes = (row[6] || "").toString().trim();
+
+  // If C:G are completely empty, classify as SKIPPED_NOT_FILLED
+  const isCGEmpty = !valLevel && !valTopic && !valAcc && !valIntervention && !valNotes;
+  if (isCGEmpty) {
+    return { isSkipped: true, isError: false, errors: [], rowData: null, status: "SKIPPED_NOT_FILLED" };
+  }
+
+  const rawLuminaId = (row[0] || "").toString().trim();
+  if (!rawLuminaId) {
+    // "Jika Lumina ID kosong tetapi C:G terisi, row error."
+    const err = {
+      row: excelRow,
+      field: "luminaId",
+      code: "MISSING_LUMINA_ID",
+      message: `Baris ke-${excelRow} memiliki data pengisian nilai tetapi Lumina ID kosong.`
+    };
+    return { isSkipped: false, isError: true, errors: [err], rowData: null, status: "error" };
+  }
+
+  // "Tolak duplicate luminaId dalam satu tab."
+  if (seenLuminaIds.has(rawLuminaId)) {
+    const err = {
+      row: excelRow,
+      luminaId: rawLuminaId,
+      field: "luminaId",
+      code: "DUPLICATE_LUMINA_ID",
+      message: `Duplicate Lumina ID '${rawLuminaId}' terdeteksi pada baris ke-${excelRow} di tab ini.`
+    };
+    return { isSkipped: false, isError: true, errors: [err], rowData: null, status: "error" };
+  }
+  seenLuminaIds.add(rawLuminaId);
+
+  // "luminaId harus cocok dengan satu siswa aktif."
+  const officialName = studentsMap[rawLuminaId];
+  if (!officialName) {
+    const err = {
+      row: excelRow,
+      luminaId: rawLuminaId,
+      field: "luminaId",
+      code: "STUDENT_NOT_FOUND",
+      message: `Siswa dengan ID '${rawLuminaId}' tidak terdaftar atau tidak aktif di kelas ${classId} untuk Tahun Ajaran ${academicYear}.`
+    };
+    return { isSkipped: false, isError: true, errors: [err], rowData: null, status: "error" };
+  }
+
+  const errors: any[] = [];
+
+  // "Nama hanya display; jika berbeda, catat warning."
+  const rowName = (row[1] || "").toString().trim();
+  const nameWarning = rowName && officialName && rowName.toLowerCase() !== officialName.toLowerCase()
+    ? `Nama siswa di sheet ('${rowName}') berbeda dengan nama resmi di database ('${officialName}').`
+    : null;
+
+  // "accuracyPercent harus 0–100."
+  let accuracyVal: number | null = null;
+  if (valAcc !== "") {
+    const cleanAcc = valAcc.replace(/%/g, '').trim();
+    const parsed = parseFloat(cleanAcc);
+    if (isNaN(parsed) || parsed < 0 || parsed > 100) {
+      errors.push({
+        row: excelRow,
+        luminaId: rawLuminaId,
+        field: "accuracyPercent",
+        code: "INVALID_ACCURACY",
+        message: `accuracyPercent pada baris ke-${excelRow} harus berupa angka desimal antara 0 sampai 100.`
+      });
+    } else {
+      accuracyVal = parsed;
+    }
+  }
+
+  // "intervensi harus enum valid."
+  const finalIntervention = parseIntervention(valIntervention);
+  if (valIntervention !== "" && finalIntervention === null) {
+    errors.push({
+      row: excelRow,
+      luminaId: rawLuminaId,
+      field: "intervensi",
+      code: "INVALID_INTERVENTION",
+      message: `Status intervensi '${valIntervention}' tidak valid. Harus salah satu dari: BELUM_DIISI, TIER_1, TIER_2, TIER_3.`
+    });
+  }
+
+  if (errors.length > 0) {
+    return { isSkipped: false, isError: true, errors, rowData: null, status: "error" };
+  }
+
+  const rowSourceUpdatedAt = parseSheetDate(row[7]);
+
+  // Handle older sourceUpdatedAt and unchanged snapshots check
+  const existing = existingMap[rawLuminaId];
+  let isUnchanged = false;
+  let isForceSynced = false;
+
+  if (existing) {
+    if (existing.sourceUpdatedAt && rowSourceUpdatedAt < existing.sourceUpdatedAt) {
+      if (isForceSync) {
+        isForceSynced = true;
+      } else {
+        isUnchanged = true;
+      }
+    } else {
+      // Compare values to determine change status
+      const hasChanges =
+        (existing.level || "") !== valLevel ||
+        (existing.topic || "") !== valTopic ||
+        existing.accuracyPercent !== accuracyVal ||
+        (existing.intervention || "BELUM_DIISI") !== (finalIntervention || "BELUM_DIISI") ||
+        (existing.notes || "") !== valNotes;
+      if (!hasChanges) {
+        isUnchanged = true;
+      }
+    }
+  }
+
+  const mappedRowData = {
+    studentId: rawLuminaId,
+    luminaId: rawLuminaId,
+    studentName: officialName,
+    level: valLevel || null,
+    topic: valTopic || null,
+    accuracyPercent: accuracyVal,
+    intervention: finalIntervention || "BELUM_DIISI",
+    notes: valNotes || null,
+    sourceUpdatedAt: rowSourceUpdatedAt,
+    nameWarning,
+    excelRow
+  };
+
+  return {
+    isSkipped: false,
+    isError: false,
+    errors: [],
+    rowData: mappedRowData,
+    status: existing ? (isUnchanged ? "unchanged" : "updated") : "inserted",
+    isForceSynced
+  };
+}
+
+function parseSheetDate(val: any): number {
+  if (!val) return Date.now();
+  const str = val.toString().trim();
+  if (!str) return Date.now();
+
+  const num = Number(str);
+  if (!isNaN(num) && num > 1000000000) {
+    return num < 10000000000 ? num * 1000 : num;
+  }
+
+  const parsed = Date.parse(str);
+  if (!isNaN(parsed)) return parsed;
+
+  return Date.now();
+}
+
+function validateHeaders(headers: string[]): boolean {
+  const expectedHeaders = [
+    "luminaId",
+    "namaSiswa",
+    "level",
+    "topik",
+    "accuracyPercent",
+    "intervensi",
+    "catatan",
+    "updatedAt"
+  ];
+  if (headers.length < expectedHeaders.length) return false;
+  for (let i = 0; i < expectedHeaders.length; i++) {
+    const cleanActual = (headers[i] || "").toString().trim().toLowerCase();
+    const cleanExpected = expectedHeaders[i].toLowerCase();
+    if (cleanActual !== cleanExpected) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function parseIntervention(val: string): string | null {
+  const u = val.toUpperCase().replace(/\s+/g, "");
+  if (u === "BELUM_DIISI" || u === "BELUMDIISI" || u === "") return "BELUM_DIISI";
+  if (u === "TIER_1" || u === "TIER1" || u === "ON_TRACK" || u === "ONTRACK") return "TIER_1";
+  if (u === "TIER_2" || u === "TIER2" || u === "MONITOR" || u === "NEEDSSUPPORT") return "TIER_2";
+  if (u === "TIER_3" || u === "TIER3" || u === "INTERVENTION" || u === "RECOMMENDED") return "TIER_3";
+  return null;
+}
+
+function normalizePeriod(periodId: string): { periodId: string; periodLabel: string; legacyPeriod: string } {
+  const p = (periodId || "").toString().toUpperCase().trim();
+  if (p === "P1" || p === "JUL_OCT") {
+    return { periodId: "P1", periodLabel: "Juli–Oktober", legacyPeriod: "JUL_OCT" };
+  }
+  if (p === "P2" || p === "NOV_FEB") {
+    return { periodId: "P2", periodLabel: "November–Februari", legacyPeriod: "NOV_FEB" };
+  }
+  if (p === "P3" || p === "MAR_JUN") {
+    return { periodId: "P3", periodLabel: "Maret–Juni", legacyPeriod: "MAR_JUN" };
+  }
+  return { periodId: p, periodLabel: p, legacyPeriod: p };
+}
+
+async function writeBatches(db: any, operations: Array<{ ref: any; data: any; type: 'set' | 'update' | 'delete' }>) {
+  const CHUNK_SIZE = 200;
+  for (let i = 0; i < operations.length; i += CHUNK_SIZE) {
+    const batch = db.batch();
+    const chunk = operations.slice(i, i + CHUNK_SIZE);
+    chunk.forEach(op => {
+      if (op.type === 'set') {
+        batch.set(op.ref, op.data, { merge: true });
+      } else if (op.type === 'update') {
+        batch.update(op.ref, op.data);
+      } else if (op.type === 'delete') {
+        batch.delete(op.ref);
+      }
+    });
+    await batch.commit();
+  }
+}
+
+// 1. Unified Preview Sync Handler
+async function handlePreviewSync(req: any, res: any) {
+  try {
+    const authResult = await checkElementaryAuth(req, res);
+    if (!authResult) return;
+    const { decodedToken, db, userData, userRole } = authResult;
+
+    const { classId, academicYear, periodId, area, dryRun } = req.body;
+    if (!classId || !academicYear || !periodId || !area) {
+      return res.status(400).json({ error: "Parameter classId, academicYear, periodId, dan area wajib disediakan." });
+    }
+
+    const academicYearKey = academicYear.replace(/\//g, "-");
+    const { periodId: normPeriodId, periodLabel, legacyPeriod } = normalizePeriod(periodId);
+
+    // Role and class scope validation
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
+    const isElementaryUnit = userData.unitId === 'ELEMENTARY' || (Array.isArray(userData.assignedUnits) && userData.assignedUnits.includes('ELEMENTARY'));
+    const isAuthorized = isSuperAdmin || (['HEAD_UNIT', 'TEACHER', 'HOMEROOM_TEACHER'].includes(userRole || "") && isElementaryUnit);
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: "Access denied. Active Elementary role/unit required." });
+    }
+
+    if (!isSuperAdmin && userRole !== 'HEAD_UNIT') {
+      const teacherClassId = userData.classId || userData.assignedClassId;
+      const teacherClassIds = Array.isArray(userData.assignedClassIds) ? userData.assignedClassIds : (teacherClassId ? [teacherClassId] : []);
+      if (teacherClassIds.length > 0 && !teacherClassIds.includes(classId)) {
+        return res.status(403).json({ error: `Access denied. Anda tidak memiliki akses ke kelas ${classId}.` });
+      }
+    }
+
+    // Force Sync access check
+    const isAuthorizedForForceSync = isSuperAdmin || userRole === "HEAD_UNIT";
+    const isForceSyncRequested = !!req.body.forceSync;
+    if (isForceSyncRequested && !isAuthorizedForForceSync) {
+      return res.status(403).json({ error: "Force sync hanya diizinkan untuk Kepala Unit dan Super Admin." });
+    }
+    const isForceSync = isForceSyncRequested && isAuthorizedForForceSync;
+
+    // Fetch official configuration
+    const configId = `${academicYearKey}__${classId}`;
+    const configSnap = await db.collection("elementaryLiteracyNumeracySheetConfigs").doc(configId).get();
+    const configData = configSnap.exists ? configSnap.data() || {} : {};
+
+    if (configSnap.exists && !configData.isActive) {
+      return res.status(400).json({ error: "Konfigurasi Google Sheet resmi untuk kelas ini dinonaktifkan oleh Admin." });
+    }
+
+    const tabKeyVal = `${normPeriodId}_${area}`;
+    let spreadsheetId = configData.spreadsheetId || (req.body.spreadsheetUrl ? extractSpreadsheetId(req.body.spreadsheetUrl) : "");
+    let sheetName = configData.tabs?.[tabKeyVal] || req.body.sheetName || "";
+
+    if (!spreadsheetId) {
+      return res.status(400).json({ error: "ID Spreadsheet tidak dikonfigurasi dan tidak disediakan di input." });
+    }
+    if (!sheetName) {
+      return res.status(400).json({ error: `Nama tab untuk kombinasi ${periodId} dan ${area} belum dikonfigurasi.` });
+    }
+
+    // Load active enrollments and students robustly
+    const classSnap = await db.collection("classes").doc(classId).get();
+    const classKeys = [classId];
+    let className = classId;
+    if (classSnap.exists) {
+      const clsData = classSnap.data() || {};
+      className = clsData.name || classId;
+      if (clsData.name && !classKeys.includes(clsData.name)) classKeys.push(clsData.name);
+      if (clsData.classId && !classKeys.includes(clsData.classId)) classKeys.push(clsData.classId);
+    }
+
+    const enrollments: any[] = [];
+    for (const key of classKeys) {
+      const enrollSnap = await db.collection("enrollments")
+        .where("academicYear", "==", academicYear)
+        .where("classId", "==", key)
+        .where("status", "==", "active")
+        .get();
+      enrollSnap.docs.forEach((doc: any) => {
+        const data = doc.data();
+        if (!enrollments.some(e => e.studentId === data.studentId)) {
+          enrollments.push(data);
+        }
+      });
+    }
+
+    const studentsMap: Record<string, string> = {};
+    const studentsGradeMap: Record<string, number> = {};
+    if (enrollments.length > 0) {
+      const chunks = [];
+      const studentIds = enrollments.map(e => e.studentId);
+      for (let i = 0; i < studentIds.length; i += 10) {
+        chunks.push(studentIds.slice(i, i + 10));
+      }
+      for (const chunk of chunks) {
+        const studentsSnap = await db.collection("students")
+          .where("__name__", "in", chunk)
+          .get();
+        studentsSnap.docs.forEach((doc: any) => {
+          const data = doc.data();
+          studentsMap[doc.id] = data.name || data.fullName || 'Siswa Tanpa Nama';
+          studentsGradeMap[doc.id] = data.gradeLevel || 1;
+        });
+      }
+    }
+
+    // Load existing records for change comparison
+    const recordsSnap = await db.collection("elementary_literacy_numeracy_records")
+      .where("academicYear", "==", academicYear)
+      .where("classId", "==", classId)
+      .where("periodId", "==", normPeriodId)
+      .where("area", "==", area)
+      .get();
+
+    const existingMap: Record<string, any> = {};
+    recordsSnap.docs.forEach((doc: any) => {
+      existingMap[doc.data().studentId] = { id: doc.id, ...doc.data() };
+    });
+
+    // Load spreadsheet from Google API
+    const sheetsInstance = getSheets();
+    if (!sheetsInstance) {
+      return res.status(500).json({ error: "Google API Service Account is not fully configured." });
+    }
+
+    const rangeName = `${sheetName}!A1:Z150`;
+    let sheetResponse;
+    try {
+      sheetResponse = await sheetsInstance.spreadsheets.values.get({
+        spreadsheetId,
+        range: rangeName
+      });
+    } catch (sheetErr: any) {
+      return res.status(400).json({ error: `Gagal membaca Google Sheet. Detail: ${sheetErr.message}` });
+    }
+
+    const rows = sheetResponse.data.values || [];
+    if (rows.length === 0) {
+      return res.status(400).json({ error: "Google Sheet kosong." });
+    }
+
+    // Generate random sync ID and preview token
+    const syncRunId = `run_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
+    const previewToken = `token_${crypto.randomBytes(16).toString("hex")}`;
+    const expiresAt = Date.now() + 15 * 60 * 1000;
+
+    // "Jika header salah: sync gagal total; tidak ada assessment record ditulis; sync run berstatus FAILED."
+    if (rows.length < 4) {
+      // Create failed run log
+      const failedPayload = {
+        id: syncRunId,
+        unitId: 'ELEMENTARY',
+        classId,
+        className,
+        academicYear,
+        academicYearKey,
+        periodId: normPeriodId,
+        area,
+        spreadsheetId,
+        sheetName,
+        initiatedBy: decodedToken.email || decodedToken.uid,
+        startedAt: Date.now(),
+        completedAt: Date.now(),
+        status: 'FAILED',
+        totals: { rowsRead: 0, inserted: 0, updated: 0, unchanged: 0, skipped: 0, errors: 1 },
+        errors: [{
+          row: 4,
+          field: "header",
+          code: "INVALID_HEADER",
+          message: "Header wajib persis: luminaId | namaSiswa | level | topik | accuracyPercent | intervensi | catatan | updatedAt. Baris header tidak ditemukan."
+        }]
+      };
+      await db.collection("literacyNumeracySyncRuns").doc(syncRunId).set(failedPayload);
+      await db.collection("elementary_literacy_numeracy_sync_runs").doc(syncRunId).set(failedPayload);
+
+      return res.status(400).json({
+        error: "Google Sheet tidak memiliki struktur baris header pada baris ke-4.",
+        syncRunId,
+        totals: { rowsRead: 0, inserted: 0, updated: 0, unchanged: 0, skipped: 0, errors: 1 },
+        errors: failedPayload.errors
+      });
+    }
+
+    const headers = rows[3].map(h => (h || "").toString());
+    const isHeadersValid = validateHeaders(headers);
+
+    if (!isHeadersValid) {
+      const failedPayload = {
+        id: syncRunId,
+        unitId: 'ELEMENTARY',
+        classId,
+        className,
+        academicYear,
+        academicYearKey,
+        periodId: normPeriodId,
+        area,
+        spreadsheetId,
+        sheetName,
+        initiatedBy: decodedToken.email || decodedToken.uid,
+        startedAt: Date.now(),
+        completedAt: Date.now(),
+        status: 'FAILED',
+        totals: { rowsRead: 0, inserted: 0, updated: 0, unchanged: 0, skipped: 0, errors: 1 },
+        errors: [{
+          row: 4,
+          field: "header",
+          code: "INVALID_HEADER",
+          message: "Header wajib persis: luminaId | namaSiswa | level | topik | accuracyPercent | intervensi | catatan | updatedAt"
+        }]
+      };
+      await db.collection("literacyNumeracySyncRuns").doc(syncRunId).set(failedPayload);
+      await db.collection("elementary_literacy_numeracy_sync_runs").doc(syncRunId).set(failedPayload);
+
+      return res.status(400).json({
+        error: "Header wajib persis: luminaId | namaSiswa | level | topik | accuracyPercent | intervensi | catatan | updatedAt",
+        syncRunId,
+        totals: { rowsRead: 0, inserted: 0, updated: 0, unchanged: 0, skipped: 0, errors: 1 },
+        errors: failedPayload.errors
+      });
+    }
+
+    // Process all rows from row 5 onwards
+    let inserted = 0;
+    let updated = 0;
+    let unchanged = 0;
+    let skipped = 0;
+    let errorsCount = 0;
+    const errorsList: any[] = [];
+    const validRowsToSync: any[] = [];
+    const seenLuminaIds = new Set<string>();
+
+    for (let r = 4; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row || row.length === 0) {
+        skipped++;
+        continue;
+      }
+
+      const resRow = parseAndValidateSheetRow(
+        area,
+        row,
+        {},
+        studentsMap,
+        classId,
+        academicYear,
+        r - 4,
+        normPeriodId,
+        existingMap,
+        seenLuminaIds,
+        isForceSync,
+        studentsGradeMap
+      );
+
+      if (resRow.isSkipped) {
+        skipped++;
+      } else if (resRow.isError) {
+        errorsCount++;
+        errorsList.push(...resRow.errors);
+      } else {
+        validRowsToSync.push(resRow.rowData);
+        if (resRow.status === "inserted") inserted++;
+        else if (resRow.status === "updated") updated++;
+        else unchanged++;
+      }
+    }
+
+    const rowsRead = inserted + updated + unchanged + skipped + errorsCount;
+    const sheetDataHash = crypto.createHash("sha256").update(JSON.stringify(rows)).digest("hex");
+
+    // Save Preview Sync Run state
+    const runPayload = {
+      id: syncRunId,
+      previewToken,
+      expiresAt,
+      unitId: 'ELEMENTARY',
+      classId,
+      className,
+      academicYear,
+      academicYearKey,
+      periodId: normPeriodId,
+      area,
+      spreadsheetId,
+      sheetName,
+      status: 'PREVIEW',
+      sheetDataHash,
+      totals: {
+        rowsRead,
+        inserted,
+        updated,
+        unchanged,
+        skipped,
+        errors: errorsCount
+      },
+      errors: errorsList,
+      validRowsToSync,
+      createdAt: Date.now(),
+      initiatedBy: decodedToken.email || decodedToken.uid
+    };
+
+    await db.collection("literacyNumeracySyncRuns").doc(syncRunId).set(runPayload);
+    await db.collection("elementary_literacy_numeracy_sync_runs").doc(syncRunId).set(runPayload);
+
+    // Legacy support for frontend mapping
+    const matchedRowsMappedForFrontend = validRowsToSync.map(r => {
+      const cur = existingMap[r.studentId];
+      return {
+        studentId: r.studentId,
+        name: r.studentName,
+        status: cur ? (cur.level !== r.level || cur.topic !== r.topic || cur.accuracyPercent !== r.accuracyPercent || cur.intervention !== r.intervention || cur.notes !== r.notes ? 'modified' : 'unchanged') : 'new',
+        current: cur ? {
+          level: cur.level,
+          topic: cur.topic,
+          accuracyPercent: cur.accuracyPercent,
+          intervention: cur.intervention,
+          notes: cur.notes
+        } : null,
+        sheet: {
+          level: r.level,
+          topic: r.topic,
+          accuracyPercent: r.accuracyPercent,
+          intervention: r.intervention,
+          notes: r.notes
+        },
+        warning: r.nameWarning
+      };
+    });
+
+    res.json({
+      success: true,
+      syncRunId,
+      previewToken,
+      expiresAt,
+      totals: {
+        rowsRead,
+        inserted,
+        updated,
+        unchanged,
+        skipped,
+        errors: errorsCount
+      },
+      errors: errorsList,
+      matchedRows: matchedRowsMappedForFrontend, // compatibility for frontend preview table
+      validRowsCount: validRowsToSync.length
+    });
+  } catch (err: any) {
+    console.error("[previewElementaryLiteracyNumeracySheetSync] Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// 2. Unified Apply Sync Handler
+async function handleApplySync(req: any, res: any) {
+  try {
+    const authResult = await checkElementaryAuth(req, res);
+    if (!authResult) return;
+    const { decodedToken, db, userData, userRole } = authResult;
+
+    const { classId, academicYear, periodId, area, dryRun, previewToken, studentIdsToSync } = req.body;
+    if (!classId || !academicYear || !periodId || !area || !previewToken) {
+      return res.status(400).json({ error: "Parameter classId, academicYear, periodId, area, dan previewToken wajib disediakan." });
+    }
+
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
+    const isElementaryUnit = userData.unitId === 'ELEMENTARY' || (Array.isArray(userData.assignedUnits) && userData.assignedUnits.includes('ELEMENTARY'));
+    const isAuthorized = isSuperAdmin || (['HEAD_UNIT', 'TEACHER', 'HOMEROOM_TEACHER'].includes(userRole || "") && isElementaryUnit);
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: "Access denied. Active Elementary role/unit required." });
+    }
+
+    if (!isSuperAdmin && userRole !== 'HEAD_UNIT') {
+      const teacherClassId = userData.classId || userData.assignedClassId;
+      const teacherClassIds = Array.isArray(userData.assignedClassIds) ? userData.assignedClassIds : (teacherClassId ? [teacherClassId] : []);
+      if (teacherClassIds.length > 0 && !teacherClassIds.includes(classId)) {
+        return res.status(403).json({ error: `Access denied. Anda tidak memiliki akses ke kelas secureClassId.` });
+      }
+    }
+
+    const { periodId: normPeriodId, periodLabel, legacyPeriod } = normalizePeriod(periodId);
+    const academicYearKey = academicYear.replace(/\//g, "-");
+
+    // Retrieve active preview run
+    let runSnap = await db.collection("literacyNumeracySyncRuns").where("previewToken", "==", previewToken).limit(1).get();
+    if (runSnap.empty) {
+      runSnap = await db.collection("elementary_literacy_numeracy_sync_runs").where("previewToken", "==", previewToken).limit(1).get();
+    }
+    if (runSnap.empty) {
+      return res.status(400).json({ error: "Token pratinjau tidak valid atau tidak ditemukan." });
+    }
+
+    const runDoc = runSnap.docs[0];
+    const runData = runDoc.data() || {};
+
+    if (runData.status !== 'PREVIEW') {
+      return res.status(400).json({ error: "Token pratinjau ini sudah digunakan atau kedaluwarsa." });
+    }
+    if (runData.expiresAt < Date.now()) {
+      return res.status(400).json({ error: "Token pratinjau telah kedaluwarsa. Maksimum waktu adalah 15 menit." });
+    }
+
+    const spreadsheetId = runData.spreadsheetId;
+    const sheetName = runData.sheetName;
+
+    // Load spreadsheet from Google API to verify hash matches
+    const sheetsInstance = getSheets();
+    if (!sheetsInstance) {
+      return res.status(500).json({ error: "Google API Service Account is not fully configured." });
+    }
+
+    let sheetResponse;
+    try {
+      sheetResponse = await sheetsInstance.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetName}!A1:Z150`
+      });
+    } catch (sheetErr: any) {
+      return res.status(400).json({ error: `Gagal membaca Google Sheet untuk validasi ulang. ${sheetErr.message}` });
+    }
+
+    const rows = sheetResponse.data.values || [];
+    const currentHash = crypto.createHash("sha256").update(JSON.stringify(rows)).digest("hex");
+    if (currentHash !== runData.sheetDataHash) {
+      return res.status(400).json({
+        error: "Konten Google Sheet telah berubah sejak dilakukan pratinjau. Silakan lakukan pratinjau ulang.",
+        code: "SHEET_CHANGED_REVIEW_AGAIN"
+      });
+    }
+
+    // Load official students and metadata
+    const classSnap = await db.collection("classes").doc(classId).get();
+    const classKeys = [classId];
+    let className = classId;
+    if (classSnap.exists) {
+      const clsData = classSnap.data() || {};
+      className = clsData.name || classId;
+      if (clsData.name && !classKeys.includes(clsData.name)) classKeys.push(clsData.name);
+      if (clsData.classId && !classKeys.includes(clsData.classId)) classKeys.push(clsData.classId);
+    }
+
+    const enrollments: any[] = [];
+    for (const key of classKeys) {
+      const enrollSnap = await db.collection("enrollments")
+        .where("academicYear", "==", academicYear)
+        .where("classId", "==", key)
+        .where("status", "==", "active")
+        .get();
+      enrollSnap.docs.forEach((doc: any) => {
+        const data = doc.data();
+        if (!enrollments.some(e => e.studentId === data.studentId)) {
+          enrollments.push(data);
+        }
+      });
+    }
+
+    const studentsMap: Record<string, string> = {};
+    const studentsGradeMap: Record<string, number> = {};
+    if (enrollments.length > 0) {
+      const chunks = [];
+      const studentIds = enrollments.map(e => e.studentId);
+      for (let i = 0; i < studentIds.length; i += 10) {
+        chunks.push(studentIds.slice(i, i + 10));
+      }
+      for (const chunk of chunks) {
+        const studentsSnap = await db.collection("students")
+          .where("__name__", "in", chunk)
+          .get();
+        studentsSnap.docs.forEach((doc: any) => {
+          const data = doc.data();
+          studentsMap[doc.id] = data.name || data.fullName || 'Siswa Tanpa Nama';
+          studentsGradeMap[doc.id] = data.gradeLevel || 1;
+        });
+      }
+    }
+
+    // Load existing records for snapshot comparisons
+    const recordsSnap = await db.collection("elementary_literacy_numeracy_records")
+      .where("academicYear", "==", academicYear)
+      .where("classId", "==", classId)
+      .where("periodId", "==", normPeriodId)
+      .where("area", "==", area)
+      .get();
+
+    const existingMap: Record<string, any> = {};
+    recordsSnap.docs.forEach((doc: any) => {
+      existingMap[doc.data().studentId] = { id: doc.id, ...doc.data() };
+    });
+
+    const isAuthorizedForForceSync = isSuperAdmin || userRole === "HEAD_UNIT";
+    const isForceSync = !!req.body.forceSync && isAuthorizedForForceSync;
+
+    let inserted = 0;
+    let updated = 0;
+    let unchanged = 0;
+    let skipped = 0;
+    let errorsCount = 0;
+    const finalErrors: any[] = [];
+    const dbOperations: any[] = [];
+    const previousBackupRecords: any[] = [];
+    const syncedRecordsList: any[] = [];
+
+    const seenLuminaIds = new Set<string>();
+
+    for (let r = 4; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row || row.length === 0) {
+        skipped++;
+        continue;
+      }
+
+      const resRow = parseAndValidateSheetRow(
+        area,
+        row,
+        {},
+        studentsMap,
+        classId,
+        academicYear,
+        r - 4,
+        normPeriodId,
+        existingMap,
+        seenLuminaIds,
+        isForceSync,
+        studentsGradeMap
+      );
+
+      if (resRow.isSkipped) {
+        skipped++;
+      } else if (resRow.isError) {
+        errorsCount++;
+        finalErrors.push(...resRow.errors);
+      } else {
+        const studentId = resRow.rowData.studentId;
+
+        // Support partial/subset selection sync if requested by frontend
+        if (Array.isArray(studentIdsToSync) && !studentIdsToSync.includes(studentId)) {
+          skipped++;
+          continue;
+        }
+
+        const currentRecord = existingMap[studentId] || null;
+        const recordId = currentRecord?.id || `${academicYearKey}__${normPeriodId}__${area}__${classId}__${studentId}`;
+        const docRef = db.collection("elementary_literacy_numeracy_records").doc(recordId);
+
+        if (resRow.status === "unchanged") {
+          unchanged++;
+          continue;
+        }
+
+        // Snapshot existing states for change log / backup
+        const beforeExists = !!currentRecord;
+        const before = beforeExists ? currentRecord : null;
+        if (beforeExists) {
+          previousBackupRecords.push(currentRecord);
+        }
+
+        const supportStatusMap: Record<string, string> = {
+          "TIER_1": "ON_TRACK",
+          "TIER_2": "MONITOR",
+          "TIER_3": "INTERVENTION_RECOMMENDED",
+          "BELUM_DIISI": "INCOMPLETE_DATA"
+        };
+
+        const finalPayload = {
+          studentId,
+          luminaId: studentId,
+          classId,
+          className,
+          unitId: 'ELEMENTARY',
+          academicYear,
+          academicYearKey,
+          periodId: normPeriodId,
+          periodLabel,
+          area,
+          level: resRow.rowData.level,
+          topic: resRow.rowData.topic,
+          accuracyPercent: resRow.rowData.accuracyPercent,
+          intervention: resRow.rowData.intervention,
+          notes: resRow.rowData.notes,
+          source: 'GOOGLE_SHEETS_SYNC',
+          sourceSpreadsheetId: spreadsheetId,
+          sourceSheetName: sheetName,
+          sourceRow: resRow.rowData.excelRow,
+          sourceUpdatedAt: resRow.rowData.sourceUpdatedAt,
+          sourceContentHash: crypto.createHash("sha256").update(row.map(c => (c || "").toString().trim()).join("|")).digest("hex"),
+          syncedAt: Date.now(),
+          syncedBy: decodedToken.email || decodedToken.uid || "system",
+          syncRunId: runDoc.id,
+          updatedAt: Date.now(),
+          updatedBy: decodedToken.email || decodedToken.uid || "system",
+
+          // Backwards compatibility keys
+          schoolYear: academicYear,
+          period: legacyPeriod,
+          supportStatus: supportStatusMap[resRow.rowData.intervention] || "INCOMPLETE_DATA",
+          gradeLevel: studentsGradeMap[studentId] || 1,
+          teacherId: decodedToken.uid || "system"
+        };
+
+        if (!beforeExists) {
+          (finalPayload as any).createdAt = Date.now();
+          (finalPayload as any).createdBy = decodedToken.email || decodedToken.uid || "system";
+          (finalPayload as any).firstSyncedAt = Date.now();
+        }
+
+        // Add to write batches
+        dbOperations.push({
+          type: 'set',
+          ref: docRef,
+          data: finalPayload
+        });
+
+        // Add to change log subcollection
+        const changeId = `change_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
+        const changeRefPrimary = db.collection("literacyNumeracySyncRuns").doc(runDoc.id).collection("changes").doc(changeId);
+        const changeRefSecondary = db.collection("elementary_literacy_numeracy_sync_runs").doc(runDoc.id).collection("changes").doc(changeId);
+
+        const changePayload = {
+          recordPath: `elementary_literacy_numeracy_records/${recordId}`,
+          recordId,
+          changeType: beforeExists ? 'UPDATE' : 'INSERT',
+          beforeExists,
+          before,
+          after: finalPayload,
+          appliedAt: Date.now()
+        };
+
+        dbOperations.push({ type: 'set', ref: changeRefPrimary, data: changePayload });
+        dbOperations.push({ type: 'set', ref: changeRefSecondary, data: changePayload });
+
+        syncedRecordsList.push(finalPayload);
+        if (resRow.status === "inserted") inserted++;
+        else if (resRow.status === "updated") updated++;
+      }
+    }
+
+    let finalStatus = 'COMPLETED';
+    if (syncedRecordsList.length === 0 && errorsCount > 0) {
+      finalStatus = 'FAILED';
+    } else if (errorsCount > 0) {
+      finalStatus = 'PARTIAL_SUCCESS';
+    }
+
+    if (!dryRun && dbOperations.length > 0) {
+      // Commit all database writes in chunks
+      await writeBatches(db, dbOperations);
+
+      // Trigger secondary MTSS sync to keep systems identical if MTSS is active
+      try {
+        const { elementaryMTSSService } = await import("./src/services/elementaryMTSSService");
+        if (elementaryMTSSService && typeof elementaryMTSSService.syncBulkRecordsToMTSS === 'function') {
+          await elementaryMTSSService.syncBulkRecordsToMTSS(syncedRecordsList);
+        }
+      } catch (mtssErr) {
+        console.warn("MTSS sync was bypassed:", mtssErr);
+      }
+    }
+
+    const syncLogId = `sync_${Date.now()}`;
+    if (!dryRun) {
+      // Backup snapshot logs to maintain historical query compatibility
+      await db.collection("elementary_literacy_numeracy_sync_logs").doc(syncLogId).set({
+        id: syncLogId,
+        timestamp: Date.now(),
+        userEmail: decodedToken.email || "unknown",
+        classId,
+        area,
+        periodId: normPeriodId,
+        academicYear,
+        spreadsheetId,
+        sheetName,
+        previousRecords: previousBackupRecords,
+        syncedRecordsCount: syncedRecordsList.length,
+        syncRunId: runDoc.id
+      });
+    }
+
+    // Update status and details of the sync run
+    const updatedStatusPayload = {
+      status: finalStatus,
+      usedAt: Date.now(),
+      syncLogId: dryRun ? null : syncLogId,
+      completedAt: Date.now(),
+      totals: {
+        rowsRead: inserted + updated + unchanged + skipped + errorsCount,
+        inserted,
+        updated,
+        unchanged,
+        skipped,
+        errors: errorsCount
+      },
+      errors: finalErrors
+    };
+
+    await db.collection("literacyNumeracySyncRuns").doc(runDoc.id).update(updatedStatusPayload);
+    await db.collection("elementary_literacy_numeracy_sync_runs").doc(runDoc.id).update(updatedStatusPayload);
+
+    res.json({
+      success: true,
+      status: finalStatus,
+      count: syncedRecordsList.length,
+      totals: {
+        rowsRead: inserted + updated + unchanged + skipped + errorsCount,
+        inserted,
+        updated,
+        unchanged,
+        skipped,
+        errors: errorsCount
+      },
+      syncLogId: dryRun ? null : syncLogId,
+      errors: finalErrors
+    });
+  } catch (err: any) {
+    console.error("[applyElementaryLiteracyNumeracySheetSync] Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// 3. Unified Test Connection Handler
+async function handleTestConnection(req: any, res: any) {
+  try {
+    const authResult = await checkElementaryAuth(req, res);
+    if (!authResult) return;
+    const { db } = authResult;
+
+    const { classId, academicYear, tabs } = req.body;
+    if (!classId || !academicYear) {
+      return res.status(400).json({ error: "Parameter classId dan academicYear wajib disediakan." });
+    }
+
+    const configId = `secureAcademicYearKey = ${academicYear.replace(/\//g, "-")}__${classId}`;
+    const configSnap = await db.collection("elementaryLiteracyNumeracySheetConfigs").doc(configId).get();
+    if (!configSnap.exists) {
+      return res.status(404).json({ error: "Konfigurasi Google Sheet resmi belum dibuat oleh Admin." });
+    }
+    const configData = configSnap.data() || {};
+    const spreadsheetId = configData.spreadsheetId;
+    if (!spreadsheetId) {
+      return res.status(400).json({ error: "ID Spreadsheet tidak ditemukan dalam konfigurasi." });
+    }
+
+    const actualTabs = tabs || configData.tabs || {};
+    const sheetsInstance = getSheets();
+    if (!sheetsInstance) {
+      return res.status(500).json({ error: "Google API Service Account is not fully configured." });
+    }
+
+    const results: Record<string, any> = {};
+    for (const [key, tabName] of Object.entries(actualTabs)) {
+      if (!tabName) {
+        results[key] = { exists: false, headersValid: false, error: "Nama tab kosong." };
+        continue;
+      }
+      try {
+        const response = await sheetsInstance.spreadsheets.values.get({
+          spreadsheetId,
+          range: `${tabName}!A4:H4`
+        });
+        const rows = response.data.values || [];
+        if (rows.length === 0 || rows[0].length === 0) {
+          results[key] = { exists: true, headersValid: false, error: "Baris header (baris 4) kosong." };
+          continue;
+        }
+
+        const headers = rows[0].map(h => (h || "").toString());
+        const isHeadersValid = validateHeaders(headers);
+
+        if (!isHeadersValid) {
+          results[key] = {
+            exists: true,
+            headersValid: false,
+            error: "Header wajib persis: luminaId | namaSiswa | level | topik | accuracyPercent | intervensi | catatan | updatedAt"
+          };
+        } else {
+          results[key] = { exists: true, headersValid: true };
+        }
+      } catch (err: any) {
+        results[key] = { exists: false, headersValid: false, error: err.message };
+      }
+    }
+
+    res.json({
+      success: Object.values(results).every((r: any) => r.exists && r.headersValid),
+      results
+    });
+  } catch (err: any) {
+    console.error("[testElementaryLiteracyNumeracySheetConnection] Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// 4. Unified Get Sync Run Handler
+async function handleGetSyncRun(req: any, res: any) {
+  try {
+    const authResult = await checkElementaryAuth(req, res);
+    if (!authResult) return;
+    const { db } = authResult;
+
+    const syncRunId = req.query.syncRunId || req.body.syncRunId;
+    if (!syncRunId) {
+      return res.status(400).json({ error: "Query parameter syncRunId wajib disediakan." });
+    }
+
+    let runSnap = await db.collection("literacyNumeracySyncRuns").doc(syncRunId).get();
+    if (!runSnap.exists) {
+      runSnap = await db.collection("elementary_literacy_numeracy_sync_runs").doc(syncRunId).get();
+    }
+    if (!runSnap.exists) {
+      return res.status(404).json({ error: "Sync run tidak ditemukan." });
+    }
+
+    res.json(runSnap.data());
+  } catch (err: any) {
+    console.error("[getElementaryLiteracyNumeracySyncRun] Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// 5. Unified Rollback Handler
+async function handleRollbackSyncRun(req: any, res: any) {
+  try {
+    const authResult = await checkElementaryAuth(req, res);
+    if (!authResult) return;
+    const { db, userRole, decodedToken } = authResult;
+
+    // "Rollback: hanya SUPER_ADMIN"
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
+    if (!isSuperAdmin) {
+      return res.status(403).json({ error: "Akses ditolak. Hanya SUPER_ADMIN yang diizinkan untuk melakukan rollback." });
+    }
+
+    const { syncRunId, syncLogId, dryRun, preview } = req.body;
+    const targetSyncRunId = syncRunId || req.body.syncRunId;
+
+    if (!targetSyncRunId && !syncLogId) {
+      return res.status(400).json({ error: "Parameter syncRunId wajib disediakan." });
+    }
+
+    // Load Sync Run
+    let finalRunId = targetSyncRunId;
+    let runSnap;
+    if (finalRunId) {
+      runSnap = await db.collection("literacyNumeracySyncRuns").doc(finalRunId).get();
+      if (!runSnap.exists) {
+        runSnap = await db.collection("elementary_literacy_numeracy_sync_runs").doc(finalRunId).get();
+      }
+    } else {
+      // Find by legacy log id
+      const legacySnap = await db.collection("elementary_literacy_numeracy_sync_logs").doc(syncLogId).get();
+      if (legacySnap.exists) {
+        finalRunId = legacySnap.data()?.syncRunId || "";
+        if (finalRunId) {
+          runSnap = await db.collection("literacyNumeracySyncRuns").doc(finalRunId).get();
+        }
+      }
+    }
+
+    if (!runSnap || !runSnap.exists) {
+      return res.status(404).json({ error: "Sync run tidak ditemukan." });
+    }
+    const runData = runSnap.data() || {};
+    finalRunId = runSnap.id;
+
+    // Load changes subcollection
+    const changesSnap = await db.collection("literacyNumeracySyncRuns").doc(finalRunId).collection("changes").get();
+    if (changesSnap.empty) {
+      return res.status(400).json({ error: "Tidak ada catatan perubahan (change log) yang ditemukan untuk rollback." });
+    }
+
+    // "jangan menimpa update dari sync yang lebih baru; jika conflict, tampilkan ROLLBACK_CONFLICT"
+    const conflicts: any[] = [];
+    const changeDocs = changesSnap.docs;
+
+    for (const doc of changeDocs) {
+      const change = doc.data();
+      const recordId = change.recordId;
+
+      // Fetch current record
+      const curSnap = await db.collection("elementary_literacy_numeracy_records").doc(recordId).get();
+      if (curSnap.exists) {
+        const curData = curSnap.data() || {};
+        // If current updatedAt is newer than the applied sync's "after.updatedAt", conflict occurs
+        if (curData.updatedAt && change.after && curData.updatedAt > change.after.updatedAt) {
+          conflicts.push({
+            recordId,
+            studentName: curData.studentName || change.after.studentName,
+            currentUpdatedAt: curData.updatedAt,
+            appliedUpdatedAt: change.after.updatedAt
+          });
+        }
+      }
+    }
+
+    if (conflicts.length > 0) {
+      return res.status(409).json({
+        error: "Gagal melakukan rollback karena terdapat konflik data yang lebih baru.",
+        code: "ROLLBACK_CONFLICT",
+        conflicts
+      });
+    }
+
+    const isPreviewOnly = !!dryRun || !!preview;
+    if (isPreviewOnly) {
+      // "harus memiliki preview rollback"
+      return res.json({
+        success: true,
+        preview: true,
+        changesCount: changeDocs.length,
+        changesToRevert: changeDocs.map(d => {
+          const c = d.data();
+          return {
+            recordId: c.recordId,
+            studentName: c.after?.studentName || "Siswa",
+            changeType: c.changeType,
+            beforeExists: c.beforeExists
+          };
+        })
+      });
+    }
+
+    // Execute Rollback
+    const rollbackOperations: any[] = [];
+    const mtssSyncList: any[] = [];
+    changeDocs.forEach(d => {
+      const change = d.data();
+      const recordId = change.recordId;
+      const docRef = db.collection("elementary_literacy_numeracy_records").doc(recordId);
+
+      if (change.beforeExists) {
+        rollbackOperations.push({
+          type: 'set',
+          ref: docRef,
+          data: change.before
+        });
+        mtssSyncList.push(change.before);
+      } else {
+        rollbackOperations.push({
+          type: 'delete',
+          ref: docRef,
+          data: null
+        });
+      }
+    });
+
+    // Mark Run and Legacy Log as rolled back
+    rollbackOperations.push({
+      type: 'update',
+      ref: db.collection("literacyNumeracySyncRuns").doc(finalRunId),
+      data: { status: 'ROLLED_BACK', rolledBackAt: Date.now() }
+    });
+    rollbackOperations.push({
+      type: 'update',
+      ref: db.collection("elementary_literacy_numeracy_sync_runs").doc(finalRunId),
+      data: { status: 'ROLLED_BACK', rolledBackAt: Date.now() }
+    });
+
+    if (runData.syncLogId) {
+      rollbackOperations.push({
+        type: 'delete',
+        ref: db.collection("elementary_literacy_numeracy_sync_logs").doc(runData.syncLogId),
+        data: null
+      });
+    }
+
+    await writeBatches(db, rollbackOperations);
+
+    // Sync Rollback state back to secondary MTSS system
+    try {
+      const { elementaryMTSSService } = await import("./src/services/elementaryMTSSService");
+      if (elementaryMTSSService && typeof elementaryMTSSService.syncBulkRecordsToMTSS === 'function') {
+        await elementaryMTSSService.syncBulkRecordsToMTSS(mtssSyncList);
+      }
+    } catch (mtssErr) {
+      console.warn("MTSS sync rollback was bypassed:", mtssErr);
+    }
+
+    res.json({
+      success: true,
+      count: changeDocs.length
+    });
+  } catch (err: any) {
+    console.error("[rollbackElementaryLiteracyNumeracySyncRun] Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// Fetch Sync History Audit logs
+async function handleGetSyncLogs(req: any, res: any) {
+  try {
+    const authResult = await checkElementaryAuth(req, res);
+    if (!authResult) return;
+    const { db } = authResult;
+
+    const { classId, area, periodId, academicYear } = req.query;
+    if (!classId || !area || !periodId || !academicYear) {
+      return res.status(400).json({ error: "Query parameters classId, area, periodId, dan academicYear wajib ada." });
+    }
+
+    const { periodId: normPeriodId } = normalizePeriod(periodId as string);
+
+    // Try primary first, fallback to old log collection
+    let snap = await db.collection("literacyNumeracySyncRuns")
+      .where("classId", "==", classId)
+      .where("area", "==", area)
+      .where("periodId", "==", normPeriodId)
+      .where("academicYear", "==", academicYear)
+      .orderBy("completedAt", "desc")
+      .limit(20)
+      .get();
+
+    if (snap.empty) {
+      snap = await db.collection("elementary_literacy_numeracy_sync_logs")
+        .where("classId", "==", classId)
+        .where("area", "==", area)
+        .where("periodId", "==", normPeriodId)
+        .where("academicYear", "==", academicYear)
+        .orderBy("timestamp", "desc")
+        .limit(20)
+        .get();
+    }
+
+    const logs: any[] = [];
+    snap.docs.forEach((doc: any) => {
+      const data = doc.data();
+      logs.push({
+        id: doc.id,
+        timestamp: data.completedAt || data.timestamp || Date.now(),
+        userEmail: data.initiatedBy || data.userEmail || "unknown",
+        spreadsheetId: data.spreadsheetId,
+        sheetName: data.sheetName,
+        syncedRecordsCount: data.totals?.inserted + data.totals?.updated || data.syncedRecordsCount || 0,
+        hasPreviousSnapshot: true,
+        status: data.status || "COMPLETED"
+      });
+    });
+
+    res.json(logs);
+  } catch (err: any) {
+    console.error("[FetchSyncLogs] Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// Bind both path patterns perfectly to ensure complete alignment and stability
+app.post("/previewElementaryLiteracyNumeracySheetSync", handlePreviewSync);
+app.post("/api/elementary/sheets/preview", handlePreviewSync);
+
+app.post("/applyElementaryLiteracyNumeracySheetSync", handleApplySync);
+app.post("/api/elementary/sheets/sync", handleApplySync);
+
+app.post("/testElementaryLiteracyNumeracySheetConnection", handleTestConnection);
+app.post("/api/elementary/sheets/test-connection", handleTestConnection);
+
+app.get("/getElementaryLiteracyNumeracySyncRun", handleGetSyncRun);
+app.get("/api/elementary/sheets/sync-run", handleGetSyncRun);
+
+app.post("/rollbackElementaryLiteracyNumeracySyncRun", handleRollbackSyncRun);
+app.post("/api/elementary/sheets/rollback", handleRollbackSyncRun);
+
+app.get("/api/elementary/sheets/sync-logs", handleGetSyncLogs);
 app.get("/api/health", (req, res) => {
   res.json({ 
     status: "ok", 

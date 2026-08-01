@@ -5,14 +5,14 @@ import {
   BookOpen, Languages, Heart, Calculator, Search, 
   Filter, History, ChevronRight, Save, User as UserIcon, 
   Calendar, RefreshCw, CheckCircle2, AlertCircle, FileText, X, Sparkles, Sliders,
-  HelpCircle, Info, Lock
+  HelpCircle, Info, Lock, Plus
 } from 'lucide-react';
 import { isTeacherAssignedToClass } from '../../services/classTeacherAssignmentService';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { db, handleFirestoreError, getStudents, getClasses, getActiveStudents } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
-import { collection, query, where, getDocs, doc, setDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, setDoc, getDoc } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { ACADEMIC_YEARS } from '../../constants';
 import ElementaryLiteracyOverview from './components/ElementaryLiteracyOverview';
@@ -107,6 +107,272 @@ export default function ElementaryLiteracyNumeracy() {
 
   // Track specifically clicked single student history drawer
   const [selectedStudentForDrawer, setSelectedStudentForDrawer] = React.useState<{ id: string; name: string } | null>(null);
+
+  // Google Sheets Sync States
+  const [showSheetsSync, setShowSheetsSync] = React.useState<boolean>(false);
+  const [sheetsUrl, setSheetsUrl] = React.useState<string>('');
+  const [sheetsTabName, setSheetsTabName] = React.useState<string>('Sheet1');
+  const [syncStep, setSyncStep] = React.useState<'initial' | 'preview' | 'history'>('initial');
+  const [previewRows, setPreviewRows] = React.useState<any[]>([]);
+  const [selectedSyncIds, setSelectedSyncIds] = React.useState<Set<string>>(new Set());
+  const [isCreatingTemplate, setIsCreatingTemplate] = React.useState<boolean>(false);
+  const [isPreviewing, setIsPreviewing] = React.useState<boolean>(false);
+  const [isSyncing, setIsSyncing] = React.useState<boolean>(false);
+  const [isLoadingLogs, setIsLoadingLogs] = React.useState<boolean>(false);
+  const [syncLogs, setSyncLogs] = React.useState<any[]>([]);
+  const [isRollingBack, setIsRollingBack] = React.useState<boolean>(false);
+  const [createdTemplateUrl, setCreatedTemplateUrl] = React.useState<string>('');
+
+  // Automated Google Sheet Configuration Fetching
+  const [loadingSheetConfig, setLoadingSheetConfig] = React.useState<boolean>(false);
+  const [sheetConfigError, setSheetConfigError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!showSheetsSync || !selectedClassId || !selectedYear) return;
+
+    const fetchSheetConfig = async () => {
+      try {
+        setLoadingSheetConfig(true);
+        setSheetConfigError(null);
+        
+        const configId = `${selectedYear.replace(/\//g, "-")}__${selectedClassId}`;
+        const docRef = doc(db, "elementaryLiteracyNumeracySheetConfigs", configId);
+        const snap = await getDoc(docRef);
+        
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data.isActive) {
+            setSheetsUrl(data.spreadsheetUrl || "");
+            const periodId = selectedPeriod === 'JUL_OCT' ? 'P1' : (selectedPeriod === 'NOV_FEB' ? 'P2' : 'P3');
+            const tabKeyVal = `${periodId}_${selectedArea}`;
+            setSheetsTabName(data.tabs?.[tabKeyVal] || "");
+          } else {
+            setSheetsUrl("");
+            setSheetsTabName("");
+            setSheetConfigError("Konfigurasi Google Sheet resmi untuk kelas ini dinonaktifkan oleh Admin.");
+          }
+        } else {
+          setSheetsUrl("");
+          setSheetsTabName("");
+          setSheetConfigError("Konfigurasi Google Sheet resmi untuk kelas dan tahun ajaran ini belum diatur oleh Admin.");
+        }
+      } catch (err: any) {
+        console.error("Error fetching sheet config:", err);
+        setSheetConfigError("Gagal memuat konfigurasi Google Sheet resmi.");
+      } finally {
+        setLoadingSheetConfig(false);
+      }
+    };
+
+    fetchSheetConfig();
+  }, [showSheetsSync, selectedClassId, selectedYear, selectedPeriod, selectedArea]);
+
+  // Fetch Sync History logs
+  const fetchSyncLogs = async () => {
+    if (!selectedClassId) return;
+    try {
+      setIsLoadingLogs(true);
+      const authResult = await import('../../lib/firebase');
+      const idToken = await authResult.auth.currentUser?.getIdToken();
+      const periodId = selectedPeriod === 'JUL_OCT' ? 'P1' : (selectedPeriod === 'NOV_FEB' ? 'P2' : 'P3');
+      const response = await fetch(`/api/elementary/sheets/sync-logs?classId=${selectedClassId}&area=${selectedArea}&periodId=${periodId}&academicYear=${encodeURIComponent(selectedYear)}`, {
+        headers: {
+          'Authorization': `Bearer ${idToken}`
+        }
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Gagal memuat log sinkronisasi');
+      }
+      const data = await response.json();
+      setSyncLogs(data);
+    } catch (err: any) {
+      console.error('Error fetching sync logs:', err);
+      toast.error(err.message || 'Gagal memuat riwayat sinkronisasi');
+    } finally {
+      setIsLoadingLogs(false);
+    }
+  };
+
+  // Create Template Google Sheet
+  const handleCreateTemplate = async () => {
+    try {
+      setIsCreatingTemplate(true);
+      setCreatedTemplateUrl('');
+      const authResult = await import('../../lib/firebase');
+      const idToken = await authResult.auth.currentUser?.getIdToken();
+      const periodId = selectedPeriod === 'JUL_OCT' ? 'P1' : (selectedPeriod === 'NOV_FEB' ? 'P2' : 'P3');
+      
+      const response = await fetch('/api/elementary/sheets/create-template', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          classId: selectedClassId,
+          area: selectedArea,
+          academicYear: selectedYear,
+          periodId
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Gagal membuat draf template Google Sheet');
+      }
+
+      setCreatedTemplateUrl(data.spreadsheetUrl);
+      setSheetsUrl(data.spreadsheetUrl);
+      toast.success('Berhasil membuat template Google Sheet pre-filled!');
+    } catch (err: any) {
+      console.error('Error creating template:', err);
+      toast.error(err.message || 'Gagal membuat draf template');
+    } finally {
+      setIsCreatingTemplate(false);
+    }
+  };
+
+  // Fetch Preview Comparison from Sheet
+  const handleFetchPreview = async () => {
+    if (!sheetsUrl.trim()) {
+      toast.error('Masukkan URL Google Sheet terlebih dahulu');
+      return;
+    }
+    try {
+      setIsPreviewing(true);
+      setPreviewRows([]);
+      const authResult = await import('../../lib/firebase');
+      const idToken = await authResult.auth.currentUser?.getIdToken();
+      const periodId = selectedPeriod === 'JUL_OCT' ? 'P1' : (selectedPeriod === 'NOV_FEB' ? 'P2' : 'P3');
+
+      const response = await fetch('/api/elementary/sheets/preview', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`
+         },
+         body: JSON.stringify({
+           spreadsheetUrl: sheetsUrl,
+           sheetName: sheetsTabName,
+           classId: selectedClassId,
+           area: selectedArea,
+           periodId,
+           academicYear: selectedYear
+         })
+       });
+
+       const data = await response.json();
+       if (!response.ok) {
+         throw new Error(data.error || 'Gagal menganalisis pratinjau data');
+       }
+
+       setPreviewRows(data.matchedRows || []);
+       
+       // Pre-select rows that have modifications or are new
+       const changeIds = new Set<string>();
+       (data.matchedRows || []).forEach((row: any) => {
+         if (row.status === 'new' || row.status === 'modified') {
+           changeIds.add(row.studentId);
+         }
+       });
+       setSelectedSyncIds(changeIds);
+       
+       setSyncStep('preview');
+       toast.success('Pratinjau data Google Sheet berhasil dimuat!');
+     } catch (err: any) {
+       console.error('Error loading preview:', err);
+       toast.error(err.message || 'Gagal mengambil pratinjau data');
+     } finally {
+       setIsPreviewing(false);
+     }
+  };
+
+  // Confirm Sync to Firestore
+  const handleConfirmSync = async () => {
+    if (selectedSyncIds.size === 0) {
+      toast.error('Pilih minimal satu siswa untuk disinkronisasi');
+      return;
+    }
+    try {
+      setIsSyncing(true);
+      const authResult = await import('../../lib/firebase');
+      const idToken = await authResult.auth.currentUser?.getIdToken();
+      const periodId = selectedPeriod === 'JUL_OCT' ? 'P1' : (selectedPeriod === 'NOV_FEB' ? 'P2' : 'P3');
+
+      const response = await fetch('/api/elementary/sheets/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          spreadsheetUrl: sheetsUrl,
+          sheetName: sheetsTabName,
+          classId: selectedClassId,
+          area: selectedArea,
+          periodId,
+          academicYear: selectedYear,
+          studentIdsToSync: Array.from(selectedSyncIds)
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Gagal menyinkronkan data');
+      }
+
+      toast.success(`Berhasil menyinkronkan data ${data.count} siswa SD ke Firestore!`);
+      setShowSheetsSync(false);
+      
+      // Reload local records
+      setSelectedClassId('');
+      setTimeout(() => setSelectedClassId(selectedClassId), 50);
+    } catch (err: any) {
+      console.error('Error confirming sync:', err);
+      toast.error(err.message || 'Gagal menyelesaikan sinkronisasi');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Rollback Sync Log
+  const handleRollbackSync = async (logId: string) => {
+    if (!window.confirm('Apakah Anda yakin ingin membatalkan (rollback) sinkronisasi ini? Semua data pada sinkronisasi ini akan dikembalikan ke kondisi sebelumnya.')) {
+      return;
+    }
+    try {
+      setIsRollingBack(true);
+      const authResult = await import('../../lib/firebase');
+      const idToken = await authResult.auth.currentUser?.getIdToken();
+      const response = await fetch('/api/elementary/sheets/rollback', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`
+        },
+        body: JSON.stringify({ syncLogId: logId })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Gagal melakukan rollback');
+      }
+
+      toast.success(`Sukses membatalkan sinkronisasi! ${data.count} rekaman berhasil dikembalikan.`);
+      fetchSyncLogs(); // Refresh logs
+      
+      // Reload local records
+      setSelectedClassId('');
+      setTimeout(() => setSelectedClassId(selectedClassId), 50);
+    } catch (err: any) {
+      console.error('Error rollback sync:', err);
+      toast.error(err.message || 'Gagal memproses rollback');
+    } finally {
+      setIsRollingBack(false);
+    }
+  };
+
 
   // Sync default school year
   React.useEffect(() => {
@@ -599,10 +865,26 @@ export default function ElementaryLiteracyNumeracy() {
             type="button"
             onClick={handleOpenHistory}
             disabled={!selectedClassId}
-            className="flex items-center gap-2 bg-slate-950 hover:bg-slate-800 text-white disabled:bg-slate-200 disabled:text-slate-400 shadow-md px-4 py-2 text-xs font-black tracking-wider uppercase transition-all rounded-xl"
+            className="flex items-center gap-2 bg-slate-950 hover:bg-slate-800 text-white disabled:bg-slate-200 disabled:text-slate-400 shadow-md px-4 py-2 text-xs font-black tracking-wider uppercase transition-all rounded-xl cursor-pointer"
           >
             <History size={13} />
             RIWAYAT KELAS
+          </button>
+
+          {/* Google Sheets Sync button */}
+          <button 
+            type="button"
+            onClick={() => {
+              setShowSheetsSync(true);
+              setSyncStep('initial');
+              setCreatedTemplateUrl('');
+              setPreviewRows([]);
+            }}
+            disabled={!selectedClassId}
+            className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white disabled:bg-slate-200 disabled:text-slate-400 shadow-md px-4 py-2 text-xs font-black tracking-wider uppercase transition-all rounded-xl cursor-pointer"
+          >
+            <FileText size={13} />
+            SINKRONISASI SHEET
           </button>
         </div>
       </header>
@@ -1378,6 +1660,532 @@ export default function ElementaryLiteracyNumeracy() {
                         })}
                       </tbody>
                     </table>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* GOOGLE SHEETS SYNC INTEGRATION MODAL */}
+      <AnimatePresence>
+        {showSheetsSync && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-[2.5rem] shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col border border-gray-100"
+            >
+              {/* Header */}
+              <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-slate-50/50">
+                <div>
+                  <div className="flex items-center gap-2 text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1">
+                    <FileText size={10} className="text-emerald-500" />
+                    <span>Integrasi Google Sheets</span>
+                    <span>•</span>
+                    <span className="text-slate-900">{classes.find(c => c.id === selectedClassId)?.name || 'SD'}</span>
+                  </div>
+                  <h3 className="text-base font-black text-slate-950 uppercase tracking-wider italic">
+                    Sinkronisasi Data: {getAreaLabel(selectedArea)} ({getPeriodLabel(selectedPeriod)})
+                  </h3>
+                  <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-1">
+                    Tahun Ajaran: {selectedYear} • Periode ID: {selectedPeriod === 'JUL_OCT' ? 'P1' : (selectedPeriod === 'NOV_FEB' ? 'P2' : 'P3')}
+                  </p>
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => setShowSheetsSync(false)}
+                  className="p-2.5 rounded-2xl bg-white border border-gray-100 hover:bg-gray-50 text-gray-400 hover:text-slate-900 transition-all shadow-sm cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Step & Tabs Selector */}
+              <div className="px-6 py-3 border-b border-gray-50 bg-white flex gap-1.5 overflow-x-auto">
+                <button
+                  type="button"
+                  onClick={() => setSyncStep('initial')}
+                  className={cn(
+                    "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap",
+                    syncStep === 'initial'
+                      ? "bg-slate-900 text-white shadow-md shadow-slate-900/10"
+                      : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
+                  )}
+                >
+                  1. Draf & Input Sheet
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (previewRows.length > 0) setSyncStep('preview');
+                  }}
+                  disabled={previewRows.length === 0}
+                  className={cn(
+                    "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap",
+                    syncStep === 'preview'
+                      ? "bg-slate-900 text-white shadow-md shadow-slate-900/10"
+                      : "text-slate-400 disabled:opacity-50 hover:text-slate-800 hover:bg-slate-50"
+                  )}
+                >
+                  2. Pratinjau Perubahan ({previewRows.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSyncStep('history');
+                    fetchSyncLogs();
+                  }}
+                  className={cn(
+                    "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap",
+                    syncStep === 'history'
+                      ? "bg-slate-900 text-white shadow-md shadow-slate-900/10"
+                      : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
+                  )}
+                >
+                  3. Riwayat Audit & Rollback
+                </button>
+              </div>
+
+              {/* Main Content Areas */}
+              <div className="flex-1 overflow-auto p-6 bg-slate-50/20">
+                {syncStep === 'initial' && (
+                  <div className="space-y-6 max-w-3xl mx-auto py-4">
+                    {/* OPTION 1: CREATE TEMPLATE */}
+                    <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm space-y-4">
+                      <div className="flex items-start gap-4">
+                        <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl shrink-0">
+                          <Sparkles size={20} />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-black text-slate-900 uppercase tracking-wider">Opsi A: Buat Template Baru dengan Data Siswa</h4>
+                          <p className="text-xs text-slate-500 mt-1">
+                            Sistem akan otomatis membuat file Google Spreadsheet baru di Google Drive Anda. Nama dan NIS/ID seluruh siswa kelas <b>{classes.find(c => c.id === selectedClassId)?.name}</b> akan dimasukkan secara urut, lengkap dengan kolom penulisan indikator area <b>{getAreaLabel(selectedArea)}</b>.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 flex flex-col sm:flex-row items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={handleCreateTemplate}
+                          disabled={isCreatingTemplate}
+                          className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-md shadow-indigo-600/10 transition-all cursor-pointer"
+                        >
+                          {isCreatingTemplate ? (
+                            <>
+                              <RefreshCw size={13} className="animate-spin" />
+                              Membuat Berkas...
+                            </>
+                          ) : (
+                            <>
+                              <Plus size={13} />
+                              Buat Template Sheet Baru
+                            </>
+                          )}
+                        </button>
+
+                        {createdTemplateUrl && (
+                          <a
+                            href={createdTemplateUrl}
+                            target="_blank"
+                            referrerPolicy="no-referrer"
+                            className="w-full sm:w-auto text-center flex items-center justify-center gap-2 bg-emerald-50 text-emerald-700 border border-emerald-200/50 hover:bg-emerald-100 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all"
+                          >
+                            Buka Google Sheet ↗
+                          </a>
+                        )}
+                      </div>
+
+                      {createdTemplateUrl && (
+                        <div className="bg-emerald-50/40 border border-emerald-100 rounded-2xl p-4 mt-2 space-y-2">
+                          <p className="text-[11px] text-emerald-800 font-bold flex items-center gap-1.5">
+                            <CheckCircle2 size={13} className="text-emerald-600" />
+                            File template berhasil dibuat dan dibagikan secara aman!
+                          </p>
+                          <p className="text-[10px] text-slate-500 leading-normal">
+                            Silakan buka tautan di atas untuk mengedit nilai-nilai perkembangan Literasi dan Numerasi siswa Anda. Setelah selesai menginput data guru di sana, masukkan URL file tersebut pada input di bawah untuk menyinkronkannya kembali ke Firestore.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* OPTION 2: ENTER EXISTING GOOGLE SHEET URL */}
+                    <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm space-y-4">
+                      <div className="flex items-start gap-4">
+                        <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl shrink-0">
+                          <FileText size={20} />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-black text-slate-900 uppercase tracking-wider">Opsi B: Analisis & Sinkronisasi Dari Google Sheet</h4>
+                          <p className="text-xs text-slate-500 mt-1">
+                            Tempelkan URL link tautan Google Spreadsheet Anda untuk menganalisis data. Kolom <b>ID Siswa (NIS)</b> akan dipetakan sebagai pencocok utama.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 pt-2">
+                        {loadingSheetConfig ? (
+                          <div className="flex items-center justify-center p-6 gap-2 text-slate-500 text-xs font-bold uppercase">
+                            <RefreshCw size={14} className="animate-spin text-slate-500" />
+                            Memuat Konfigurasi Google Sheet Resmi...
+                          </div>
+                        ) : sheetConfigError ? (
+                          <div className="bg-amber-50/60 border border-amber-100 p-4 rounded-2xl flex items-start gap-2.5 text-amber-900 text-xs leading-normal">
+                            <span className="font-bold text-amber-600 shrink-0 uppercase tracking-wider block mt-0.5">⚠️ Perhatian:</span>
+                            <div>
+                              <p className="font-bold">{sheetConfigError}</p>
+                              <p className="text-[10px] text-slate-500 mt-0.5 leading-normal">
+                                Hubungi Administrator untuk mengatur pemetaan Google Sheet resmi bagi kelas ini di panel Admin.
+                              </p>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                              <div className="md:col-span-3 space-y-1">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Tautan URL Google Sheet (Resmi - Read Only)</label>
+                                <input
+                                  type="text"
+                                  value={sheetsUrl}
+                                  readOnly
+                                  disabled
+                                  className="w-full bg-slate-100 border border-slate-200 text-xs px-3 py-2.5 rounded-xl outline-none font-medium text-slate-500 cursor-not-allowed select-all"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Tab Terpilih (Read Only)</label>
+                                <input
+                                  type="text"
+                                  value={sheetsTabName}
+                                  readOnly
+                                  disabled
+                                  className="w-full bg-slate-100 border border-slate-200 text-xs px-3 py-2.5 rounded-xl outline-none font-bold text-slate-500 cursor-not-allowed"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="pt-2 flex justify-end">
+                              <button
+                                type="button"
+                                onClick={handleFetchPreview}
+                                disabled={isPreviewing || !sheetsUrl}
+                                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-md shadow-emerald-600/10"
+                              >
+                                {isPreviewing ? (
+                                  <>
+                                    <RefreshCw size={13} className="animate-spin" />
+                                    Menganalisis Berkas...
+                                  </>
+                                ) : (
+                                  <>
+                                    <FileText size={13} />
+                                    Analisis & Lihat Pratinjau
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {syncStep === 'preview' && (
+                  <div className="space-y-4">
+                    {/* Summary statistics & action */}
+                    <div className="bg-slate-900 text-white rounded-3xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-lg">
+                      <div className="space-y-1">
+                        <span className="text-[9px] font-black tracking-widest text-[#9d9da6] uppercase">Hasil Perbandingan Data</span>
+                        <h4 className="text-sm font-black text-white uppercase tracking-wider">Pratinjau Sinkronisasi Terdeteksi</h4>
+                        <p className="text-[11px] text-slate-400">
+                          Total data dari Google Sheet: <b>{previewRows.length} baris</b>. Beri tanda centang pada siswa yang ingin Anda simpan.
+                        </p>
+                      </div>
+
+                      {/* Select all changes option */}
+                      <div className="flex flex-wrap items-center gap-3">
+                        <label className="flex items-center gap-2 bg-slate-800 border border-slate-700 p-2.5 rounded-2xl text-xs font-bold text-slate-300 cursor-pointer select-none hover:bg-slate-700 transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={
+                              previewRows.length > 0 &&
+                              previewRows.filter(row => row.status === 'new' || row.status === 'modified').every(row => selectedSyncIds.has(row.studentId))
+                            }
+                            onChange={e => {
+                              const changes = previewRows.filter(row => row.status === 'new' || row.status === 'modified');
+                              setSelectedSyncIds(prev => {
+                                const next = new Set(prev);
+                                if (e.target.checked) {
+                                  changes.forEach(row => next.add(row.studentId));
+                                } else {
+                                  changes.forEach(row => next.delete(row.studentId));
+                                }
+                                return next;
+                              });
+                            }}
+                            className="accent-emerald-500 rounded cursor-pointer"
+                          />
+                          <span>Pilih Semua Perubahan</span>
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={handleConfirmSync}
+                          disabled={isSyncing || selectedSyncIds.size === 0}
+                          className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-700 disabled:text-slate-400 text-white px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider shadow-md transition-all cursor-pointer"
+                        >
+                          {isSyncing ? (
+                            <>
+                              <RefreshCw size={13} className="animate-spin" />
+                              Menyimpan...
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle2 size={13} />
+                              SINKRONKAN ({selectedSyncIds.size} SISWA)
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Preview Table */}
+                    <div className="bg-white rounded-3xl border border-gray-100 overflow-hidden shadow-sm">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr className="bg-slate-50 border-b border-gray-100 text-slate-400 uppercase tracking-wider font-black text-[9px] py-3">
+                              <th className="py-3 px-4 w-12 text-center">Sync</th>
+                              <th className="py-3 px-4 w-48">Nama Siswa SD</th>
+                              <th className="py-3 px-2 w-28 text-center">Status</th>
+                              <th className="py-3 px-4">Perbandingan Perubahan Nilai</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-50 text-gray-700 font-medium">
+                            {previewRows.map((row) => {
+                              const isSelected = selectedSyncIds.has(row.studentId);
+                              const isEditable = row.status === 'new' || row.status === 'modified';
+
+                              return (
+                                <tr key={row.studentId} className={cn("hover:bg-slate-50/30 transition-colors", isSelected ? "bg-emerald-50/10" : "")}>
+                                  <td className="py-4 px-4 text-center">
+                                    <input
+                                      type="checkbox"
+                                      disabled={!isEditable}
+                                      checked={isSelected}
+                                      onChange={() => {
+                                        setSelectedSyncIds(prev => {
+                                          const next = new Set(prev);
+                                          if (next.has(row.studentId)) {
+                                            next.delete(row.studentId);
+                                          } else {
+                                            next.add(row.studentId);
+                                          }
+                                          return next;
+                                        });
+                                      }}
+                                      className="accent-emerald-500 rounded cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                                    />
+                                  </td>
+                                  <td className="py-4 px-4">
+                                    <span className="font-black text-slate-900 block">{row.studentName}</span>
+                                    <span className="text-[10px] text-slate-400 block font-mono">NIS: {row.studentId}</span>
+                                  </td>
+                                  <td className="py-4 px-2 text-center">
+                                    <span
+                                      className={cn(
+                                        "px-2.5 py-0.5 rounded-lg text-[9px] font-extrabold tracking-wider uppercase border inline-block",
+                                        row.status === 'new' && "bg-emerald-50 text-emerald-700 border-emerald-100",
+                                        row.status === 'modified' && "bg-amber-50 text-amber-700 border-amber-100",
+                                        row.status === 'no_change' && "bg-slate-50 text-slate-500 border-slate-100",
+                                        row.status === 'missing_in_sheet' && "bg-slate-100 text-slate-600 border-slate-200"
+                                      )}
+                                    >
+                                      {row.status === 'new' && 'BARU'}
+                                      {row.status === 'modified' && 'DIUBAH'}
+                                      {row.status === 'no_change' && 'SAMA'}
+                                      {row.status === 'missing_in_sheet' && 'TIDAK DI SHEET'}
+                                    </span>
+                                  </td>
+                                  <td className="py-4 px-4 text-[11px] leading-normal font-mono text-slate-600">
+                                    {row.status === 'missing_in_sheet' && (
+                                      <span className="text-slate-400 italic">Siswa terdaftar di kelas tetapi barisnya kosong di Google Sheet. Data lama di Firestore tetap aman dan tidak akan dihapus.</span>
+                                    )}
+                                    {row.status === 'no_change' && (
+                                      <span className="text-slate-400">Nilai di Google Sheet sama persis dengan database Firestore.</span>
+                                    )}
+                                    {isEditable && (
+                                      <div className="space-y-1">
+                                        {/* Display specific fields for preview */}
+                                        {selectedArea === 'NUMERACY' && (
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                                            <div>
+                                              <span className="text-[9px] text-slate-400 block font-sans uppercase font-bold">Math Level:</span>
+                                              <span className="text-slate-400 line-through">{(row.previousData?.mathLevel) || '(kosong)'}</span>
+                                              <span className="text-emerald-600 font-bold ml-1">➔ {row.newData?.mathLevel || '(kosong)'}</span>
+                                            </div>
+                                            <div>
+                                              <span className="text-[9px] text-slate-400 block font-sans uppercase font-bold">Topik:</span>
+                                              <span className="text-slate-400 truncate max-w-[100px] inline-block align-bottom line-through">{(row.previousData?.topic) || '(kosong)'}</span>
+                                              <span className="text-emerald-600 font-bold ml-1">➔ {row.newData?.topic || '(kosong)'}</span>
+                                            </div>
+                                            <div>
+                                              <span className="text-[9px] text-slate-400 block font-sans uppercase font-bold">Accuracy:</span>
+                                              <span className="text-slate-400 line-through">{row.previousData?.accuracy !== undefined && row.previousData?.accuracy !== null ? `${row.previousData.accuracy}%` : '(kosong)'}</span>
+                                              <span className="text-emerald-600 font-bold ml-1">➔ {row.newData?.accuracy !== undefined && row.newData?.accuracy !== null ? `${row.newData.accuracy}%` : '(kosong)'}</span>
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        {(selectedArea === 'BAHASA_INDONESIA' || selectedArea === 'ENGLISH_READING') && (
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                                            <div>
+                                              <span className="text-[9px] text-slate-400 block font-sans uppercase font-bold">Words Read/Errors/WPM:</span>
+                                              <span className="text-slate-400 line-through">
+                                                {row.previousData?.wordsRead ?? '-'}/{row.previousData?.errors ?? '-'}/{row.previousData?.wpm ?? '-'}
+                                              </span>
+                                              <span className="text-emerald-600 font-bold ml-1">
+                                                ➔ {row.newData?.wordsRead ?? '-'}/{row.newData?.errors ?? '-'}/{row.newData?.wpm ?? '-'}
+                                              </span>
+                                            </div>
+                                            <div>
+                                              <span className="text-[9px] text-slate-400 block font-sans uppercase font-bold">Reading Level:</span>
+                                              <span className="text-slate-400 line-through">{row.previousData?.readingLevel || '-'}</span>
+                                              <span className="text-emerald-600 font-bold ml-1">➔ {row.newData?.readingLevel || '-'}</span>
+                                            </div>
+                                            <div>
+                                              <span className="text-[9px] text-slate-400 block font-sans uppercase font-bold">Comprehension:</span>
+                                              <span className="text-slate-400 line-through">{row.previousData?.comprehensionScore !== undefined && row.previousData?.comprehensionScore !== null ? `${row.previousData.comprehensionScore}%` : '-'}</span>
+                                              <span className="text-emerald-600 font-bold ml-1">➔ {row.newData?.comprehensionScore !== undefined && row.newData?.comprehensionScore !== null ? `${row.newData.comprehensionScore}%` : '-'}</span>
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        {selectedArea === 'MENGAJI' && (
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
+                                            <div>
+                                              <span className="text-[9px] text-slate-400 block font-sans uppercase font-bold">Level:</span>
+                                              <span className="text-slate-400 line-through">{row.previousData?.iqroCurrentLevel || '-'}</span>
+                                              <span className="text-emerald-600 font-bold ml-1">➔ {row.newData?.iqroCurrentLevel || '-'}</span>
+                                            </div>
+                                            <div>
+                                              <span className="text-[9px] text-slate-400 block font-sans uppercase font-bold">Checkpoint:</span>
+                                              <span className="text-slate-400 line-through">{row.previousData?.iqroCurrentCheckpoint || '-'}</span>
+                                              <span className="text-emerald-600 font-bold ml-1">➔ {row.newData?.iqroCurrentCheckpoint || '-'}</span>
+                                            </div>
+                                            <div>
+                                              <span className="text-[9px] text-slate-400 block font-sans uppercase font-bold">Target:</span>
+                                              <span className="text-slate-400 line-through">{row.previousData?.targetIqroLevel || '-'}</span>
+                                              <span className="text-emerald-600 font-bold ml-1">➔ {row.newData?.targetIqroLevel || '-'}</span>
+                                            </div>
+                                            <div>
+                                              <span className="text-[9px] text-slate-400 block font-sans uppercase font-bold">Kelulusan:</span>
+                                              <span className="text-slate-400 line-through">{row.previousData?.completionStatus || '-'}</span>
+                                              <span className="text-emerald-600 font-bold ml-1">➔ {row.newData?.completionStatus || '-'}</span>
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        {/* Display support status changes */}
+                                        <div className="text-[10px] text-slate-500 font-sans mt-1 bg-slate-50 p-1.5 rounded-lg border border-slate-100 flex items-center gap-1.5 w-fit">
+                                          <span>Intervensi:</span>
+                                          <span className="line-through text-slate-400">{getSupportStatusLabel(row.previousData?.supportStatus || 'INCOMPLETE_DATA')}</span>
+                                          <span>➔</span>
+                                          <span className="text-emerald-700 font-black">{getSupportStatusLabel(row.newData?.supportStatus || 'INCOMPLETE_DATA')}</span>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {syncStep === 'history' && (
+                  <div className="space-y-4">
+                    {isLoadingLogs ? (
+                      <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2">
+                        <RefreshCw className="animate-spin text-indigo-500" size={24} />
+                        <span className="text-xs font-black uppercase tracking-widest">Memuat Log Audit...</span>
+                      </div>
+                    ) : syncLogs.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-20 text-slate-400 text-center bg-white rounded-3xl border border-gray-100">
+                        <FileText size={40} className="text-slate-200 mb-3" />
+                        <p className="text-xs font-black uppercase tracking-widest">Belum ada riwayat sinkronisasi</p>
+                        <p className="text-[10px] text-slate-400 mt-1 max-w-xs leading-normal">Belum ada aktivitas sinkronisasi Google Sheet yang tercatat untuk kelas dan area terpilih.</p>
+                      </div>
+                    ) : (
+                      <div className="bg-white rounded-3xl border border-gray-100 overflow-hidden shadow-sm">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left border-collapse text-xs">
+                            <thead>
+                              <tr className="bg-slate-50 border-b border-gray-100 text-slate-400 uppercase tracking-wider font-black text-[9px] py-3">
+                                <th className="py-3 px-4">Tanggal Sinkronisasi</th>
+                                <th className="py-3 px-4">Oleh Pengguna</th>
+                                <th className="py-3 px-4">Tautan Berkas & Tab</th>
+                                <th className="py-3 px-4 text-center">Jumlah Baris</th>
+                                <th className="py-3 px-4 text-center">Aksi Batal (Rollback)</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-50 text-gray-700 font-medium">
+                              {syncLogs.map((log) => (
+                                <tr key={log.id} className="hover:bg-slate-50/20 transition-colors">
+                                  <td className="py-4 px-4 font-mono font-bold text-slate-800">
+                                    {new Date(log.timestamp).toLocaleString('id-ID', {
+                                      dateStyle: 'medium',
+                                      timeStyle: 'short'
+                                    })}
+                                  </td>
+                                  <td className="py-4 px-4">
+                                    <span className="font-bold text-slate-950 block">{log.teacherName || 'Guru SD'}</span>
+                                    <span className="text-[10px] text-slate-400 block">{log.teacherEmail}</span>
+                                  </td>
+                                  <td className="py-4 px-4 max-w-xs truncate">
+                                    <a
+                                      href={log.spreadsheetUrl}
+                                      target="_blank"
+                                      referrerPolicy="no-referrer"
+                                      className="text-indigo-600 hover:underline font-bold block truncate"
+                                      title={log.spreadsheetUrl}
+                                    >
+                                      Buka Spreadsheet ↗
+                                    </a>
+                                    <span className="text-[10px] text-slate-400 block font-bold">Tab: {log.sheetName}</span>
+                                  </td>
+                                  <td className="py-4 px-4 text-center font-bold text-indigo-600">{log.syncedStudentIds?.length || 0} Siswa</td>
+                                  <td className="py-4 px-4 text-center">
+                                    {log.isRolledBack ? (
+                                      <span className="px-2.5 py-1 bg-slate-100 border border-slate-200 text-slate-500 rounded-xl text-[9px] font-black uppercase tracking-wider">
+                                        TELAH DI-ROLLBACK
+                                      </span>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRollbackSync(log.id)}
+                                        disabled={isRollingBack}
+                                        className="inline-flex items-center gap-1.5 bg-red-50 hover:bg-red-100 disabled:bg-slate-50 text-red-700 border border-red-200/50 px-3 py-1.5 rounded-xl text-[9px] font-black tracking-wider uppercase transition-all cursor-pointer"
+                                      >
+                                        <History size={10} />
+                                        ROLLBACK
+                                      </button>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

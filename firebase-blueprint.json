@@ -762,6 +762,10 @@
       "schema": "ElementaryLiteracyNumeracy",
       "description": "Elementary multi-area literacy and numeracy progress records."
     },
+    "elementaryLiteracyNumeracySheetConfigs/{configId}": {
+      "schema": "ElementaryLiteracyNumeracySheetConfig",
+      "description": "Admin configuration for canonical Google Sheet linking and tabs for Elementary Literacy and Numeracy."
+    },
     "selfExploration/{studentId}": {
       "schema": "SelfExploration",
       "description": "Student self-exploration profile summaries."
