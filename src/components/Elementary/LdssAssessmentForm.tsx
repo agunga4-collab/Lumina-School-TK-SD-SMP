@@ -255,6 +255,118 @@ export default function LdssAssessmentForm({
   // Read-only checker
   const isReadOnly = activeSession?.status?.toUpperCase() === "COMPLETED" || activeSession?.status === "completed" || periodStatus === "CLOSED";
 
+  // Authorized check for editing/bulk-actions
+  const isAuthorizedToEdit = !isReadOnly && (
+    profile?.role === "SUPER_ADMIN" || 
+    profile?.role === "HEAD_UNIT" || 
+    profile?.role === "TEACHER"
+  );
+
+  // Show bulk action filling dropdown menu state
+  const [showBulkMenu, setShowBulkMenu] = React.useState(false);
+
+  // Dialog state
+  const [sectionConfirmDialog, setSectionConfirmDialog] = React.useState<{
+    isOpen: boolean;
+    domainId: string;
+    domainName: string;
+    answer: "YA" | "TIDAK";
+    count: number;
+  } | null>(null);
+
+  const [allConfirmDialog, setAllConfirmDialog] = React.useState<{
+    isOpen: boolean;
+    answer: "YA" | "TIDAK" | "KOSONGKAN";
+    editableCount: number;
+  } | null>(null);
+
+  const isAllSectionAnswer = (domainId: string, answer: "YA" | "TIDAK") => {
+    const domain = activeTemplate?.domains.find((d) => d.id === domainId);
+    if (!domain || domain.indicators.length === 0) return false;
+    return domain.indicators.every((ind) => scores[ind.id] === answer);
+  };
+
+  const hasAnswersInSection = (domainId: string) => {
+    const domain = activeTemplate?.domains.find((d) => d.id === domainId);
+    if (!domain) return false;
+    return domain.indicators.some((ind) => scores[ind.id] !== null && scores[ind.id] !== undefined);
+  };
+
+  const applyAnswerToSection = (domainId: string, answer: "YA" | "TIDAK") => {
+    setScores((current) => {
+      const next = { ...current };
+      const domain = activeTemplate?.domains.find((d) => d.id === domainId);
+      if (domain) {
+        domain.indicators.forEach((indicator) => {
+          next[indicator.id] = answer;
+        });
+      }
+      return next;
+    });
+    setSaveSuccess(false);
+  };
+
+  const handleBulkDomainAction = (domainId: string, answer: "YA" | "TIDAK") => {
+    const domain = activeTemplate?.domains.find((d) => d.id === domainId);
+    if (!domain) return;
+
+    // Check if everything is already this answer
+    if (isAllSectionAnswer(domainId, answer)) return;
+
+    if (hasAnswersInSection(domainId)) {
+      setSectionConfirmDialog({
+        isOpen: true,
+        domainId,
+        domainName: domain.name,
+        answer,
+        count: domain.indicators.length,
+      });
+    } else {
+      applyAnswerToSection(domainId, answer);
+    }
+  };
+
+  const handleBulkAllAction = (answer: "YA" | "TIDAK" | "KOSONGKAN") => {
+    if (!activeTemplate) return;
+
+    let editableCount = 0;
+    activeTemplate.domains.forEach((dom) => {
+      editableCount += dom.indicators.length;
+    });
+
+    setAllConfirmDialog({
+      isOpen: true,
+      answer,
+      editableCount,
+    });
+  };
+
+  const applyAnswerToAll = (answer: "YA" | "TIDAK") => {
+    setScores((current) => {
+      const next = { ...current };
+      activeTemplate?.domains.forEach((dom) => {
+        dom.indicators.forEach((indicator) => {
+          next[indicator.id] = answer;
+        });
+      });
+      return next;
+    });
+    setSaveSuccess(false);
+  };
+
+  const clearAllAnswers = () => {
+    setScores((current) => {
+      const next = { ...current };
+      activeTemplate?.domains.forEach((dom) => {
+        dom.indicators.forEach((indicator) => {
+          next[indicator.id] = null;
+        });
+      });
+      return next;
+    });
+    setSaveSuccess(false);
+  };
+
   // Loading and Initializing Data
   React.useEffect(() => {
     const initializeForm = async () => {
@@ -1145,6 +1257,62 @@ export default function LdssAssessmentForm({
             </select>
           )}
 
+          {/* Aksi Pengisian dropdown */}
+          {isAuthorizedToEdit && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowBulkMenu(!showBulkMenu)}
+                className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black rounded-xl cursor-pointer transition-all flex items-center gap-1.5"
+              >
+                <span>Aksi Pengisian</span>
+                <ChevronDown size={14} />
+              </button>
+              
+              {showBulkMenu && (
+                <>
+                  <div 
+                    className="fixed inset-0 z-40" 
+                    onClick={() => setShowBulkMenu(false)} 
+                  />
+                  <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-150 rounded-2xl shadow-xl z-50 py-1.5 animate-in fade-in duration-100">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowBulkMenu(false);
+                        handleBulkAllAction("YA");
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 hover:text-indigo-600 transition-colors"
+                    >
+                      ✓ Isi semua indikator sebagai Ya
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowBulkMenu(false);
+                        handleBulkAllAction("TIDAK");
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 hover:text-indigo-600 transition-colors"
+                    >
+                      × Isi semua indikator sebagai Tidak
+                    </button>
+                    <div className="h-px bg-gray-100 my-1" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowBulkMenu(false);
+                        handleBulkAllAction("KOSONGKAN");
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 transition-colors"
+                    >
+                      🗑 Kosongkan semua jawaban
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           {/* Start New Session Button */}
           <button
             onClick={() => {
@@ -1302,12 +1470,57 @@ export default function LdssAssessmentForm({
                   </div>
                 </div>
 
-                <div>
-                  {isExpanded ? (
-                    <ChevronUp size={16} className="text-slate-400 shrink-0" />
-                  ) : (
-                    <ChevronDown size={16} className="text-slate-400 shrink-0" />
+                <div className="flex items-center gap-3">
+                  {isExpanded && isAuthorizedToEdit && (
+                    <div 
+                      className="flex items-center gap-1.5 mr-1"
+                      onClick={(e) => e.stopPropagation()} // Prevent accordion toggle
+                    >
+                      <span className="hidden sm:inline-block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        Pilih semua:
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleBulkDomainAction(domain.id, "YA");
+                        }}
+                        className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider border cursor-pointer transition-all ${
+                          isAllSectionAnswer(domain.id, "YA")
+                            ? "bg-emerald-600 border-emerald-600 text-white shadow-sm"
+                            : "bg-white border-gray-200 text-gray-500 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200"
+                        }`}
+                        title="Isi semua indikator di bagian ini sebagai Ya"
+                      >
+                        <Check size={11} className="stroke-[3]" />
+                        <span>Ya</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleBulkDomainAction(domain.id, "TIDAK");
+                        }}
+                        className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider border cursor-pointer transition-all ${
+                          isAllSectionAnswer(domain.id, "TIDAK")
+                            ? "bg-rose-600 border-rose-600 text-white shadow-sm"
+                            : "bg-white border-gray-200 text-gray-500 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200"
+                        }`}
+                        title="Isi semua indikator di bagian ini sebagai Tidak"
+                      >
+                        <X size={11} className="stroke-[3]" />
+                        <span>Tidak</span>
+                      </button>
+                    </div>
                   )}
+
+                  <div>
+                    {isExpanded ? (
+                      <ChevronUp size={16} className="text-slate-400 shrink-0" />
+                    ) : (
+                      <ChevronDown size={16} className="text-slate-400 shrink-0" />
+                    )}
+                  </div>
                 </div>
               </button>
 
@@ -1546,6 +1759,129 @@ export default function LdssAssessmentForm({
           )}
         </div>
       </div>
+
+      {/* Domain Confirmation Dialog */}
+      {sectionConfirmDialog && sectionConfirmDialog.isOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xl max-w-md w-full space-y-4 text-left"
+          >
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl shrink-0">
+                <AlertTriangle size={20} />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-sm font-black text-slate-900">
+                  Terapkan jawaban untuk seluruh bagian?
+                </h4>
+                <p className="text-xs text-slate-500 leading-relaxed font-semibold">
+                  Pilihan ini akan mengubah <span className="text-indigo-600 font-bold">{sectionConfirmDialog.count}</span> indikator pada bagian <strong className="text-slate-800">{sectionConfirmDialog.domainName}</strong>. Catatan khusus yang sudah ditulis tidak akan dihapus.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setSectionConfirmDialog(null)}
+                className="px-4 py-2 border border-gray-200 hover:bg-slate-50 text-slate-600 text-xs font-bold rounded-xl cursor-pointer transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  applyAnswerToSection(sectionConfirmDialog.domainId, sectionConfirmDialog.answer);
+                  setSectionConfirmDialog(null);
+                }}
+                className={`px-4 py-2 text-white text-xs font-black rounded-xl cursor-pointer transition-colors ${
+                  sectionConfirmDialog.answer === "YA" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"
+                }`}
+              >
+                Ya, pilih semua sebagai {sectionConfirmDialog.answer === "YA" ? "Ya" : "Tidak"}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* All Instruments Confirmation Dialog */}
+      {allConfirmDialog && allConfirmDialog.isOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xl max-w-md w-full space-y-4 text-left"
+          >
+            <div className="flex items-start gap-3">
+              <div className={`p-2 rounded-xl shrink-0 ${
+                allConfirmDialog.answer === "KOSONGKAN" ? "bg-rose-50 text-rose-600" : "bg-indigo-50 text-indigo-600"
+              }`}>
+                <AlertTriangle size={20} />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-sm font-black text-slate-900">
+                  {allConfirmDialog.answer === "KOSONGKAN" 
+                    ? "Kosongkan semua jawaban LDSS?"
+                    : `Isi seluruh instrumen sebagai ${allConfirmDialog.answer === "YA" ? "Ya" : "Tidak"}?`
+                  }
+                </h4>
+                {allConfirmDialog.answer === "KOSONGKAN" ? (
+                  <p className="text-xs text-slate-500 leading-relaxed font-semibold">
+                    Semua jawaban Ya/Tidak pada sesi draft ini akan dihapus. Catatan khusus tidak ikut dihapus.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-xs text-slate-500 leading-relaxed font-semibold">
+                      Tindakan ini akan mengisi <span className="text-indigo-600 font-bold">{allConfirmDialog.editableCount}</span> indikator LDSS sebagai <span className="font-bold">{allConfirmDialog.answer === "YA" ? "Ya" : "Tidak"}</span>. Jawaban yang sudah ada akan diganti. Catatan khusus tidak akan dihapus.
+                    </p>
+                    <p className="text-[10px] text-amber-600 bg-amber-50 border border-amber-100 p-2 rounded-xl font-bold">
+                      Gunakan hanya bila hasil observasi memang berlaku untuk seluruh indikator.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setAllConfirmDialog(null)}
+                className="px-4 py-2 border border-gray-200 hover:bg-slate-50 text-slate-600 text-xs font-bold rounded-xl cursor-pointer transition-colors"
+              >
+                Batal
+              </button>
+              {allConfirmDialog.answer === "KOSONGKAN" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearAllAnswers();
+                    setAllConfirmDialog(null);
+                  }}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-xl cursor-pointer transition-colors"
+                >
+                  Kosongkan jawaban
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    applyAnswerToAll(allConfirmDialog.answer as "YA" | "TIDAK");
+                    setAllConfirmDialog(null);
+                  }}
+                  className={`px-4 py-2 text-white text-xs font-black rounded-xl cursor-pointer transition-colors ${
+                    allConfirmDialog.answer === "YA" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"
+                  }`}
+                >
+                  Isi semua sebagai {allConfirmDialog.answer === "YA" ? "Ya" : "Tidak"}
+                </button>
+              )}
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }
