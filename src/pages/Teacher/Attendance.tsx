@@ -1637,10 +1637,10 @@ export default function Attendance() {
                 ))}
               </select>
             </div>
-            {activeUnit === 'JUNIOR_HIGH' && fileMap?.spreadsheetId && (
+            {(activeUnit === 'JUNIOR_HIGH' || activeUnit === 'ELEMENTARY') && (fileMap?.spreadsheetId || fileMap?.spreadsheetUrl) && (
               <div className="ml-auto flex items-center">
                 <a
-                  href={`https://docs.google.com/spreadsheets/d/${fileMap.spreadsheetId}`}
+                  href={fileMap.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${fileMap.spreadsheetId}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-sm transition-colors cursor-pointer"
