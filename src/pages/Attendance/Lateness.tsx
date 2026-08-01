@@ -1113,7 +1113,7 @@ export default function Lateness() {
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-10 py-3 rounded-2xl shadow-xl shadow-blue-100 transition-all disabled:opacity-50"
              >
                 {saving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
-                {saving ? 'Menyimpan...' : 'Simpan & Kirim Notifikasi'}
+                {saving ? 'Menyimpan...' : 'Simpan'}
              </button>
           </div>
 

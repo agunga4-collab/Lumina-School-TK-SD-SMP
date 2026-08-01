@@ -1350,7 +1350,7 @@ export default function JuniorHighLatenessAndViolations() {
                     className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-black px-8 py-3 rounded-2xl shadow-lg shadow-blue-100 transition-all disabled:opacity-50 text-xs uppercase tracking-wider cursor-pointer"
                   >
                     {savingLateness ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                    {savingLateness ? 'Menyimpan...' : 'Simpan & Kirim Notifikasi'}
+                    {savingLateness ? 'Menyimpan...' : 'Simpan'}
                   </button>
                 </div>
               </div>

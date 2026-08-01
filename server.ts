@@ -4416,16 +4416,22 @@ app.post("/api/admin/sync-parents-data", async (req, res) => {
     studentsCollList.forEach(s => {
       const parentEmail = String(s.parentEmail || "").trim().toLowerCase();
       const luminaId = String(s.luminaId || s.id || "").trim();
-      if (luminaId && parentEmail) {
-        allStudentsMap.set(luminaId, {
-          id: s.id,
-          luminaId,
-          parentEmail,
-          name: s.name || s.fullName || "Siswa",
-          unitId: s.unitId || "KINDERGARTEN",
-          fatherName: s.fatherName || "",
-          motherName: s.motherName || ""
-        });
+      if (luminaId) {
+        if (parentEmail) {
+          allStudentsMap.set(luminaId, {
+            id: s.id,
+            luminaId,
+            parentEmail,
+            name: s.name || s.fullName || "Siswa",
+            unitId: s.unitId || "KINDERGARTEN",
+            fatherName: s.fatherName || "",
+            motherName: s.motherName || ""
+          });
+        } else {
+          // If parentEmail is removed/cleared in the active students collection,
+          // make sure we don't sync any parent for this student.
+          allStudentsMap.delete(luminaId);
+        }
       }
     });
 
