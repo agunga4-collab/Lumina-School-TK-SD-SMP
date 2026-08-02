@@ -44,6 +44,8 @@ import { useAcademicYear } from '../../context/AcademicYearContext';
 import { attendanceSyncService, attendanceBackupConfigService } from '../../services/attendanceBackupConfigService';
 import { toast } from 'sonner';
 import StudentSearch from '../../components/StudentSearch';
+import AttendanceStatusSelector from '../../components/AttendanceStatusSelector';
+import AttendanceStudentCard from '../../components/AttendanceStudentCard';
 
 interface StudentAttendance {
   id: string;
@@ -1166,19 +1168,21 @@ export default function Attendance() {
       {view === 'INPUT' && (
         <div className="space-y-6">
           <div className={cn(
-            "p-6 rounded-2xl shadow-sm border flex flex-wrap items-center justify-between gap-4 transition-all",
+            "p-4 sm:p-6 rounded-2xl shadow-sm border flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 transition-all",
             attendanceType === 'DHUHUR' ? "bg-blue-50/10 border-blue-100 shadow-blue-50/10" : "bg-white border-gray-100"
           )}>
-             <div className="flex items-center gap-4">
-                <div className="flex flex-col">
-                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Kelas</span>
-                  <div className="relative">
+             {/* Left Column: Kelas and Tanggal */}
+             <div className="flex flex-col sm:flex-row sm:items-center gap-4 w-full lg:w-auto">
+                {/* Dropdown Kelas */}
+                <div className="flex flex-col w-full sm:w-auto sm:min-w-[150px]">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1.5">Kelas</span>
+                  <div className="relative w-full">
                     <select 
                       value={selectedClass}
                       disabled={loadingClasses}
                       onChange={(e) => setSelectedClass(e.target.value)}
                       className={cn(
-                        "bg-gray-50 border rounded-lg pl-3 pr-8 py-1.5 text-sm font-bold outline-none cursor-pointer transition-colors appearance-none min-w-[120px]",
+                        "bg-gray-50 border rounded-lg pl-3 pr-8 py-2 text-sm font-bold outline-none cursor-pointer transition-colors appearance-none w-full",
                         attendanceType === 'DHUHUR'
                           ? "border-blue-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-blue-900"
                           : "border-gray-200 hover:border-blue-300"
@@ -1195,27 +1199,29 @@ export default function Attendance() {
                         </>
                       )}
                     </select>
-                    <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
                       <Layers size={14} />
                     </div>
                   </div>
                 </div>
-                <div className="flex flex-col">
-                   <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Tanggal</span>
-                   <div className="flex items-center gap-1">
+
+                {/* Tanggal Controls */}
+                <div className="flex flex-col w-full sm:w-auto">
+                   <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1.5">Tanggal</span>
+                   <div className="flex items-center gap-1.5 w-full">
                      <button 
                        onClick={handlePrevDate}
-                       className="p-1.5 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-lg transition-all"
+                       className="p-2.5 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-lg transition-all shrink-0 h-10 w-10 flex items-center justify-center"
                        title="Tanggal Sebelumnya"
                      >
-                       <ChevronLeft size={16} />
+                       <ChevronLeft size={18} />
                      </button>
                      <input 
                       type="date"
                       value={selectedDate}
                       onChange={(e) => setSelectedDate(e.target.value)}
                       className={cn(
-                        "px-3 py-1.5 bg-gray-50 border rounded-lg text-sm font-bold outline-none cursor-pointer transition-all",
+                        "px-3 py-2 bg-gray-50 border rounded-lg text-sm font-bold outline-none cursor-pointer transition-all flex-1 sm:flex-initial h-10",
                         attendanceType === 'DHUHUR'
                           ? "border-blue-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-blue-900"
                           : "border-gray-200 hover:border-blue-300"
@@ -1223,53 +1229,102 @@ export default function Attendance() {
                      />
                      <button 
                        onClick={handleNextDate}
-                       className="p-1.5 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-lg transition-all"
+                       className="p-2.5 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-lg transition-all shrink-0 h-10 w-10 flex items-center justify-center"
                        title="Tanggal Berikutnya"
                      >
-                       <ChevronRight size={16} />
+                       <ChevronRight size={18} />
                      </button>
-                     <div className="flex items-center gap-1 ml-2">
+                     
+                     <div className="hidden xs:flex sm:flex items-center gap-1 ml-1.5">
                         <button 
                           onClick={setDateToToday}
-                          className="px-2 py-1.5 text-[10px] font-bold bg-gray-100 text-gray-500 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition-all whitespace-nowrap"
+                          className="px-2.5 py-2 text-[10px] font-bold bg-gray-100 text-gray-600 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition-all whitespace-nowrap h-10"
                         >
                           Hari Ini
                         </button>
                         <button 
                           onClick={setDateToYesterday}
-                          className="px-2 py-1.5 text-[10px] font-bold bg-gray-100 text-gray-500 rounded-lg hover:bg-orange-50 hover:text-orange-600 transition-all whitespace-nowrap"
+                          className="px-2.5 py-2 text-[10px] font-bold bg-gray-100 text-gray-600 rounded-lg hover:bg-orange-50 hover:text-orange-600 transition-all whitespace-nowrap h-10"
                         >
                           Kemarin
                         </button>
                      </div>
                    </div>
+                   
+                   {/* Mobile Today/Yesterday Shortcuts */}
+                   <div className="flex xs:hidden gap-1.5 mt-2 w-full">
+                     <button 
+                       onClick={setDateToToday}
+                       className="flex-1 py-2 text-[10px] font-black bg-gray-100 text-gray-600 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition-all text-center h-9"
+                     >
+                       Hari Ini
+                     </button>
+                     <button 
+                       onClick={setDateToYesterday}
+                       className="flex-1 py-2 text-[10px] font-black bg-gray-100 text-gray-600 rounded-lg hover:bg-orange-50 hover:text-orange-600 transition-all text-center h-9"
+                     >
+                       Kemarin
+                     </button>
+                   </div>
                 </div>
              </div>
-             <div className="flex gap-2">
+
+             {/* Right Column: Actions (Cek Semua Hadir & Hapus Data Hari Ini) */}
+             <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto sm:justify-end lg:self-end">
                 <button 
                   onClick={() => setStudents(students.map(s => ({ ...s, status: attendanceType === 'DHUHUR' ? 'H' : 'HADIR' })))}
-                  className="px-4 py-2 bg-blue-50 text-blue-600 rounded-xl text-sm font-bold border border-blue-100 hover:bg-blue-100 transition-all active:scale-95"
+                  className="px-4 py-2.5 bg-blue-50 text-blue-600 rounded-xl text-xs font-bold border border-blue-100 hover:bg-blue-100 transition-all active:scale-95 text-center h-11 sm:h-auto"
                 >
                   Cek Semua Hadir
                 </button>
                 <button 
                   onClick={handleDeleteAll}
                   disabled={deleting}
-                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-bold transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2 shadow-sm"
+                  className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm h-11 sm:h-auto"
                 >
                   {deleting ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                  Hapus Semua Data Hari Ini
+                  <span>Hapus Semua Data Hari Ini</span>
                 </button>
              </div>
           </div>
 
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-            {error && (
-              <div className="p-4 bg-red-50 border-b border-red-100 flex items-center gap-3 text-red-600 text-sm font-medium">
-                <AlertTriangle size={18} />
-                {error}
+          {error && (
+            <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-3 text-red-600 text-sm font-medium animate-in fade-in duration-200">
+              <AlertTriangle size={18} />
+              {error}
+            </div>
+          )}
+
+          {/* Mobile view cards (visible only on screen < md) */}
+          <div className="block md:hidden space-y-4" id="attendance-student-cards-mobile">
+            {loading ? (
+              <div className="bg-white p-12 text-center text-gray-400 font-medium border border-gray-100 rounded-2xl shadow-sm">
+                <RefreshCw size={24} className="animate-spin mx-auto mb-2 text-blue-500" />
+                Memuat data siswa...
               </div>
+            ) : students.length === 0 ? (
+              <div className="bg-white p-12 text-center text-gray-400 font-medium italic border border-gray-100 rounded-2xl shadow-sm">
+                {selectedClass ? 'Tidak ada siswa yang ditemukan di kelas ini.' : 'Pilih kelas terlebih dahulu.'}
+              </div>
+            ) : (
+              students.map((student) => (
+                <AttendanceStudentCard
+                  key={student.id}
+                  student={student}
+                  attendanceType={attendanceType}
+                  onStatusChange={(newStatus) => handleStatusChange(student.id, newStatus)}
+                  onNoteChange={(newNote) => handleNoteChange(student.id, newNote)}
+                  onDeleteOne={() => handleDeleteOne(student.id)}
+                  deleting={deleting}
+                  threshold={threshold}
+                  disabled={saving || deleting}
+                />
+              ))
             )}
+          </div>
+
+          {/* Desktop view table (visible only on screen >= md) */}
+          <div className="hidden md:block bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden" id="attendance-student-table-desktop">
             <table className="w-full text-left">
               <thead className="bg-gray-50/50 border-b border-gray-100">
                 <tr>
@@ -1283,77 +1338,34 @@ export default function Attendance() {
               <tbody className="divide-y divide-gray-50">
                 {loading ? (
                    <tr>
-                     <td colSpan={4} className="px-6 py-12 text-center text-gray-400 font-medium">
+                     <td colSpan={5} className="px-6 py-12 text-center text-gray-400 font-medium">
                         <RefreshCw size={24} className="animate-spin mx-auto mb-2 text-blue-500" />
                         Memuat data siswa...
                      </td>
                    </tr>
                 ) : students.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-6 py-12 text-center text-gray-400 font-medium italic">
+                    <td colSpan={5} className="px-6 py-12 text-center text-gray-400 font-medium italic">
                        {selectedClass ? 'Tidak ada siswa yang ditemukan di kelas ini.' : 'Pilih kelas terlebih dahulu.'}
                     </td>
                   </tr>
                 ) : students.map((student) => (
                   <tr key={student.id} className="hover:bg-gray-50/50 transition-colors">
-                    <td className="px-6 py-4">
-                      <p className="font-bold text-gray-900 text-sm whitespace-nowrap">{student.name}</p>
-                      <p className="text-[10px] text-gray-400 font-medium">#{student.id}</p>
+                    <td className="px-6 py-4 min-w-0">
+                      <p className="font-bold text-gray-900 text-sm break-words leading-tight max-w-[280px]">{student.name}</p>
+                      <p className="text-[10px] text-gray-400 font-medium mt-0.5">#{student.id}</p>
                     </td>
                     <td className="px-2 py-4">
-                      <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit mx-auto">
-                        {attendanceType === 'DHUHUR' ? (
-                          <>
-                            <StatusBtnDhuhur 
-                              active={student.status === 'H'} 
-                              type="H" 
-                              label="H"
-                              title="Hadir Tepat Waktu"
-                              onClick={() => handleStatusChange(student.id, 'H')} 
-                            />
-                            <StatusBtnDhuhur 
-                              active={student.status === 'T'} 
-                              type="T" 
-                              label="T"
-                              title="Terlambat"
-                              onClick={() => handleStatusChange(student.id, 'T')} 
-                            />
-                            <StatusBtnDhuhur 
-                              active={student.status === 'A'} 
-                              type="A" 
-                              label="A"
-                              title="Absen"
-                              onClick={() => handleStatusChange(student.id, 'A')} 
-                            />
-                          </>
-                        ) : (
-                          <>
-                            <StatusBtn 
-                              active={student.status === 'HADIR'} 
-                              type="HADIR" 
-                              onClick={() => handleStatusChange(student.id, 'HADIR')} 
-                            />
-                            <StatusBtn 
-                              active={student.status === 'SAKIT'} 
-                              type="SAKIT" 
-                              onClick={() => handleStatusChange(student.id, 'SAKIT')} 
-                            />
-                            <StatusBtn 
-                              active={student.status === 'IZIN'} 
-                              type="IZIN" 
-                              onClick={() => handleStatusChange(student.id, 'IZIN')} 
-                            />
-                            <StatusBtn 
-                              active={student.status === 'ALPA'} 
-                              type="ALPA" 
-                              onClick={() => handleStatusChange(student.id, 'ALPA')} 
-                            />
-                          </>
-                        )}
-                      </div>
+                      <AttendanceStatusSelector
+                        value={student.status}
+                        onChange={(newStatus) => handleStatusChange(student.id, newStatus)}
+                        attendanceType={attendanceType}
+                        layout="desktop"
+                        disabled={saving || deleting}
+                      />
                     </td>
                     <td className="px-6 py-4">
-                      <div className="relative group">
+                      <div className="relative group max-w-[240px]">
                         <MessageSquare size={14} className="absolute left-0 top-1/2 -translate-y-1/2 text-gray-300 group-hover:text-blue-400 transition-colors" />
                         <input 
                           type="text" 
@@ -1394,10 +1406,10 @@ export default function Attendance() {
             </table>
           </div>
 
-          <div className="flex justify-end items-center gap-4 pt-4">
+          <div className="flex flex-col sm:flex-row justify-end items-stretch sm:items-center gap-3 pt-4 w-full">
              {lastSaved && lastSaved.date === selectedDate && lastSaved.classId === selectedClass && (
                <div className={cn(
-                 "flex items-center gap-1.5 font-bold text-sm px-4 py-2 rounded-xl border animate-in fade-in slide-in-from-right-2",
+                 "flex items-center justify-center gap-1.5 font-bold text-sm px-4 py-2 rounded-xl border animate-in fade-in slide-in-from-right-2 self-stretch sm:self-auto",
                  attendanceType === 'DHUHUR' 
                    ? "text-blue-600 bg-blue-50 border-blue-100" 
                    : "text-emerald-600 bg-emerald-50 border-emerald-100"
@@ -1410,7 +1422,7 @@ export default function Attendance() {
                 <div className="w-full flex flex-col gap-4">
                   {/* Warning if not saved to Lumina */}
                   {!lastSaved || lastSaved.date !== selectedDate || lastSaved.classId !== selectedClass ? (
-                    <div className="text-red-500 font-semibold text-xs bg-red-50 border border-red-100 px-4 py-2.5 rounded-xl self-end">
+                    <div className="text-red-500 font-semibold text-xs bg-red-50 border border-red-100 px-4 py-2.5 rounded-xl self-stretch sm:self-end text-center sm:text-left">
                       Simpan data ke Lumina terlebih dahulu sebelum melakukan backup Google Sheets.
                     </div>
                   ) : null}
@@ -1504,11 +1516,11 @@ export default function Attendance() {
                   )}
 
                   {/* Buttons controls */}
-                  <div className="flex justify-end items-center gap-4">
+                  <div className="flex flex-col sm:flex-row justify-end items-stretch sm:items-center gap-3 w-full">
                     <button 
                       onClick={handleSaveFirestore}
                       disabled={saving || backingUp || (elementaryBackupJob && ['IN_PROGRESS', 'PREPARING', 'RETRYING'].includes(elementaryBackupJob.status))}
-                      className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50"
+                      className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50 w-full sm:w-auto"
                     >
                       {saving ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
                       {saving ? 'Menyimpan...' : 'Simpan (Lumina)'}
@@ -1516,7 +1528,7 @@ export default function Attendance() {
                     <button 
                       onClick={handleBackupElementaryGoogleSheets}
                       disabled={saving || backingUp || !lastSaved || lastSaved.date !== selectedDate || lastSaved.classId !== selectedClass || (elementaryBackupJob && ['IN_PROGRESS', 'PREPARING', 'RETRYING'].includes(elementaryBackupJob.status))}
-                      className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-emerald-100 transition-all active:scale-95 disabled:opacity-50"
+                      className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-emerald-100 transition-all active:scale-95 disabled:opacity-50 w-full sm:w-auto"
                     >
                       {backingUp || (elementaryBackupJob && ['IN_PROGRESS', 'PREPARING', 'RETRYING'].includes(elementaryBackupJob.status)) ? (
                         <>
@@ -1538,7 +1550,7 @@ export default function Attendance() {
                    <button 
                     onClick={handleSaveDhuhurFirestore}
                     disabled={saving || backingUp}
-                    className="flex items-center gap-2 bg-blue-700 hover:bg-blue-800 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50"
+                    className="flex items-center justify-center gap-2 bg-blue-700 hover:bg-blue-800 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50 w-full sm:w-auto"
                    >
                       {saving ? <RefreshCw size={18} className="animate-spin" /> : (
                         <div className="flex items-center gap-1">
@@ -1550,8 +1562,8 @@ export default function Attendance() {
                    </button>
                    <button 
                     onClick={handleBackupDhuhurGoogleSheets}
-                    disabled={saving || backingUp}
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50"
+                     disabled={saving || backingUp}
+                     className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50 w-full sm:w-auto"
                    >
                       {backingUp ? <RefreshCw size={18} className="animate-spin" /> : (
                         <div className="flex items-center gap-1">
@@ -1566,8 +1578,8 @@ export default function Attendance() {
                  <>
                    <button 
                     onClick={handleSaveFirestore}
-                    disabled={saving || backingUp}
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50"
+                     disabled={saving || backingUp}
+                     className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50 w-full sm:w-auto"
                    >
                       {saving ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
                       {saving ? 'Menyimpan...' : 'Simpan (Lumina)'}
@@ -1575,7 +1587,7 @@ export default function Attendance() {
                    <button 
                     onClick={handleBackupGoogleSheets}
                     disabled={saving || backingUp}
-                    className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-emerald-100 transition-all active:scale-95 disabled:opacity-50"
+                    className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-8 py-3 rounded-xl shadow-xl shadow-emerald-100 transition-all active:scale-95 disabled:opacity-50 w-full sm:w-auto"
                    >
                       {backingUp ? <RefreshCw size={18} className="animate-spin" /> : <ExternalLink size={18} />}
                       {backingUp ? 'Mengekspor...' : 'Back Up (Google Sheets)'}
@@ -1586,7 +1598,7 @@ export default function Attendance() {
                <button 
                 onClick={handleSaveAll}
                 disabled={saving}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-10 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50"
+                className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-10 py-3 rounded-xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50 w-full sm:w-auto"
                >
                   {saving ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
                   {saving ? 'Menyimpan...' : 'Simpan Kehadiran Hari Ini'}
