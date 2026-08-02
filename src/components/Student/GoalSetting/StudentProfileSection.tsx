@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { User, Calendar, GraduationCap, Users } from 'lucide-react';
 import { Student } from '../../../types';
+import { threeWayConferenceService } from '../../../services/threeWayConferenceService';
 
 interface StudentProfileSectionProps {
   student: Student | null;
@@ -9,6 +10,23 @@ interface StudentProfileSectionProps {
 }
 
 export default function StudentProfileSection({ student, academicYear, semester }: StudentProfileSectionProps) {
+  const [resolvedClass, setResolvedClass] = React.useState<string>('');
+  const [resolvedGrade, setResolvedGrade] = React.useState<string>('');
+
+  React.useEffect(() => {
+    if (student?.id && academicYear) {
+      threeWayConferenceService.resolveConferenceEnrollment({
+        studentId: student.id,
+        academicYear
+      }).then(res => {
+        setResolvedClass(res.className);
+        setResolvedGrade(res.gradeLabel);
+      }).catch(err => {
+        console.error('Failed to resolve enrollment in profile section:', err);
+      });
+    }
+  }, [student?.id, academicYear]);
+
   return (
     <div className="bg-white rounded-[2rem] border border-gray-100 p-8 shadow-sm space-y-6">
       <div className="flex items-center gap-4 pb-4 border-b border-gray-100">
@@ -48,7 +66,7 @@ export default function StudentProfileSection({ student, academicYear, semester 
             <Users size={12} className="text-emerald-500" /> Class & Grade
           </div>
           <div className="font-bold text-gray-800 text-sm">
-            {student?.classId ? `${student.classId} (Grade ${student.grade || '-'})` : '-'}
+            {resolvedClass ? `${resolvedClass} (${resolvedGrade || 'Grade —'})` : (student?.classId ? `${student.classId} (Grade ${student.grade || '-'})` : '-')}
           </div>
         </div>
 

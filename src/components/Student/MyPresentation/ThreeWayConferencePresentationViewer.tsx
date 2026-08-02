@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useAuth } from '../../../context/AuthContext';
 import { useAcademicYear } from '../../../context/AcademicYearContext';
-import { threeWayConferenceService, resolveConferenceClass } from '../../../services/threeWayConferenceService';
+import { threeWayConferenceService, resolveConferenceClass, resolveConferenceEnrollment, ResolvedConferenceEnrollment } from '../../../services/threeWayConferenceService';
 import { Student, ThreeWayConference, Class } from '../../../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { Loader2, Tv, X, Play, RefreshCw, AlertCircle, ArrowLeft } from 'lucide-react';
@@ -53,6 +53,7 @@ export function ThreeWayConferencePresentationViewer({
   const [error, setError] = React.useState<string | null>(null);
   const [selfExplorationRef, setSelfExplorationRef] = React.useState<any>(null);
   const [resolvedClass, setResolvedClass] = React.useState<Class | null>(null);
+  const [resolvedEnrollment, setResolvedEnrollment] = React.useState<ResolvedConferenceEnrollment | null>(null);
 
   // Theme Settings
   const [selectedTheme, setSelectedTheme] = React.useState<'LAZUARDI' | 'OCEAN' | 'COBALT' | 'BLOOM' | 'EARTH'>('LAZUARDI');
@@ -86,8 +87,15 @@ export function ThreeWayConferencePresentationViewer({
       );
       setSelfExplorationRef(seRef);
 
-      // Resolve actual active class for the student for this specific conference academic year
+      // Resolve actual active class and enrollment for the student for this specific conference academic year
       if (conference) {
+        const resolvedEnroll = await resolveConferenceEnrollment({
+          studentId: conference.studentId || student.id,
+          academicYear: conference.academicYear || activeYear,
+          conferenceId: conference.id
+        });
+        setResolvedEnrollment(resolvedEnroll);
+
         const resolved = await resolveConferenceClass(conference as any, student);
         setResolvedClass(resolved);
       }
@@ -499,8 +507,8 @@ export function ThreeWayConferencePresentationViewer({
                   <PresentationSlide
                     slide={currentSlide}
                     studentName={student.name}
-                    className={resolvedClass?.name || conference.className || (student as any).className || ''}
-                    gradeLevel={resolvedClass?.grade || conference.gradeLevel || student.grade || 0}
+                    className={resolvedEnrollment?.className || resolvedClass?.name || conference.className || (student as any).className || ''}
+                    gradeLevel={resolvedEnrollment?.gradeLevel || resolvedClass?.grade || conference.gradeLevel || student.grade || 0}
                     academicYear={conference.academicYear}
                     semester={conference.semester}
                     aboutMe={conference.aboutMe || ''}
@@ -657,8 +665,8 @@ export function ThreeWayConferencePresentationViewer({
                     <PresentationSlide
                       slide={currentSlide}
                       studentName={student.name}
-                      className={conference.className || (student as any).className || ''}
-                      gradeLevel={conference.gradeLevel || student.grade || 0}
+                      className={resolvedEnrollment?.className || resolvedClass?.name || conference.className || (student as any).className || ''}
+                      gradeLevel={resolvedEnrollment?.gradeLevel || resolvedClass?.grade || conference.gradeLevel || student.grade || 0}
                       academicYear={conference.academicYear}
                       semester={conference.semester}
                       aboutMe={conference.aboutMe || ''}

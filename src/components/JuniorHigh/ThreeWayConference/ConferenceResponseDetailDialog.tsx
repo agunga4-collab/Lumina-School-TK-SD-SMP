@@ -34,6 +34,8 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
   const [error, setError] = useState<string | null>(null);
   const [seReference, setSeReference] = useState<any | null>(null);
   const [isLoadingSe, setIsLoadingSe] = useState<boolean>(false);
+  const [resolvedClassName, setResolvedClassName] = useState<string>('');
+  const [resolvedGrade, setResolvedGrade] = useState<string | number>('');
 
   // Teacher Review States
   const [isSavingReview, setIsSavingReview] = useState<boolean>(false);
@@ -369,6 +371,8 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
         setIsLoading(true);
         setError(null);
         setResponse(null);
+        setResolvedClassName('');
+        setResolvedGrade('');
         const responseId = `${periodId}_${student.id}`;
         try {
           console.log(`[ViewResponse] Fetching response with consistent ID: ${responseId}`);
@@ -378,6 +382,28 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
             console.log('[Debug-DetailDialog] Response document keys:', Object.keys(resp));
           }
           setResponse(resp);
+
+          let acadYear = '';
+          try {
+            const periodDoc = await threeWayConferenceService.getConferencePeriodById(periodId);
+            if (periodDoc) {
+              acadYear = periodDoc.academicYear;
+            }
+          } catch (e) {
+            console.error('Failed to load period details:', e);
+          }
+
+          try {
+            const resEnroll = await threeWayConferenceService.resolveConferenceEnrollment({
+              studentId: student.id,
+              academicYear: resp?.academicYear || acadYear || '',
+              conferenceId: resp?.id || `${periodId}_${student.id}`
+            });
+            setResolvedClassName(resEnroll.className);
+            setResolvedGrade(resEnroll.gradeLevel);
+          } catch (e) {
+            console.error('Failed to resolve conference enrollment:', e);
+          }
 
           if (resp) {
             setIsLoadingSe(true);
@@ -406,6 +432,8 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
       setResponse(null);
       setSeReference(null);
       setError(null);
+      setResolvedClassName('');
+      setResolvedGrade('');
     }
   }, [isOpen, student, periodId]);
 
@@ -644,8 +672,8 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                   <h4 className="text-base font-bold text-gray-900">{student.name}</h4>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-1.5 text-xs text-gray-500 font-medium">
                     <span>ID / NIS: <strong className="text-gray-700 font-mono">{student.nis || student.id}</strong></span>
-                    <span>Class: <strong className="text-gray-700">{className}</strong></span>
-                    <span>Grade: <strong className="text-gray-700">Grade {grade}</strong></span>
+                    <span>Class: <strong className="text-gray-700">{resolvedClassName || className}</strong></span>
+                    <span>Grade: <strong className="text-gray-700">Grade {resolvedGrade || grade}</strong></span>
                     {response?.academicYear && (
                       <span>Academic Year: <strong className="text-gray-700">{response.academicYear} (S{response.semester})</strong></span>
                     )}

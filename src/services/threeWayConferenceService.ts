@@ -25,12 +25,157 @@ import type {
   Enrollment
 } from '../types';
 
+export interface ResolvedConferenceEnrollment {
+  enrollmentId: string | null;
+  studentId: string;
+  academicYear: string;
+  classId: string | null;
+  className: string;
+  gradeLevel: number;
+  gradeLabel: string;
+}
+
+export async function resolveConferenceEnrollment({
+  studentId,
+  academicYear,
+  conferenceId,
+}: {
+  studentId: string;
+  academicYear: string;
+  conferenceId?: string;
+}): Promise<ResolvedConferenceEnrollment> {
+  const emptyResult: ResolvedConferenceEnrollment = {
+    enrollmentId: null,
+    studentId,
+    academicYear,
+    classId: null,
+    className: 'Kelas belum ditetapkan',
+    gradeLevel: 0,
+    gradeLabel: 'Grade —',
+  };
+
+  if (!studentId || !academicYear) {
+    return emptyResult;
+  }
+
+  try {
+    const eq = query(
+      collection(db, 'enrollments'),
+      where('studentId', '==', studentId),
+      where('academicYear', '==', academicYear)
+    );
+    const eSnap = await getDocs(eq);
+    const activeEnrollments = eSnap.docs
+      .map(d => ({ id: d.id, ...d.data() } as Enrollment & { id: string }))
+      .filter(e => (e.status || '').toUpperCase() === 'ACTIVE');
+
+    let selectedEnrollment: (Enrollment & { id: string }) | null = null;
+
+    if (activeEnrollments.length > 1) {
+      console.warn(
+        `[resolveConferenceEnrollment] Warning: Multiple active enrollments found for student ${studentId} in academic year ${academicYear}.`,
+        activeEnrollments
+      );
+      selectedEnrollment = activeEnrollments[0];
+    } else if (activeEnrollments.length === 1) {
+      selectedEnrollment = activeEnrollments[0];
+    }
+
+    if (selectedEnrollment && selectedEnrollment.classId) {
+      const classRef = doc(db, 'classes', selectedEnrollment.classId);
+      const classSnap = await getDoc(classRef);
+      if (classSnap.exists()) {
+        const classData = classSnap.data() as Class;
+        const gradeVal = classData.grade ? String(classData.grade) : '—';
+        const parsedGrade = parseInt(gradeVal, 10) || 0;
+        return {
+          enrollmentId: selectedEnrollment.id,
+          studentId,
+          academicYear,
+          classId: classSnap.id,
+          className: classData.name || 'Kelas belum ditetapkan',
+          gradeLevel: parsedGrade,
+          gradeLabel: parsedGrade ? `Grade ${parsedGrade}` : `Grade ${gradeVal}`,
+        };
+      } else {
+        const cq = query(
+          collection(db, 'classes'),
+          where('name', '==', selectedEnrollment.classId)
+        );
+        const cqSnap = await getDocs(cq);
+        if (!cqSnap.empty) {
+          const classDoc = cqSnap.docs[0];
+          const classData = classDoc.data() as Class;
+          const gradeVal = classData.grade ? String(classData.grade) : '—';
+          const parsedGrade = parseInt(gradeVal, 10) || 0;
+          return {
+            enrollmentId: selectedEnrollment.id,
+            studentId,
+            academicYear,
+            classId: classDoc.id,
+            className: classData.name || 'Kelas belum ditetapkan',
+            gradeLevel: parsedGrade,
+            gradeLabel: parsedGrade ? `Grade ${parsedGrade}` : `Grade ${gradeVal}`,
+          };
+        }
+      }
+    }
+
+    if (conferenceId) {
+      const confRef = doc(db, 'studentConferenceResponses', conferenceId);
+      const confSnap = await getDoc(confRef);
+      if (confSnap.exists()) {
+        const confData = confSnap.data() as StudentConferenceResponse;
+        if (confData.academicYear === academicYear && confData.className) {
+          const parsedGrade = confData.gradeLevel ? Number(confData.gradeLevel) : 0;
+          return {
+            enrollmentId: null,
+            studentId,
+            academicYear,
+            classId: confData.classId || null,
+            className: confData.className,
+            gradeLevel: parsedGrade,
+            gradeLabel: parsedGrade ? `Grade ${parsedGrade}` : 'Grade —',
+          };
+        }
+      }
+    }
+
+    const cq = query(
+      collection(db, 'studentConferenceResponses'),
+      where('studentId', '==', studentId),
+      where('academicYear', '==', academicYear)
+    );
+    const cqSnap = await getDocs(cq);
+    if (!cqSnap.empty) {
+      const confData = cqSnap.docs[0].data() as StudentConferenceResponse;
+      if (confData.className) {
+        const parsedGrade = confData.gradeLevel ? Number(confData.gradeLevel) : 0;
+        return {
+          enrollmentId: null,
+          studentId,
+          academicYear,
+          classId: confData.classId || null,
+          className: confData.className,
+          gradeLevel: parsedGrade,
+          gradeLabel: parsedGrade ? `Grade ${parsedGrade}` : 'Grade —',
+        };
+      }
+    }
+  } catch (err) {
+    console.error('[resolveConferenceEnrollment] Error during resolution:', err);
+  }
+
+  return emptyResult;
+}
+
 const PERIODS_COLLECTION = 'conferencePeriods';
 const RESPONSES_COLLECTION = 'studentConferenceResponses';
 const ASSIGNMENTS_COLLECTION = 'mentorAssignments';
 const TRACKER_COLLECTION = 'smartGoalTrackerEntries';
 
 export const threeWayConferenceService = {
+  resolveConferenceEnrollment,
   /**
    * Helper to generate deterministic response ID
    */
@@ -2722,6 +2867,29 @@ export async function resolveConferenceClass(
   conference: StudentConferenceResponse,
   student: Student | null
 ): Promise<Class | null> {
+  // 1. Resolve canonical enrollment first
+  const studId = conference.studentId || student?.id;
+  const acadYear = conference.academicYear;
+  if (studId && acadYear) {
+    const resEnrollment = await resolveConferenceEnrollment({
+      studentId: studId,
+      academicYear: acadYear,
+      conferenceId: conference.id
+    });
+    if (resEnrollment.classId) {
+      try {
+        const classRef = doc(db, 'classes', resEnrollment.classId);
+        const classSnap = await getDoc(classRef);
+        if (classSnap.exists()) {
+          return { id: classSnap.id, ...classSnap.data() } as Class;
+        }
+      } catch (e) {
+        // Ignore
+      }
+    }
+  }
+
+  // Fallback for candidates
   const candidateIds = Array.from(new Set([
     conference.classId,
     student?.classId,
@@ -2729,7 +2897,7 @@ export async function resolveConferenceClass(
     (student as any).classDocumentId,
   ].filter(Boolean) as string[]));
 
-  // 1. Direct document lookup for candidate IDs
+  // Direct document lookup for candidate IDs
   for (const id of candidateIds) {
     try {
       const classRef = doc(db, 'classes', id);
@@ -2742,7 +2910,7 @@ export async function resolveConferenceClass(
     }
   }
 
-  // 2. Fallback query by class name (since classId/student.classId sometimes is class name)
+  // Fallback query by class name
   if (candidateIds.length > 0) {
     try {
       const q = query(
@@ -2753,56 +2921,6 @@ export async function resolveConferenceClass(
       if (!qSnap.empty) {
         const docSnap = qSnap.docs[0];
         return { id: docSnap.id, ...docSnap.data() } as Class;
-      }
-    } catch (e) {
-      // Ignore
-    }
-  }
-
-  // 3. Fallback: Search in enrollments
-  if (conference.studentId && conference.academicYear) {
-    try {
-      const eq = query(
-        collection(db, 'enrollments'),
-        where('studentId', '==', conference.studentId),
-        where('academicYear', '==', conference.academicYear),
-        where('status', '==', 'active')
-      );
-      const eSnap = await getDocs(eq);
-      if (!eSnap.empty) {
-        const eData = eSnap.docs[0].data() as Enrollment;
-        if (eData.classId) {
-          const classRef = doc(db, 'classes', eData.classId);
-          const classSnap = await getDoc(classRef);
-          if (classSnap.exists()) {
-            return { id: classSnap.id, ...classSnap.data() } as Class;
-          }
-        }
-      }
-    } catch (e) {
-      // Ignore
-    }
-  }
-
-  // 4. Fallback: Search any enrollment for this student
-  if (conference.studentId) {
-    try {
-      const eq = query(
-        collection(db, 'enrollments'),
-        where('studentId', '==', conference.studentId)
-      );
-      const eSnap = await getDocs(eq);
-      if (!eSnap.empty) {
-        for (const edoc of eSnap.docs) {
-          const eData = edoc.data() as Enrollment;
-          if (eData.classId) {
-            const classRef = doc(db, 'classes', eData.classId);
-            const classSnap = await getDoc(classRef);
-            if (classSnap.exists()) {
-              return { id: classSnap.id, ...classSnap.data() } as Class;
-            }
-          }
-        }
       }
     } catch (e) {
       // Ignore
