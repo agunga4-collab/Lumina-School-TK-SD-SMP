@@ -1931,7 +1931,13 @@ export interface StudentConferenceResponse {
   submittedBy?: string | null;
   
   // New section-level teacher review fields
-  overallStatus?: 'DRAFT' | 'SUBMITTED' | 'PARTIALLY_APPROVED' | 'REVISION_REQUIRED' | 'FULLY_APPROVED';
+  overallStatus?: 'DRAFT' | 'SUBMITTED' | 'PARTIALLY_APPROVED' | 'REVISION_REQUIRED' | 'FULLY_APPROVED' | 'APPROVED' | 'RETURNED';
+  approvalSummary?: {
+    approvedCount: number;
+    requiredCount: number;
+    returnedCount: number;
+    allRequiredApproved: boolean;
+  };
   sectionReviews?: {
     aboutMe?: SectionReview;
     strengths?: SectionReview;

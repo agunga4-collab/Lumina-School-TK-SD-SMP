@@ -451,61 +451,38 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
   const getApprovedProgressText = () => {
     if (!response) return '';
     
-    const applicableSections: string[] = [];
-    if (response.aboutMe && response.aboutMe.trim() !== '') {
-      applicableSections.push('aboutMe');
-    }
-    if (response.strengths && response.strengths.trim() !== '') {
-      applicableSections.push('strengths');
-    }
-    if (response.areasForGrowth && response.areasForGrowth.trim() !== '') {
-      applicableSections.push('growthAreas');
-    }
-    
-    const hasSelfExploration = response.selfExplorationReferenceId || response.selfExplorationSnapshot;
-    if (hasSelfExploration) {
-      applicableSections.push('selfExploration');
-    }
-
-    const hasExtracurricular = response.unitActivity || (response.unitActivities && response.unitActivities.length > 0);
-    if (hasExtracurricular) {
-      applicableSections.push('extracurricular');
-    }
-
-    const goals = response.goals || [];
-    const goalIds = goals.map(g => g.id);
-
-    const totalApplicable = applicableSections.length + goalIds.length;
-    if (totalApplicable === 0) return '';
-
-    let approvedCount = 0;
-    
-    // Count reflection fields
-    applicableSections.forEach(sec => {
-      if (sec === 'aboutMe' || sec === 'strengths' || sec === 'growthAreas') {
-        if (localReviews.reflectionStatus === 'APPROVED') {
-          approvedCount++;
-        }
-      } else if (sec === 'selfExploration') {
-        if (localReviews.selfExplorationStatus === 'APPROVED') {
-          approvedCount++;
-        }
-      } else if (sec === 'extracurricular') {
-        if (localReviews.unitActivityStatus === 'APPROVED') {
-          approvedCount++;
-        }
+    // Construct a mock response object that has sectionReviews matching localReviews
+    const mockResponse = {
+      ...response,
+      sectionReviews: {
+        aboutMe: { status: localReviews.reflectionStatus },
+        strengths: { status: localReviews.reflectionStatus },
+        growthAreas: { status: localReviews.reflectionStatus },
+        selfExploration: { status: localReviews.selfExplorationStatus },
+        extracurricular: { status: localReviews.unitActivityStatus },
+        smartGoals: localReviews.smartGoals,
       }
-    });
+    };
 
-    // Count goals
-    goalIds.forEach(id => {
-      const rev = localReviews.smartGoals[id];
-      if (rev && rev.status === 'APPROVED') {
-        approvedCount++;
+    const { summary } = threeWayConferenceService.calculateConferenceStatus(mockResponse);
+    return `${summary.approvedCount}/${summary.requiredCount} approved`;
+  };
+
+  const getCurrentStatus = () => {
+    if (!response) return 'DRAFT';
+    const mockResponse = {
+      ...response,
+      sectionReviews: {
+        aboutMe: { status: localReviews.reflectionStatus },
+        strengths: { status: localReviews.reflectionStatus },
+        growthAreas: { status: localReviews.reflectionStatus },
+        selfExploration: { status: localReviews.selfExplorationStatus },
+        extracurricular: { status: localReviews.unitActivityStatus },
+        smartGoals: localReviews.smartGoals,
       }
-    });
-
-    return `${approvedCount}/${totalApplicable} approved`;
+    };
+    const { status } = threeWayConferenceService.calculateConferenceStatus(mockResponse);
+    return status;
   };
 
   const getStatusBadge = (status?: string) => {
@@ -691,7 +668,7 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                         {getApprovedProgressText()}
                       </span>
                     )}
-                    {getStatusBadge(response?.status)}
+                    {getStatusBadge(getCurrentStatus())}
                   </div>
                 </div>
                 <div className="pt-2.5 border-t border-gray-50 flex flex-col justify-between h-full">
@@ -749,7 +726,7 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                       <h4 className="text-sm font-black text-gray-800 uppercase italic tracking-tight">Status & Alur Kerja Workbook</h4>
                       <div className="flex items-center gap-2 text-xs text-gray-500 font-medium">
                         <span>Status saat ini:</span>
-                        {getStatusBadge(response.status)}
+                        {getStatusBadge(getCurrentStatus())}
                         <span className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md">
                           {getApprovedProgressText()}
                         </span>

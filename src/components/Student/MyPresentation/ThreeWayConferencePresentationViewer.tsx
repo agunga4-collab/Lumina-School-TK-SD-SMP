@@ -63,6 +63,11 @@ export function ThreeWayConferencePresentationViewer({
   const [currentSlideIndex, setCurrentSlideIndex] = React.useState(0);
   const [textSize, setTextSize] = React.useState<'NORMAL' | 'LARGE' | 'XLARGE'>('NORMAL');
 
+  const resolvedStatus = React.useMemo(() => {
+    if (!conference) return 'DRAFT';
+    return threeWayConferenceService.calculateConferenceStatus(conference).status;
+  }, [conference]);
+
   // Fetch references (e.g. self-exploration reference data)
   const fetchReferences = React.useCallback(async () => {
     if (!student?.id) {
@@ -233,7 +238,7 @@ export function ThreeWayConferencePresentationViewer({
     }
 
     // 13. Conference Notes (Only for Submitted or Completed)
-    if (conference.status === 'SUBMITTED' || conference.status === 'CONFERENCE_COMPLETED') {
+    if (resolvedStatus === 'SUBMITTED' || resolvedStatus === 'CONFERENCE_COMPLETED') {
       list.push({ type: 'CONFERENCE_NOTES', title: 'Conference Notes' });
     }
 
@@ -449,12 +454,12 @@ export function ThreeWayConferencePresentationViewer({
                   id="presentation-status-badge"
                   className={cn(
                     "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold uppercase tracking-wider border",
-                    conference.status === 'DRAFT'
+                    resolvedStatus === 'DRAFT'
                       ? "bg-amber-50 text-amber-700 border-amber-200"
                       : "bg-emerald-50 text-emerald-700 border-emerald-200"
                   )}
                 >
-                  {conference.status}
+                  {resolvedStatus}
                 </span>
               </div>
             </div>
@@ -516,7 +521,7 @@ export function ThreeWayConferencePresentationViewer({
                     areasForGrowth={conference.areasForGrowth || ''}
                     unitActivity={conference.unitActivity || ''}
                     selfExplorationRef={selfExplorationRef}
-                    status={conference.status as any}
+                    status={resolvedStatus as any}
                     themeId={selectedTheme}
                     textSize={textSize}
                   />
@@ -674,7 +679,7 @@ export function ThreeWayConferencePresentationViewer({
                       areasForGrowth={conference.areasForGrowth || ''}
                       unitActivity={conference.unitActivity || ''}
                       selfExplorationRef={selfExplorationRef}
-                      status={conference.status as any}
+                      status={resolvedStatus as any}
                       themeId={selectedTheme}
                       textSize={textSize}
                     />

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Loader2, Calendar, Settings, ShieldAlert, BookOpen, UserCheck } from 'lucide-react';
+import { Loader2, Calendar, Settings, ShieldAlert, BookOpen, UserCheck, RefreshCw } from 'lucide-react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { useAcademicYear } from '../../../context/AcademicYearContext';
 import { useAuth } from '../../../context/AuthContext';
@@ -133,6 +133,19 @@ export default function TeacherConferenceWorkspace() {
 
       if (results[0].status === 'fulfilled') {
         rowsList = results[0].value;
+        // Auto-reconcile loaded responses with discrepancies
+        rowsList.forEach(async (row) => {
+          if (row.response) {
+            const { status: calculatedStatus, summary: approvalSummary } = threeWayConferenceService.calculateConferenceStatus(row.response);
+            const statusChanged = row.response.status !== calculatedStatus;
+            const summaryChanged = !row.response.approvalSummary ||
+              row.response.approvalSummary.approvedCount !== approvalSummary.approvedCount ||
+              row.response.approvalSummary.requiredCount !== approvalSummary.requiredCount;
+            if (statusChanged || summaryChanged) {
+              await threeWayConferenceService.reconcileThreeWayConferenceStatuses({ conferenceId: row.response.id });
+            }
+          }
+        });
       } else {
         throw results[0].reason;
       }
@@ -352,17 +365,41 @@ export default function TeacherConferenceWorkspace() {
           </p>
         </div>
 
-        {/* Configuration settings button for Admin */}
-        {profile?.role === 'SUPER_ADMIN' && (
-          <Link
-            id="workspace-admin-settings-link"
-            to="/junior-high/conference/admin"
-            className="inline-flex items-center gap-1.5 px-4 py-2 border border-gray-200 rounded-lg text-xs font-bold text-gray-700 bg-white hover:bg-gray-50 hover:text-gray-900 transition shadow-sm self-start md:self-center"
-          >
-            <Settings className="h-4 w-4" />
-            Conference Settings
-          </Link>
-        )}
+        <div className="flex flex-wrap items-center gap-2 self-start md:self-center">
+          {activePeriod && (
+            <button
+              onClick={async () => {
+                try {
+                  toast.loading('Sinkronisasi status...', { id: 'reconcile-toast' });
+                  const result = await threeWayConferenceService.reconcileThreeWayConferenceStatuses({
+                    academicYear: activeYear,
+                    semester: activeSemester
+                  });
+                  toast.success(`Sinkronisasi sukses! Memproses ${result.scanned} dokumen, mengupdate ${result.updatedToApproved} menjadi APPROVED.`, { id: 'reconcile-toast' });
+                  loadWorkspaceData();
+                } catch (e) {
+                  toast.error('Gagal sinkronisasi data.', { id: 'reconcile-toast' });
+                }
+              }}
+              className="inline-flex items-center gap-1.5 px-4 py-2 border border-blue-200 rounded-lg text-xs font-bold text-blue-700 bg-blue-50/50 hover:bg-blue-50 transition shadow-sm"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Sinkronisasi Status
+            </button>
+          )}
+
+          {/* Configuration settings button for Admin */}
+          {profile?.role === 'SUPER_ADMIN' && (
+            <Link
+              id="workspace-admin-settings-link"
+              to="/junior-high/conference/admin"
+              className="inline-flex items-center gap-1.5 px-4 py-2 border border-gray-200 rounded-lg text-xs font-bold text-gray-700 bg-white hover:bg-gray-50 hover:text-gray-900 transition shadow-sm"
+            >
+              <Settings className="h-4 w-4" />
+              Conference Settings
+            </Link>
+          )}
+        </div>
       </div>
 
       {/* Loading States */}

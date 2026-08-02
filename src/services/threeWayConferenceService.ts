@@ -169,6 +169,103 @@ export async function resolveConferenceEnrollment({
   return emptyResult;
 }
 
+export type ApprovalSummary = {
+  approvedCount: number;
+  requiredCount: number;
+  returnedCount: number;
+  allRequiredApproved: boolean;
+};
+
+export function calculateConferenceStatus(response: any): {
+  status: 'DRAFT' | 'SUBMITTED' | 'RETURNED' | 'APPROVED';
+  summary: ApprovalSummary;
+} {
+  const summary: ApprovalSummary = {
+    approvedCount: 0,
+    requiredCount: 0,
+    returnedCount: 0,
+    allRequiredApproved: false,
+  };
+
+  if (!response) {
+    return { status: 'DRAFT', summary };
+  }
+
+  const reviews = response.sectionReviews || {};
+
+  const items = [
+    {
+      key: 'aboutMe',
+      active: true,
+      status: reviews.aboutMe?.status || reviews.reflection?.status || 'NOT_REVIEWED',
+    },
+    {
+      key: 'strengths',
+      active: true,
+      status: reviews.strengths?.status || reviews.reflection?.status || 'NOT_REVIEWED',
+    },
+    {
+      key: 'growthAreas',
+      active: true,
+      status: reviews.growthAreas?.status || reviews.reflection?.status || 'NOT_REVIEWED',
+    },
+    {
+      key: 'selfExploration',
+      active: !!(response.selfExplorationReferenceId || response.selfExplorationSnapshot),
+      status: reviews.selfExploration?.status || 'NOT_REVIEWED',
+    },
+    {
+      key: 'extracurricular',
+      active: !!(response.unitActivity || (response.unitActivities && response.unitActivities.length > 0)),
+      status: reviews.extracurricular?.status || 'NOT_REVIEWED',
+    },
+  ];
+
+  items.forEach(item => {
+    if (item.active) {
+      summary.requiredCount++;
+      if (item.status === 'APPROVED') {
+        summary.approvedCount++;
+      } else if (item.status === 'REVISION_REQUIRED') {
+        summary.returnedCount++;
+      }
+    }
+  });
+
+  const goals = response.goals || [];
+  const goalIds = goals.map((g: any) => g.id);
+  const goalReviews = reviews.smartGoals || {};
+
+  goalIds.forEach((id: string) => {
+    summary.requiredCount++;
+    const rev = goalReviews[id];
+    if (rev?.status === 'APPROVED') {
+      summary.approvedCount++;
+    } else if (rev?.status === 'REVISION_REQUIRED') {
+      summary.returnedCount++;
+    }
+  });
+
+  summary.allRequiredApproved = summary.requiredCount > 0 && summary.approvedCount === summary.requiredCount;
+
+  const hasReturnedRequiredItem = summary.returnedCount > 0;
+
+  let calculatedStatus: 'DRAFT' | 'SUBMITTED' | 'RETURNED' | 'APPROVED' = 'DRAFT';
+
+  if (hasReturnedRequiredItem) {
+    calculatedStatus = 'RETURNED';
+  } else if (summary.allRequiredApproved) {
+    calculatedStatus = 'APPROVED';
+  } else if (response.status === 'SUBMITTED' || response.overallStatus === 'SUBMITTED' || response.isSubmitted) {
+    calculatedStatus = 'SUBMITTED';
+  }
+
+  return {
+    status: calculatedStatus,
+    summary,
+  };
+}
+
 const PERIODS_COLLECTION = 'conferencePeriods';
 const RESPONSES_COLLECTION = 'studentConferenceResponses';
 const ASSIGNMENTS_COLLECTION = 'mentorAssignments';
@@ -439,95 +536,20 @@ export const threeWayConferenceService = {
    * Calculate overall status of a conference response based on its section-by-section reviews
    */
   calculateOverallStatus(response: StudentConferenceResponse): 'DRAFT' | 'SUBMITTED' | 'PARTIALLY_APPROVED' | 'REVISION_REQUIRED' | 'FULLY_APPROVED' {
-    const reviews = response.sectionReviews;
-    if (!reviews) {
-      return (!response.status || response.status === 'DRAFT') ? 'DRAFT' : 'SUBMITTED';
-    }
-
-    const applicableSections: string[] = [];
-    if (response.aboutMe && response.aboutMe.trim() !== '') {
-      applicableSections.push('aboutMe');
-    }
-    if (response.strengths && response.strengths.trim() !== '') {
-      applicableSections.push('strengths');
-    }
-    if (response.areasForGrowth && response.areasForGrowth.trim() !== '') {
-      applicableSections.push('growthAreas');
-    }
-    
-    const hasSelfExploration = response.selfExplorationReferenceId || response.selfExplorationSnapshot;
-    if (hasSelfExploration) {
-      applicableSections.push('selfExploration');
-    }
-
-    const hasExtracurricular = response.unitActivity || (response.unitActivities && response.unitActivities.length > 0);
-    if (hasExtracurricular) {
-      applicableSections.push('extracurricular');
-    }
-
-    // Exclude Karya Ilmiah from overall approval calculation per user request
-    // const isGrade9 = response.gradeLevel === 9;
-    // if (isGrade9 && response.karyaIlmiahReferenceId) {
-    //   applicableSections.push('karyaIlmiah');
-    // }
-
-    const goals = response.goals || [];
-    const goalIds = goals.map(g => g.id);
-
-    let totalApplicable = applicableSections.length + goalIds.length;
-    let approvedCount = 0;
-    let revisionCount = 0;
-    let notReviewedCount = 0;
-
-    applicableSections.forEach(sec => {
-      const rev = (reviews as any)[sec];
-      if (!rev || rev.status === 'NOT_REVIEWED') {
-        notReviewedCount++;
-      } else if (rev.status === 'APPROVED') {
-        approvedCount++;
-      } else if (rev.status === 'REVISION_REQUIRED') {
-        revisionCount++;
-      }
-    });
-
-    const goalReviews = reviews.smartGoals || {};
-    goalIds.forEach(id => {
-      const rev = goalReviews[id];
-      if (!rev || rev.status === 'NOT_REVIEWED') {
-        notReviewedCount++;
-      } else if (rev.status === 'APPROVED') {
-        approvedCount++;
-      } else if (rev.status === 'REVISION_REQUIRED') {
-        revisionCount++;
-      }
-    });
-
-    if (totalApplicable === 0) {
-      return (!response.status || response.status === 'DRAFT') ? 'DRAFT' : 'SUBMITTED';
-    }
-
-    if (approvedCount === totalApplicable) {
+    const { status, summary } = calculateConferenceStatus(response);
+    if (status === 'APPROVED') {
       return 'FULLY_APPROVED';
     }
-
-    // If response status is DRAFT and it is not fully approved, keep it as DRAFT
-    if (!response.status || response.status === 'DRAFT') {
-      return 'DRAFT';
-    }
-
-    if (revisionCount > 0 && approvedCount > 0) {
-      return 'PARTIALLY_APPROVED';
-    }
-
-    if (revisionCount > 0 && approvedCount === 0) {
+    if (status === 'RETURNED') {
       return 'REVISION_REQUIRED';
     }
-
-    if (approvedCount > 0 && notReviewedCount > 0) {
+    if (summary.approvedCount > 0) {
       return 'PARTIALLY_APPROVED';
     }
-
-    return 'SUBMITTED';
+    if (status === 'SUBMITTED') {
+      return 'SUBMITTED';
+    }
+    return 'DRAFT';
   },
 
   /**
@@ -799,7 +821,10 @@ export const threeWayConferenceService = {
       };
 
       // Recalculate overall status
-      docPayload.overallStatus = this.calculateOverallStatus(docPayload);
+      const { status: calculatedStatus, summary: approvalSummary } = calculateConferenceStatus(docPayload);
+      docPayload.status = calculatedStatus === 'DRAFT' ? 'SUBMITTED' : calculatedStatus;
+      docPayload.overallStatus = docPayload.status;
+      docPayload.approvalSummary = approvalSummary;
 
       // Run validation rules
       const validation = this.validateConferenceResponseForSubmission(docPayload);
@@ -2536,20 +2561,19 @@ export const threeWayConferenceService = {
         sectionReviews
       };
 
-      const calculatedStatus = this.calculateOverallStatus(mockResponse);
+      const { status: calculatedStatus, summary: approvalSummary } = calculateConferenceStatus(mockResponse);
 
-      let nextStatus = responseData.status;
+      let nextStatus = calculatedStatus;
       let updatedHistory = responseData.statusHistory || [];
-      if (calculatedStatus === 'FULLY_APPROVED' && responseData.status !== 'APPROVED') {
-        nextStatus = 'APPROVED';
+      if (calculatedStatus !== responseData.status) {
         const historyItem = {
-          fromStatus: responseData.status,
-          toStatus: 'APPROVED' as const,
-          action: 'APPROVED' as const,
+          fromStatus: responseData.status || 'DRAFT',
+          toStatus: calculatedStatus,
+          action: (calculatedStatus === 'APPROVED' ? 'APPROVED' : (calculatedStatus === 'RETURNED' ? 'RETURNED_BY_TEACHER' : 'DRAFT_SAVED')) as any,
           performedByUid: currentUserUid,
           performedByName: currentUserName,
           performedByRole: 'TEACHER' as const,
-          note: 'Workbook disetujui penuh oleh guru setelah penilaian selesai.',
+          note: `Workbook status diperbarui otomatis menjadi ${calculatedStatus}.`,
           createdAt: now
         };
         updatedHistory = [...updatedHistory, historyItem];
@@ -2560,6 +2584,9 @@ export const threeWayConferenceService = {
         sectionReviews,
         overallStatus: calculatedStatus,
         status: nextStatus,
+        approvalSummary,
+        statusUpdatedAt: now,
+        statusUpdatedBy: currentUserUid,
         statusHistory: updatedHistory,
         updatedAt: now
       });
@@ -2568,10 +2595,10 @@ export const threeWayConferenceService = {
       try {
         const student = await getStudentById(studentId);
         if (student?.email) {
-          const typeStr = calculatedStatus === 'FULLY_APPROVED' ? 'REPORT_APPROVED' : 'REPORT_REJECTED';
-          const msgStr = calculatedStatus === 'FULLY_APPROVED'
+          const typeStr = calculatedStatus === 'APPROVED' ? 'REPORT_APPROVED' : 'REPORT_REJECTED';
+          const msgStr = calculatedStatus === 'APPROVED'
             ? `Workbook Three-Way Conference kamu telah DISETUJUI PENUH oleh guru!`
-            : `Workbook Three-Way Conference kamu butuh revisi. Status: ${calculatedStatus === 'PARTIALLY_APPROVED' ? 'Disetujui Sebagian' : 'Perlu Revisi'}.`;
+            : `Workbook Three-Way Conference kamu butuh revisi. Status: ${calculatedStatus === 'RETURNED' ? 'Perlu Revisi' : 'DRAFT'}.`;
 
           await sendNotification({
             userId: student.email,
@@ -2835,6 +2862,124 @@ mentor yang ditugaskan, atau pihak sekolah yang berwenang.`;
         throw error;
       }
       return handleFirestoreError(error, 'get', `${RESPONSES_COLLECTION}/${conferenceId}`);
+    }
+  },
+
+  calculateConferenceStatus,
+
+  async reconcileThreeWayConferenceStatuses(options: {
+    academicYear?: string;
+    semester?: number;
+    conferenceId?: string;
+  }): Promise<{
+    scanned: number;
+    updatedToApproved: number;
+    updatedToReturned: number;
+    updatedToDraft: number;
+    updatedToSubmitted: number;
+    unchanged: number;
+    errors: number;
+  }> {
+    const results = {
+      scanned: 0,
+      updatedToApproved: 0,
+      updatedToReturned: 0,
+      updatedToDraft: 0,
+      updatedToSubmitted: 0,
+      unchanged: 0,
+      errors: 0
+    };
+
+    try {
+      let responsesRef = collection(db, RESPONSES_COLLECTION);
+      let q: any = responsesRef;
+
+      if (options.conferenceId) {
+        const docRef = doc(db, RESPONSES_COLLECTION, options.conferenceId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = { id: docSnap.id, ...docSnap.data() } as StudentConferenceResponse;
+          await this.reconcileSingleResponse(data, results);
+        } else {
+          const pq = query(responsesRef, where('periodId', '==', options.conferenceId));
+          const snap = await getDocs(pq);
+          for (const d of snap.docs) {
+            const data = { id: d.id, ...d.data() } as StudentConferenceResponse;
+            await this.reconcileSingleResponse(data, results);
+          }
+        }
+        return results;
+      }
+
+      const constraints: any[] = [];
+      if (options.academicYear) {
+        constraints.push(where('academicYear', '==', options.academicYear));
+      }
+      if (options.semester) {
+        constraints.push(where('semester', '==', Number(options.semester)));
+      }
+
+      if (constraints.length > 0) {
+        q = query(responsesRef, ...constraints);
+      }
+
+      const querySnap = await getDocs(q);
+      for (const d of querySnap.docs) {
+        const data = { id: d.id, ...(d.data() as any) } as StudentConferenceResponse;
+        await this.reconcileSingleResponse(data, results);
+      }
+    } catch (err) {
+      console.error('[Reconcile] Error in reconcileThreeWayConferenceStatuses:', err);
+      results.errors++;
+    }
+
+    return results;
+  },
+
+  async reconcileSingleResponse(
+    response: StudentConferenceResponse,
+    results: any
+  ): Promise<void> {
+    try {
+      results.scanned++;
+      const { status: calculatedStatus, summary: approvalSummary } = calculateConferenceStatus(response);
+
+      const statusChanged = response.status !== calculatedStatus;
+      const overallStatusChanged = response.overallStatus !== calculatedStatus;
+      
+      const summaryChanged = !response.approvalSummary ||
+        response.approvalSummary.approvedCount !== approvalSummary.approvedCount ||
+        response.approvalSummary.requiredCount !== approvalSummary.requiredCount ||
+        response.approvalSummary.returnedCount !== approvalSummary.returnedCount ||
+        response.approvalSummary.allRequiredApproved !== approvalSummary.allRequiredApproved;
+
+      if (statusChanged || overallStatusChanged || summaryChanged) {
+        const responseRef = doc(db, RESPONSES_COLLECTION, response.id);
+        const updatePayload: any = {
+          status: calculatedStatus,
+          overallStatus: calculatedStatus,
+          approvalSummary,
+          updatedAt: Date.now(),
+          statusUpdatedAt: Date.now()
+        };
+
+        await updateDoc(responseRef, updatePayload);
+
+        if (calculatedStatus === 'APPROVED') {
+          results.updatedToApproved++;
+        } else if (calculatedStatus === 'RETURNED') {
+          results.updatedToReturned++;
+        } else if (calculatedStatus === 'SUBMITTED') {
+          results.updatedToSubmitted++;
+        } else {
+          results.updatedToDraft++;
+        }
+      } else {
+        results.unchanged++;
+      }
+    } catch (e) {
+      console.error(`[Reconcile] Error reconciling response ${response.id}:`, e);
+      results.errors++;
     }
   }
 };

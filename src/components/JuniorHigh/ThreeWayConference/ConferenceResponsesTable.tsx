@@ -1,6 +1,7 @@
 import React from 'react';
 import { Eye, UserPlus, UserCheck, Calendar, Tv } from 'lucide-react';
 import type { Student, StudentConferenceResponse, MentorAssignment } from '../../../types';
+import { calculateConferenceStatus } from '../../../services/threeWayConferenceService';
 
 interface ConferenceWorkspaceRow {
   student: Student;
@@ -109,53 +110,8 @@ export const ConferenceResponsesTable: React.FC<ConferenceResponsesTableProps> =
 
   const getApprovedProgressText = (response: StudentConferenceResponse | null) => {
     if (!response) return '';
-
-    const applicableSections: string[] = [];
-    if (response.aboutMe && response.aboutMe.trim() !== '') {
-      applicableSections.push('aboutMe');
-    }
-    if (response.strengths && response.strengths.trim() !== '') {
-      applicableSections.push('strengths');
-    }
-    if (response.areasForGrowth && response.areasForGrowth.trim() !== '') {
-      applicableSections.push('growthAreas');
-    }
-
-    const hasSelfExploration = response.selfExplorationReferenceId || response.selfExplorationSnapshot;
-    if (hasSelfExploration) {
-      applicableSections.push('selfExploration');
-    }
-
-    const hasExtracurricular = response.unitActivity || (response.unitActivities && response.unitActivities.length > 0);
-    if (hasExtracurricular) {
-      applicableSections.push('extracurricular');
-    }
-
-    const goals = response.goals || [];
-    const goalIds = goals.map(g => g.id);
-
-    const totalApplicable = applicableSections.length + goalIds.length;
-    if (totalApplicable === 0) return '';
-
-    let approvedCount = 0;
-    const reviews = response.sectionReviews || {};
-
-    applicableSections.forEach(sec => {
-      const rev = (reviews as any)[sec];
-      if (rev && rev.status === 'APPROVED') {
-        approvedCount++;
-      }
-    });
-
-    const goalReviews = reviews.smartGoals || {};
-    goalIds.forEach(id => {
-      const rev = goalReviews[id];
-      if (rev && rev.status === 'APPROVED') {
-        approvedCount++;
-      }
-    });
-
-    return `${approvedCount}/${totalApplicable} approved`;
+    const { summary } = calculateConferenceStatus(response);
+    return `${summary.approvedCount}/${summary.requiredCount} approved`;
   };
 
   return (
@@ -188,7 +144,7 @@ export const ConferenceResponsesTable: React.FC<ConferenceResponsesTableProps> =
               </tr>
             ) : (
               rows.map((row) => {
-                const responseStatus = row.response ? row.response.status : 'NOT_STARTED';
+                const responseStatus = row.response ? calculateConferenceStatus(row.response).status : 'NOT_STARTED';
                 const goals = row.response?.goals || [];
                 const mentorName = row.assignment?.status !== 'REMOVED' ? row.assignment?.mentorName : null;
 

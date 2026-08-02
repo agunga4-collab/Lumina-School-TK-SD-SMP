@@ -129,6 +129,10 @@ export default function StudentGoalSettingPage() {
       if (activePeriod) {
         // Fetch existing response document
         const existingResponse = await threeWayConferenceService.getCurrentStudentConferenceResponse(activePeriod.id, studentId);
+        if (existingResponse) {
+          const { status: calculatedStatus } = threeWayConferenceService.calculateConferenceStatus(existingResponse);
+          existingResponse.status = calculatedStatus;
+        }
         setResponse(existingResponse);
 
         // Fetch Self-Exploration References FIRST so we can merge it
@@ -293,6 +297,10 @@ export default function StudentGoalSettingPage() {
       
       // Refresh local responses status
       const updatedResponse = await threeWayConferenceService.getCurrentStudentConferenceResponse(period.id, studentId);
+      if (updatedResponse) {
+        const { status: calculatedStatus } = threeWayConferenceService.calculateConferenceStatus(updatedResponse);
+        updatedResponse.status = calculatedStatus;
+      }
       setResponse(updatedResponse);
     } catch (err: any) {
       toast.error(err.message || 'Failed to save draft.');
