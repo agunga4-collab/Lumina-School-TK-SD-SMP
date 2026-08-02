@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { useAuth } from '../../../context/AuthContext';
 import { useAcademicYear } from '../../../context/AcademicYearContext';
-import { threeWayConferenceService } from '../../../services/threeWayConferenceService';
-import { Student, ThreeWayConference } from '../../../types';
+import { threeWayConferenceService, resolveConferenceClass } from '../../../services/threeWayConferenceService';
+import { Student, ThreeWayConference, Class } from '../../../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { Loader2, Tv, X, Play, RefreshCw, AlertCircle, ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -52,6 +52,7 @@ export function ThreeWayConferencePresentationViewer({
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [selfExplorationRef, setSelfExplorationRef] = React.useState<any>(null);
+  const [resolvedClass, setResolvedClass] = React.useState<Class | null>(null);
 
   // Theme Settings
   const [selectedTheme, setSelectedTheme] = React.useState<'LAZUARDI' | 'OCEAN' | 'COBALT' | 'BLOOM' | 'EARTH'>('LAZUARDI');
@@ -84,6 +85,12 @@ export function ThreeWayConferencePresentationViewer({
         Number(conference?.semester || activeSemester)
       );
       setSelfExplorationRef(seRef);
+
+      // Resolve actual active class for the student for this specific conference academic year
+      if (conference) {
+        const resolved = await resolveConferenceClass(conference as any, student);
+        setResolvedClass(resolved);
+      }
     } catch (err: any) {
       console.error('Error fetching presentation viewer references:', err);
       // We don't block the entire viewer if only reference fetching fails, unless it's a critical error
@@ -492,8 +499,8 @@ export function ThreeWayConferencePresentationViewer({
                   <PresentationSlide
                     slide={currentSlide}
                     studentName={student.name}
-                    className={conference.className || (student as any).className || ''}
-                    gradeLevel={conference.gradeLevel || student.grade || 0}
+                    className={resolvedClass?.name || conference.className || (student as any).className || ''}
+                    gradeLevel={resolvedClass?.grade || conference.gradeLevel || student.grade || 0}
                     academicYear={conference.academicYear}
                     semester={conference.semester}
                     aboutMe={conference.aboutMe || ''}
