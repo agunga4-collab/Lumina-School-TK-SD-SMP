@@ -420,6 +420,66 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
     });
   };
 
+  const getApprovedProgressText = () => {
+    if (!response) return '';
+    
+    const applicableSections: string[] = [];
+    if (response.aboutMe && response.aboutMe.trim() !== '') {
+      applicableSections.push('aboutMe');
+    }
+    if (response.strengths && response.strengths.trim() !== '') {
+      applicableSections.push('strengths');
+    }
+    if (response.areasForGrowth && response.areasForGrowth.trim() !== '') {
+      applicableSections.push('growthAreas');
+    }
+    
+    const hasSelfExploration = response.selfExplorationReferenceId || response.selfExplorationSnapshot;
+    if (hasSelfExploration) {
+      applicableSections.push('selfExploration');
+    }
+
+    const hasExtracurricular = response.unitActivity || (response.unitActivities && response.unitActivities.length > 0);
+    if (hasExtracurricular) {
+      applicableSections.push('extracurricular');
+    }
+
+    const goals = response.goals || [];
+    const goalIds = goals.map(g => g.id);
+
+    const totalApplicable = applicableSections.length + goalIds.length;
+    if (totalApplicable === 0) return '';
+
+    let approvedCount = 0;
+    
+    // Count reflection fields
+    applicableSections.forEach(sec => {
+      if (sec === 'aboutMe' || sec === 'strengths' || sec === 'growthAreas') {
+        if (localReviews.reflectionStatus === 'APPROVED') {
+          approvedCount++;
+        }
+      } else if (sec === 'selfExploration') {
+        if (localReviews.selfExplorationStatus === 'APPROVED') {
+          approvedCount++;
+        }
+      } else if (sec === 'extracurricular') {
+        if (localReviews.unitActivityStatus === 'APPROVED') {
+          approvedCount++;
+        }
+      }
+    });
+
+    // Count goals
+    goalIds.forEach(id => {
+      const rev = localReviews.smartGoals[id];
+      if (rev && rev.status === 'APPROVED') {
+        approvedCount++;
+      }
+    });
+
+    return `${approvedCount}/${totalApplicable} approved`;
+  };
+
   const getStatusBadge = (status?: string) => {
     if (!status) {
       return (
@@ -597,7 +657,14 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
               <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm space-y-3">
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-gray-500 font-bold uppercase tracking-wider">Response Status:</span>
-                  {getStatusBadge(response?.status)}
+                  <div className="flex items-center gap-1.5">
+                    {response && (
+                      <span className="text-[10px] font-bold text-gray-500 bg-gray-50 border border-gray-150 px-2 py-0.5 rounded-md">
+                        {getApprovedProgressText()}
+                      </span>
+                    )}
+                    {getStatusBadge(response?.status)}
+                  </div>
                 </div>
                 <div className="pt-2.5 border-t border-gray-50 flex flex-col justify-between h-full">
                   <div className="text-xs">
@@ -655,6 +722,9 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
                       <div className="flex items-center gap-2 text-xs text-gray-500 font-medium">
                         <span>Status saat ini:</span>
                         {getStatusBadge(response.status)}
+                        <span className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md">
+                          {getApprovedProgressText()}
+                        </span>
                       </div>
                     </div>
 

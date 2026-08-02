@@ -294,13 +294,9 @@ export const threeWayConferenceService = {
    * Calculate overall status of a conference response based on its section-by-section reviews
    */
   calculateOverallStatus(response: StudentConferenceResponse): 'DRAFT' | 'SUBMITTED' | 'PARTIALLY_APPROVED' | 'REVISION_REQUIRED' | 'FULLY_APPROVED' {
-    if (!response.status || response.status === 'DRAFT') {
-      return 'DRAFT';
-    }
-    
     const reviews = response.sectionReviews;
     if (!reviews) {
-      return 'SUBMITTED';
+      return (!response.status || response.status === 'DRAFT') ? 'DRAFT' : 'SUBMITTED';
     }
 
     const applicableSections: string[] = [];
@@ -324,10 +320,11 @@ export const threeWayConferenceService = {
       applicableSections.push('extracurricular');
     }
 
-    const isGrade9 = response.gradeLevel === 9;
-    if (isGrade9 && response.karyaIlmiahReferenceId) {
-      applicableSections.push('karyaIlmiah');
-    }
+    // Exclude Karya Ilmiah from overall approval calculation per user request
+    // const isGrade9 = response.gradeLevel === 9;
+    // if (isGrade9 && response.karyaIlmiahReferenceId) {
+    //   applicableSections.push('karyaIlmiah');
+    // }
 
     const goals = response.goals || [];
     const goalIds = goals.map(g => g.id);
@@ -361,11 +358,16 @@ export const threeWayConferenceService = {
     });
 
     if (totalApplicable === 0) {
-      return 'SUBMITTED';
+      return (!response.status || response.status === 'DRAFT') ? 'DRAFT' : 'SUBMITTED';
     }
 
     if (approvedCount === totalApplicable) {
       return 'FULLY_APPROVED';
+    }
+
+    // If response status is DRAFT and it is not fully approved, keep it as DRAFT
+    if (!response.status || response.status === 'DRAFT') {
+      return 'DRAFT';
     }
 
     if (revisionCount > 0 && approvedCount > 0) {
@@ -2640,8 +2642,17 @@ mentor yang ditugaskan, atau pihak sekolah yang berwenang.`;
       ]);
 
       // 4. Validate unit of the student / conference is JUNIOR_HIGH
-      const isJuniorHigh = conference.unit === 'JUNIOR_HIGH' || 
-                           (conference.gradeLevel && [7, 8, 9, '7', '8', '9'].includes(String(conference.gradeLevel)));
+      const viewerRoleNormalized = (latestViewer.role || '').replace(/_/g, '');
+      const isSuperAdmin = viewerRoleNormalized === 'SUPERADMIN';
+      
+      const studentGrade = student?.grade;
+      const isJuniorHigh = isSuperAdmin ||
+                           conference.unit === 'JUNIOR_HIGH' || 
+                           (conference.gradeLevel && [7, 8, 9, '7', '8', '9'].includes(String(conference.gradeLevel))) ||
+                           (studentGrade && [7, 8, 9, '7', '8', '9'].includes(String(studentGrade))) ||
+                           (classData?.unitId === 'JUNIOR_HIGH') ||
+                           (classData?.grade && [7, 8, 9, '7', '8', '9'].includes(String(classData.grade)));
+
       if (!isJuniorHigh) {
         throw new Error(ACCESS_DENIED_ERROR);
       }
@@ -2907,6 +2918,16 @@ export function canViewConferencePresentationWithReason({
 
   if (isStudentOwner) {
     return { allowed: true, reason: 'STUDENT_OWNER' };
+  }
+
+  // 1.5. All Junior High Teachers/Staff can present/view Junior High students
+  const normalizedViewerRole = (viewer.role || '').replace(/_/g, '');
+  const isJuniorHighTeacher =
+    ['TEACHER', 'HOMEROOMTEACHER', 'BKMENTOR', 'COUNSELOR', 'COORDINATOR', 'PRINCIPAL', 'VICEPRINCIPAL', 'HEADUNIT', 'HEADJUNIOR'].includes(normalizedViewerRole) &&
+    viewer.unitId === 'JUNIOR_HIGH';
+
+  if (isJuniorHighTeacher) {
+    return { allowed: true, reason: 'JUNIOR_HIGH_TEACHER_ALL_ACCESS' };
   }
 
   // 2. Admin/head sesuai scope existing.

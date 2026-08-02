@@ -23,7 +23,7 @@ export const ConferenceResponsesTable: React.FC<ConferenceResponsesTableProps> =
   onAssignMentor,
   onPresentConference,
 }) => {
-  const getStatusBadge = (status: 'NOT_STARTED' | 'DRAFT' | 'SUBMITTED' | 'CONFERENCE_COMPLETED') => {
+  const getStatusBadge = (status: 'NOT_STARTED' | 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'RETURNED' | 'CONFERENCE_COMPLETED') => {
     switch (status) {
       case 'NOT_STARTED':
         return (
@@ -41,6 +41,18 @@ export const ConferenceResponsesTable: React.FC<ConferenceResponsesTableProps> =
         return (
           <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
             Submitted
+          </span>
+        );
+      case 'APPROVED':
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            Approved
+          </span>
+        );
+      case 'RETURNED':
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+            Returned
           </span>
         );
       case 'CONFERENCE_COMPLETED':
@@ -93,6 +105,57 @@ export const ConferenceResponsesTable: React.FC<ConferenceResponsesTableProps> =
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  const getApprovedProgressText = (response: StudentConferenceResponse | null) => {
+    if (!response) return '';
+
+    const applicableSections: string[] = [];
+    if (response.aboutMe && response.aboutMe.trim() !== '') {
+      applicableSections.push('aboutMe');
+    }
+    if (response.strengths && response.strengths.trim() !== '') {
+      applicableSections.push('strengths');
+    }
+    if (response.areasForGrowth && response.areasForGrowth.trim() !== '') {
+      applicableSections.push('growthAreas');
+    }
+
+    const hasSelfExploration = response.selfExplorationReferenceId || response.selfExplorationSnapshot;
+    if (hasSelfExploration) {
+      applicableSections.push('selfExploration');
+    }
+
+    const hasExtracurricular = response.unitActivity || (response.unitActivities && response.unitActivities.length > 0);
+    if (hasExtracurricular) {
+      applicableSections.push('extracurricular');
+    }
+
+    const goals = response.goals || [];
+    const goalIds = goals.map(g => g.id);
+
+    const totalApplicable = applicableSections.length + goalIds.length;
+    if (totalApplicable === 0) return '';
+
+    let approvedCount = 0;
+    const reviews = response.sectionReviews || {};
+
+    applicableSections.forEach(sec => {
+      const rev = (reviews as any)[sec];
+      if (rev && rev.status === 'APPROVED') {
+        approvedCount++;
+      }
+    });
+
+    const goalReviews = reviews.smartGoals || {};
+    goalIds.forEach(id => {
+      const rev = goalReviews[id];
+      if (rev && rev.status === 'APPROVED') {
+        approvedCount++;
+      }
+    });
+
+    return `${approvedCount}/${totalApplicable} approved`;
   };
 
   return (
@@ -156,7 +219,14 @@ export const ConferenceResponsesTable: React.FC<ConferenceResponsesTableProps> =
 
                     {/* Response Status */}
                     <td className="px-4 py-4 whitespace-nowrap">
-                      {getStatusBadge(responseStatus)}
+                      <div className="flex items-center gap-2">
+                        {getStatusBadge(responseStatus)}
+                        {row.response && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold text-gray-500 bg-gray-50 border border-gray-200">
+                            {getApprovedProgressText(row.response)}
+                          </span>
+                        )}
+                      </div>
                     </td>
 
                     {/* Goal Summary */}
