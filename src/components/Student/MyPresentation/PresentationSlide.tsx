@@ -665,9 +665,8 @@ export function PresentationSlide({
         );
 
       case 'SELF_EXPLORATION':
-        const seEnrollment = selfExplorationRef?.enrollment || {};
-        const seChoices = seEnrollment.activityChoices || [];
-        const hasChoices = seChoices.length > 0;
+        const seChoices = selfExplorationRef?.choices || [];
+        const hasChoices = selfExplorationRef?.available === true && seChoices.length > 0;
 
         return (
           <div className="flex flex-col h-full w-full p-8 md:p-12 select-none" style={{ backgroundColor: theme.slideBg }}>
@@ -681,7 +680,9 @@ export function PresentationSlide({
                 </div>
                 <div>
                   <h3 className="text-xl font-black uppercase italic tracking-tight" style={{ color: theme.primary }}>My Self-Exploration</h3>
-                  <p className="text-xs font-bold uppercase tracking-wider" style={{ color: theme.textSecondary }}>Self-chosen co-curricular pathways</p>
+                  <p className="text-xs font-bold uppercase tracking-wider" style={{ color: theme.textSecondary }}>
+                    {selfExplorationRef?.periodLabel || 'Self-chosen co-curricular pathways'}
+                  </p>
                 </div>
               </div>
             </div>
@@ -697,7 +698,7 @@ export function PresentationSlide({
                     >
                       <div className="flex items-center justify-between">
                         <span className="font-extrabold uppercase tracking-widest text-[10px]" style={{ color: theme.secondary }}>
-                          {choice.category || 'Choice'}
+                          Choice Slot {choice.slot || index + 1} &mdash; {choice.domainLabel || 'Choice'}
                         </span>
                         <span className="w-6 h-6 rounded-lg font-bold text-xs flex items-center justify-center" style={{ backgroundColor: theme.badgeBg, color: theme.primary }}>
                           {index + 1}
@@ -706,7 +707,7 @@ export function PresentationSlide({
                       <div>
                         <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">Activity Name</span>
                         <p className="text-base font-black leading-snug" style={{ color: theme.textPrimary }}>
-                          {choice.activityName || choice.customActivity || '-'}
+                          {choice.activityName || '-'}
                         </p>
                       </div>
                       {choice.finalTarget && (

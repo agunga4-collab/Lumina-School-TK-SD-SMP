@@ -84,12 +84,13 @@ export function ThreeWayConferencePresentationViewer({
         setSelectedTheme(conference.presentationTheme);
       }
 
-      // Fetch student self exploration reference
-      const seRef = await threeWayConferenceService.getStudentSelfExplorationReference(
-        student.id,
-        conference?.academicYear || activeYear,
-        Number(conference?.semester || activeSemester)
-      );
+      // Fetch student self exploration reference canonically
+      const seRef = await threeWayConferenceService.resolveConferenceSelfExploration({
+        studentId: student.id,
+        academicYear: conference?.academicYear || activeYear,
+        semester: Number(conference?.semester || activeSemester),
+        periodId: conference?.periodId || 'P1'
+      });
       setSelfExplorationRef(seRef);
 
       // Resolve actual active class and enrollment for the student for this specific conference academic year
@@ -207,7 +208,7 @@ export function ThreeWayConferencePresentationViewer({
     }
 
     // 9. Self-Exploration
-    const hasSeData = selfExplorationRef?.enrollment || conference.selfExplorationSnapshot || conference.selfExplorationReferenceId;
+    const hasSeData = selfExplorationRef?.available === true && selfExplorationRef?.choices?.length > 0;
     if (hasSeData) {
       list.push({ type: 'SELF_EXPLORATION', title: 'My Self-Exploration' });
     }

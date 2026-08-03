@@ -408,12 +408,23 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
           if (resp) {
             setIsLoadingSe(true);
             try {
-              const ref = await threeWayConferenceService.getStudentSelfExplorationReference(
-                student.id,
-                resp.academicYear,
-                resp.semester
-              );
-              setSeReference(ref);
+              const resolvedSe = await threeWayConferenceService.resolveConferenceSelfExploration({
+                studentId: student.id,
+                academicYear: resp.academicYear,
+                semester: resp.semester,
+                periodId: periodId
+              });
+              setSeReference({
+                periodLabel: resolvedSe.periodLabel,
+                enrollment: resolvedSe.available ? {
+                  choices: resolvedSe.choices.map(c => ({
+                    slot: c.slot,
+                    strand: c.domainLabel,
+                    activityName: c.activityName,
+                    customActivity: c.activityName
+                  }))
+                } : null
+              });
             } catch (err) {
               console.warn('Failed to load SE reference:', err);
             } finally {

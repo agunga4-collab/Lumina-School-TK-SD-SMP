@@ -288,6 +288,124 @@ export const threeWayConferenceService = {
   },
 
   /**
+   * Resolve Self-Exploration reference canonically for Response Detail and Presentation Mode
+   */
+  async resolveConferenceSelfExploration(params: {
+    studentId: string;
+    academicYear: string;
+    semester: string | number;
+    periodId: string;
+  }): Promise<{
+    available: boolean;
+    periodId: string;
+    periodLabel: string;
+    academicYear: string;
+    semester: string | number;
+    choices: Array<{
+      slot: number;
+      domain: 'IMAGINAL' | 'RATIONAL' | string;
+      domainLabel: string;
+      activityId?: string;
+      activityName: string;
+    }>;
+  }> {
+    try {
+      const { studentId, academicYear, semester, periodId } = params;
+      const responseId = `${periodId}_${studentId}`;
+      const responseRef = doc(db, RESPONSES_COLLECTION, responseId);
+      const responseSnap = await getDoc(responseRef);
+      const responseData = responseSnap.exists() ? responseSnap.data() as StudentConferenceResponse : null;
+
+      let sourceEnrollment: any = null;
+
+      // 1. Snapshot khusus conference bila tersedia
+      if (responseData?.selfExplorationSnapshot) {
+        sourceEnrollment = responseData.selfExplorationSnapshot;
+      }
+
+      // 2. Jika snapshot belum tersedia, gunakan resolver canonical untuk student + academicYear + semester
+      if (!sourceEnrollment && academicYear && semester) {
+        const qEnroll = query(
+          collection(db, 'seEnrollments'),
+          where('studentId', '==', studentId)
+        );
+        const enrollSnap = await getDocs(qEnroll);
+        if (!enrollSnap.empty) {
+          const semesterStr = String(semester);
+          const match = enrollSnap.docs.find(d => {
+            const data = d.data();
+            return data.academicYear === academicYear && String(data.semester) === semesterStr;
+          });
+          if (match) {
+            sourceEnrollment = { id: match.id, ...match.data() };
+          }
+        }
+      }
+
+      // Resolve periodLabel dynamically if available
+      let periodLabel = `Periode 1 Semester ${semester} ${academicYear}`;
+      try {
+        const sePeriodsCol = collection(db, 'sePeriods');
+        const qPeriods = query(sePeriodsCol, where('unitId', '==', 'JUNIOR_HIGH'));
+        const periodsSnap = await getDocs(qPeriods);
+        const matchingPeriodDoc = periodsSnap.docs.find(d => d.data().academicYear === academicYear && Number(d.data().semester) === Number(semester));
+        if (matchingPeriodDoc) {
+          periodLabel = matchingPeriodDoc.data().label || periodLabel;
+        }
+      } catch (e) {
+        console.warn('Failed to load sePeriods dynamically in resolver:', e);
+      }
+
+      const choices = (sourceEnrollment?.choices || sourceEnrollment?.activityChoices || []).map((choice: any, idx: number) => {
+        const domainStr = (choice.strand || choice.domain || '').toUpperCase();
+        let domainVal = 'IMAGINAL';
+        let domainLabelVal = 'Imaginal';
+        
+        if (domainStr === 'RATIONAL') {
+          domainVal = 'RATIONAL';
+          domainLabelVal = 'Rational';
+        } else if (domainStr === 'IMAGINAL') {
+          domainVal = 'IMAGINAL';
+          domainLabelVal = 'Imaginal';
+        } else {
+          domainVal = domainStr;
+          domainLabelVal = choice.strand || (domainStr ? domainStr.charAt(0) + domainStr.slice(1).toLowerCase() : '');
+        }
+
+        return {
+          slot: Number(choice.slot || idx + 1),
+          domain: domainVal,
+          domainLabel: domainLabelVal,
+          activityId: choice.activityId || undefined,
+          activityName: choice.activityName || choice.customActivity || '-',
+          finalTarget: choice.finalTarget || choice.personalTarget || ''
+        };
+      });
+
+      const available = !!sourceEnrollment && choices.length > 0;
+
+      return {
+        available,
+        periodId,
+        periodLabel,
+        academicYear,
+        semester,
+        choices
+      };
+    } catch (err) {
+      console.warn('Could not resolve conference self-exploration canonically:', err);
+      return {
+        available: false,
+        periodId: params.periodId,
+        periodLabel: `Semester ${params.semester} ${params.academicYear}`,
+        academicYear: params.academicYear,
+        semester: params.semester,
+        choices: []
+      };
+    }
+  },
+
+  /**
    * Create a new Conference Period
    */
   async createConferencePeriod(payload: Omit<ConferencePeriod, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
