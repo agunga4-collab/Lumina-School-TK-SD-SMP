@@ -116,7 +116,7 @@ export default function AAPAssessment() {
 
       // Initialize editing scores map from fetched Firestore records
       const initialScores: Record<string, Record<string, number>> = {};
-      const classStudents = students.filter(s => s.classId === selectedClassId);
+      const classStudents = students.filter(s => activeClassObj && isStudentInClass(s.classId, activeClassObj));
       
       classStudents.forEach(s => {
         const records = fetched[s.id];
@@ -143,10 +143,48 @@ export default function AAPAssessment() {
     loadAssessments();
   }, [loadAssessments]);
 
+  // Helper mapping helper logic from Observation.tsx
+  const isStudentInClass = React.useCallback((studClassId: string, activeClassObj: { id: string; name: string }) => {
+    const sClass = (studClassId || '').trim().toLowerCase();
+    const actId = (activeClassObj.id || '').trim().toLowerCase();
+    const actName = (activeClassObj.name || '').trim().toLowerCase();
+    
+    if (!sClass) return false;
+    if (sClass === actId || sClass === actName) return true;
+    
+    const norm = (str: string) => str.replace(/[\s\-_]+/g, '').toLowerCase();
+    const normS = norm(sClass);
+    const normId = norm(actId);
+    const normName = norm(actName);
+    
+    if (normS === normName || normS === normId) return true;
+    
+    const hasKomodo = (str: string) => str.includes('komodo');
+    const hasTapir = (str: string) => str.includes('tapir');
+    if (hasKomodo(normS) && hasKomodo(normName)) return true;
+    if (hasTapir(normS) && hasTapir(normName)) return true;
+
+    const specificClassWords = [
+      'koala', 'panda', 'caterpillar', 'butterfly',
+      'cenderawasih', 'elang', 'kakatua', 'badak', 'komodo', 'tapir'
+    ];
+    const hasSpecS = specificClassWords.some(w => normS.includes(w));
+    const hasSpecAct = specificClassWords.some(w => normId.includes(w) || normName.includes(w));
+    
+    if (hasSpecAct && !hasSpecS) {
+      return false;
+    }
+    
+    if (normId.includes(normS) || normS.includes(normId)) return true;
+    
+    return false;
+  }, []);
+
   // Get current class students
   const classStudents = React.useMemo(() => {
-    return students.filter(s => s.classId === selectedClassId);
-  }, [students, selectedClassId]);
+    if (!selectedClassId || !activeClassObj) return [];
+    return students.filter(s => isStudentInClass(s.classId, activeClassObj));
+  }, [students, selectedClassId, activeClassObj, isStudentInClass]);
 
   // Realtime scores aggregator & stats generator per student
   const calculateLiveScores = (studentId: string) => {

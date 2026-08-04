@@ -19,7 +19,7 @@ import { collection, query, where, getDocs, addDoc, deleteDoc, doc, updateDoc, g
 import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { useAuth } from '../../context/AuthContext';
-import { logFirestoreRead } from '../../lib/kindergartenMetadataCache';
+import { logFirestoreRead, getKindergartenClasses, getKindergartenStudents } from '../../lib/kindergartenMetadataCache';
 import { toast } from 'sonner';
 import { html2canvasWithModernColors } from '../../lib/html2canvasPatch';
 import { jsPDF } from 'jspdf';
@@ -121,135 +121,17 @@ export default function WeeklyReview() {
     async function loadKindergartenData() {
       try {
         setIsLoadingClasses(true);
-        console.log('Loading Kindergarten data from Firestore for year:', activeYear);
+        console.log('Loading Kindergarten data from Firestore via cache manager for year:', activeYear);
         
-        const qClasses = query(
-          collection(db, 'classes'),
-          where('unitId', '==', 'KINDERGARTEN'),
-          where('academicYear', '==', activeYear)
-        );
-        const classesSnap = await getDocs(qClasses).catch(e => {
-          console.warn('Classes query failed:', e);
-          return { docs: [] };
-        });
-
-        const fetchedClasses = classesSnap.docs.map(docSnap => {
-          const data = docSnap.data();
-          return {
-            id: docSnap.id,
-            name: data.name,
-            grade: data.grade,
-            unitId: data.unitId,
-            academicYear: data.academicYear,
-            homeroomTeacherId: data.homeroomTeacherId || null,
-            homeroomTeacherName: data.homeroomTeacherName || null,
-            teacherSignatureUrl: data.teacherSignatureUrl || null
-          };
-        }).sort((a, b) => a.name.localeCompare(b.name));
-
+        const fetchedClasses = await getKindergartenClasses(activeYear);
         setClasses(fetchedClasses);
+        
         if (fetchedClasses.length > 0) {
-          setSelectedClassId(fetchedClasses[0].id);
+          const defaultClass = paramClassId && fetchedClasses.some(c => c.id === paramClassId) ? paramClassId : fetchedClasses[0].id;
+          setSelectedClassId(defaultClass);
         }
 
-        const qStudents = query(
-          collection(db, 'students'),
-          where('unitId', '==', 'KINDERGARTEN')
-        );
-        
-        const qInvites = query(
-          collection(db, 'roleInvites'),
-          where('role', '==', 'STUDENT'),
-          where('unitId', '==', 'KINDERGARTEN')
-        );
-
-        const qEnrollments = query(
-          collection(db, 'enrollments'),
-          where('unitId', '==', 'KINDERGARTEN'),
-          where('academicYear', '==', activeYear)
-        );
-
-        const [studentsSnap, invitesSnap, enrollmentsSnap] = await Promise.all([
-          getDocs(qStudents).catch(e => { console.warn('Students query failed:', e); return { docs: [] }; }),
-          getDocs(qInvites).catch(e => { console.warn('Invites query failed:', e); return { docs: [] }; }),
-          getDocs(qEnrollments).catch(e => { console.warn('Enrollments query failed:', e); return { docs: [] }; })
-        ]);
-
-        const enrollmentClassMap = new Map<string, string>();
-        enrollmentsSnap.docs.forEach(docSnap => {
-          const data = docSnap.data();
-          if (data.studentId && data.classId) {
-            enrollmentClassMap.set(data.studentId, data.classId);
-          }
-        });
-
-        const map = new Map<string, any>();
-
-        invitesSnap.docs.forEach(docSnap => {
-          const data = docSnap.data();
-          const studentId = data.luminaId || data.id || docSnap.id;
-          const classId = data.classId || data.jobTitle || '';
-          const ageGroup: 'TK_A' | 'TK_B' = (classId.toUpperCase().includes('TK_A') || classId.toUpperCase().includes('CATERPILLAR')) ? 'TK_A' : 'TK_B';
-          
-          if (studentId) {
-            map.set(studentId, {
-              id: studentId,
-              name: data.fullName || data.name || 'Siswa Tanpa Nama',
-              nickName: data.nickname || data.name?.split(' ')[0] || 'Siswa',
-              ageGroup: ageGroup,
-              classId: classId
-            });
-          }
-        });
-
-        studentsSnap.docs.forEach(docSnap => {
-          const data = docSnap.data();
-          
-          if (data.academicYear && data.academicYear !== activeYear) {
-            const isEnrolledInActiveYear = enrollmentsSnap.docs.some(eDoc => eDoc.data().studentId === docSnap.id);
-            if (!isEnrolledInActiveYear) {
-              return;
-            }
-          }
-          const studentId = data.luminaId || docSnap.id;
-          const classId = enrollmentClassMap.get(docSnap.id) || enrollmentClassMap.get(studentId) || enrollmentClassMap.get(data.luminaId || '') || data.classId || '';
-          const ageGroup: 'TK_A' | 'TK_B' = (classId.toUpperCase().includes('TK_A') || classId.toUpperCase().includes('CATERPILLAR')) ? 'TK_A' : 'TK_B';
-
-          const existing = map.get(studentId);
-          if (existing && existing.classId) {
-            map.set(studentId, {
-              ...existing,
-              name: existing.name || data.fullName || data.name || 'Siswa Tanpa Nama',
-              nickName: existing.nickName || data.nickname || data.nickName || data.fullName?.split(' ')[0] || 'Siswa'
-            });
-          } else {
-            map.set(studentId, {
-              id: studentId,
-              name: data.fullName || data.name || 'Siswa Tanpa Nama',
-              nickName: data.nickname || data.nickName || data.fullName?.split(' ')[0] || 'Siswa',
-              ageGroup: ageGroup,
-              classId: classId
-            });
-          }
-        });
-
-        const uniqueStudentsMap = new Map<string, any>();
-        Array.from(map.values()).forEach(stud => {
-          const normName = stud.name.trim().toLowerCase();
-          const existing = uniqueStudentsMap.get(normName);
-          if (!existing) {
-            uniqueStudentsMap.set(normName, stud);
-          } else {
-            // Prefer registered/official students over invites if both exist
-            const existingIsInvite = existing.id && (existing.id.startsWith('INVITE_') || existing.id.includes('_') || existing.id.length > 15);
-            const currentIsInvite = stud.id && (stud.id.startsWith('INVITE_') || stud.id.includes('_') || stud.id.length > 15);
-            if (existingIsInvite && !currentIsInvite) {
-              uniqueStudentsMap.set(normName, stud);
-            }
-          }
-        });
-
-        const fetchedStudents = Array.from(uniqueStudentsMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+        const fetchedStudents = await getKindergartenStudents(activeYear);
 
         if (fetchedStudents.length > 0) {
           setStudents(fetchedStudents);
