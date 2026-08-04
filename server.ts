@@ -8453,14 +8453,15 @@ app.get("/api/self-exploration/plan-photo/:fileId", async (req, res) => {
     // 1. Fetch file metadata to determine mime type
     const meta = await driveObj.files.get({
       fileId,
-      fields: "mimeType,name"
+      fields: "mimeType,name",
+      supportsAllDrives: true
     });
 
     const mimeType = meta.data.mimeType || "image/jpeg";
 
     // 2. Download physical file stream from Google Drive and pipe to response
     const fileResponse = await driveObj.files.get(
-      { fileId, alt: "media" },
+      { fileId, alt: "media", supportsAllDrives: true },
       { responseType: "stream" }
     );
 

@@ -60,6 +60,7 @@ export async function uploadPlanPhoto(
     requestBody: { name: fileName, parents: [PLAN_FOLDER_ID] },
     media: { mimeType, body: bufferToStream(buffer) },
     fields: "id",
+    supportsAllDrives: true,
   });
   if (!res.data.id) throw new Error("Upload ke Google Drive gagal, tidak ada file ID dikembalikan");
   return res.data.id;
@@ -70,7 +71,7 @@ export async function getPlanPhotoBase64(fileId: string): Promise<string> {
     throw new Error("Google Drive API is not initialized. Please verify GOOGLE_SERVICE_ACCOUNT_KEY env var.");
   }
   const res = await drive.files.get(
-    { fileId, alt: "media" },
+    { fileId, alt: "media", supportsAllDrives: true },
     { responseType: "arraybuffer" }
   );
   return Buffer.from(res.data as ArrayBuffer).toString("base64");
