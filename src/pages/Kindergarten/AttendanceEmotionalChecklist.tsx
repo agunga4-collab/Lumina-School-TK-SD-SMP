@@ -1327,9 +1327,6 @@ Tindakan ini tidak dapat dibatalkan.`;
       <header className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
         <div>
            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Attendance & Emotional Checklist</h1>
-           <p className="text-gray-500 font-medium text-sm mt-0.5">
-              Catat kehadiran dan kondisi emosional dengan mudah & stabil
-           </p>
         </div>
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full lg:w-auto">
@@ -1475,128 +1472,142 @@ Tindakan ini tidak dapat dibatalkan.`;
 
           {/* ATTENDANCE TABLE */}
           <div className="bg-white rounded-[2rem] shadow-xl shadow-emerald-50/50 border border-emerald-100/50 overflow-hidden">
-            <div className="bg-gradient-to-r from-emerald-500/5 to-teal-500/5 p-6 border-b border-emerald-50 flex items-center justify-between">
+            <div className="bg-gradient-to-r from-emerald-500/5 to-teal-500/5 p-6 border-b border-emerald-50 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                <div className="flex items-center gap-2 text-emerald-700">
                   <Users size={18} />
                   <span className="font-bold text-sm tracking-tight">
                     Daftar Checklist Kehadiran — {filteredStudents.length} Siswa
                   </span>
                </div>
+               <div className="md:hidden text-center sm:text-right">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-[10px] font-bold animate-pulse">
+                     ← Geser untuk melihat status →
+                  </span>
+               </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table id="daily-attendance-table" className="w-full text-left min-w-[950px] table-fixed border-collapse">
-                <thead>
-                  <tr className="text-emerald-700 text-[10px] font-black uppercase tracking-[0.2em] border-b border-emerald-100 bg-emerald-50/10">
-                    <th className="px-6 py-4 w-[240px]">Anak Hebat</th>
-                    <th className="px-6 py-4 text-center">Attendance & Emotional Checklist</th>
-                    <th className="px-6 py-4 text-center w-[100px]">Reset Hapus</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-emerald-50/50">
-                  {filteredStudents.map((student) => {
-                    const activeOption = getActiveOption(student);
-                    const hasSelected = activeOption !== '';
+            <div className="relative">
+              <div className="overflow-x-auto scrollbar-thin">
+                <table id="daily-attendance-table" className="w-full text-left min-w-[950px] table-fixed border-collapse">
+                  <thead>
+                    <tr className="text-emerald-700 text-[10px] font-black uppercase tracking-[0.2em] border-b border-emerald-100 bg-[#f6fcf9]">
+                      <th className="px-6 py-4 w-[180px] sm:w-[240px] sticky left-0 bg-[#f6fcf9] z-20 border-r border-emerald-100 shadow-[2px_0_5px_rgba(0,0,0,0.03)] shrink-0">Nama Siswa</th>
+                      <th className="px-6 py-4 text-center">Attendance & Emotional Checklist</th>
+                      <th className="px-6 py-4 text-center w-[100px]">Reset Hapus</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-emerald-50/50">
+                    {filteredStudents.map((student) => {
+                      const activeOption = getActiveOption(student);
+                      const hasSelected = activeOption !== '';
 
-                    return (
-                      <tr key={student.id} className={cn("transition-colors", hasSelected ? "bg-white" : "bg-gray-50/10 hover:bg-emerald-50/10")}>
-                        <td className="px-6 py-5">
-                          <div className="flex items-center gap-4">
-                             <div className={cn(
-                               "w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-sm shadow-sm border transition-all",
-                               activeOption === 'HAPPY' && "bg-yellow-50 text-yellow-600 border-yellow-200 scale-105",
-                               activeOption === 'SAD' && "bg-blue-50 text-blue-600 border-blue-200 scale-105",
-                               activeOption === 'OK' && "bg-emerald-50 text-emerald-600 border-emerald-200 scale-105",
-                               activeOption === 'ANGRY' && "bg-red-50 text-red-600 border-red-200 scale-105",
-                               activeOption === 'SICK' && "bg-indigo-50 text-indigo-600 border-indigo-200 scale-105",
-                               activeOption === 'EXCUSED' && "bg-orange-50 text-orange-600 border-orange-200 scale-105",
-                               activeOption === 'NO_NEWS' && "bg-slate-50 text-slate-500 border-slate-200 scale-105",
-                               !hasSelected && "from-emerald-50 to-teal-50 bg-gradient-to-br text-emerald-700 border-white"
-                             )}>
-                                {student.name[0]}
+                      return (
+                        <tr key={student.id} className={cn("group transition-colors", hasSelected ? "bg-white" : "bg-gray-50/10 hover:bg-emerald-50/10")}>
+                          <td className={cn(
+                            "px-6 py-5 sticky left-0 z-10 border-r border-emerald-100/60 shadow-[2px_0_5px_rgba(0,0,0,0.03)] transition-colors",
+                            hasSelected 
+                              ? "bg-white group-hover:bg-emerald-50/5" 
+                              : "bg-[#fcfdfd] group-hover:bg-[#f2faf5]"
+                          )}>
+                            <div className="flex items-center gap-3 sm:gap-4">
+                               <div className={cn(
+                                 "hidden sm:flex w-10 h-10 rounded-2xl items-center justify-center font-bold text-sm shadow-sm border transition-all",
+                                 activeOption === 'HAPPY' && "bg-yellow-50 text-yellow-600 border-yellow-200 scale-105",
+                                 activeOption === 'SAD' && "bg-blue-50 text-blue-600 border-blue-200 scale-105",
+                                 activeOption === 'OK' && "bg-emerald-50 text-emerald-600 border-emerald-200 scale-105",
+                                 activeOption === 'ANGRY' && "bg-red-50 text-red-600 border-red-200 scale-105",
+                                 activeOption === 'SICK' && "bg-indigo-50 text-indigo-600 border-indigo-200 scale-105",
+                                 activeOption === 'EXCUSED' && "bg-orange-50 text-orange-600 border-orange-200 scale-105",
+                                 activeOption === 'NO_NEWS' && "bg-slate-50 text-slate-500 border-slate-200 scale-105",
+                                 !hasSelected && "from-emerald-50 to-teal-50 bg-gradient-to-br text-emerald-700 border-white"
+                               )}>
+                                  {student.name[0]}
+                               </div>
+                               <div>
+                                  <p className="font-bold text-gray-900 text-sm tracking-tight">{student.name}</p>
+                                  <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-widest">
+                                     {hasSelected ? (
+                                        <span className="inline-flex items-center gap-1 transition-all">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                          Sudah Terisi
+                                        </span>
+                                     ) : (
+                                        <span className="text-gray-400 font-medium">Belum Diisi</span>
+                                     )}
+                                  </p>
+                               </div>
                              </div>
-                             <div>
-                                <p className="font-bold text-gray-900 text-sm tracking-tight">{student.name}</p>
-                                <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-widest">
-                                   {hasSelected ? (
-                                      <span className="inline-flex items-center gap-1 transition-all">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                        Sudah Terisi
-                                      </span>
-                                   ) : (
-                                      <span className="text-gray-400 font-medium">Belum Diisi</span>
-                                   )}
-                                </p>
-                             </div>
-                           </div>
-                        </td>
+                          </td>
 
-                        <td className="px-6 py-5">
-                          <div className="flex flex-wrap gap-2 justify-center items-center">
-                             <ChecklistButton 
-                               option="HAPPY"
-                               active={activeOption === 'HAPPY'}
-                               onClick={() => handleUpdateOption(student.id, 'HAPPY')}
-                             />
-                             <ChecklistButton 
-                               option="SAD"
-                               active={activeOption === 'SAD'}
-                               onClick={() => handleUpdateOption(student.id, 'SAD')}
-                             />
-                             <ChecklistButton 
-                               option="OK"
-                               active={activeOption === 'OK'}
-                               onClick={() => handleUpdateOption(student.id, 'OK')}
-                             />
-                             <ChecklistButton 
-                               option="ANGRY"
-                               active={activeOption === 'ANGRY'}
-                               onClick={() => handleUpdateOption(student.id, 'ANGRY')}
-                             />
-                             <span className="w-[1px] h-5 bg-emerald-100 hidden sm:inline-block" />
-                             <ChecklistButton 
-                               option="NO_NEWS"
-                               active={activeOption === 'NO_NEWS'}
-                               onClick={() => handleUpdateOption(student.id, 'NO_NEWS')}
-                             />
-                             <ChecklistButton 
-                               option="SICK"
-                               active={activeOption === 'SICK'}
-                               onClick={() => handleUpdateOption(student.id, 'SICK')}
-                             />
-                             <ChecklistButton 
-                               option="EXCUSED"
-                               active={activeOption === 'EXCUSED'}
-                               onClick={() => handleUpdateOption(student.id, 'EXCUSED')}
-                             />
-                          </div>
-                        </td>
+                          <td className="px-6 py-5">
+                            <div className="flex flex-nowrap gap-2 justify-center items-center whitespace-nowrap">
+                               <ChecklistButton 
+                                 option="HAPPY"
+                                 active={activeOption === 'HAPPY'}
+                                 onClick={() => handleUpdateOption(student.id, 'HAPPY')}
+                               />
+                               <ChecklistButton 
+                                 option="SAD"
+                                 active={activeOption === 'SAD'}
+                                 onClick={() => handleUpdateOption(student.id, 'SAD')}
+                               />
+                               <ChecklistButton 
+                                 option="OK"
+                                 active={activeOption === 'OK'}
+                                 onClick={() => handleUpdateOption(student.id, 'OK')}
+                               />
+                               <ChecklistButton 
+                                 option="ANGRY"
+                                 active={activeOption === 'ANGRY'}
+                                 onClick={() => handleUpdateOption(student.id, 'ANGRY')}
+                               />
+                               <span className="w-[1px] h-5 bg-emerald-100 hidden sm:inline-block" />
+                               <ChecklistButton 
+                                 option="NO_NEWS"
+                                 active={activeOption === 'NO_NEWS'}
+                                 onClick={() => handleUpdateOption(student.id, 'NO_NEWS')}
+                               />
+                               <ChecklistButton 
+                                 option="SICK"
+                                 active={activeOption === 'SICK'}
+                                 onClick={() => handleUpdateOption(student.id, 'SICK')}
+                               />
+                               <ChecklistButton 
+                                 option="EXCUSED"
+                                 active={activeOption === 'EXCUSED'}
+                                 onClick={() => handleUpdateOption(student.id, 'EXCUSED')}
+                               />
+                            </div>
+                          </td>
 
-                        <td className="px-6 py-5 text-center">
-                          {hasSelected ? (
-                            <button 
-                              onClick={() => handleUpdateOption(student.id, null)}
-                              className="p-2 hover:bg-rose-50 text-rose-400 hover:text-rose-600 rounded-xl transition-all border border-transparent hover:border-rose-100 cursor-pointer inline-flex items-center justify-center bg-transparent"
-                              title="Hapus / Kosongkan Pilihan"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          ) : (
-                            <span className="text-xs text-gray-350 font-medium select-none">-</span>
-                          )}
+                          <td className="px-6 py-5 text-center">
+                            {hasSelected ? (
+                              <button 
+                                onClick={() => handleUpdateOption(student.id, null)}
+                                className="p-2 hover:bg-rose-50 text-rose-400 hover:text-rose-600 rounded-xl transition-all border border-transparent hover:border-rose-100 cursor-pointer inline-flex items-center justify-center bg-transparent"
+                                title="Hapus / Kosongkan Pilihan"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            ) : (
+                              <span className="text-xs text-gray-350 font-medium select-none">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {filteredStudents.length === 0 && (
+                      <tr>
+                        <td colSpan={3} className="px-6 py-12 text-center text-gray-400 text-sm font-bold">
+                          Si kecil yang dicari tidak ditemukan 😢
                         </td>
                       </tr>
-                    );
-                  })}
-                  {filteredStudents.length === 0 && (
-                    <tr>
-                      <td colSpan={3} className="px-6 py-12 text-center text-gray-400 text-sm font-bold">
-                        Si kecil yang dicari tidak ditemukan 😢
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              {/* Right-edge shadow/gradient to indicate scroll availability on mobile */}
+              <div className="pointer-events-none absolute top-0 right-0 bottom-0 w-12 bg-gradient-to-l from-white/95 to-transparent z-10 md:hidden" />
             </div>
           </div>
         </>
@@ -1753,11 +1764,16 @@ Tindakan ini tidak dapat dibatalkan.`;
 
           {/* MONTHLY TABLE DISPLAY CARD */}
           <div className="bg-white rounded-[2rem] shadow-xl shadow-emerald-50/50 border border-emerald-100/50 overflow-hidden">
-            <div className="bg-gradient-to-r from-emerald-500/5 to-teal-500/5 p-6 border-b border-emerald-50 flex items-center justify-between">
+            <div className="bg-gradient-to-r from-emerald-500/5 to-teal-500/5 p-6 border-b border-emerald-50 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                <div className="flex items-center gap-2 text-emerald-700">
                   <CalendarDays size={18} />
                   <span className="font-bold text-sm tracking-tight">
                     Tabel Rekap Kehadiran Bulanan — {selectedClassName}
+                  </span>
+               </div>
+               <div className="md:hidden text-center sm:text-right">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-[10px] font-bold animate-pulse">
+                     ← Geser untuk melihat status →
                   </span>
                </div>
             </div>
@@ -1768,135 +1784,139 @@ Tindakan ini tidak dapat dibatalkan.`;
                 <p className="text-sm font-bold text-gray-550">Memuat data rekap dari database...</p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table id="monthly-recap-table" className="w-full border-collapse text-left text-xs">
-                  <thead>
-                    <tr className="bg-emerald-50/10 border-b border-emerald-100 text-emerald-800 font-extrabold uppercase tracking-wider text-[10px]">
-                      <th className="px-4 py-3 sticky left-0 bg-emerald-50 font-bold z-10 border-r border-emerald-100 w-[180px] shrink-0">Anak Hebat</th>
-                      {Array.from({ length: daysInMonth }).map((_, i) => {
-                        const day = i + 1;
-                        const weekend = isWeekend(day, parseInt(monthlySelectedYear, 10), monthlySelectedMonth);
-                        return (
-                          <th 
-                            key={day} 
-                            className={cn(
-                              "py-2 text-center font-bold border-r border-emerald-100/30 w-[32px] min-w-[32px] max-w-[32px]", 
-                              weekend ? "bg-red-50 text-red-600" : "text-gray-700"
-                            )}
-                          >
-                            {day}
-                          </th>
-                        );
-                      })}
-                      <th className="px-2 py-3 text-center border-l-2 border-emerald-200 bg-emerald-50 font-bold text-emerald-950 w-[35px]">H</th>
-                      <th className="px-2 py-3 text-center bg-indigo-50 font-bold text-indigo-950 w-[35px]">S</th>
-                      <th className="px-2 py-3 text-center bg-teal-50 font-bold text-teal-950 w-[35px]">I</th>
-                      <th className="px-2 py-3 text-center bg-slate-100 font-bold text-slate-150 w-[35px]">A</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100/80">
-                    {filteredClassStudents.length === 0 ? (
-                      <tr>
-                        <td colSpan={daysInMonth + 5} className="px-6 py-12 text-center text-gray-400 font-bold">
-                          Tidak ada data siswa untuk kelas ini.
-                        </td>
-                      </tr>
-                    ) : (
-                      filteredClassStudents.map((student) => {
-                        const recap = studentRecapMap[student.id] || { hadir: 0, sakit: 0, izin: 0, alpa: 0 };
-                        
-                        return (
-                          <tr key={student.id} className="hover:bg-emerald-50/5 transition-colors">
-                            <td className="px-4 py-2.5 font-bold text-gray-800 sticky left-0 bg-white z-10 border-r border-emerald-100 w-[180px] truncate max-w-[180px] shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
-                              {student.name}
-                            </td>
-                            
-                            {Array.from({ length: daysInMonth }).map((_, i) => {
-                              const day = i + 1;
-                              const dayStr = String(day).padStart(2, '0');
-                              const monthStr = String(monthlySelectedMonth + 1).padStart(2, '0');
-                              const dateStr = `${monthlySelectedYear}-${monthStr}-${dayStr}`;
-                              
-                              const record = getMonthlyStudentCell(monthlyDataMap, student, dateStr);
-                              const emojiData = record ? getEmojiForStatus(record.emotion, record.status) : null;
-                              const weekend = isWeekend(day, parseInt(monthlySelectedYear, 10), monthlySelectedMonth);
-                              
-                              return (
-                                <td 
-                                  key={day} 
-                                  className={cn(
-                                    "py-1.5 text-center border-r border-gray-100 text-sm select-none",
-                                    weekend ? "bg-red-50/10" : ""
-                                  )}
-                                  title={record ? `Tanggal ${day}: ${emojiData?.label || record.status}` : undefined}
-                                >
-                                  {recapViewMode === 'emoji' ? (
-                                    emojiData?.emoji || ''
-                                  ) : record ? (
-                                    <span className={cn(
-                                      "font-extrabold text-[10px] uppercase tracking-tighter",
-                                      record.emotion === 'happy' && "text-amber-500",
-                                      record.emotion === 'ok' && "text-emerald-500",
-                                      record.emotion === 'sad' && "text-blue-500",
-                                      record.emotion === 'angry' && "text-rose-500",
-                                      record.emotion === 'earlyLeave' && "text-yellow-600",
-                                      (record.emotion === 'sick' || record.status === 'sakit') && "text-red-500",
-                                      (record.emotion === 'izin' || record.status === 'izin') && "text-teal-600",
-                                      (record.emotion === 'noNews' || record.status === 'tanpa_kabar') && "text-gray-400"
-                                    )}>
-                                      {getTextForStatus(record.emotion, record.status)}
-                                    </span>
-                                  ) : (
-                                    ''
-                                  )}
-                                </td>
-                              );
-                            })}
-
-                            <td className="py-2 text-center font-black bg-emerald-50/20 text-emerald-750 border-l-2 border-emerald-250">
-                              {recap.hadir || '-'}
-                            </td>
-                            <td className="py-2 text-center font-black bg-indigo-50/20 text-indigo-750">
-                              {recap.sakit || '-'}
-                            </td>
-                            <td className="py-2 text-center font-black bg-teal-50/20 text-teal-750">
-                              {recap.izin || '-'}
-                            </td>
-                            <td className="py-2 text-center font-black bg-slate-100/20 text-slate-750">
-                              {recap.alpa || '-'}
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                    
-                    {filteredClassStudents.length > 0 && (
-                      <tr className="bg-emerald-50/20 font-bold border-t border-emerald-100 text-xs">
-                        <td className="px-4 py-3 sticky left-0 bg-emerald-50 z-10 border-r border-emerald-100 font-black text-emerald-950 w-[180px] shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
-                          Total Hadir
-                        </td>
+              <div className="relative">
+                <div className="overflow-x-auto">
+                  <table id="monthly-recap-table" className="w-full border-collapse text-left text-xs">
+                    <thead>
+                      <tr className="bg-emerald-50/10 border-b border-emerald-100 text-emerald-800 font-extrabold uppercase tracking-wider text-[10px]">
+                        <th className="px-4 py-3 sticky left-0 bg-emerald-50 font-bold z-10 border-r border-emerald-100 w-[180px] shrink-0">Nama Siswa</th>
                         {Array.from({ length: daysInMonth }).map((_, i) => {
                           const day = i + 1;
-                          const count = totalHadirPerTanggal[day] || 0;
                           const weekend = isWeekend(day, parseInt(monthlySelectedYear, 10), monthlySelectedMonth);
                           return (
-                            <td 
+                            <th 
                               key={day} 
                               className={cn(
-                                "py-1 text-center font-black border-r border-emerald-100/50 text-[11px]",
-                                count > 0 ? "text-emerald-800 bg-emerald-50/50" : "text-gray-400 font-medium",
-                                weekend && count === 0 ? "bg-red-50/10" : ""
+                                "py-2 text-center font-bold border-r border-emerald-100/30 w-[32px] min-w-[32px] max-w-[32px]", 
+                                weekend ? "bg-red-50 text-red-600" : "text-gray-700"
                               )}
                             >
-                              {count || '-'}
-                            </td>
+                              {day}
+                            </th>
                           );
                         })}
-                        <td colSpan={4} className="bg-emerald-50/30"></td>
+                        <th className="px-2 py-3 text-center border-l-2 border-emerald-200 bg-emerald-50 font-bold text-emerald-950 w-[35px]">H</th>
+                        <th className="px-2 py-3 text-center bg-indigo-50 font-bold text-indigo-950 w-[35px]">S</th>
+                        <th className="px-2 py-3 text-center bg-teal-50 font-bold text-teal-950 w-[35px]">I</th>
+                        <th className="px-2 py-3 text-center bg-slate-100 font-bold text-slate-150 w-[35px]">A</th>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100/80">
+                      {filteredClassStudents.length === 0 ? (
+                        <tr>
+                          <td colSpan={daysInMonth + 5} className="px-6 py-12 text-center text-gray-400 font-bold">
+                            Tidak ada data siswa untuk kelas ini.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredClassStudents.map((student) => {
+                          const recap = studentRecapMap[student.id] || { hadir: 0, sakit: 0, izin: 0, alpa: 0 };
+                          
+                          return (
+                            <tr key={student.id} className="hover:bg-emerald-50/5 transition-colors">
+                              <td className="px-4 py-2.5 font-bold text-gray-800 sticky left-0 bg-white z-10 border-r border-emerald-100 w-[180px] truncate max-w-[180px] shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
+                                {student.name}
+                              </td>
+                              
+                              {Array.from({ length: daysInMonth }).map((_, i) => {
+                                const day = i + 1;
+                                const dayStr = String(day).padStart(2, '0');
+                                const monthStr = String(monthlySelectedMonth + 1).padStart(2, '0');
+                                const dateStr = `${monthlySelectedYear}-${monthStr}-${dayStr}`;
+                                
+                                const record = getMonthlyStudentCell(monthlyDataMap, student, dateStr);
+                                const emojiData = record ? getEmojiForStatus(record.emotion, record.status) : null;
+                                const weekend = isWeekend(day, parseInt(monthlySelectedYear, 10), monthlySelectedMonth);
+                                
+                                return (
+                                  <td 
+                                    key={day} 
+                                    className={cn(
+                                      "py-1.5 text-center border-r border-gray-100 text-sm select-none",
+                                      weekend ? "bg-red-50/10" : ""
+                                    )}
+                                    title={record ? `Tanggal ${day}: ${emojiData?.label || record.status}` : undefined}
+                                  >
+                                    {recapViewMode === 'emoji' ? (
+                                      emojiData?.emoji || ''
+                                    ) : record ? (
+                                      <span className={cn(
+                                        "font-extrabold text-[10px] uppercase tracking-tighter",
+                                        record.emotion === 'happy' && "text-amber-500",
+                                        record.emotion === 'ok' && "text-emerald-500",
+                                        record.emotion === 'sad' && "text-blue-500",
+                                        record.emotion === 'angry' && "text-rose-500",
+                                        record.emotion === 'earlyLeave' && "text-yellow-600",
+                                        (record.emotion === 'sick' || record.status === 'sakit') && "text-red-500",
+                                        (record.emotion === 'izin' || record.status === 'izin') && "text-teal-600",
+                                        (record.emotion === 'noNews' || record.status === 'tanpa_kabar') && "text-gray-400"
+                                      )}>
+                                        {getTextForStatus(record.emotion, record.status)}
+                                      </span>
+                                    ) : (
+                                      ''
+                                    )}
+                                  </td>
+                                );
+                              })}
+  
+                              <td className="py-2 text-center font-black bg-emerald-50/20 text-emerald-750 border-l-2 border-emerald-250">
+                                {recap.hadir || '-'}
+                              </td>
+                              <td className="py-2 text-center font-black bg-indigo-50/20 text-indigo-750">
+                                {recap.sakit || '-'}
+                              </td>
+                              <td className="py-2 text-center font-black bg-teal-50/20 text-teal-750">
+                                {recap.izin || '-'}
+                              </td>
+                              <td className="py-2 text-center font-black bg-slate-100/20 text-slate-750">
+                                {recap.alpa || '-'}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                      
+                      {filteredClassStudents.length > 0 && (
+                        <tr className="bg-emerald-50/20 font-bold border-t border-emerald-100 text-xs">
+                          <td className="px-4 py-3 sticky left-0 bg-emerald-50 z-10 border-r border-emerald-100 font-black text-emerald-950 w-[180px] shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
+                            Total Hadir
+                          </td>
+                          {Array.from({ length: daysInMonth }).map((_, i) => {
+                            const day = i + 1;
+                            const count = totalHadirPerTanggal[day] || 0;
+                            const weekend = isWeekend(day, parseInt(monthlySelectedYear, 10), monthlySelectedMonth);
+                            return (
+                              <td 
+                                key={day} 
+                                className={cn(
+                                  "py-1 text-center font-black border-r border-emerald-100/50 text-[11px]",
+                                  count > 0 ? "text-emerald-800 bg-emerald-50/50" : "text-gray-400 font-medium",
+                                  weekend && count === 0 ? "bg-red-50/10" : ""
+                                )}
+                              >
+                                {count || '-'}
+                              </td>
+                            );
+                          })}
+                          <td colSpan={4} className="bg-emerald-50/30"></td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {/* Right-edge shadow/gradient to indicate scroll availability on mobile */}
+                <div className="pointer-events-none absolute top-0 right-0 bottom-0 w-12 bg-gradient-to-l from-white/95 to-transparent z-10 md:hidden" />
               </div>
             )}
 
