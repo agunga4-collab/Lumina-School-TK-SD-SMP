@@ -4,8 +4,7 @@ import {
   UploadCloud, Trash2, CheckCircle2, Save, Send, Loader2, Info, Lock
 } from 'lucide-react';
 import { 
-  getSEPeriods, getSEEnrollment, db, storage, ref, uploadBytes, 
-  getDownloadURL, deleteObject 
+  getSEPeriods, getSEEnrollment, db
 } from '../../../lib/firebase';
 import { SEPeriod, SEEnrollment, Student, SEStrand } from '../../../types';
 import { useAuth } from '../../../context/AuthContext';
@@ -29,6 +28,7 @@ interface SinglePlan {
   weeks: WeekPlan[];
   status: "draft" | "submitted" | "verified";
   photoUrl: string | null;
+  driveFileId?: string | null;
   scanConfidence: "high" | "low" | null;
 }
 
@@ -262,23 +262,23 @@ export default function SEPlan() {
 
     setScanningPlanIndex(planIndex);
     try {
-      // 1. Upload original photo to Firebase Storage
-      const sanitizedAY = activePeriod.academicYear.replace('/', '_');
-      const storagePath = `self-exploration/${sanitizedAY}/${activePeriod.semester}/${activePeriod.id}/${studentData.id}/plan-${planIndex}/scan_photo_${Date.now()}_${file.name}`;
-      const fileRef = ref(storage, storagePath);
-      const snapshot = await uploadBytes(fileRef, file);
-      const photoUrl = await getDownloadURL(snapshot.ref);
-
-      // 2. Transcribe using backend API route
+      // 1. Convert to base64
       const base64 = await fileToBase64(file);
+
+      // 2. Transcribe and upload via backend API route
       const scanRes = await fetch("/api/self-exploration/scan-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ base64Image: base64 })
+        body: JSON.stringify({ 
+          base64Image: base64,
+          studentId: studentData.id,
+          periodId: activePeriod.id,
+          planIndex: planIndex
+        })
       });
 
       if (!scanRes.ok) {
-        throw new Error("Server gagal memproses transkripsi vision.");
+        throw new Error("Server gagal memproses transkripsi vision dan upload Google Drive.");
       }
 
       const scanData = await scanRes.json();
@@ -301,7 +301,8 @@ export default function SEPlan() {
             });
             return {
               ...p,
-              photoUrl,
+              photoUrl: null, // Ganti dari field photoUrl yang lama
+              driveFileId: scanData.driveFileId,
               scanConfidence: "high" as const,
               weeks: cleanWeeks
             };
@@ -310,7 +311,12 @@ export default function SEPlan() {
         });
 
         setPlansDoc({ ...plansDoc, plans: updatedPlans });
-        showFeedback(planIndex, "Scan AI selesai! Silakan review hasil transkripsi sebelum menyimpan.", "success");
+        
+        if (scanData.driveError) {
+          showFeedback(planIndex, `Scan AI Selesai! Catatan: ${scanData.driveError}`, "success");
+        } else {
+          showFeedback(planIndex, "Scan AI selesai! Silakan review hasil transkripsi sebelum menyimpan.", "success");
+        }
       }
     } catch (err: any) {
       console.error("Scanning failed:", err);
@@ -323,16 +329,12 @@ export default function SEPlan() {
   const removePhoto = async (planIndex: number) => {
     if (!plansDoc) return;
     const plan = plansDoc.plans.find(p => p.planIndex === planIndex);
-    if (!plan || !plan.photoUrl) return;
+    if (!plan) return;
 
     try {
-      // Find storage reference and delete it
-      const fileRef = ref(storage, plan.photoUrl);
-      await deleteObject(fileRef).catch(e => console.warn("Delete storage file failed (might be already deleted):", e));
-
       const updatedPlans = plansDoc.plans.map(p => {
         if (p.planIndex === planIndex) {
-          return { ...p, photoUrl: null, scanConfidence: null };
+          return { ...p, photoUrl: null, driveFileId: null, scanConfidence: null };
         }
         return p;
       });
@@ -581,11 +583,11 @@ export default function SEPlan() {
                     <div className="bg-gray-50 p-6 rounded-[2rem] border border-gray-100 flex flex-col justify-between">
                       <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-4">Preview Dokumen Terunggah</p>
                       
-                      {plan.photoUrl ? (
+                      {(plan.driveFileId || plan.photoUrl) ? (
                         <div className="space-y-4 flex-1 flex flex-col justify-between">
                           <div className="relative aspect-video rounded-2xl overflow-hidden border border-gray-200 bg-white">
                             <img 
-                              src={plan.photoUrl} 
+                              src={plan.driveFileId ? `/api/self-exploration/plan-photo/${plan.driveFileId}` : plan.photoUrl!} 
                               alt="Scanned plan physical table" 
                               className="w-full h-full object-cover"
                               referrerPolicy="no-referrer"

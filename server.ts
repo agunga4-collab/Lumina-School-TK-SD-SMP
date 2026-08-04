@@ -10,6 +10,7 @@ import { Readable } from "stream";
 import type { LGBackupStatus, LGBackupSummary, LGBackupLog } from "./src/types";
 import { resolveAcademicYearAndPeriod } from "./src/utils/academicYearResolver";
 import crypto from "crypto";
+import { uploadPlanPhoto, getPlanPhotoBase64 } from "./src/lib/googleDrive";
 
 const app = express();
 app.use(express.json({ limit: "50mb" }));
@@ -8216,7 +8217,7 @@ app.post("/api/sync-knowledge", async (req, res) => {
 // API: Scan 17-week plan table using AI Vision
 app.post("/api/self-exploration/scan-plan", async (req, res) => {
   try {
-    const { base64Image } = req.body;
+    const { base64Image, studentId, periodId, planIndex } = req.body;
     if (!base64Image) {
       return res.status(400).json({ error: "Missing base64Image in request body" });
     }
@@ -8250,7 +8251,10 @@ Each object in the array must have this exact schema:
     // Fallback to Google Gemini OpenAI-compatible endpoint if native Gemini key is used directly
     if (API_KEY.startsWith("AIza") && BASE_URL.includes("koboillm.com")) {
       console.log("[ScanPlan] Direct Gemini Key detected. Rerouting to Official Google Gemini OpenAI-compatible endpoint.");
-      BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
+      BASE_URL = "https://genergenerativelanguage.googleapis.com/v1beta/openai";
+      if (BASE_URL.includes("genergenerativelanguage")) {
+        BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
+      }
       MODEL = "gemini-2.5-flash";
     }
 
@@ -8293,7 +8297,7 @@ Each object in the array must have this exact schema:
     });
 
     let rawText = aiResponse.data.choices?.[0]?.message?.content || "";
-    console.log("[ScanPlan] AI Raw Response:", rawText);
+    console.log("[ScanPlan] AI Raw Response length:", rawText.length);
 
     // 4. Clean up response text from potential markdown wrappers
     let cleanText = rawText.trim();
@@ -8303,7 +8307,7 @@ Each object in the array must have this exact schema:
     }
     cleanText = cleanText.trim();
 
-    // 5. Parse and post-process transcribed data
+    // 5. Parse transcribed data
     let transcribedWeeks = JSON.parse(cleanText);
 
     if (!Array.isArray(transcribedWeeks)) {
@@ -8321,9 +8325,64 @@ Each object in the array must have this exact schema:
       };
     });
 
+    // 6. Decode Base64 and upload to Google Drive
+    let driveFileId = null;
+    let driveError = null;
+
+    try {
+      const matches = base64Image.match(/^data:(image\/[a-zA-Z0-9.-]+);base64,(.+)$/);
+      let mimeType = "image/jpeg";
+      let base64Data = base64Image;
+      if (matches && matches.length === 3) {
+        mimeType = matches[1];
+        base64Data = matches[2];
+      }
+      const buffer = Buffer.from(base64Data, 'base64');
+      const ext = mimeType.split('/')[1] || 'jpg';
+      const timestamp = Date.now();
+      const fileName = `${studentId || "unknown"}_${periodId || "unknown"}_plan${planIndex || "1"}_${timestamp}.${ext}`;
+
+      console.log(`[ScanPlan] Uploading parsed image buffer to Google Drive. Name: ${fileName}, Type: ${mimeType}`);
+      driveFileId = await uploadPlanPhoto(buffer, fileName, mimeType);
+      console.log(`[ScanPlan] Successfully uploaded to Google Drive. File ID: ${driveFileId}`);
+
+      // 7. Save fileId directly to Firestore if document information is present
+      if (studentId && periodId && planIndex) {
+        try {
+          const docRef = adminDb.collection("selfExploration").doc(studentId).collection("plans").doc(periodId);
+          const docSnap = await docRef.get();
+          if (docSnap.exists) {
+            const data = docSnap.data();
+            if (data && Array.isArray(data.plans)) {
+              const updatedPlans = data.plans.map((p: any) => {
+                if (Number(p.planIndex) === Number(planIndex)) {
+                  return {
+                    ...p,
+                    driveFileId,
+                    photoUrl: null, // Ganti dari field photoUrl yang lama
+                    updatedAt: Date.now()
+                  };
+                }
+                return p;
+              });
+              await docRef.set({ plans: updatedPlans }, { merge: true });
+              console.log(`[ScanPlan] Firestore updated successfully with driveFileId ${driveFileId}`);
+            }
+          }
+        } catch (dbErr: any) {
+          console.error("[ScanPlan] Failed to update Firestore document with driveFileId:", dbErr.message);
+        }
+      }
+    } catch (gErr: any) {
+      console.error("[ScanPlan] Google Drive upload failed post-scan:", gErr);
+      driveError = `Arsip foto gagal disimpan, tapi data plan tetap bisa dilanjutkan. Detail: ${gErr.message}`;
+    }
+
     return res.json({
       success: true,
-      weeks: finalWeeks
+      weeks: finalWeeks,
+      driveFileId,
+      driveError
     });
 
   } catch (err: any) {
@@ -8334,6 +8393,45 @@ Each object in the array must have this exact schema:
     });
   }
 });
+
+
+// API: Serve Plan Photo from Google Drive
+app.get("/api/self-exploration/plan-photo/:fileId", async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    if (!fileId) {
+      return res.status(400).send("Missing fileId");
+    }
+
+    // Lazy load/resolve drive object
+    const driveObj = getDrive();
+    if (!driveObj) {
+      return res.status(503).send("Google Drive service is currently unavailable.");
+    }
+
+    // 1. Fetch file metadata to determine mime type
+    const meta = await driveObj.files.get({
+      fileId,
+      fields: "mimeType,name"
+    });
+
+    const mimeType = meta.data.mimeType || "image/jpeg";
+
+    // 2. Download physical file stream from Google Drive and pipe to response
+    const fileResponse = await driveObj.files.get(
+      { fileId, alt: "media" },
+      { responseType: "stream" }
+    );
+
+    res.setHeader("Content-Type", mimeType);
+    res.setHeader("Cache-Control", "public, max-age=86400"); // cache for 1 day
+    fileResponse.data.pipe(res);
+  } catch (err: any) {
+    console.error("[GetPlanPhoto] Failed to serve plan photo:", err.message);
+    res.status(500).send("Failed to retrieve photo from Google Drive");
+  }
+});
+
 
 
 // --- Server Start & Export ---
