@@ -50,6 +50,7 @@ export default function HeadDashboard() {
   const [goalTrackers, setGoalTrackers] = useState<any[]>([]);
   const [mentorAssignments, setMentorAssignments] = useState<any[]>([]);
   const [literacyRecords, setLiteracyRecords] = useState<any[]>([]);
+  const [enrollments, setEnrollments] = useState<any[]>([]);
 
   // --- Navigation & Modal UI ---
   const [activeAnalysisTab, setActiveAnalysisTab] = useState<'daily_insights' | 'keterlambatan' | 'kehadiran' | 'academic' | 'behavior' | 'goals'>('daily_insights');
@@ -82,7 +83,8 @@ export default function HeadDashboard() {
           responsesSnap,
           trackersSnap,
           assignmentsSnap,
-          literacySnap
+          literacySnap,
+          enrollmentsSnap
         ] = await Promise.all([
           getDocs(query(collection(db, 'classes'), where('unitId', '==', 'JUNIOR_HIGH'))),
           Promise.all([
@@ -98,7 +100,8 @@ export default function HeadDashboard() {
           getDocs(collection(db, 'studentConferenceResponses')),
           getDocs(collection(db, 'smartGoalTrackerEntries')),
           getDocs(collection(db, 'mentorAssignments')),
-          getDocs(collection(db, 'junior_high_literacy_numeracy_records'))
+          getDocs(collection(db, 'junior_high_literacy_numeracy_records')),
+          getDocs(query(collection(db, 'enrollments'), where('unitId', '==', 'JUNIOR_HIGH')))
         ]);
 
         const loadedClasses = classesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -119,6 +122,7 @@ export default function HeadDashboard() {
         const loadedTrackers = trackersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         const loadedAssignments = assignmentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         const loadedLiteracy = literacySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const loadedEnrollments = enrollmentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
         setClasses(loadedClasses);
         setStudents(loadedStudents);
@@ -132,6 +136,7 @@ export default function HeadDashboard() {
         setGoalTrackers(loadedTrackers);
         setMentorAssignments(loadedAssignments);
         setLiteracyRecords(loadedLiteracy);
+        setEnrollments(loadedEnrollments);
 
         // Batch Concerns retrieval
         const loadedConcerns: any[] = [];
@@ -220,8 +225,29 @@ export default function HeadDashboard() {
   };
 
   // --- Dynamic Filtering Logic ---
+  const resolvedStudents = useMemo(() => {
+    return students.map(s => {
+      // Find active enrollment for the selectedYear
+      const activeEnrollment = enrollments.find(e => 
+        (e.studentId === s.id || e.studentId === s.luminaId) && 
+        e.academicYear === selectedYear && 
+        e.status === 'active'
+      );
+
+      if (activeEnrollment) {
+        return {
+          ...s,
+          classId: activeEnrollment.classId,
+          academicYear: selectedYear,
+          originalClassId: s.classId || ''
+        };
+      }
+      return s;
+    });
+  }, [students, enrollments, selectedYear]);
+
   const filteredStudents = useMemo(() => {
-    return students.filter(s => {
+    return resolvedStudents.filter(s => {
       if (s.academicYear && s.academicYear !== selectedYear) return false;
       if (selectedCohort !== 'ALL') {
         const studentGrade = getStudentGrade(s);
@@ -230,7 +256,7 @@ export default function HeadDashboard() {
       if (selectedClassId !== 'ALL' && !isStudentInClass(s.classId, selectedClassId)) return false;
       return true;
     });
-  }, [students, selectedClassId, selectedCohort, classes, selectedYear]);
+  }, [resolvedStudents, selectedClassId, selectedCohort, classes, selectedYear]);
 
   const activeStudentIds = useMemo(() => new Set(filteredStudents.map(s => s.id)), [filteredStudents]);
   const isStudentFiltered = (sid: string) => activeStudentIds.has(sid);
@@ -391,7 +417,7 @@ export default function HeadDashboard() {
       return true;
     });
     return jhClasses.map(cls => {
-      const clsStudents = students.filter(s => {
+      const clsStudents = resolvedStudents.filter(s => {
         if (s.academicYear && s.academicYear !== selectedYear) return false;
         return isStudentInClass(s.classId, cls.id);
       });
@@ -408,7 +434,7 @@ export default function HeadDashboard() {
       const isCompleted = clsStudents.length === 0 || recsToday.length >= clsStudents.length;
       return { classId: cls.id, className: cls.name, teacher: cls.homeroomTeacherName || 'Guru', totalStudents: clsStudents.length, recsCount: recsToday.length, hadir, sakit, izin, alpa, isCompleted };
     });
-  }, [filteredClasses, students, attendanceRecords, todayStr, selectedClassId, selectedCohort, selectedYear]);
+  }, [filteredClasses, resolvedStudents, attendanceRecords, todayStr, selectedClassId, selectedCohort, selectedYear]);
 
   // 3. Daily Case Record (Individual Case Record - created today)
   const todayCases = useMemo(() => {
@@ -575,7 +601,7 @@ export default function HeadDashboard() {
     const cohorts: Record<string, { present: number, total: number }> = { '7': { present: 0, total: 0 }, '8': { present: 0, total: 0 }, '9': { present: 0, total: 0 } };
     recs.forEach(r => {
       let g = '';
-      const s = students.find(stud => stud.id === r.studentId);
+      const s = resolvedStudents.find(stud => stud.id === r.studentId);
       if (s) {
         const gradeVal = getStudentGrade(s);
         if (gradeVal) g = String(gradeVal);
@@ -645,7 +671,7 @@ export default function HeadDashboard() {
     })).sort((a,b) => a.date.localeCompare(b.date));
 
     return { rate, sakit, izin, alpa, cohortRates, classRates, lowPresence, classesFollowUp, trendData };
-  }, [filteredAttendance, classes, students, selectedYear]);
+  }, [filteredAttendance, classes, resolvedStudents, selectedYear]);
 
   // 3. MTSS Academic Tab Analysis
   const academicAnalysis = useMemo(() => {
