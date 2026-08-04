@@ -627,6 +627,8 @@ export function Layout() {
                   {(['SUPER_ADMIN', 'HEAD_UNIT'].includes(currentUser.role) || hasKindyClassAssignment) && (
                     <NavItem to="/kindy/dashboard" icon={<LayoutDashboard size={18} />} label="Dashboard" />
                   )}
+                  <NavItem to="/kindy/aap-assessment" icon={<ClipboardCheck size={18} />} label="Asesmen Awal Pembelajaran" />
+                  <NavItem to="/kindy/aap-report" icon={<FileText size={18} />} label="Hasil & Analisis AAP" />
                   <NavItem to="/kindy/checklist" icon={<Smile size={18} />} label="Attendance & Emotional Checklist" />
                   <NavItem to="/kindy/observation" icon={<Camera size={18} />} label="Observation Data" />
                   <NavItem to="/kindy/weekly-summary" icon={<Sparkles size={18} />} label="Weekly Summary & AI" />

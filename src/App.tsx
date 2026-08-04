@@ -61,6 +61,8 @@ import ElementaryHeadDashboard from './pages/Dashboard/ElementaryHeadDashboard';
 import StudentProgress from './pages/Student/StudentProgress';
 import DailyChecklist from './pages/Kindergarten/DailyChecklist';
 import ObservationKG from './pages/Kindergarten/Observation';
+import AAPAssessment from './pages/Kindergarten/AAPAssessment';
+import AAPReport from './pages/Kindergarten/AAPReport';
 import WeeklyReview from './pages/Kindergarten/WeeklyReview';
 import WeeklySummary from './pages/Kindergarten/WeeklySummary';
 import HeadDashboardKG from './pages/Kindergarten/HeadDashboard';
@@ -407,6 +409,8 @@ export default function App() {
           } />
           <Route path="kindy">
             <Route path="dashboard" element={<TeacherDashboardKG />} />
+            <Route path="aap-assessment" element={<AAPAssessment />} />
+            <Route path="aap-report" element={<AAPReport />} />
             <Route path="checklist" element={<DailyChecklist />} />
             <Route path="observation" element={<ObservationKG />} />
             <Route path="weekly-summary" element={<WeeklySummary />} />
