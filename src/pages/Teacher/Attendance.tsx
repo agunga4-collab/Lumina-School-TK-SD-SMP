@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   CheckCircle2, AlertCircle, Clock, UserX, Search, Filter, 
   Save, Calendar, ChevronRight, ChevronLeft, AlertTriangle, MessageSquare, 
-  Settings2, BarChart3, Bell, RefreshCw, Layers, Trash2, ExternalLink
+  Settings2, BarChart3, Bell, RefreshCw, Layers, Trash2, ExternalLink, X
 } from 'lucide-react';
 import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 
@@ -53,6 +53,7 @@ interface StudentAttendance {
   status: AttendanceStatus | null;
   note: string;
   absencesThisMonth: number;
+  emotion?: 'happy' | 'neutral' | 'sad' | null;
 }
 
 const mockStudents: StudentAttendance[] = [];
@@ -87,6 +88,18 @@ export default function Attendance() {
   });
   const [selectedClass, setSelectedClass] = React.useState(searchParams.get('classId') || '');
   const [selectedDate, setSelectedDate] = React.useState(searchParams.get('date') || new Date().toISOString().split('T')[0]);
+  
+  const [searchTerm, setSearchTerm] = React.useState('');
+  const [isFiltersExpanded, setIsFiltersExpanded] = React.useState(false);
+
+  const filteredStudents = React.useMemo(() => {
+    if (!searchTerm.trim()) return students;
+    const term = searchTerm.toLowerCase().trim();
+    return students.filter(s => 
+      (s.name || '').toLowerCase().includes(term) || 
+      (s.id || '').toLowerCase().includes(term)
+    );
+  }, [students, searchTerm]);
   
   const now = new Date();
   const [recapMonth, setRecapMonth] = React.useState((now.getMonth() + 1).toString().padStart(2, '0'));
@@ -302,6 +315,7 @@ export default function Attendance() {
         const recordsSnap = await getDocs(recordsQ);
         const recordsMap = new Map(recordsSnap.docs.map(d => [d.data().studentId, d.data().status]));
         const notesMap = new Map(recordsSnap.docs.map(d => [d.data().studentId, d.data().note]));
+        const emotionsMap = new Map(recordsSnap.docs.map(d => [d.data().studentId, d.data().emotion]));
 
         if (recordsSnap.size > 0) {
           setLastSaved({ date: selectedDate, classId: selectedClass });
@@ -313,7 +327,8 @@ export default function Attendance() {
           setStudents(studentList.map(s => ({
             ...s,
             status: (recordsMap.get(s.id) as any) || null,
-            note: notesMap.get(s.id) || ''
+            note: notesMap.get(s.id) || '',
+            emotion: emotionsMap.get(s.id) || null
           })));
         } else {
           // No students found in this class
@@ -560,6 +575,10 @@ export default function Attendance() {
   const handleNoteChange = (id: string, note: string) => {
     setStudents(students.map(s => s.id === id ? { ...s, note } : s));
   };
+
+  const handleEmotionChange = (id: string, emotion: 'happy' | 'neutral' | 'sad' | null) => {
+    setStudents(students.map(s => s.id === id ? { ...s, emotion } : s));
+  };
   
   const handleSaveFirestore = async () => {
     const unselectedCount = students.filter(s => s.status === null).length;
@@ -578,7 +597,7 @@ export default function Attendance() {
         if (student.status === null) continue;
 
         const recordId = `${selectedClass}_${selectedDate}_${student.id}`;
-        const record: AttendanceRecord = {
+        const record: AttendanceRecord & { emotion?: 'happy' | 'neutral' | 'sad' | null } = {
           id: recordId,
           studentId: student.id,
           studentName: student.name,
@@ -588,6 +607,7 @@ export default function Attendance() {
           date: selectedDate,
           status: student.status,
           note: student.note,
+          emotion: student.emotion || null,
           latenessMinutes: null,
           recordedBy: userEmail,
           recordedAt: Date.now(),
@@ -1173,6 +1193,29 @@ export default function Attendance() {
           )}>
              {/* Left Column: Kelas and Tanggal */}
              <div className="flex flex-col sm:flex-row sm:items-center gap-4 w-full lg:w-auto">
+                {/* Search Input for Desktop */}
+                <div className="hidden md:flex flex-col w-[200px]" id="desktop-search-container">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1.5">Cari Siswa</span>
+                  <div className="relative w-full">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input
+                      type="text"
+                      placeholder="Nama / ID..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="bg-gray-50 border border-gray-200 rounded-lg pl-8 pr-7 py-2 text-sm font-bold outline-none focus:border-blue-300 w-full placeholder:text-gray-400 focus:bg-white transition-colors"
+                    />
+                    {searchTerm && (
+                      <button
+                        onClick={() => setSearchTerm('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-0.5"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
                 {/* Dropdown Kelas */}
                 <div className="flex flex-col w-full sm:w-auto sm:min-w-[150px]">
                   <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1.5">Kelas</span>
@@ -1295,25 +1338,155 @@ export default function Attendance() {
             </div>
           )}
 
-          {/* Mobile view cards (visible only on screen < md) */}
+          {/* Mobile view cards sticky filter header & container (visible only on screen < md) */}
+          <div className="block md:hidden sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-100 shadow-xs -mx-4 px-4 py-3 space-y-2.5 transition-all mb-4" id="mobile-sticky-filter-header">
+            {/* Summary Bar */}
+            <div className="flex items-center justify-between bg-slate-50 border border-slate-100 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-700">
+              <div className="flex items-center gap-1.5 truncate">
+                <span className="bg-blue-600 text-white rounded-md px-1.5 py-0.5 text-[10px] font-black uppercase">
+                  {classes.find(c => c.id === selectedClass)?.name || "Pilih Kelas"}
+                </span>
+                <span className="text-gray-300">|</span>
+                <span className="truncate">
+                  {new Date(selectedDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsFiltersExpanded(!isFiltersExpanded)}
+                className="text-blue-600 hover:text-blue-700 font-extrabold flex items-center gap-1 shrink-0"
+              >
+                <span>{isFiltersExpanded ? "Tutup" : "Ubah"}</span>
+                <Filter size={12} className={cn("transition-transform", isFiltersExpanded && "rotate-180")} />
+              </button>
+            </div>
+
+            {/* Collapsible Full Filters (Class & Date) */}
+            <AnimatePresence>
+              {isFiltersExpanded && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="overflow-hidden space-y-3 pb-2"
+                >
+                  <div className="grid grid-cols-1 gap-3 pt-1">
+                    {/* Class Select */}
+                    <div className="flex flex-col">
+                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Kelas</label>
+                      <div className="relative">
+                        <select
+                          value={selectedClass}
+                          disabled={loadingClasses}
+                          onChange={(e) => {
+                            setSelectedClass(e.target.value);
+                            setIsFiltersExpanded(false); // Auto close on select
+                          }}
+                          className="bg-gray-50 border border-gray-200 rounded-xl pl-3 pr-8 py-2 text-xs font-extrabold outline-none cursor-pointer w-full text-slate-800"
+                        >
+                          {loadingClasses ? (
+                            <option>Loading...</option>
+                          ) : (
+                            <>
+                              <option value="">Pilih Kelas</option>
+                              {classes.map(c => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                              ))}
+                            </>
+                          )}
+                        </select>
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                          <Layers size={12} />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Date Picker */}
+                    <div className="flex flex-col">
+                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Tanggal</label>
+                      <div className="flex items-center gap-1.5">
+                        <button 
+                          onClick={handlePrevDate}
+                          className="p-2 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-xl h-9 w-9 flex items-center justify-center border border-gray-200/40"
+                        >
+                          <ChevronLeft size={16} />
+                        </button>
+                        <input 
+                          type="date"
+                          value={selectedDate}
+                          onChange={(e) => setSelectedDate(e.target.value)}
+                          className="px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-extrabold outline-none cursor-pointer flex-1 text-center h-9 text-slate-800"
+                        />
+                        <button 
+                          onClick={handleNextDate}
+                          className="p-2 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-xl h-9 w-9 flex items-center justify-center border border-gray-200/40"
+                        >
+                          <ChevronRight size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Search Row */}
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Cari nama atau ID siswa..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl py-2 pl-9 pr-8 text-xs font-bold focus:border-blue-300 focus:bg-white outline-none transition-all placeholder:text-gray-400 text-slate-800"
+                />
+                {searchTerm && (
+                  <button
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+                    aria-label="Bersihkan pencarian"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsFiltersExpanded(!isFiltersExpanded)}
+                className={cn(
+                  "p-2 rounded-xl border flex items-center justify-center h-9 w-9 transition-all",
+                  isFiltersExpanded 
+                    ? "bg-blue-50 border-blue-200 text-blue-600" 
+                    : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
+                )}
+                title="Tampilkan filter"
+              >
+                <Filter size={14} />
+              </button>
+            </div>
+          </div>
+
           <div className="block md:hidden space-y-4" id="attendance-student-cards-mobile">
             {loading ? (
               <div className="bg-white p-12 text-center text-gray-400 font-medium border border-gray-100 rounded-2xl shadow-sm">
                 <RefreshCw size={24} className="animate-spin mx-auto mb-2 text-blue-500" />
                 Memuat data siswa...
               </div>
-            ) : students.length === 0 ? (
+            ) : filteredStudents.length === 0 ? (
               <div className="bg-white p-12 text-center text-gray-400 font-medium italic border border-gray-100 rounded-2xl shadow-sm">
-                {selectedClass ? 'Tidak ada siswa yang ditemukan di kelas ini.' : 'Pilih kelas terlebih dahulu.'}
+                {searchTerm ? 'Tidak ada siswa yang cocok dengan pencarian.' : (selectedClass ? 'Tidak ada siswa yang ditemukan di kelas ini.' : 'Pilih kelas terlebih dahulu.')}
               </div>
             ) : (
-              students.map((student) => (
+              filteredStudents.map((student) => (
                 <AttendanceStudentCard
                   key={student.id}
                   student={student}
                   attendanceType={attendanceType}
                   onStatusChange={(newStatus) => handleStatusChange(student.id, newStatus)}
                   onNoteChange={(newNote) => handleNoteChange(student.id, newNote)}
+                  onEmotionChange={(newEmotion) => handleEmotionChange(student.id, newEmotion)}
                   onDeleteOne={() => handleDeleteOne(student.id)}
                   deleting={deleting}
                   threshold={threshold}
@@ -1343,13 +1516,13 @@ export default function Attendance() {
                         Memuat data siswa...
                      </td>
                    </tr>
-                ) : students.length === 0 ? (
+                ) : filteredStudents.length === 0 ? (
                   <tr>
                     <td colSpan={5} className="px-6 py-12 text-center text-gray-400 font-medium italic">
-                       {selectedClass ? 'Tidak ada siswa yang ditemukan di kelas ini.' : 'Pilih kelas terlebih dahulu.'}
+                       {searchTerm ? 'Tidak ada siswa yang cocok dengan pencarian.' : (selectedClass ? 'Tidak ada siswa yang ditemukan di kelas ini.' : 'Pilih kelas terlebih dahulu.')}
                     </td>
                   </tr>
-                ) : students.map((student) => (
+                ) : filteredStudents.map((student) => (
                   <tr key={student.id} className="hover:bg-gray-50/50 transition-colors">
                     <td className="px-6 py-4 min-w-0">
                       <p className="font-bold text-gray-900 text-sm break-words leading-tight max-w-[280px]">{student.name}</p>
