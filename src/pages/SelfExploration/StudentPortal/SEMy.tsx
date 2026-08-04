@@ -159,6 +159,28 @@ export default function SEMy() {
          </div>
       </div>
 
+      {/* CTA Card for My Plan (17 Minggu) */}
+      <div className="bg-white rounded-[2.5rem] p-8 border border-gray-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6">
+         <div className="flex items-center gap-4">
+            <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-indigo-600 text-white rounded-2xl flex items-center justify-center shrink-0 shadow-lg shadow-blue-100">
+               <ClipboardList size={24} />
+            </div>
+            <div>
+               <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-black text-gray-900 uppercase italic">Weekly Target Plan (My Plan 17 Minggu)</h3>
+                  <span className="px-2.5 py-0.5 bg-blue-50 text-blue-600 text-[8px] font-black uppercase tracking-widest rounded-full border border-blue-100">Baru</span>
+               </div>
+               <p className="text-xs text-gray-500 font-medium mt-0.5">Buat target, scan lembar tulisan fisik via AI, dan kelola target mingguan Anda untuk periode ini.</p>
+            </div>
+         </div>
+         <button 
+            onClick={() => navigate(`/self-exploration/my/${activePeriod.id}/plan`)}
+            className="w-full md:w-auto px-8 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-black uppercase text-[10px] tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-100 hover:shadow-indigo-200 shrink-0"
+         >
+            Kelola My Plan <ChevronRight size={14} />
+         </button>
+      </div>
+
       {/* Main Content Area */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
          <div className="lg:col-span-8 space-y-6">

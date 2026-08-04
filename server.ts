@@ -8213,6 +8213,129 @@ app.post("/api/sync-knowledge", async (req, res) => {
 });
 
 
+// API: Scan 17-week plan table using AI Vision
+app.post("/api/self-exploration/scan-plan", async (req, res) => {
+  try {
+    const { base64Image } = req.body;
+    if (!base64Image) {
+      return res.status(400).json({ error: "Missing base64Image in request body" });
+    }
+
+    // 1. Prepare system instruction for 17-week table transcription
+    const systemInstruction = `You are Lumina AI Vision assistant, specialized in scanning and transcribing handwritten tables of "My Plan" (17-week plans) from students of Lazuardi School.
+The table consists of exactly 17 rows representing Week 1 to Week 17.
+Each row contains:
+1. Week / Meeting Number (1 to 17)
+2. Student's target / plan (handwritten text in the "Target" or "Student Target" or "Rencana Siswa" column)
+
+Your task:
+Analyze the provided image of the handwritten table. Carefully transcribe the student's target/plan for each week from Week 1 to Week 17.
+- ONLY transcribe the Student's Target column. Do NOT transcribe supervisor notes, feedback, or headers.
+- If a week's cell is empty, blank, scribbled out, or has no legible text, return an empty string "" for that week's target.
+- Pay close attention to transcribing Indonesian or English handwriting accurately.
+
+You MUST respond ONLY with a valid, clean JSON array of exactly 17 objects. Do not wrap your response in markdown code blocks like \`\`\`json ... \`\`\`. Do not include any other commentary, HTML, text, or conversational padding.
+Each object in the array must have this exact schema:
+{
+  "weekNumber": number,
+  "studentTarget": "transcribed text or empty string"
+}
+`;
+
+    // 2. Select AI Provider & Config
+    let BASE_URL = process.env.VITE_AI_BASE_URL || "https://api.koboillm.com/v1";
+    let API_KEY = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
+    let MODEL = process.env.VITE_AI_MODEL || "gemini/gemini-2.5-flash-lite";
+
+    // Fallback to Google Gemini OpenAI-compatible endpoint if native Gemini key is used directly
+    if (API_KEY.startsWith("AIza") && BASE_URL.includes("koboillm.com")) {
+      console.log("[ScanPlan] Direct Gemini Key detected. Rerouting to Official Google Gemini OpenAI-compatible endpoint.");
+      BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
+      MODEL = "gemini-2.5-flash";
+    }
+
+    console.log(`[ScanPlan] Initiating vision request to ${BASE_URL} using model ${MODEL}`);
+
+    // Ensure base64 image has proper prefix if not already present
+    let formattedBase64 = base64Image;
+    if (!formattedBase64.startsWith("data:image/")) {
+      formattedBase64 = `data:image/jpeg;base64,${formattedBase64}`;
+    }
+
+    // 3. Make chat completions API call with multimodal payload
+    const aiResponse = await axios.post(`${BASE_URL}/chat/completions`, {
+      model: MODEL,
+      messages: [
+        { role: "system", content: systemInstruction },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Here is the photo of the handwritten 17-week plan table. Please scan, transcribe, and output exactly 17 JSON objects."
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: formattedBase64
+              }
+            }
+          ]
+        }
+      ],
+      temperature: 0.1
+    }, {
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${API_KEY}`
+      },
+      timeout: 60000
+    });
+
+    let rawText = aiResponse.data.choices?.[0]?.message?.content || "";
+    console.log("[ScanPlan] AI Raw Response:", rawText);
+
+    // 4. Clean up response text from potential markdown wrappers
+    let cleanText = rawText.trim();
+    if (cleanText.startsWith("```")) {
+      cleanText = cleanText.replace(/^```(?:json)?\n?/, "");
+      cleanText = cleanText.replace(/\n?```$/, "");
+    }
+    cleanText = cleanText.trim();
+
+    // 5. Parse and post-process transcribed data
+    let transcribedWeeks = JSON.parse(cleanText);
+
+    if (!Array.isArray(transcribedWeeks)) {
+      throw new Error("AI did not return a valid JSON array");
+    }
+
+    // Standardize to exactly 17 weeks
+    const finalWeeks = Array.from({ length: 17 }, (_, idx) => {
+      const weekNum = idx + 1;
+      const found = transcribedWeeks.find((w: any) => parseInt(w?.weekNumber) === weekNum);
+      return {
+        weekNumber: weekNum,
+        studentTarget: found ? String(found.studentTarget || "").trim() : "",
+        supervisorNotes: ""
+      };
+    });
+
+    return res.json({
+      success: true,
+      weeks: finalWeeks
+    });
+
+  } catch (err: any) {
+    console.error("[ScanPlanError] Scan operation failed:", err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || "Failed to process photo scan. Please check model credentials or try again."
+    });
+  }
+});
+
+
 // --- Server Start & Export ---
 
 // --- Server Initialization ---
