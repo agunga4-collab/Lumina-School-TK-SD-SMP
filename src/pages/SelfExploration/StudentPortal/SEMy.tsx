@@ -7,8 +7,7 @@ import {
 } from 'lucide-react';
 import { 
   getSEPeriods, getSEEnrollment, getSEActivities, 
-  saveSEEnrollment, db, storage, ref, uploadBytes, 
-  getDownloadURL, deleteObject 
+  saveSEEnrollment, db
 } from '../../../lib/firebase';
 import { SEPeriod, SEEnrollment, SEChoice, Student, SEStrand } from '../../../types';
 import { useAuth } from '../../../context/AuthContext';
@@ -421,6 +420,15 @@ function SlotEditorModal({ slot, studentData, activePeriod, enrollment, activiti
     return filteredActivities.find(a => a.id === activityId);
   }, [filteredActivities, activityId]);
 
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = error => reject(error);
+    });
+  };
+
   // File Upload Logic
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -453,20 +461,35 @@ function SlotEditorModal({ slot, studentData, activePeriod, enrollment, activiti
         }
 
         const fileId = Date.now() + "_" + Math.random().toString(36).substr(2, 9);
-        const sanitizedAY = activePeriod.academicYear.replace('/', '_');
-        const storagePath = `self-exploration/${sanitizedAY}/${activePeriod.semester}/${activePeriod.id}/${studentData.id}/slot-${slot}/${fileId}_${file.name}`;
-        
-        const fileRef = ref(storage, storagePath);
-        const snapshot = await uploadBytes(fileRef, file);
-        const downloadUrl = await getDownloadURL(snapshot.ref);
+        const base64 = await fileToBase64(file);
+
+        // Upload to server-side endpoint (Google Drive)
+        const uploadRes = await fetch("/api/self-exploration/upload-attachment", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            base64File: base64,
+            fileName: `${studentData.id}_slot${slot}_${fileId}_${file.name}`,
+            mimeType: file.type
+          })
+        });
+
+        if (!uploadRes.ok) {
+          throw new Error("Server gagal mengunggah file ke Google Drive.");
+        }
+
+        const uploadData = await uploadRes.json();
+        if (!uploadData.success) {
+          throw new Error(uploadData.error || "Gagal mengunggah.");
+        }
 
         newAttachments.push({
           id: fileId,
           fileName: file.name,
           mimeType: file.type,
           sizeBytes: file.size,
-          storagePath: storagePath,
-          downloadUrl: downloadUrl,
+          driveFileId: uploadData.driveFileId,
+          downloadUrl: uploadData.downloadUrl,
           uploadedAt: Date.now(),
           uploadedByUid: profile?.uid || 'student'
         });
@@ -475,25 +498,15 @@ function SlotEditorModal({ slot, studentData, activePeriod, enrollment, activiti
       setAttachments(newAttachments);
     } catch (err: any) {
       console.error("Upload failed:", err);
-      alert("Terjadi kesalahan saat mengunggah file.");
+      alert("Terjadi kesalahan saat mengunggah file: " + err.message);
     } finally {
       setUploading(false);
     }
   };
 
   // Delete attachment
-  const handleFileDelete = async (attachmentId: string) => {
-    const fileObj = attachments.find(a => a.id === attachmentId);
-    if (!fileObj) return;
-
+  const handleFileDelete = (attachmentId: string) => {
     if (confirm("Apakah Anda yakin ingin menghapus file ini?")) {
-      try {
-        const fileRef = ref(storage, fileObj.storagePath);
-        await deleteObject(fileRef);
-      } catch (err) {
-        console.warn("Storage deletion warning (might be missing):", err);
-      }
-
       setAttachments(prev => prev.filter(a => a.id !== attachmentId));
     }
   };

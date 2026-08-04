@@ -8395,6 +8395,47 @@ Each object in the array must have this exact schema:
 });
 
 
+// API: Upload choice slot attachment to Google Drive
+app.post("/api/self-exploration/upload-attachment", async (req, res) => {
+  try {
+    const { base64File, fileName, mimeType } = req.body;
+    if (!base64File) {
+      return res.status(400).json({ error: "Missing base64File in request body" });
+    }
+    if (!fileName) {
+      return res.status(400).json({ error: "Missing fileName in request body" });
+    }
+
+    // Extract base64 details
+    const matches = base64File.match(/^data:(.+);base64,(.+)$/);
+    let base64Data = base64File;
+    let resolvedMime = mimeType || "application/octet-stream";
+
+    if (matches && matches.length === 3) {
+      resolvedMime = matches[1];
+      base64Data = matches[2];
+    }
+
+    const buffer = Buffer.from(base64Data, "base64");
+    console.log(`[UploadAttachment] Uploading attachment to Google Drive. Name: ${fileName}, Type: ${resolvedMime}`);
+    const driveFileId = await uploadPlanPhoto(buffer, fileName, resolvedMime);
+    console.log(`[UploadAttachment] Successfully uploaded attachment to Google Drive. File ID: ${driveFileId}`);
+
+    return res.json({
+      success: true,
+      driveFileId,
+      downloadUrl: `/api/self-exploration/plan-photo/${driveFileId}`
+    });
+  } catch (err: any) {
+    console.error("[UploadAttachmentError] Failed to upload attachment:", err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || "Failed to upload file to Google Drive."
+    });
+  }
+});
+
+
 // API: Serve Plan Photo from Google Drive
 app.get("/api/self-exploration/plan-photo/:fileId", async (req, res) => {
   try {
