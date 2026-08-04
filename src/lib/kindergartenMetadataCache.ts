@@ -1,4 +1,4 @@
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, documentId } from 'firebase/firestore';
 import { db } from './firebase';
 
 /**
@@ -164,6 +164,45 @@ export async function getUnitStudents(unitId: string, academicYear: string, forc
 
       console.log(`[Compilation Map] Resolving ${unitId} identity graph. Src counts - raw: ${sRead}, invites: ${iRead}, enrollments: ${eRead}`);
 
+      const resolvedStudentIds = new Set<string>();
+      studentsSnap.docs.forEach(docSnap => resolvedStudentIds.add(docSnap.id));
+
+      const missingStudentIds = new Set<string>();
+      enrollmentsSnap.docs.forEach(docSnap => {
+        const sId = docSnap.data().studentId;
+        if (sId && !resolvedStudentIds.has(sId)) {
+          missingStudentIds.add(sId);
+        }
+      });
+
+      const missingDocs: any[] = [];
+      if (missingStudentIds.size > 0) {
+        const missingIdsList = Array.from(missingStudentIds);
+        const chunks: string[][] = [];
+        for (let i = 0; i < missingIdsList.length; i += 10) {
+          chunks.push(missingIdsList.slice(i, i + 10));
+        }
+
+        const fetchPromises = chunks.map(chunk => {
+          const q = query(
+            collection(db, 'students'),
+            where(documentId(), 'in', chunk)
+          );
+          return getDocs(q).catch(e => {
+            console.warn('Failed to fetch missing students in cache compile:', e);
+            return { docs: [] };
+          });
+        });
+
+        const missingSnaps = await Promise.all(fetchPromises);
+        missingSnaps.forEach(snap => {
+          missingDocs.push(...snap.docs);
+        });
+
+        logFirestoreRead('students', missingDocs.length);
+        console.log(`[Cache Fix] Fetched ${missingDocs.length} missing enrolled students whose unitId was not '${unitId}'`);
+      }
+
       const enrollmentClassMap = new Map<string, string>();
       enrollmentsSnap.docs.forEach(docSnap => {
         const data = docSnap.data();
@@ -181,9 +220,19 @@ export async function getUnitStudents(unitId: string, academicYear: string, forc
         if (!studentId) return;
 
         const classId = data.classId || enrollmentClassMap.get(studentId) || '';
-        const ageGroup = unitId === 'KINDERGARTEN'
-          ? (data.classId && String(data.classId).toLowerCase().includes('tkb') ? 'TK_B' : 'TK_A')
-          : 'ELEMENTARY';
+        let ageGroup = 'ELEMENTARY';
+        if (unitId === 'KINDERGARTEN') {
+          const cid = String(classId || '').toUpperCase();
+          if (cid.includes('TKB') || cid.includes('TK-B') || cid.includes('BUTTERFLY')) {
+            ageGroup = 'TK_B';
+          } else if (cid.includes('TKA') || cid.includes('TK-A') || cid.includes('CATERPILLAR')) {
+            ageGroup = 'TK_A';
+          } else if (cid.includes('PRA_TK') || cid.includes('PRA-TK') || cid.includes('PLAYGROUP') || cid.includes('PG') || cid.includes('BUNAKEN')) {
+            ageGroup = 'PRA_TK';
+          } else {
+            ageGroup = 'TK_A';
+          }
+        }
 
         map.set(studentId, {
           id: studentId,
@@ -196,13 +245,25 @@ export async function getUnitStudents(unitId: string, academicYear: string, forc
       });
 
       // Merge active registered students
-      studentsSnap.docs.forEach(docSnap => {
+      const allStudentDocs = [...studentsSnap.docs, ...missingDocs];
+      allStudentDocs.forEach(docSnap => {
         const data = docSnap.data();
         const studentId = docSnap.id;
         const classId = enrollmentClassMap.get(studentId) || data.classId || '';
-        const ageGroup = unitId === 'KINDERGARTEN'
-          ? ((data.grade === 'TK_B' || (classId && String(classId).toLowerCase().includes('tkb'))) ? 'TK_B' : 'TK_A')
-          : 'ELEMENTARY';
+        let ageGroup = 'ELEMENTARY';
+        if (unitId === 'KINDERGARTEN') {
+          const g = String(data.grade || '').toUpperCase();
+          const cid = String(classId || '').toUpperCase();
+          if (cid.includes('TKB') || cid.includes('TK-B') || cid.includes('BUTTERFLY') || g.includes('TK_B') || g === 'TK B' || g === 'TKB') {
+            ageGroup = 'TK_B';
+          } else if (cid.includes('TKA') || cid.includes('TK-A') || cid.includes('CATERPILLAR') || g.includes('TK_A') || g === 'TK A' || g === 'TKA') {
+            ageGroup = 'TK_A';
+          } else if (cid.includes('PRA_TK') || cid.includes('PRA-TK') || cid.includes('PLAYGROUP') || cid.includes('PG') || cid.includes('BUNAKEN') || g.includes('PRA') || g === 'PRA TK' || g === 'PLAYGROUP') {
+            ageGroup = 'PRA_TK';
+          } else {
+            ageGroup = 'TK_A';
+          }
+        }
 
         const existing = map.get(studentId);
         if (existing && existing.classId) {
@@ -210,7 +271,8 @@ export async function getUnitStudents(unitId: string, academicYear: string, forc
             ...existing,
             name: existing.name || data.fullName || data.name || 'Siswa Tanpa Nama',
             nickName: existing.nickName || data.nickname || data.nickName || data.fullName?.split(' ')[0] || 'Siswa',
-            unitId: unitId
+            unitId: unitId,
+            ageGroup: ageGroup
           });
         } else {
           map.set(studentId, {
