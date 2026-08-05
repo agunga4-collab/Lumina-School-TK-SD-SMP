@@ -7,18 +7,21 @@ import {
 import { 
   getSEPeriods, getSEEnrollmentsByClass, approveSEEnrollment, 
   requestSERevision, saveSETeacherComment, getSESelfAssessments,
+  getActiveStudents,
   db
 } from '../../../lib/firebase';
 import { SEPeriod, SEEnrollment, SEChoice, SESelfAssessment } from '../../../types';
 import { useAuth } from '../../../context/AuthContext';
+import { useAcademicYear } from '../../../context/AcademicYearContext';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../../lib/utils';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 
 export default function SEClassView() {
   const { classId } = useParams();
   const { profile } = useAuth();
+  const { activeYear } = useAcademicYear();
   const [activePeriod, setActivePeriod] = React.useState<SEPeriod | null>(null);
   const [enrollments, setEnrollments] = React.useState<SEEnrollment[]>([]);
   const [classes, setClasses] = React.useState<any[]>([]);
@@ -30,21 +33,62 @@ export default function SEClassView() {
   const [assessments, setAssessments] = React.useState<SESelfAssessment[]>([]);
 
   const fetchInitial = React.useCallback(async () => {
-    // Get Classes
-    const cSnap = await getDocs(collection(db, 'classes'));
-    setClasses(cSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+    setLoading(true);
+    try {
+      // Get Classes with local filter on activeYear & unitId === 'JUNIOR_HIGH' & status === 'active'
+      const q = query(collection(db, 'classes'), where('unitId', '==', 'JUNIOR_HIGH'));
+      const cSnap = await getDocs(q);
+      const filteredClasses = cSnap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter((c: any) => c.academicYear === activeYear && c.status === 'active')
+        .sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''));
+      setClasses(filteredClasses);
 
-    // Get Active Period
-    const periods = await getSEPeriods('JUNIOR_HIGH');
-    const active = periods.find(p => p.isActive);
-    setActivePeriod(active || null);
+      // Get Active Period for active academic year
+      const periods = await getSEPeriods('JUNIOR_HIGH');
+      const active = periods?.find(p => p.academicYear === activeYear && p.isActive) || 
+                     periods?.find(p => p.academicYear === activeYear) || null;
+      setActivePeriod(active);
 
-    if (active && currentClassId) {
-      const data = await getSEEnrollmentsByClass(currentClassId, active.id);
-      setEnrollments(data);
+      if (active && currentClassId) {
+        // 1. Get active students roster in the selected class for active academic year
+        const roster = await getActiveStudents(currentClassId, activeYear);
+        
+        // 2. Get existing seEnrollments for the selected class and active period
+        const seEnrollments = await getSEEnrollmentsByClass(currentClassId, active.id);
+
+        // 3. Merge them
+        const mergedEnrollments = (roster || []).map(student => {
+          const found = (seEnrollments || []).find(se => se.studentId === student.id);
+          if (found) return found;
+
+          return {
+            id: `temp-${student.id}`,
+            studentId: student.id,
+            studentName: student.name,
+            classId: currentClassId,
+            grade: Number(student.grade || 7) as any,
+            periodId: active.id,
+            academicYear: activeYear,
+            semester: active.semester || '1',
+            periodNumber: active.periodNumber || 1,
+            choices: [],
+            status: 'Belum Memilih' as any,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+          } as SEEnrollment;
+        });
+
+        setEnrollments(mergedEnrollments);
+      } else {
+        setEnrollments([]);
+      }
+    } catch (err) {
+      console.error("Error fetching initial SE class view data:", err);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  }, [currentClassId]);
+  }, [currentClassId, activeYear]);
 
   React.useEffect(() => {
     fetchInitial();
@@ -68,6 +112,10 @@ export default function SEClassView() {
         <div>
            <h1 className="text-3xl font-black text-gray-900 tracking-tight italic uppercase">Pantau Kelas SE</h1>
            <p className="text-sm text-gray-500 font-medium mt-1">Review rencana dan hasil eksplorasi siswa.</p>
+           <div className="inline-flex items-center gap-2 mt-2 px-3 py-1 bg-blue-50 border border-blue-100 rounded-full text-[10px] font-black text-blue-700 uppercase tracking-wider">
+             <Calendar size={12} />
+             Tahun Ajaran Aktif: {activeYear}
+           </div>
         </div>
         <div className="flex items-center gap-3">
            <select 
@@ -89,6 +137,12 @@ export default function SEClassView() {
         <div className="py-20 text-center">
            <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin inline-block" />
         </div>
+      ) : enrollments.length === 0 ? (
+         <div className="p-20 bg-gray-50 rounded-[3rem] border-2 border-dashed border-gray-200 text-center">
+            <p className="text-xs font-black text-gray-400 uppercase tracking-widest leading-relaxed">
+              Belum ada data Self Exploration pada kelas ini untuk Tahun Ajaran {activeYear}.
+            </p>
+         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
            {enrollments.map(enroll => {
@@ -111,6 +165,7 @@ export default function SEClassView() {
                        "px-4 py-1.5 rounded-full text-[8px] font-black uppercase tracking-widest",
                        enroll.status === 'COMPLETED' ? "bg-emerald-50 text-emerald-600" :
                        enroll.status === 'APPROVED' ? "bg-blue-50 text-blue-600" :
+                       enroll.status === 'Belum Memilih' ? "bg-rose-50 text-rose-600 border border-rose-100" :
                        "bg-amber-50 text-amber-600"
                      )}>
                         {enroll.status}
@@ -118,23 +173,29 @@ export default function SEClassView() {
                   </div>
 
                   <div className="space-y-3">
-                     {enroll.choices.map(c => (
-                       <div key={c.slot} className="p-4 bg-gray-50 rounded-2xl flex items-center justify-between group">
-                          <div className="space-y-0.5">
-                             <p className="text-[8px] font-black uppercase text-gray-400 tracking-widest">{c.strand}</p>
-                             <p className="text-[10px] font-bold text-gray-900 uppercase italic truncate max-w-[150px]">{c.activityName}</p>
-                          </div>
-                          {c.approvalStatus === 'PENDING' && (
-                            <span className="w-2 h-2 bg-blue-600 rounded-full animate-pulse" />
-                          )}
-                          {c.approvalStatus === 'REVISION_NEEDED' && (
-                            <AlertCircle size={14} className="text-red-500" />
-                          )}
-                          {c.approvalStatus === 'APPROVED' && (
-                            <CheckCircle2 size={14} className="text-emerald-500" />
-                          )}
+                     {enroll.choices.length > 0 ? (
+                       enroll.choices.map(c => (
+                         <div key={c.slot} className="p-4 bg-gray-50 rounded-2xl flex items-center justify-between group">
+                            <div className="space-y-0.5">
+                               <p className="text-[8px] font-black uppercase text-gray-400 tracking-widest">{c.strand}</p>
+                               <p className="text-[10px] font-bold text-gray-900 uppercase italic truncate max-w-[150px]">{c.activityName}</p>
+                            </div>
+                            {c.approvalStatus === 'PENDING' && (
+                              <span className="w-2 h-2 bg-blue-600 rounded-full animate-pulse" />
+                            )}
+                            {c.approvalStatus === 'REVISION_NEEDED' && (
+                              <AlertCircle size={14} className="text-red-500" />
+                            )}
+                            {c.approvalStatus === 'APPROVED' && (
+                              <CheckCircle2 size={14} className="text-emerald-500" />
+                            )}
+                         </div>
+                       ))
+                     ) : (
+                       <div className="p-4 bg-gray-50/50 border border-dashed border-gray-100 rounded-2xl text-center py-6">
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Belum memilih strand/aktivitas</p>
                        </div>
-                     ))}
+                     )}
                   </div>
 
                   <div className="flex items-center gap-2 pt-4 border-t border-gray-50">
@@ -154,12 +215,14 @@ export default function SEClassView() {
                         </button>
                      ) : (
                         <button className="flex-1 py-3 bg-gray-50 text-gray-400 rounded-xl font-black uppercase text-[9px] tracking-widest cursor-default">
-                           No Action Needed
+                           {enroll.status === 'Belum Memilih' ? 'Belum Ada Rencana' : 'No Action Needed'}
                         </button>
                      )}
-                     <button className="w-10 h-10 flex items-center justify-center bg-gray-50 text-gray-400 rounded-xl hover:bg-gray-100">
-                        <Eye size={16} />
-                     </button>
+                     {!enroll.id.startsWith('temp-') && (
+                       <button className="w-10 h-10 flex items-center justify-center bg-gray-50 text-gray-400 rounded-xl hover:bg-gray-100">
+                          <Eye size={16} />
+                       </button>
+                     )}
                   </div>
                </div>
              );
