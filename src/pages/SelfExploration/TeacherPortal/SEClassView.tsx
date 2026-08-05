@@ -19,7 +19,7 @@ import { useAcademicYear } from '../../../context/AcademicYearContext';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../../lib/utils';
-import { collection, getDocs, query, where, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, getDoc, setDoc, serverTimestamp, addDoc, Timestamp } from 'firebase/firestore';
 
 const getChoiceStatusLabel = (status?: string, approvalStatus?: string) => {
   const s = status || (
@@ -357,16 +357,16 @@ function ApprovalModal({ enrollment, onClose, onSuccess }: { enrollment: SEEnrol
         if (p.planIndex === planIndex) {
           return {
             ...p,
-            objective: "",
-            currentLevel: "",
+            // Preserve strand, activity, objective, and currentLevel
             weeks: createDefaultWeeks(),
             status: "draft",
             photoUrl: null,
             driveFileId: null,
             photoFileName: null,
             scanConfidence: null,
+            scanMetadata: null,
             deletedBy: deletedByObj,
-            deletedAt: serverTimestamp()
+            deletedAt: Timestamp.now()
           };
         }
         return p;
@@ -375,11 +375,25 @@ function ApprovalModal({ enrollment, onClose, onSuccess }: { enrollment: SEEnrol
       const updatedDoc = {
         ...plansDoc,
         plans: updatedPlans,
-        updatedAt: Date.now()
+        updatedAt: serverTimestamp()
       };
 
       const planRef = doc(db, 'selfExploration', enrollment.studentId, 'plans', enrollment.periodId);
       await setDoc(planRef, updatedDoc, { merge: true });
+
+      // Add audit trail log
+      try {
+        await addDoc(collection(db, 'selfExplorationAudit'), {
+          action: "reset_plan",
+          studentId: enrollment.studentId,
+          periodId: enrollment.periodId,
+          planIndex,
+          actor: deletedByObj,
+          createdAt: serverTimestamp()
+        });
+      } catch (auditErr) {
+        console.warn("Failed to write reset_plan audit trail:", auditErr);
+      }
 
       setPlansDoc(updatedDoc);
       alert("Rencana berhasil di-reset.");
@@ -1195,11 +1209,11 @@ function ApprovalModal({ enrollment, onClose, onSuccess }: { enrollment: SEEnrol
                                                            driveFileId: null, 
                                                            photoFileName: null,
                                                            scanConfidence: null,
-                                                           photoHiddenAt: Date.now(),
+                                                           photoHiddenAt: Timestamp.now(),
                                                            photoHiddenBy: {
                                                               uid: profile?.uid || 'unknown',
                                                               name: profile?.displayName || profile?.email || 'Unknown',
-                                                              role: "guru"
+                                                              role: (profile?.role === 'SUPER_ADMIN' || profile?.role === 'ADMIN') ? 'admin' : 'guru'
                                                            }
                                                         };
                                                      }
@@ -1208,10 +1222,29 @@ function ApprovalModal({ enrollment, onClose, onSuccess }: { enrollment: SEEnrol
                                                   const updatedDoc = {
                                                      ...plansDoc,
                                                      plans: updatedPlans,
-                                                     updatedAt: Date.now()
+                                                     updatedAt: serverTimestamp()
                                                   };
                                                   const planRef = doc(db, 'selfExploration', enrollment.studentId, 'plans', enrollment.periodId);
                                                   await setDoc(planRef, updatedDoc, { merge: true });
+
+                                                  // Add audit trail log using server authoritative timestamp
+                                                  try {
+                                                     await addDoc(collection(db, 'selfExplorationAudit'), {
+                                                        action: 'hide_photo',
+                                                        studentId: enrollment.studentId,
+                                                        periodId: enrollment.periodId,
+                                                        planIndex: selectedPlanSlot,
+                                                        actor: {
+                                                           uid: profile?.uid || 'unknown',
+                                                           name: profile?.displayName || profile?.email || 'Unknown',
+                                                           role: (profile?.role === 'SUPER_ADMIN' || profile?.role === 'ADMIN') ? 'admin' : 'guru'
+                                                        },
+                                                        createdAt: serverTimestamp()
+                                                     });
+                                                  } catch (auditErr) {
+                                                     console.warn('Failed to write hide_photo audit trail:', auditErr);
+                                                  }
+
                                                   setPlansDoc(updatedDoc);
                                                   alert("Foto berhasil dihapus dari tampilan.");
                                                } catch (err: any) {

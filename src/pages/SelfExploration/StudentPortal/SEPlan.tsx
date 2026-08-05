@@ -11,7 +11,7 @@ import { useAuth } from '../../../context/AuthContext';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../../lib/utils';
-import { doc, getDoc, setDoc, collection, getDocs, query, where, limit, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs, query, where, limit, serverTimestamp, Timestamp, addDoc } from 'firebase/firestore';
 
 interface WeekPlan {
   weekNumber: number;
@@ -30,13 +30,19 @@ interface SinglePlan {
   photoUrl: string | null;
   driveFileId?: string | null;
   scanConfidence: "high" | "low" | null;
+  photoFileName?: string | null;
+  photoUploadedAt?: any;
+  photoHiddenAt?: any;
+  photoHiddenBy?: any;
+  deletedAt?: any;
+  deletedBy?: any;
 }
 
 interface StudentPlansDoc {
   grade: number;
   planCount: number;
   plans: SinglePlan[];
-  updatedAt?: number;
+  updatedAt?: any;
 }
 
 const MANDATED_WEEKS: Record<number, string> = {
@@ -91,6 +97,10 @@ export default function SEPlan() {
   const isAdmin = React.useMemo(() => {
     if (!profile) return false;
     return profile.role === 'SUPER_ADMIN' || profile.role === 'ADMIN';
+  }, [profile]);
+
+  const isOwner = React.useMemo(() => {
+    return profile?.role === 'STUDENT';
   }, [profile]);
 
   const fileInputRefs = React.useRef<{ [key: number]: HTMLInputElement | null }>({});
@@ -249,7 +259,7 @@ export default function SEPlan() {
       const updatedDocPayload: StudentPlansDoc = {
         ...plansDoc,
         plans: updatedPlans,
-        updatedAt: Date.now()
+        updatedAt: serverTimestamp()
       };
 
       const docRef = doc(db, 'selfExploration', studentData.id, 'plans', periodId);
@@ -344,10 +354,6 @@ export default function SEPlan() {
     const plan = plansDoc.plans.find(p => p.planIndex === planIndex);
     if (!plan) return;
 
-    const isJuniorHighStaff = profile?.role === 'TEACHER' && profile?.unitId === 'JUNIOR_HIGH';
-    const isAdmin = profile?.role === 'SUPER_ADMIN' || profile?.role === 'ADMIN' || profile?.role === 'HEAD_JUNIOR';
-    const isOwner = profile?.role === 'STUDENT';
-
     if (!isOwner && !isJuniorHighStaff && !isAdmin) {
       alert("Anda tidak memiliki akses untuk menghapus foto ini.");
       return;
@@ -380,7 +386,7 @@ export default function SEPlan() {
             driveFileId: null, 
             photoFileName: null,
             scanConfidence: null,
-            photoHiddenAt: serverTimestamp(),
+            photoHiddenAt: Timestamp.now(),
             photoHiddenBy: nextPhotoHiddenBy
           };
         }
@@ -390,11 +396,25 @@ export default function SEPlan() {
       const updatedDocPayload: StudentPlansDoc = {
         ...plansDoc,
         plans: updatedPlans,
-        updatedAt: Date.now()
+        updatedAt: serverTimestamp()
       };
 
       const docRef = doc(db, 'selfExploration', studentData.id, 'plans', periodId);
       await setDoc(docRef, updatedDocPayload, { merge: true });
+
+      // Add audit trail log using server authoritative timestamp
+      try {
+        await addDoc(collection(db, 'selfExplorationAudit'), {
+          action: "hide_photo",
+          studentId: studentData.id,
+          periodId,
+          planIndex,
+          actor: nextPhotoHiddenBy,
+          createdAt: serverTimestamp()
+        });
+      } catch (auditErr) {
+        console.warn("Failed to write hide_photo audit trail:", auditErr);
+      }
 
       setPlansDoc(updatedDocPayload);
       showFeedback(planIndex, "Foto berhasil dihapus.", "success");
@@ -409,14 +429,16 @@ export default function SEPlan() {
     const plan = plansDoc.plans.find(p => p.planIndex === planIndex);
     if (!plan) return;
 
-    if (!isJuniorHighStaff && !isAdmin) {
-      alert("Hanya Guru Junior High atau Admin yang dapat mereset rencana ini.");
+    if (!isOwner && !isJuniorHighStaff && !isAdmin) {
+      alert("Hanya Pemilik Plan, Guru Junior High, atau Admin yang dapat mereset rencana ini.");
       return;
     }
 
     try {
-      let roleName: "siswa" | "guru" | "admin" = "guru";
-      if (isAdmin) {
+      let roleName: "siswa" | "guru" | "admin" = "siswa";
+      if (isJuniorHighStaff) {
+        roleName = "guru";
+      } else if (isAdmin) {
         roleName = "admin";
       }
 
@@ -430,16 +452,16 @@ export default function SEPlan() {
         if (p.planIndex === planIndex) {
           return {
             ...p,
-            objective: "",
-            currentLevel: "",
+            // Preserve strand, activity, objective, and currentLevel
             weeks: createDefaultWeeks(),
             status: "draft" as const,
             photoUrl: null,
             driveFileId: null,
             photoFileName: null,
             scanConfidence: null,
+            scanMetadata: null,
             deletedBy: deletedByObj,
-            deletedAt: serverTimestamp()
+            deletedAt: Timestamp.now()
           };
         }
         return p;
@@ -448,11 +470,25 @@ export default function SEPlan() {
       const updatedDocPayload: StudentPlansDoc = {
         ...plansDoc,
         plans: updatedPlans,
-        updatedAt: Date.now()
+        updatedAt: serverTimestamp()
       };
 
       const docRef = doc(db, 'selfExploration', studentData.id, 'plans', periodId);
       await setDoc(docRef, updatedDocPayload, { merge: true });
+
+      // Add audit trail log using server authoritative timestamp
+      try {
+        await addDoc(collection(db, 'selfExplorationAudit'), {
+          action: "reset_plan",
+          studentId: studentData.id,
+          periodId,
+          planIndex,
+          actor: deletedByObj,
+          createdAt: serverTimestamp()
+        });
+      } catch (auditErr) {
+        console.warn("Failed to write reset_plan audit trail:", auditErr);
+      }
 
       setPlansDoc(updatedDocPayload);
       showFeedback(planIndex, "Rencana berhasil di-reset.", "success");
@@ -776,7 +812,22 @@ export default function SEPlan() {
                     <Calendar size={18} className="text-blue-600" />
                     <h3 className="font-black uppercase italic text-sm text-gray-800">Target Rencana Per Pekan</h3>
                   </div>
-                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest bg-gray-50 px-3 py-1 rounded-full">17 Pekan Pertemuan</p>
+                  <div className="flex items-center gap-3">
+                    {(isOwner || isJuniorHighStaff || isAdmin) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setResetModalPlanIndex(plan.planIndex);
+                          setConfirmText("");
+                        }}
+                        className="flex items-center gap-1.5 border border-red-200 hover:bg-red-50 hover:border-red-300 text-red-600 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-sm shrink-0"
+                      >
+                        <Trash2 size={12} />
+                        Hapus Rencana Ini
+                      </button>
+                    )}
+                    <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest bg-gray-50 px-3 py-1 rounded-full">17 Pekan Pertemuan</p>
+                  </div>
                 </div>
 
                 {/* Dense modern table */}
@@ -880,9 +931,9 @@ export default function SEPlan() {
                 <div className="w-14 h-14 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-sm">
                   <Trash2 size={28} />
                 </div>
-                <h3 className="text-lg font-black italic uppercase text-gray-900 tracking-tight">Hapus Rencana Mingguan</h3>
+                <h3 className="text-lg font-black italic uppercase text-gray-900 tracking-tight">Hapus Rencana Ini?</h3>
                 <p className="text-xs text-gray-500 font-medium leading-relaxed">
-                  Apakah Anda yakin ingin menghapus/mereset seluruh rencana mingguan ini? Tindakan ini akan mengosongkan semua target mingguan dan foto terunggah. Pilihan aktivitas siswa akan tetap dipertahankan.
+                  Target mingguan, catatan supervisor, hasil scan, dan referensi foto akan dihapus dari Lumina. File foto asli tetap tersimpan sebagai arsip di Google Drive. Pilihan strand dan aktivitas tidak ikut dihapus.
                 </p>
                 
                 <div className="space-y-2 text-left pt-2">
