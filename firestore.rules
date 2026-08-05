@@ -155,7 +155,7 @@ service cloud.firestore {
         'academicYearId', 'date', 'time', 'activityContext', 'anecdote',
         'followUp', 'createdBy', 'createdAt', 'updatedAt'
       ])
-      && data.keys().size() == 13
+      && data.keys().size() == 14
       && data.studentId is string && data.studentId.size() <= 128
       && data.studentName is string && data.studentName.size() <= 200
       && data.classId is string && data.classId.size() <= 128
@@ -181,7 +181,7 @@ service cloud.firestore {
         'academicYearId', 'date', 'time', 'activityContext', 'anecdote',
         'followUp', 'createdBy', 'createdAt', 'updatedAt'
       ])
-      && data.keys().size() == 13
+      && data.keys().size() == 14
       && data.studentId is string && data.studentId.size() <= 128
       && data.studentName is string && data.studentName.size() <= 200
       && data.classId is string && data.classId.size() <= 128

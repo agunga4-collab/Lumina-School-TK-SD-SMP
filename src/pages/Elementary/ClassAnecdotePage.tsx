@@ -12,6 +12,7 @@ import {
   doc,
   deleteDoc,
   Timestamp,
+  serverTimestamp,
 } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { toast } from "sonner";
@@ -83,11 +84,13 @@ interface AnecdoteRow {
   followUp: string;
   isDraft: boolean;
   status: "UNSAVED" | "SAVING" | "SAVED" | "FAILED";
+  createdAt?: Timestamp;
   originalData?: {
     time: string;
     activityContext: string;
     anecdote: string;
     followUp: string;
+    createdAt?: Timestamp;
   };
 }
 
@@ -275,11 +278,13 @@ export default function ClassAnecdotePage() {
               followUp: followUpVal,
               isDraft: false,
               status: isModified ? "UNSAVED" : "SAVED",
+              createdAt: saved.createdAt,
               originalData: {
                 time: saved.time || "",
                 activityContext: saved.activityContext || "",
                 anecdote: saved.anecdote || "",
                 followUp: saved.followUp || "",
+                createdAt: saved.createdAt,
               },
             });
           });
@@ -582,8 +587,9 @@ export default function ClassAnecdotePage() {
     );
 
     try {
+      const isDraftRow = row.isDraft || row.rowId.startsWith("draft_");
       // Determine target document ID
-      const finalDocId = row.isDraft
+      const finalDocId = isDraftRow
         ? `anecdote_${selectedClass.id}_${row.studentId}_${Date.now()}`
         : row.rowId;
 
@@ -609,8 +615,8 @@ export default function ClassAnecdotePage() {
           name: profile.displayName || profile.email,
           role: profile.role,
         },
-        createdAt: row.isDraft ? Timestamp.now() : Timestamp.fromDate(row.originalData ? new Date() : new Date()), // keep original or set current
-        updatedAt: Timestamp.now(),
+        createdAt: isDraftRow ? serverTimestamp() : (row.createdAt || serverTimestamp()),
+        updatedAt: serverTimestamp(),
       };
 
       await setDoc(docRef, payload);
@@ -623,11 +629,13 @@ export default function ClassAnecdotePage() {
               rowId: finalDocId,
               isDraft: false,
               status: "SAVED",
+              createdAt: r.createdAt || Timestamp.now(),
               originalData: {
                 time: payload.time,
                 activityContext: payload.activityContext,
                 anecdote: payload.anecdote,
                 followUp: payload.followUp || "",
+                createdAt: r.createdAt || Timestamp.now(),
               },
             };
           }
@@ -667,10 +675,11 @@ export default function ClassAnecdotePage() {
     let failCount = 0;
 
     for (const r of unsavedRows) {
+      const isDraftRow = r.isDraft || r.rowId.startsWith("draft_");
       // Basic validations per row
       if (!r.anecdote.trim() || !r.time.trim() || !r.activityContext.trim()) {
         // Skip entirely empty row if it's draft, otherwise fail it
-        if (r.isDraft && !r.anecdote.trim() && !r.activityContext.trim()) {
+        if (isDraftRow && !r.anecdote.trim() && !r.activityContext.trim()) {
           continue;
         }
         failCount++;
@@ -681,7 +690,7 @@ export default function ClassAnecdotePage() {
       }
 
       try {
-        const finalDocId = r.isDraft
+        const finalDocId = isDraftRow
           ? `anecdote_${selectedClass!.id}_${r.studentId}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`
           : r.rowId;
 
@@ -705,8 +714,8 @@ export default function ClassAnecdotePage() {
             name: profile!.displayName || profile!.email,
             role: profile!.role,
           },
-          createdAt: r.isDraft ? Timestamp.now() : Timestamp.now(),
-          updatedAt: Timestamp.now(),
+          createdAt: isDraftRow ? serverTimestamp() : (r.createdAt || serverTimestamp()),
+          updatedAt: serverTimestamp(),
         };
 
         await setDoc(docRef, payload);
@@ -720,11 +729,13 @@ export default function ClassAnecdotePage() {
                 rowId: finalDocId,
                 isDraft: false,
                 status: "SAVED",
+                createdAt: r.createdAt || Timestamp.now(),
                 originalData: {
                   time: payload.time,
                   activityContext: payload.activityContext,
                   anecdote: payload.anecdote,
                   followUp: payload.followUp || "",
+                  createdAt: r.createdAt || Timestamp.now(),
                 },
               };
             }
