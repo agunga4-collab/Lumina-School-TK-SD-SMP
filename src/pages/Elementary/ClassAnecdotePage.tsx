@@ -136,6 +136,38 @@ export default function ClassAnecdotePage() {
   const [modalRecording, setModalRecording] = React.useState(false);
   const recognitionRef = React.useRef<any>(null);
 
+  // Speech-to-Text dynamic states and refs for preventing stale closures
+  const [sttBaseText, _setSttBaseText] = React.useState("");
+  const [sttFinalTranscript, _setSttFinalTranscript] = React.useState("");
+  const [sttInterimText, _setSttInterimText] = React.useState("");
+
+  const sttBaseTextRef = React.useRef("");
+  const sttFinalTranscriptRef = React.useRef("");
+  const sttInterimTextRef = React.useRef("");
+
+  const setSttBaseText = (val: string) => {
+    _setSttBaseText(val);
+    sttBaseTextRef.current = val;
+  };
+
+  const setSttFinalTranscript = (val: string | ((prev: string) => string)) => {
+    if (typeof val === "function") {
+      _setSttFinalTranscript((prev) => {
+        const next = val(prev);
+        sttFinalTranscriptRef.current = next;
+        return next;
+      });
+    } else {
+      _setSttFinalTranscript(val);
+      sttFinalTranscriptRef.current = val;
+    }
+  };
+
+  const setSttInterimText = (val: string) => {
+    _setSttInterimText(val);
+    sttInterimTextRef.current = val;
+  };
+
   // Helper to resolve current local time as HH.MM string
   const getCurrentLocalTime = () => {
     const now = new Date();
@@ -370,7 +402,6 @@ export default function ClassAnecdotePage() {
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
-      setRecordingRowId(null);
     } else {
       if (recognitionRef.current) {
         recognitionRef.current.stop();
@@ -382,41 +413,34 @@ export default function ClassAnecdotePage() {
         rec.interimResults = true;
         rec.lang = "id-ID";
 
+        const currentRow = rows.find(r => r.rowId === rowId);
+        const initialText = currentRow?.anecdote || "";
+        setSttBaseText(initialText);
+        setSttFinalTranscript("");
+        setSttInterimText("");
+
         rec.onstart = () => {
           setRecordingRowId(rowId);
           toast.info("Mulai mendengarkan... Berbicaralah dalam Bahasa Indonesia.");
         };
 
         rec.onresult = (event: any) => {
-          let interimTranscript = "";
-          let finalTranscript = "";
+          let finalPart = "";
+          let interimPart = "";
 
           for (let i = event.resultIndex; i < event.results.length; ++i) {
             const transcript = event.results[i][0].transcript;
             if (event.results[i].isFinal) {
-              finalTranscript += transcript;
+              finalPart += transcript;
             } else {
-              interimTranscript += transcript;
+              interimPart += transcript;
             }
           }
 
-          const combinedText = (finalTranscript || interimTranscript).trim();
-          if (combinedText) {
-            setRows((prevRows) => {
-              const updated = prevRows.map((r) => {
-                if (r.rowId === rowId) {
-                  // Append to previous context with spaces
-                  const updatedText = r.anecdote
-                    ? `${r.anecdote.trim()} ${combinedText}`
-                    : combinedText;
-                  return { ...r, anecdote: updatedText, status: "UNSAVED" };
-                }
-                return r;
-              });
-              saveDraftsToLocal(updated);
-              return updated;
-            });
+          if (finalPart) {
+            setSttFinalTranscript((prev) => prev + " " + finalPart);
           }
+          setSttInterimText(interimPart);
         };
 
         rec.onerror = (event: any) => {
@@ -427,6 +451,23 @@ export default function ClassAnecdotePage() {
 
         rec.onend = () => {
           setRecordingRowId(null);
+          const completedText = `${sttBaseTextRef.current} ${sttFinalTranscriptRef.current}`.replace(/\s+/g, " ").trim();
+          
+          setRows((prevRows) => {
+            const updated = prevRows.map((r) => {
+              if (r.rowId === rowId) {
+                return { ...r, anecdote: completedText, status: "UNSAVED" };
+              }
+              return r;
+            });
+            saveDraftsToLocal(updated);
+            return updated;
+          });
+
+          // Reset STT states
+          setSttBaseText("");
+          setSttFinalTranscript("");
+          setSttInterimText("");
         };
 
         recognitionRef.current = rec;
@@ -451,13 +492,20 @@ export default function ClassAnecdotePage() {
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
-      setModalRecording(false);
     } else {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+
       try {
         const rec = new SpeechRecognition();
         rec.continuous = true;
         rec.interimResults = true;
         rec.lang = "id-ID";
+
+        setSttBaseText(modalAnecdote || "");
+        setSttFinalTranscript("");
+        setSttInterimText("");
 
         rec.onstart = () => {
           setModalRecording(true);
@@ -465,31 +513,38 @@ export default function ClassAnecdotePage() {
         };
 
         rec.onresult = (event: any) => {
-          let interimTranscript = "";
-          let finalTranscript = "";
+          let finalPart = "";
+          let interimPart = "";
 
           for (let i = event.resultIndex; i < event.results.length; ++i) {
             const transcript = event.results[i][0].transcript;
             if (event.results[i].isFinal) {
-              finalTranscript += transcript;
+              finalPart += transcript;
             } else {
-              interimTranscript += transcript;
+              interimPart += transcript;
             }
           }
 
-          const combinedText = (finalTranscript || interimTranscript).trim();
-          if (combinedText) {
-            setModalAnecdote((prev) => (prev ? `${prev.trim()} ${combinedText}` : combinedText));
+          if (finalPart) {
+            setSttFinalTranscript((prev) => prev + " " + finalPart);
           }
+          setSttInterimText(interimPart);
         };
 
         rec.onerror = (event: any) => {
           console.error("Modal speech error:", event);
+          toast.error(`Error Speech-to-Text: ${event.error || "Izin mikrofon ditolak"}`);
           setModalRecording(false);
         };
 
         rec.onend = () => {
           setModalRecording(false);
+          const completedText = `${sttBaseTextRef.current} ${sttFinalTranscriptRef.current}`.replace(/\s+/g, " ").trim();
+          setModalAnecdote(completedText);
+          
+          setSttBaseText("");
+          setSttFinalTranscript("");
+          setSttInterimText("");
         };
 
         recognitionRef.current = rec;
@@ -1072,7 +1127,7 @@ export default function ClassAnecdotePage() {
                       <td className="py-4 px-4 relative">
                         <div className="relative flex items-stretch gap-2">
                           <textarea
-                            value={row.anecdote}
+                            value={isRecording ? `${sttBaseText} ${sttFinalTranscript} ${sttInterimText}`.replace(/\s+/g, " ").trim() : row.anecdote}
                             disabled={!canWrite}
                             placeholder="Tuliskan kejadian faktual dan objektif di sini..."
                             onChange={(e) => handleInputChange(row.rowId, "anecdote", e.target.value)}
@@ -1095,9 +1150,16 @@ export default function ClassAnecdotePage() {
                           )}
                         </div>
                         {isRecording && (
-                          <div className="text-[10px] font-semibold text-rose-500 flex items-center gap-1.5 mt-1 animate-pulse">
-                            <span className="w-2 h-2 rounded-full bg-rose-500"></span>
-                            Mendengarkan transkripsi Bahasa Indonesia secara langsung...
+                          <div className="space-y-1 mt-1">
+                            <div className="text-[10px] font-semibold text-rose-500 flex items-center gap-1.5 animate-pulse">
+                              <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+                              Mendengarkan transkripsi Bahasa Indonesia secara langsung...
+                            </div>
+                            {sttInterimText && (
+                              <div className="text-xs text-slate-400 italic bg-slate-50 border border-slate-100 p-2 rounded-md">
+                                Preview: {sttInterimText}
+                              </div>
+                            )}
                           </div>
                         )}
                       </td>
@@ -1285,16 +1347,23 @@ export default function ClassAnecdotePage() {
                   </button>
                 </div>
                 <textarea
-                  value={modalAnecdote}
+                  value={modalRecording ? `${sttBaseText} ${sttFinalTranscript} ${sttInterimText}`.replace(/\s+/g, " ").trim() : modalAnecdote}
                   onChange={(e) => setModalAnecdote(e.target.value)}
                   placeholder="Tuliskan kejadian faktual, objektif, dan terperinci..."
                   className="w-full min-h-[100px] p-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-xl text-sm text-slate-700 bg-white resize-none"
                   id="modal-textarea-anecdote"
                 />
                 {modalRecording && (
-                  <p className="text-[10px] text-rose-500 animate-pulse font-semibold">
-                    * Berbicaralah sekarang. Suara Anda sedang ditranskripsikan ke dalam draf di atas.
-                  </p>
+                  <div className="space-y-1 mt-1">
+                    <p className="text-[10px] text-rose-500 animate-pulse font-semibold">
+                      * Berbicaralah sekarang. Suara Anda sedang ditranskripsikan ke dalam draf di atas.
+                    </p>
+                    {sttInterimText && (
+                      <div className="text-xs text-slate-400 italic bg-slate-50 border border-slate-100 p-2 rounded-md">
+                        Preview: {sttInterimText}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 
