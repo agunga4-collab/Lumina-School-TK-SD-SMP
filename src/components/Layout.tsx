@@ -4,7 +4,7 @@ import {
   Map as MapIcon, Smile, Camera, History, Heart, CheckSquare, BookOpen, 
   Eye, Clock, ShieldAlert, ShieldCheck, ClipboardList, ClipboardCheck, Target, Mail, RefreshCw,
   Baby, TrendingUp, Folder, BarChart3, FileText, Sparkles, Settings, GraduationCap, User, Users,
-  Menu, X, Presentation
+  Menu, X, Presentation, MessageSquare
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, Navigate, useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -645,6 +645,7 @@ export function Layout() {
                   )}
                   <NavItem to="/lateness" icon={<Clock size={18} />} label="Keterlambatan" />
                   <NavItem to="/attendance" icon={<CheckSquare size={18} />} label="Kehadiran" />
+                  <NavItem to="/elementary/anecdote" icon={<MessageSquare size={18} />} label="Anekdot Kelas" />
                   {isMenuVisible(currentUnit, 'learningGoals') && (
                     <NavItem to="/academic/learning-goals" icon={<Target size={18} />} label="Learning Goals" />
                   )}

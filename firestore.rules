@@ -149,6 +149,58 @@ service cloud.firestore {
         && data.status in ['OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'DISMISSED', 'ARCHIVED'];
     }
 
+    function isValidClassAnecdote(data) {
+      return data.keys().hasAll([
+        'studentId', 'studentName', 'classId', 'className', 'unit',
+        'academicYearId', 'date', 'time', 'activityContext', 'anecdote',
+        'followUp', 'createdBy', 'createdAt', 'updatedAt'
+      ])
+      && data.keys().size() == 13
+      && data.studentId is string && data.studentId.size() <= 128
+      && data.studentName is string && data.studentName.size() <= 200
+      && data.classId is string && data.classId.size() <= 128
+      && data.className is string && data.className.size() <= 128
+      && data.unit == 'ELEMENTARY'
+      && data.academicYearId is string && data.academicYearId.size() <= 32
+      && data.date is timestamp
+      && data.time is string && data.time.size() <= 32
+      && data.activityContext is string && data.activityContext.size() <= 500
+      && data.anecdote is string && data.anecdote.size() <= 5000
+      && (data.followUp == null || (data.followUp is string && data.followUp.size() <= 2000))
+      && data.createdBy is map
+      && data.createdBy.uid == request.auth.uid
+      && data.createdBy.name is string && data.createdBy.name.size() <= 200
+      && data.createdBy.role is string && data.createdBy.role.size() <= 128
+      && data.createdAt == request.time
+      && data.updatedAt == request.time;
+    }
+
+    function isValidClassAnecdoteUpdate(data) {
+      return data.keys().hasAll([
+        'studentId', 'studentName', 'classId', 'className', 'unit',
+        'academicYearId', 'date', 'time', 'activityContext', 'anecdote',
+        'followUp', 'createdBy', 'createdAt', 'updatedAt'
+      ])
+      && data.keys().size() == 13
+      && data.studentId is string && data.studentId.size() <= 128
+      && data.studentName is string && data.studentName.size() <= 200
+      && data.classId is string && data.classId.size() <= 128
+      && data.className is string && data.className.size() <= 128
+      && data.unit == 'ELEMENTARY'
+      && data.academicYearId is string && data.academicYearId.size() <= 32
+      && data.date is timestamp
+      && data.time is string && data.time.size() <= 32
+      && data.activityContext is string && data.activityContext.size() <= 500
+      && data.anecdote is string && data.anecdote.size() <= 5000
+      && (data.followUp == null || (data.followUp is string && data.followUp.size() <= 2000))
+      && data.createdBy is map
+      && data.createdBy.uid is string && data.createdBy.uid.size() <= 128
+      && data.createdBy.name is string && data.createdBy.name.size() <= 200
+      && data.createdBy.role is string && data.createdBy.role.size() <= 128
+      && data.createdAt is timestamp
+      && data.updatedAt == request.time;
+    }
+
     match /users/{userId} {
       allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       allow list: if isAdmin() || (
@@ -701,6 +753,34 @@ service cloud.firestore {
         )
       );
       allow delete: if false;
+    }
+
+    match /class_anecdotes/{anecdoteId} {
+      allow read: if isActive() && (
+        isAdmin() ||
+        (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL')) ||
+        (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL'))
+      );
+      
+      allow create: if isActive() && (
+        isAdmin() ||
+        (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL'))
+      ) && isValidClassAnecdote(incoming());
+      
+      allow update: if isActive() && (
+        isAdmin() ||
+        (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL'))
+      ) && isValidClassAnecdoteUpdate(incoming())
+        && incoming().studentId == existing().studentId
+        && incoming().classId == existing().classId
+        && incoming().createdBy.uid == existing().createdBy.uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().academicYearId == existing().academicYearId;
+        
+      allow delete: if isActive() && (
+        isAdmin() ||
+        (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL'))
+      );
     }
   }
 }

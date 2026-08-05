@@ -1749,7 +1749,7 @@ export type LdssAssessment = {
   academicYear: string;
   age: LdssAge;
   templateId: string;
-  scores: Record<string, "YA" | "TIDAK" | null>;
+  scores: Record<string, 0 | 1 | 2 | 3 | "YA" | "TIDAK" | null>;
   notes: Record<string, string>;
   generalNotes?: string;
   assessedBy: string;
@@ -1758,7 +1758,7 @@ export type LdssAssessment = {
 };
 
 export interface LdssSessionResponse {
-  score: "YA" | "TIDAK" | null;
+  score: 0 | 1 | 2 | 3 | "YA" | "TIDAK" | null;
   note: string;
 }
 
@@ -1820,6 +1820,9 @@ export type LdssSessionAssessment = {
   domainScores?: Record<string, number | null>;
   createdByUid?: string;
   createdByName?: string;
+  periodId?: string;
+  assessorId?: string;
+  assessedAt?: string;
 };
 
 // --- Three-Way Conference & SMART Goal Tracker Types ---

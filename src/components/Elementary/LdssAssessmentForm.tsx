@@ -235,7 +235,7 @@ export default function LdssAssessmentForm({
   const [isFormInitialized, setIsFormInitialized] = React.useState(false);
 
   // Core scores/notes state mapping
-  const [scores, setScores] = React.useState<Record<string, "YA" | "TIDAK" | null>>({});
+  const [scores, setScores] = React.useState<Record<string, 0 | 1 | 2 | 3 | "YA" | "TIDAK" | null>>({});
   const [notes, setNotes] = React.useState<Record<string, string>>({});
   const [generalNotes, setGeneralNotes] = React.useState<string>("");
 
@@ -270,17 +270,17 @@ export default function LdssAssessmentForm({
     isOpen: boolean;
     domainId: string;
     domainName: string;
-    answer: "YA" | "TIDAK";
+    answer: 0 | 1 | 2 | 3 | "YA" | "TIDAK";
     count: number;
   } | null>(null);
 
   const [allConfirmDialog, setAllConfirmDialog] = React.useState<{
     isOpen: boolean;
-    answer: "YA" | "TIDAK" | "KOSONGKAN";
+    answer: 0 | 1 | 2 | 3 | "YA" | "TIDAK" | "KOSONGKAN";
     editableCount: number;
   } | null>(null);
 
-  const isAllSectionAnswer = (domainId: string, answer: "YA" | "TIDAK") => {
+  const isAllSectionAnswer = (domainId: string, answer: 0 | 1 | 2 | 3 | "YA" | "TIDAK") => {
     const domain = activeTemplate?.domains.find((d) => d.id === domainId);
     if (!domain || domain.indicators.length === 0) return false;
     return domain.indicators.every((ind) => scores[ind.id] === answer);
@@ -292,7 +292,7 @@ export default function LdssAssessmentForm({
     return domain.indicators.some((ind) => scores[ind.id] !== null && scores[ind.id] !== undefined);
   };
 
-  const applyAnswerToSection = (domainId: string, answer: "YA" | "TIDAK") => {
+  const applyAnswerToSection = (domainId: string, answer: 0 | 1 | 2 | 3 | "YA" | "TIDAK") => {
     setScores((current) => {
       const next = { ...current };
       const domain = activeTemplate?.domains.find((d) => d.id === domainId);
@@ -306,7 +306,7 @@ export default function LdssAssessmentForm({
     setSaveSuccess(false);
   };
 
-  const handleBulkDomainAction = (domainId: string, answer: "YA" | "TIDAK") => {
+  const handleBulkDomainAction = (domainId: string, answer: 0 | 1 | 2 | 3 | "YA" | "TIDAK") => {
     const domain = activeTemplate?.domains.find((d) => d.id === domainId);
     if (!domain) return;
 
@@ -326,7 +326,7 @@ export default function LdssAssessmentForm({
     }
   };
 
-  const handleBulkAllAction = (answer: "YA" | "TIDAK" | "KOSONGKAN") => {
+  const handleBulkAllAction = (answer: 0 | 1 | 2 | 3 | "YA" | "TIDAK" | "KOSONGKAN") => {
     if (!activeTemplate) return;
 
     let editableCount = 0;
@@ -341,7 +341,7 @@ export default function LdssAssessmentForm({
     });
   };
 
-  const applyAnswerToAll = (answer: "YA" | "TIDAK") => {
+  const applyAnswerToAll = (answer: 0 | 1 | 2 | 3 | "YA" | "TIDAK") => {
     setScores((current) => {
       const next = { ...current };
       activeTemplate?.domains.forEach((dom) => {
@@ -400,7 +400,7 @@ export default function LdssAssessmentForm({
           setActiveSession(matchedSession);
           setShowSessionSelector(false);
 
-          const initialScores: Record<string, "YA" | "TIDAK" | null> = {};
+          const initialScores: Record<string, 0 | 1 | 2 | 3 | "YA" | "TIDAK" | null> = {};
           const initialNotes: Record<string, string> = {};
 
           template.domains.forEach((domain) => {
@@ -476,7 +476,7 @@ export default function LdssAssessmentForm({
               };
             });
 
-            const initialScores: Record<string, "YA" | "TIDAK" | null> = {};
+            const initialScores: Record<string, 0 | 1 | 2 | 3 | "YA" | "TIDAK" | null> = {};
             const initialNotes: Record<string, string> = {};
 
             template.domains.forEach((domain) => {
@@ -565,7 +565,7 @@ export default function LdssAssessmentForm({
   }, [scores, notes, generalNotes, activeSession, isFormInitialized, loading]);
 
   // Handle score change
-  const handleScoreChange = (indicatorId: string, val: "YA" | "TIDAK") => {
+  const handleScoreChange = (indicatorId: string, val: 0 | 1 | 2 | 3 | "YA" | "TIDAK" | null) => {
     if (isReadOnly) return;
     setScores((prev) => ({
       ...prev,
@@ -620,7 +620,7 @@ export default function LdssAssessmentForm({
 
     setActiveSession(session);
 
-    const initialScores: Record<string, "YA" | "TIDAK" | null> = {};
+    const initialScores: Record<string, 0 | 1 | 2 | 3 | "YA" | "TIDAK" | null> = {};
     const initialNotes: Record<string, string> = {};
 
     activeTemplate.domains.forEach((domain) => {
@@ -672,7 +672,7 @@ export default function LdssAssessmentForm({
       };
     });
 
-    const initialScores: Record<string, "YA" | "TIDAK" | null> = {};
+    const initialScores: Record<string, 0 | 1 | 2 | 3 | "YA" | "TIDAK" | null> = {};
     const initialNotes: Record<string, string> = {};
 
     activeTemplate.domains.forEach((domain) => {
@@ -771,13 +771,33 @@ export default function LdssAssessmentForm({
 
   // Calculations for Progress Bars
   const progressStats = React.useMemo(() => {
-    if (!activeTemplate) return { total: 0, completed: 0, percent: 0, domainStats: {}, totalYes: 0, totalNo: 0, totalBlank: 0 };
+    if (!activeTemplate) return {
+      total: 0,
+      completed: 0,
+      percent: 0,
+      domainStats: {},
+      totalYes: 0,
+      totalNo: 0,
+      totalBlank: 0,
+      score0Count: 0,
+      score1Count: 0,
+      score2Count: 0,
+      score3Count: 0,
+      averageScore: null
+    };
 
     let total = 0;
     let completed = 0;
     let totalYes = 0;
     let totalNo = 0;
     let totalBlank = 0;
+    let score0Count = 0;
+    let score1Count = 0;
+    let score2Count = 0;
+    let score3Count = 0;
+    let totalScoreSum = 0;
+    let scoreRatingsCount = 0;
+
     const domainStats: Record<string, { total: number; completed: number; percent: number }> = {};
 
     activeTemplate.domains.forEach((dom) => {
@@ -791,8 +811,27 @@ export default function LdssAssessmentForm({
         if (val !== undefined && val !== null) {
           completed++;
           domCompleted++;
-          if (val === "YA") totalYes++;
-          else if (val === "TIDAK") totalNo++;
+          if (val === "YA") {
+            totalYes++;
+          } else if (val === "TIDAK") {
+            totalNo++;
+          } else if (val === 0) {
+            score0Count++;
+            totalScoreSum += 0;
+            scoreRatingsCount++;
+          } else if (val === 1) {
+            score1Count++;
+            totalScoreSum += 1;
+            scoreRatingsCount++;
+          } else if (val === 2) {
+            score2Count++;
+            totalScoreSum += 2;
+            scoreRatingsCount++;
+          } else if (val === 3) {
+            score3Count++;
+            totalScoreSum += 3;
+            scoreRatingsCount++;
+          }
         } else {
           totalBlank++;
         }
@@ -805,6 +844,8 @@ export default function LdssAssessmentForm({
       };
     });
 
+    const averageScore = scoreRatingsCount > 0 ? Math.round((totalScoreSum / scoreRatingsCount) * 10) / 10 : null;
+
     return {
       total,
       completed,
@@ -812,9 +853,18 @@ export default function LdssAssessmentForm({
       domainStats,
       totalYes,
       totalNo,
-      totalBlank
+      totalBlank,
+      score0Count,
+      score1Count,
+      score2Count,
+      score3Count,
+      averageScore
     };
   }, [activeTemplate, scores]);
+
+  const hasLegacyScores = React.useMemo(() => {
+    return Object.values(scores).some((val) => val === "YA" || val === "TIDAK");
+  }, [scores]);
 
   // Helper to compute domain scores dynamically
   const computeDomainScores = () => {
@@ -822,15 +872,27 @@ export default function LdssAssessmentForm({
     const domainScores: Record<string, number | null> = {};
     activeTemplate.domains.forEach((dom) => {
       let answeredCount = 0;
-      let yesCount = 0;
+      let totalPointsObtained = 0;
+      let maxPointsPossible = 0;
       dom.indicators.forEach((ind) => {
         const val = scores[ind.id];
-        if (val === "YA" || val === "TIDAK") {
-          answeredCount++;
-          if (val === "YA") yesCount++;
+        if (val !== undefined && val !== null) {
+          if (typeof val === "number") {
+            answeredCount++;
+            totalPointsObtained += val;
+            maxPointsPossible += 3;
+          } else if (val === "YA") {
+            answeredCount++;
+            totalPointsObtained += 3;
+            maxPointsPossible += 3;
+          } else if (val === "TIDAK") {
+            answeredCount++;
+            totalPointsObtained += 0;
+            maxPointsPossible += 3;
+          }
         }
       });
-      domainScores[dom.id] = answeredCount > 0 ? Math.round((yesCount / answeredCount) * 100) : null;
+      domainScores[dom.id] = answeredCount > 0 ? Math.round((totalPointsObtained / maxPointsPossible) * 100) : null;
     });
     return domainScores;
   };
@@ -841,13 +903,19 @@ export default function LdssAssessmentForm({
     const domainScores = computeDomainScores();
     return {
       periodKey: targetPeriodKey,
+      periodId: targetPeriodKey,
       periodLabel: periodLabel || (targetPeriodKey === 'LDSS_1' ? 'LDSS 1' : targetPeriodKey === 'LDSS_2' ? 'LDSS 2' : 'LDSS 3'),
       unit: 'ELEMENTARY' as const,
       academicYear: academicYear,
+      academicYearId: academicYear,
       studentName: student.name,
+      studentId: student.id,
+      classId: classInfo.id,
       studentAge: age,
       createdByUid: session.createdByUid || profile?.uid || "",
       createdByName: session.createdByName || profile?.displayName || userEmail,
+      assessorId: profile?.uid || "",
+      assessedAt: session.assessmentDate || new Date().toISOString(),
       domainScores,
       status: targetStatus,
     };
@@ -887,7 +955,12 @@ export default function LdssAssessmentForm({
         totalYes: progressStats.totalYes,
         totalNo: progressStats.totalNo,
         totalBlank: progressStats.totalBlank,
-        percentCompleted: progressStats.percent
+        percentCompleted: progressStats.percent,
+        score0Count: progressStats.score0Count,
+        score1Count: progressStats.score1Count,
+        score2Count: progressStats.score2Count,
+        score3Count: progressStats.score3Count,
+        averageScore: progressStats.averageScore,
       };
 
       const updatedSession: LdssSessionAssessment = {
@@ -962,7 +1035,12 @@ export default function LdssAssessmentForm({
         totalYes: progressStats.totalYes,
         totalNo: progressStats.totalNo,
         totalBlank: progressStats.totalBlank,
-        percentCompleted: progressStats.percent
+        percentCompleted: progressStats.percent,
+        score0Count: progressStats.score0Count,
+        score1Count: progressStats.score1Count,
+        score2Count: progressStats.score2Count,
+        score3Count: progressStats.score3Count,
+        averageScore: progressStats.averageScore,
       };
 
       const updatedSession: LdssSessionAssessment = {
@@ -1037,7 +1115,12 @@ export default function LdssAssessmentForm({
           totalYes: progressStats.totalYes,
           totalNo: progressStats.totalNo,
           totalBlank: progressStats.totalBlank,
-          percentCompleted: progressStats.percent
+          percentCompleted: progressStats.percent,
+          score0Count: progressStats.score0Count,
+          score1Count: progressStats.score1Count,
+          score2Count: progressStats.score2Count,
+          score3Count: progressStats.score3Count,
+          averageScore: progressStats.averageScore,
         };
 
         const finalizedSession: LdssSessionAssessment = {
@@ -1280,21 +1363,41 @@ export default function LdssAssessmentForm({
                       type="button"
                       onClick={() => {
                         setShowBulkMenu(false);
-                        handleBulkAllAction("YA");
+                        handleBulkAllAction(3);
                       }}
-                      className="w-full text-left px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 hover:text-indigo-600 transition-colors"
+                      className="w-full text-left px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 hover:text-emerald-600 transition-colors"
                     >
-                      ✓ Isi semua indikator sebagai Ya
+                      ✓ Isi semua sebagai 3 (Mandiri)
                     </button>
                     <button
                       type="button"
                       onClick={() => {
                         setShowBulkMenu(false);
-                        handleBulkAllAction("TIDAK");
+                        handleBulkAllAction(2);
                       }}
-                      className="w-full text-left px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 hover:text-indigo-600 transition-colors"
+                      className="w-full text-left px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 hover:text-blue-600 transition-colors"
                     >
-                      × Isi semua indikator sebagai Tidak
+                      ✓ Isi semua sebagai 2 (Bantuan Ringan)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowBulkMenu(false);
+                        handleBulkAllAction(1);
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 hover:text-amber-600 transition-colors"
+                    >
+                      ✓ Isi semua sebagai 1 (Bantuan Intensif)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowBulkMenu(false);
+                        handleBulkAllAction(0);
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 hover:text-rose-600 transition-colors"
+                    >
+                      ✓ Isi semua sebagai 0 (Belum Mampu)
                     </button>
                     <div className="h-px bg-gray-100 my-1" />
                     <button
@@ -1330,6 +1433,19 @@ export default function LdssAssessmentForm({
           </button>
         </div>
       </div>
+
+      {/* Format Penilaian Lama Alert */}
+      {hasLegacyScores && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3.5 rounded-3xl text-xs font-semibold flex items-start gap-2.5 animate-in fade-in duration-200 shadow-sm">
+          <AlertTriangle className="text-amber-600 shrink-0 mt-0.5 animate-bounce" size={16} />
+          <div>
+            <p className="font-black text-amber-900">Format Penilaian Lama Terdeteksi</p>
+            <p className="mt-1 text-amber-700 font-semibold leading-relaxed">
+              Asesmen ini menggunakan format Ya/Tidak lama. Nilai perlu ditinjau ulang apabila ingin menggunakan skala LDSS 0–3.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Local Draft Recovery Banner (Fail-safe) */}
       {showRecoveryBanner && (
@@ -1477,40 +1593,31 @@ export default function LdssAssessmentForm({
                       onClick={(e) => e.stopPropagation()} // Prevent accordion toggle
                     >
                       <span className="hidden sm:inline-block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                        Pilih semua:
+                        Set semua:
                       </span>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleBulkDomainAction(domain.id, "YA");
-                        }}
-                        className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider border cursor-pointer transition-all ${
-                          isAllSectionAnswer(domain.id, "YA")
-                            ? "bg-emerald-600 border-emerald-600 text-white shadow-sm"
-                            : "bg-white border-gray-200 text-gray-500 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200"
-                        }`}
-                        title="Isi semua indikator di bagian ini sebagai Ya"
-                      >
-                        <Check size={11} className="stroke-[3]" />
-                        <span>Ya</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleBulkDomainAction(domain.id, "TIDAK");
-                        }}
-                        className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider border cursor-pointer transition-all ${
-                          isAllSectionAnswer(domain.id, "TIDAK")
-                            ? "bg-rose-600 border-rose-600 text-white shadow-sm"
-                            : "bg-white border-gray-200 text-gray-500 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200"
-                        }`}
-                        title="Isi semua indikator di bagian ini sebagai Tidak"
-                      >
-                        <X size={11} className="stroke-[3]" />
-                        <span>Tidak</span>
-                      </button>
+                      {[
+                        { val: 0, bgActive: "bg-rose-600 border-rose-600 text-white shadow-sm", bgInactive: "bg-white border-gray-200 text-slate-600 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200", title: "Set semua indikator di bagian ini sebagai 0" },
+                        { val: 1, bgActive: "bg-amber-500 border-amber-500 text-white shadow-sm", bgInactive: "bg-white border-gray-200 text-slate-600 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200", title: "Set semua indikator di bagian ini sebagai 1" },
+                        { val: 2, bgActive: "bg-blue-600 border-blue-600 text-white shadow-sm", bgInactive: "bg-white border-gray-200 text-slate-600 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200", title: "Set semua indikator di bagian ini sebagai 2" },
+                        { val: 3, bgActive: "bg-emerald-600 border-emerald-600 text-white shadow-sm", bgInactive: "bg-white border-gray-200 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200", title: "Set semua indikator di bagian ini sebagai 3" }
+                      ].map((item) => (
+                        <button
+                          key={item.val}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleBulkDomainAction(domain.id, item.val as 0 | 1 | 2 | 3);
+                          }}
+                          className={`w-7 h-7 rounded-full text-[10px] font-black border flex items-center justify-center cursor-pointer transition-all ${
+                            isAllSectionAnswer(domain.id, item.val as 0 | 1 | 2 | 3)
+                              ? item.bgActive
+                              : item.bgInactive
+                          }`}
+                          title={item.title}
+                        >
+                          {item.val}
+                        </button>
+                      ))}
                     </div>
                   )}
 
@@ -1556,34 +1663,42 @@ export default function LdssAssessmentForm({
                                 </p>
                               </div>
 
-                              {/* YES/NO Score Toggles */}
-                              <div className="flex items-center gap-2 shrink-0">
-                                <button
-                                  type="button"
-                                  disabled={isReadOnly}
-                                  onClick={() => handleScoreChange(ind.id, "YA")}
-                                  className={`flex-1 md:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider border cursor-pointer transition-all ${
-                                    currentScore === "YA"
-                                      ? "bg-emerald-600 border-emerald-600 text-white shadow-sm"
-                                      : "bg-white border-gray-200 text-gray-500 hover:bg-emerald-50/45 hover:text-emerald-700 hover:border-emerald-200"
-                                  } disabled:opacity-85 disabled:cursor-not-allowed`}
-                                >
-                                  <Check size={12} className="stroke-[3]" />
-                                  <span>YA</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={isReadOnly}
-                                  onClick={() => handleScoreChange(ind.id, "TIDAK")}
-                                  className={`flex-1 md:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider border cursor-pointer transition-all ${
-                                    currentScore === "TIDAK"
-                                      ? "bg-rose-600 border-rose-600 text-white shadow-sm"
-                                      : "bg-white border-gray-200 text-gray-500 hover:bg-rose-50/45 hover:text-rose-700 hover:border-rose-200"
-                                  } disabled:opacity-85 disabled:cursor-not-allowed`}
-                                >
-                                  <X size={12} className="stroke-[3]" />
-                                  <span>TIDAK</span>
-                                </button>
+                              {/* 0-3 Score Toggles with full desktop description labels */}
+                              <div className="flex flex-col gap-2 w-full md:w-auto shrink-0 md:max-w-[420px]">
+                                <div className="grid grid-cols-4 gap-1.5">
+                                  {[
+                                    { val: 0, label: "0", desc: "Belum mampu meskipun telah dibantu penuh", colorActive: "bg-rose-600 border-rose-600 text-white shadow-sm", colorInactive: "bg-rose-50/50 border-rose-100 text-rose-700 hover:bg-rose-50 hover:border-rose-200" },
+                                    { val: 1, label: "1", desc: "Mampu dengan bantuan intensif", colorActive: "bg-amber-500 border-amber-500 text-white shadow-sm", colorInactive: "bg-amber-50/50 border-amber-100 text-amber-700 hover:bg-amber-50 hover:border-amber-200" },
+                                    { val: 2, label: "2", desc: "Mampu dengan bantuan ringan atau pengingat", colorActive: "bg-blue-600 border-blue-600 text-white shadow-sm", colorInactive: "bg-blue-50/50 border-blue-100 text-blue-700 hover:bg-blue-50 hover:border-blue-200" },
+                                    { val: 3, label: "3", desc: "Mandiri dan konsisten sesuai usia", colorActive: "bg-emerald-600 border-emerald-600 text-white shadow-sm", colorInactive: "bg-emerald-50/50 border-emerald-100 text-emerald-700 hover:bg-emerald-50 hover:border-emerald-200" },
+                                  ].map((option) => {
+                                    const isSelected = currentScore === option.val;
+                                    return (
+                                      <button
+                                        key={option.val}
+                                        type="button"
+                                        disabled={isReadOnly}
+                                        onClick={() => handleScoreChange(ind.id, option.val as 0 | 1 | 2 | 3)}
+                                        className={`flex flex-col items-center justify-between p-2 rounded-xl border text-center transition-all cursor-pointer min-h-[64px] md:min-h-[84px] ${
+                                          isSelected ? option.colorActive : option.colorInactive
+                                        } disabled:opacity-85 disabled:cursor-not-allowed`}
+                                        title={`${option.label} — ${option.desc}`}
+                                      >
+                                        <span className="text-xs font-black">{option.label}</span>
+                                        <span className="hidden md:block text-[8px] font-bold leading-tight mt-1 opacity-90">
+                                          {option.desc}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+
+                                {/* Legacy YA / TIDAK indicators if they exist on this row */}
+                                {(currentScore === "YA" || currentScore === "TIDAK") && (
+                                  <div className="flex items-center justify-center gap-1.5 px-3 py-1 bg-yellow-50 border border-yellow-200 rounded-xl text-[10px] font-black text-yellow-800 uppercase tracking-wider">
+                                    <span>Legacy format: {currentScore}</span>
+                                  </div>
+                                )}
                               </div>
                             </div>
 
@@ -1797,10 +1912,12 @@ export default function LdssAssessmentForm({
                   setSectionConfirmDialog(null);
                 }}
                 className={`px-4 py-2 text-white text-xs font-black rounded-xl cursor-pointer transition-colors ${
-                  sectionConfirmDialog.answer === "YA" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"
+                  sectionConfirmDialog.answer === "YA" || sectionConfirmDialog.answer === 3 ? "bg-emerald-600 hover:bg-emerald-700" :
+                  sectionConfirmDialog.answer === 2 ? "bg-blue-600 hover:bg-blue-700" :
+                  sectionConfirmDialog.answer === 1 ? "bg-amber-500 hover:bg-amber-600" : "bg-rose-600 hover:bg-rose-700"
                 }`}
               >
-                Ya, pilih semua sebagai {sectionConfirmDialog.answer === "YA" ? "Ya" : "Tidak"}
+                Ya, pilih semua sebagai {sectionConfirmDialog.answer}
               </button>
             </div>
           </motion.div>
@@ -1825,17 +1942,17 @@ export default function LdssAssessmentForm({
                 <h4 className="text-sm font-black text-slate-900">
                   {allConfirmDialog.answer === "KOSONGKAN" 
                     ? "Kosongkan semua jawaban LDSS?"
-                    : `Isi seluruh instrumen sebagai ${allConfirmDialog.answer === "YA" ? "Ya" : "Tidak"}?`
+                    : `Isi seluruh instrumen sebagai ${allConfirmDialog.answer}?`
                   }
                 </h4>
                 {allConfirmDialog.answer === "KOSONGKAN" ? (
                   <p className="text-xs text-slate-500 leading-relaxed font-semibold">
-                    Semua jawaban Ya/Tidak pada sesi draft ini akan dihapus. Catatan khusus tidak ikut dihapus.
+                    Semua jawaban pada sesi draft ini akan dihapus. Catatan khusus tidak ikut dihapus.
                   </p>
                 ) : (
                   <div className="space-y-2">
                     <p className="text-xs text-slate-500 leading-relaxed font-semibold">
-                      Tindakan ini akan mengisi <span className="text-indigo-600 font-bold">{allConfirmDialog.editableCount}</span> indikator LDSS sebagai <span className="font-bold">{allConfirmDialog.answer === "YA" ? "Ya" : "Tidak"}</span>. Jawaban yang sudah ada akan diganti. Catatan khusus tidak akan dihapus.
+                      Tindakan ini akan mengisi <span className="text-indigo-600 font-bold">{allConfirmDialog.editableCount}</span> indikator LDSS sebagai <span className="font-bold">{allConfirmDialog.answer}</span>. Jawaban yang sudah ada akan diganti. Catatan khusus tidak akan dihapus.
                     </p>
                     <p className="text-[10px] text-amber-600 bg-amber-50 border border-amber-100 p-2 rounded-xl font-bold">
                       Gunakan hanya bila hasil observasi memang berlaku untuk seluruh indikator.
@@ -1868,14 +1985,16 @@ export default function LdssAssessmentForm({
                 <button
                   type="button"
                   onClick={() => {
-                    applyAnswerToAll(allConfirmDialog.answer as "YA" | "TIDAK");
+                    applyAnswerToAll(allConfirmDialog.answer as 0 | 1 | 2 | 3 | "YA" | "TIDAK");
                     setAllConfirmDialog(null);
                   }}
                   className={`px-4 py-2 text-white text-xs font-black rounded-xl cursor-pointer transition-colors ${
-                    allConfirmDialog.answer === "YA" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"
+                    allConfirmDialog.answer === "YA" || allConfirmDialog.answer === 3 ? "bg-emerald-600 hover:bg-emerald-700" :
+                    allConfirmDialog.answer === 2 ? "bg-blue-600 hover:bg-blue-700" :
+                    allConfirmDialog.answer === 1 ? "bg-amber-500 hover:bg-amber-600" : "bg-rose-600 hover:bg-rose-700"
                   }`}
                 >
-                  Isi semua sebagai {allConfirmDialog.answer === "YA" ? "Ya" : "Tidak"}
+                  Isi semua sebagai {allConfirmDialog.answer}
                 </button>
               )}
             </div>

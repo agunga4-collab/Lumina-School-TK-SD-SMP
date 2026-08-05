@@ -707,6 +707,36 @@
         "reopenedBy": { "type": "array" }
       },
       "required": ["id", "studentId", "studentNameSnapshot", "classId", "classNameSnapshot", "unitId", "academicYearId", "instrumentAge", "assessmentDate", "status", "responses", "sectionProgress", "createdAt", "updatedAt", "createdBy", "templateVersion"]
+    },
+    "ClassAnecdote": {
+      "title": "ClassAnecdote",
+      "description": "Class anecdote observations and records for students.",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "classId": { "type": "string" },
+        "className": { "type": "string" },
+        "unit": { "type": "string", "enum": ["ELEMENTARY"] },
+        "academicYearId": { "type": "string" },
+        "date": { "type": "object", "description": "Firestore Timestamp for the observation date" },
+        "time": { "type": "string" },
+        "activityContext": { "type": "string" },
+        "anecdote": { "type": "string" },
+        "followUp": { "type": "string" },
+        "createdBy": {
+          "type": "object",
+          "properties": {
+            "uid": { "type": "string" },
+            "name": { "type": "string" },
+            "role": { "type": "string" }
+          },
+          "required": ["uid", "name", "role"]
+        },
+        "createdAt": { "type": "object" },
+        "updatedAt": { "type": "object" }
+      },
+      "required": ["studentId", "studentName", "classId", "className", "unit", "academicYearId", "date", "time", "activityContext", "anecdote", "createdBy", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -893,6 +923,10 @@
     "ldss_assessments/{sessionId}": {
       "schema": "LdssSessionAssessment",
       "description": "LDSS multi-session student screening records."
+    },
+    "class_anecdotes/{anecdoteId}": {
+      "schema": "ClassAnecdote",
+      "description": "Class anecdotes collected by teachers."
     }
   }
 }

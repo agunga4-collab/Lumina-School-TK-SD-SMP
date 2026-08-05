@@ -55,6 +55,7 @@ import TeacherPresentationPage from './pages/JuniorHigh/ThreeWayConference/Teach
 import ElementaryLiteracyInputPage from './pages/Elementary/ElementaryLiteracyInputPage';
 import MTSSAcademicDashboard from './pages/Elementary/MTSSAcademicDashboard';
 import LdssPage from './pages/Elementary/LdssPage';
+import ClassAnecdotePage from './pages/Elementary/ClassAnecdotePage';
 import LiteracySummary from './pages/Parent/LiteracySummary';
 import Lateness from './pages/Attendance/Lateness';
 import ElementaryHeadDashboard from './pages/Dashboard/ElementaryHeadDashboard';
@@ -395,6 +396,11 @@ export default function App() {
           <Route path="elementary/ldss" element={
             <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER']}>
               <LdssPage />
+            </RoleGuard>
+          } />
+          <Route path="elementary/anecdote" element={
+            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER']}>
+              <ClassAnecdotePage />
             </RoleGuard>
           } />
           <Route path="elementary/ldss/settings" element={

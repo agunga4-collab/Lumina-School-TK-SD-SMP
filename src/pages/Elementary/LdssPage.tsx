@@ -263,6 +263,29 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
   const [chartStudentId, setChartStudentId] = React.useState<string>("");
   const [checkedDomains, setCheckedDomains] = React.useState<Record<string, boolean>>({});
 
+  // NEW: Class Analytics & Statistics States
+  const [subTab, setSubTab] = React.useState<"students" | "analytics">("students");
+  const [templates, setTemplates] = React.useState<LdssTemplate[]>([]);
+  const [analyticsPeriod, setAnalyticsPeriod] = React.useState<string>("");
+
+  React.useEffect(() => {
+    const loadTemplates = async () => {
+      try {
+        const data = await getAllLdssTemplates();
+        setTemplates(data);
+      } catch (err) {
+        console.error("Error loading templates in selection panel:", err);
+      }
+    };
+    loadTemplates();
+  }, []);
+
+  React.useEffect(() => {
+    if (ldssSettings?.activePeriodKey) {
+      setAnalyticsPeriod(ldssSettings.activePeriodKey);
+    }
+  }, [ldssSettings]);
+
   // Age calculation helper
   const calculateStudentAge = (birthDateString?: string): LdssAge => {
     if (!birthDateString) return 6;
@@ -457,6 +480,241 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
       alert(err.message || "Gagal menghapus draft.");
     }
   };
+
+  // NEW: Class Analytics & Statistics Calculations
+  const analyticsData = React.useMemo(() => {
+    const selectedPeriod = analyticsPeriod || ldssSettings?.activePeriodKey || "LDSS_1";
+
+    // 1. Filter sessions of selected class, academicYear, and period
+    const filteredSessions = classSessions.filter((s) => {
+      const matchPeriod = selectedPeriod === "ALL" || s.periodKey === selectedPeriod;
+      return matchPeriod; // classId and academicYear are already filtered in getClassLdssSessions
+    });
+
+    // 2. Map student ID to template to know their indicators
+    const studentTemplateMap = new Map<string, LdssTemplate>();
+    students.forEach((stud) => {
+      const computedAge = calculateStudentAge(stud.birthDate);
+      const matchedTemplate = templates.find((t) => t.age === computedAge);
+      if (matchedTemplate) {
+        studentTemplateMap.set(stud.id, matchedTemplate);
+      }
+    });
+
+    let totalIndicatorsExpected = 0;
+    let totalScore0 = 0;
+    let totalScore1 = 0;
+    let totalScore2 = 0;
+    let totalScore3 = 0;
+    let totalLegacyYes = 0;
+    let totalLegacyNo = 0;
+    let totalRatedCount = 0;
+    let totalScoreSum = 0;
+
+    // Student performance list
+    const studentStatsList = students.map((student) => {
+      const studentSessions = filteredSessions.filter((s) => s.studentId === student.id);
+      
+      let studExpected = 0;
+      let studScore0 = 0;
+      let studScore1 = 0;
+      let studScore2 = 0;
+      let studScore3 = 0;
+      let studLegacyYes = 0;
+      let studLegacyNo = 0;
+      let studRatedCount = 0;
+      let studScoreSum = 0;
+      const needSupportIndicators: Array<{ id: string; name: string; score: number | string; domainName: string }> = [];
+
+      // Get appropriate templates for the student
+      const template = studentTemplateMap.get(student.id);
+      const indicatorsCount = template ? template.domains.reduce((sum, dom) => sum + dom.indicators.length, 0) : 0;
+      
+      // If filtering by ALL periods, we multiply expected indicators by the number of periods (or active periods)
+      const periodMultiplier = selectedPeriod === "ALL" ? 3 : 1;
+      studExpected = indicatorsCount * periodMultiplier;
+
+      studentSessions.forEach((sess) => {
+        if (!sess.responses) return;
+        Object.entries(sess.responses).forEach(([indicatorId, rawResp]) => {
+          const resp = rawResp as any;
+          if (resp && resp.score !== null && resp.score !== undefined) {
+            studRatedCount++;
+            const val = resp.score;
+            if (val === 0) {
+              studScore0++;
+              studScoreSum += 0;
+              // Find indicator text & domain for "Perlu Dukungan" listing
+              if (template) {
+                template.domains.forEach((dom) => {
+                  const ind = dom.indicators.find((i) => i.id === indicatorId);
+                  if (ind) {
+                    needSupportIndicators.push({ id: indicatorId, name: ind.text, score: 0, domainName: dom.name });
+                  }
+                });
+              }
+            } else if (val === 1) {
+              studScore1++;
+              studScoreSum += 1;
+              if (template) {
+                template.domains.forEach((dom) => {
+                  const ind = dom.indicators.find((i) => i.id === indicatorId);
+                  if (ind) {
+                    needSupportIndicators.push({ id: indicatorId, name: ind.text, score: 1, domainName: dom.name });
+                  }
+                });
+              }
+            } else if (val === 2) {
+              studScore2++;
+              studScoreSum += 2;
+            } else if (val === 3) {
+              studScore3++;
+              studScoreSum += 3;
+            } else if (val === "YA") {
+              studLegacyYes++;
+              studScoreSum += 3; // count legacy YA as 3
+            } else if (val === "TIDAK") {
+              studLegacyNo++;
+              studScoreSum += 0; // count legacy TIDAK as 0
+              if (template) {
+                template.domains.forEach((dom) => {
+                  const ind = dom.indicators.find((i) => i.id === indicatorId);
+                  if (ind) {
+                    needSupportIndicators.push({ id: indicatorId, name: ind.text, score: "TIDAK (Legacy)", domainName: dom.name });
+                  }
+                });
+              }
+            }
+          }
+        });
+      });
+
+      const studUnrated = Math.max(0, studExpected - studRatedCount);
+      const studAverage = studRatedCount > 0 ? Math.round((studScoreSum / studRatedCount) * 10) / 10 : null;
+
+      // Flag "Perlu Dukungan Intensif"
+      // If student has ANY 0 or 1 score, they are flagged
+      const needsIntensiveSupport = studScore0 > 0 || studScore1 > 0 || studLegacyNo > 0;
+
+      // Class level aggregates increment
+      totalIndicatorsExpected += studExpected;
+      totalScore0 += studScore0;
+      totalScore1 += studScore1;
+      totalScore2 += studScore2;
+      totalScore3 += studScore3;
+      totalLegacyYes += studLegacyYes;
+      totalLegacyNo += studLegacyNo;
+      totalRatedCount += studRatedCount;
+      totalScoreSum += studScoreSum;
+
+      return {
+        student,
+        expected: studExpected,
+        ratedCount: studRatedCount,
+        unratedCount: studUnrated,
+        score0: studScore0,
+        score1: studScore1,
+        score2: studScore2,
+        score3: studScore3,
+        legacyYes: studLegacyYes,
+        legacyNo: studLegacyNo,
+        average: studAverage,
+        needsIntensiveSupport,
+        needSupportIndicators
+      };
+    });
+
+    const totalUnrated = Math.max(0, totalIndicatorsExpected - totalRatedCount);
+    const classAverage = totalRatedCount > 0 ? Math.round((totalScoreSum / totalRatedCount) * 10) / 10 : null;
+
+    // 3. Indicator-level average score & support flagging
+    const indicatorStatsMap: Record<string, { id: string; text: string; domainName: string; sum: number; count: number; blankCount: number; s0: number; s1: number; s2: number; s3: number; studentsWithLowScore: string[] }> = {};
+
+    filteredSessions.forEach((sess) => {
+      const template = studentTemplateMap.get(sess.studentId);
+      if (!template) return;
+      
+      template.domains.forEach((dom) => {
+        dom.indicators.forEach((ind) => {
+          if (!indicatorStatsMap[ind.id]) {
+            indicatorStatsMap[ind.id] = {
+              id: ind.id,
+              text: ind.text,
+              domainName: dom.name,
+              sum: 0,
+              count: 0,
+              blankCount: 0,
+              s0: 0,
+              s1: 0,
+              s2: 0,
+              s3: 0,
+              studentsWithLowScore: []
+            };
+          }
+
+          const response = sess.responses?.[ind.id];
+          if (response && response.score !== null && response.score !== undefined) {
+            const val = response.score;
+            indicatorStatsMap[ind.id].count++;
+            if (typeof val === "number") {
+              indicatorStatsMap[ind.id].sum += val;
+              if (val === 0) {
+                indicatorStatsMap[ind.id].s0++;
+                indicatorStatsMap[ind.id].studentsWithLowScore.push(sess.studentNameSnapshot || sess.studentName || "Siswa");
+              } else if (val === 1) {
+                indicatorStatsMap[ind.id].s1++;
+                indicatorStatsMap[ind.id].studentsWithLowScore.push(sess.studentNameSnapshot || sess.studentName || "Siswa");
+              } else if (val === 2) {
+                indicatorStatsMap[ind.id].s2++;
+              } else if (val === 3) {
+                indicatorStatsMap[ind.id].s3++;
+              }
+            } else if (val === "YA") {
+              indicatorStatsMap[ind.id].sum += 3;
+              indicatorStatsMap[ind.id].s3++;
+            } else if (val === "TIDAK") {
+              indicatorStatsMap[ind.id].sum += 0;
+              indicatorStatsMap[ind.id].s0++;
+              indicatorStatsMap[ind.id].studentsWithLowScore.push(sess.studentNameSnapshot || sess.studentName || "Siswa");
+            }
+          } else {
+            indicatorStatsMap[ind.id].blankCount++;
+          }
+        });
+      });
+    });
+
+    const indicatorStatsList = Object.values(indicatorStatsMap).map((stat) => {
+      const avg = stat.count > 0 ? Math.round((stat.sum / stat.count) * 10) / 10 : null;
+      const needsIntensiveSupport = stat.s0 > 0 || stat.s1 > 0;
+      return {
+        ...stat,
+        average: avg,
+        needsIntensiveSupport
+      };
+    });
+
+    indicatorStatsList.sort((a, b) => {
+      if (a.average === null) return 1;
+      if (b.average === null) return -1;
+      return a.average - b.average; // show lowest average scores first
+    });
+
+    return {
+      totalExpected: totalIndicatorsExpected,
+      totalRated: totalRatedCount,
+      totalUnrated,
+      score0Count: totalScore0,
+      score1Count: totalScore1,
+      score2Count: totalScore2,
+      score3Count: totalScore3,
+      legacyYesCount: totalLegacyYes,
+      legacyNoCount: totalLegacyNo,
+      classAverage,
+      studentStats: studentStatsList,
+      indicatorStats: indicatorStatsList
+    };
+  }, [classSessions, students, templates, analyticsPeriod, ldssSettings]);
 
   // Compile Chart data for the selected chart student
   const chartDataAndDomains = React.useMemo(() => {
@@ -666,300 +924,583 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
 
           {selectedClass ? (
             <div className="space-y-6">
-              {/* Table Card */}
-              <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden text-left">
-                <div className="px-6 py-5 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <h3 className="text-base font-black text-gray-950 tracking-tight flex items-center gap-2">
-                      <ClipboardCheck className="text-indigo-600 shrink-0" size={18} />
-                      Status Pengisian LDSS Kelas: {selectedClass.name}
-                    </h3>
-                    <p className="text-xs text-slate-400 font-bold">
-                      Tabel pelacakan asesmen berkala untuk tiga periode (LDSS 1, LDSS 2, LDSS 3) tahun ajaran aktif.
-                    </p>
-                  </div>
-                  {ldssSettings && (
-                    <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-100 text-indigo-800 px-3 py-1.5 rounded-xl text-xs font-black w-fit">
-                      <CalendarDays size={14} className="text-indigo-600" />
-                      <span>Periode Aktif: {ldssSettings.activePeriodLabel} • {ldssSettings.status === 'OPEN' ? 'TERBUKA' : 'DITUTUP'}</span>
-                    </div>
-                  )}
-                </div>
-
-                {loadingSessions || loadingStudents ? (
-                  <div className="p-16 text-center flex flex-col items-center justify-center space-y-3">
-                    <Loader2 className="animate-spin text-indigo-600" size={32} />
-                    <p className="text-xs text-slate-400 font-bold">Memuat rekapitulasi data kelas...</p>
-                  </div>
-                ) : students.length === 0 ? (
-                  <div className="p-16 text-center text-slate-400 italic text-xs font-semibold">
-                    Tidak ada siswa aktif ditemukan di kelas ini.
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-slate-50 border-b border-gray-100 text-[10px] font-black text-gray-400 uppercase tracking-wider">
-                        <tr>
-                          <th className="py-3 px-4 w-12 text-center">No</th>
-                          <th className="py-3 px-4 min-w-[180px]">Nama Siswa</th>
-                          <th className="py-3 px-4 w-20 text-center">Usia</th>
-                          <th className="py-3 px-4 text-center">LDSS 1</th>
-                          <th className="py-3 px-4 text-center">LDSS 2</th>
-                          <th className="py-3 px-4 text-center">LDSS 3</th>
-                          <th className="py-3 px-4 min-w-[140px]">Terakhir Diperbarui</th>
-                          <th className="py-3 px-4 text-center w-36">Aksi</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {students.map((student, idx) => {
-                          const computedAge = calculateStudentAge(student.birthDate);
-                          
-                          // Find assessments
-                          const s1 = classSessions.find(s => s.studentId === student.id && s.periodKey === "LDSS_1");
-                          const s2 = classSessions.find(s => s.studentId === student.id && s.periodKey === "LDSS_2");
-                          const s3 = classSessions.find(s => s.studentId === student.id && s.periodKey === "LDSS_3");
-
-                          // Find active period session and determine action state
-                          const activePeriodKey = ldssSettings?.activePeriodKey || "LDSS_1";
-                          const activeSession = classSessions.find(s => s.studentId === student.id && s.periodKey === activePeriodKey);
-
-                          // Last updated session
-                          const allStudSessions = [s1, s2, s3].filter(Boolean) as LdssSessionAssessment[];
-                          allStudSessions.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-                          const latestSession = allStudSessions[0];
-
-                          const renderPeriodStatus = (sess: LdssSessionAssessment | undefined) => {
-                            if (!sess) {
-                              return (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-500 border border-slate-200 rounded-full text-[10px] font-bold">
-                                  Belum Diisi
-                                </span>
-                              );
-                            }
-                            
-                            const isCompleted = sess.status?.toUpperCase() === "COMPLETED";
-                            if (isCompleted) {
-                              const percent = sess.scoringSummary?.percentCompleted || 0;
-                              return (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[10px] font-bold">
-                                  <CheckCircle2 size={10} className="text-emerald-600 shrink-0" />
-                                  Selesai ({percent}%)
-                                </span>
-                              );
-                            } else {
-                              const percent = sess.scoringSummary?.percentCompleted || 0;
-                              const isMyDraft = sess.createdByUid === profile?.uid;
-                              return (
-                                <div className="inline-flex items-center gap-1.5">
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-[10px] font-bold">
-                                    <Pencil size={10} className="text-amber-500 shrink-0" />
-                                    Draf ({percent}%)
-                                  </span>
-                                  {isMyDraft && (
-                                    <button
-                                      onClick={() => handleDeleteDraft(sess.id)}
-                                      className="p-1 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-rose-100"
-                                      title="Hapus Draft Milik Saya"
-                                    >
-                                      <Trash2 size={12} />
-                                    </button>
-                                  )}
-                                </div>
-                              );
-                            }
-                          };
-
-                          const teacherAge = activeSession?.instrumentAge || latestSession?.instrumentAge;
-
-                          return (
-                            <tr key={student.id} className="hover:bg-slate-50/50 transition-colors">
-                              <td className="py-3.5 px-4 text-center font-bold text-slate-400">{idx + 1}</td>
-                              <td className="py-3.5 px-4 font-black text-slate-800">{student.name}</td>
-                              <td className="py-3.5 px-4 text-center font-bold text-slate-600">
-                                {teacherAge ? (
-                                  `${teacherAge} Th`
-                                ) : (
-                                  <span className="text-slate-400 font-semibold italic">Belum diisi</span>
-                                )}
-                              </td>
-                              <td className="py-3.5 px-4 text-center">{renderPeriodStatus(s1)}</td>
-                              <td className="py-3.5 px-4 text-center">{renderPeriodStatus(s2)}</td>
-                              <td className="py-3.5 px-4 text-center">{renderPeriodStatus(s3)}</td>
-                              <td className="py-3.5 px-4 text-slate-400 font-bold">
-                                {latestSession 
-                                  ? `${new Date(latestSession.updatedAt).toLocaleDateString("id-ID")} - ${latestSession.updatedBy?.name || latestSession.createdBy?.name || "Guru"}`
-                                  : "-"
-                                }
-                              </td>
-                              <td className="py-3.5 px-4 text-center">
-                                <button
-                                  onClick={() => {
-                                    setSelectedStudent(student);
-                                    // Use active session instrument age, fallback to latest or computed age
-                                    setSelectedAge(activeSession?.instrumentAge || latestSession?.instrumentAge || computedAge);
-                                  }}
-                                  className={`px-3 py-1.5 rounded-xl text-[11px] font-black tracking-wide flex items-center justify-center gap-1 w-full border transition-all cursor-pointer ${
-                                    activeSession?.status?.toUpperCase() === "COMPLETED"
-                                      ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-250"
-                                      : activeSession
-                                      ? "bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-sm"
-                                      : ldssSettings?.status === "CLOSED"
-                                      ? "bg-slate-50 text-slate-400 border-slate-100 cursor-not-allowed"
-                                      : "bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-650 shadow-sm"
-                                  }`}
-                                  disabled={!activeSession && ldssSettings?.status === "CLOSED"}
-                                >
-                                  {activeSession?.status?.toUpperCase() === "COMPLETED" ? (
-                                    <>
-                                      <Eye size={12} />
-                                      <span>Tinjau</span>
-                                    </>
-                                  ) : activeSession ? (
-                                    <>
-                                      <Pencil size={12} />
-                                      <span>Edit Draf</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Plus size={12} />
-                                      <span>Mulai</span>
-                                    </>
-                                  )}
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+              {/* Sub Tab Switcher */}
+              <div className="flex bg-white p-1 rounded-2xl border border-gray-100 shadow-sm w-fit gap-1 text-left">
+                <button
+                  type="button"
+                  onClick={() => setSubTab("students")}
+                  className={`px-4 py-2 text-xs font-black rounded-xl cursor-pointer transition-all flex items-center gap-2 ${
+                    subTab === "students"
+                      ? "bg-indigo-600 text-white shadow-sm font-black"
+                      : "text-slate-500 hover:text-slate-800 hover:bg-slate-50 font-bold"
+                  }`}
+                >
+                  <User size={14} />
+                  <span>Daftar Siswa & Pengisian</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSubTab("analytics")}
+                  className={`px-4 py-2 text-xs font-black rounded-xl cursor-pointer transition-all flex items-center gap-2 ${
+                    subTab === "analytics"
+                      ? "bg-indigo-600 text-white shadow-sm font-black"
+                      : "text-slate-500 hover:text-slate-800 hover:bg-slate-50 font-bold"
+                  }`}
+                >
+                  <Activity size={14} />
+                  <span>Analisis & Statistik Kelas</span>
+                </button>
               </div>
 
-              {/* Progress Chart Card */}
-              <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm text-left space-y-6">
-                <div className="border-b border-gray-100 pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <h3 className="text-base font-black text-gray-950 tracking-tight flex items-center gap-2">
-                      <TrendingUp className="text-indigo-600 shrink-0" size={18} />
-                      Perkembangan LDSS Kelas / Siswa
-                    </h3>
-                    <p className="text-xs text-slate-400 font-bold">
-                      Grafik tren perkembangan skor pencapaian per domain/komponen dalam satu tahun ajaran (diambil dari data Lengkap).
-                    </p>
+              {subTab === "students" ? (
+                <div className="space-y-6">
+                  {/* Table Card */}
+                  <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden text-left">
+                    <div className="px-6 py-5 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <h3 className="text-base font-black text-gray-950 tracking-tight flex items-center gap-2">
+                          <ClipboardCheck className="text-indigo-600 shrink-0" size={18} />
+                          Status Pengisian LDSS Kelas: {selectedClass.name}
+                        </h3>
+                        <p className="text-xs text-slate-400 font-bold">
+                          Tabel pelacakan asesmen berkala untuk tiga periode (LDSS 1, LDSS 2, LDSS 3) tahun ajaran aktif.
+                        </p>
+                      </div>
+                      {ldssSettings && (
+                        <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-100 text-indigo-800 px-3 py-1.5 rounded-xl text-xs font-black w-fit">
+                          <CalendarDays size={14} className="text-indigo-600" />
+                          <span>Periode Aktif: {ldssSettings.activePeriodLabel} • {ldssSettings.status === 'OPEN' ? 'TERBUKA' : 'DITUTUP'}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {loadingSessions || loadingStudents ? (
+                      <div className="p-16 text-center flex flex-col items-center justify-center space-y-3">
+                        <Loader2 className="animate-spin text-indigo-600" size={32} />
+                        <p className="text-xs text-slate-400 font-bold">Memuat rekapitulasi data kelas...</p>
+                      </div>
+                    ) : students.length === 0 ? (
+                      <div className="p-16 text-center text-slate-400 italic text-xs font-semibold">
+                        Tidak ada siswa aktif ditemukan di kelas ini.
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-50 border-b border-gray-100 text-[10px] font-black text-gray-400 uppercase tracking-wider">
+                            <tr>
+                              <th className="py-3 px-4 w-12 text-center">No</th>
+                              <th className="py-3 px-4 min-w-[180px]">Nama Siswa</th>
+                              <th className="py-3 px-4 w-20 text-center">Usia</th>
+                              <th className="py-3 px-4 text-center">LDSS 1</th>
+                              <th className="py-3 px-4 text-center">LDSS 2</th>
+                              <th className="py-3 px-4 text-center">LDSS 3</th>
+                              <th className="py-3 px-4 min-w-[140px]">Terakhir Diperbarui</th>
+                              <th className="py-3 px-4 text-center w-36">Aksi</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {students.map((student, idx) => {
+                              const computedAge = calculateStudentAge(student.birthDate);
+                              
+                              // Find assessments
+                              const s1 = classSessions.find(s => s.studentId === student.id && s.periodKey === "LDSS_1");
+                              const s2 = classSessions.find(s => s.studentId === student.id && s.periodKey === "LDSS_2");
+                              const s3 = classSessions.find(s => s.studentId === student.id && s.periodKey === "LDSS_3");
+
+                              // Find active period session and determine action state
+                              const activePeriodKey = ldssSettings?.activePeriodKey || "LDSS_1";
+                              const activeSession = classSessions.find(s => s.studentId === student.id && s.periodKey === activePeriodKey);
+
+                              // Last updated session
+                              const allStudSessions = [s1, s2, s3].filter(Boolean) as LdssSessionAssessment[];
+                              allStudSessions.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+                              const latestSession = allStudSessions[0];
+
+                              const renderPeriodStatus = (sess: LdssSessionAssessment | undefined) => {
+                                if (!sess) {
+                                  return (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-500 border border-slate-200 rounded-full text-[10px] font-bold">
+                                      Belum Diisi
+                                    </span>
+                                  );
+                                }
+                                
+                                const isCompleted = sess.status?.toUpperCase() === "COMPLETED";
+                                if (isCompleted) {
+                                  const percent = sess.scoringSummary?.percentCompleted || 0;
+                                  return (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[10px] font-bold">
+                                      <CheckCircle2 size={10} className="text-emerald-600 shrink-0" />
+                                      Selesai ({percent}%)
+                                    </span>
+                                  );
+                                } else {
+                                  const percent = sess.scoringSummary?.percentCompleted || 0;
+                                  const isMyDraft = sess.createdByUid === profile?.uid;
+                                  return (
+                                    <div className="inline-flex items-center gap-1.5">
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-[10px] font-bold">
+                                        <Pencil size={10} className="text-amber-500 shrink-0" />
+                                        Draf ({percent}%)
+                                      </span>
+                                      {isMyDraft && (
+                                        <button
+                                          onClick={() => handleDeleteDraft(sess.id)}
+                                          className="p-1 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-rose-100"
+                                          title="Hapus Draft Milik Saya"
+                                        >
+                                          <Trash2 size={12} />
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                }
+                              };
+
+                              const teacherAge = activeSession?.instrumentAge || latestSession?.instrumentAge;
+
+                              return (
+                                <tr key={student.id} className="hover:bg-slate-50/50 transition-colors">
+                                  <td className="py-3.5 px-4 text-center font-bold text-slate-400">{idx + 1}</td>
+                                  <td className="py-3.5 px-4 font-black text-slate-800">{student.name}</td>
+                                  <td className="py-3.5 px-4 text-center font-bold text-slate-600">
+                                    {teacherAge ? (
+                                      `${teacherAge} Th`
+                                    ) : (
+                                      <span className="text-slate-400 font-semibold italic">Belum diisi</span>
+                                    )}
+                                  </td>
+                                  <td className="py-3.5 px-4 text-center">{renderPeriodStatus(s1)}</td>
+                                  <td className="py-3.5 px-4 text-center">{renderPeriodStatus(s2)}</td>
+                                  <td className="py-3.5 px-4 text-center">{renderPeriodStatus(s3)}</td>
+                                  <td className="py-3.5 px-4 text-slate-400 font-bold">
+                                    {latestSession 
+                                      ? `${new Date(latestSession.updatedAt).toLocaleDateString("id-ID")} - ${latestSession.updatedBy?.name || latestSession.createdBy?.name || "Guru"}`
+                                      : "-"
+                                    }
+                                  </td>
+                                  <td className="py-3.5 px-4 text-center">
+                                    <button
+                                      onClick={() => {
+                                        setSelectedStudent(student);
+                                        // Use active session instrument age, fallback to latest or computed age
+                                        setSelectedAge(activeSession?.instrumentAge || latestSession?.instrumentAge || computedAge);
+                                      }}
+                                      className={`px-3 py-1.5 rounded-xl text-[11px] font-black tracking-wide flex items-center justify-center gap-1 w-full border transition-all cursor-pointer ${
+                                        activeSession?.status?.toUpperCase() === "COMPLETED"
+                                          ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-250"
+                                          : activeSession
+                                          ? "bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-sm"
+                                          : ldssSettings?.status === "CLOSED"
+                                          ? "bg-slate-50 text-slate-400 border-slate-100 cursor-not-allowed"
+                                          : "bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-650 shadow-sm"
+                                      }`}
+                                      disabled={!activeSession && ldssSettings?.status === "CLOSED"}
+                                    >
+                                      {activeSession?.status?.toUpperCase() === "COMPLETED" ? (
+                                        <>
+                                          <Eye size={12} />
+                                          <span>Tinjau</span>
+                                        </>
+                                      ) : activeSession ? (
+                                        <>
+                                          <Pencil size={12} />
+                                          <span>Edit Draf</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Plus size={12} />
+                                          <span>Mulai</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
 
-                  {completedStudents.length > 0 && (
-                    <div className="flex items-center gap-2 text-xs font-bold">
-                      <span className="text-slate-400 font-bold whitespace-nowrap">Pilih Siswa:</span>
+                  {/* Progress Chart Card */}
+                  <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm text-left space-y-6">
+                    <div className="border-b border-gray-100 pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <h3 className="text-base font-black text-gray-950 tracking-tight flex items-center gap-2">
+                          <TrendingUp className="text-indigo-600 shrink-0" size={18} />
+                          Perkembangan LDSS Kelas / Siswa
+                        </h3>
+                        <p className="text-xs text-slate-400 font-bold">
+                          Grafik tren perkembangan skor pencapaian per domain/komponen dalam satu tahun ajaran (diambil dari data Lengkap).
+                        </p>
+                      </div>
+
+                      {completedStudents.length > 0 && (
+                        <div className="flex items-center gap-2 text-xs font-bold">
+                          <span className="text-slate-400 font-bold whitespace-nowrap">Pilih Siswa:</span>
+                          <select
+                            value={chartStudentId}
+                            onChange={(e) => setChartStudentId(e.target.value)}
+                            className="bg-slate-50 border border-gray-150 rounded-xl px-3 py-2 text-xs font-black text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-150 h-[38px] cursor-pointer"
+                          >
+                            {completedStudents.map((cs) => (
+                              <option key={cs.id} value={cs.id}>
+                                {cs.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+
+                    {!hasCompletedSessions ? (
+                      <div className="py-12 px-6 rounded-2xl bg-slate-50/50 border border-dashed border-gray-150 text-center flex flex-col items-center justify-center text-slate-400 space-y-3">
+                        <div className="p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
+                          <TrendingUp size={20} className="text-slate-300" />
+                        </div>
+                        <div className="max-w-xs space-y-0.5">
+                          <p className="text-xs font-black text-slate-600">Grafik Tidak Tersedia</p>
+                          <p className="text-[11px] font-semibold leading-relaxed">
+                            Belum ada data asesmen dengan status <strong className="text-slate-500">Selesai (Completed)</strong> di kelas ini. Grafik akan aktif secara otomatis setelah asesmen difinalisasi.
+                          </p>
+                        </div>
+                      </div>
+                    ) : chartDataAndDomains.data.length === 0 ? (
+                      <div className="text-center text-slate-400 py-12 text-xs font-semibold">
+                        Silakan tentukan pilihan siswa yang memiliki asesmen Selesai untuk memplot grafik.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+                        {/* Checkboxes selector on the left (1 column) */}
+                        <div className="space-y-3 lg:border-r border-gray-100 lg:pr-6 max-h-80 overflow-y-auto">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider sticky top-0 bg-white pb-1.5 z-10 border-b border-gray-50">
+                            Filter Domain ({chartDataAndDomains.domains.length})
+                          </p>
+                          <div className="space-y-1.5">
+                            {chartDataAndDomains.domains.map((domKey) => {
+                              const capitalizedName = domKey.replace(/_/g, " ").replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase());
+                              return (
+                                <label key={domKey} className="flex items-start gap-2.5 px-2 py-1.5 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors text-[11px] font-bold text-slate-600">
+                                  <input
+                                    type="checkbox"
+                                    checked={!!checkedDomains[domKey]}
+                                    onChange={() => setCheckedDomains(prev => ({ ...prev, [domKey]: !prev[domKey] }))}
+                                    className="mt-0.5 h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                  />
+                                  <span className="leading-tight truncate">{capitalizedName}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Interactive Chart on the right (3 columns) */}
+                        <div className="lg:col-span-3 h-[320px] w-full min-w-0">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart
+                              data={chartDataAndDomains.data}
+                              margin={{ top: 10, right: 30, left: -20, bottom: 5 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                              <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 11, fontWeight: 'bold', fill: '#94a3b8' }} />
+                              <YAxis domain={[0, 100]} tickLine={false} axisLine={false} tick={{ fontSize: 11, fontWeight: 'bold', fill: '#94a3b8' }} unit="%" />
+                              <ChartTooltip
+                                contentStyle={{ backgroundColor: "#ffffff", borderRadius: "16px", border: "1px solid #e2e8f0", boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.05)", fontSize: "11px", fontWeight: "600" }}
+                                formatter={(value: any, name: string) => [`${value}%`, name.replace(/_/g, " ").toUpperCase()]}
+                              />
+                              <ChartLegend wrapperStyle={{ fontSize: "10px", fontWeight: "bold", paddingTop: "15px" }} />
+                              {chartDataAndDomains.domains.map((domKey, idx) => {
+                                if (!checkedDomains[domKey]) return null;
+                                const colors = [
+                                  "#6366f1", // Indigo
+                                  "#10b981", // Emerald
+                                  "#f59e0b", // Amber
+                                  "#ef4444", // Rose
+                                  "#8b5cf6", // Violet
+                                  "#06b6d4", // Cyan
+                                  "#ec4899", // Pink
+                                  "#14b8a6", // Teal
+                                  "#f97316", // Orange
+                                  "#22c55e", // Green
+                                  "#3b82f6", // Blue
+                                  "#eab308", // Yellow
+                                ];
+                                const strokeColor = colors[idx % colors.length];
+                                const labelName = domKey.replace(/_/g, " ").toUpperCase();
+                                return (
+                                  <Line
+                                    key={domKey}
+                                    type="monotone"
+                                    dataKey={domKey}
+                                    name={labelName}
+                                    stroke={strokeColor}
+                                    strokeWidth={2.5}
+                                    activeDot={{ r: 6 }}
+                                    connectNulls
+                                  />
+                                );
+                              })}
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {/* Analytics Controls & Period Filter */}
+                  <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-left">
+                    <div className="space-y-1">
+                      <h3 className="text-base font-black text-gray-950 tracking-tight flex items-center gap-2">
+                        <Activity className="text-indigo-600 shrink-0" size={18} />
+                        Laporan Analitik & Rekapitulasi Kelas
+                      </h3>
+                      <p className="text-xs text-slate-400 font-bold">
+                        Analisis data komprehensif skala 0–3, rata-rata skor, distribusi penilaian, dan deteksi siswa berisiko.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">Pilih Periode:</span>
                       <select
-                        value={chartStudentId}
-                        onChange={(e) => setChartStudentId(e.target.value)}
-                        className="bg-slate-50 border border-gray-150 rounded-xl px-3 py-2 text-xs font-black text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-150 h-[38px] cursor-pointer"
+                        value={analyticsPeriod}
+                        onChange={(e) => setAnalyticsPeriod(e.target.value)}
+                        className="bg-slate-50 hover:bg-slate-100 border border-gray-200 rounded-xl px-3 py-2 text-xs font-black text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer transition-all h-[38px]"
                       >
-                        {completedStudents.map((cs) => (
-                          <option key={cs.id} value={cs.id}>
-                            {cs.name}
-                          </option>
-                        ))}
+                        <option value="LDSS_1">LDSS 1 (Asesmen Awal)</option>
+                        <option value="LDSS_2">LDSS 2 (Asesmen Tengah)</option>
+                        <option value="LDSS_3">LDSS 3 (Asesmen Akhir)</option>
+                        <option value="ALL">Semua Periode Gabungan</option>
                       </select>
                     </div>
-                  )}
-                </div>
+                  </div>
 
-                {!hasCompletedSessions ? (
-                  <div className="py-12 px-6 rounded-2xl bg-slate-50/50 border border-dashed border-gray-150 text-center flex flex-col items-center justify-center text-slate-400 space-y-3">
-                    <div className="p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
-                      <TrendingUp size={20} className="text-slate-300" />
+                  {/* Top Level Summary Cards (Bento Grid) */}
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-6 text-left">
+                    <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm flex flex-col justify-between">
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Rerata Skor Kelas</span>
+                      <div className="mt-2 flex items-baseline gap-1.5">
+                        <span className="text-3xl font-black text-slate-900">{analyticsData.classAverage !== null ? analyticsData.classAverage : "-"}</span>
+                        <span className="text-xs font-bold text-slate-400">/ 3.0</span>
+                      </div>
+                      <p className="text-[10px] font-bold text-slate-400 mt-2">
+                        Rata-rata seluruh indikator yang bernilai angka di kelas ini.
+                      </p>
                     </div>
-                    <div className="max-w-xs space-y-0.5">
-                      <p className="text-xs font-black text-slate-600">Grafik Tidak Tersedia</p>
-                      <p className="text-[11px] font-semibold leading-relaxed">
-                        Belum ada data asesmen dengan status <strong className="text-slate-500">Selesai (Completed)</strong> di kelas ini. Grafik akan aktif secara otomatis setelah asesmen difinalisasi.
+
+                    <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm flex flex-col justify-between">
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Total Dinilai (Rated)</span>
+                      <div className="mt-2 flex items-baseline gap-1.5">
+                        <span className="text-3xl font-black text-emerald-600">{analyticsData.totalRated}</span>
+                        <span className="text-xs font-bold text-slate-400">/ {analyticsData.totalExpected}</span>
+                      </div>
+                      <p className="text-[10px] font-bold text-slate-400 mt-2">
+                        {analyticsData.totalExpected > 0 ? Math.round((analyticsData.totalRated / analyticsData.totalExpected) * 100) : 0}% Indikator telah diobservasi.
+                      </p>
+                    </div>
+
+                    <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm flex flex-col justify-between">
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Belum Dinilai (Unrated)</span>
+                      <div className="mt-2 flex items-baseline gap-1.5">
+                        <span className="text-3xl font-black text-amber-500">{analyticsData.totalUnrated}</span>
+                        <span className="text-xs font-bold text-slate-400">Indikator</span>
+                      </div>
+                      <p className="text-[10px] font-bold text-slate-400 mt-2">
+                        Sengaja dipisahkan secara terpisah dan tidak dinilai sebagai skor 0.
+                      </p>
+                    </div>
+
+                    <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm flex flex-col justify-between">
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Dukungan Intensif</span>
+                      <div className="mt-2 flex items-baseline gap-1.5">
+                        <span className="text-3xl font-black text-rose-600">
+                          {analyticsData.studentStats.filter(s => s.needsIntensiveSupport).length}
+                        </span>
+                        <span className="text-xs font-bold text-slate-400">Siswa</span>
+                      </div>
+                      <p className="text-[10px] font-bold text-slate-400 mt-2">
+                        Siswa yang memperoleh skor 0 atau 1 pada minimal satu indikator.
                       </p>
                     </div>
                   </div>
-                ) : chartDataAndDomains.data.length === 0 ? (
-                  <div className="text-center text-slate-400 py-12 text-xs font-semibold">
-                    Silakan tentukan pilihan siswa yang memiliki asesmen Selesai untuk memplot grafik.
+
+                  {/* Score Distribution Section */}
+                  <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm text-left space-y-4">
+                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">Distribusi Skor Perkembangan</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                      {/* Score 3 */}
+                      <div className="p-4 bg-emerald-50/30 border border-emerald-100 rounded-2xl flex flex-col justify-between">
+                        <span className="text-[11px] font-black text-emerald-700">Skor 3 (Mandiri)</span>
+                        <span className="text-2xl font-black text-emerald-600 mt-2">{analyticsData.score3Count}</span>
+                        <span className="text-[10px] font-bold text-emerald-500 mt-1">Konsisten sesuai usia</span>
+                      </div>
+
+                      {/* Score 2 */}
+                      <div className="p-4 bg-blue-50/30 border border-blue-100 rounded-2xl flex flex-col justify-between">
+                        <span className="text-[11px] font-black text-blue-700">Skor 2 (Ringan)</span>
+                        <span className="text-2xl font-black text-blue-600 mt-2">{analyticsData.score2Count}</span>
+                        <span className="text-[10px] font-bold text-blue-500 mt-1">Dengan bantuan ringan</span>
+                      </div>
+
+                      {/* Score 1 */}
+                      <div className="p-4 bg-amber-50/30 border border-amber-100 rounded-2xl flex flex-col justify-between">
+                        <span className="text-[11px] font-black text-amber-700">Skor 1 (Intensif)</span>
+                        <span className="text-2xl font-black text-amber-600 mt-2">{analyticsData.score1Count}</span>
+                        <span className="text-[10px] font-bold text-amber-500 mt-1">Bantuan intensif</span>
+                      </div>
+
+                      {/* Score 0 */}
+                      <div className="p-4 bg-rose-50/30 border border-rose-100 rounded-2xl flex flex-col justify-between">
+                        <span className="text-[11px] font-black text-rose-700">Skor 0 (Belum)</span>
+                        <span className="text-2xl font-black text-rose-600 mt-2">{analyticsData.score0Count}</span>
+                        <span className="text-[10px] font-bold text-rose-500 mt-1">Belum mampu</span>
+                      </div>
+
+                      {/* Legacy Yes */}
+                      <div className="p-4 bg-slate-50 border border-slate-150 rounded-2xl flex flex-col justify-between col-span-1">
+                        <span className="text-[11px] font-black text-slate-600">YA (Legacy)</span>
+                        <span className="text-2xl font-black text-slate-500 mt-2">{analyticsData.legacyYesCount}</span>
+                        <span className="text-[10px] font-semibold text-slate-400 mt-1">Format lama</span>
+                      </div>
+
+                      {/* Legacy No */}
+                      <div className="p-4 bg-slate-50 border border-slate-150 rounded-2xl flex flex-col justify-between col-span-1">
+                        <span className="text-[11px] font-black text-slate-600">TIDAK (Legacy)</span>
+                        <span className="text-2xl font-black text-slate-500 mt-2">{analyticsData.legacyNoCount}</span>
+                        <span className="text-[10px] font-semibold text-slate-400 mt-1">Format lama</span>
+                      </div>
+                    </div>
                   </div>
-                ) : (
-                  <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-                    {/* Checkboxes selector on the left (1 column) */}
-                    <div className="space-y-3 lg:border-r border-gray-100 lg:pr-6 max-h-80 overflow-y-auto">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider sticky top-0 bg-white pb-1.5 z-10 border-b border-gray-50">
-                        Filter Domain ({chartDataAndDomains.domains.length})
-                      </p>
-                      <div className="space-y-1.5">
-                        {chartDataAndDomains.domains.map((domKey) => {
-                          const capitalizedName = domKey.replace(/_/g, " ").replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase());
-                          return (
-                            <label key={domKey} className="flex items-start gap-2.5 px-2 py-1.5 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors text-[11px] font-bold text-slate-600">
-                              <input
-                                type="checkbox"
-                                checked={!!checkedDomains[domKey]}
-                                onChange={() => setCheckedDomains(prev => ({ ...prev, [domKey]: !prev[domKey] }))}
-                                className="mt-0.5 h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                              />
-                              <span className="leading-tight truncate">{capitalizedName}</span>
-                            </label>
-                          );
-                        })}
+
+                  {/* Two-Column Detail Analysis */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 text-left">
+                    {/* Student Analysis Card */}
+                    <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
+                      <div className="px-6 py-5 border-b border-gray-100">
+                        <h4 className="text-sm font-black text-gray-950 flex items-center gap-2">
+                          <User size={16} className="text-indigo-600" />
+                          Analisis Kinerja & Deteksi Siswa
+                        </h4>
+                        <p className="text-[11px] text-slate-400 font-bold mt-0.5">
+                          Rata-rata skor per siswa dan status deteksi "Perlu Dukungan Intensif" (skor 0 atau 1).
+                        </p>
+                      </div>
+
+                      <div className="overflow-x-auto flex-1">
+                        <table className="w-full text-xs">
+                          <thead className="bg-slate-50 border-b border-gray-100 text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                            <tr>
+                              <th className="py-2.5 px-4 w-12 text-center">No</th>
+                              <th className="py-2.5 px-4">Nama Siswa</th>
+                              <th className="py-2.5 px-4 text-center">Rerata</th>
+                              <th className="py-2.5 px-4 text-center">Dinilai</th>
+                              <th className="py-2.5 px-4 text-center">Belum</th>
+                              <th className="py-2.5 px-4 text-center">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {analyticsData.studentStats.map((stat, sIdx) => (
+                              <tr key={stat.student.id} className="hover:bg-slate-50/50 transition-colors">
+                                <td className="py-3 px-4 text-center font-bold text-slate-400">{sIdx + 1}</td>
+                                <td className="py-3 px-4 font-black text-slate-800">{stat.student.name}</td>
+                                <td className="py-3 px-4 text-center font-black">
+                                  {stat.average !== null ? (
+                                    <span className={`px-2 py-0.5 rounded-lg text-xs font-black ${
+                                      stat.average >= 2.5 ? "text-emerald-700 bg-emerald-50" :
+                                      stat.average >= 1.5 ? "text-blue-700 bg-blue-50" : "text-rose-700 bg-rose-50"
+                                    }`}>
+                                      {stat.average}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-300">-</span>
+                                  )}
+                                </td>
+                                <td className="py-3 px-4 text-center font-bold text-slate-600">{stat.ratedCount}</td>
+                                <td className="py-3 px-4 text-center font-bold text-amber-600">{stat.unratedCount}</td>
+                                <td className="py-3 px-4 text-center">
+                                  {stat.needsIntensiveSupport ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-rose-50 border border-rose-100 text-rose-700 rounded-full text-[10px] font-black uppercase tracking-wider">
+                                      <AlertTriangle size={10} className="shrink-0" />
+                                      Perlu Dukungan
+                                    </span>
+                                  ) : stat.ratedCount > 0 ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-full text-[10px] font-black uppercase tracking-wider">
+                                      <CheckCircle2 size={10} className="shrink-0" />
+                                      Sesuai Harapan
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-50 border border-slate-100 text-slate-400 rounded-full text-[10px] font-black uppercase tracking-wider">
+                                      Belum Dinilai
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
 
-                    {/* Interactive Chart on the right (3 columns) */}
-                    <div className="lg:col-span-3 h-[320px] w-full min-w-0">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart
-                          data={chartDataAndDomains.data}
-                          margin={{ top: 10, right: 30, left: -20, bottom: 5 }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                          <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 11, fontWeight: 'bold', fill: '#94a3b8' }} />
-                          <YAxis domain={[0, 100]} tickLine={false} axisLine={false} tick={{ fontSize: 11, fontWeight: 'bold', fill: '#94a3b8' }} unit="%" />
-                          <ChartTooltip
-                            contentStyle={{ backgroundColor: "#ffffff", borderRadius: "16px", border: "1px solid #e2e8f0", boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.05)", fontSize: "11px", fontWeight: "600" }}
-                            formatter={(value: any, name: string) => [`${value}%`, name.replace(/_/g, " ").toUpperCase()]}
-                          />
-                          <ChartLegend wrapperStyle={{ fontSize: "10px", fontWeight: "bold", paddingTop: "15px" }} />
-                          {chartDataAndDomains.domains.map((domKey, idx) => {
-                            if (!checkedDomains[domKey]) return null;
-                            const colors = [
-                              "#6366f1", // Indigo
-                              "#10b981", // Emerald
-                              "#f59e0b", // Amber
-                              "#ef4444", // Rose
-                              "#8b5cf6", // Violet
-                              "#06b6d4", // Cyan
-                              "#ec4899", // Pink
-                              "#14b8a6", // Teal
-                              "#f97316", // Orange
-                              "#22c55e", // Green
-                              "#3b82f6", // Blue
-                              "#eab308", // Yellow
-                            ];
-                            const strokeColor = colors[idx % colors.length];
-                            const labelName = domKey.replace(/_/g, " ").toUpperCase();
-                            return (
-                              <Line
-                                key={domKey}
-                                type="monotone"
-                                dataKey={domKey}
-                                name={labelName}
-                                stroke={strokeColor}
-                                strokeWidth={2.5}
-                                activeDot={{ r: 6 }}
-                                connectNulls
-                              />
-                            );
-                          })}
-                        </LineChart>
-                      </ResponsiveContainer>
+                    {/* Indicator Analysis Card */}
+                    <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
+                      <div className="px-6 py-5 border-b border-gray-100">
+                        <h4 className="text-sm font-black text-gray-950 flex items-center gap-2">
+                          <Activity size={16} className="text-indigo-600" />
+                          Rerata Indikator & Fokus Dukungan
+                        </h4>
+                        <p className="text-[11px] text-slate-400 font-bold mt-0.5">
+                          Indikator diurutkan dari skor terendah. Menunjukkan aspek-aspek perkembangan yang paling perlu ditingkatkan.
+                        </p>
+                      </div>
+
+                      <div className="overflow-y-auto flex-1 max-h-[420px]">
+                        {analyticsData.indicatorStats.length === 0 ? (
+                          <div className="p-12 text-center text-slate-400 italic font-semibold text-xs">
+                            Belum ada data indikator terisi untuk periode/filter ini.
+                          </div>
+                        ) : (
+                          <div className="divide-y divide-gray-100">
+                            {analyticsData.indicatorStats.map((ind, iIdx) => (
+                              <div key={ind.id} className="p-4 hover:bg-slate-50/50 transition-all flex items-start gap-4 justify-between">
+                                <div className="space-y-1 min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-[9px] font-black bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-md uppercase tracking-wide truncate max-w-[120px]">
+                                      {ind.domainName}
+                                    </span>
+                                    {ind.needsIntensiveSupport && (
+                                      <span className="text-[9px] font-black bg-rose-50 text-rose-600 border border-rose-100 px-1.5 py-0.5 rounded-md uppercase tracking-wide">
+                                        Perlu Dukungan ({ind.s0 + ind.s1} Siswa)
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-xs font-bold text-slate-800 leading-snug">{ind.text}</p>
+                                  {ind.studentsWithLowScore.length > 0 && (
+                                    <p className="text-[10px] font-semibold text-rose-500 leading-normal">
+                                      Siswa terdeteksi skor 0/1: {Array.from(new Set(ind.studentsWithLowScore)).join(", ")}
+                                    </p>
+                                  )}
+                                </div>
+
+                                <div className="text-right shrink-0">
+                                  <div className="text-xs font-black text-slate-900 bg-slate-100 px-2 py-1 rounded-lg">
+                                    {ind.average !== null ? `Avg: ${ind.average}` : "Belum Dinilai"}
+                                  </div>
+                                  <p className="text-[9px] text-slate-400 font-semibold mt-1">
+                                    {ind.count} Siswa dinilai
+                                  </p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           ) : (
             /* Empty state selection card when no class is selected */
