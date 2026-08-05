@@ -424,12 +424,12 @@ service cloud.firestore {
     match /selfExploration/{studentId} {
       allow read: if isActive() &&
         (isOwnStudentData(studentId) || (isStudent() && studentId == request.auth.uid) || isJuniorHighStaff() || isLinkedStudent(studentId));
-      allow write: if isAdmin() || (isStudent() && studentId == request.auth.uid) || (isActive() && isOwnStudentData(studentId));
+      allow write: if isAdmin() || isJuniorHighStaff() || (isStudent() && studentId == request.auth.uid) || (isActive() && isOwnStudentData(studentId));
 
       match /plans/{periodId} {
         allow read: if isActive() &&
           (isOwnStudentData(studentId) || (isStudent() && studentId == request.auth.uid) || isJuniorHighStaff() || isLinkedStudent(studentId));
-        allow write: if isAdmin() || (isStudent() && studentId == request.auth.uid) || (isActive() && isOwnStudentData(studentId));
+        allow write: if isAdmin() || isJuniorHighStaff() || (isStudent() && studentId == request.auth.uid) || (isActive() && isOwnStudentData(studentId));
       }
     }
 

@@ -11,7 +11,7 @@ import { useAuth } from '../../../context/AuthContext';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../../lib/utils';
-import { doc, getDoc, setDoc, collection, getDocs, query, where, limit } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs, query, where, limit, serverTimestamp } from 'firebase/firestore';
 
 interface WeekPlan {
   weekNumber: number;
@@ -80,6 +80,18 @@ export default function SEPlan() {
   const [savingPlanIndex, setSavingPlanIndex] = React.useState<number | null>(null);
   const [scanningPlanIndex, setScanningPlanIndex] = React.useState<number | null>(null);
   const [feedbackMsg, setFeedbackMsg] = React.useState<{ [key: number]: { text: string; type: 'success' | 'error' } }>({});
+  const [resetModalPlanIndex, setResetModalPlanIndex] = React.useState<number | null>(null);
+  const [confirmText, setConfirmText] = React.useState("");
+
+  const isJuniorHighStaff = React.useMemo(() => {
+    if (!profile) return false;
+    return (profile.role === 'TEACHER' && profile.unitId === 'JUNIOR_HIGH') || profile.role === 'HEAD_JUNIOR';
+  }, [profile]);
+
+  const isAdmin = React.useMemo(() => {
+    if (!profile) return false;
+    return profile.role === 'SUPER_ADMIN' || profile.role === 'ADMIN';
+  }, [profile]);
 
   const fileInputRefs = React.useRef<{ [key: number]: HTMLInputElement | null }>({});
   const cameraInputRefs = React.useRef<{ [key: number]: HTMLInputElement | null }>({});
@@ -328,23 +340,125 @@ export default function SEPlan() {
   };
 
   const removePhoto = async (planIndex: number) => {
-    if (!plansDoc) return;
+    if (!plansDoc || !studentData || !periodId) return;
     const plan = plansDoc.plans.find(p => p.planIndex === planIndex);
     if (!plan) return;
 
+    const isJuniorHighStaff = profile?.role === 'TEACHER' && profile?.unitId === 'JUNIOR_HIGH';
+    const isAdmin = profile?.role === 'SUPER_ADMIN' || profile?.role === 'ADMIN' || profile?.role === 'HEAD_JUNIOR';
+    const isOwner = profile?.role === 'STUDENT';
+
+    if (!isOwner && !isJuniorHighStaff && !isAdmin) {
+      alert("Anda tidak memiliki akses untuk menghapus foto ini.");
+      return;
+    }
+
+    const confirmMsg = "Hapus foto dari tampilan Plan? File asli tetap tersimpan sebagai arsip di Google Drive, tetapi tidak lagi tampil di aplikasi.";
+    if (!window.confirm(confirmMsg)) {
+      return;
+    }
+
     try {
+      let roleName: "siswa" | "guru" | "admin" = "siswa";
+      if (isJuniorHighStaff) {
+        roleName = "guru";
+      } else if (isAdmin) {
+        roleName = "admin";
+      }
+
+      const nextPhotoHiddenBy = {
+        uid: user?.uid || profile?.uid || 'unknown',
+        name: profile?.displayName || profile?.email || 'Unknown',
+        role: roleName
+      };
+
       const updatedPlans = plansDoc.plans.map(p => {
         if (p.planIndex === planIndex) {
-          return { ...p, photoUrl: null, driveFileId: null, scanConfidence: null };
+          return { 
+            ...p, 
+            photoUrl: null, 
+            driveFileId: null, 
+            photoFileName: null,
+            scanConfidence: null,
+            photoHiddenAt: serverTimestamp(),
+            photoHiddenBy: nextPhotoHiddenBy
+          };
         }
         return p;
       });
 
-      setPlansDoc({ ...plansDoc, plans: updatedPlans });
+      const updatedDocPayload: StudentPlansDoc = {
+        ...plansDoc,
+        plans: updatedPlans,
+        updatedAt: Date.now()
+      };
+
+      const docRef = doc(db, 'selfExploration', studentData.id, 'plans', periodId);
+      await setDoc(docRef, updatedDocPayload, { merge: true });
+
+      setPlansDoc(updatedDocPayload);
       showFeedback(planIndex, "Foto berhasil dihapus.", "success");
     } catch (err: any) {
       console.error("Remove photo failed:", err);
       showFeedback(planIndex, "Gagal menghapus foto.", "error");
+    }
+  };
+
+  const resetPlan = async (planIndex: number) => {
+    if (!plansDoc || !studentData || !periodId) return;
+    const plan = plansDoc.plans.find(p => p.planIndex === planIndex);
+    if (!plan) return;
+
+    if (!isJuniorHighStaff && !isAdmin) {
+      alert("Hanya Guru Junior High atau Admin yang dapat mereset rencana ini.");
+      return;
+    }
+
+    try {
+      let roleName: "siswa" | "guru" | "admin" = "guru";
+      if (isAdmin) {
+        roleName = "admin";
+      }
+
+      const deletedByObj = {
+        uid: user?.uid || profile?.uid || 'unknown',
+        name: profile?.displayName || profile?.email || 'Unknown',
+        role: roleName
+      };
+
+      const updatedPlans = plansDoc.plans.map(p => {
+        if (p.planIndex === planIndex) {
+          return {
+            ...p,
+            objective: "",
+            currentLevel: "",
+            weeks: createDefaultWeeks(),
+            status: "draft" as const,
+            photoUrl: null,
+            driveFileId: null,
+            photoFileName: null,
+            scanConfidence: null,
+            deletedBy: deletedByObj,
+            deletedAt: serverTimestamp()
+          };
+        }
+        return p;
+      });
+
+      const updatedDocPayload: StudentPlansDoc = {
+        ...plansDoc,
+        plans: updatedPlans,
+        updatedAt: Date.now()
+      };
+
+      const docRef = doc(db, 'selfExploration', studentData.id, 'plans', periodId);
+      await setDoc(docRef, updatedDocPayload, { merge: true });
+
+      setPlansDoc(updatedDocPayload);
+      showFeedback(planIndex, "Rencana berhasil di-reset.", "success");
+    } catch (err: any) {
+      console.error("Reset plan failed:", err);
+      showFeedback(planIndex, "Gagal mereset rencana.", "error");
     }
   };
 
@@ -458,6 +572,17 @@ export default function SEPlan() {
                 </div>
 
                 <div className="flex items-center gap-3 w-full lg:w-auto">
+                  {(isJuniorHighStaff || isAdmin) && (
+                    <button
+                      type="button"
+                      onClick={() => setResetModalPlanIndex(plan.planIndex)}
+                      className="flex-1 lg:flex-none flex items-center justify-center gap-2 border-2 border-red-500 hover:bg-red-50 text-red-500 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm shrink-0"
+                    >
+                      <Trash2 size={14} />
+                      Hapus Rencana Ini
+                    </button>
+                  )}
+
                   <button
                     disabled={isSubmitted || savingPlanIndex !== null || scanningPlanIndex !== null}
                     onClick={() => savePlan(plan.planIndex, "draft")}
@@ -730,6 +855,78 @@ export default function SEPlan() {
           );
         })}
       </div>
+
+      {/* Reset Plan Confirmation Modal */}
+      <AnimatePresence>
+        {resetModalPlanIndex !== null && (
+          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              onClick={() => {
+                setResetModalPlanIndex(null);
+                setConfirmText("");
+              }} 
+              className="absolute inset-0 bg-black/50 backdrop-blur-sm" 
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }} 
+              animate={{ opacity: 1, scale: 1 }} 
+              exit={{ opacity: 0, scale: 0.95 }} 
+              className="relative w-full max-w-md bg-white rounded-[2rem] shadow-2xl p-8 z-10 border border-gray-100"
+            >
+              <div className="text-center space-y-4">
+                <div className="w-14 h-14 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-sm">
+                  <Trash2 size={28} />
+                </div>
+                <h3 className="text-lg font-black italic uppercase text-gray-900 tracking-tight">Hapus Rencana Mingguan</h3>
+                <p className="text-xs text-gray-500 font-medium leading-relaxed">
+                  Apakah Anda yakin ingin menghapus/mereset seluruh rencana mingguan ini? Tindakan ini akan mengosongkan semua target mingguan dan foto terunggah. Pilihan aktivitas siswa akan tetap dipertahankan.
+                </p>
+                
+                <div className="space-y-2 text-left pt-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                    Ketik "HAPUS" untuk konfirmasi:
+                  </label>
+                  <input 
+                    type="text" 
+                    value={confirmText}
+                    onChange={(e) => setConfirmText(e.target.value)}
+                    placeholder="Ketik HAPUS"
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-bold text-xs text-gray-800 text-center placeholder-gray-400 focus:bg-white focus:ring-2 focus:ring-red-500 transition-all"
+                  />
+                </div>
+
+                <div className="flex gap-4 pt-4">
+                  <button 
+                    onClick={() => {
+                      setResetModalPlanIndex(null);
+                      setConfirmText("");
+                    }}
+                    className="flex-1 py-3 border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all"
+                  >
+                    Batal
+                  </button>
+                  <button 
+                    disabled={confirmText !== "HAPUS"}
+                    onClick={async () => {
+                      if (resetModalPlanIndex !== null) {
+                        await resetPlan(resetModalPlanIndex);
+                        setResetModalPlanIndex(null);
+                        setConfirmText("");
+                      }
+                    }}
+                    className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-black uppercase text-[10px] tracking-widest transition-all disabled:opacity-40 disabled:hover:bg-red-600 shadow-lg shadow-red-100"
+                  >
+                    Ya, Hapus Rencana
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
