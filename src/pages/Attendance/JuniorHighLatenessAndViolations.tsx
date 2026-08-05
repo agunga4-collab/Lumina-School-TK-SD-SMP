@@ -404,6 +404,52 @@ export default function JuniorHighLatenessAndViolations() {
     setLatenessClassStudents(prev => prev.map(s => s.id === studentId ? { ...s, arrivalTime: val } : s));
   };
 
+  const handleTimeChange = (id: string, val: string, updateFn: (id: string, time: string) => void) => {
+    // Allow digits and colons only, max length 5 (HH:MM)
+    let cleaned = val.replace(/[^0-9:]/g, '');
+    if (cleaned.length > 5) {
+      cleaned = cleaned.slice(0, 5);
+    }
+    updateFn(id, cleaned);
+  };
+
+  const handleTimeBlur = (id: string, val: string, updateFn: (id: string, time: string) => void) => {
+    if (!val) return;
+    
+    // Extract only digits
+    let digits = val.replace(/[^0-9]/g, '');
+    if (digits.length === 0) {
+      updateFn(id, '');
+      return;
+    }
+    
+    let hours = '00';
+    let minutes = '00';
+    
+    if (digits.length === 1) {
+      hours = '0' + digits;
+    } else if (digits.length === 2) {
+      hours = digits;
+    } else if (digits.length === 3) {
+      hours = '0' + digits[0];
+      minutes = digits.slice(1);
+    } else if (digits.length >= 4) {
+      hours = digits.slice(0, 2);
+      minutes = digits.slice(2, 4);
+    }
+    
+    // Range check hours and minutes
+    let hNum = parseInt(hours, 10);
+    let mNum = parseInt(minutes, 10);
+    if (hNum > 23) hNum = 23;
+    if (mNum > 59) mNum = 59;
+    
+    const hStr = hNum.toString().padStart(2, '0');
+    const mStr = mNum.toString().padStart(2, '0');
+    
+    updateFn(id, `${hStr}:${mStr}`);
+  };
+
   const updateLatenessReason = (studentId: string, val: string) => {
     setLatenessClassStudents(prev => prev.map(s => s.id === studentId ? { ...s, reason: val } : s));
   };
@@ -1257,10 +1303,13 @@ export default function JuniorHighLatenessAndViolations() {
                             <td className="px-5 py-3.5">
                               <div className="flex items-center gap-1.5">
                                 <input
-                                  type="time"
+                                  type="text"
+                                  placeholder="07:30"
+                                  inputMode="numeric"
                                   value={student.arrivalTime}
-                                  onChange={(e) => updateLatenessTime(student.id, e.target.value)}
-                                  className="bg-gray-50 border border-gray-100 rounded-lg px-2.5 py-1.5 text-xs font-black text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 w-24"
+                                  onChange={(e) => handleTimeChange(student.id, e.target.value, updateLatenessTime)}
+                                  onBlur={(e) => handleTimeBlur(student.id, e.target.value, updateLatenessTime)}
+                                  className="bg-gray-50 border border-gray-100 rounded-lg px-2.5 py-1.5 text-xs font-black text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 w-24 text-center"
                                 />
                                 <button
                                   type="button"

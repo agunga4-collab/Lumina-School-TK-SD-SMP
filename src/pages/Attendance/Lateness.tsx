@@ -585,6 +585,52 @@ export default function Lateness() {
     setRecords(records.map(r => r.id === id ? { ...r, arrivalTime } : r));
   };
 
+  const handleTimeChange = (id: string, val: string, updateFn: (id: string, time: string) => void) => {
+    // Allow digits and colons only, max length 5 (HH:MM)
+    let cleaned = val.replace(/[^0-9:]/g, '');
+    if (cleaned.length > 5) {
+      cleaned = cleaned.slice(0, 5);
+    }
+    updateFn(id, cleaned);
+  };
+
+  const handleTimeBlur = (id: string, val: string, updateFn: (id: string, time: string) => void) => {
+    if (!val) return;
+    
+    // Extract only digits
+    let digits = val.replace(/[^0-9]/g, '');
+    if (digits.length === 0) {
+      updateFn(id, '');
+      return;
+    }
+    
+    let hours = '00';
+    let minutes = '00';
+    
+    if (digits.length === 1) {
+      hours = '0' + digits;
+    } else if (digits.length === 2) {
+      hours = digits;
+    } else if (digits.length === 3) {
+      hours = '0' + digits[0];
+      minutes = digits.slice(1);
+    } else if (digits.length >= 4) {
+      hours = digits.slice(0, 2);
+      minutes = digits.slice(2, 4);
+    }
+    
+    // Range check hours and minutes
+    let hNum = parseInt(hours, 10);
+    let mNum = parseInt(minutes, 10);
+    if (hNum > 23) hNum = 23;
+    if (mNum > 59) mNum = 59;
+    
+    const hStr = hNum.toString().padStart(2, '0');
+    const mStr = mNum.toString().padStart(2, '0');
+    
+    updateFn(id, `${hStr}:${mStr}`);
+  };
+
   const updateReason = (id: string, reason: string) => {
     setRecords(records.map(r => r.id === id ? { ...r, reason } : r));
   };
@@ -985,11 +1031,14 @@ export default function Lateness() {
                                 <div className="flex flex-col gap-1.5">
                                   <div className="flex items-center gap-1.5">
                                     <input 
-                                        type="time" 
+                                        type="text" 
+                                        placeholder="07:30"
+                                        inputMode="numeric"
                                         id={`time-input-${record.id}`}
-                                        className="bg-gray-50 border border-gray-100 rounded-lg px-3 py-1.5 text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 w-32"
+                                        className="bg-gray-50 border border-gray-100 rounded-lg px-3 py-1.5 text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 w-32 text-center"
                                         value={record.arrivalTime}
-                                        onChange={(e) => updateTime(record.id, e.target.value)}
+                                        onChange={(e) => handleTimeChange(record.id, e.target.value, updateTime)}
+                                        onBlur={(e) => handleTimeBlur(record.id, e.target.value, updateTime)}
                                     />
                                     <button
                                       type="button"
