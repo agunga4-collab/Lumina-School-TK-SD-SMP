@@ -82,6 +82,7 @@ export default function SEPlan() {
   const [feedbackMsg, setFeedbackMsg] = React.useState<{ [key: number]: { text: string; type: 'success' | 'error' } }>({});
 
   const fileInputRefs = React.useRef<{ [key: number]: HTMLInputElement | null }>({});
+  const cameraInputRefs = React.useRef<{ [key: number]: HTMLInputElement | null }>({});
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -538,18 +539,25 @@ export default function SEPlan() {
                     {/* Upload Zone */}
                     <div className="lg:col-span-2">
                       <div 
-                        onClick={() => fileInputRefs.current[plan.planIndex]?.click()}
                         className={cn(
-                          "border-2 border-dashed rounded-[2rem] p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center min-h-[220px]",
+                          "border-2 border-dashed rounded-[2rem] p-8 text-center transition-all flex flex-col items-center justify-center min-h-[220px]",
                           scanningPlanIndex === plan.planIndex 
                             ? "border-blue-300 bg-blue-50/20 pointer-events-none" 
-                            : "border-gray-200 hover:border-blue-400 hover:bg-gray-50/50"
+                            : "border-gray-200 bg-white"
                         )}
                       >
                         <input
                           type="file"
                           accept="image/*"
                           ref={el => fileInputRefs.current[plan.planIndex] = el}
+                          onChange={(e) => handleFileUpload(plan.planIndex, e)}
+                          className="hidden"
+                        />
+                        <input
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          ref={el => cameraInputRefs.current[plan.planIndex] = el}
                           onChange={(e) => handleFileUpload(plan.planIndex, e)}
                           className="hidden"
                         />
@@ -563,7 +571,7 @@ export default function SEPlan() {
                             </div>
                           </div>
                         ) : (
-                          <div className="space-y-4">
+                          <div className="space-y-4 w-full">
                             <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto">
                               <UploadCloud size={24} />
                             </div>
@@ -571,8 +579,27 @@ export default function SEPlan() {
                               <p className="text-xs font-black text-gray-800 uppercase tracking-widest">Foto & Scan Tabel My Plan</p>
                               <p className="text-[10px] font-bold text-gray-400 mt-1 uppercase tracking-wider">Format JPG, JPEG, PNG • Maksimal 5MB</p>
                             </div>
+
+                            {/* Dual Opsi Tombol */}
+                            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 py-2">
+                              <button
+                                type="button"
+                                onClick={() => cameraInputRefs.current[plan.planIndex]?.click()}
+                                className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black uppercase tracking-wider rounded-2xl transition-all shadow-sm hover:shadow"
+                              >
+                                <span className="text-base">📷</span> Ambil Foto
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => fileInputRefs.current[plan.planIndex]?.click()}
+                                className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-black uppercase tracking-wider rounded-2xl transition-all border border-gray-200"
+                              >
+                                <span className="text-base">🖼️</span> Pilih dari Galeri
+                              </button>
+                            </div>
+
                             <p className="text-[10px] font-medium text-gray-400 max-w-sm leading-relaxed mx-auto italic">
-                              Letakkan lembar My Plan di permukaan datar dengan cahaya terang, foto lurus, lalu upload di sini untuk transkripsi otomatis.
+                              Letakkan lembar My Plan di permukaan datar dengan cahaya terang, foto lurus, lalu pilih salah satu metode di atas untuk transkripsi otomatis.
                             </p>
                           </div>
                         )}
