@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Sparkles, Loader2, Save, Smile, Meh, Frown, Angry, AlertCircle, CheckCircle2,
   Calendar, Edit3, BookOpen, Clock, Heart, ShieldAlert, ArrowRight, Eye, RefreshCw, ChevronDown, ChevronUp, Check, Trash2, ClipboardList,
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, Mic, MicOff
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
@@ -647,6 +647,221 @@ export default function WeeklySummary() {
   // Specific loading states for per-student actions
   const [generatingSelId, setGeneratingSelId] = React.useState<string | null>(null);
   const [generatingWeeklyId, setGeneratingWeeklyId] = React.useState<string | null>(null);
+
+  // Speech-to-text and AI Refinement states
+  interface RefineState {
+    studentId: string;
+    studentName: string;
+    fieldType: 'social_emotional' | 'weekly_domains';
+    originalText: string;
+    refinedText: string;
+  }
+
+  const SpeechRecognitionAPI = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+  const [activeRecording, setActiveRecording] = React.useState<{ studentId: string; fieldType: 'social_emotional' | 'weekly_domains' } | null>(null);
+  const [refineReview, setRefineReview] = React.useState<RefineState | null>(null);
+  const [refiningField, setRefiningField] = React.useState<{ studentId: string; fieldType: 'social_emotional' | 'weekly_domains' } | null>(null);
+
+  const recognitionRef = React.useRef<any>(null);
+  const recordingStateRef = React.useRef<{
+    studentId: string;
+    fieldType: 'social_emotional' | 'weekly_domains';
+    baseText: string;
+    finalTranscript: string;
+    interimTranscript: string;
+  } | null>(null);
+
+  const localNormalize = (text: string): string => {
+    let cleaned = text.replace(/\s+/g, " ").trim();
+    if (cleaned.length === 0) return "";
+    // Capitalize first letter
+    cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+    // Add ending dot if it doesn't end with a punctuation mark
+    if (!/[.!?]$/.test(cleaned)) {
+      cleaned += ".";
+    }
+    return cleaned;
+  };
+
+  const finishRecording = () => {
+    if (!recordingStateRef.current) return;
+    const { studentId, fieldType, baseText, finalTranscript } = recordingStateRef.current;
+    
+    // Normalize final transcript
+    const combinedFinal = `${baseText} ${finalTranscript}`.replace(/\s+/g, ' ').trim();
+    const normalized = localNormalize(combinedFinal);
+
+    if (fieldType === 'social_emotional') {
+      handleLocalDraftChange(studentId, { attendanceCommentTeacherEdited: normalized });
+    } else {
+      handleLocalDraftChange(studentId, { observationCommentTeacherEdited: normalized });
+    }
+
+    recordingStateRef.current = null;
+    setActiveRecording(null);
+    recognitionRef.current = null;
+  };
+
+  const stopRecording = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.onend = null;
+        recognitionRef.current.stop();
+      } catch (e) {
+        console.warn(e);
+      }
+    }
+    finishRecording();
+  };
+
+  const startRecording = (studentId: string, fieldType: 'social_emotional' | 'weekly_domains', currentVal: string) => {
+    if (recognitionRef.current) {
+      stopRecording();
+    }
+
+    if (!SpeechRecognitionAPI) {
+      toast.error("Transkripsi suara tidak didukung oleh browser Anda.");
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognitionAPI();
+      recognition.lang = 'id-ID';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+
+      recordingStateRef.current = {
+        studentId,
+        fieldType,
+        baseText: currentVal,
+        finalTranscript: '',
+        interimTranscript: ''
+      };
+
+      recognition.onstart = () => {
+        setActiveRecording({ studentId, fieldType });
+      };
+
+      recognition.onresult = (event: any) => {
+        if (!recordingStateRef.current) return;
+        
+        let interim = '';
+        let final = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            final += event.results[i][0].transcript;
+          } else {
+            interim += event.results[i][0].transcript;
+          }
+        }
+
+        const state = recordingStateRef.current;
+        state.finalTranscript += final;
+        state.interimTranscript = interim;
+
+        // Combine
+        const combined = `${state.baseText} ${state.finalTranscript} ${state.interimTranscript}`
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        // Update local state in real-time
+        if (state.fieldType === 'social_emotional') {
+          handleLocalDraftChange(state.studentId, { attendanceCommentTeacherEdited: combined });
+        } else {
+          handleLocalDraftChange(state.studentId, { observationCommentTeacherEdited: combined });
+        }
+      };
+
+      recognition.onend = () => {
+        finishRecording();
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error("Speech recognition error:", event.error);
+        if (event.error === 'not-allowed') {
+          toast.error("Izin microphone belum diberikan.");
+        } else {
+          toast.error(`Error transkripsi: ${event.error}`);
+        }
+        stopRecording();
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err: any) {
+      console.error(err);
+      toast.error("Gagal memulai microphone: " + err.message);
+    }
+  };
+
+  const handleRefineComment = async (studentId: string, studentName: string, fieldType: 'social_emotional' | 'weekly_domains', currentText: string) => {
+    if (!currentText || currentText.trim() === "") {
+      toast.error("Teks komentar kosong.");
+      return;
+    }
+
+    setRefiningField({ studentId, fieldType });
+    const toastId = toast.loading("Lumina AI sedang merapikan komentar...");
+    try {
+      const studentDraft = studentDrafts[studentId];
+      const classLevel = studentDraft?.ageGroup || 'TK_A';
+      const theme = studentDraft?.theme || globalTheme || '';
+      const week = studentDraft?.week || globalWeek || '';
+
+      const response = await fetch('/api/kindergarten/weekly-summary/refine-comment', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          text: currentText,
+          fieldType,
+          studentName,
+          classLevel,
+          theme,
+          week
+        })
+      });
+
+      if (!response.ok) {
+        let errMsg = 'Gagal memanggil API AI';
+        try {
+          const errData = await response.json();
+          errMsg = errData.error || errMsg;
+        } catch (_) {}
+        throw new Error(errMsg);
+      }
+
+      const data = await response.json();
+      const refinedText = data.refinedText || '';
+
+      toast.success("Komentar berhasil dirapikan! ✨", { id: toastId });
+      setRefineReview({
+        studentId,
+        studentName,
+        fieldType,
+        originalText: currentText,
+        refinedText
+      });
+    } catch (err: any) {
+      console.error(err);
+      toast.error("Gagal merapikan komentar. Teks asli Anda tetap aman dan dapat didraf secara manual.", { id: toastId });
+    } finally {
+      setRefiningField(null);
+    }
+  };
+
+  React.useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.onend = null;
+          recognitionRef.current.stop();
+        } catch (_) {}
+      }
+    };
+  }, []);
 
   // Cache/Memoize the expensive aggregateKGWeeklyReportForPeriod function per student
   // to prevent running aggregate computations for ALL (or even active) students in each sub-character typed
@@ -1631,11 +1846,77 @@ export default function WeeklySummary() {
                                     className="w-full bg-gray-50/50 p-3 rounded-xl border border-gray-200 outline-none focus:bg-white text-xs text-gray-800 leading-relaxed font-serif resize-none"
                                     placeholder="Ketikan masukan guru atau generate via tombol AI di atas..."
                                   />
-                                  {draft?.attendanceCommentAiDraft && (draft?.attendanceCommentTeacherEdited === draft?.attendanceCommentAiDraft) && (
-                                    <span className="text-[8px] bg-sky-50 text-sky-700 border border-sky-100 rounded px-1.5 py-0.5 font-bold tracking-wide font-sans">
-                                      Original AI Draft Drafted
-                                    </span>
-                                  )}
+                                  <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5 pt-1 border-t border-gray-100">
+                                    <div className="flex items-center gap-1.5 font-sans">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const isRec = activeRecording?.studentId === student.id && activeRecording?.fieldType === 'social_emotional';
+                                          if (isRec) {
+                                            stopRecording();
+                                          } else {
+                                            startRecording(
+                                              student.id,
+                                              'social_emotional',
+                                              draft?.attendanceCommentTeacherEdited || draft?.attendanceCommentAiDraft || ''
+                                            );
+                                          }
+                                        }}
+                                        className={cn(
+                                          "flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded transition-all cursor-pointer",
+                                          activeRecording?.studentId === student.id && activeRecording?.fieldType === 'social_emotional'
+                                            ? "bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 animate-pulse font-sans"
+                                            : "bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200 font-sans"
+                                        )}
+                                      >
+                                        {activeRecording?.studentId === student.id && activeRecording?.fieldType === 'social_emotional' ? (
+                                          <>
+                                            <MicOff size={11} className="text-red-600" />
+                                            <span>Berhenti</span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Mic size={11} className="text-gray-600" />
+                                            <span>Dikte</span>
+                                          </>
+                                        )}
+                                      </button>
+                                      {activeRecording?.studentId === student.id && activeRecording?.fieldType === 'social_emotional' && (
+                                        <span className="text-[10px] text-red-500 font-bold italic animate-pulse font-sans">
+                                          Mendengarkan...
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <div className="flex items-center gap-2 font-sans">
+                                      {draft?.attendanceCommentAiDraft && (draft?.attendanceCommentTeacherEdited === draft?.attendanceCommentAiDraft) && (
+                                        <span className="text-[8px] bg-sky-50 text-sky-700 border border-sky-100 rounded px-1.5 py-0.5 font-bold tracking-wide font-sans">
+                                          Original AI Draft Drafted
+                                        </span>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRefineComment(
+                                          student.id,
+                                          student.name,
+                                          'social_emotional',
+                                          draft?.attendanceCommentTeacherEdited || draft?.attendanceCommentAiDraft || ''
+                                        )}
+                                        disabled={
+                                          !(draft?.attendanceCommentTeacherEdited || draft?.attendanceCommentAiDraft || '').trim() ||
+                                          (refiningField?.studentId === student.id && refiningField?.fieldType === 'social_emotional')
+                                        }
+                                        className="flex items-center gap-1 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed px-2.5 py-1 rounded transition-all cursor-pointer font-sans"
+                                      >
+                                        {refiningField?.studentId === student.id && refiningField?.fieldType === 'social_emotional' ? (
+                                          <Loader2 size={11} className="animate-spin text-indigo-600" />
+                                        ) : (
+                                          <Sparkles size={11} className="text-indigo-600" />
+                                        )}
+                                        <span>Rapikan dengan AI</span>
+                                      </button>
+                                    </div>
+                                  </div>
                                 </div>
 
                                 {/* 2. Observation Comment block */}
@@ -1664,11 +1945,77 @@ export default function WeeklySummary() {
                                     className="w-full bg-gray-50/50 p-3 rounded-xl border border-gray-200 outline-none focus:bg-white text-xs text-gray-800 leading-relaxed font-serif resize-none"
                                     placeholder="Tuliskan catatan akademik atau generate melalui tombol AI diatas..."
                                   />
-                                  {draft?.observationCommentAiDraft && (draft?.observationCommentTeacherEdited === draft?.observationCommentAiDraft) && (
-                                    <span className="text-[8px] bg-sky-50 text-sky-700 border border-sky-100 rounded px-1.5 py-0.5 font-bold tracking-wide font-sans">
-                                      Original AI Draft Drafted
-                                    </span>
-                                  )}
+                                  <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5 pt-1 border-t border-gray-100">
+                                    <div className="flex items-center gap-1.5 font-sans">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const isRec = activeRecording?.studentId === student.id && activeRecording?.fieldType === 'weekly_domains';
+                                          if (isRec) {
+                                            stopRecording();
+                                          } else {
+                                            startRecording(
+                                              student.id,
+                                              'weekly_domains',
+                                              draft?.observationCommentTeacherEdited || draft?.observationCommentAiDraft || ''
+                                            );
+                                          }
+                                        }}
+                                        className={cn(
+                                          "flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded transition-all cursor-pointer",
+                                          activeRecording?.studentId === student.id && activeRecording?.fieldType === 'weekly_domains'
+                                            ? "bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 animate-pulse font-sans"
+                                            : "bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200 font-sans"
+                                        )}
+                                      >
+                                        {activeRecording?.studentId === student.id && activeRecording?.fieldType === 'weekly_domains' ? (
+                                          <>
+                                            <MicOff size={11} className="text-red-600" />
+                                            <span>Berhenti</span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Mic size={11} className="text-gray-600" />
+                                            <span>Dikte</span>
+                                          </>
+                                        )}
+                                      </button>
+                                      {activeRecording?.studentId === student.id && activeRecording?.fieldType === 'weekly_domains' && (
+                                        <span className="text-[10px] text-red-500 font-bold italic animate-pulse font-sans">
+                                          Mendengarkan...
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <div className="flex items-center gap-2 font-sans">
+                                      {draft?.observationCommentAiDraft && (draft?.observationCommentTeacherEdited === draft?.observationCommentAiDraft) && (
+                                        <span className="text-[8px] bg-sky-50 text-sky-700 border border-sky-100 rounded px-1.5 py-0.5 font-bold tracking-wide font-sans">
+                                          Original AI Draft Drafted
+                                        </span>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRefineComment(
+                                          student.id,
+                                          student.name,
+                                          'weekly_domains',
+                                          draft?.observationCommentTeacherEdited || draft?.observationCommentAiDraft || ''
+                                        )}
+                                        disabled={
+                                          !(draft?.observationCommentTeacherEdited || draft?.observationCommentAiDraft || '').trim() ||
+                                          (refiningField?.studentId === student.id && refiningField?.fieldType === 'weekly_domains')
+                                        }
+                                        className="flex items-center gap-1 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed px-2.5 py-1 rounded transition-all cursor-pointer font-sans"
+                                      >
+                                        {refiningField?.studentId === student.id && refiningField?.fieldType === 'weekly_domains' ? (
+                                          <Loader2 size={11} className="animate-spin text-indigo-600" />
+                                        ) : (
+                                          <Sparkles size={11} className="text-indigo-600" />
+                                        )}
+                                        <span>Rapikan dengan AI</span>
+                                      </button>
+                                    </div>
+                                  </div>
                                 </div>
 
                               </div>
@@ -2001,6 +2348,130 @@ export default function WeeklySummary() {
               </motion.div>
             </div>
 
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* REVIEW AI REFINE RESULT MODAL */}
+      <AnimatePresence>
+        {refineReview && (
+          <div className="fixed inset-0 z-50 overflow-y-auto font-sans">
+            {/* Backdrop */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setRefineReview(null)}
+              className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm cursor-pointer"
+            />
+
+            {/* Modal Container */}
+            <div className="flex min-h-screen items-center justify-center p-4 sm:p-6 lg:p-8 font-sans">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-gray-150 overflow-hidden flex flex-col max-h-[90vh] font-sans"
+              >
+                {/* Header */}
+                <div className="bg-gradient-to-r from-indigo-600 to-violet-700 p-6 text-white flex justify-between items-center shrink-0">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-white/10 p-2.5 rounded-2xl">
+                      <Sparkles size={22} className="text-yellow-300" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-black tracking-tight font-sans">Review Hasil AI - {refineReview.studentName}</h3>
+                      <p className="text-xs text-indigo-100 font-medium font-sans">Silakan periksa perbandingan teks sebelum menerapkan saran perbaikan AI.</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setRefineReview(null)}
+                    className="p-1.5 rounded-full hover:bg-white/15 transition-all text-white/85 hover:text-white cursor-pointer font-extrabold text-sm w-7 h-7 flex items-center justify-center bg-white/5"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* Content */}
+                <div className="p-6 overflow-y-auto space-y-5 flex-1 font-sans">
+                  {/* Left-Right or Top-Bottom Comparison */}
+                  <div className="space-y-4 font-sans">
+                    
+                    {/* Original Teks */}
+                    <div className="space-y-1.5 font-sans">
+                      <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider block font-sans">Komentar Asli Anda:</span>
+                      <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 text-xs text-gray-750 font-serif leading-relaxed italic whitespace-pre-wrap">
+                        "{refineReview.originalText}"
+                      </div>
+                    </div>
+
+                    {/* Arrow Indicator */}
+                    <div className="flex justify-center font-sans">
+                      <div className="bg-indigo-50 text-indigo-600 p-2 rounded-full border border-indigo-100 shadow-sm">
+                        <ArrowRight size={16} className="rotate-90 md:rotate-0" />
+                      </div>
+                    </div>
+
+                    {/* AI Refined Teks */}
+                    <div className="space-y-1.5 font-sans">
+                      <span className="text-[10px] font-black text-indigo-600 uppercase tracking-wider block font-sans">Hasil Rapian AI (Lumina):</span>
+                      <div className="bg-indigo-50/35 border border-indigo-150 rounded-2xl p-4 text-xs text-gray-800 font-serif leading-relaxed whitespace-pre-wrap">
+                        {refineReview.refinedText}
+                      </div>
+                    </div>
+
+                  </div>
+
+                  <div className="bg-amber-50 border border-amber-200 p-3.5 rounded-2xl text-[11px] text-amber-900 leading-relaxed font-sans font-medium">
+                    ⚠️ <b>Penting:</b> AI hanya memperbaiki tata bahasa, ejaan, tanda baca, dan susunan kalimat agar lebih profesional tanpa mengubah atau menambahkan fakta observasi baru dari Anda.
+                  </div>
+                </div>
+
+                {/* Footer Actions */}
+                <div className="bg-gray-55 p-5 border-t border-gray-150 flex flex-wrap gap-2.5 justify-end items-center shrink-0 font-sans">
+                  <button
+                    type="button"
+                    onClick={() => setRefineReview(null)}
+                    className="border border-gray-250 hover:bg-gray-100 text-gray-650 font-extrabold text-xs py-2.5 px-4.5 rounded-xl transition-all cursor-pointer font-sans"
+                  >
+                    Pertahankan Teks Asli
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const { studentId, fieldType, refinedText } = refineReview;
+                      if (fieldType === 'social_emotional') {
+                        handleLocalDraftChange(studentId, { attendanceCommentTeacherEdited: refinedText });
+                      } else {
+                        handleLocalDraftChange(studentId, { observationCommentTeacherEdited: refinedText });
+                      }
+                      setRefineReview(null);
+                      toast.info("Teks asli telah digantikan dengan hasil AI. Anda masih dapat mengeditnya secara manual sebelum menyimpan draf.");
+                    }}
+                    className="border border-indigo-250 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 font-extrabold text-xs py-2.5 px-4.5 rounded-xl transition-all cursor-pointer font-sans"
+                  >
+                    Edit Lagi
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const { studentId, fieldType, refinedText } = refineReview;
+                      if (fieldType === 'social_emotional') {
+                        handleLocalDraftChange(studentId, { attendanceCommentTeacherEdited: refinedText });
+                      } else {
+                        handleLocalDraftChange(studentId, { observationCommentTeacherEdited: refinedText });
+                      }
+                      setRefineReview(null);
+                      toast.success("Hasil AI berhasil diterapkan! Silakan klik 'Simpan Draf Siswa' di baris siswa untuk menyimpannya permanen.");
+                    }}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs py-2.5 px-5 rounded-xl transition-all shadow-md shadow-indigo-600/10 cursor-pointer font-sans"
+                  >
+                    Gunakan Hasil AI
+                  </button>
+                </div>
+
+              </motion.div>
+            </div>
           </div>
         )}
       </AnimatePresence>

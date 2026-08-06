@@ -5322,6 +5322,75 @@ app.post("/api/kindergarten/generate-weekly-comment", async (req, res) => {
   }
 });
 
+// API: Refine Comment (Rapikan dengan AI) for Weekly Summary
+app.post("/api/kindergarten/weekly-summary/refine-comment", async (req, res) => {
+  try {
+    const { text, fieldType, studentName, classLevel, theme, week } = req.body;
+    if (!text || text.trim() === "") {
+      return res.status(400).json({ error: "Teks komentar kosong." });
+    }
+
+    const API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
+    if (!API_KEY || API_KEY.trim() === "") {
+      return res.status(500).json({ error: "AI API key is not configured on the server." });
+    }
+
+    const BASE_URL = process.env.VITE_AI_BASE_URL || "https://api.koboillm.com/v1";
+    const MODEL = process.env.VITE_AI_MODEL || "gemini/gemini-2.5-flash-lite";
+
+    const systemPrompt = `Kamu adalah editor bahasa untuk komentar perkembangan siswa Kindergarten.
+Rapikan teks Bahasa Indonesia dari guru agar jelas, profesional, hangat,
+ringkas, dan layak dimasukkan ke Weekly Summary/rapor.
+
+ATURAN KETAT:
+1. Pertahankan seluruh fakta, makna, dan tingkat kepastian dari teks asli.
+2. Jangan menambahkan fakta, kemampuan, nilai, diagnosis, kesimpulan,
+   rekomendasi, atau aktivitas yang tidak disebutkan guru.
+3. Jangan mengubah nama siswa, angka, frekuensi, waktu, atau nama kegiatan.
+4. Perbaiki kapitalisasi, ejaan, tanda baca, pilihan kata, dan susunan
+   kalimat.
+5. Gunakan bahasa observasional dan positif; hindari label negatif.
+6. Jika teks berupa kalimat lisan yang terputus, susun menjadi kalimat
+   lengkap tanpa mengarang informasi baru.
+7. Kembalikan HANYA teks komentar yang sudah dirapikan, tanpa pembuka,
+   penjelasan, Markdown, atau tanda kutip tambahan.`;
+
+    const userContent = `Informasi Siswa:
+Nama Siswa: ${studentName || "Siswa"}
+Jenjang Kelas: ${classLevel || "-"}
+Tema: ${theme || "-"}
+Pekan: ${week || "-"}
+Tipe Kolom: ${fieldType || "Komentar"}
+
+Teks Asli Guru:
+"${text}"
+
+Silakan kembalikan versi yang telah dirapikan sesuai aturan ketat di atas.`;
+
+    const aiResponse = await axios.post(`${BASE_URL}/chat/completions`, {
+      model: MODEL,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userContent }
+      ],
+      temperature: 0.3
+    }, {
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${API_KEY}`,
+      },
+      timeout: 30000
+    });
+
+    const textResult = aiResponse.data?.choices?.[0]?.message?.content || "";
+    const sanitizedText = sanitizeAiComment(textResult);
+    res.json({ refinedText: sanitizedText });
+  } catch (error: any) {
+    console.error("[RefineCommentAI] Error calling AI API:", error);
+    res.status(500).json({ error: error.message || "Gagal merapikan komentar menggunakan AI." });
+  }
+});
+
 // API: Generate Weekly Social-Emotional Comments from Attendance
 app.post("/api/kindergarten/generate-sel-comment", async (req, res) => {
   try {
