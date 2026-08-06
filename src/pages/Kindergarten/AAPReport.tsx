@@ -10,9 +10,9 @@ import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { 
-  getKindergartenClasses, 
-  getKindergartenStudents 
+  getKindergartenClasses 
 } from '../../lib/kindergartenMetadataCache';
+import { getKindergartenActiveRoster } from '../../services/kindergartenRosterService';
 import { 
   AAP_ASPECTS, 
   getStageFromPercentage, 
@@ -28,42 +28,6 @@ import { jsPDF } from 'jspdf';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList 
 } from 'recharts';
-
-const isStudentInClass = (studClassId: string, activeClassObj: { id: string; name: string }) => {
-  const sClass = (studClassId || '').trim().toLowerCase();
-  const actId = (activeClassObj.id || '').trim().toLowerCase();
-  const actName = (activeClassObj.name || '').trim().toLowerCase();
-  
-  if (!sClass) return false;
-  if (sClass === actId || sClass === actName) return true;
-  
-  const norm = (str: string) => str.replace(/[\s\-_]+/g, '').toLowerCase();
-  const normS = norm(sClass);
-  const normId = norm(actId);
-  const normName = norm(actName);
-  
-  if (normS === normName || normS === normId) return true;
-  
-  const hasKomodo = (str: string) => str.includes('komodo');
-  const hasTapir = (str: string) => str.includes('tapir');
-  if (hasKomodo(normS) && hasKomodo(normName)) return true;
-  if (hasTapir(normS) && hasTapir(normName)) return true;
-
-  const specificClassWords = [
-    'koala', 'panda', 'caterpillar', 'butterfly',
-    'cenderawasih', 'elang', 'kakatua', 'badak', 'komodo', 'tapir'
-  ];
-  const hasSpecS = specificClassWords.some(w => normS.includes(w));
-  const hasSpecAct = specificClassWords.some(w => normId.includes(w) || normName.includes(w));
-  
-  if (hasSpecAct && !hasSpecS) {
-    return false;
-  }
-  
-  if (normId.includes(normS) || normS.includes(normId)) return true;
-  
-  return false;
-};
 
 export default function AAPReport() {
   const { activeYear } = useAcademicYear();
@@ -117,11 +81,10 @@ export default function AAPReport() {
     async function loadStudentsAndAssessments() {
       try {
         setIsLoading(true);
-        const studentList = await getKindergartenStudents(activeYear);
-        const activeClassObj = classes.find(c => c.id === selectedClassId);
-        const filteredStudents = activeClassObj 
-          ? studentList.filter((s: any) => isStudentInClass(s.classId, activeClassObj))
-          : [];
+        const filteredStudents = await getKindergartenActiveRoster({
+          classId: selectedClassId,
+          academicYearId: activeYear || '2026/2027'
+        });
         setStudents(filteredStudents);
 
         // Select first student if none selected or if selected student is not in the new class

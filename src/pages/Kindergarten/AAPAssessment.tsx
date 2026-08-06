@@ -12,8 +12,10 @@ import { useAcademicYear } from '../../context/AcademicYearContext';
 import { useNavigate } from 'react-router-dom';
 import { 
   getKindergartenClasses, 
-  getKindergartenStudents 
+  invalidateKindergartenCache
 } from '../../lib/kindergartenMetadataCache';
+import { useAuth } from '../../context/AuthContext';
+import { getKindergartenActiveRoster, KindergartenRosterStudent } from '../../services/kindergartenRosterService';
 import { 
   AAP_RUBRIC, 
   AAP_ASPECTS, 
@@ -25,10 +27,12 @@ import AAPImporter from './AAPImporter';
 export default function AAPAssessment() {
   const navigate = useNavigate();
   const { activeYear } = useAcademicYear();
+  const { profile } = useAuth();
   const [classes, setClasses] = React.useState<any[]>([]);
-  const [students, setStudents] = React.useState<any[]>([]);
+  const [classStudents, setClassStudents] = React.useState<KindergartenRosterStudent[]>([]);
   const [selectedClassId, setSelectedClassId] = React.useState<string>('');
   const [isLoading, setIsLoading] = React.useState(true);
+  const [isLoadingRoster, setIsLoadingRoster] = React.useState(false);
   
   // Importer Modal State
   const [isImportOpen, setIsImportOpen] = React.useState(false);
@@ -42,6 +46,71 @@ export default function AAPAssessment() {
 
   // Expanded student cards Map
   const [expandedStudentId, setExpandedStudentId] = React.useState<string | null>(null);
+
+  // Audit State
+  const [auditData, setAuditData] = React.useState<any[]>([]);
+  const [isAuditing, setIsAuditing] = React.useState(false);
+  const [showAuditPanel, setShowAuditPanel] = React.useState(false);
+
+  const isSuperAdminOrHead = profile?.role === 'SUPER_ADMIN' || profile?.role === 'HEAD_UNIT';
+
+  const runRosterAudit = React.useCallback(async () => {
+    try {
+      setIsAuditing(true);
+      const yr = activeYear || '2026/2027';
+      const fetchedClasses = await getKindergartenClasses(yr);
+      
+      const auditRows = await Promise.all(
+        fetchedClasses.map(async (cls) => {
+          // Get active roster count using the service
+          const roster = await getKindergartenActiveRoster({
+            classId: cls.id,
+            academicYearId: yr
+          });
+
+          // Query enrollments for current class to count active students
+          const enrollmentsQuery = query(
+            collection(db, 'enrollments'),
+            where('unitId', '==', 'KINDERGARTEN'),
+            where('academicYear', '==', yr)
+          );
+          const enrollmentsSnap = await getDocs(enrollmentsQuery);
+          const enrollments = enrollmentsSnap.docs
+            .map(docSnap => docSnap.data())
+            .filter(e => {
+              const isActive = e.status === 'active' || !e.status;
+              const matchesClass = e.classId === cls.id || e.classId === cls.name;
+              return isActive && matchesClass;
+            });
+
+          const countManajemenKelas = enrollments.length;
+          const rosterCount = roster.length;
+          const status = countManajemenKelas === rosterCount ? 'OK' : 'MISMATCH';
+
+          return {
+            classId: cls.id,
+            className: cls.name,
+            countManajemenKelas,
+            rosterCount,
+            status
+          };
+        })
+      );
+
+      setAuditData(auditRows);
+    } catch (err) {
+      console.error("Error running roster audit:", err);
+      toast.error("Gagal menjalankan audit roster.");
+    } finally {
+      setIsAuditing(false);
+    }
+  }, [activeYear]);
+
+  React.useEffect(() => {
+    if (showAuditPanel && isSuperAdminOrHead) {
+      runRosterAudit();
+    }
+  }, [showAuditPanel, activeYear, isSuperAdminOrHead, runRosterAudit]);
 
   const activeClassObj = classes.find(c => c.id === selectedClassId);
 
@@ -71,12 +140,12 @@ export default function AAPAssessment() {
     return list;
   }, [ageRangeUsed]);
 
-  // Load Classes and Students initially
+  // Load Classes initially
   React.useEffect(() => {
-    async function loadData() {
+    async function loadClasses() {
       try {
         setIsLoading(true);
-        const yr = activeYear || '2025/2026';
+        const yr = activeYear || '2026/2027';
         
         const fetchedClasses = await getKindergartenClasses(yr);
         setClasses(fetchedClasses);
@@ -84,20 +153,41 @@ export default function AAPAssessment() {
         if (fetchedClasses.length > 0) {
           setSelectedClassId(fetchedClasses[0].id);
         }
-
-        const fetchedStudents = await getKindergartenStudents(yr);
-        setStudents(fetchedStudents);
       } catch (err) {
-        console.error("Error loading Kindergarten classes/students for AAP:", err);
+        console.error("Error loading Kindergarten classes for AAP:", err);
         toast.error("Gagal memuat metadata kelas Lumina Kindergarten.");
       } finally {
         setIsLoading(false);
       }
     }
-    loadData();
+    loadClasses();
   }, [activeYear]);
 
-  // Fetch assessments when selectedClassId or activeYear changes
+  // Fetch student active roster using the unified service
+  React.useEffect(() => {
+    if (!selectedClassId) {
+      setClassStudents([]);
+      return;
+    }
+    async function loadRoster() {
+      try {
+        setIsLoadingRoster(true);
+        const roster = await getKindergartenActiveRoster({
+          classId: selectedClassId,
+          academicYearId: activeYear || '2026/2027'
+        });
+        setClassStudents(roster);
+      } catch (err) {
+        console.error("Error loading Kindergarten active roster:", err);
+        toast.error("Gagal memuat daftar siswa aktif kelas.");
+      } finally {
+        setIsLoadingRoster(false);
+      }
+    }
+    loadRoster();
+  }, [selectedClassId, activeYear]);
+
+  // Fetch assessments when selectedClassId, activeYear or classStudents changes
   const loadAssessments = React.useCallback(async () => {
     if (!selectedClassId) return;
     try {
@@ -116,7 +206,6 @@ export default function AAPAssessment() {
 
       // Initialize editing scores map from fetched Firestore records
       const initialScores: Record<string, Record<string, number>> = {};
-      const classStudents = students.filter(s => activeClassObj && isStudentInClass(s.classId, activeClassObj));
       
       classStudents.forEach(s => {
         const records = fetched[s.id];
@@ -137,54 +226,11 @@ export default function AAPAssessment() {
     } finally {
       setIsLoadingAssessments(false);
     }
-  }, [selectedClassId, activeYear, students]);
+  }, [selectedClassId, activeYear, classStudents]);
 
   React.useEffect(() => {
     loadAssessments();
   }, [loadAssessments]);
-
-  // Helper mapping helper logic from Observation.tsx
-  const isStudentInClass = React.useCallback((studClassId: string, activeClassObj: { id: string; name: string }) => {
-    const sClass = (studClassId || '').trim().toLowerCase();
-    const actId = (activeClassObj.id || '').trim().toLowerCase();
-    const actName = (activeClassObj.name || '').trim().toLowerCase();
-    
-    if (!sClass) return false;
-    if (sClass === actId || sClass === actName) return true;
-    
-    const norm = (str: string) => str.replace(/[\s\-_]+/g, '').toLowerCase();
-    const normS = norm(sClass);
-    const normId = norm(actId);
-    const normName = norm(actName);
-    
-    if (normS === normName || normS === normId) return true;
-    
-    const hasKomodo = (str: string) => str.includes('komodo');
-    const hasTapir = (str: string) => str.includes('tapir');
-    if (hasKomodo(normS) && hasKomodo(normName)) return true;
-    if (hasTapir(normS) && hasTapir(normName)) return true;
-
-    const specificClassWords = [
-      'koala', 'panda', 'caterpillar', 'butterfly',
-      'cenderawasih', 'elang', 'kakatua', 'badak', 'komodo', 'tapir'
-    ];
-    const hasSpecS = specificClassWords.some(w => normS.includes(w));
-    const hasSpecAct = specificClassWords.some(w => normId.includes(w) || normName.includes(w));
-    
-    if (hasSpecAct && !hasSpecS) {
-      return false;
-    }
-    
-    if (normId.includes(normS) || normS.includes(normId)) return true;
-    
-    return false;
-  }, []);
-
-  // Get current class students
-  const classStudents = React.useMemo(() => {
-    if (!selectedClassId || !activeClassObj) return [];
-    return students.filter(s => isStudentInClass(s.classId, activeClassObj));
-  }, [students, selectedClassId, activeClassObj, isStudentInClass]);
 
   // Realtime scores aggregator & stats generator per student
   const calculateLiveScores = (studentId: string) => {
@@ -378,7 +424,7 @@ export default function AAPAssessment() {
       <div className="max-w-7xl mx-auto space-y-6 pb-16 px-4">
         <AAPImporter 
           classes={classes}
-          students={students}
+          students={classStudents}
           selectedClassId={selectedClassId}
           onClose={() => setIsImportOpen(false)}
           onImportSuccess={loadAssessments}
@@ -711,6 +757,96 @@ export default function AAPAssessment() {
               <CheckCircle2 size={16} /> Simpan Semua Roster Kelas
             </button>
           </div>
+
+          {/* Audit & Validasi Roster (Hanya Super Admin / Head Unit) */}
+          {isSuperAdminOrHead && (
+            <div className="bg-white rounded-3xl border border-gray-200/80 p-6 md:p-8 shadow-sm space-y-6">
+              <div className="flex items-center justify-between cursor-pointer border-b border-gray-100 pb-4 select-none" onClick={() => setShowAuditPanel(!showAuditPanel)}>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 bg-indigo-100 text-indigo-700 text-[10px] font-black uppercase rounded-md tracking-wider">Admin Tool</span>
+                    <h3 className="text-sm font-black text-gray-900 uppercase tracking-wider">Audit & Validasi Roster</h3>
+                  </div>
+                  <p className="text-xs text-gray-400">
+                    Bandingkan sinkronisasi roster antara Manajemen Kelas (Enrollments), Roster Aktif AAP, dan data Assessments.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="p-2 hover:bg-gray-50 rounded-xl transition-all"
+                >
+                  <ChevronDown size={18} className={cn("text-gray-500 transition-transform duration-200", showAuditPanel && "rotate-180")} />
+                </button>
+              </div>
+
+              {showAuditPanel && (
+                <div className="space-y-4 animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-gray-500">Tahun Ajaran: {activeYear || '2026/2027'}</span>
+                    <button
+                      type="button"
+                      onClick={runRosterAudit}
+                      disabled={isAuditing}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 hover:bg-gray-100 disabled:opacity-50 text-gray-700 rounded-xl text-xs font-bold border border-gray-150 transition-all cursor-pointer"
+                    >
+                      <RefreshCw size={12} className={cn(isAuditing && "animate-spin")} /> Refresh Audit
+                    </button>
+                  </div>
+
+                  {isAuditing ? (
+                    <div className="flex flex-col items-center justify-center py-12 gap-3 text-gray-400 text-xs">
+                      <RefreshCw size={24} className="animate-spin text-indigo-500" />
+                      <span>Menghitung data audit roster...</span>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto border border-gray-100 rounded-2xl">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-gray-50/70 border-b border-gray-100 font-bold text-gray-500 uppercase tracking-wider">
+                            <th className="px-4 py-3">Nama Kelas</th>
+                            <th className="px-4 py-3 text-center">Jumlah Manajemen Kelas (Active Enrollments)</th>
+                            <th className="px-4 py-3 text-center">Jumlah AAP Assessment (Roster)</th>
+                            <th className="px-4 py-3 text-center">Jumlah Dropdown Importer</th>
+                            <th className="px-4 py-3 text-center">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-150">
+                          {auditData.map((row) => {
+                            const isMatch = row.status === 'OK';
+                            return (
+                              <tr key={row.classId} className="hover:bg-gray-50/40 transition">
+                                <td className="px-4 py-3 font-extrabold text-gray-800">{row.className}</td>
+                                <td className="px-4 py-3 text-center font-bold text-gray-600">{row.countManajemenKelas}</td>
+                                <td className="px-4 py-3 text-center font-bold text-indigo-600">{row.rosterCount}</td>
+                                <td className="px-4 py-3 text-center font-bold text-indigo-600">{row.rosterCount}</td>
+                                <td className="px-4 py-3 text-center">
+                                  <span className={cn(
+                                    "inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider",
+                                    isMatch 
+                                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200" 
+                                      : "bg-orange-50 text-orange-700 border border-orange-200"
+                                  )}>
+                                    {row.status}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          {auditData.length === 0 && (
+                            <tr>
+                              <td colSpan={5} className="px-4 py-8 text-center text-gray-400 font-medium">
+                                Tidak ada data kelas untuk diaudit.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
