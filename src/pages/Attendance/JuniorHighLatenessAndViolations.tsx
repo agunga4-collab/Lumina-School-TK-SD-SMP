@@ -9,7 +9,7 @@ import {
 import { cn } from '../../lib/utils';
 import { db, getActiveStudents } from '../../lib/firebase';
 import { 
-  collection, query, where, getDocs, doc, setDoc, 
+  collection, query, where, getDocs, doc, setDoc, getDoc,
   serverTimestamp, deleteDoc, onSnapshot, updateDoc, addDoc 
 } from 'firebase/firestore';
 import { useAcademicYear } from '../../context/AcademicYearContext';
@@ -99,6 +99,7 @@ export default function JuniorHighLatenessAndViolations() {
   // Inline edit states for saved lateness
   const [editingLatenessId, setEditingLatenessId] = React.useState<string | null>(null);
   const [editingLatenessReason, setEditingLatenessReason] = React.useState('');
+  const [editingLatenessTime, setEditingLatenessTime] = React.useState('');
   const [editingLatenessCustom, setEditingLatenessCustom] = React.useState(false);
   const [updatingLatenessId, setUpdatingLatenessId] = React.useState<string | null>(null);
 
@@ -473,24 +474,37 @@ export default function JuniorHighLatenessAndViolations() {
 
       const promises = toSave.map(async (record) => {
         const recordId = `${latenessDate}_${record.id}`;
-        await setDoc(doc(db, 'lateness_records', recordId), {
-          studentId: record.id,
-          studentName: record.name,
-          classId: selectedClassId,
-          className: className,
-          date: latenessDate,
-          arrivalTime: record.arrivalTime,
-          reason: record.reason || '',
-          parentNote: false,
-          recordedAt: serverTimestamp(),
-          academicYear: activeYear,
-          semester: activeSemester,
-          unitId: 'JUNIOR_HIGH'
-        });
+        const recordRef = doc(db, 'lateness_records', recordId);
+        const recordSnap = await getDoc(recordRef);
+        
+        if (recordSnap.exists()) {
+          // Update existing record
+          await setDoc(recordRef, {
+            arrivalTime: record.arrivalTime,
+            reason: record.reason || '',
+            updatedAt: serverTimestamp()
+          }, { merge: true });
+        } else {
+          // Create new record
+          await setDoc(recordRef, {
+            studentId: record.id,
+            studentName: record.name,
+            classId: selectedClassId,
+            className: className,
+            date: latenessDate,
+            arrivalTime: record.arrivalTime,
+            reason: record.reason || '',
+            parentNote: false,
+            recordedAt: serverTimestamp(),
+            academicYear: activeYear,
+            semester: activeSemester,
+            unitId: 'JUNIOR_HIGH'
+          });
+        }
       });
 
       await Promise.all(promises);
-      toast.success(`Berhasil menyimpan ${toSave.length} catatan keterlambatan & notifikasi terkirim.`);
+      toast.success(`Berhasil menyimpan ${toSave.length} catatan keterlambatan.`);
       
       // Clear draft forms
       setLatenessClassStudents(prev => prev.map(s => ({ ...s, arrivalTime: '', reason: '' })));
@@ -503,19 +517,27 @@ export default function JuniorHighLatenessAndViolations() {
     }
   };
 
-  // Update saved reason
+  // Update saved reason and time
   const handleUpdateSavedLatenessReason = async (recordId: string) => {
+    // Validate time format (HH:MM)
+    const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    if (!timeRegex.test(editingLatenessTime)) {
+      toast.error('Format waktu tidak valid. Gunakan format HH:MM (contoh: 07:45).');
+      return;
+    }
+
     setUpdatingLatenessId(recordId);
     try {
       await updateDoc(doc(db, 'lateness_records', recordId), {
         reason: editingLatenessReason,
+        arrivalTime: editingLatenessTime,
         updatedAt: serverTimestamp()
       });
-      toast.success('Alasan keterlambatan berhasil diperbarui.');
+      toast.success('Data keterlambatan berhasil diperbarui.');
       setEditingLatenessId(null);
     } catch (err) {
       console.error(err);
-      toast.error('Gagal memperbarui alasan.');
+      toast.error('Gagal memperbarui data keterlambatan.');
     } finally {
       setUpdatingLatenessId(null);
     }
@@ -1151,10 +1173,18 @@ export default function JuniorHighLatenessAndViolations() {
   // ----------------------------------------------------
   // SUB-RENDER: TAB 1 KETERLAMBATAN Form & Table
   // ----------------------------------------------------
-  const filteredLatenessClassStudents = latenessClassStudents.filter(s => 
-    s.name.toLowerCase().includes(latenessSearch.toLowerCase()) || 
-    (s.nickname && s.nickname.toLowerCase().includes(latenessSearch.toLowerCase()))
-  );
+  const recordedStudentIds = React.useMemo(() => {
+    return latenessTodaySaved.map(r => r.studentId);
+  }, [latenessTodaySaved]);
+
+  const filteredLatenessClassStudents = React.useMemo(() => {
+    return latenessClassStudents.filter(s => {
+      const isRecorded = recordedStudentIds.includes(s.id);
+      if (isRecorded) return false;
+      return s.name.toLowerCase().includes(latenessSearch.toLowerCase()) || 
+        (s.nickname && s.nickname.toLowerCase().includes(latenessSearch.toLowerCase()));
+    });
+  }, [latenessClassStudents, recordedStudentIds, latenessSearch]);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
@@ -1279,7 +1309,13 @@ export default function JuniorHighLatenessAndViolations() {
                     </div>
                   ) : filteredLatenessClassStudents.length === 0 ? (
                     <div className="p-12 text-center text-gray-400">
-                      <p className="text-sm italic font-medium">Tidak ada siswa ditemukan di kelas ini.</p>
+                      {latenessClassStudents.length === 0 ? (
+                        <p className="text-sm italic font-medium">Tidak ada siswa ditemukan di kelas ini.</p>
+                      ) : latenessSearch !== '' ? (
+                        <p className="text-sm italic font-medium">Tidak ada siswa yang cocok dengan pencarian.</p>
+                      ) : (
+                        <p className="text-sm italic font-medium">Tidak ada siswa lain yang perlu dicatat untuk tanggal ini.</p>
+                      )}
                     </div>
                   ) : (
                     <table className="w-full text-left">
@@ -1454,9 +1490,31 @@ export default function JuniorHighLatenessAndViolations() {
                               </span>
                             </td>
                             <td className="px-6 py-4">
-                              <span className="text-xs font-black text-red-600 bg-red-50 border border-red-100 px-2.5 py-1 rounded-lg">
-                                {record.arrivalTime}
-                              </span>
+                              {editingLatenessId === record.id ? (
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="text"
+                                    placeholder="07:30"
+                                    inputMode="numeric"
+                                    value={editingLatenessTime}
+                                    onChange={(e) => handleTimeChange(record.id, e.target.value, (_, val) => setEditingLatenessTime(val))}
+                                    onBlur={(e) => handleTimeBlur(record.id, e.target.value, (_, val) => setEditingLatenessTime(val))}
+                                    className="bg-gray-50 border border-gray-100 rounded-lg px-2.5 py-1.5 text-xs font-black text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 w-24 text-center"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingLatenessTime(getCurrentTimeStr())}
+                                    className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                                    title="Set jam saat ini"
+                                  >
+                                    <Clock size={14} />
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-xs font-black text-red-600 bg-red-50 border border-red-100 px-2.5 py-1 rounded-lg">
+                                  {record.arrivalTime}
+                                </span>
+                              )}
                             </td>
                             <td className="px-6 py-4">
                               {editingLatenessId === record.id ? (
@@ -1533,6 +1591,7 @@ export default function JuniorHighLatenessAndViolations() {
                                     onClick={() => {
                                       setEditingLatenessId(record.id);
                                       setEditingLatenessReason(record.reason || '');
+                                      setEditingLatenessTime(record.arrivalTime || '');
                                       const isPreset = JUNIOR_HIGH_REASONS.includes(record.reason || '') || (record.reason || '') === '';
                                       setEditingLatenessCustom(!isPreset);
                                     }}
