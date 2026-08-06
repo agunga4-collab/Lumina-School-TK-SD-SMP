@@ -574,8 +574,8 @@ export default function AAPReport() {
                   
                   <div className="space-y-4">
                     {currentAssessment.aspects.map((asp: any) => {
-                      const analysis = AAP_DEVELOPMENT_ANALYSIS[asp.aspectName as AAPAspectName]?.[asp.stage as any] || 'Siswa menunjukkan capaian sesuai dengan butir penilaian.';
-                      const recommendation = AAP_RECOMMENDATIONS[asp.aspectName as AAPAspectName]?.[asp.stage as any] || 'Sediakan stimulasi teratur di kelas dan rumah.';
+                      const analysis = asp.analysis || AAP_DEVELOPMENT_ANALYSIS[asp.aspectName as AAPAspectName]?.[asp.stage as any] || 'Siswa menunjukkan capaian sesuai dengan butir penilaian.';
+                      const recommendation = asp.stimulationRecommendation || AAP_RECOMMENDATIONS[asp.aspectName as AAPAspectName]?.[asp.stage as any] || 'Sediakan stimulasi teratur di kelas dan rumah.';
 
                       return (
                         <div key={asp.aspectName} className="p-5 border border-gray-150 rounded-2xl space-y-2 bg-white">
