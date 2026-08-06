@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { 
   Plus, Calendar, Trash2, CheckCircle2, XCircle, 
-  ChevronRight, AlertCircle, Clock, Info 
+  ChevronRight, AlertCircle, Clock, Info, Edit
 } from 'lucide-react';
 import { 
   getSEPeriods, saveSEPeriod, toggleSEPeriodActive, deleteSEPeriod, 
@@ -11,7 +11,7 @@ import { SEPeriod } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, setDoc } from 'firebase/firestore';
 
 export default function SEPeriods() {
   const { profile } = useAuth();
@@ -19,6 +19,7 @@ export default function SEPeriods() {
   const [loading, setLoading] = React.useState(true);
   const [showModal, setShowModal] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
+  const [editingPeriod, setEditingPeriod] = React.useState<SEPeriod | null>(null);
 
   const [formData, setFormData] = React.useState({
     academicYear: '2026/2027',
@@ -32,6 +33,15 @@ export default function SEPeriods() {
     exhibitionDate: ''
   });
 
+  const formatDateToInput = (timestamp: number) => {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const fetchPeriods = React.useCallback(async () => {
     const data = await getSEPeriods('JUNIOR_HIGH');
     setPeriods(data || []);
@@ -42,28 +52,80 @@ export default function SEPeriods() {
     fetchPeriods();
   }, [fetchPeriods]);
 
+  const handleCreateClick = () => {
+    setEditingPeriod(null);
+    setFormData({
+      academicYear: '2026/2027',
+      semester: '1',
+      periodNumber: 1,
+      label: '',
+      startDate: '',
+      endDate: '',
+      totalSessions: 9,
+      planningDeadline: '',
+      exhibitionDate: ''
+    });
+    setShowModal(true);
+  };
+
+  const handleEditClick = (period: SEPeriod) => {
+    setEditingPeriod(period);
+    setFormData({
+      academicYear: period.academicYear,
+      semester: period.semester,
+      periodNumber: period.periodNumber,
+      label: period.label,
+      startDate: formatDateToInput(period.startDate),
+      endDate: formatDateToInput(period.endDate),
+      totalSessions: period.totalSessions,
+      planningDeadline: formatDateToInput(period.planningDeadline),
+      exhibitionDate: formatDateToInput(period.exhibitionDate)
+    });
+    setShowModal(true);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await saveSEPeriod({
-        unitId: 'JUNIOR_HIGH',
-        academicYear: formData.academicYear,
-        semester: formData.semester,
-        periodNumber: formData.periodNumber,
-        label: formData.label,
-        startDate: new Date(formData.startDate).getTime(),
-        endDate: new Date(formData.endDate).getTime(),
-        totalSessions: formData.totalSessions,
-        planningDeadline: new Date(formData.planningDeadline).getTime(),
-        exhibitionDate: new Date(formData.exhibitionDate).getTime(),
-        isActive: false,
-        createdBy: profile?.email || ''
-      });
+      if (editingPeriod) {
+        const updatedData = {
+          ...editingPeriod,
+          academicYear: formData.academicYear,
+          semester: formData.semester,
+          periodNumber: formData.periodNumber,
+          label: formData.label,
+          startDate: new Date(formData.startDate).getTime(),
+          endDate: new Date(formData.endDate).getTime(),
+          totalSessions: formData.totalSessions,
+          planningDeadline: new Date(formData.planningDeadline).getTime(),
+          exhibitionDate: new Date(formData.exhibitionDate).getTime()
+        };
+        await setDoc(doc(db, 'sePeriods', editingPeriod.id), updatedData, { merge: true });
+        alert("Periode berhasil diperbarui.");
+      } else {
+        await saveSEPeriod({
+          unitId: 'JUNIOR_HIGH',
+          academicYear: formData.academicYear,
+          semester: formData.semester,
+          periodNumber: formData.periodNumber,
+          label: formData.label,
+          startDate: new Date(formData.startDate).getTime(),
+          endDate: new Date(formData.endDate).getTime(),
+          totalSessions: formData.totalSessions,
+          planningDeadline: new Date(formData.planningDeadline).getTime(),
+          exhibitionDate: new Date(formData.exhibitionDate).getTime(),
+          isActive: false,
+          createdBy: profile?.email || ''
+        });
+        alert("Periode berhasil dibuat.");
+      }
       setShowModal(false);
+      setEditingPeriod(null);
       fetchPeriods();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert("Gagal menyimpan periode: " + err.message);
     } finally {
       setSubmitting(false);
     }
@@ -108,7 +170,7 @@ export default function SEPeriods() {
            <p className="text-sm text-gray-500 font-medium mt-1">Konfigurasi jadwal eksplorasi diri per semester.</p>
         </div>
         <button 
-          onClick={() => setShowModal(true)}
+          onClick={handleCreateClick}
           className="flex items-center gap-3 bg-blue-600 text-white px-8 py-4 rounded-[2rem] font-black uppercase text-[10px] tracking-widest hover:bg-blue-700 transition-all shadow-xl shadow-blue-100 active:scale-95"
         >
           <Plus size={16} /> Buat Periode Baru
@@ -142,7 +204,7 @@ export default function SEPeriods() {
                )}
 
                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-8">
-                  <div className="space-y-4">
+                  <div className="space-y-4 flex-grow">
                      <div className="flex items-center gap-3">
                         <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600">
                            <Calendar size={24} />
@@ -163,7 +225,7 @@ export default function SEPeriods() {
                      </div>
                   </div>
 
-                  <div className="flex items-center gap-3 lg:border-l lg:border-gray-100 lg:pl-8">
+                  <div className="flex items-center gap-3 lg:border-l lg:border-gray-100 lg:pl-8 shrink-0">
                      <button 
                         onClick={() => handleToggleActive(period.id, period.isActive)}
                         className={cn(
@@ -177,8 +239,15 @@ export default function SEPeriods() {
                         {period.isActive ? "Aktif" : "Aktifkan"}
                      </button>
                      <button 
+                        onClick={() => handleEditClick(period)}
+                        className="flex items-center gap-2 px-6 py-3 rounded-2xl font-black uppercase text-[9px] tracking-widest bg-amber-50 text-amber-600 hover:bg-amber-100 transition-all border border-amber-200"
+                     >
+                        <Edit size={14} />
+                        Edit
+                     </button>
+                     <button 
                         onClick={() => handleDelete(period.id)}
-                        className="w-12 h-12 flex items-center justify-center rounded-2xl bg-gray-50 text-gray-400 hover:bg-red-50 hover:text-red-500 transition-all"
+                        className="w-12 h-12 flex items-center justify-center rounded-2xl bg-gray-50 text-gray-400 hover:bg-red-50 hover:text-red-500 transition-all border border-transparent hover:border-red-200"
                      >
                         <Trash2 size={18} />
                      </button>
@@ -207,8 +276,12 @@ export default function SEPeriods() {
             >
                <div className="p-10 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
                   <div>
-                    <h2 className="text-xl font-black text-gray-900 uppercase italic tracking-tight">Buat Periode Baru</h2>
-                    <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mt-1">Input parameter jadwal SE</p>
+                    <h2 className="text-xl font-black text-gray-900 uppercase italic tracking-tight">
+                      {editingPeriod ? 'Edit Periode SE' : 'Buat Periode Baru'}
+                    </h2>
+                    <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mt-1">
+                      {editingPeriod ? 'Perbarui parameter jadwal SE' : 'Input parameter jadwal SE'}
+                    </p>
                   </div>
                   <button onClick={() => setShowModal(false)} className="w-12 h-12 flex items-center justify-center rounded-full hover:bg-white transition-all text-gray-400">
                      <Plus size={24} className="rotate-45" />
@@ -293,7 +366,7 @@ export default function SEPeriods() {
                     disabled={submitting}
                     className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase text-xs tracking-widest translate-y-2 hover:bg-blue-700 transition-all shadow-xl shadow-blue-100 disabled:opacity-50"
                   >
-                    {submitting ? 'Menyimpan...' : 'Simpan Periode Baru'}
+                    {submitting ? 'Menyimpan...' : (editingPeriod ? 'Simpan Perubahan' : 'Simpan Periode Baru')}
                   </button>
                </form>
             </motion.div>
