@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { 
   Users, Search, ArrowUpDown, Loader2, X, AlertCircle, Calendar, GraduationCap
 } from "lucide-react";
+import { useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { useAuth } from "../../context/AuthContext";
 import { useAcademicYear } from "../../context/AcademicYearContext";
@@ -15,9 +16,9 @@ export default function ClassDataPage() {
   const { profile } = useAuth();
   const { activeYear } = useAcademicYear();
 
-  // Active unit from user profile / active unit state
-  // Let's determine active unit based on activeUnit or profile's unitId
-  const activeUnit = profile?.currentUnit || profile?.unitId || "JUNIOR_HIGH";
+  // Active unit from useOutletContext (layout context) or user profile/unitId fallback
+  const outletCtx = useOutletContext<{ activeUnit?: string }>() || {};
+  const activeUnit = outletCtx.activeUnit || profile?.currentUnit || profile?.unitId || "JUNIOR_HIGH";
 
   // Data State
   const [classes, setClasses] = useState<Class[]>([]);
@@ -36,18 +37,54 @@ export default function ClassDataPage() {
   const [studentSortDirection, setStudentSortDirection] = useState<"asc" | "desc">("asc");
   const [studentSearchQuery, setStudentSearchQuery] = useState("");
 
+  // This acts as our "cache key" and reset trigger. When unit/year changes:
+  // 1. Clear previous class lists.
+  // 2. Close active student modal/drawers.
+  // 3. Reset search filters and sort settings.
+  // 4. Force state to loading (never show old data while loading new unit).
   useEffect(() => {
+    setClasses([]);
+    setSelectedClass(null);
+    setStudentSearchQuery("");
+    setClassSortField("name");
+    setClassSortDirection("asc");
+    setStudentSortField("name");
+    setStudentSortDirection("asc");
+    setLoading(true);
+
     async function loadData() {
-      if (!profile || !activeYear) return;
-      setLoading(true);
+      if (!profile || !activeYear || !activeUnit) return;
       try {
-        const [allCls, tchs, invs] = await Promise.all([
-          getClasses(),
+        // Query class data at server/backend level with strict filters (unitId AND academicYear)
+        let fetchedClasses: Class[] = [];
+        try {
+          const qCompound = query(
+            collection(db, "classes"),
+            where("unitId", "==", activeUnit),
+            where("academicYear", "==", activeYear)
+          );
+          const snap = await getDocs(qCompound);
+          fetchedClasses = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Class));
+        } catch (err) {
+          console.warn("Compound query failed (possibly missing index), falling back to client-side filtering:", err);
+          try {
+            // Fallback 1: Filter by unitId on firestore
+            const qUnit = query(collection(db, "classes"), where("unitId", "==", activeUnit));
+            const snap = await getDocs(qUnit);
+            fetchedClasses = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Class));
+          } catch (err2) {
+            console.error("Unit query fallback failed, retrieving all:", err2);
+            // Fallback 2: Retrieve all classes
+            fetchedClasses = await getClasses();
+          }
+        }
+
+        const [tchs, invs] = await Promise.all([
           getTeachers(),
           getAllInvites()
         ]);
 
-        setClasses(allCls || []);
+        setClasses(fetchedClasses || []);
         setTeachers(tchs || []);
         setInvites((invs || []).filter(i => i.role === "STUDENT") as any);
 
@@ -66,8 +103,9 @@ export default function ClassDataPage() {
         setLoading(false);
       }
     }
+
     loadData();
-  }, [profile, activeYear]);
+  }, [profile, activeYear, activeUnit]);
 
   // Translate unit ID to full name for the badge
   const getUnitName = (unit: string) => {
@@ -110,15 +148,16 @@ export default function ClassDataPage() {
     });
   };
 
-  // Apply filters: Unit & Active Year
+  // Apply filters: Unit & Active Year with extra frontend defensive checks
   const isUserAdmin = ["SUPER_ADMIN", "HEAD_UNIT", "HEAD_JUNIOR"].includes(profile?.role || "");
   
   const filteredClasses = classes.filter((cls) => {
-    // Must match active unit
-    if (cls.unitId !== activeUnit) return false;
-    // Must match active year
-    if (cls.academicYear !== activeYear) return false;
-    // Must not be archived
+    // DEFENSIVE EXTRA CHECK:
+    const itemUnit = cls.unitId || (cls as any).unit || "";
+    const itemYear = cls.academicYear || (cls as any).academicYearId || "";
+
+    if (itemUnit !== activeUnit) return false;
+    if (itemYear !== activeYear) return false;
     if (cls.status === "archived") return false;
 
     // Standard teachers only see assigned classes (homeroom or GPK)
