@@ -14,7 +14,7 @@ import { toast } from 'sonner';
 import type { KGActivity, KGDomain, KGGrading } from '../../types';
 import { DEFAULT_STUDENTS, getStoredStudents, saveStoredStudents } from '../../lib/kindergartenWeeklyReport';
 import ObservationBulkPeriodImport from './ObservationBulkPeriodImport';
-import { collection, query, where, getDocs, getDoc, writeBatch, deleteDoc, doc, setDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, getDoc, writeBatch, deleteDoc, doc, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { normalizeStudentName } from '../../lib/namecentricResolver';
@@ -334,13 +334,21 @@ export default function Observation() {
         const d = docSnap.data();
         return {
           id: docSnap.id,
+          classId: d.classId,
+          academicYearId: d.academicYearId || d.academicYear,
           activity: d.activity,
           domain: d.domain,
           date: d.date, // 'YYYY-MM-DD'
-          generalPhoto: d.generalPhotoUrl,
+          generalPhoto: d.generalPhotoDeleted === true ? null : (d.generalPhotoUrl || d.generalPhoto),
           observations: d.observations || {},
           timestamp: d.timestamp || Date.now()
         };
+      }).filter(item => {
+        // Only show items that belong to the currently selected class
+        if (selectedClassId && item.classId && item.classId !== selectedClassId) {
+          return false;
+        }
+        return true;
       });
 
       // 2. Fetch from LocalStorage
@@ -350,6 +358,10 @@ export default function Observation() {
         if (key && key.startsWith('kg_obs_hist_')) {
           try {
             const data = JSON.parse(localStorage.getItem(key) || '{}');
+            // Filter local storage by selectedClassId
+            if (selectedClassId && data.classId && data.classId !== selectedClassId) {
+              continue;
+            }
             if (data && data.observations) {
               const idxLastUnderscore = key.lastIndexOf('_');
               let dateStr = data.date;
@@ -365,10 +377,11 @@ export default function Observation() {
 
               localItems.push({
                 id: key,
+                classId: data.classId,
                 activity: data.selectedActivity || data.activity,
                 domain: data.selectedDomain || data.domain,
                 date: dateStr,
-                generalPhoto: data.generalPhoto,
+                generalPhoto: data.generalPhotoDeleted === true ? null : (data.generalPhoto || data.generalPhotoUrl),
                 observations: data.observations,
                 timestamp: data.timestamp || Date.now()
               });
@@ -574,8 +587,12 @@ export default function Observation() {
 
       if (Object.keys(updatedObservations).length === 0) {
         await deleteDoc(docRef);
-        const lsKey = `kg_obs_hist_${selectedDetailSession.activity}_${selectedDetailSession.domain}_${selectedDetailSession.date}`;
-        localStorage.removeItem(lsKey);
+        // Remove both scoped and legacy local storage keys
+        const lsKeyNew = `kg_obs_hist_${selectedDetailSession.classId || selectedClassId}_${selectedDetailSession.activity}_${selectedDetailSession.domain}_${selectedDetailSession.date}`;
+        const lsKeyOld = `kg_obs_hist_${selectedDetailSession.activity}_${selectedDetailSession.domain}_${selectedDetailSession.date}`;
+        localStorage.removeItem(lsKeyNew);
+        localStorage.removeItem(lsKeyOld);
+        
         setSelectedDetailSession(null);
         toast.success(`Seluruh observasi kosong. Sesi ${selectedDetailSession.date} dihapus penuh.`);
       } else {
@@ -602,8 +619,11 @@ export default function Observation() {
       const docRef = doc(db, 'observations', selectedDetailSession.id);
       await deleteDoc(docRef);
 
-      const lsKey = `kg_obs_hist_${selectedDetailSession.activity}_${selectedDetailSession.domain}_${selectedDetailSession.date}`;
-      localStorage.removeItem(lsKey);
+      // Remove both scoped and legacy local storage keys
+      const lsKeyNew = `kg_obs_hist_${selectedDetailSession.classId || selectedClassId}_${selectedDetailSession.activity}_${selectedDetailSession.domain}_${selectedDetailSession.date}`;
+      const lsKeyOld = `kg_obs_hist_${selectedDetailSession.activity}_${selectedDetailSession.domain}_${selectedDetailSession.date}`;
+      localStorage.removeItem(lsKeyNew);
+      localStorage.removeItem(lsKeyOld);
 
       toast.success("Berhasil menghapus seluruh sesi.");
       setSelectedDetailSession(null);
@@ -732,13 +752,19 @@ export default function Observation() {
     }
   }, [activeTab, selectedClassId, recapMonth, recapYear]);
 
-  // Triggered when selected Sentra + Domain combo or Observation Date changes: load / initialize specific data
+  // Triggered when selected Sentra + Domain combo, Class, or Observation Date changes: load / initialize specific data
   React.useEffect(() => {
     let active = true;
     
     async function fetchComboDoc() {
-      // 1. Try to load from LocalStorage first (with date!)
-      const comboDateKey = `kg_obs_hist_${selectedActivity}_${selectedDomain}_${observationDate}`;
+      if (!selectedClassId) {
+        setObservations({});
+        setGeneralPhoto(null);
+        return;
+      }
+
+      // 1. Try to load from LocalStorage first (classId & date scoped!)
+      const comboDateKey = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`;
       const savedComboData = localStorage.getItem(comboDateKey);
       
       if (savedComboData) {
@@ -746,8 +772,14 @@ export default function Observation() {
           const parsed = JSON.parse(savedComboData);
           if (!active) return;
           if (parsed.observations) setObservations(parsed.observations);
-          if (parsed.generalPhoto) {
+          
+          // Check generalPhotoDeleted flag
+          if (parsed.generalPhotoDeleted === true) {
+            setGeneralPhoto(null);
+          } else if (parsed.generalPhoto) {
             setGeneralPhoto(parsed.generalPhoto);
+          } else if (parsed.generalPhotoUrl) {
+            setGeneralPhoto(parsed.generalPhotoUrl);
           } else {
             setGeneralPhoto(null);
           }
@@ -757,17 +789,22 @@ export default function Observation() {
         }
       }
 
-      // Let's also check the old key format which didn't have date, but ONLY if the date inside matches observationDate
-      const fallbackKey = `kg_obs_hist_${selectedActivity}_${selectedDomain}`;
-      const legacyComboData = localStorage.getItem(fallbackKey);
-      if (legacyComboData) {
+      // Legacy fallback keys: if we find them, only use them if classId matches or is absent
+      const oldComboDateKey = `kg_obs_hist_${selectedActivity}_${selectedDomain}_${observationDate}`;
+      const oldSavedComboData = localStorage.getItem(oldComboDateKey);
+      if (oldSavedComboData) {
         try {
-          const parsed = JSON.parse(legacyComboData);
-          if (parsed && parsed.date === observationDate) {
+          const parsed = JSON.parse(oldSavedComboData);
+          if (parsed && (!parsed.classId || parsed.classId === selectedClassId)) {
             if (!active) return;
             if (parsed.observations) setObservations(parsed.observations);
-            if (parsed.generalPhoto) {
+            
+            if (parsed.generalPhotoDeleted === true) {
+              setGeneralPhoto(null);
+            } else if (parsed.generalPhoto) {
               setGeneralPhoto(parsed.generalPhoto);
+            } else if (parsed.generalPhotoUrl) {
+              setGeneralPhoto(parsed.generalPhotoUrl);
             } else {
               setGeneralPhoto(null);
             }
@@ -778,8 +815,33 @@ export default function Observation() {
         }
       }
 
-      // 2. Fetch from Firestore for the specific doc ID
-      const docId = `${selectedActivity}_${selectedDomain}_${observationDate}`;
+      const fallbackKey = `kg_obs_hist_${selectedActivity}_${selectedDomain}`;
+      const legacyComboData = localStorage.getItem(fallbackKey);
+      if (legacyComboData) {
+        try {
+          const parsed = JSON.parse(legacyComboData);
+          if (parsed && parsed.date === observationDate && (!parsed.classId || parsed.classId === selectedClassId)) {
+            if (!active) return;
+            if (parsed.observations) setObservations(parsed.observations);
+            
+            if (parsed.generalPhotoDeleted === true) {
+              setGeneralPhoto(null);
+            } else if (parsed.generalPhoto) {
+              setGeneralPhoto(parsed.generalPhoto);
+            } else if (parsed.generalPhotoUrl) {
+              setGeneralPhoto(parsed.generalPhotoUrl);
+            } else {
+              setGeneralPhoto(null);
+            }
+            return;
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      // 2. Fetch from Firestore for the specific doc ID (classId scoped)
+      const docId = `${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`;
       const docRef = doc(db, 'observations', docId);
       
       try {
@@ -790,12 +852,36 @@ export default function Observation() {
         if (docSnap.exists()) {
           const d = docSnap.data();
           if (d.observations) setObservations(d.observations);
-          if (d.generalPhotoUrl) {
-            setGeneralPhoto(d.generalPhotoUrl);
+          
+          if (d.generalPhotoDeleted === true) {
+            setGeneralPhoto(null);
+          } else if (d.generalPhotoUrl || d.generalPhoto) {
+            setGeneralPhoto(d.generalPhotoUrl || d.generalPhoto);
           } else {
             setGeneralPhoto(null);
           }
         } else {
+          // Fallback to unscoped query (backward compatibility for old saved records without classId prefix)
+          const unscopedDocId = `${selectedActivity}_${selectedDomain}_${observationDate}`;
+          const unscopedRef = doc(db, 'observations', unscopedDocId);
+          const unscopedSnap = await getDoc(unscopedRef);
+          
+          if (unscopedSnap.exists()) {
+            const d = unscopedSnap.data();
+            // Only accept if classId matches or is empty (unscoped)
+            if (!d.classId || d.classId === selectedClassId) {
+              if (d.observations) setObservations(d.observations);
+              if (d.generalPhotoDeleted === true) {
+                setGeneralPhoto(null);
+              } else if (d.generalPhotoUrl || d.generalPhoto) {
+                setGeneralPhoto(d.generalPhotoUrl || d.generalPhoto);
+              } else {
+                setGeneralPhoto(null);
+              }
+              return;
+            }
+          }
+
           // No entry, initialize empty
           const cleared = getStoredStudents().reduce((acc, kid) => {
             acc[kid.id] = { grading: null, notes: '', photo: null };
@@ -821,7 +907,7 @@ export default function Observation() {
     return () => {
       active = false;
     };
-  }, [selectedActivity, selectedDomain, observationDate]);
+  }, [selectedClassId, selectedActivity, selectedDomain, observationDate]);
 
   const updateStudentField = (studentId: string, field: keyof StudentObservation, value: any) => {
     setObservations(prev => {
@@ -1271,11 +1357,18 @@ export default function Observation() {
       return;
     }
 
+    if (!selectedClassId) {
+      toast.error('Gagal menyimpan! Kelas belum dipilih.');
+      return;
+    }
+
     setIsSaving(true);
     try {
       const targetDate = observationDate;
       const todayStr = formatDateLocal(new Date());
-      
+      const docId = `${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const docRef = doc(db, 'observations', docId);
+
       // Enrich with student's names
       const enrichedObservations = { ...observations };
       students.forEach(student => {
@@ -1297,38 +1390,43 @@ export default function Observation() {
         }
       });
 
-      // Save permanently with old key format (legacy for today)
-      const comboKeyLegacy = `kg_obs_hist_${selectedActivity}_${selectedDomain}`;
-      const payloadLegacy = {
-        selectedActivity,
-        selectedDomain,
-        generalPhoto,
-        observations: enrichedObservations,
-        date: targetDate,
-        timestamp: Date.now()
-      };
-      if (targetDate === todayStr) {
-        localStorage.setItem(comboKeyLegacy, JSON.stringify(payloadLegacy));
-      }
-
-      // Save permanently with new date-specific key format in LocalStorage
-      const comboKeyDateSpecific = `kg_obs_hist_${selectedActivity}_${selectedDomain}_${targetDate}`;
-      localStorage.setItem(comboKeyDateSpecific, JSON.stringify(payloadLegacy));
-
-      // Save permanently to Firestore 'observations' collection
-      const docId = `${selectedActivity}_${selectedDomain}_${targetDate}`;
-      const docRef = doc(db, 'observations', docId);
-      
-      await setDoc(docRef, cleanFirestoreData({
+      // Construct a fully standardized payload
+      const payload = {
         id: docId,
-        activity: selectedActivity,
-        domain: selectedDomain,
-        date: targetDate,
+        academicYearId: activeYear || '2026/2027',
+        academicYear: activeYear || '2026/2027',
+        unit: 'KINDERGARTEN',
+        classId: selectedClassId,
+        observationDate: targetDate,
+        centerId: selectedActivity,
+        domainId: selectedDomain,
+        activity: selectedActivity, // backward compatibility
+        domain: selectedDomain, // backward compatibility
+        date: targetDate, // backward compatibility
+        
         generalPhotoUrl: generalPhoto,
+        generalPhoto: generalPhoto, // backward compatibility
+        generalPhotoStoragePath: `observations/${(activeYear || '2026/2027').replace(/\//g, '_')}/${selectedClassId}/${docId}/general.jpg`,
+        generalPhotoDeleted: false,
+        generalPhotoUpdatedAt: Date.now(),
+        status: 'active',
         observations: enrichedObservations,
         timestamp: Date.now(),
         updatedAt: Date.now()
-      }), { merge: true });
+      };
+
+      // Save permanently with old key format (legacy for today) but class-scoped!
+      const comboKeyLegacy = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}`;
+      if (targetDate === todayStr) {
+        localStorage.setItem(comboKeyLegacy, JSON.stringify(payload));
+      }
+
+      // Save permanently with new date-specific, class-scoped key format in LocalStorage
+      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      localStorage.setItem(comboKeyDateSpecific, JSON.stringify(payload));
+
+      // Save permanently to Firestore 'observations' collection
+      await setDoc(docRef, cleanFirestoreData(payload), { merge: true });
 
       toast.success('Observation Data berhasil disimpan ke sistem & Firestore! ✨', {
         description: `Sentra: ${activities.find(a => a.id === selectedActivity)?.label}, Domain: ${domains.find(d => d.id === selectedDomain)?.label}`
@@ -1341,9 +1439,72 @@ export default function Observation() {
     }
   };
 
-  const clearGeneralPhoto = () => {
+  const clearGeneralPhoto = async () => {
     setGeneralPhoto(null);
-    toast.info('Foto General dikosongkan. Mohon unggah kembali sebelum menyimpan.');
+    toast.info('Foto General dikosongkan. Menghapus referensi foto dari Firestore...');
+
+    try {
+      if (!selectedClassId) return;
+
+      const targetDate = observationDate;
+      const docId = `${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const docRef = doc(db, 'observations', docId);
+
+      // Check if document exists
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        await updateDoc(docRef, {
+          generalPhotoUrl: null,
+          generalPhoto: null,
+          generalPhotoStoragePath: null,
+          generalPhotoDeleted: true,
+          generalPhotoDeletedAt: Date.now(),
+          updatedAt: Date.now()
+        });
+      }
+
+      // Also clean up local storage caches
+      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const saved = localStorage.getItem(comboKeyDateSpecific);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          parsed.generalPhoto = null;
+          parsed.generalPhotoUrl = null;
+          parsed.generalPhotoDeleted = true;
+          localStorage.setItem(comboKeyDateSpecific, JSON.stringify(parsed));
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      const todayStr = formatDateLocal(new Date());
+      if (targetDate === todayStr) {
+        const comboKeyLegacy = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}`;
+        const savedLegacy = localStorage.getItem(comboKeyLegacy);
+        if (savedLegacy) {
+          try {
+            const parsed = JSON.parse(savedLegacy);
+            parsed.generalPhoto = null;
+            parsed.generalPhotoUrl = null;
+            parsed.generalPhotoDeleted = true;
+            localStorage.setItem(comboKeyLegacy, JSON.stringify(parsed));
+          } catch (e) {
+            console.error(e);
+          }
+        }
+      }
+
+      // Trigger refetch of recap data so UI is instantly updated
+      if (activeTab === 'recap') {
+        loadRecapData();
+      }
+
+      toast.success('Foto General berhasil dihapus dari sistem & Firestore! 🗑️');
+    } catch (err: any) {
+      console.error("Gagal menghapus referensi foto general:", err);
+      toast.error(`Gagal menghapus referensi foto: ${err.message || String(err)}`);
+    }
   };
 
   const currentSentraObj = activities.find(a => a.id === selectedActivity);

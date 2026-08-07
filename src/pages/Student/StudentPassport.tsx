@@ -885,17 +885,22 @@ export default function StudentPassport() {
       const obsRecords = docData.observations || {};
       const found = obsRecords[selectedStudentId];
       if (found && (found.notes || found.photo || found.grading)) {
-        items.push({
-          id: docData.docId,
-          date: dStr || formatDateLabel(new Date(docData.timestamp || Date.now())),
-          activity: ACTIVITY_LABEL_MAP[docData.activity] || docData.activity || 'Classroom Activity',
-          domain: getEnglishDomainLabel(DOMAIN_LABEL_MAP[docData.domain] || docData.domain || 'General'),
-          objective: docData.objective || found.objective || 'Thematic Learning',
-          grade: found.grading || 'Observed',
-          notes: found.notes || '',
-          photoUrl: found.photo || docData.generalPhotoUrl || docData.generalPhoto || null,
-          timestamp: docData.timestamp || Date.now()
-        });
+        // Defensive check: match student's current classId if defined in docData
+        const classMatches = !docData.classId || docData.classId === activeStudentProfile.classId;
+        if (classMatches) {
+          const generalPhotoFallback = docData.generalPhotoDeleted === true ? null : (docData.generalPhotoUrl || docData.generalPhoto || null);
+          items.push({
+            id: docData.docId,
+            date: dStr || formatDateLabel(new Date(docData.timestamp || Date.now())),
+            activity: ACTIVITY_LABEL_MAP[docData.activity] || docData.activity || 'Classroom Activity',
+            domain: getEnglishDomainLabel(DOMAIN_LABEL_MAP[docData.domain] || docData.domain || 'General'),
+            objective: docData.objective || found.objective || 'Thematic Learning',
+            grade: found.grading || 'Observed',
+            notes: found.notes || '',
+            photoUrl: found.photo || generalPhotoFallback,
+            timestamp: docData.timestamp || Date.now()
+          });
+        }
       }
     });
 
@@ -916,17 +921,21 @@ export default function StudentPassport() {
             if (items.some(item => item.id === key)) continue;
 
             const stObs = payloadParsed.observations[selectedStudentId];
-            items.push({
-              id: key,
-              date: dStr || formatDateLabel(new Date(payloadParsed.timestamp || Date.now())),
-              activity: ACTIVITY_LABEL_MAP[payloadParsed.selectedActivity] || payloadParsed.selectedActivity || 'Classroom Activity',
-              domain: getEnglishDomainLabel(DOMAIN_LABEL_MAP[payloadParsed.selectedDomain] || payloadParsed.selectedDomain || 'General'),
-              objective: payloadParsed.learningObjectives || 'Practical Exploration',
-              grade: stObs.grading || 'Observed',
-              notes: stObs.notes || '',
-              photoUrl: stObs.photo || payloadParsed.generalPhotoUrl || payloadParsed.generalPhoto || null,
-              timestamp: payloadParsed.timestamp || Date.now()
-            });
+            const classMatches = !payloadParsed.classId || payloadParsed.classId === activeStudentProfile.classId;
+            if (classMatches) {
+              const generalPhotoFallback = payloadParsed.generalPhotoDeleted === true ? null : (payloadParsed.generalPhotoUrl || payloadParsed.generalPhoto || null);
+              items.push({
+                id: key,
+                date: dStr || formatDateLabel(new Date(payloadParsed.timestamp || Date.now())),
+                activity: ACTIVITY_LABEL_MAP[payloadParsed.selectedActivity] || payloadParsed.selectedActivity || 'Classroom Activity',
+                domain: getEnglishDomainLabel(DOMAIN_LABEL_MAP[payloadParsed.selectedDomain] || payloadParsed.selectedDomain || 'General'),
+                objective: payloadParsed.learningObjectives || 'Practical Exploration',
+                grade: stObs.grading || 'Observed',
+                notes: stObs.notes || '',
+                photoUrl: stObs.photo || generalPhotoFallback,
+                timestamp: payloadParsed.timestamp || Date.now()
+              });
+            }
           }
         } catch (e) {
           // ignore

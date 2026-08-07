@@ -325,12 +325,41 @@ function KindergartenStudentDashboard({
   const [aiSummary, setAiSummary] = React.useState<string>("");
   const [aiRecs, setAiRecs] = React.useState<AiRecommendation[]>([]);
   const [dbSummary, setDbSummary] = React.useState<any>(null);
+  const [firestoreObservations, setFirestoreObservations] = React.useState<any[]>([]);
 
   // Sync date ranges in sessionStorage
   React.useEffect(() => {
     sessionStorage.setItem('kindy_report_start', startDateStr);
     sessionStorage.setItem('kindy_report_end', endDateStr);
   }, [startDateStr, endDateStr]);
+
+  // Fetch observations from Firestore for this period
+  React.useEffect(() => {
+    if (!loggedInStudentId || !startDateStr || !endDateStr) return;
+    let active = true;
+    const fetchFirestoreObs = async () => {
+      try {
+        const q = query(
+          collection(db, 'observations'),
+          where('date', '>=', startDateStr),
+          where('date', '<=', endDateStr)
+        );
+        const snap = await getDocs(q);
+        if (!active) return;
+        const fetched = snap.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setFirestoreObservations(fetched);
+      } catch (err) {
+        console.warn("Error fetching observations for student dashboard:", err);
+      }
+    };
+    fetchFirestoreObs();
+    return () => {
+      active = false;
+    };
+  }, [loggedInStudentId, startDateStr, endDateStr]);
 
   // Fetch from Firestore for backup
   React.useEffect(() => {
@@ -511,20 +540,25 @@ function KindergartenStudentDashboard({
           const data = JSON.parse(localStorage.getItem(key) || '{}');
           const obsTimestamp = data.timestamp || Date.now();
           if (obsTimestamp >= startTs && obsTimestamp <= endTs) {
-            const studentPhoto = data?.observations?.[loggedInStudentId]?.photo;
-            const fallbackPhoto = data?.generalPhotoUrl || data?.generalPhoto;
-            const finalPhoto = studentPhoto || fallbackPhoto;
-            
-            if (finalPhoto) {
-              const sentraId = data.selectedActivity;
-              const domainId = data.selectedDomain;
-              const sentraName = sentraLabels[sentraId] || sentraId || "Aktivitas";
-              const domainName = domainLabels[domainId] || domainId || "Sentra";
+            const classMatches = !data.classId || !currentStudent.classId || data.classId === currentStudent.classId;
+            if (classMatches) {
+              const studentPhoto = data?.observations?.[loggedInStudentId]?.photo;
+              const fallbackPhoto = data.generalPhotoDeleted === true ? null : (data?.generalPhotoUrl || data?.generalPhoto);
+              const finalPhoto = studentPhoto || fallbackPhoto;
               
-              photos.push({
-                url: finalPhoto,
-                caption: `${sentraName} - ${domainName}`
-              });
+              if (finalPhoto) {
+                const sentraId = data.selectedActivity || data.activity;
+                const domainId = data.selectedDomain || data.domain;
+                const sentraName = sentraLabels[sentraId] || sentraId || "Aktivitas";
+                const domainName = domainLabels[domainId] || domainId || "Sentra";
+                
+                if (!photos.some(p => p.url === finalPhoto)) {
+                  photos.push({
+                    url: finalPhoto,
+                    caption: `${sentraName} - ${domainName}`
+                  });
+                }
+              }
             }
           }
         } catch (e) {
@@ -532,9 +566,33 @@ function KindergartenStudentDashboard({
         }
       }
     }
+
+    // Process Firestore observations
+    firestoreObservations.forEach(data => {
+      const classMatches = !data.classId || !currentStudent.classId || data.classId === currentStudent.classId;
+      if (classMatches) {
+        const studentPhoto = data?.observations?.[loggedInStudentId]?.photo;
+        const fallbackPhoto = data.generalPhotoDeleted === true ? null : (data?.generalPhotoUrl || data?.generalPhoto);
+        const finalPhoto = studentPhoto || fallbackPhoto;
+        
+        if (finalPhoto) {
+          const sentraId = data.activity || data.selectedActivity;
+          const domainId = data.domain || data.selectedDomain;
+          const sentraName = sentraLabels[sentraId] || sentraId || "Aktivitas";
+          const domainName = domainLabels[domainId] || domainId || "Sentra";
+          
+          if (!photos.some(p => p.url === finalPhoto)) {
+            photos.push({
+              url: finalPhoto,
+              caption: `${sentraName} - ${domainName}`
+            });
+          }
+        }
+      }
+    });
     
     return photos;
-  }, [loggedInStudentId, startDateStr, endDateStr]);
+  }, [loggedInStudentId, startDateStr, endDateStr, firestoreObservations, currentStudent.classId]);
 
   // Generate child-friendly AI recommendations and encouragement using Gemini
   const handleGenerateAiSummary = async () => {

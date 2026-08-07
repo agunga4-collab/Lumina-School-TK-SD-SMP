@@ -600,7 +600,8 @@ export function aggregateKGWeeklyReportForPeriod(
       const obsDateStr = payload.date || formatDateToKey(new Date(obsTimestamp));
 
       const matchedDay = dateKeys.find(dk => dk.dateKey === obsDateStr);
-      if (matchedDay) {
+      const classMatches = !payload.classId || !student.classId || payload.classId === student.classId;
+      if (matchedDay && classMatches) {
         let studentObs = payload.observations?.[studentId];
         
         if (!studentObs && activeStudents) {
@@ -629,7 +630,7 @@ export function aggregateKGWeeklyReportForPeriod(
             grade: studentObs.grading || 'Belum Berkembang',
             notes: studentObs.notes || '',
             photoUrl: studentObs.photo || null,
-            generalPhotoUrl: payload.generalPhotoUrl || payload.generalPhoto || null
+            generalPhotoUrl: payload.generalPhotoDeleted === true ? null : (payload.generalPhotoUrl || payload.generalPhoto || null)
           });
         }
       }
@@ -646,7 +647,8 @@ export function aggregateKGWeeklyReportForPeriod(
             const obsDateStr = payload.date || formatDateToKey(new Date(obsTimestamp));
 
             const matchedDay = dateKeys.find(dk => dk.dateKey === obsDateStr);
-            if (matchedDay) {
+            const classMatches = !payload.classId || !student.classId || payload.classId === student.classId;
+            if (matchedDay && classMatches) {
               const studentObs = payload.observations?.[studentId];
               if (studentObs && (studentObs.grading || studentObs.notes || studentObs.photo)) {
                 weeklyObservationItems.push({
@@ -658,7 +660,7 @@ export function aggregateKGWeeklyReportForPeriod(
                   grade: studentObs.grading || 'Belum Berkembang',
                   notes: studentObs.notes || '',
                   photoUrl: studentObs.photo || null,
-                  generalPhotoUrl: payload.generalPhoto || payload.generalPhotoUrl || null
+                  generalPhotoUrl: payload.generalPhotoDeleted === true ? null : (payload.generalPhoto || payload.generalPhotoUrl || null)
                 });
               }
             }

@@ -177,20 +177,25 @@ export default function ParentView() {
           const data = JSON.parse(localStorage.getItem(key) || '{}');
           const obsTimestamp = data.timestamp || Date.now();
           if (obsTimestamp >= startTs && obsTimestamp <= endTs) {
-            const studentPhoto = data?.observations?.[selectedStudentId]?.photo;
-            const fallbackPhoto = data?.generalPhotoUrl || data?.generalPhoto;
-            const finalPhoto = studentPhoto || fallbackPhoto;
-            
-            if (finalPhoto) {
-              const sentraId = data.selectedActivity;
-              const domainId = data.selectedDomain;
-              const sentraName = sentraLabels[sentraId] || sentraId || "Aktivitas";
-              const domainName = domainLabels[domainId] || domainId || "Sentra";
+            const classMatches = !data.classId || !currentStudent.classId || data.classId === currentStudent.classId;
+            if (classMatches) {
+              const studentPhoto = data?.observations?.[selectedStudentId]?.photo;
+              const fallbackPhoto = data.generalPhotoDeleted === true ? null : (data?.generalPhotoUrl || data?.generalPhoto);
+              const finalPhoto = studentPhoto || fallbackPhoto;
               
-              photos.push({
-                url: finalPhoto,
-                caption: `${sentraName} - ${domainName}`
-              });
+              if (finalPhoto) {
+                const sentraId = data.selectedActivity || data.activity;
+                const domainId = data.selectedDomain || data.domain;
+                const sentraName = sentraLabels[sentraId] || sentraId || "Aktivitas";
+                const domainName = domainLabels[domainId] || domainId || "Sentra";
+                
+                if (!photos.some(p => p.url === finalPhoto)) {
+                  photos.push({
+                    url: finalPhoto,
+                    caption: `${sentraName} - ${domainName}`
+                  });
+                }
+              }
             }
           }
         } catch (e) {
