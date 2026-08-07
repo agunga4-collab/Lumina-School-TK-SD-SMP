@@ -576,9 +576,13 @@ export function Layout() {
              {currentUser.role === 'STUDENT' ? (
                 <>
                   <NavItem to="/student/dashboard" icon={<Home size={18} />} label="Dashboard Siswa" />
-                  <NavItem to="/self-exploration/my" icon={<Sparkles size={18} />} label="Self Exploration" />
-                  <NavItem to="/student/goal-setting" icon={<Target size={18} />} label="Goal Setting" />
-                  <NavItem to="/student/my-presentation" icon={<Presentation size={18} />} label="My Presentation" />
+                  {currentUnit !== 'KINDERGARTEN' && (
+                    <>
+                      <NavItem to="/self-exploration/my" icon={<Sparkles size={18} />} label="Self Exploration" />
+                      <NavItem to="/student/goal-setting" icon={<Target size={18} />} label="Goal Setting" />
+                      <NavItem to="/student/my-presentation" icon={<Presentation size={18} />} label="My Presentation" />
+                    </>
+                  )}
                   {/* <NavItem to="/student/smart-goal-tracker" icon={<TrendingUp size={18} />} label="SMART Goal Tracker" /> */}
                   {isMenuVisible(currentUnit, 'reportCards') && (
                     <NavItem to="/student/reports" icon={<FileText size={18} />} label="Rapor Saya" />
