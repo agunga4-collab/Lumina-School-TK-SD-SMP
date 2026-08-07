@@ -16,11 +16,16 @@ import {
   getStudentById
 } from '../../lib/firebase';
 import { cn } from '../../lib/utils';
+import { useAcademicYear } from '../../context/AcademicYearContext';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../../lib/firebase';
 
 export default function StudentReports() {
   const { currentUser } = useOutletContext<{ currentUser: AppUser }>();
+  const { activeYear, activeSemester } = useAcademicYear();
   const [studentData, setStudentData] = React.useState<Student | null>(null);
   const [reports, setReports] = React.useState<ReportCard[]>([]);
+  const [kgReports, setKgReports] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
@@ -31,18 +36,34 @@ export default function StudentReports() {
         setStudentData(student);
 
         if (student) {
-          const allReports = await getReportCards({
-             unitId: student.unitId as any,
-             academicYear: '2025/2026',
-             status: 'PUBLISHED'
-          });
-          
-          // Filter reports where student is included
-          const studentReports = allReports.filter(rc => 
-            rc.studentReports.some(sr => sr.studentId === student.id)
-          );
-          
-          setReports(studentReports.sort((a, b) => b.createdAt - a.createdAt));
+          if (student.unitId === 'KINDERGARTEN') {
+            const studentId = student.id || (student as any).luminaId || currentUser.luminaId || '';
+            const q = query(
+              collection(db, 'published_kg_reports'),
+              where('studentId', '==', studentId.trim()),
+              where('academicYear', '==', activeYear)
+            );
+            const snap = await getDocs(q);
+            const list = snap.docs.map(docSnap => ({
+              id: docSnap.id,
+              ...docSnap.data()
+            } as any));
+            const filteredList = list.filter((r: any) => !r.status || r.status.toLowerCase() === 'published');
+            setKgReports(filteredList.sort((a: any, b: any) => (b.publishedAt || 0) - (a.publishedAt || 0)));
+          } else {
+            const allReports = await getReportCards({
+               unitId: student.unitId as any,
+               academicYear: activeYear || '2025/2026',
+               status: 'PUBLISHED'
+            });
+            
+            // Filter reports where student is included
+            const studentReports = allReports.filter(rc => 
+              rc.studentReports.some(sr => sr.studentId === student.id)
+            );
+            
+            setReports(studentReports.sort((a, b) => b.createdAt - a.createdAt));
+          }
         }
       } catch (err) {
         console.error(err);
@@ -51,12 +72,90 @@ export default function StudentReports() {
       }
     };
     fetchReports();
-  }, [currentUser]);
+  }, [currentUser, activeYear]);
 
   if (loading) {
     return (
       <div className="h-[60vh] flex items-center justify-center">
         <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+      </div>
+    );
+  }
+
+  if (studentData?.unitId === 'KINDERGARTEN') {
+    return (
+      <div className="max-w-5xl mx-auto space-y-8 pb-20 animate-in fade-in duration-700">
+        {/* Breadcrumb */}
+        <div className="flex items-center gap-1 text-xs font-black uppercase tracking-widest text-gray-400">
+          Rapor Saya
+        </div>
+
+        {/* Header */}
+        <div className="space-y-2">
+          <h1 className="text-4xl font-black tracking-tighter italic uppercase text-gray-900 leading-none">
+            Rapor <span className="text-blue-600">Saya</span>
+          </h1>
+          <p className="text-gray-500 font-medium">
+            Lihat rapor yang telah diterbitkan sekolah.
+          </p>
+        </div>
+
+        {kgReports.length === 0 ? (
+          <div className="bg-white border border-gray-100 p-16 rounded-[2rem] text-center space-y-2 shadow-sm">
+            <h3 className="text-xl font-bold text-gray-900">Belum Ada Rapor</h3>
+            <p className="text-sm text-gray-500 font-medium max-w-md mx-auto">
+              Sekolah belum menerbitkan rapor untuk periode ini.
+            </p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 text-[11px] font-black uppercase tracking-wider text-gray-400 border-b border-gray-100">
+                    <th className="py-5 px-6">Tahun Ajaran</th>
+                    <th className="py-5 px-6">Semester</th>
+                    <th className="py-5 px-6">Periode</th>
+                    <th className="py-5 px-6">Status</th>
+                    <th className="py-5 px-6 text-right">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 text-sm font-semibold text-gray-700">
+                  {kgReports.map((report) => {
+                    const semesterText = report.semester || activeSemester || "Semester 1";
+                    const periodText = report.theme ? `${report.theme}${report.week ? ` - Minggu ${report.week}` : ''}` : (report.period || 'Ganjil');
+                    return (
+                      <tr key={report.id} className="hover:bg-gray-50/50 transition-colors">
+                        <td className="py-5 px-6 font-bold text-gray-900">{report.academicYear}</td>
+                        <td className="py-5 px-6">{semesterText}</td>
+                        <td className="py-5 px-6">{periodText}</td>
+                        <td className="py-5 px-6">
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-100">
+                            Diterbitkan
+                          </span>
+                        </td>
+                        <td className="py-5 px-6 text-right">
+                          <div className="flex justify-end gap-2">
+                            {report.driveFileUrl && (
+                              <a
+                                href={report.driveFileUrl}
+                                target="_blank"
+                                rel="referrer noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm"
+                              >
+                                <Eye size={14} /> Lihat Rapor
+                              </a>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

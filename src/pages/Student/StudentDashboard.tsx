@@ -7,7 +7,7 @@ import {
   CheckCircle2, Smile, Meh, Frown, Angry, 
   Activity, BookOpen, Coffee, Home, Loader2, ChevronLeft, ShieldAlert
 } from 'lucide-react';
-import { useOutletContext, Link, useNavigate } from 'react-router-dom';
+import { useOutletContext, Link, useNavigate, Navigate } from 'react-router-dom';
 import { User as AppUser, Student } from '../../types';
 import { getStudentById } from '../../lib/firebase';
 import { cn } from '../../lib/utils';
@@ -29,6 +29,11 @@ interface AiRecommendation {
 
 export default function StudentDashboard() {
   const { currentUser, activeUnit } = useOutletContext<{ currentUser: AppUser; activeUnit?: string }>();
+
+  if (currentUser?.role === 'STUDENT' && activeUnit === 'KINDERGARTEN') {
+    return <Navigate to="/student/reports" replace />;
+  }
+
   const { activeYear } = useAcademicYear();
   const navigate = useNavigate();
   const [studentData, setStudentData] = React.useState<Student | null>(null);

@@ -636,7 +636,7 @@ service cloud.firestore {
 
     match /published_kg_reports/{reportId} {
       allow read: if isActive() &&
-        (isJuniorHighStaff() || isTeacher() || isLinkedStudent(existing().studentId));
+        (isJuniorHighStaff() || isTeacher() || isLinkedStudent(existing().studentId) || isOwnStudentData(existing().studentId));
       allow write: if isJuniorHighStaff() || isAdmin() || isTeacher();
     }
 

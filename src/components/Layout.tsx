@@ -638,7 +638,9 @@ export function Layout() {
              
              {currentUser.role === 'STUDENT' ? (
                 <>
-                  <NavItem to="/student/dashboard" icon={<Home size={18} />} label="Dashboard Siswa" />
+                  {currentUnit !== 'KINDERGARTEN' && (
+                    <NavItem to="/student/dashboard" icon={<Home size={18} />} label="Dashboard Siswa" />
+                  )}
                   {currentUnit !== 'KINDERGARTEN' && (
                     <>
                       <NavItem to="/self-exploration/my" icon={<Sparkles size={18} />} label="Self Exploration" />
@@ -647,7 +649,7 @@ export function Layout() {
                     </>
                   )}
                   {/* <NavItem to="/student/smart-goal-tracker" icon={<TrendingUp size={18} />} label="SMART Goal Tracker" /> */}
-                  {isMenuVisible(currentUnit, 'reportCards') && (
+                  {(currentUnit === 'KINDERGARTEN' || isMenuVisible(currentUnit, 'reportCards')) && (
                     <NavItem to="/student/reports" icon={<FileText size={18} />} label="Rapor Saya" />
                   )}
                 </>
@@ -772,10 +774,12 @@ export function Layout() {
           )}
 
           {/* Shared Sections */}
-          <div className="space-y-1">
-            <NavSectionLabel label="Komunikasi" />
-             {/* Refleksi Diri removed - replaced by Self Exploration in Academic for SMP */}
-          </div>
+          {!(currentUser.role === 'STUDENT' && currentUnit === 'KINDERGARTEN') && (
+            <div className="space-y-1">
+              <NavSectionLabel label="Komunikasi" />
+               {/* Refleksi Diri removed - replaced by Self Exploration in Academic for SMP */}
+            </div>
+          )}
 
           {(currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'HEAD_UNIT') && (
             <div className="space-y-1">
