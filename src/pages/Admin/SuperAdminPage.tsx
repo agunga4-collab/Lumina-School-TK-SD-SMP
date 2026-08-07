@@ -253,6 +253,8 @@ export default function SuperAdminPage() {
     null,
   );
   const [expandedStudentsSortDir, setExpandedStudentsSortDir] = React.useState<"asc" | "desc">("asc");
+  const [studentSortKey, setStudentSortKey] = React.useState<"name" | "nis" | "nisn" | "gender" | "email" | "gpk">("name");
+  const [studentSortDirection, setStudentSortDirection] = React.useState<"asc" | "desc">("asc");
   const [importResult, setImportResult] = React.useState<{
     created: number;
     updated: number;
@@ -3230,6 +3232,9 @@ export default function SuperAdminPage() {
                     <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">
                       Wali Kelas
                     </th>
+                    <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">
+                      GPK
+                    </th>
                     <th className="px-10 py-6 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 text-right">
                       Aksi
                     </th>
@@ -3239,7 +3244,7 @@ export default function SuperAdminPage() {
                   {sortedClasses.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={6}
+                        colSpan={7}
                         className="px-10 py-20 text-center text-gray-400 italic"
                       >
                         No classes found in this unit.
@@ -3250,24 +3255,93 @@ export default function SuperAdminPage() {
                       const classStudents = invites
                         .filter((i) => {
                           if (i.role !== "STUDENT") return false;
-                          if (i.classId === cls.id || i.classId === cls.name) return true;
+                          
+                          // If student has a luminaId, check enrollments strictly
                           if (i.luminaId) {
                             return allEnrollments.some(
                               (e) =>
                                 e.studentId === i.luminaId &&
-                                (e.classId === cls.id || e.classId === cls.name)
+                                (e.classId === cls.id || e.classId === cls.name) &&
+                                e.academicYear === cls.academicYear
                             );
                           }
-                          return false;
+                          
+                          // Fallback if no luminaId
+                          const directClassMatch = i.classId === cls.id || i.classId === cls.name;
+                          const directYearMatch = !i.academicYear || i.academicYear === cls.academicYear;
+                          return directClassMatch && directYearMatch;
                         })
                         .sort((a, b) => {
-                          const aName = a.name.toLowerCase();
-                          const bName = b.name.toLowerCase();
-                          if (expandedStudentsSortDir === "asc") {
-                            return aName < bName ? -1 : aName > bName ? 1 : 0;
-                          } else {
-                            return aName > bName ? -1 : aName < bName ? 1 : 0;
+                          // Helper to get GPK name for a student
+                          const getStudentGpkName = (student: typeof a) => {
+                            const enrollment = allEnrollments.find(
+                              (e) =>
+                                e.studentId === student.luminaId &&
+                                (e.classId === cls.id || e.classId === cls.name) &&
+                                e.academicYear === cls.academicYear
+                            );
+                            
+                            const gpkId = student.gpkId || student.gpkUserId || student.gpkTeacherId || enrollment?.gpkId || enrollment?.gpkUserId || enrollment?.gpkTeacherId || enrollment?.gpk;
+                            const gpkNameFromRecord = student.gpkName || student.gpkTeacherName || student.gpkDisplayName || enrollment?.gpkName || enrollment?.gpkTeacherName || enrollment?.gpkDisplayName;
+                            
+                            if (gpkId) {
+                              const gpkTeacher = teachers.find(t => t.uid === gpkId);
+                              if (gpkTeacher) return gpkTeacher.displayName;
+                              if (typeof gpkId === 'string' && gpkId.length > 8) return gpkId;
+                            }
+                            if (gpkNameFromRecord) return gpkNameFromRecord;
+                            return "";
+                          };
+
+                          let comparison = 0;
+                          if (studentSortKey === "name") {
+                            const aVal = (a.name || "").toLowerCase();
+                            const bVal = (b.name || "").toLowerCase();
+                            comparison = aVal.localeCompare(bVal);
+                          } else if (studentSortKey === "nis") {
+                            const aVal = (a.luminaId || "").toLowerCase();
+                            const bVal = (b.luminaId || "").toLowerCase();
+                            comparison = aVal.localeCompare(bVal);
+                          } else if (studentSortKey === "nisn") {
+                            const aVal = a.nisn || "";
+                            const bVal = b.nisn || "";
+                            
+                            // Empty values always at the bottom
+                            if (!aVal && !bVal) comparison = 0;
+                            else if (!aVal) return 1;
+                            else if (!bVal) return -1;
+                            else {
+                              comparison = aVal.localeCompare(bVal, undefined, { numeric: true });
+                            }
+                          } else if (studentSortKey === "gender") {
+                            const aVal = (a.gender || "").toLowerCase();
+                            const bVal = (b.gender || "").toLowerCase();
+                            comparison = aVal.localeCompare(bVal);
+                          } else if (studentSortKey === "email") {
+                            const aVal = a.email || "";
+                            const bVal = b.email || "";
+                            
+                            // Empty values always at the bottom
+                            if (!aVal && !bVal) comparison = 0;
+                            else if (!aVal) return 1;
+                            else if (!bVal) return -1;
+                            else {
+                              comparison = aVal.localeCompare(bVal);
+                            }
+                          } else if (studentSortKey === "gpk") {
+                            const aVal = getStudentGpkName(a);
+                            const bVal = getStudentGpkName(b);
+                            
+                            // Empty values always at the bottom
+                            if (!aVal && !bVal) comparison = 0;
+                            else if (!aVal) return 1;
+                            else if (!bVal) return -1;
+                            else {
+                              comparison = aVal.localeCompare(bVal);
+                            }
                           }
+
+                          return studentSortDirection === "asc" ? comparison : -comparison;
                         });
                       const isExpanded = expandedClassId === cls.id;
                       
@@ -3319,6 +3393,17 @@ export default function SuperAdminPage() {
                                 {cls.homeroomTeacherName ? cls.homeroomTeacherName.replace(/^\s*\(UNDANGAN\)\s*/i, "") : "-"}
                               </span>
                             </td>
+                            <td className="px-10 py-6">
+                              <span className="text-xs font-bold text-gray-700">
+                                {(() => {
+                                  const classAssignments = getClassTeacherAssignments(cls);
+                                  const gpkAssignments = classAssignments.filter(a => a.role === 'GPK');
+                                  return gpkAssignments.length > 0 
+                                    ? gpkAssignments.map(a => a.displayName.replace(/^\s*\(UNDANGAN\)\s*/i, "")).join(", ")
+                                    : "-";
+                                })()}
+                              </span>
+                            </td>
                             <td className="px-10 py-6 text-right">
                               <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-all">
                                 <button
@@ -3360,46 +3445,133 @@ export default function SuperAdminPage() {
                           
                           {isExpanded && (
                             <tr className="bg-blue-50/10">
-                              <td colSpan={6} className="px-10 py-6">
-                                <div className="flex items-center justify-between mb-4">
-                                  <div className="flex items-center gap-2">
-                                    <Users size={14} className="text-blue-600" />
-                                    <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Daftar Siswa Terdaftar</span>
-                                  </div>
-                                  <button 
-                                    onClick={() => setExpandedStudentsSortDir(expandedStudentsSortDir === "asc" ? "desc" : "asc")}
-                                    className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-100 rounded-xl text-[9px] font-black uppercase tracking-tight text-gray-500 hover:text-blue-600 hover:border-blue-100 transition-all shadow-sm"
-                                  >
-                                    <ArrowUpDown size={12} />
-                                    Sort: {expandedStudentsSortDir === "asc" ? "A-Z" : "Z-A"}
-                                  </button>
+                              <td colSpan={7} className="px-10 py-6">
+                                <div className="flex items-center gap-2 mb-4">
+                                  <Users size={14} className="text-blue-600" />
+                                  <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Daftar Siswa Terdaftar</span>
                                 </div>
                                 <motion.div 
                                   initial={{ opacity: 0, y: -10 }}
                                   animate={{ opacity: 1, y: 0 }}
-                                  className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"
+                                  className="w-full"
                                 >
-                                  {classStudents.length === 0 ? (
-                                    <div className="col-span-full py-8 text-center text-[10px] font-bold text-gray-400 uppercase tracking-widest italic">
-                                      Belum ada siswa di kelas ini
-                                    </div>
-                                  ) : (
-                                    classStudents.map((s) => (
-                                      <div key={s.id} className="p-3 bg-white border border-blue-50 rounded-2xl flex items-center gap-3 shadow-sm">
-                                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-[10px] font-black text-blue-600">
-                                          {s.name.charAt(0)}
-                                        </div>
-                                        <div className="flex flex-col">
-                                          <span className="text-[10px] font-black text-gray-900 uppercase">
-                                            {s.name}
-                                          </span>
-                                          <span className="text-[9px] font-mono text-gray-400">
-                                            {s.luminaId}
-                                          </span>
-                                        </div>
-                                      </div>
-                                    ))
-                                  )}
+                                  <div className="overflow-x-auto w-full border border-blue-100 rounded-3xl bg-white shadow-sm mt-2">
+                                    <table className="w-full text-left border-collapse min-w-[800px]">
+                                      <thead>
+                                        <tr className="bg-blue-50/50 border-b border-blue-100 select-none">
+                                          <th className="px-6 py-4 text-[10px] font-black text-slate-600 uppercase tracking-widest w-16 text-center">
+                                            No
+                                          </th>
+                                          <th 
+                                            onClick={() => {
+                                              if (studentSortKey === "name") {
+                                                setStudentSortDirection(prev => prev === "asc" ? "desc" : "asc");
+                                              } else {
+                                                setStudentSortKey("name");
+                                                setStudentSortDirection("asc");
+                                              }
+                                            }}
+                                            className="px-6 py-4 text-[10px] font-black text-slate-600 uppercase tracking-widest cursor-pointer hover:text-blue-600 transition-colors"
+                                          >
+                                            Nama Siswa {studentSortKey === "name" ? (studentSortDirection === "asc" ? "↑" : "↓") : "↕"}
+                                          </th>
+                                          <th 
+                                            onClick={() => {
+                                              if (studentSortKey === "nis") {
+                                                setStudentSortDirection(prev => prev === "asc" ? "desc" : "asc");
+                                              } else {
+                                                setStudentSortKey("nis");
+                                                setStudentSortDirection("asc");
+                                              }
+                                            }}
+                                            className="px-6 py-4 text-[10px] font-black text-slate-600 uppercase tracking-widest cursor-pointer hover:text-blue-600 transition-colors"
+                                          >
+                                            NIS {studentSortKey === "nis" ? (studentSortDirection === "asc" ? "↑" : "↓") : "↕"}
+                                          </th>
+                                          <th 
+                                            onClick={() => {
+                                              if (studentSortKey === "nisn") {
+                                                setStudentSortDirection(prev => prev === "asc" ? "desc" : "asc");
+                                              } else {
+                                                setStudentSortKey("nisn");
+                                                setStudentSortDirection("asc");
+                                              }
+                                            }}
+                                            className="px-6 py-4 text-[10px] font-black text-slate-600 uppercase tracking-widest cursor-pointer hover:text-blue-600 transition-colors"
+                                          >
+                                            NISN {studentSortKey === "nisn" ? (studentSortDirection === "asc" ? "↑" : "↓") : "↕"}
+                                          </th>
+                                          <th 
+                                            onClick={() => {
+                                              if (studentSortKey === "gender") {
+                                                setStudentSortDirection(prev => prev === "asc" ? "desc" : "asc");
+                                              } else {
+                                                setStudentSortKey("gender");
+                                                setStudentSortDirection("asc");
+                                              }
+                                            }}
+                                            className="px-6 py-4 text-[10px] font-black text-slate-600 uppercase tracking-widest cursor-pointer hover:text-blue-600 transition-colors"
+                                          >
+                                            Jenis Kelamin {studentSortKey === "gender" ? (studentSortDirection === "asc" ? "↑" : "↓") : "↕"}
+                                          </th>
+                                          <th 
+                                            onClick={() => {
+                                              if (studentSortKey === "email") {
+                                                setStudentSortDirection(prev => prev === "asc" ? "desc" : "asc");
+                                              } else {
+                                                setStudentSortKey("email");
+                                                setStudentSortDirection("asc");
+                                              }
+                                            }}
+                                            className="px-6 py-4 text-[10px] font-black text-slate-600 uppercase tracking-widest cursor-pointer hover:text-blue-600 transition-colors"
+                                          >
+                                            Email {studentSortKey === "email" ? (studentSortDirection === "asc" ? "↑" : "↓") : "↕"}
+                                          </th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-gray-100">
+                                        {classStudents.length === 0 ? (
+                                          <tr>
+                                            <td colSpan={6} className="px-6 py-12 text-center text-[10px] font-bold text-gray-400 uppercase tracking-widest italic bg-slate-50/50">
+                                              Belum ada siswa terdaftar pada kelas ini untuk Tahun Ajaran {cls.academicYear}.
+                                            </td>
+                                          </tr>
+                                        ) : (
+                                          classStudents.map((s, index) => {
+                                            const genderVal = s.gender || "";
+                                            const genderLabel = genderVal.toUpperCase() === "L" || genderVal.toUpperCase() === "LAKI-LAKI" || genderVal.toUpperCase() === "LAKI_LAKI" 
+                                              ? "Laki-laki" 
+                                              : genderVal.toUpperCase() === "P" || genderVal.toUpperCase() === "PEREMPUAN" 
+                                                ? "Perempuan" 
+                                                : "-";
+
+                                            return (
+                                              <tr key={s.id} className="hover:bg-slate-50/40 transition-all">
+                                                <td className="px-6 py-3.5 text-xs text-slate-500 font-bold text-center">
+                                                  {index + 1}
+                                                </td>
+                                                <td className="px-6 py-3.5 text-xs text-slate-900 font-black">
+                                                  {s.name}
+                                                </td>
+                                                <td className="px-6 py-3.5 text-xs font-mono text-slate-500">
+                                                  {s.luminaId || "-"}
+                                                </td>
+                                                <td className="px-6 py-3.5 text-xs font-mono text-slate-500">
+                                                  {s.nisn || "-"}
+                                                </td>
+                                                <td className="px-6 py-3.5 text-xs text-slate-600 font-semibold">
+                                                  {genderLabel}
+                                                </td>
+                                                <td className="px-6 py-3.5 text-xs text-slate-600">
+                                                  {s.email || "-"}
+                                                </td>
+                                              </tr>
+                                            );
+                                          })
+                                        )}
+                                      </tbody>
+                                    </table>
+                                  </div>
                                 </motion.div>
                               </td>
                             </tr>

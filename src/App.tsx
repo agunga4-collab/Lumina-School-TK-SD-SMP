@@ -43,6 +43,7 @@ const SEClassView = React.lazy(() => import('./pages/SelfExploration/TeacherPort
 import HeadDashboard from './pages/Dashboard/HeadDashboard';
 import Observations from './pages/Teacher/Observations';
 import Attendance from './pages/Teacher/Attendance';
+import ClassDataPage from './pages/Teacher/ClassDataPage';
 import ChildAttendance from './pages/Parent/Attendance';
 import LiteracyInput from './pages/LiteracyNumeracy/LiteracyInput';
 import LiteracyRecap from './pages/LiteracyNumeracy/LiteracyRecap';
@@ -291,6 +292,7 @@ export default function App() {
             } />
           </Route>
           <Route path="lateness" element={<Lateness />} />
+          <Route path="class-data" element={<ClassDataPage />} />
           <Route path="notifications" element={<NotificationsPage />} />
           <Route path="conference/presentation/:conferenceId" element={<TeacherPresentationPage />} />
           <Route path="academic">

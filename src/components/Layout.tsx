@@ -627,6 +627,7 @@ export function Layout() {
                   {(['SUPER_ADMIN', 'HEAD_UNIT'].includes(currentUser.role) || hasKindyClassAssignment) && (
                     <NavItem to="/kindy/dashboard" icon={<LayoutDashboard size={18} />} label="Dashboard" />
                   )}
+                  <NavItem to="/class-data" icon={<Users size={18} />} label="Data Kelas" />
                   <NavItem to="/kindy/aap-assessment" icon={<ClipboardCheck size={18} />} label="Asesmen Awal Pembelajaran" />
                   <NavItem to="/kindy/aap-report" icon={<FileText size={18} />} label="Hasil & Analisis AAP" />
                   <NavItem to="/kindy/checklist" icon={<Smile size={18} />} label="Attendance & Emotional Checklist" />
@@ -643,6 +644,7 @@ export function Layout() {
                   {(['SUPER_ADMIN', 'HEAD_UNIT'].includes(currentUser.role) || hasElementaryClassAssignment) && (
                     <NavItem to="/elementary/dashboard" icon={<LayoutDashboard size={18} />} label="Dashboard Guru Kelas" />
                   )}
+                  <NavItem to="/class-data" icon={<Users size={18} />} label="Data Kelas" />
                   <NavItem to="/lateness" icon={<Clock size={18} />} label="Keterlambatan" />
                   <NavItem to="/attendance" icon={<CheckSquare size={18} />} label="Kehadiran" />
                   <NavItem to="/elementary/anecdote" icon={<MessageSquare size={18} />} label="Anekdot Kelas" />
@@ -661,6 +663,7 @@ export function Layout() {
               {currentUnit === 'JUNIOR_HIGH' && (
                 <div className="space-y-1">
                   <NavSectionLabel label="Akademik & MTSS" />
+                  <NavItem to="/class-data" icon={<Users size={18} />} label="Data Kelas" />
                   <NavItem to="/lateness" icon={<Clock size={18} />} label="Keterlambatan & Pelanggaran Ringan" />
                   <NavItem to="/attendance" icon={<CheckSquare size={18} />} label="Kehadiran" />
                   {isMenuVisible(currentUnit, 'learningGoals') && (
