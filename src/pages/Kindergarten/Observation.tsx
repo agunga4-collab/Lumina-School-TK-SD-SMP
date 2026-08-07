@@ -1260,6 +1260,11 @@ export default function Observation() {
   const handleSaveStudent = async (studentId: string) => {
     setIsSaving(true);
     try {
+      if (!selectedClassId) {
+        toast.error('Gagal menyimpan! Kelas belum dipilih.');
+        return;
+      }
+
       const targetDate = observationDate;
       const todayStr = formatDateLocal(new Date());
       
@@ -1277,8 +1282,8 @@ export default function Observation() {
         studentName: student.name
       };
 
-      // Fetch the existing document from Firestore first to merge
-      const docId = `${selectedActivity}_${selectedDomain}_${targetDate}`;
+      // Fetch the existing document from Firestore first to merge (using class-scoped prefix)
+      const docId = `${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
       const docRef = doc(db, 'observations', docId);
       
       let existingObservations: Record<string, any> = {};
@@ -1290,6 +1295,18 @@ export default function Observation() {
         existingObservations = d.observations || {};
         if (d.generalPhotoUrl) {
           existingGeneralPhoto = d.generalPhotoUrl;
+        }
+      } else {
+        // Fallback checks for legacy unscoped document in Firestore
+        const legacyDocId = `${selectedActivity}_${selectedDomain}_${targetDate}`;
+        const legacyDocRef = doc(db, 'observations', legacyDocId);
+        const legacyDocSnap = await getDoc(legacyDocRef);
+        if (legacyDocSnap.exists()) {
+          const d = legacyDocSnap.data();
+          existingObservations = d.observations || {};
+          if (d.generalPhotoUrl) {
+            existingGeneralPhoto = d.generalPhotoUrl;
+          }
         }
       }
 
@@ -1308,34 +1325,39 @@ export default function Observation() {
         updatedObservations[student.nis] = enrichedStudentObs;
       }
 
-      // Save permanently to date-specific key in LocalStorage
-      const comboKeyDateSpecific = `kg_obs_hist_${selectedActivity}_${selectedDomain}_${targetDate}`;
-      const payloadLegacy = {
-        selectedActivity,
-        selectedDomain,
-        generalPhoto: existingGeneralPhoto,
-        observations: updatedObservations,
-        date: targetDate,
-        timestamp: Date.now()
-      };
-      
-      localStorage.setItem(comboKeyDateSpecific, JSON.stringify(payloadLegacy));
-      if (targetDate === todayStr) {
-        const comboKeyLegacy = `kg_obs_hist_${selectedActivity}_${selectedDomain}`;
-        localStorage.setItem(comboKeyLegacy, JSON.stringify(payloadLegacy));
-      }
-
-      // Save to Firestore
-      await setDoc(docRef, cleanFirestoreData({
+      // Standardized payload matching handleSaveAll
+      const payload = {
         id: docId,
-        activity: selectedActivity,
-        domain: selectedDomain,
-        date: targetDate,
+        academicYearId: activeYear || '2026/2027',
+        academicYear: activeYear || '2026/2027',
+        unit: 'KINDERGARTEN',
+        classId: selectedClassId,
+        observationDate: targetDate,
+        centerId: selectedActivity,
+        domainId: selectedDomain,
+        activity: selectedActivity, // backward compatibility
+        domain: selectedDomain, // backward compatibility
+        date: targetDate, // backward compatibility
         generalPhotoUrl: existingGeneralPhoto,
+        generalPhoto: existingGeneralPhoto,
+        generalPhotoDeleted: false,
+        status: 'active',
         observations: updatedObservations,
         timestamp: Date.now(),
         updatedAt: Date.now()
-      }), { merge: true });
+      };
+
+      // Save permanently with new date-specific, class-scoped key format in LocalStorage
+      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      localStorage.setItem(comboKeyDateSpecific, JSON.stringify(payload));
+      
+      if (targetDate === todayStr) {
+        const comboKeyLegacy = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}`;
+        localStorage.setItem(comboKeyLegacy, JSON.stringify(payload));
+      }
+
+      // Save permanently to Firestore 'observations' collection
+      await setDoc(docRef, cleanFirestoreData(payload), { merge: true });
 
       // Update our local page observations state
       setObservations(updatedObservations);
@@ -1451,20 +1473,32 @@ export default function Observation() {
       const docId = `${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
       const docRef = doc(db, 'observations', docId);
 
-      // Check if document exists
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        await updateDoc(docRef, {
+      // ALWAYS set the class-scoped document's generalPhoto to null and generalPhotoDeleted: true
+      await setDoc(docRef, {
+        generalPhotoUrl: null,
+        generalPhoto: null,
+        generalPhotoStoragePath: null,
+        generalPhotoDeleted: true,
+        generalPhotoDeletedAt: Date.now(),
+        updatedAt: Date.now()
+      }, { merge: true });
+
+      // ALSO check if there's a legacy unscoped document, and mark generalPhoto as deleted there too
+      const legacyDocId = `${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const legacyDocRef = doc(db, 'observations', legacyDocId);
+      const legacyDocSnap = await getDoc(legacyDocRef);
+      if (legacyDocSnap.exists()) {
+        await setDoc(legacyDocRef, {
           generalPhotoUrl: null,
           generalPhoto: null,
           generalPhotoStoragePath: null,
           generalPhotoDeleted: true,
           generalPhotoDeletedAt: Date.now(),
           updatedAt: Date.now()
-        });
+        }, { merge: true });
       }
 
-      // Also clean up local storage caches
+      // Also clean up local storage caches (both class-scoped and old unscoped)
       const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
       const saved = localStorage.getItem(comboKeyDateSpecific);
       if (saved) {
@@ -1474,6 +1508,20 @@ export default function Observation() {
           parsed.generalPhotoUrl = null;
           parsed.generalPhotoDeleted = true;
           localStorage.setItem(comboKeyDateSpecific, JSON.stringify(parsed));
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      const oldComboDateKey = `kg_obs_hist_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const savedOld = localStorage.getItem(oldComboDateKey);
+      if (savedOld) {
+        try {
+          const parsed = JSON.parse(savedOld);
+          parsed.generalPhoto = null;
+          parsed.generalPhotoUrl = null;
+          parsed.generalPhotoDeleted = true;
+          localStorage.setItem(oldComboDateKey, JSON.stringify(parsed));
         } catch (e) {
           console.error(e);
         }
@@ -1490,6 +1538,20 @@ export default function Observation() {
             parsed.generalPhotoUrl = null;
             parsed.generalPhotoDeleted = true;
             localStorage.setItem(comboKeyLegacy, JSON.stringify(parsed));
+          } catch (e) {
+            console.error(e);
+          }
+        }
+
+        const oldComboLegacyKey = `kg_obs_hist_${selectedActivity}_${selectedDomain}`;
+        const savedOldLegacy = localStorage.getItem(oldComboLegacyKey);
+        if (savedOldLegacy) {
+          try {
+            const parsed = JSON.parse(savedOldLegacy);
+            parsed.generalPhoto = null;
+            parsed.generalPhotoUrl = null;
+            parsed.generalPhotoDeleted = true;
+            localStorage.setItem(oldComboLegacyKey, JSON.stringify(parsed));
           } catch (e) {
             console.error(e);
           }

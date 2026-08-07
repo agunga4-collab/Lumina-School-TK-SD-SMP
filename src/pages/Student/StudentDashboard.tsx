@@ -540,9 +540,13 @@ function KindergartenStudentDashboard({
           const data = JSON.parse(localStorage.getItem(key) || '{}');
           const obsTimestamp = data.timestamp || Date.now();
           if (obsTimestamp >= startTs && obsTimestamp <= endTs) {
-            const classMatches = !data.classId || !currentStudent.classId || data.classId === currentStudent.classId;
-            if (classMatches) {
-              const studentPhoto = data?.observations?.[loggedInStudentId]?.photo;
+            const classMatches = data.classId 
+              ? (data.classId === currentStudent.classId) 
+              : (data?.observations && !!data.observations[loggedInStudentId]);
+            
+            const studentObs = data?.observations?.[loggedInStudentId];
+            if (classMatches && studentObs) {
+              const studentPhoto = studentObs.photo;
               const fallbackPhoto = data.generalPhotoDeleted === true ? null : (data?.generalPhotoUrl || data?.generalPhoto);
               const finalPhoto = studentPhoto || fallbackPhoto;
               
@@ -569,9 +573,13 @@ function KindergartenStudentDashboard({
 
     // Process Firestore observations
     firestoreObservations.forEach(data => {
-      const classMatches = !data.classId || !currentStudent.classId || data.classId === currentStudent.classId;
-      if (classMatches) {
-        const studentPhoto = data?.observations?.[loggedInStudentId]?.photo;
+      const classMatches = data.classId 
+        ? (data.classId === currentStudent.classId) 
+        : (data?.observations && !!data.observations[loggedInStudentId]);
+      
+      const studentObs = data?.observations?.[loggedInStudentId];
+      if (classMatches && studentObs) {
+        const studentPhoto = studentObs.photo;
         const fallbackPhoto = data.generalPhotoDeleted === true ? null : (data?.generalPhotoUrl || data?.generalPhoto);
         const finalPhoto = studentPhoto || fallbackPhoto;
         
