@@ -23,11 +23,75 @@ import type { Student } from '../types';
 
 export function Layout() {
   const { profile, signOut } = useAuth();
+  const currentUser = profile;
   const { activeYear, activeSemester } = useAcademicYear();
   const { isMenuVisible } = useMenuVisibility();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [pendingLXDCount, setPendingLXDCount] = React.useState(0);
+  const [resolvedStudentName, setResolvedStudentName] = React.useState<string>("");
+  const [resolvedStudentClass, setResolvedStudentClass] = React.useState<string>("");
+
+  React.useEffect(() => {
+    if (currentUser && currentUser.role === 'STUDENT' && currentUser.luminaId) {
+      const fetchMasterStudentData = async () => {
+        try {
+          const studentId = currentUser.luminaId.trim();
+          // Fetch student name from master students table
+          const studentSnap = await getDoc(doc(db, 'students', studentId));
+          if (studentSnap.exists()) {
+            const sData = studentSnap.data();
+            if (sData.name) {
+              setResolvedStudentName(sData.name);
+            }
+          }
+
+          // Fetch enrollment class
+          if (activeYear) {
+            const qEnroll = query(
+              collection(db, 'enrollments'),
+              where('studentId', '==', studentId),
+              where('academicYear', '==', activeYear)
+            );
+            const qEnrollSnap = await getDocs(qEnroll);
+            if (!qEnrollSnap.empty) {
+              const enrollment = qEnrollSnap.docs[0].data();
+              
+              // Now get the class name
+              const classDocSnap = await getDoc(doc(db, 'classes', enrollment.classId));
+              if (classDocSnap.exists()) {
+                const cData = classDocSnap.data();
+                if (cData.name) {
+                  setResolvedStudentClass(cData.name);
+                }
+              } else {
+                // Try query by class name
+                const qClass = query(
+                  collection(db, 'classes'),
+                  where('name', '==', enrollment.classId)
+                );
+                const qClassSnap = await getDocs(qClass);
+                if (!qClassSnap.empty) {
+                  const cData = qClassSnap.docs[0].data();
+                  if (cData.name) {
+                    setResolvedStudentClass(cData.name);
+                  }
+                } else {
+                  setResolvedStudentClass(enrollment.classId);
+                }
+              }
+            }
+          }
+        } catch (err) {
+          console.error("Error resolving master student profile details in Layout:", err);
+        }
+      };
+      fetchMasterStudentData();
+    } else {
+      setResolvedStudentName("");
+      setResolvedStudentClass("");
+    }
+  }, [currentUser, activeYear]);
   const [logos, setLogos] = React.useState<{
     KINDERGARTEN: { rectangular: string; square: string };
     ELEMENTARY: { rectangular: string; square: string };
@@ -104,7 +168,6 @@ export function Layout() {
   // Call the alert scanner hook
   useBehaviorAlerts();
 
-  const currentUser = profile;
   const [hasKindyClassAssignment, setHasKindyClassAssignment] = React.useState(false);
   const [hasElementaryClassAssignment, setHasElementaryClassAssignment] = React.useState(false);
 
@@ -730,14 +793,14 @@ export function Layout() {
           <div className="flex items-center gap-3 p-2 rounded-xl bg-white shadow-sm border border-gray-100 mb-4">
              <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold border-2 border-white shadow-sm ring-1 ring-blue-50 overflow-hidden">
                 {currentUser.photoURL ? (
-                  <img src={currentUser.photoURL} alt={currentUser.displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  <img src={currentUser.photoURL} alt={resolvedStudentName || currentUser.displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 ) : (
-                  currentUser.displayName[0]
+                  (resolvedStudentName || currentUser.displayName)[0]
                 )}
              </div>
              <div className="flex-1 text-left overflow-hidden">
-                <p className="text-sm font-bold text-gray-900 truncate">{currentUser.displayName}</p>
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{currentUser.jobTitle || currentUser.role.replace('_', ' ')}</p>
+                <p className="text-sm font-bold text-gray-900 truncate">{resolvedStudentName || currentUser.displayName}</p>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{resolvedStudentClass || currentUser.jobTitle || currentUser.role.replace('_', ' ')}</p>
              </div>
           </div>
           

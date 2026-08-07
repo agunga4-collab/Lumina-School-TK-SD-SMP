@@ -5,7 +5,7 @@ import {
   Map, Calendar, Users, GraduationCap,
   Heart, Star, Camera, MessageCircleHeart, 
   CheckCircle2, Smile, Meh, Frown, Angry, 
-  Activity, BookOpen, Coffee, Home, Loader2, ChevronLeft
+  Activity, BookOpen, Coffee, Home, Loader2, ChevronLeft, ShieldAlert
 } from 'lucide-react';
 import { useOutletContext, Link, useNavigate } from 'react-router-dom';
 import { User as AppUser, Student } from '../../types';
@@ -19,7 +19,7 @@ import {
 } from '../../lib/kindergartenWeeklyReport';
 import { getSummaryKey } from '../Kindergarten/WeeklySummary';
 import { GoogleGenAI, Type } from '@google/genai';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, query, collection, where, getDocs } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 
 interface AiRecommendation {
@@ -32,29 +32,169 @@ export default function StudentDashboard() {
   const { activeYear } = useAcademicYear();
   const navigate = useNavigate();
   const [studentData, setStudentData] = React.useState<Student | null>(null);
+  const [classData, setClassData] = React.useState<any | null>(null);
   const [loading, setLoading] = React.useState(true);
+  const [dataError, setDataError] = React.useState<string | null>(null);
+  const [isValidated, setIsValidated] = React.useState(false);
 
   React.useEffect(() => {
-    const fetchStudent = async () => {
-      if (currentUser?.luminaId) {
-        setLoading(true);
-        const data = await getStudentById(currentUser.luminaId);
-        setStudentData(data);
+    const validateAndFetch = async () => {
+      if (!currentUser) {
         setLoading(false);
-      } else {
+        return;
+      }
+
+      setLoading(true);
+      setDataError(null);
+      setIsValidated(false);
+
+      try {
+        // Guard 1: Verify user role is indeed STUDENT
+        if (currentUser.role !== 'STUDENT') {
+          setDataError("Data akun siswa belum terhubung dengan data kelas. Silakan hubungi admin.");
+          setLoading(false);
+          return;
+        }
+
+        // Guard 2: Use studentId (luminaId) as the primary key
+        const studentId = currentUser.luminaId;
+        if (!studentId || !studentId.trim()) {
+          setDataError("Data akun siswa belum terhubung dengan data kelas. Silakan hubungi admin.");
+          setLoading(false);
+          return;
+        }
+
+        // Guard 3: Fetch student profile based on studentId
+        const studentProfileRef = doc(db, 'students', studentId.trim());
+        const studentProfileSnap = await getDoc(studentProfileRef);
+        if (!studentProfileSnap.exists()) {
+          setDataError("Data akun siswa belum terhubung dengan data kelas. Silakan hubungi admin.");
+          setLoading(false);
+          return;
+        }
+        const studentProfile = { id: studentProfileSnap.id, ...studentProfileSnap.data() } as Student;
+
+        // Guard 4: Fetch activeEnrollment based on studentId and active academic year
+        if (!activeYear) {
+          setDataError("Tahun ajaran aktif belum ditentukan. Silakan hubungi admin.");
+          setLoading(false);
+          return;
+        }
+
+        // Search in enrollments
+        const qEnroll = query(
+          collection(db, 'enrollments'),
+          where('studentId', '==', studentId.trim()),
+          where('academicYear', '==', activeYear)
+        );
+        const qEnrollSnap = await getDocs(qEnroll);
+        
+        let enrollment = null;
+        if (!qEnrollSnap.empty) {
+          enrollment = qEnrollSnap.docs[0].data();
+        }
+
+        if (!enrollment) {
+          setDataError("Data akun siswa belum terhubung dengan data kelas. Silakan hubungi admin.");
+          setLoading(false);
+          return;
+        }
+
+        // Guard 5: Strict cross-check validation
+        // studentProfile.luminaId (or id) == activeEnrollment.studentId == authUser.luminaId
+        const profileId = (studentProfile as any).luminaId || studentProfile.id;
+        const enrollmentStudentId = enrollment.studentId;
+        
+        if (profileId !== studentId.trim() || enrollmentStudentId !== studentId.trim() || currentUser.luminaId !== studentId.trim()) {
+          setDataError("Data akun siswa belum terhubung dengan data kelas. Silakan hubungi admin.");
+          setLoading(false);
+          return;
+        }
+
+        // Email matching guard: if email field exists, check case-insensitive match
+        if (studentProfile.email && currentUser.email) {
+          if (studentProfile.email.toLowerCase().trim() !== currentUser.email.toLowerCase().trim()) {
+            setDataError("Data akun siswa belum terhubung dengan data kelas. Silakan hubungi admin.");
+            setLoading(false);
+            return;
+          }
+        }
+
+        // Guard 6: Fetch class details using classId from the active enrollment
+        const classDocRef = doc(db, 'classes', enrollment.classId);
+        const classDocSnap = await getDoc(classDocRef);
+        let classDetails = null;
+        if (classDocSnap.exists()) {
+          classDetails = { id: classDocSnap.id, ...classDocSnap.data() };
+        } else {
+          // If the classDoc doesn't exist by ID, try querying by class name
+          const qClass = query(
+            collection(db, 'classes'),
+            where('name', '==', enrollment.classId)
+          );
+          const qClassSnap = await getDocs(qClass);
+          if (!qClassSnap.empty) {
+            classDetails = { id: qClassSnap.docs[0].id, ...qClassSnap.docs[0].data() };
+          }
+        }
+
+        setStudentData(studentProfile);
+        setClassData(classDetails);
+        setIsValidated(true);
+      } catch (err: any) {
+        console.error("Critical student validation failed:", err);
+        setDataError("Terjadi kesalahan memuat data siswa. Silakan coba beberapa saat lagi atau hubungi admin.");
+      } finally {
         setLoading(false);
       }
     };
-    fetchStudent();
-  }, [currentUser]);
 
-  const unit = activeUnit || currentUser?.unitId || "JUNIOR_HIGH";
+    validateAndFetch();
+  }, [currentUser, activeYear]);
+
+  if (loading) {
+    return (
+      <div className="min-h-[50vh] flex flex-col items-center justify-center gap-4">
+        <Loader2 className="w-12 h-12 text-[#109E58] animate-spin" />
+        <p className="text-xs font-black text-gray-400 uppercase tracking-widest">Memvalidasi Data Akun...</p>
+      </div>
+    );
+  }
+
+  if (dataError) {
+    return (
+      <div className="max-w-md mx-auto my-12 p-8 bg-white border border-red-100 rounded-[2rem] shadow-xl shadow-red-50/50 flex flex-col items-center text-center space-y-6">
+        <div className="w-16 h-16 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center">
+          <ShieldAlert size={32} />
+        </div>
+        <div className="space-y-2">
+          <h2 className="text-xl font-black text-gray-900 tracking-tight">Koneksi Akun Terganggu</h2>
+          <p className="text-sm text-gray-500 font-medium leading-relaxed">{dataError}</p>
+        </div>
+        <div className="w-full pt-2">
+          <button
+            onClick={() => window.location.reload()}
+            className="w-full py-4 bg-gray-900 hover:bg-gray-800 text-white font-black text-[10px] uppercase tracking-widest rounded-xl transition-all shadow-sm"
+          >
+            Segarkan Halaman
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isValidated) {
+    return null;
+  }
+
+  const unit = activeUnit || classData?.unitId || currentUser?.unitId || "JUNIOR_HIGH";
 
   if (unit === 'KINDERGARTEN') {
     return (
       <KindergartenStudentDashboard 
         currentUser={currentUser} 
         studentData={studentData} 
+        classData={classData}
         activeYear={activeYear} 
       />
     );
@@ -71,7 +211,7 @@ export default function StudentDashboard() {
         
         <div className="space-y-4 relative">
           <h1 className="text-5xl font-black tracking-tighter italic uppercase text-gray-900 leading-none">
-            Halo, <span className="text-blue-600">{currentUser.displayName.split(' ')[0]}! 👋</span>
+            Halo, <span className="text-blue-600">{(studentData?.name || currentUser.displayName).split(' ')[0]}! 👋</span>
           </h1>
           <div className="flex flex-wrap gap-4">
              <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 rounded-2xl text-[10px] font-black uppercase tracking-widest text-gray-400">
@@ -150,10 +290,12 @@ export default function StudentDashboard() {
 function KindergartenStudentDashboard({ 
   currentUser, 
   studentData, 
+  classData,
   activeYear 
 }: { 
   currentUser: AppUser; 
   studentData: Student | null; 
+  classData: any | null;
   activeYear: string | null;
 }) {
   const loggedInStudentId = currentUser.luminaId || '';
@@ -239,12 +381,12 @@ function KindergartenStudentDashboard({
     if (found) return found;
     return {
       id: loggedInStudentId,
-      name: currentUser.displayName || studentData?.name || 'Siswa Hebat',
-      nickName: currentUser.displayName ? currentUser.displayName.split(' ')[0] : 'Ananda',
-      ageGroup: ((studentData as any)?.grade === 'TK_B' || (studentData as any)?.ageGroup === 'TK_B') ? ('TK_B' as const) : ('TK_A' as const),
-      classId: studentData?.classId || ''
+      name: studentData?.name || currentUser.displayName || 'Siswa Hebat',
+      nickName: studentData?.nickname || studentData?.name?.split(' ')[0] || currentUser.displayName?.split(' ')[0] || 'Ananda',
+      ageGroup: (classData?.name?.includes('TK-B') || (studentData as any)?.grade === 'TK_B' || (studentData as any)?.ageGroup === 'TK_B') ? ('TK_B' as const) : ('TK_A' as const),
+      classId: classData?.name || studentData?.classId || ''
     };
-  }, [loggedInStudentId, DEFAULT_STUDENTS, currentUser, studentData]);
+  }, [loggedInStudentId, DEFAULT_STUDENTS, currentUser, studentData, classData]);
 
   // Merge local draft and database comments
   const savedReview = React.useMemo(() => {
