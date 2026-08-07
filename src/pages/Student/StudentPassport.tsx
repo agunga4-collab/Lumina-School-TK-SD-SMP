@@ -893,7 +893,7 @@ export default function StudentPassport() {
           objective: docData.objective || found.objective || 'Thematic Learning',
           grade: found.grading || 'Observed',
           notes: found.notes || '',
-          photoUrl: found.photo || docData.generalPhoto || null,
+          photoUrl: found.photo || docData.generalPhotoUrl || docData.generalPhoto || null,
           timestamp: docData.timestamp || Date.now()
         });
       }
@@ -924,7 +924,7 @@ export default function StudentPassport() {
               objective: payloadParsed.learningObjectives || 'Practical Exploration',
               grade: stObs.grading || 'Observed',
               notes: stObs.notes || '',
-              photoUrl: stObs.photo || payloadParsed.generalPhoto || null,
+              photoUrl: stObs.photo || payloadParsed.generalPhotoUrl || payloadParsed.generalPhoto || null,
               timestamp: payloadParsed.timestamp || Date.now()
             });
           }

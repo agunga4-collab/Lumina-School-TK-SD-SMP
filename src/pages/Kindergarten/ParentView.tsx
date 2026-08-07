@@ -178,7 +178,7 @@ export default function ParentView() {
           const obsTimestamp = data.timestamp || Date.now();
           if (obsTimestamp >= startTs && obsTimestamp <= endTs) {
             const studentPhoto = data?.observations?.[selectedStudentId]?.photo;
-            const fallbackPhoto = data?.generalPhoto;
+            const fallbackPhoto = data?.generalPhotoUrl || data?.generalPhoto;
             const finalPhoto = studentPhoto || fallbackPhoto;
             
             if (finalPhoto) {
