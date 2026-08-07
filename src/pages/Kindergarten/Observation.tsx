@@ -175,6 +175,7 @@ export default function Observation() {
   
   // High fidelity general photo (Starts pre-filled with a beautiful school activity image)
   const [generalPhoto, setGeneralPhoto] = React.useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState<boolean>(false);
   
   // Observations for students, keyed by studentId
   const [observations, setObservations] = React.useState<Record<string, StudentObservation>>(() => {
@@ -1732,12 +1733,6 @@ export default function Observation() {
                       >
                         <Camera size={12} /> Kamera
                       </button>
-                      <button 
-                        onClick={clearGeneralPhoto}
-                        className="p-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-[10px] transition-transform hover:scale-105 flex items-center gap-1 shadow-md cursor-pointer"
-                      >
-                        <Trash2 size={12} /> Hapus
-                      </button>
                     </div>
                     <div className="absolute bottom-2 left-2 bg-rose-600 text-white px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-wider">
                       Active Fallback
@@ -1797,6 +1792,61 @@ export default function Observation() {
                 </motion.div>
               )}
             </AnimatePresence>
+
+            {generalPhoto && (
+              <div className="pt-4 border-t border-gray-100 space-y-3">
+                {!showDeleteConfirm ? (
+                  <div className="flex gap-2.5">
+                    <button
+                      type="button"
+                      onClick={handleSaveAll}
+                      disabled={isSaving}
+                      className="flex-1 py-2.5 bg-[#109E58] hover:bg-[#0E854A] disabled:opacity-50 text-white text-[10px] font-extrabold uppercase tracking-widest rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      id="btn-save-general-photo"
+                    >
+                      {isSaving ? <Loader2 className="animate-spin" size={12} /> : <Save size={12} />}
+                      Simpan
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowDeleteConfirm(true)}
+                      className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-extrabold uppercase tracking-widest rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      id="btn-delete-general-photo"
+                    >
+                      <Trash2 size={12} />
+                      Hapus
+                    </button>
+                  </div>
+                ) : (
+                  <div className="bg-rose-50 border border-rose-100 rounded-2xl p-3.5 space-y-3">
+                    <p className="text-[11px] font-bold text-rose-800 text-center">
+                      Apakah Anda yakin?
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await clearGeneralPhoto();
+                          setShowDeleteConfirm(false);
+                        }}
+                        className="flex-1 py-2 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer"
+                        id="btn-confirm-delete-yes"
+                      >
+                        Ya, dan simpan perubahan
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowDeleteConfirm(false)}
+                        className="flex-1 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center cursor-pointer"
+                        id="btn-confirm-delete-no"
+                      >
+                        Tidak
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
