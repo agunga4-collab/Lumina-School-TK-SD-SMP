@@ -530,6 +530,14 @@ service cloud.firestore {
       allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
     }
 
+    match /aap_assessments/{assessmentId} {
+      allow read: if isActive() && isTeacher();
+      allow read: if isActive() && isJuniorHighStaff();
+      allow read: if isAdmin();
+      allow read: if isActive() && isLinkedStudent(existing().studentId);
+      allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
+    }
+
     match /learning_goals/{goalId} {
       allow read, write: if isJuniorHighStaff();
     }
