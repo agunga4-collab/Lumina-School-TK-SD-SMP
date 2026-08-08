@@ -12,6 +12,8 @@ import { startOfMonth, endOfMonth, format, eachDayOfInterval, isWeekend as isDat
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
+import { useAuth } from '../../context/AuthContext';
+import { useTeacherAssignedClasses } from '../../hooks/useTeacherAssignedClasses';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import { html2canvasWithModernColors } from '../../lib/html2canvasPatch';
@@ -34,9 +36,21 @@ interface StudentAggregatedData {
 export default function AttendanceSummaryReport() {
   const navigate = useNavigate();
   const { activeYear } = useAcademicYear();
+  const { profile } = useAuth();
 
-  // Filter States
-  const [classes, setClasses] = React.useState<any[]>([]);
+  // Filter States using useTeacherAssignedClasses
+  const {
+    assignedClasses: classes,
+    assignedClassIds,
+    primaryClassId,
+    isRestrictedToAssignedClasses,
+    loading: isLoadingClasses,
+    setLastSelectedClassId
+  } = useTeacherAssignedClasses({
+    userId: profile?.uid,
+    academicYearId: activeYear || '2026/2027'
+  });
+
   const [selectedClassId, setSelectedClassId] = React.useState<string>('');
   const [selectedMonth, setSelectedMonth] = React.useState<number>(() => new Date().getMonth());
   const [selectedYear, setSelectedYear] = React.useState<string>(() => {
@@ -113,32 +127,44 @@ export default function AttendanceSummaryReport() {
     return [activeYear, '2025', '2026', '2027'].filter((v, i, a) => a.indexOf(v) === i);
   }, [activeYear]);
 
-  // Load Classes and Students (just once or when activeYear changes) using cache layer
+  // Set default selection and handle URL/storage redirection rules
   React.useEffect(() => {
-    async function loadKindergartenData() {
+    if (!isLoadingClasses && classes.length > 0) {
+      const defaultClassId = primaryClassId;
+      if (defaultClassId) {
+        setSelectedClassId(defaultClassId);
+      }
+    }
+  }, [classes, assignedClassIds, primaryClassId, isLoadingClasses]);
+
+  // Real-time access check
+  React.useEffect(() => {
+    if (!isLoadingClasses && isRestrictedToAssignedClasses && selectedClassId) {
+      if (assignedClassIds.length > 0 && !assignedClassIds.includes(selectedClassId)) {
+        toast.error('Anda tidak memiliki hak akses untuk kelas ini. Mengembalikan ke kelas penugasan Anda.');
+        setSelectedClassId(primaryClassId || '');
+      }
+    }
+  }, [selectedClassId, isRestrictedToAssignedClasses, assignedClassIds, primaryClassId, isLoadingClasses]);
+
+  // Load Students (just once or when activeYear changes) using cache layer
+  React.useEffect(() => {
+    async function loadKindergartenStudentsData() {
       if (!activeYear) return;
       setIsLoading(true);
       try {
-        // 1. Fetch Kindergarten classes from Cache
-        const fetchedClasses = await getKindergartenClasses(activeYear);
-        setClasses(fetchedClasses);
-        
-        if (fetchedClasses.length > 0) {
-          setSelectedClassId(fetchedClasses[0].id);
-        }
-
-        // 2. Fetch Kindergarten Students from Cache
+        // Fetch Kindergarten Students from Cache
         const fetchedStudents = await getKindergartenStudents(activeYear);
         setStudents(fetchedStudents);
       } catch (err) {
-        console.error('Error loading Kindergarten data for report:', err);
-        toast.error('Gagal memuat data dasar kelas & siswa.');
+        console.error('Error loading Kindergarten students for report:', err);
+        toast.error('Gagal memuat data dasar siswa.');
       } finally {
         setIsLoading(false);
       }
     }
 
-    loadKindergartenData();
+    loadKindergartenStudentsData();
   }, [activeYear]);
 
   // Fetch Attendance Records for the entire selected period
@@ -514,6 +540,39 @@ export default function AttendanceSummaryReport() {
     }
   };
 
+  if (isRestrictedToAssignedClasses && classes.length === 0 && !isLoadingClasses) {
+    return (
+      <div id="attendance-summary-container" className="min-h-screen bg-[#FAFDFB] p-4 lg:p-8">
+        <div className="max-w-7xl mx-auto mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <button 
+              id="back-to-checklist-btn"
+              onClick={() => navigate('/kindy/checklist')}
+              className="p-3 bg-white border border-emerald-100 text-emerald-800 rounded-2xl hover:bg-emerald-50 transition-all shadow-sm group"
+            >
+              <ArrowLeft size={18} />
+            </button>
+            <div>
+              <h1 className="text-2xl font-black text-gray-900 tracking-tight font-sans">Rekap Bulanan Absensi Siswa</h1>
+            </div>
+          </div>
+        </div>
+
+        <div className="max-w-4xl mx-auto my-12 p-12 bg-white border border-gray-150 rounded-3xl shadow-sm text-center">
+          <div className="flex flex-col items-center justify-center space-y-4">
+            <div className="p-4 bg-amber-50 text-amber-600 rounded-full">
+              <AlertTriangle size={36} />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900">Belum Ada Kelas Ditugaskan</h2>
+            <p className="text-gray-600 max-w-md">
+              Belum ada kelas aktif yang ditugaskan kepada Anda pada Tahun Ajaran {activeYear || '2026/2027'}. Hubungi Kepala Unit atau admin untuk memperbarui assignment kelas.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div id="attendance-summary-container" className="min-h-screen bg-[#FAFDFB] p-4 lg:p-8">
       
@@ -677,8 +736,12 @@ export default function AttendanceSummaryReport() {
               <select
                 id="class-selector"
                 value={selectedClassId}
-                onChange={(e) => setSelectedClassId(e.target.value)}
-                className="w-full bg-white border border-gray-200 rounded-xl py-2.5 pl-10 pr-4 text-sm font-medium text-gray-800 focus:outline-none focus:border-emerald-800 transition-all cursor-pointer"
+                onChange={(e) => {
+                  setSelectedClassId(e.target.value);
+                  setLastSelectedClassId(e.target.value);
+                }}
+                disabled={isRestrictedToAssignedClasses && classes.length <= 1}
+                className="w-full bg-white border border-gray-200 rounded-xl py-2.5 pl-10 pr-4 text-sm font-medium text-gray-800 focus:outline-none focus:border-emerald-800 transition-all cursor-pointer disabled:opacity-75 disabled:cursor-not-allowed"
               >
                 {classes.length === 0 ? (
                   <option value="">Memuat kelas...</option>

@@ -4,7 +4,8 @@ import { db } from '../../lib/firebase';
 import { collection, query, where, getDocs, doc, setDoc } from 'firebase/firestore';
 import { 
   ClipboardCheck, Printer, Save, FileText, ChevronLeft, RefreshCw, 
-  TrendingUp, Layers, Award, CheckCircle2, User, BookOpen, Signature, Sparkles
+  TrendingUp, Layers, Award, CheckCircle2, User, BookOpen, Signature, Sparkles,
+  AlertCircle
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
@@ -28,17 +29,19 @@ import { jsPDF } from 'jspdf';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList 
 } from 'recharts';
+import { useAuth } from '../../context/AuthContext';
+import { useTeacherAssignedClasses } from '../../hooks/useTeacherAssignedClasses';
 
 export default function AAPReport() {
   const { activeYear } = useAcademicYear();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { profile } = useAuth();
 
   // Navigation state / Active tabs
   const [activeTab, setActiveTab] = React.useState<'individual' | 'class'>('individual');
 
   // Metadata states
-  const [classes, setClasses] = React.useState<any[]>([]);
   const [students, setStudents] = React.useState<any[]>([]);
   const [selectedClassId, setSelectedClassId] = React.useState<string>('');
   const [selectedStudentId, setSelectedStudentId] = React.useState<string>('');
@@ -46,33 +49,47 @@ export default function AAPReport() {
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSavingConclusion, setIsSavingConclusion] = React.useState(false);
 
+  const {
+    assignedClasses: classes,
+    assignedClassIds,
+    primaryClassId,
+    isRestrictedToAssignedClasses,
+    loading: isLoadingClasses,
+    setLastSelectedClassId
+  } = useTeacherAssignedClasses({
+    userId: profile?.uid,
+    academicYearId: activeYear || '2026/2027'
+  });
+
   // General Conclusion Custom Edit State
   const [generalConclusion, setGeneralConclusion] = React.useState<string>('');
 
   // Read URL parameters if redirecting from Assessment Page
-  React.useEffect(() => {
-    const urlClassId = searchParams.get('classId');
-    const urlStudentId = searchParams.get('studentId');
-    if (urlClassId) setSelectedClassId(urlClassId);
-    if (urlStudentId) setSelectedStudentId(urlStudentId);
-  }, [searchParams]);
+  const urlClassId = searchParams.get('classId');
+  const urlStudentId = searchParams.get('studentId');
 
-  // Load initial Classes metadata
   React.useEffect(() => {
-    async function loadClasses() {
-      try {
-        const classList = await getKindergartenClasses(activeYear);
-        setClasses(classList);
-        if (classList.length > 0 && !selectedClassId) {
-          setSelectedClassId(classList[0].id);
-        }
-      } catch (err) {
-        console.error("Error loading kindergarten classes:", err);
-        toast.error("Gagal memuat daftar kelas.");
+    if (!isLoadingClasses && classes.length > 0) {
+      const validUrlClassId = urlClassId && assignedClassIds.includes(urlClassId) ? urlClassId : null;
+      const defaultClassId = validUrlClassId || primaryClassId;
+      if (defaultClassId) {
+        setSelectedClassId(defaultClassId);
+      }
+      if (urlStudentId) {
+        setSelectedStudentId(urlStudentId);
       }
     }
-    loadClasses();
-  }, [activeYear]);
+  }, [classes, assignedClassIds, primaryClassId, urlClassId, urlStudentId, isLoadingClasses]);
+
+  // Real-time access check
+  React.useEffect(() => {
+    if (!isLoadingClasses && isRestrictedToAssignedClasses && selectedClassId) {
+      if (assignedClassIds.length > 0 && !assignedClassIds.includes(selectedClassId)) {
+        toast.error('Anda tidak memiliki hak akses untuk kelas ini. Mengembalikan ke kelas penugasan Anda.');
+        setSelectedClassId(primaryClassId || '');
+      }
+    }
+  }, [selectedClassId, isRestrictedToAssignedClasses, assignedClassIds, primaryClassId, isLoadingClasses]);
 
   // Load students and assessments for the selected class
   React.useEffect(() => {
@@ -246,6 +263,41 @@ export default function AAPReport() {
   const activeClassObj = classes.find(c => c.id === selectedClassId);
   const activeStudentObj = students.find(s => s.id === selectedStudentId);
 
+  if (isRestrictedToAssignedClasses && classes.length === 0 && !isLoadingClasses) {
+    return (
+      <div className="min-h-screen bg-gray-50/50 p-6 md:p-8 space-y-8 pb-20">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate('/kindy/aap-assessment')}
+            className="flex items-center justify-center w-10 h-10 rounded-2xl bg-white border border-gray-100 text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-all cursor-pointer active:scale-95"
+          >
+            <ChevronLeft size={20} />
+          </button>
+          <div>
+            <div className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest">
+              <span>Kindergarten</span>
+              <span>/</span>
+              <span>Asesmen Awal Pembelajaran</span>
+            </div>
+            <h1 className="text-xl font-black text-gray-900 tracking-tight mt-1">Laporan & Analisis Hasil AAP</h1>
+          </div>
+        </div>
+
+        <div className="max-w-4xl mx-auto my-12 p-12 bg-white border border-gray-150 rounded-3xl shadow-sm text-center">
+          <div className="flex flex-col items-center justify-center space-y-4">
+            <div className="p-4 bg-amber-50 text-amber-600 rounded-full">
+              <AlertCircle size={36} />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900">Belum Ada Kelas Ditugaskan</h2>
+            <p className="text-gray-600 max-w-md">
+              Belum ada kelas aktif yang ditugaskan kepada Anda pada Tahun Ajaran {activeYear || '2026/2027'}. Hubungi Kepala Unit atau admin untuk memperbarui assignment kelas.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50/50 p-6 md:p-8 space-y-8 pb-20">
       {/* Header and Controls (Hidden on Print) */}
@@ -312,8 +364,12 @@ export default function AAPReport() {
               <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Pilih Kelas</label>
               <select
                 value={selectedClassId}
-                onChange={(e) => setSelectedClassId(e.target.value)}
-                className="w-full bg-gray-50/50 border border-gray-150 rounded-2xl px-4 py-2.5 text-xs font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                onChange={(e) => {
+                  setSelectedClassId(e.target.value);
+                  setLastSelectedClassId(e.target.value);
+                }}
+                disabled={isRestrictedToAssignedClasses && classes.length <= 1}
+                className="w-full bg-gray-50/50 border border-gray-150 rounded-2xl px-4 py-2.5 text-xs font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 disabled:opacity-75 disabled:cursor-not-allowed"
               >
                 {classes.map(cls => (
                   <option key={cls.id} value={cls.id}>{cls.name}</option>

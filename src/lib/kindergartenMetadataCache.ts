@@ -88,7 +88,14 @@ export async function getUnitClasses(unitId: string, academicYear: string, force
           name: data.name,
           grade: data.grade,
           unitId: data.unitId,
-          academicYear: data.academicYear
+          academicYear: data.academicYear,
+          teacherAssignments: data.teacherAssignments || [],
+          assignedTeacherIds: data.assignedTeacherIds || [],
+          homeroomTeacherIds: data.homeroomTeacherIds || [],
+          gpkTeacherIds: data.gpkTeacherIds || [],
+          homeroomTeacherId: data.homeroomTeacherId || null,
+          homeroomTeacherName: data.homeroomTeacherName || null,
+          status: data.status || 'active'
         };
       }).sort((a, b) => a.name.localeCompare(b.name));
 

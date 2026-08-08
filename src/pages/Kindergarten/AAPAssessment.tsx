@@ -23,15 +23,28 @@ import {
   STAGE_LABELS 
 } from '../../config/aapRubric';
 import AAPImporter from './AAPImporter';
+import { useTeacherAssignedClasses } from '../../hooks/useTeacherAssignedClasses';
 
 export default function AAPAssessment() {
   const navigate = useNavigate();
   const { activeYear } = useAcademicYear();
   const { profile } = useAuth();
-  const [classes, setClasses] = React.useState<any[]>([]);
-  const [classStudents, setClassStudents] = React.useState<KindergartenRosterStudent[]>([]);
+  
   const [selectedClassId, setSelectedClassId] = React.useState<string>('');
-  const [isLoading, setIsLoading] = React.useState(true);
+  const {
+    assignedClasses: classes,
+    assignedClassIds,
+    primaryClassId,
+    isRestrictedToAssignedClasses,
+    loading: isLoadingClasses,
+    setLastSelectedClassId
+  } = useTeacherAssignedClasses({
+    userId: profile?.uid,
+    academicYearId: activeYear || '2026/2027'
+  });
+
+  const isLoading = isLoadingClasses;
+  const [classStudents, setClassStudents] = React.useState<KindergartenRosterStudent[]>([]);
   const [isLoadingRoster, setIsLoadingRoster] = React.useState(false);
   
   // Importer Modal State
@@ -140,28 +153,26 @@ export default function AAPAssessment() {
     return list;
   }, [ageRangeUsed]);
 
-  // Load Classes initially
+  // Set default selection and handle URL/storage redirection rules
   React.useEffect(() => {
-    async function loadClasses() {
-      try {
-        setIsLoading(true);
-        const yr = activeYear || '2026/2027';
-        
-        const fetchedClasses = await getKindergartenClasses(yr);
-        setClasses(fetchedClasses);
-        
-        if (fetchedClasses.length > 0) {
-          setSelectedClassId(fetchedClasses[0].id);
-        }
-      } catch (err) {
-        console.error("Error loading Kindergarten classes for AAP:", err);
-        toast.error("Gagal memuat metadata kelas Lumina Kindergarten.");
-      } finally {
-        setIsLoading(false);
+    if (!isLoadingClasses && classes.length > 0) {
+      if (selectedClassId && assignedClassIds.includes(selectedClassId)) {
+        // Keep current valid selection
+      } else if (primaryClassId) {
+        setSelectedClassId(primaryClassId);
       }
     }
-    loadClasses();
-  }, [activeYear]);
+  }, [classes, assignedClassIds, primaryClassId, isLoadingClasses]);
+
+  // Real-time access check
+  React.useEffect(() => {
+    if (!isLoadingClasses && isRestrictedToAssignedClasses && selectedClassId) {
+      if (assignedClassIds.length > 0 && !assignedClassIds.includes(selectedClassId)) {
+        toast.error('Anda tidak memiliki hak akses untuk kelas ini. Mengembalikan ke kelas penugasan Anda.');
+        setSelectedClassId(primaryClassId || '');
+      }
+    }
+  }, [selectedClassId, isRestrictedToAssignedClasses, assignedClassIds, primaryClassId, isLoadingClasses]);
 
   // Fetch student active roster using the unified service
   React.useEffect(() => {
@@ -436,6 +447,35 @@ export default function AAPAssessment() {
   // Count assessed students
   const assessedCount = classStudents.filter(s => !!assessments[s.id]).length;
 
+  if (isRestrictedToAssignedClasses && classes.length === 0 && !isLoadingClasses) {
+    return (
+      <div className="max-w-7xl mx-auto space-y-8 pb-16 px-4">
+        {/* Header Banner */}
+        <header className="flex flex-col md:flex-row md:items-center md:justify-between bg-white rounded-3xl p-8 border border-gray-100 shadow-sm space-y-4 md:space-y-0">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 bg-emerald-100 text-emerald-700 text-xs font-black uppercase rounded-full tracking-widest">Kindergarten Unit</span>
+              <span className="px-3 py-1 bg-indigo-100 text-indigo-700 text-xs font-black uppercase rounded-full tracking-widest">AAP</span>
+            </div>
+            <h1 className="text-3xl font-black text-gray-900 tracking-tight">Asesmen Awal Pembelajaran (AAP)</h1>
+          </div>
+        </header>
+
+        <div className="max-w-4xl mx-auto my-12 p-12 bg-white border border-gray-150 rounded-3xl shadow-sm text-center">
+          <div className="flex flex-col items-center justify-center space-y-4">
+            <div className="p-4 bg-amber-50 text-amber-600 rounded-full">
+              <AlertCircle size={36} />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900">Belum Ada Kelas Ditugaskan</h2>
+            <p className="text-gray-600 max-w-md">
+              Belum ada kelas aktif yang ditugaskan kepada Anda pada Tahun Ajaran {activeYear || '2026/2027'}. Hubungi Kepala Unit atau admin untuk memperbarui assignment kelas.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-16 px-4">
       {/* Header Banner */}
@@ -489,10 +529,11 @@ export default function AAPAssessment() {
                 value={selectedClassId}
                 onChange={e => {
                   setSelectedClassId(e.target.value);
+                  setLastSelectedClassId(e.target.value);
                   setExpandedStudentId(null);
                 }}
-                disabled={isLoading}
-                className="appearance-none bg-gray-50 border border-gray-100 text-gray-800 rounded-2xl pl-4 pr-10 py-3 text-xs font-black uppercase tracking-wider transition outline-none focus:ring-4 focus:ring-emerald-50 focus:border-emerald-500 cursor-pointer min-w-[220px]"
+                disabled={isLoading || (isRestrictedToAssignedClasses && classes.length <= 1)}
+                className="appearance-none bg-gray-50 border border-gray-100 text-gray-800 rounded-2xl pl-4 pr-10 py-3 text-xs font-black uppercase tracking-wider transition outline-none focus:ring-4 focus:ring-emerald-50 focus:border-emerald-500 cursor-pointer min-w-[220px] disabled:opacity-75 disabled:cursor-not-allowed"
               >
                 {classes.length === 0 ? (
                   <option value="">Tidak ada kelas</option>

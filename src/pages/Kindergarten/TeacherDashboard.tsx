@@ -10,6 +10,8 @@ import { cn } from '../../lib/utils';
 import { db } from '../../lib/firebase';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { useAcademicYear } from '../../context/AcademicYearContext';
+import { useAuth } from '../../context/AuthContext';
+import { useTeacherAssignedClasses } from '../../hooks/useTeacherAssignedClasses';
 import { 
   getKindergartenClasses, 
   getKindergartenStudents, 
@@ -111,9 +113,21 @@ export default function TeacherDashboard() {
   const navigate = useNavigate();
   const { activeYear } = useAcademicYear();
   const { currentUser } = useOutletContext<{ currentUser: any }>() || {};
+  const { profile } = useAuth();
 
-  // Class assignment lists
-  const [classes, setClasses] = React.useState<any[]>([]);
+  // Class assignment lists using useTeacherAssignedClasses
+  const {
+    assignedClasses: classes,
+    assignedClassIds,
+    primaryClassId,
+    isRestrictedToAssignedClasses,
+    loading: isLoadingClasses,
+    setLastSelectedClassId
+  } = useTeacherAssignedClasses({
+    userId: profile?.uid || currentUser?.uid,
+    academicYearId: activeYear || '2026/2027'
+  });
+
   const [selectedClassId, setSelectedClassId] = React.useState<string>('');
   const [allStudents, setAllStudents] = React.useState<any[]>([]);
   const [schoolHolidays, setSchoolHolidays] = React.useState<string[]>([]);
@@ -177,43 +191,45 @@ export default function TeacherDashboard() {
     loadHolidays();
   }, []);
 
-  // Fetch classes and students initially
+  // Set default selection and handle URL/storage redirection rules
+  React.useEffect(() => {
+    if (!isLoadingClasses && classes.length > 0) {
+      const defaultClassId = primaryClassId;
+      if (defaultClassId) {
+        setSelectedClassId(defaultClassId);
+      }
+    }
+  }, [classes, assignedClassIds, primaryClassId, isLoadingClasses]);
+
+  // Real-time access check
+  React.useEffect(() => {
+    if (!isLoadingClasses && isRestrictedToAssignedClasses && selectedClassId) {
+      if (assignedClassIds.length > 0 && !assignedClassIds.includes(selectedClassId)) {
+        toast.error('Anda tidak memiliki hak akses untuk kelas ini. Mengembalikan ke kelas penugasan Anda.');
+        setSelectedClassId(primaryClassId || '');
+      }
+    }
+  }, [selectedClassId, isRestrictedToAssignedClasses, assignedClassIds, primaryClassId, isLoadingClasses]);
+
+  // Fetch students initially
   React.useEffect(() => {
     async function loadInitialData() {
-      if (!currentUser?.uid || !activeYear) return;
+      if (!activeYear) return;
       setLoadingInitial(true);
       try {
-        // 1. Fetch Kindergarten classes
-        const fetchedClasses = await getKindergartenClasses(activeYear);
-        
-        // Filter classes:
-        // Super Admin & Head Unit see ALL classes.
-        // Standard teachers only see classes where they are the homeroom teacher.
-        const isAuditor = ['SUPER_ADMIN', 'HEAD_UNIT'].includes(currentUser.role);
-        const filteredClasses = isAuditor 
-          ? fetchedClasses 
-          : fetchedClasses.filter(c => isTeacherAssignedToClass(c, currentUser.uid));
-
-        setClasses(filteredClasses);
-
-        if (filteredClasses.length > 0) {
-          setSelectedClassId(filteredClasses[0].id);
-        }
-
-        // 2. Fetch Kindergarten students
+        // Fetch Kindergarten students
         const fetchedStudents = await getKindergartenStudents(activeYear);
         setAllStudents(fetchedStudents);
-
       } catch (err) {
         console.error('Error loading initial teacher dashboard data:', err);
-        toast.error('Gagal memuat data kelas dan siswa.');
+        toast.error('Gagal memuat data siswa.');
       } finally {
         setLoadingInitial(false);
       }
     }
 
     loadInitialData();
-  }, [currentUser, activeYear]);
+  }, [activeYear]);
 
   // Aggregate Tasks for selected class
   React.useEffect(() => {
@@ -478,12 +494,14 @@ export default function TeacherDashboard() {
   if (classes.length === 0) {
     return (
       <div className="p-8 max-w-4xl mx-auto">
-        <div className="p-6 bg-amber-50 border border-amber-200 rounded-2xl flex gap-4 items-start shadow-sm">
-          <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={24} />
-          <div>
-            <h3 className="font-bold text-amber-900 text-base mb-1">Akses Terbatas</h3>
-            <p className="text-sm text-amber-800 leading-relaxed">
-              Tampilan dashboard guru kelas hanya dapat diakses oleh guru yang memiliki assignment kelas aktif di unit Kindergarten pada tahun ajaran {activeYear}. Jika Anda adalah Kepala Unit atau Super Admin dan merasa ini kesalahan, silakan pastikan data kelas sudah terisi dengan benar.
+        <div className="max-w-4xl mx-auto my-12 p-12 bg-white border border-gray-150 rounded-3xl shadow-sm text-center">
+          <div className="flex flex-col items-center justify-center space-y-4">
+            <div className="p-4 bg-amber-50 text-amber-600 rounded-full">
+              <AlertCircle size={36} />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900">Belum Ada Kelas Ditugaskan</h2>
+            <p className="text-gray-600 max-w-md">
+              Belum ada kelas aktif yang ditugaskan kepada Anda pada Tahun Ajaran {activeYear || '2026/2027'}. Hubungi Kepala Unit atau admin untuk memperbarui assignment kelas.
             </p>
           </div>
         </div>
@@ -519,8 +537,12 @@ export default function TeacherDashboard() {
             <div className="relative shrink-0">
               <select
                 value={selectedClassId}
-                onChange={(e) => setSelectedClassId(e.target.value)}
-                className="appearance-none pl-4 pr-10 py-2.5 bg-white text-sm font-semibold text-gray-800 border border-gray-200 rounded-xl focus:outline-none focus:border-emerald-500 transition shadow-sm cursor-pointer"
+                onChange={(e) => {
+                  setSelectedClassId(e.target.value);
+                  setLastSelectedClassId(e.target.value);
+                }}
+                disabled={isRestrictedToAssignedClasses && classes.length <= 1}
+                className="appearance-none pl-4 pr-10 py-2.5 bg-white text-sm font-semibold text-gray-800 border border-gray-200 rounded-xl focus:outline-none focus:border-emerald-500 transition shadow-sm cursor-pointer disabled:opacity-75 disabled:cursor-not-allowed"
               >
                 {classes.map(c => (
                   <option key={c.id} value={c.id}>

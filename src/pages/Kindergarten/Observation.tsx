@@ -17,6 +17,8 @@ import ObservationBulkPeriodImport from './ObservationBulkPeriodImport';
 import { collection, query, where, getDocs, getDoc, writeBatch, deleteDoc, doc, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
+import { useAuth } from '../../context/AuthContext';
+import { useTeacherAssignedClasses } from '../../hooks/useTeacherAssignedClasses';
 import { normalizeStudentName } from '../../lib/namecentricResolver';
 import { getKindergartenClasses, getKindergartenStudents, logFirestoreRead } from '../../lib/kindergartenMetadataCache';
 
@@ -117,11 +119,22 @@ export default function Observation() {
   const paramDate = searchParams.get('date');
   const paramActivity = searchParams.get('activity');
   const paramDomain = searchParams.get('domain');
+  const { profile } = useAuth();
 
   const [students, setStudents] = React.useState<any[]>(() => getStoredStudents());
-  const [classes, setClasses] = React.useState<any[]>([]);
-  const [selectedClassId, setSelectedClassId] = React.useState<string>(paramClassId || '');
-  const [isLoadingClasses, setIsLoadingClasses] = React.useState<boolean>(false);
+  const {
+    assignedClasses: classes,
+    assignedClassIds,
+    primaryClassId,
+    isRestrictedToAssignedClasses,
+    loading: isLoadingClasses,
+    setLastSelectedClassId
+  } = useTeacherAssignedClasses({
+    userId: profile?.uid,
+    academicYearId: activeYear || '2026/2027'
+  });
+
+  const [selectedClassId, setSelectedClassId] = React.useState<string>('');
 
   // View States
   const [activeTab, setActiveTab] = React.useState<'input' | 'recap'>('input');
@@ -268,23 +281,34 @@ export default function Observation() {
     return false;
   };
 
-  // Load students and classes from Unified Cache-equipped Firestore handlers
+  // Set default selection and handle URL/storage redirection rules
   React.useEffect(() => {
-    async function loadKindergartenData() {
-      try {
-        setIsLoadingClasses(true);
-        console.log('[Observation Page] Requesting cached Kindergarten data for year:', activeYear);
-        
-        // 1. Fetch Kindergarten classes from Cache
-        const fetchedClasses = await getKindergartenClasses(activeYear || '2025/2026');
-        setClasses(fetchedClasses);
-        
-        if (fetchedClasses.length > 0) {
-          const defaultClass = paramClassId && fetchedClasses.some(c => c.id === paramClassId) ? paramClassId : fetchedClasses[0].id;
-          setSelectedClassId(defaultClass);
-        }
+    if (!isLoadingClasses && classes.length > 0) {
+      const validParamClassId = paramClassId && assignedClassIds.includes(paramClassId) ? paramClassId : null;
+      const defaultClassId = validParamClassId || primaryClassId;
+      if (defaultClassId) {
+        setSelectedClassId(defaultClassId);
+      }
+    }
+  }, [classes, assignedClassIds, primaryClassId, paramClassId, isLoadingClasses]);
 
-        // 2. Fetch Kindergarten Students from Cache
+  // Real-time access check
+  React.useEffect(() => {
+    if (!isLoadingClasses && isRestrictedToAssignedClasses && selectedClassId) {
+      if (assignedClassIds.length > 0 && !assignedClassIds.includes(selectedClassId)) {
+        toast.error('Anda tidak memiliki hak akses untuk kelas ini. Mengembalikan ke kelas penugasan Anda.');
+        setSelectedClassId(primaryClassId || '');
+      }
+    }
+  }, [selectedClassId, isRestrictedToAssignedClasses, assignedClassIds, primaryClassId, isLoadingClasses]);
+
+  // Load students from cache-enhanced Firestore service
+  React.useEffect(() => {
+    async function loadKindergartenStudentsData() {
+      try {
+        console.log('[Observation Page] Requesting cached Kindergarten students for year:', activeYear);
+        
+        // Fetch Kindergarten Students from Cache
         const fetchedStudents = await getKindergartenStudents(activeYear || '2025/2026');
         
         if (fetchedStudents.length > 0) {
@@ -298,12 +322,10 @@ export default function Observation() {
         }
       } catch (err) {
         console.error('Error loading Kindergarten students from Firestore:', err);
-      } finally {
-        setIsLoadingClasses(false);
       }
     }
 
-    loadKindergartenData();
+    loadKindergartenStudentsData();
   }, [activeYear]);
 
   // Unified monthly observation aggregator for Rekap Bulanan — optimized to load on-demand by month and year
@@ -905,7 +927,35 @@ export default function Observation() {
 
     fetchComboDoc();
     
-    return () => {
+    if (isRestrictedToAssignedClasses && classes.length === 0 && !isLoadingClasses) {
+    return (
+      <div className="max-w-7xl mx-auto space-y-8 pb-16 px-4">
+        {/* Header Banner */}
+        <header className="flex flex-col md:flex-row md:items-center md:justify-between bg-white rounded-3xl p-8 border border-gray-100 shadow-sm space-y-4 md:space-y-0">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 bg-emerald-100 text-emerald-700 text-xs font-black uppercase rounded-full tracking-widest">Kindergarten Unit</span>
+            </div>
+            <h1 className="text-3xl font-black text-gray-900 tracking-tight">Observation Data</h1>
+          </div>
+        </header>
+
+        <div className="max-w-4xl mx-auto my-12 p-12 bg-white border border-gray-150 rounded-3xl shadow-sm text-center">
+          <div className="flex flex-col items-center justify-center space-y-4">
+            <div className="p-4 bg-amber-50 text-amber-600 rounded-full">
+              <AlertTriangle size={36} />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900">Belum Ada Kelas Ditugaskan</h2>
+            <p className="text-gray-600 max-w-md">
+              Belum ada kelas aktif yang ditugaskan kepada Anda pada Tahun Ajaran {activeYear || '2026/2027'}. Hubungi Kepala Unit atau admin untuk memperbarui assignment kelas.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return () => {
       active = false;
     };
   }, [selectedClassId, selectedActivity, selectedDomain, observationDate]);
@@ -1598,6 +1648,34 @@ export default function Observation() {
     );
   }
 
+  if (isRestrictedToAssignedClasses && classes.length === 0 && !isLoadingClasses) {
+    return (
+      <div className="max-w-7xl mx-auto space-y-8 pb-16 px-4">
+        {/* Header Banner */}
+        <header className="flex flex-col md:flex-row md:items-center md:justify-between bg-white rounded-3xl p-8 border border-gray-100 shadow-sm space-y-4 md:space-y-0">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 bg-emerald-100 text-emerald-700 text-xs font-black uppercase rounded-full tracking-widest">Kindergarten Unit</span>
+            </div>
+            <h1 className="text-3xl font-black text-gray-900 tracking-tight">Observation Data</h1>
+          </div>
+        </header>
+
+        <div className="max-w-4xl mx-auto my-12 p-12 bg-white border border-gray-150 rounded-3xl shadow-sm text-center">
+          <div className="flex flex-col items-center justify-center space-y-4">
+            <div className="p-4 bg-amber-50 text-amber-600 rounded-full">
+              <AlertTriangle size={36} />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900">Belum Ada Kelas Ditugaskan</h2>
+            <p className="text-gray-600 max-w-md">
+              Belum ada kelas aktif yang ditugaskan kepada Anda pada Tahun Ajaran {activeYear || '2026/2027'}. Hubungi Kepala Unit atau admin untuk memperbarui assignment kelas.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-16 px-4">
       
@@ -1954,8 +2032,12 @@ export default function Observation() {
                 <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Pilih Kelas:</span>
                 <select
                   value={selectedClassId}
-                  onChange={(e) => setSelectedClassId(e.target.value)}
-                  className="bg-transparent text-xs font-bold text-gray-800 outline-none cursor-pointer border-0 p-0 focus:ring-0"
+                  onChange={(e) => {
+                    setSelectedClassId(e.target.value);
+                    setLastSelectedClassId(e.target.value);
+                  }}
+                  disabled={isRestrictedToAssignedClasses && classes.length <= 1}
+                  className="bg-transparent text-xs font-bold text-gray-800 outline-none cursor-pointer border-0 p-0 focus:ring-0 disabled:opacity-75 disabled:cursor-not-allowed"
                 >
                   {classes.map((cls) => {
                     const classStudentsCount = students.filter(s => isStudentInClass(s.classId, cls)).length;
@@ -2253,8 +2335,12 @@ export default function Observation() {
                 <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Kelas:</span>
                 <select
                   value={selectedClassId}
-                  onChange={(e) => setSelectedClassId(e.target.value)}
-                  className="bg-transparent text-xs font-bold text-gray-800 outline-none cursor-pointer border-0 p-0 focus:ring-0"
+                  onChange={(e) => {
+                    setSelectedClassId(e.target.value);
+                    setLastSelectedClassId(e.target.value);
+                  }}
+                  disabled={isRestrictedToAssignedClasses && classes.length <= 1}
+                  className="bg-transparent text-xs font-bold text-gray-800 outline-none cursor-pointer border-0 p-0 focus:ring-0 disabled:opacity-75 disabled:cursor-not-allowed"
                 >
                   {classes.map((cls) => {
                     const classStudentsCount = students.filter(s => isStudentInClass(s.classId, cls)).length;

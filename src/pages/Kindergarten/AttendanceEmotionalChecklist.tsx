@@ -16,6 +16,8 @@ import {
 import { collection, query, where, getDocs, doc, setDoc, getDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
+import { useAuth } from '../../context/AuthContext';
+import { useTeacherAssignedClasses } from '../../hooks/useTeacherAssignedClasses';
 import { normalizeStudentName, buildStudentNameIndex, resolveAttendanceStudent } from '../../lib/namecentricResolver';
 import { getKindergartenClasses, getKindergartenStudents, logFirestoreRead } from '../../lib/kindergartenMetadataCache';
 
@@ -39,10 +41,22 @@ export default function AttendanceEmotionalChecklist() {
   const [searchParams] = useSearchParams();
   const paramClassId = searchParams.get('classId');
   const paramDate = searchParams.get('date');
+  const { profile } = useAuth();
 
   const [students, setStudents] = React.useState<any[]>(() => getStoredStudents());
-  const [classes, setClasses] = React.useState<any[]>([]);
-  const [selectedClassId, setSelectedClassId] = React.useState<string>(paramClassId || '');
+  const {
+    assignedClasses: classes,
+    assignedClassIds,
+    primaryClassId,
+    isRestrictedToAssignedClasses,
+    loading: isLoadingClasses,
+    setLastSelectedClassId
+  } = useTeacherAssignedClasses({
+    userId: profile?.uid,
+    academicYearId: activeYear || '2026/2027'
+  });
+
+  const [selectedClassId, setSelectedClassId] = React.useState<string>('');
 
   // Smart Paste states
   const [isImportModalOpen, setIsImportModalOpen] = React.useState(false);
@@ -101,22 +115,34 @@ export default function AttendanceEmotionalChecklist() {
   } | null>(null);
   const [isImporting, setIsImporting] = React.useState(false);
 
-  // Load students and classes from cache-enhanced Firestore service
+  // Set default selection and handle URL/storage redirection rules
   React.useEffect(() => {
-    async function loadKindergartenData() {
-      try {
-        console.log('[Checklist Page] Requesting cached Kindergarten data for year:', activeYear);
-        
-        // 1. Fetch classes through the deduplicating caching system
-        const fetchedClasses = await getKindergartenClasses(activeYear || '2025/2026');
-        setClasses(fetchedClasses);
-        
-        if (fetchedClasses.length > 0) {
-          const defaultClass = paramClassId && fetchedClasses.some(c => c.id === paramClassId) ? paramClassId : fetchedClasses[0].id;
-          setSelectedClassId(defaultClass);
-        }
+    if (!isLoadingClasses && classes.length > 0) {
+      const validParamClassId = paramClassId && assignedClassIds.includes(paramClassId) ? paramClassId : null;
+      const defaultClassId = validParamClassId || primaryClassId;
+      if (defaultClassId) {
+        setSelectedClassId(defaultClassId);
+      }
+    }
+  }, [classes, assignedClassIds, primaryClassId, paramClassId, isLoadingClasses]);
 
-        // 2. Fetch joined student list through caching system
+  // Real-time access check
+  React.useEffect(() => {
+    if (!isLoadingClasses && isRestrictedToAssignedClasses && selectedClassId) {
+      if (assignedClassIds.length > 0 && !assignedClassIds.includes(selectedClassId)) {
+        toast.error('Anda tidak memiliki hak akses untuk kelas ini. Mengembalikan ke kelas penugasan Anda.');
+        setSelectedClassId(primaryClassId || '');
+      }
+    }
+  }, [selectedClassId, isRestrictedToAssignedClasses, assignedClassIds, primaryClassId, isLoadingClasses]);
+
+  // Load students from cache-enhanced Firestore service
+  React.useEffect(() => {
+    async function loadKindergartenStudentsData() {
+      try {
+        console.log('[Checklist Page] Requesting cached Kindergarten students for year:', activeYear);
+        
+        // Fetch joined student list through caching system
         const fetchedStudents = await getKindergartenStudents(activeYear || '2025/2026');
         
         if (fetchedStudents.length > 0) {
@@ -133,7 +159,7 @@ export default function AttendanceEmotionalChecklist() {
       }
     }
 
-    loadKindergartenData();
+    loadKindergartenStudentsData();
   }, [activeYear]);
 
   const [selectedDate, setSelectedDate] = React.useState<Date>(() => {
@@ -1282,6 +1308,33 @@ Tindakan ini tidak dapat dibatalkan.`;
     return recap;
   }, [filteredClassStudents, monthlyDataMap, daysInMonth, monthlySelectedMonth, monthlySelectedYear]);
 
+  if (isRestrictedToAssignedClasses && classes.length === 0 && !isLoadingClasses) {
+    return (
+      <div id="kg-checklist-empty-wrapper" className="max-w-5xl mx-auto space-y-8 pb-12 px-4">
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+          <div>
+             <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Attendance & Emotional Checklist</h1>
+             <p className="text-gray-500 font-medium text-sm mt-1">
+                Catat kehadiran dan kondisi emosional siswa
+             </p>
+          </div>
+        </header>
+
+        <div className="bg-white p-12 rounded-[2rem] border border-emerald-100/50 shadow-xl shadow-emerald-50/50 text-center space-y-4">
+          <div className="w-16 h-16 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center mx-auto">
+            <AlertCircle size={32} />
+          </div>
+          <p className="text-gray-850 font-bold text-lg max-w-md mx-auto">
+            Belum Ada Kelas Ditugaskan
+          </p>
+          <p className="text-gray-600 max-w-md mx-auto text-sm">
+            Belum ada kelas aktif yang ditugaskan kepada Anda pada Tahun Ajaran {activeYear || '2026/2027'}. Hubungi Kepala Unit atau admin untuk memperbarui assignment kelas.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (classes.length === 0) {
     return (
       <div id="kg-checklist-empty-wrapper" className="max-w-5xl mx-auto space-y-8 pb-12">
@@ -1407,8 +1460,12 @@ Tindakan ini tidak dapat dibatalkan.`;
             <select
               id="select-class-dropdown"
               value={selectedClassId}
-              onChange={(e) => setSelectedClassId(e.target.value)}
-              className="px-4 py-2.5 bg-emerald-50/40 border border-emerald-100 rounded-2xl text-sm font-bold text-emerald-800 focus:ring-2 focus:ring-emerald-300 outline-none transition-all cursor-pointer min-w-[250px]"
+              onChange={(e) => {
+                setSelectedClassId(e.target.value);
+                setLastSelectedClassId(e.target.value);
+              }}
+              disabled={isRestrictedToAssignedClasses && classes.length <= 1}
+              className="px-4 py-2.5 bg-emerald-50/40 border border-emerald-100 rounded-2xl text-sm font-bold text-emerald-800 focus:ring-2 focus:ring-emerald-300 outline-none transition-all cursor-pointer min-w-[250px] disabled:opacity-75 disabled:cursor-not-allowed"
             >
               {classes.map((cls) => (
                 <option key={cls.id} value={cls.id}>

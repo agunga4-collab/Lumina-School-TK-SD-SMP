@@ -19,6 +19,7 @@ import { collection, query, where, getDocs, addDoc, deleteDoc, doc, updateDoc, g
 import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { useAuth } from '../../context/AuthContext';
+import { useTeacherAssignedClasses } from '../../hooks/useTeacherAssignedClasses';
 import { logFirestoreRead, getKindergartenClasses, getKindergartenStudents } from '../../lib/kindergartenMetadataCache';
 import { toast } from 'sonner';
 import { html2canvasWithModernColors } from '../../lib/html2canvasPatch';
@@ -56,11 +57,23 @@ export default function WeeklyReview() {
     setTkLogoUrl("");
   };
 
-  // Class Selection states
-  const [classes, setClasses] = React.useState<any[]>([]);
-  const [selectedClassId, setSelectedClassId] = React.useState<string>(paramClassId || '');
+  const { profile } = useAuth();
+
+  // Class Selection states using useTeacherAssignedClasses
+  const {
+    assignedClasses: classes,
+    assignedClassIds,
+    primaryClassId,
+    isRestrictedToAssignedClasses,
+    loading: isLoadingClasses,
+    setLastSelectedClassId
+  } = useTeacherAssignedClasses({
+    userId: profile?.uid,
+    academicYearId: activeYear || '2026/2027'
+  });
+
+  const [selectedClassId, setSelectedClassId] = React.useState<string>('');
   const [students, setStudents] = React.useState<any[]>(() => DEFAULT_STUDENTS);
-  const [isLoadingClasses, setIsLoadingClasses] = React.useState(true);
 
   // Helper mapping helper logic from Observation.tsx
   const isStudentInClass = (studClassId: string, activeClassObj: { id: string; name: string }) => {
@@ -116,21 +129,33 @@ export default function WeeklyReview() {
     return false;
   };
 
-  // Load students and classes from Firestore
+  // Set default selection and handle URL/storage redirection rules
   React.useEffect(() => {
-    async function loadKindergartenData() {
-      try {
-        setIsLoadingClasses(true);
-        console.log('Loading Kindergarten data from Firestore via cache manager for year:', activeYear);
-        
-        const fetchedClasses = await getKindergartenClasses(activeYear);
-        setClasses(fetchedClasses);
-        
-        if (fetchedClasses.length > 0) {
-          const defaultClass = paramClassId && fetchedClasses.some(c => c.id === paramClassId) ? paramClassId : fetchedClasses[0].id;
-          setSelectedClassId(defaultClass);
-        }
+    if (!isLoadingClasses && classes.length > 0) {
+      const validParamClassId = paramClassId && assignedClassIds.includes(paramClassId) ? paramClassId : null;
+      const defaultClassId = validParamClassId || primaryClassId;
+      if (defaultClassId) {
+        setSelectedClassId(defaultClassId);
+      }
+    }
+  }, [classes, assignedClassIds, primaryClassId, paramClassId, isLoadingClasses]);
 
+  // Real-time access check
+  React.useEffect(() => {
+    if (!isLoadingClasses && isRestrictedToAssignedClasses && selectedClassId) {
+      if (assignedClassIds.length > 0 && !assignedClassIds.includes(selectedClassId)) {
+        toast.error('Anda tidak memiliki hak akses untuk kelas ini. Mengembalikan ke kelas penugasan Anda.');
+        setSelectedClassId(primaryClassId || '');
+      }
+    }
+  }, [selectedClassId, isRestrictedToAssignedClasses, assignedClassIds, primaryClassId, isLoadingClasses]);
+
+  // Load students from cache-enhanced Firestore service
+  React.useEffect(() => {
+    async function loadKindergartenStudentsData() {
+      try {
+        console.log('Loading Kindergarten students from Firestore via cache manager for year:', activeYear);
+        
         const fetchedStudents = await getKindergartenStudents(activeYear);
 
         if (fetchedStudents.length > 0) {
@@ -143,13 +168,11 @@ export default function WeeklyReview() {
           }
         }
       } catch (err) {
-        console.error('Error loading Kindergarten students from Firestore:', err);
-      } finally {
-        setIsLoadingClasses(false);
+        console.error('Error loading Kindergarten students from Firestore Cache:', err);
       }
     }
 
-    loadKindergartenData();
+    loadKindergartenStudentsData();
   }, [activeYear]);
 
   const activeClassObj = classes.find(c => c.id === selectedClassId);
@@ -303,7 +326,36 @@ export default function WeeklyReview() {
 
     loadData();
 
-    return () => {
+    if (isRestrictedToAssignedClasses && classes.length === 0 && !isLoadingClasses) {
+    return (
+      <div className="max-w-4xl mx-auto space-y-8 pb-20 px-4 md:px-0 font-sans">
+        {/* 1. TOPBAR CONTROLS */}
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-[2rem] border border-gray-150 shadow-sm">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[10px] font-black uppercase tracking-wider">Tahap 2</span>
+              <span className="text-xs text-gray-400 font-bold">Pratinjau Rapor Laporan Mingguan</span>
+            </div>
+            <h1 className="text-2xl font-black text-gray-900 tracking-tight font-sans">Weekly Review & PDF Report</h1>
+          </div>
+        </header>
+
+        <div className="max-w-4xl mx-auto my-12 p-12 bg-white border border-gray-150 rounded-3xl shadow-sm text-center">
+          <div className="flex flex-col items-center justify-center space-y-4">
+            <div className="p-4 bg-amber-50 text-amber-600 rounded-full">
+              <AlertCircle size={36} />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900">Belum Ada Kelas Ditugaskan</h2>
+            <p className="text-gray-600 max-w-md">
+              Belum ada kelas aktif yang ditugaskan kepada Anda pada Tahun Ajaran {activeYear || '2026/2027'}. Hubungi Kepala Unit atau admin untuk memperbarui assignment kelas.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return () => {
       active = false;
     };
   }, [selectedClassId, startDateStr, endDateStr]);
@@ -909,6 +961,35 @@ export default function WeeklyReview() {
     );
   };
 
+  if (isRestrictedToAssignedClasses && classes.length === 0 && !isLoadingClasses) {
+    return (
+      <div className="max-w-4xl mx-auto space-y-8 pb-20 px-4 md:px-0 font-sans">
+        {/* 1. TOPBAR CONTROLS */}
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-[2rem] border border-gray-150 shadow-sm">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[10px] font-black uppercase tracking-wider">Tahap 2</span>
+              <span className="text-xs text-gray-400 font-bold">Pratinjau Rapor Laporan Mingguan</span>
+            </div>
+            <h1 className="text-2xl font-black text-gray-900 tracking-tight font-sans">Weekly Review & PDF Report</h1>
+          </div>
+        </header>
+
+        <div className="max-w-4xl mx-auto my-12 p-12 bg-white border border-gray-150 rounded-3xl shadow-sm text-center">
+          <div className="flex flex-col items-center justify-center space-y-4">
+            <div className="p-4 bg-amber-50 text-amber-600 rounded-full">
+              <AlertCircle size={36} />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900">Belum Ada Kelas Ditugaskan</h2>
+            <p className="text-gray-600 max-w-md">
+              Belum ada kelas aktif yang ditugaskan kepada Anda pada Tahun Ajaran {activeYear || '2026/2027'}. Hubungi Kepala Unit atau admin untuk memperbarui assignment kelas.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-4xl mx-auto space-y-8 pb-20 px-4 md:px-0 font-sans">
       
@@ -1008,8 +1089,12 @@ export default function WeeklyReview() {
             <div className="relative">
               <select
                 value={selectedClassId}
-                onChange={(e) => setSelectedClassId(e.target.value)}
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-xs font-bold outline-none text-gray-700 appearance-none pr-8 cursor-pointer hover:bg-gray-100/50"
+                onChange={(e) => {
+                  setSelectedClassId(e.target.value);
+                  setLastSelectedClassId(e.target.value);
+                }}
+                disabled={isRestrictedToAssignedClasses && classes.length <= 1}
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-xs font-bold outline-none text-gray-700 appearance-none pr-8 cursor-pointer hover:bg-gray-100/50 disabled:opacity-75 disabled:cursor-not-allowed"
               >
                 {isLoadingClasses ? (
                   <option value="">Memuat kelas...</option>

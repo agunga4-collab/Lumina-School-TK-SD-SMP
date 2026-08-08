@@ -19,6 +19,8 @@ import {
 import { collection, query, where, getDocs, doc, setDoc, getDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
+import { useAuth } from '../../context/AuthContext';
+import { useTeacherAssignedClasses } from '../../hooks/useTeacherAssignedClasses';
 import { logFirestoreRead, getKindergartenClasses, getKindergartenStudents } from '../../lib/kindergartenMetadataCache';
 import { useOutletContext } from 'react-router-dom';
 
@@ -35,12 +37,23 @@ export default function WeeklySummary() {
 
   const { activeYear } = useAcademicYear();
   const { currentUser } = useOutletContext<{ currentUser: any }>() || {};
+  const { profile } = useAuth();
 
-  // Class Selection states
-  const [classes, setClasses] = React.useState<any[]>([]);
-  const [selectedClassId, setSelectedClassId] = React.useState<string>(paramClassId || '');
+  // Class Selection states using centralized hook
+  const {
+    assignedClasses: classes,
+    assignedClassIds,
+    primaryClassId,
+    isRestrictedToAssignedClasses,
+    loading: isLoadingClasses,
+    setLastSelectedClassId
+  } = useTeacherAssignedClasses({
+    userId: profile?.uid,
+    academicYearId: activeYear || '2026/2027'
+  });
+
+  const [selectedClassId, setSelectedClassId] = React.useState<string>('');
   const [students, setStudents] = React.useState<any[]>(() => DEFAULT_STUDENTS);
-  const [isLoadingClasses, setIsLoadingClasses] = React.useState(true);
 
   // Copy-Paste Import states
   const [isImportOpen, setIsImportOpen] = React.useState(false);
@@ -277,21 +290,35 @@ export default function WeeklySummary() {
     });
   }, [pastedText, students, overrideMatches, activeClassObj, isStudentInClass]);
 
-  // Load students and classes from Firestore
+  // Set default selection and handle URL/storage redirection rules
   React.useEffect(() => {
-    async function loadKindergartenData() {
+    if (!isLoadingClasses && classes.length > 0) {
+      const validParamClassId = paramClassId && assignedClassIds.includes(paramClassId) ? paramClassId : null;
+      const defaultClassId = validParamClassId || primaryClassId;
+      if (defaultClassId) {
+        setSelectedClassId(defaultClassId);
+      }
+    }
+  }, [classes, assignedClassIds, primaryClassId, paramClassId, isLoadingClasses]);
+
+  // Real-time access check
+  React.useEffect(() => {
+    if (!isLoadingClasses && isRestrictedToAssignedClasses && selectedClassId) {
+      if (assignedClassIds.length > 0 && !assignedClassIds.includes(selectedClassId)) {
+        toast.error('Anda tidak memiliki hak akses untuk kelas ini. Mengembalikan ke kelas penugasan Anda.');
+        setSelectedClassId(primaryClassId || '');
+      }
+    }
+  }, [selectedClassId, isRestrictedToAssignedClasses, assignedClassIds, primaryClassId, isLoadingClasses]);
+
+  // Load students from cache-enhanced Firestore service
+  React.useEffect(() => {
+    async function loadKindergartenStudentsData() {
       try {
-        setIsLoadingClasses(true);
         if (process.env.NODE_ENV !== 'production') {
-          console.log('Loading Kindergarten data from Firestore for year:', activeYear);
+          console.log('Loading Kindergarten students from Firestore Cache for year:', activeYear);
         }
         
-        const fetchedClasses = await getKindergartenClasses(activeYear || '2025/2026');
-        setClasses(fetchedClasses);
-        if (fetchedClasses.length > 0) {
-          setSelectedClassId(prev => prev || fetchedClasses[0].id);
-        }
-
         const fetchedStudents = await getKindergartenStudents(activeYear || '2025/2026');
         if (fetchedStudents.length > 0) {
           setStudents(fetchedStudents);
@@ -304,12 +331,10 @@ export default function WeeklySummary() {
         }
       } catch (err) {
         console.error('Error loading Kindergarten students from Firestore Cache:', err);
-      } finally {
-        setIsLoadingClasses(false);
       }
     }
 
-    loadKindergartenData();
+    loadKindergartenStudentsData();
   }, [activeYear]);
 
   // 1. Period states - Default to current week Monday to Friday
@@ -1345,6 +1370,38 @@ export default function WeeklySummary() {
     }
   };
 
+  if (isRestrictedToAssignedClasses && classes.length === 0 && !isLoadingClasses) {
+    return (
+      <div className="max-w-7xl mx-auto space-y-8 pb-20 px-4 md:px-0 font-sans">
+        {/* 1. Page Title & Action Headers */}
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-gradient-to-r from-emerald-600 to-teal-700 p-6 rounded-[2rem] text-white shadow-xl">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full bg-white/20 text-[10px] font-black uppercase tracking-wider">Tahap 1</span>
+              <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/30 text-[10px] font-bold tracking-wide">Kindergarten Unit</span>
+            </div>
+            <h1 className="text-2xl font-black tracking-tight font-sans">Weekly Summary</h1>
+            <p className="text-emerald-100 font-medium text-xs mt-0.5 font-sans">
+              Otomasi komentar mingguan berdasarkan data harian Checklist & Observasi
+            </p>
+          </div>
+        </header>
+
+        <div className="max-w-4xl mx-auto my-12 p-12 bg-white border border-gray-150 rounded-3xl shadow-sm text-center">
+          <div className="flex flex-col items-center justify-center space-y-4">
+            <div className="p-4 bg-amber-50 text-amber-600 rounded-full">
+              <AlertCircle size={36} />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900">Belum Ada Kelas Ditugaskan</h2>
+            <p className="text-gray-600 max-w-md">
+              Belum ada kelas aktif yang ditugaskan kepada Anda pada Tahun Ajaran {activeYear || '2026/2027'}. Hubungi Kepala Unit atau admin untuk memperbarui assignment kelas.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-20 px-4 md:px-0 font-sans">
       
@@ -1483,8 +1540,12 @@ export default function WeeklySummary() {
           <div className="relative font-sans">
             <select
               value={selectedClassId}
-              onChange={(e) => setSelectedClassId(e.target.value)}
-              className="w-full bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-1 focus:ring-emerald-400 text-gray-700 appearance-none cursor-pointer"
+              onChange={(e) => {
+                setSelectedClassId(e.target.value);
+                setLastSelectedClassId(e.target.value);
+              }}
+              disabled={isRestrictedToAssignedClasses && classes.length <= 1}
+              className="w-full bg-gray-50 border border-gray-200 hover:border-gray-300 rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-1 focus:ring-emerald-400 text-gray-700 appearance-none cursor-pointer disabled:opacity-75 disabled:cursor-not-allowed"
             >
               {classes.map((cls) => {
                 const classStudentsCount = students.filter(s => isStudentInClass(s.classId, cls)).length;
