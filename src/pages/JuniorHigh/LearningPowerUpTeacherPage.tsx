@@ -22,6 +22,7 @@ import {
   query, 
   where, 
   getDocs, 
+  getDoc,
   doc, 
   setDoc, 
   updateDoc, 
@@ -347,7 +348,85 @@ export default function LearningPowerUpTeacherPage() {
     try {
       // 1. Load active student roster
       const roster = await getActiveStudents(selectedClassId, activeYear) || [];
-      setStudents(roster);
+      
+      // Enrich each student with resolved NIS
+      const enrichedStudents = await Promise.all(roster.map(async (student: any) => {
+        // Try getting NIS from existing fields
+        let foundNis = 
+          student.nis ||
+          student.NIS ||
+          student.studentNumber ||
+          student.nisSiswa ||
+          student.profile?.nis ||
+          student.studentProfile?.nis ||
+          student.luminaId;
+
+        // If not found directly, perform a lookup based on studentId (student.id)
+        if (!foundNis && student.id) {
+          try {
+            // Lookup in students collection
+            const sDoc = await getDoc(doc(db, 'students', student.id));
+            if (sDoc.exists()) {
+              const sData = sDoc.data();
+              foundNis = 
+                sData.luminaId ||
+                sData.nis ||
+                sData.NIS ||
+                sData.studentNumber ||
+                sData.nisSiswa ||
+                sData.profile?.nis ||
+                sData.studentProfile?.nis;
+            }
+
+            // Fallback lookup in roleInvites if still not found
+            if (!foundNis) {
+              const iDoc = await getDoc(doc(db, 'roleInvites', student.id));
+              if (iDoc.exists()) {
+                const iData = iDoc.data();
+                if (iData) {
+                  foundNis = iData.luminaId || iData.nis;
+                }
+              }
+            }
+
+            // Fallback lookup in users if still not found
+            if (!foundNis) {
+              const uDoc = await getDoc(doc(db, 'users', student.id));
+              if (uDoc.exists()) {
+                const uData = uDoc.data();
+                if (uData) {
+                  foundNis = uData.luminaId || uData.nis;
+                }
+              }
+            }
+          } catch (err) {
+            console.warn(`Error resolving NIS for student ID ${student.id}:`, err);
+          }
+        }
+
+        // If found, format as string, otherwise check if id itself is numeric/not standard Firestore ID/UUID
+        let resolvedNis = "-";
+        if (foundNis) {
+          resolvedNis = String(foundNis);
+        } else {
+          const idStr = String(student.id || "");
+          if (
+            idStr &&
+            !/^[a-zA-Z0-9]{20}$/.test(idStr) &&
+            !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(idStr) &&
+            !/^[a-zA-Z0-9]{20,30}$/.test(idStr)
+          ) {
+            resolvedNis = idStr;
+          }
+        }
+
+        return {
+          ...student,
+          nis: resolvedNis
+        };
+      }));
+
+      setStudents(enrichedStudents);
 
       // 2. Load packages for this class & year
       const qPackages = query(
@@ -1084,7 +1163,7 @@ export default function LearningPowerUpTeacherPage() {
                             <div className="flex flex-col">
                               <span className="font-bold text-gray-950">{student.name}</span>
                               <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">
-                                NIS: {student.nis || "N/A"}
+                                NIS: {student.nis || "-"}
                               </span>
                             </div>
                           </td>
@@ -1448,7 +1527,7 @@ export default function LearningPowerUpTeacherPage() {
                     {verifyingProgress.student.name}
                   </h3>
                   <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">
-                    Kelas: {classes.find(c => c.id === selectedClassId)?.name} • NIS: {verifyingProgress.student.nis || 'N/A'}
+                    Kelas: {classes.find(c => c.id === selectedClassId)?.name} • NIS: {verifyingProgress.student.nis || '-'}
                   </p>
                 </div>
 

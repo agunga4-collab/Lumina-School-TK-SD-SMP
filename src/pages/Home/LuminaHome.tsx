@@ -4,7 +4,7 @@ import {
   LayoutDashboard, ClipboardList, ShieldAlert, User as UserIcon, Target, 
   Users, Home, Eye, CheckSquare, Mail, BookOpen, Folder, Heart, 
   Baby, History, BarChart3, TrendingUp, Clock, Camera, Smile, Sparkles,
-  ChevronRight, Bell, Calendar, Zap, AlertCircle, ArrowRight, Map
+  ChevronRight, Bell, Calendar, Zap, AlertCircle, ArrowRight, Map, AlertTriangle, X
 } from 'lucide-react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { cn } from '../../lib/utils';
@@ -12,6 +12,7 @@ import type { UserRole, UnitType, User } from '../../types';
 import KindergartenHeadDashboard from '../Kindergarten/HeadDashboard';
 import HeadDashboard from '../Dashboard/HeadDashboard';
 import TeacherDashboard from '../JuniorHigh/TeacherDashboard';
+import { useAttendanceReminder } from '../../hooks/useAttendanceReminder';
 
 export default function LuminaHome() {
   const { 
@@ -32,6 +33,19 @@ export default function LuminaHome() {
   const userName = currentUser.displayName;
   const userRole = currentUser.role;
 
+  const { missingDays, loading: reminderLoading } = useAttendanceReminder(activeUnit);
+  const [showReminder, setShowReminder] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!reminderLoading && missingDays.length > 0) {
+      const shown = sessionStorage.getItem('lumina_attendance_reminder_shown');
+      if (shown !== 'true') {
+        setShowReminder(true);
+        sessionStorage.setItem('lumina_attendance_reminder_shown', 'true');
+      }
+    }
+  }, [reminderLoading, missingDays]);
+
   if (activeUnit === 'KINDERGARTEN' && (userRole === 'HEAD_UNIT' || userRole === 'SUPER_ADMIN')) {
     return <KindergartenHeadDashboard />;
   }
@@ -41,7 +55,17 @@ export default function LuminaHome() {
   }
 
   if (activeUnit === 'JUNIOR_HIGH' && (userRole === 'TEACHER' || userRole === 'BK_MENTOR')) {
-    return <TeacherDashboard />;
+    return (
+      <>
+        <TeacherDashboard />
+        <AttendanceReminderModal 
+          isOpen={showReminder} 
+          onClose={() => setShowReminder(false)} 
+          missingDays={missingDays} 
+          unit={activeUnit} 
+        />
+      </>
+    );
   }
 
   const isParent = userRole === 'PARENT';
@@ -173,6 +197,12 @@ export default function LuminaHome() {
         </div>
 
       </div>
+      <AttendanceReminderModal 
+        isOpen={showReminder} 
+        onClose={() => setShowReminder(false)} 
+        missingDays={missingDays} 
+        unit={activeUnit} 
+      />
     </div>
   );
 }
@@ -344,6 +374,110 @@ function AlertList({ role, unit }: { role: UserRole; unit: UnitType }) {
        </div>
        <p className="text-[10px] font-black text-orange-800 uppercase tracking-widest">Tidak Ada Antrean</p>
        <p className="text-[9px] text-orange-600/60 font-medium mt-1">Semua tugas selesai!</p>
+    </div>
+  );
+}
+
+interface AttendanceReminderModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  missingDays: any[];
+  unit: string;
+}
+
+function AttendanceReminderModal({ isOpen, onClose, missingDays, unit }: AttendanceReminderModalProps) {
+  const navigate = useNavigate();
+  if (!isOpen || missingDays.length === 0) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        className="bg-white rounded-[2.5rem] shadow-2xl max-w-lg w-full overflow-hidden border border-gray-100 flex flex-col relative"
+      >
+        {/* Header with X icon to close */}
+        <div className="absolute top-6 right-6">
+          <button 
+            onClick={onClose}
+            className="p-2 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-600 transition-colors"
+            aria-label="Tutup"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="p-8 space-y-6">
+          {/* Alert Icon & Info */}
+          <div className="flex items-start gap-4">
+            <div className="p-3.5 bg-orange-50 rounded-2xl text-orange-500 shrink-0">
+              <AlertTriangle size={28} />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-lg font-black text-gray-900 tracking-tight leading-tight">
+                Kehadiran Belum Lengkap!
+              </h3>
+              <p className="text-xs text-gray-500 font-semibold leading-relaxed">
+                Ada <span className="font-extrabold text-orange-600">{missingDays.length} hari</span> sekolah yang belum Anda isi absensinya sejak tanggal 20 Juli 2026. Silakan melengkapi absensi kelas Anda.
+              </p>
+            </div>
+          </div>
+
+          {/* Scrollable list/table of missing days */}
+          <div className="border border-gray-100 rounded-2xl overflow-hidden bg-gray-50/50 max-h-56 overflow-y-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100 sticky top-0 z-10">
+                  <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-gray-400">Tanggal</th>
+                  <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-gray-400">Kelas</th>
+                  <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-gray-400 text-right">Keterangan</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 text-xs">
+                {missingDays.map((day, idx) => (
+                  <tr key={idx} className="hover:bg-gray-50/80 transition-colors">
+                    <td className="px-4 py-3 font-semibold text-gray-700">
+                      {new Date(day.date).toLocaleDateString('id-ID', {
+                        weekday: 'short',
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric'
+                      })}
+                    </td>
+                    <td className="px-4 py-3 font-bold text-gray-900">{day.className}</td>
+                    <td className="px-4 py-3 text-right">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-orange-50 text-orange-600 border border-orange-100">
+                        {day.unstatusCount} Siswa
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Navigation buttons */}
+          <div className="flex gap-3 pt-2">
+            <button
+              onClick={onClose}
+              className="flex-1 px-5 py-3 rounded-2xl text-xs font-bold text-gray-500 hover:bg-gray-50 hover:text-gray-700 border border-gray-200 transition-colors"
+            >
+              Nanti Saja
+            </button>
+            <button
+              onClick={() => {
+                onClose();
+                const targetPath = unit === 'KINDERGARTEN' ? '/kindy/checklist' : '/attendance';
+                navigate(targetPath);
+              }}
+              className="flex-1 px-5 py-3 rounded-2xl text-xs font-black text-white bg-blue-600 hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-100 transition-all flex items-center justify-center gap-1.5"
+            >
+              Isi Sekarang <ArrowRight size={14} />
+            </button>
+          </div>
+        </div>
+      </motion.div>
     </div>
   );
 }
