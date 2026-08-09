@@ -542,6 +542,16 @@ service cloud.firestore {
       allow read, write: if isJuniorHighStaff();
     }
 
+    match /learning_power_up_tasks/{taskId} {
+      allow read: if isActive();
+      allow write: if isAdmin() || isJuniorHighStaff();
+    }
+
+    match /learning_power_up_progress/{progressId} {
+      allow read: if isActive();
+      allow write: if isActive() && (isJuniorHighStaff() || isAdmin() || isStudent());
+    }
+
     match /lxd/{lxdId} {
       allow read, write: if isJuniorHighStaff();
     }

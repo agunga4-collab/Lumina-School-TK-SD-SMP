@@ -641,6 +641,9 @@ export function Layout() {
                   {currentUnit !== 'KINDERGARTEN' && (
                     <NavItem to="/student/dashboard" icon={<Home size={18} />} label="Dashboard Siswa" />
                   )}
+                  {currentUser.role === 'STUDENT' && currentUnit === 'JUNIOR_HIGH' && (
+                    <NavItem to="/student/learning-power-up" icon={<CheckSquare size={18} />} label="Learning Power-Up" />
+                  )}
                   {currentUnit !== 'KINDERGARTEN' && (
                     <>
                       <NavItem to="/self-exploration/my" icon={<Sparkles size={18} />} label="Self Exploration" />
@@ -756,6 +759,7 @@ export function Layout() {
                     <NavItem to="/academic/rapor" icon={<FileText size={18} />} label="Rapor" />
                   )}
                   <NavItem to="/junior-high/literasi-numerasi" icon={<BookOpen size={18} />} label="Literasi & Numerasi" />
+                  <NavItem to="/junior-high/learning-power-up" icon={<CheckSquare size={18} />} label="Learning Power-Up" />
                   <NavItem to="/self-exploration" icon={<Sparkles size={18} />} label="Self-Exploration" />
                   <NavItem to="/junior-high/behavior/mtss/overview" icon={<ShieldAlert size={18} />} label="MTSS Behavior" />
                   <NavItem to="/junior-high/academic/mtss/overview" icon={<GraduationCap size={18} />} label="MTSS Academic" />

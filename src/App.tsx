@@ -110,6 +110,8 @@ import ParentDashboard from './pages/Parent/ParentDashboard';
 import ParentReports from './pages/Parent/ParentReports';
 import ParentStudents from './pages/Parent/ParentStudents';
 import ReportConfigPage from './pages/Settings/ReportConfig';
+import LearningPowerUpStudentPage from './pages/Student/LearningPowerUpStudentPage';
+import LearningPowerUpTeacherPage from './pages/JuniorHigh/LearningPowerUpTeacherPage';
 
 // High-level wrapper for Admin-only access
 function AdminGuard({ children }: { children: React.ReactNode }) {
@@ -434,6 +436,11 @@ export default function App() {
           </Route>
           <Route path="junior-high">
             <Route path="literasi-numerasi" element={<JuniorHighLiteracyNumeracy />} />
+            <Route path="learning-power-up" element={
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'COORDINATOR']}>
+                <LearningPowerUpTeacherPage />
+              </RoleGuard>
+            } />
             <Route path="conference/admin" element={
               <RoleGuard roles={['SUPER_ADMIN']}>
                 <ConferencePeriodManagement />
@@ -533,6 +540,14 @@ export default function App() {
                 element={
                   <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
                     <StudentDashboard />
+                  </RoleGuard>
+                } 
+             />
+             <Route 
+                path="learning-power-up" 
+                element={
+                  <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
+                    <LearningPowerUpStudentPage />
                   </RoleGuard>
                 } 
              />
