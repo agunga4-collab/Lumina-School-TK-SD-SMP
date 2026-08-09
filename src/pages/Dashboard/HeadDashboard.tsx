@@ -475,7 +475,7 @@ export default function HeadDashboard() {
 
     const categoryMap = { Disiplin: 0, Sikap: 0, Kerapihan: 0, Sosial: 0, Lainnya: 0 };
     incidents.forEach(inc => {
-      const desc = inc.description.toLowerCase();
+      const desc = (inc.description || '').toLowerCase();
       if (desc.includes('telat') || desc.includes('bolos')) categoryMap.Disiplin++;
       else if (desc.includes('ribut') || desc.includes('kasar')) categoryMap.Sikap++;
       else if (desc.includes('seragam') || desc.includes('rambut')) categoryMap.Kerapihan++;
@@ -867,10 +867,14 @@ export default function HeadDashboard() {
   }, [jhFilteredStudentsForAttendance, attendanceRecords, selectedYear, selectedSemester, startDate, endDate, filteredClasses]);
 
   const filteredJhAttentionStudents = useMemo(() => {
-    const term = jhSearchTerm.toLowerCase();
-    return jhAttentionStudents.filter(item => {
-      return item.name.toLowerCase().includes(term) || item.className.toLowerCase().includes(term);
-    }).sort((a, b) => b.alpa - a.alpa || a.rate - b.rate);
+    const term = (jhSearchTerm || '').trim().toLowerCase();
+    const safeAttentionStudents = Array.isArray(jhAttentionStudents) ? jhAttentionStudents : [];
+    return safeAttentionStudents.filter(item => {
+      if (!item) return false;
+      const studentName = (item.name || '').toString().toLowerCase();
+      const className = (item.className || '').toString().toLowerCase();
+      return studentName.includes(term) || className.includes(term);
+    }).sort((a, b) => (b.alpa || 0) - (a.alpa || 0) || (a.rate || 0) - (b.rate || 0));
   }, [jhAttentionStudents, jhSearchTerm]);
 
   const jhItemsPerPage = 10;
@@ -931,7 +935,7 @@ export default function HeadDashboard() {
     // Categories frequencies
     const freq = { 'Disiplin': 0, 'Sikap': 0, 'Kerapihan': 0, 'Sosial': 0, 'Lainnya': 0 };
     filteredConcerns.forEach(con => {
-      const desc = con.description.toLowerCase();
+      const desc = (con.description || '').toLowerCase();
       if (desc.includes('telat') || desc.includes('bolos')) freq.Disiplin++;
       else if (desc.includes('ribut') || desc.includes('kasar')) freq.Sikap++;
       else if (desc.includes('seragam') || desc.includes('rambut')) freq.Kerapihan++;
@@ -1013,10 +1017,14 @@ export default function HeadDashboard() {
   };
 
   const filteredModalData = useMemo(() => {
-    if (!modalSearch) return modalData;
-    const term = modalSearch.toLowerCase();
-    return modalData.filter(item => {
-      const valuesStr = Object.values(item).map(v => String(v).toLowerCase()).join(' ');
+    const term = (modalSearch || '').trim().toLowerCase();
+    if (!term) return modalData;
+    const safeModalData = Array.isArray(modalData) ? modalData : [];
+    return safeModalData.filter(item => {
+      if (!item) return false;
+      const valuesStr = Object.values(item)
+        .map(v => (v !== null && v !== undefined ? String(v).toLowerCase() : ''))
+        .join(' ');
       return valuesStr.includes(term);
     });
   }, [modalData, modalSearch]);
