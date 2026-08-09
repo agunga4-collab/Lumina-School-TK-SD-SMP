@@ -12,24 +12,37 @@ import { useOutletContext, Navigate } from 'react-router-dom';
 import { User as AppUser, Student } from '../../types';
 import { cn } from '../../lib/utils';
 import { useAcademicYear } from '../../context/AcademicYearContext';
-import { doc, getDoc, query, collection, where, getDocs, setDoc, updateDoc, serverTimestamp, doc as getFirestoreDoc } from 'firebase/firestore';
+import { 
+  doc, 
+  getDoc, 
+  query, 
+  collection, 
+  where, 
+  getDocs, 
+  setDoc, 
+  serverTimestamp 
+} from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { toast } from 'sonner';
 
-interface LearningPowerUpTask {
-  id: string;
+interface LearningPowerUpPackage {
+  id: string; // learning_power_up_{classId}_{weekStartDate}
   unit: 'JUNIOR_HIGH';
   academicYearId: string;
   classId: string;
-  weekId: string;
+  weekStartDate: string;
+  weekEndDate: string;
   weekLabel: string;
-  category: 'LITERASI_BAHASA' | 'LITERASI_ENGLISH' | 'MENGAJI' | 'NUMERASI';
-  title: string;
-  instruction: string;
-  dueDate: string;
-  isActive: boolean;
+  tasks: {
+    bahasaIndonesia: string | null;
+    english: string | null;
+    mengaji: string | null;
+    numerasi: string | null;
+  };
+  copiedFromWeekId: string | null;
   createdBy: string;
   createdAt: any;
+  updatedAt: any;
 }
 
 interface TaskProgressHistory {
@@ -40,11 +53,12 @@ interface TaskProgressHistory {
 }
 
 interface TaskProgress {
-  id: string;
-  taskId: string;
+  id: string; // progress_{packageId}_{studentId}_{field}
+  packageId: string;
   studentId: string;
   classId: string;
   academicYearId: string;
+  field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi';
   status: 'NOT_STARTED' | 'SUBMITTED' | 'REVISION_REQUIRED' | 'VERIFIED';
   submittedAt: any;
   verifiedAt: any;
@@ -56,28 +70,28 @@ interface TaskProgress {
 }
 
 const CATEGORY_CONFIG = {
-  LITERASI_BAHASA: {
-    label: 'Literasi Bahasa',
+  bahasaIndonesia: {
+    label: 'Bahasa Indonesia',
     icon: BookOpen,
     colorClass: 'text-blue-600 bg-blue-50 border-blue-200',
     accentColor: 'blue',
     cardBorder: 'hover:border-blue-300'
   },
-  LITERASI_ENGLISH: {
-    label: 'Literasi English',
+  english: {
+    label: 'English',
     icon: Languages,
     colorClass: 'text-violet-600 bg-violet-50 border-violet-200',
     accentColor: 'violet',
     cardBorder: 'hover:border-violet-300'
   },
-  MENGAJI: {
+  mengaji: {
     label: 'Mengaji',
     icon: BookMarked,
     colorClass: 'text-emerald-600 bg-emerald-50 border-emerald-200',
     accentColor: 'emerald',
     cardBorder: 'hover:border-emerald-300'
   },
-  NUMERASI: {
+  numerasi: {
     label: 'Numerasi',
     icon: Calculator,
     colorClass: 'text-amber-600 bg-amber-50 border-amber-200',
@@ -87,7 +101,7 @@ const CATEGORY_CONFIG = {
 };
 
 export default function LearningPowerUpStudentPage() {
-  const { currentUser, activeUnit } = useOutletContext<{ currentUser: AppUser; activeUnit?: string }>();
+  const { currentUser } = useOutletContext<{ currentUser: AppUser }>();
   
   if (currentUser?.role !== 'STUDENT') {
     return <Navigate to="/" replace />;
@@ -101,13 +115,16 @@ export default function LearningPowerUpStudentPage() {
   const [isValidated, setIsValidated] = React.useState(false);
 
   // Feature specific states
-  const [tasks, setTasks] = React.useState<LearningPowerUpTask[]>([]);
+  const [packages, setPackages] = React.useState<LearningPowerUpPackage[]>([]);
   const [progresses, setProgresses] = React.useState<Record<string, TaskProgress>>({});
   const [selectedWeek, setSelectedWeek] = React.useState<string>('');
   const [loadingTasks, setLoadingTasks] = React.useState(false);
 
   // Detail popup states
-  const [activeTaskDetail, setActiveTaskDetail] = React.useState<LearningPowerUpTask | null>(null);
+  const [activeTaskDetail, setActiveTaskDetail] = React.useState<{
+    field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi';
+    taskDescription: string;
+  } | null>(null);
   const [isSubmittingAction, setIsSubmittingAction] = React.useState(false);
 
   // Validate student account on mount
@@ -193,38 +210,34 @@ export default function LearningPowerUpStudentPage() {
     validateAndFetch();
   }, [currentUser, activeYear]);
 
-  // Load Tasks and Progresses
+  // Load Packages and Progresses
   const loadTasksAndProgress = async () => {
     if (!classData || !studentData || !activeYear) return;
     setLoadingTasks(true);
     try {
-      // 1. Fetch tasks for JUNIOR_HIGH, active classId (and/or legacy name matches), and activeYear
-      const qTasks = query(
+      // 1. Fetch weekly task packages
+      const qPackages = query(
         collection(db, 'learning_power_up_tasks'),
         where('academicYearId', '==', activeYear),
         where('classId', '==', classData.id),
-        where('unit', '==', 'JUNIOR_HIGH'),
-        where('isActive', '==', true)
+        where('unit', '==', 'JUNIOR_HIGH')
       );
 
-      const tasksSnap = await getDocs(qTasks);
-      const loadedTasks = tasksSnap.docs.map(d => ({
+      const packagesSnap = await getDocs(qPackages);
+      const loadedPackages = packagesSnap.docs.map(d => ({
         id: d.id,
         ...d.data()
-      })) as LearningPowerUpTask[];
+      })) as LearningPowerUpPackage[];
 
-      // Sort tasks by dueDate or category
-      loadedTasks.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
-      setTasks(loadedTasks);
+      // Sort by start date descending
+      loadedPackages.sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate));
+      setPackages(loadedPackages);
 
-      // Extract unique weekIds to set a default week if not already selected
-      const weekIds = Array.from(new Set(loadedTasks.map(t => t.weekId)));
-      if (weekIds.length > 0 && !selectedWeek) {
-        // Try to select the latest/current week, or just the first available
-        setSelectedWeek(weekIds[weekIds.length - 1]);
+      if (loadedPackages.length > 0 && !selectedWeek) {
+        setSelectedWeek(loadedPackages[0].id);
       }
 
-      // 2. Fetch student's progress for these tasks
+      // 2. Fetch student's progress
       const qProgress = query(
         collection(db, 'learning_power_up_progress'),
         where('studentId', '==', studentData.id),
@@ -235,11 +248,11 @@ export default function LearningPowerUpStudentPage() {
       const progressMap: Record<string, TaskProgress> = {};
       progressSnap.docs.forEach(d => {
         const p = d.data() as TaskProgress;
-        progressMap[p.taskId] = { id: d.id, ...p };
+        progressMap[`${p.packageId}_${p.field}`] = { id: d.id, ...p };
       });
       setProgresses(progressMap);
     } catch (err) {
-      console.error("Error loading learning power-up tasks/progress:", err);
+      console.error("Error loading learning power-up packages/progress:", err);
       toast.error("Gagal memuat tugas mingguan.");
     } finally {
       setLoadingTasks(false);
@@ -287,29 +300,29 @@ export default function LearningPowerUpStudentPage() {
     return null;
   }
 
-  // Filter tasks by the selected week
-  const filteredTasks = tasks.filter(t => t.weekId === selectedWeek);
+  // Current selected package
+  const activePackage = packages.find(p => p.id === selectedWeek);
   
-  // Available weeks for selection
-  const uniqueWeeks = Array.from(new Set(tasks.map(t => JSON.stringify({ id: t.weekId, label: t.weekLabel })))).map((s: any) => JSON.parse(s) as { id: string; label: string });
+  // Extract active fields of the current selected package (where description is not empty)
+  const activeFields = activePackage ? (['bahasaIndonesia', 'english', 'mengaji', 'numerasi'] as const).filter(
+    field => activePackage.tasks[field] && activePackage.tasks[field]?.trim()
+  ) : [];
 
-  // Active week label
-  const activeWeekObj = uniqueWeeks.find(w => w.id === selectedWeek);
-  const activeWeekLabel = activeWeekObj?.label || selectedWeek || "Pekan Aktif";
-
-  // Progress summary: tasks verified in the current week
-  const verifiedCount = filteredTasks.filter(t => progresses[t.id]?.status === 'VERIFIED').length;
-  const totalWeekTasks = filteredTasks.length;
+  // Summary counts for current selected package
+  const totalWeekTasks = activeFields.length;
+  const verifiedCount = activePackage ? activeFields.filter(
+    field => progresses[`${activePackage.id}_${field}`]?.status === 'VERIFIED'
+  ).length : 0;
 
   // Overdue status check helper
-  const isOverdue = (dueDate: string) => {
+  const isOverdue = (endDate: string) => {
     const today = new Date().toISOString().split('T')[0];
-    return today > dueDate;
+    return today > endDate;
   };
 
   // Status badges UI mapper
-  const getStatusBadge = (status: TaskProgress['status'], dueDate: string) => {
-    const overdue = isOverdue(dueDate);
+  const getStatusBadge = (status: TaskProgress['status'] | undefined, endDate: string) => {
+    const overdue = isOverdue(endDate) && status !== 'VERIFIED';
     switch (status) {
       case 'VERIFIED':
         return (
@@ -351,11 +364,13 @@ export default function LearningPowerUpStudentPage() {
   };
 
   // Submit task completion action handler
-  const handleTaskSubmit = async (task: LearningPowerUpTask, isRevision: boolean) => {
+  const handleTaskSubmit = async (field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi', isRevision: boolean) => {
+    if (!activePackage) return;
     setIsSubmittingAction(true);
     try {
-      const progressId = progresses[task.id]?.id || `progress_${task.id}_${studentData.id}`;
-      const currentHistory = progresses[task.id]?.history || [];
+      const progressKey = `${activePackage.id}_${field}`;
+      const progressId = progresses[progressKey]?.id || `progress_${activePackage.id}_${studentData.id}_${field}`;
+      const currentHistory = progresses[progressKey]?.history || [];
       const nowStr = new Date().toLocaleString('id-ID', { hour12: false });
       
       const newHistoryItem: TaskProgressHistory = {
@@ -365,39 +380,28 @@ export default function LearningPowerUpStudentPage() {
         note: isRevision ? "Siswa mengirim ulang tugas setelah revisi." : "Siswa menandai tugas selesai."
       };
 
-      const updatedProgress: Omit<TaskProgress, 'id'> = {
-        taskId: task.id,
+      const updatedProgress = {
+        id: progressId,
+        packageId: activePackage.id,
         studentId: studentData.id,
         classId: classData.id,
         academicYearId: activeYear,
+        field: field,
         status: 'SUBMITTED',
         submittedAt: serverTimestamp(),
-        verifiedAt: progresses[task.id]?.verifiedAt || null,
-        verifiedBy: progresses[task.id]?.verifiedBy || null,
-        revisionNote: progresses[task.id]?.revisionNote || null,
-        revisedAt: isRevision ? serverTimestamp() : (progresses[task.id]?.revisedAt || null),
+        verifiedAt: progresses[progressKey]?.verifiedAt || null,
+        verifiedBy: progresses[progressKey]?.verifiedBy || null,
+        revisionNote: progresses[progressKey]?.revisionNote || null,
+        revisedAt: isRevision ? serverTimestamp() : (progresses[progressKey]?.revisedAt || null),
         updatedAt: serverTimestamp(),
         history: [...currentHistory, newHistoryItem]
       };
 
-      await setDoc(getFirestoreDoc(db, 'learning_power_up_progress', progressId), updatedProgress, { merge: true });
+      await setDoc(doc(db, 'learning_power_up_progress', progressId), updatedProgress, { merge: true });
       toast.success(isRevision ? "Tugas berhasil dikirim ulang!" : "Tugas berhasil ditandai selesai.");
       
-      // Reload lists and close detail
+      // Reload lists
       await loadTasksAndProgress();
-      
-      // Update detail popup reference to reflect changes
-      if (activeTaskDetail) {
-        const refreshedProgress: TaskProgress = {
-          id: progressId,
-          ...updatedProgress,
-          submittedAt: new Date(),
-          updatedAt: new Date(),
-          revisedAt: isRevision ? new Date() : (progresses[task.id]?.revisedAt || null),
-          history: [...currentHistory, newHistoryItem]
-        };
-        setProgresses(prev => ({ ...prev, [task.id]: refreshedProgress }));
-      }
     } catch (err) {
       console.error("Error submitting learning power up task:", err);
       toast.error("Gagal mengirim laporan tugas.");
@@ -406,17 +410,17 @@ export default function LearningPowerUpStudentPage() {
     }
   };
 
-  // Compute overall uncompleted active count
-  const uncompletedActiveTasks = tasks.filter(t => {
-    const status = progresses[t.id]?.status || 'NOT_STARTED';
+  // Determine overall uncompleted active task fields for the current selected package
+  const uncompletedActiveFieldsCount = activePackage ? activeFields.filter(field => {
+    const status = progresses[`${activePackage.id}_${field}`]?.status || 'NOT_STARTED';
     return status === 'NOT_STARTED' || status === 'REVISION_REQUIRED';
-  });
+  }).length : 0;
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 space-y-8" id="learning-power-up-student-root">
       
       {/* Reminder Panel */}
-      {uncompletedActiveTasks.length > 0 && (
+      {uncompletedActiveFieldsCount > 0 && (
         <motion.div 
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -430,7 +434,7 @@ export default function LearningPowerUpStudentPage() {
             <div>
               <p className="text-sm font-bold text-amber-900">Pengingat Penguatan Belajar</p>
               <p className="text-xs text-amber-700 font-medium">
-                Masih ada {uncompletedActiveTasks.length} tugas Learning Power-Up yang perlu diselesaikan pekan ini atau pekan sebelumnya.
+                Masih ada {uncompletedActiveFieldsCount} bidang tugas Learning Power-Up yang perlu diselesaikan pekan ini.
               </p>
             </div>
           </div>
@@ -496,14 +500,14 @@ export default function LearningPowerUpStudentPage() {
 
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-gray-500 uppercase tracking-widest">Pilih Pekan:</span>
-            {uniqueWeeks.length > 0 ? (
+            {packages.length > 0 ? (
               <select
                 value={selectedWeek}
                 onChange={(e) => setSelectedWeek(e.target.value)}
                 className="bg-white border border-slate-200 text-gray-700 font-bold text-sm px-4 py-2.5 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-[#109E58]/20 focus:border-[#109E58]"
               >
-                {uniqueWeeks.map(w => (
-                  <option key={w.id} value={w.id}>{w.label}</option>
+                {packages.map(p => (
+                  <option key={p.id} value={p.id}>{p.weekLabel}</option>
                 ))}
               </select>
             ) : (
@@ -520,24 +524,25 @@ export default function LearningPowerUpStudentPage() {
             <Loader2 className="w-8 h-8 text-[#109E58] animate-spin" />
             <p className="text-xs text-gray-400 font-bold">Memuat daftar tugas...</p>
           </div>
-        ) : filteredTasks.length > 0 ? (
+        ) : activeFields.length > 0 && activePackage ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6" id="tasks-list-grid">
-            {filteredTasks.map(task => {
-              const cfg = CATEGORY_CONFIG[task.category] || CATEGORY_CONFIG.LITERASI_BAHASA;
+            {activeFields.map(field => {
+              const cfg = CATEGORY_CONFIG[field];
               const IconComp = cfg.icon;
-              const progress = progresses[task.id];
+              const progress = progresses[`${activePackage.id}_${field}`];
               const status = progress?.status || 'NOT_STARTED';
-              const overdue = isOverdue(task.dueDate) && status !== 'VERIFIED';
+              const overdue = isOverdue(activePackage.weekEndDate) && status !== 'VERIFIED';
+              const taskDescription = activePackage.tasks[field] || '';
 
               return (
                 <div 
-                  key={task.id}
+                  key={field}
                   className={cn(
                     "bg-white border border-slate-100 rounded-[2rem] p-6 shadow-sm transition-all duration-300 flex flex-col justify-between space-y-6 relative overflow-hidden",
                     cfg.cardBorder,
                     overdue && "border-red-200 bg-red-50/10 shadow-sm shadow-red-50"
                   )}
-                  id={`task-card-${task.id}`}
+                  id={`task-card-${field}`}
                 >
                   {overdue && (
                     <div className="absolute top-0 right-0 bg-red-500 text-white font-black text-[9px] uppercase tracking-widest px-3 py-1 rounded-bl-xl shadow-sm">
@@ -564,16 +569,16 @@ export default function LearningPowerUpStudentPage() {
                     {/* Task Title */}
                     <div className="space-y-1">
                       <h3 className="text-md font-bold text-gray-900 tracking-tight line-clamp-2">
-                        {task.title}
+                        Tugas {cfg.label}
                       </h3>
                       <p className="text-xs text-gray-400 font-medium">
-                        Pekan: {task.weekLabel}
+                        Pekan: {activePackage.weekLabel}
                       </p>
                     </div>
 
                     {/* Instruction Summary */}
                     <p className="text-xs text-gray-500 font-medium line-clamp-3 bg-slate-50 p-3 rounded-xl border border-slate-100/50">
-                      {task.instruction}
+                      {taskDescription}
                     </p>
                   </div>
 
@@ -585,18 +590,18 @@ export default function LearningPowerUpStudentPage() {
                       </span>
                       <span className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
                         <Calendar size={14} className="text-gray-400" />
-                        {new Date(task.dueDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+                        Minggu, {new Date(activePackage.weekEndDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
                       </span>
                     </div>
 
                     {/* Status Badge */}
                     <div className="pt-1">
-                      {getStatusBadge(status, task.dueDate)}
+                      {getStatusBadge(status, activePackage.weekEndDate)}
                     </div>
 
                     {/* Action Button */}
                     <button
-                      onClick={() => setActiveTaskDetail(task)}
+                      onClick={() => setActiveTaskDetail({ field, taskDescription })}
                       className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 mt-2"
                     >
                       Tampilkan Detail
@@ -615,7 +620,7 @@ export default function LearningPowerUpStudentPage() {
             <div className="space-y-1">
               <h3 className="text-lg font-black text-gray-900">Belum Ada Tugas Pekan Ini</h3>
               <p className="text-sm text-gray-500 font-semibold leading-relaxed">
-                Keren sekali! Seluruh tugas Learning Power-Up untuk kelasmu belum dirilis oleh guru/coach, atau semua pekan telah selesai. Silakan hubungi coach kelasmu jika ada pertanyaan.
+                Seluruh tugas Learning Power-Up untuk kelasmu belum dirilis oleh guru/coach, atau semua pekan telah selesai. Silakan hubungi coach kelasmu jika ada pertanyaan.
               </p>
             </div>
           </div>
@@ -624,7 +629,7 @@ export default function LearningPowerUpStudentPage() {
 
       {/* Modal Detail Tugas */}
       <AnimatePresence>
-        {activeTaskDetail && (
+        {activeTaskDetail && activePackage && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto" id="task-detail-modal-overlay">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
@@ -649,17 +654,17 @@ export default function LearningPowerUpStudentPage() {
                   </span>
                   
                   <div className="flex items-center gap-3 mb-4">
-                    <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border", CATEGORY_CONFIG[activeTaskDetail.category]?.colorClass)}>
-                      {React.createElement(CATEGORY_CONFIG[activeTaskDetail.category]?.icon || BookOpen, { size: 20 })}
+                    <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border", CATEGORY_CONFIG[activeTaskDetail.field]?.colorClass)}>
+                      {React.createElement(CATEGORY_CONFIG[activeTaskDetail.field]?.icon || BookOpen, { size: 20 })}
                     </div>
                     <div>
                       <span className="text-[9px] font-black text-gray-400 tracking-wider block">KATEGORI TUGAS</span>
-                      <h4 className="text-xs font-black text-gray-700">{CATEGORY_CONFIG[activeTaskDetail.category]?.label}</h4>
+                      <h4 className="text-xs font-black text-gray-700">{CATEGORY_CONFIG[activeTaskDetail.field]?.label}</h4>
                     </div>
                   </div>
 
                   <h3 className="text-2xl font-black text-gray-900 tracking-tight">
-                    {activeTaskDetail.title}
+                    Tugas Penguatan {CATEGORY_CONFIG[activeTaskDetail.field]?.label}
                   </h3>
                 </div>
 
@@ -667,7 +672,7 @@ export default function LearningPowerUpStudentPage() {
                 <div className="space-y-2">
                   <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest">Instruksi Tugas</h4>
                   <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 text-sm text-gray-700 font-medium leading-relaxed max-h-40 overflow-y-auto">
-                    {activeTaskDetail.instruction}
+                    {activeTaskDetail.taskDescription}
                   </div>
                 </div>
 
@@ -675,12 +680,12 @@ export default function LearningPowerUpStudentPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100">
                     <span className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Periode</span>
-                    <span className="text-xs font-bold text-gray-700 block">{activeTaskDetail.weekLabel}</span>
+                    <span className="text-xs font-bold text-gray-700 block">{activePackage.weekLabel}</span>
                   </div>
                   <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100">
                     <span className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Batas Waktu</span>
                     <span className="text-xs font-bold text-red-600 block">
-                      {new Date(activeTaskDetail.dueDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+                      Minggu, {new Date(activePackage.weekEndDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
                     </span>
                   </div>
                 </div>
@@ -690,16 +695,16 @@ export default function LearningPowerUpStudentPage() {
                   <div className="space-y-1">
                     <span className="text-xs font-black text-gray-400 uppercase tracking-wider block">Status Saat Ini</span>
                     <div>
-                      {getStatusBadge(progresses[activeTaskDetail.id]?.status || 'NOT_STARTED', activeTaskDetail.dueDate)}
+                      {getStatusBadge(progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.status, activePackage.weekEndDate)}
                     </div>
                   </div>
 
                   {/* Actions based on status */}
                   <div className="pt-2">
                     {/* NOT STARTED / DEFAULT */}
-                    {(!progresses[activeTaskDetail.id] || progresses[activeTaskDetail.id]?.status === 'NOT_STARTED') && (
+                    {(!progresses[`${activePackage.id}_${activeTaskDetail.field}`] || progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.status === 'NOT_STARTED') && (
                       <button
-                        onClick={() => handleTaskSubmit(activeTaskDetail, false)}
+                        onClick={() => handleTaskSubmit(activeTaskDetail.field, false)}
                         disabled={isSubmittingAction}
                         className="w-full py-4 bg-[#109E58] hover:bg-[#0d854a] disabled:bg-[#109E58]/50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
                       >
@@ -718,7 +723,7 @@ export default function LearningPowerUpStudentPage() {
                     )}
 
                     {/* SUBMITTED */}
-                    {progresses[activeTaskDetail.id]?.status === 'SUBMITTED' && (
+                    {progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.status === 'SUBMITTED' && (
                       <div className="bg-amber-50/50 border border-amber-200 rounded-2xl p-4 text-center">
                         <p className="text-sm font-bold text-amber-900">Menunggu Verifikasi Coach</p>
                         <p className="text-xs text-amber-700 font-medium mt-1 leading-relaxed">
@@ -728,9 +733,9 @@ export default function LearningPowerUpStudentPage() {
                     )}
 
                     {/* REVISION_REQUIRED */}
-                    {progresses[activeTaskDetail.id]?.status === 'REVISION_REQUIRED' && (
+                    {progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.status === 'REVISION_REQUIRED' && (
                       <button
-                        onClick={() => handleTaskSubmit(activeTaskDetail, true)}
+                        onClick={() => handleTaskSubmit(activeTaskDetail.field, true)}
                         disabled={isSubmittingAction}
                         className="w-full py-4 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-500/50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-2 animate-pulse"
                       >
@@ -749,7 +754,7 @@ export default function LearningPowerUpStudentPage() {
                     )}
 
                     {/* VERIFIED */}
-                    {progresses[activeTaskDetail.id]?.status === 'VERIFIED' && (
+                    {progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.status === 'VERIFIED' && (
                       <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center">
                         <p className="text-sm font-bold text-emerald-900 flex items-center justify-center gap-1.5">
                           <CheckCircle2 size={16} className="text-emerald-500" />
@@ -775,11 +780,11 @@ export default function LearningPowerUpStudentPage() {
                 </div>
 
                 {/* Coach notes if exist */}
-                {progresses[activeTaskDetail.id]?.revisionNote && (
+                {progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.revisionNote && (
                   <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 space-y-2">
                     <span className="text-[10px] font-black text-rose-700 uppercase tracking-wider block">Catatan Revisi dari Guru:</span>
                     <p className="text-xs font-bold text-rose-900 leading-relaxed bg-white p-3 rounded-xl border border-rose-100 shadow-sm">
-                      "{progresses[activeTaskDetail.id]?.revisionNote}"
+                      "{progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.revisionNote}"
                     </p>
                   </div>
                 )}
@@ -789,8 +794,8 @@ export default function LearningPowerUpStudentPage() {
                   <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Log Aktivitas</span>
                   
                   <div className="space-y-4 max-h-60 overflow-y-auto pr-1">
-                    {progresses[activeTaskDetail.id]?.history && progresses[activeTaskDetail.id]?.history!.length > 0 ? (
-                      progresses[activeTaskDetail.id]?.history!.map((h, idx) => (
+                    {progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.history && progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.history!.length > 0 ? (
+                      progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.history!.map((h, idx) => (
                         <div key={idx} className="flex gap-3 text-xs">
                           {/* Timeline dot */}
                           <div className="flex flex-col items-center">
@@ -801,7 +806,7 @@ export default function LearningPowerUpStudentPage() {
                             )}>
                               {idx + 1}
                             </div>
-                            {idx < progresses[activeTaskDetail.id]!.history!.length - 1 && (
+                            {idx < progresses[`${activePackage.id}_${activeTaskDetail.field}`]!.history!.length - 1 && (
                               <div className="w-0.5 bg-slate-200 flex-1 min-h-[20px]" />
                             )}
                           </div>
