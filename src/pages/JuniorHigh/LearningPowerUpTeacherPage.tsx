@@ -54,7 +54,7 @@ interface LearningPowerUpPackage {
 
 interface TaskProgressHistory {
   timestamp: string;
-  action: 'SUBMIT' | 'REVISION_REQUEST' | 'RESUBMIT' | 'VERIFY';
+  action: 'SUBMIT' | 'REVISION_REQUEST' | 'RESUBMIT' | 'VERIFY' | 'UNVERIFY';
   note?: string | null;
   actorName: string;
 }
@@ -62,18 +62,28 @@ interface TaskProgressHistory {
 interface TaskProgress {
   id: string; // progress_{packageId}_{studentId}_{field}
   packageId: string;
+  taskPackageId?: string;
   studentId: string;
   classId: string;
   academicYearId: string;
   field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi';
+  subjectKey?: string;
   status: 'NOT_STARTED' | 'SUBMITTED' | 'REVISION_REQUIRED' | 'VERIFIED';
   submittedAt: any;
   verifiedAt: any;
   verifiedBy: string | null;
+  verifiedByUserId?: string | null;
+  verifiedByName?: string | null;
+  verifiedByEmail?: string | null;
+  verificationMethod?: 'INDIVIDUAL' | 'BULK' | null;
   revisionNote: string | null;
   revisedAt: any;
   updatedAt: any;
   history?: TaskProgressHistory[];
+  lastUnverifiedByUserId?: string | null;
+  lastUnverifiedByEmail?: string | null;
+  lastUnverifiedAt?: any;
+  unverifyReason?: string | null;
 }
 
 const CATEGORY_CONFIG = {
@@ -121,6 +131,116 @@ const formatDateFull = (dateStr: string) => {
   return `${d.getDate()} ${idMonths[d.getMonth()]} ${d.getFullYear()}`;
 };
 
+const formatDateRange = (startStr: string, endStr: string) => {
+  if (!startStr || !endStr) return '';
+  const start = new Date(startStr);
+  const end = new Date(endStr);
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return '';
+  const idMonthsFull = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+  
+  const startDay = start.getDate();
+  const endDay = end.getDate();
+  const startMonth = start.getMonth();
+  const endMonth = end.getMonth();
+  const startYear = start.getFullYear();
+  const endYear = end.getFullYear();
+
+  if (startYear === endYear) {
+    if (startMonth === endMonth) {
+      return `${startDay}–${endDay} ${idMonthsFull[startMonth]} ${startYear}`;
+    } else {
+      return `${startDay} ${idMonthsFull[startMonth]} – ${endDay} ${idMonthsFull[endMonth]} ${startYear}`;
+    }
+  } else {
+    return `${startDay} ${idMonthsFull[startMonth]} ${startYear} – ${endDay} ${idMonthsFull[endMonth]} ${endYear}`;
+  }
+};
+
+const formatVerificationTime = (timestamp: any) => {
+  if (!timestamp) return '';
+  let d: Date;
+  if (timestamp.toDate && typeof timestamp.toDate === 'function') {
+    d = timestamp.toDate();
+  } else {
+    d = new Date(timestamp);
+  }
+  if (isNaN(d.getTime())) return '';
+  const idMonths = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+  const day = d.getDate();
+  const month = idMonths[d.getMonth()];
+  const year = d.getFullYear();
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  return `${day} ${month} ${year}, ${hours}.${minutes}`;
+};
+
+const canTeacherVerifySubject = (
+  user: AppUser, 
+  classData: any, 
+  subjectField: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi'
+): boolean => {
+  if (!user || !classData) return false;
+  
+  const role = user.role;
+  // 1. Super Admin, Head Unit, Principal, Coordinator have full access
+  if (['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR'].includes(role)) {
+    return true;
+  }
+
+  // 2. Wali Kelas (Homeroom Teacher) check
+  const assignments = classData.teacherAssignments || [];
+  const isHomeroom = assignments.some(
+    (a: any) => a.userId === user.uid && a.role === 'HOMEROOM_TEACHER'
+  ) || classData.homeroomTeacherId === user.uid;
+
+  if (isHomeroom) {
+    return true; // Wali Kelas is allowed
+  }
+
+  // 3. Subject-specific assignment checks. Let's see if the teacher is assigned to this class first
+  const isAssignedToClass = assignments.some((a: any) => a.userId === user.uid) || 
+                            (classData.assignedTeacherIds && classData.assignedTeacherIds.includes(user.uid));
+  if (!isAssignedToClass) {
+    return false; // Not even assigned to this class!
+  }
+
+  // 4. If assigned, let's check if the assignment has specific subject fields (e.g., subjects array)
+  const userAssignment = assignments.find((a: any) => a.userId === user.uid);
+  if (userAssignment && userAssignment.subjects && Array.isArray(userAssignment.subjects)) {
+    if (userAssignment.subjects.includes(subjectField)) {
+      return true;
+    }
+  }
+
+  // 5. Keyword mapping on jobTitle or displayName or email
+  const jobTitleLower = (user.jobTitle || '').toLowerCase();
+  const displayNameLower = (user.displayName || '').toLowerCase();
+  const emailLower = (user.email || '').toLowerCase();
+
+  const checkKeywords = (keywords: string[]) => {
+    return keywords.some(k => 
+      jobTitleLower.includes(k) || 
+      displayNameLower.includes(k) || 
+      emailLower.includes(k)
+    );
+  };
+
+  if (subjectField === 'bahasaIndonesia') {
+    return checkKeywords(['bahasa', 'indonesia', 'indo', 'bi']);
+  }
+  if (subjectField === 'english') {
+    return checkKeywords(['english', 'inggris', 'eng']);
+  }
+  if (subjectField === 'mengaji') {
+    return checkKeywords(['mengaji', 'agama', 'islam', 'ustadz', 'ustadzah', 'quran', 'pai']);
+  }
+  if (subjectField === 'numerasi') {
+    return checkKeywords(['numerasi', 'math', 'matematika', 'sains', 'ipa', 'mipa', 'numeracy']);
+  }
+
+  return false;
+};
+
 export default function LearningPowerUpTeacherPage() {
   const { currentUser } = useOutletContext<{ currentUser: AppUser }>();
   const { activeYear } = useAcademicYear();
@@ -164,6 +284,25 @@ export default function LearningPowerUpTeacherPage() {
   } | null>(null);
   const [verificationNote, setVerificationNote] = React.useState('');
   const [isSavingVerification, setIsSavingVerification] = React.useState(false);
+
+  // Bulk verification confirmation state
+  const [bulkConfirm, setBulkConfirm] = React.useState<{
+    field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi';
+    studentCount: number;
+  } | null>(null);
+
+  // Individual unverification confirmation state
+  const [unverifyingProgress, setUnverifyingProgress] = React.useState<{
+    student: Student;
+    field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi';
+    progress: TaskProgress;
+  } | null>(null);
+
+  // Bulk unverification confirmation state
+  const [bulkUnverifyConfirm, setBulkUnverifyConfirm] = React.useState<{
+    field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi';
+    studentCount: number;
+  } | null>(null);
 
   // Load Classes on mount
   React.useEffect(() => {
@@ -270,20 +409,20 @@ export default function LearningPowerUpTeacherPage() {
       const endStr = end.toISOString().split('T')[0];
       setWeekEndDate(endStr);
       
-      const label = `Pekan (${formatDateShort(val)} - ${formatDateFull(endStr)})`;
+      const label = formatDateRange(val, endStr);
       setWeekLabel(label);
-
+ 
       // If an existing package exists for this startDate, prefill it!
       const existing = packages.find(p => p.weekStartDate === val);
       if (existing) {
-        setWeekLabel(existing.weekLabel);
+        setWeekLabel(existing.weekLabel || label);
         setTasksForm({
           bahasaIndonesia: existing.tasks.bahasaIndonesia || '',
           english: existing.tasks.english || '',
           mengaji: existing.tasks.mengaji || '',
           numerasi: existing.tasks.numerasi || ''
         });
-        toast.info("Memuat data paket tugas terdaftar untuk tanggal ini.");
+        toast.info("Memuat data tugas terdaftar untuk tanggal ini.");
       } else {
         setTasksForm({
           bahasaIndonesia: '',
@@ -294,11 +433,11 @@ export default function LearningPowerUpTeacherPage() {
       }
     }
   };
-
-  // Copy tasks from previous week package
+ 
+  // Copy tasks from previous package
   const handleCopyFromPrevious = () => {
     if (!copiedFromWeekId) {
-      toast.error("Pilih pekan sumber terlebih dahulu!");
+      toast.error("Pilih periode sumber terlebih dahulu!");
       return;
     }
     const sourcePkg = packages.find(p => p.id === copiedFromWeekId);
@@ -309,28 +448,30 @@ export default function LearningPowerUpTeacherPage() {
         mengaji: sourcePkg.tasks.mengaji || '',
         numerasi: sourcePkg.tasks.numerasi || ''
       });
-      toast.success(`Berhasil menyalin deskripsi tugas dari ${sourcePkg.weekLabel}!`);
+      toast.success(`Berhasil menyalin deskripsi tugas dari periode ${formatDateRange(sourcePkg.weekStartDate, sourcePkg.weekEndDate)}!`);
     }
   };
-
+ 
   // Save package to Firestore
   const handleSavePackage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClassId || !activeYear) return;
-    if (!weekStartDate || !weekEndDate || !weekLabel) {
-      toast.error("Harap isi tanggal mulai dan selesai pekan!");
+    
+    const computedLabel = weekLabel || formatDateRange(weekStartDate, weekEndDate);
+    if (!weekStartDate || !weekEndDate || !computedLabel) {
+      toast.error("Harap isi tanggal mulai dan selesai!");
       return;
     }
-
+ 
     const isAllEmpty = !tasksForm.bahasaIndonesia.trim() && 
                        !tasksForm.english.trim() && 
                        !tasksForm.mengaji.trim() && 
                        !tasksForm.numerasi.trim();
     if (isAllEmpty) {
-      toast.error("Paket tugas tidak dapat disimpan karena semua bidang tugas kosong!");
+      toast.error("Tugas tidak dapat disimpan karena semua bidang tugas kosong!");
       return;
     }
-
+ 
     setLoadingData(true);
     try {
       const packageId = `learning_power_up_${selectedClassId}_${weekStartDate}`;
@@ -341,7 +482,7 @@ export default function LearningPowerUpTeacherPage() {
         classId: selectedClassId,
         weekStartDate,
         weekEndDate,
-        weekLabel,
+        weekLabel: computedLabel,
         tasks: {
           bahasaIndonesia: tasksForm.bahasaIndonesia.trim() || null,
           english: tasksForm.english.trim() || null,
@@ -353,10 +494,10 @@ export default function LearningPowerUpTeacherPage() {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       };
-
+ 
       await setDoc(doc(db, 'learning_power_up_tasks', packageId), pkgDoc);
-      toast.success("Paket tugas mingguan berhasil disimpan!");
-      
+      toast.success("Tugas berhasil disimpan!");
+       
       // Reset form
       setWeekStartDate('');
       setWeekEndDate('');
@@ -368,42 +509,42 @@ export default function LearningPowerUpTeacherPage() {
         mengaji: '',
         numerasi: ''
       });
-      
+       
       setSelectedWeek(packageId);
       await loadClassData();
     } catch (err) {
       console.error("Error saving package:", err);
-      toast.error("Gagal menyimpan paket tugas.");
+      toast.error("Gagal menyimpan tugas.");
     } finally {
       setLoadingData(false);
     }
   };
-
+ 
   // Delete package and associated progresses
   const handleDeletePackage = async (pkgId: string) => {
-    if (!confirm("Apakah Anda yakin ingin menghapus paket tugas ini? Seluruh progres penyelesaian siswa untuk pekan ini juga akan terhapus secara permanen.")) {
+    if (!confirm("Apakah Anda yakin ingin menghapus tugas ini? Seluruh progres penyelesaian siswa untuk periode ini juga akan terhapus secara permanen.")) {
       return;
     }
     setLoadingData(true);
     try {
       const batch = writeBatch(db);
-      
+       
       // Delete package
       batch.delete(doc(db, 'learning_power_up_tasks', pkgId));
-      
+       
       // Delete all related progresses
       const q = query(collection(db, 'learning_power_up_progress'), where('packageId', '==', pkgId));
       const progressSnap = await getDocs(q);
       progressSnap.docs.forEach(docSnap => {
         batch.delete(docSnap.ref);
       });
-      
+       
       await batch.commit();
-      toast.success("Paket tugas dan seluruh progres siswa berhasil dihapus.");
+      toast.success("Tugas dan seluruh progres siswa berhasil dihapus.");
       await loadClassData();
     } catch (err) {
       console.error("Error deleting package:", err);
-      toast.error("Gagal menghapus paket tugas.");
+      toast.error("Gagal menghapus tugas.");
     } finally {
       setLoadingData(false);
     }
@@ -435,21 +576,42 @@ export default function LearningPowerUpTeacherPage() {
     return progresses.find(p => p.studentId === studentId && p.packageId === pkgId && p.field === field) || null;
   };
 
+  const isFieldAllVerified = (field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi') => {
+    if (!activePackage || students.length === 0) return false;
+    return students.every(student => {
+      const progress = findProgress(student.id, activePackage.id, field);
+      return progress?.status === 'VERIFIED';
+    });
+  };
+
   // Filter package options
   const activePackage = packages.find(p => p.id === selectedWeek);
   const activeFields = activePackage ? (['bahasaIndonesia', 'english', 'mengaji', 'numerasi'] as const).filter(
     f => activePackage.tasks[f] && activePackage.tasks[f]?.trim()
   ) : [];
 
-  // Handle spreadsheet cell click -> opens Verification Modal
+  // Handle spreadsheet cell click -> opens Verification Modal or Unverification Dialog
   const handleCellClick = (student: Student, field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi') => {
     if (!activePackage) return;
     const taskDescription = activePackage.tasks[field] || '';
     if (!taskDescription.trim()) {
-      toast.error(`Tidak ada tugas untuk bidang ${CATEGORY_CONFIG[field].label} pekan ini.`);
+      toast.error(`Tidak ada tugas untuk bidang ${CATEGORY_CONFIG[field].label} pada periode ini.`);
       return;
     }
     const progress = findProgress(student.id, activePackage.id, field);
+    
+    // Check if task is already VERIFIED -> trigger cancellation dialog
+    if (progress && progress.status === 'VERIFIED') {
+      const activeClass = classes.find(c => c.id === selectedClassId);
+      const hasAccess = canTeacherVerifySubject(currentUser, activeClass, field);
+      if (!hasAccess) {
+        toast.error(`Akses Ditolak: Anda tidak memiliki wewenang untuk membatalkan verifikasi pada bidang ${CATEGORY_CONFIG[field].label}.`);
+        return;
+      }
+      setUnverifyingProgress({ student, field, progress });
+      return;
+    }
+
     setVerifyingProgress({ student, field, taskDescription, progress });
     setVerificationNote(progress?.revisionNote || '');
   };
@@ -480,14 +642,20 @@ export default function LearningPowerUpTeacherPage() {
       const updatedProgress = {
         id: progressId,
         packageId: activePackage.id,
+        taskPackageId: activePackage.id,
         studentId: student.id,
         classId: selectedClassId,
         academicYearId: activeYear,
         field,
+        subjectKey: field,
         status: isApproved ? 'VERIFIED' : 'REVISION_REQUIRED',
         submittedAt: progress?.submittedAt || null,
         verifiedAt: isApproved ? serverTimestamp() : (progress?.verifiedAt || null),
-        verifiedBy: isApproved ? currentUser.uid : (progress?.verifiedBy || null),
+        verifiedBy: isApproved ? (currentUser.displayName || currentUser.email || "Guru/Coach") : (progress?.verifiedBy || null),
+        verifiedByUserId: isApproved ? (currentUser.uid || null) : (progress?.verifiedByUserId || null),
+        verifiedByName: isApproved ? (currentUser.displayName || currentUser.email || "Guru/Coach") : (progress?.verifiedByName || null),
+        verifiedByEmail: isApproved ? (currentUser.email || null) : (progress?.verifiedByEmail || null),
+        verificationMethod: isApproved ? ("INDIVIDUAL" as const) : (progress?.verificationMethod || null),
         revisionNote: isApproved ? null : verificationNote,
         revisedAt: progress?.revisedAt || null,
         updatedAt: serverTimestamp(),
@@ -504,6 +672,229 @@ export default function LearningPowerUpTeacherPage() {
       toast.error("Gagal menyimpan hasil verifikasi.");
     } finally {
       setIsSavingVerification(false);
+    }
+  };
+
+  // Bulk Verification Click handler
+  const handleBulkVerifyClick = (field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi') => {
+    const activeClass = classes.find(c => c.id === selectedClassId);
+    const hasAccess = canTeacherVerifySubject(currentUser, activeClass, field);
+    if (!hasAccess) {
+      toast.error(`Akses Ditolak: Anda tidak memiliki wewenang untuk verifikasi massal pada bidang ${CATEGORY_CONFIG[field].label}.`);
+      return;
+    }
+
+    setBulkConfirm({
+      field,
+      studentCount: filteredStudents.length
+    });
+  };
+
+  // Bulk Verification Submit handler
+  const handleBulkVerifySubmit = async () => {
+    if (!bulkConfirm || !activePackage) return;
+    const { field } = bulkConfirm;
+    
+    // Authorization check
+    const activeClass = classes.find(c => c.id === selectedClassId);
+    const hasAccess = canTeacherVerifySubject(currentUser, activeClass, field);
+    if (!hasAccess) {
+      toast.error(`Akses ditolak: Anda tidak berwenang melakukan verifikasi massal bidang ${CATEGORY_CONFIG[field].label}.`);
+      setBulkConfirm(null);
+      return;
+    }
+
+    setLoadingData(true);
+    try {
+      const batch = writeBatch(db);
+      const nowStr = new Date().toLocaleString('id-ID', { hour12: false });
+
+      for (const student of students) {
+        const existingProgress = findProgress(student.id, activePackage.id, field);
+        const progressId = existingProgress?.id || `progress_${activePackage.id}_${student.id}_${field}`;
+        const currentHistory = existingProgress?.history || [];
+
+        const newHistoryItem: TaskProgressHistory = {
+          timestamp: nowStr,
+          action: 'VERIFY',
+          actorName: currentUser.displayName || currentUser.email || "Guru/Coach",
+          note: "Verifikasi massal oleh guru."
+        };
+
+        const updatedProgress = {
+          id: progressId,
+          packageId: activePackage.id,
+          taskPackageId: activePackage.id,
+          studentId: student.id,
+          classId: selectedClassId,
+          academicYearId: activeYear,
+          field,
+          subjectKey: field,
+          status: 'VERIFIED' as const,
+          submittedAt: existingProgress?.submittedAt || serverTimestamp(),
+          verifiedAt: serverTimestamp(),
+          verifiedBy: currentUser.displayName || currentUser.email || "Guru/Coach",
+          verifiedByUserId: currentUser.uid || null,
+          verifiedByName: currentUser.displayName || currentUser.email || "Guru/Coach",
+          verifiedByEmail: currentUser.email || null,
+          verificationMethod: "BULK" as const,
+          revisionNote: null,
+          revisedAt: existingProgress?.revisedAt || null,
+          updatedAt: serverTimestamp(),
+          history: [...currentHistory, newHistoryItem]
+        };
+
+        batch.set(doc(db, 'learning_power_up_progress', progressId), updatedProgress, { merge: true });
+      }
+
+      await batch.commit();
+      toast.success(`Berhasil melakukan verifikasi massal untuk seluruh siswa kelas pada bidang ${CATEGORY_CONFIG[field].label}!`);
+      setBulkConfirm(null);
+      await loadClassData();
+    } catch (err) {
+      console.error("Error doing bulk verification:", err);
+      toast.error("Gagal melakukan verifikasi massal.");
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  // Individual Unverification Submit handler
+  const handleUnverifySubmit = async () => {
+    if (!unverifyingProgress || !activePackage) return;
+    const { student, field, progress } = unverifyingProgress;
+
+    // Authorization check
+    const activeClass = classes.find(c => c.id === selectedClassId);
+    const hasAccess = canTeacherVerifySubject(currentUser, activeClass, field);
+    if (!hasAccess) {
+      toast.error(`Akses ditolak: Anda tidak berwenang membatalkan verifikasi bidang ${CATEGORY_CONFIG[field].label}.`);
+      setUnverifyingProgress(null);
+      return;
+    }
+
+    setLoadingData(true);
+    try {
+      const progressId = progress.id;
+      const currentHistory = progress.history || [];
+      const nowStr = new Date().toLocaleString('id-ID', { hour12: false });
+
+      const newHistoryItem: TaskProgressHistory = {
+        timestamp: nowStr,
+        action: 'UNVERIFY' as const,
+        actorName: currentUser.displayName || currentUser.email || "Guru/Coach",
+        note: "Pembatalan verifikasi tugas manual."
+      };
+
+      const updatedProgress = {
+        id: progressId,
+        status: 'NOT_STARTED' as const,
+        verifiedByUserId: null,
+        verifiedByEmail: null,
+        verifiedByName: null,
+        verifiedBy: null,
+        verifiedAt: null,
+        verificationMethod: null,
+
+        lastUnverifiedByUserId: currentUser.uid || null,
+        lastUnverifiedByEmail: currentUser.email || null,
+        lastUnverifiedAt: serverTimestamp(),
+        unverifyReason: "manual_correction",
+        
+        updatedAt: serverTimestamp(),
+        history: [...currentHistory, newHistoryItem]
+      };
+
+      await setDoc(doc(db, 'learning_power_up_progress', progressId), updatedProgress, { merge: true });
+      toast.success(`Berhasil membatalkan verifikasi tugas ${CATEGORY_CONFIG[field].label} untuk ${student.name}!`);
+      setUnverifyingProgress(null);
+      await loadClassData();
+    } catch (err) {
+      console.error("Error un-verifying task:", err);
+      toast.error("Gagal membatalkan verifikasi.");
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  // Bulk Unverification Click handler
+  const handleBulkUnverifyClick = (field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi') => {
+    const activeClass = classes.find(c => c.id === selectedClassId);
+    const hasAccess = canTeacherVerifySubject(currentUser, activeClass, field);
+    if (!hasAccess) {
+      toast.error(`Akses Ditolak: Anda tidak memiliki wewenang untuk pembatalan verifikasi massal pada bidang ${CATEGORY_CONFIG[field].label}.`);
+      return;
+    }
+
+    setBulkUnverifyConfirm({
+      field,
+      studentCount: students.length
+    });
+  };
+
+  // Bulk Unverification Submit handler
+  const handleBulkUnverifySubmit = async () => {
+    if (!bulkUnverifyConfirm || !activePackage) return;
+    const { field } = bulkUnverifyConfirm;
+    
+    // Authorization check
+    const activeClass = classes.find(c => c.id === selectedClassId);
+    const hasAccess = canTeacherVerifySubject(currentUser, activeClass, field);
+    if (!hasAccess) {
+      toast.error(`Akses ditolak: Anda tidak berwenang melakukan pembatalan verifikasi massal bidang ${CATEGORY_CONFIG[field].label}.`);
+      setBulkUnverifyConfirm(null);
+      return;
+    }
+
+    setLoadingData(true);
+    try {
+      const batch = writeBatch(db);
+      const nowStr = new Date().toLocaleString('id-ID', { hour12: false });
+
+      for (const student of students) {
+        const existingProgress = findProgress(student.id, activePackage.id, field);
+        if (!existingProgress) continue;
+        const progressId = existingProgress.id;
+        const currentHistory = existingProgress.history || [];
+
+        const newHistoryItem: TaskProgressHistory = {
+          timestamp: nowStr,
+          action: 'UNVERIFY' as const,
+          actorName: currentUser.displayName || currentUser.email || "Guru/Coach",
+          note: "Pembatalan verifikasi massal oleh guru."
+        };
+
+        const updatedProgress = {
+          id: progressId,
+          status: 'NOT_STARTED' as const,
+          verifiedByUserId: null,
+          verifiedByEmail: null,
+          verifiedByName: null,
+          verifiedBy: null,
+          verifiedAt: null,
+          verificationMethod: null,
+
+          lastUnverifiedByUserId: currentUser.uid || null,
+          lastUnverifiedByEmail: currentUser.email || null,
+          lastUnverifiedAt: serverTimestamp(),
+          unverifyReason: "manual_correction",
+          
+          updatedAt: serverTimestamp(),
+          history: [...currentHistory, newHistoryItem]
+        };
+
+        batch.set(doc(db, 'learning_power_up_progress', progressId), updatedProgress, { merge: true });
+      }
+
+      await batch.commit();
+      toast.success(`Berhasil membatalkan verifikasi massal untuk seluruh siswa kelas pada bidang ${CATEGORY_CONFIG[field].label}!`);
+      setBulkUnverifyConfirm(null);
+      await loadClassData();
+    } catch (err) {
+      console.error("Error doing bulk unverification:", err);
+      toast.error("Gagal melakukan pembatalan verifikasi massal.");
+    } finally {
+      setLoadingData(false);
     }
   };
 
@@ -529,7 +920,7 @@ export default function LearningPowerUpTeacherPage() {
             Learning Power-Up Tracker
           </h1>
           <p className="text-sm text-gray-500 font-semibold">
-            Kelola paket tugas pekanan dan verifikasi penyelesaian tugas siswa secara terpadu.
+            Kelola tugas dan verifikasi penyelesaian tugas siswa secara terpadu.
           </p>
           
           <div className="flex flex-wrap gap-x-4 gap-y-2 pt-2 text-xs font-bold text-gray-500">
@@ -586,7 +977,7 @@ export default function LearningPowerUpTeacherPage() {
             activeTab === 'MANAGE_TASKS' ? "text-[#109E58]" : "text-gray-400 hover:text-gray-600"
           )}
         >
-          Kelola Tugas Mingguan
+          Kelola Tugas
           {activeTab === 'MANAGE_TASKS' && (
             <motion.div layoutId="teacherTabUnderline" className="absolute bottom-0 inset-x-0 h-1 bg-[#109E58] rounded-t-full" />
           )}
@@ -600,7 +991,7 @@ export default function LearningPowerUpTeacherPage() {
           <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-100">
             <div className="flex flex-wrap items-center gap-4">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-gray-500 uppercase tracking-widest">Pekan:</span>
+                <span className="text-xs font-bold text-gray-500 uppercase tracking-widest">Periode:</span>
                 {packages.length > 0 ? (
                   <select
                     value={selectedWeek}
@@ -608,11 +999,11 @@ export default function LearningPowerUpTeacherPage() {
                     className="bg-white border border-slate-200 text-gray-700 font-bold text-xs px-3 py-2 rounded-lg"
                   >
                     {packages.map(p => (
-                      <option key={p.id} value={p.id}>{p.weekLabel}</option>
+                      <option key={p.id} value={p.id}>{formatDateRange(p.weekStartDate, p.weekEndDate)}</option>
                     ))}
                   </select>
                 ) : (
-                  <span className="text-xs font-bold text-gray-400 italic">Belum ada paket tugas dibuat</span>
+                  <span className="text-xs font-bold text-gray-400 italic">Belum ada tugas dibuat</span>
                 )}
               </div>
             </div>
@@ -648,13 +1039,32 @@ export default function LearningPowerUpTeacherPage() {
                       <th className="py-4 px-6 min-w-[200px]">Nama Siswa</th>
                       {activeFields.length > 0 ? (
                         activeFields.map(field => (
-                          <th key={field} className="py-4 px-6 text-center">
-                            {CATEGORY_CONFIG[field].label}
+                          <th key={field} className="py-4 px-6 text-center align-middle">
+                            <div className="flex flex-col items-center gap-1.5 justify-center">
+                              <span className="text-gray-900 font-bold">{CATEGORY_CONFIG[field].label}</span>
+                              {isFieldAllVerified(field) ? (
+                                <button
+                                  onClick={() => handleBulkUnverifyClick(field)}
+                                  className="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[9px] font-black uppercase tracking-widest rounded-md shadow-sm transition-all whitespace-nowrap"
+                                  title={`Batalkan verifikasi seluruh siswa untuk bidang ${CATEGORY_CONFIG[field].label}`}
+                                >
+                                  Batalkan Semua
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => handleBulkVerifyClick(field)}
+                                  className="px-2 py-1 bg-[#109E58] hover:bg-[#0d854a] text-white text-[9px] font-black uppercase tracking-widest rounded-md shadow-sm transition-all whitespace-nowrap"
+                                  title={`Verifikasi seluruh siswa untuk bidang ${CATEGORY_CONFIG[field].label}`}
+                                >
+                                  Selesai Semua
+                                </button>
+                              )}
+                            </div>
                           </th>
                         ))
                       ) : (
                         <th className="py-4 px-6 text-center text-slate-400 font-semibold italic">
-                          Tidak Ada Tugas Aktif Pekan Ini
+                          Tidak Ada Tugas Aktif
                         </th>
                       )}
                       <th className="py-4 px-6 text-center">Ringkasan Selesai</th>
@@ -690,12 +1100,11 @@ export default function LearningPowerUpTeacherPage() {
                             return (
                               <td 
                                 key={field} 
-                                className="py-4 px-6 text-center align-middle"
+                                className="py-4 px-6 text-center align-middle relative group"
                               >
                                 <button
                                   onClick={() => handleCellClick(student, field)}
                                   className="inline-flex items-center justify-center p-1 rounded-xl transition-all hover:bg-slate-100 focus:outline-none"
-                                  title={`Klik untuk verifikasi ${student.name} - ${CATEGORY_CONFIG[field].label}`}
                                 >
                                   {status === 'VERIFIED' && (
                                     <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center border border-emerald-200">
@@ -720,6 +1129,23 @@ export default function LearningPowerUpTeacherPage() {
                                     </div>
                                   )}
                                 </button>
+
+                                {status === 'VERIFIED' && (
+                                  <div className="pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-slate-900 text-white text-[11px] p-2.5 rounded-xl shadow-lg z-30 w-48 text-center font-bold leading-normal">
+                                    <p className="text-emerald-400">
+                                      Verified by: {
+                                        progress?.verifiedByEmail || 
+                                        progress?.verifiedByName || 
+                                        (progress?.verifiedBy && !/^[a-zA-Z0-9]{20,30}$/.test(progress.verifiedBy) && !/^[0-9a-fA-F-]{36}$/.test(progress.verifiedBy) ? progress.verifiedBy : null) || 
+                                        'Guru Lumina'
+                                      }
+                                    </p>
+                                    {progress?.verificationMethod === 'BULK' && (
+                                      <p className="text-slate-300 text-[10px] font-medium">Bulk verification</p>
+                                    )}
+                                    <p className="text-slate-400 text-[10px] mt-0.5">{formatVerificationTime(progress?.verifiedAt || progress?.updatedAt)}</p>
+                                  </div>
+                                )}
                               </td>
                             );
                           })}
@@ -763,21 +1189,21 @@ export default function LearningPowerUpTeacherPage() {
         </div>
       )}
 
-      {/* TAB 2 — KELOLA TUGAS MINGGUAN */}
+      {/* TAB 2 — KELOLA TUGAS */}
       {activeTab === 'MANAGE_TASKS' && (
         <div className="space-y-8">
           
-          {/* Main Form: Atur Tugas Pekan Ini */}
+          {/* Main Form: Atur Tugas */}
           <form onSubmit={handleSavePackage} className="bg-white rounded-[2rem] border border-slate-100 p-8 shadow-sm space-y-6">
             <div className="border-b border-slate-100 pb-4">
-              <h2 className="text-xl font-bold text-gray-900">Atur Tugas Pekan Ini</h2>
-              <p className="text-xs font-semibold text-gray-400">Atur paket tugas satu pekan untuk seluruh bidang studi aktif sekaligus.</p>
+              <h2 className="text-xl font-bold text-gray-900">Atur Tugas</h2>
+              <p className="text-xs font-semibold text-gray-400">Atur paket tugas untuk seluruh bidang studi aktif sekaligus berdasarkan rentang tanggal.</p>
             </div>
 
-            {/* Date Pickers & Label */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Date Pickers */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Mulai Pekan (Senin)</label>
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Tanggal Mulai</label>
                 <input
                   type="date"
                   required
@@ -788,24 +1214,12 @@ export default function LearningPowerUpTeacherPage() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Akhir Pekan (Minggu)</label>
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Tanggal Selesai</label>
                 <input
                   type="date"
                   required
                   value={weekEndDate}
                   onChange={(e) => setWeekEndDate(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Label Visual Pekan</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Pekan (10 Agt - 16 Agt 2026)"
-                  value={weekLabel}
-                  onChange={(e) => setWeekLabel(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold"
                 />
               </div>
@@ -817,7 +1231,7 @@ export default function LearningPowerUpTeacherPage() {
                 <div className="space-y-1">
                   <h4 className="text-xs font-black text-gray-700 flex items-center gap-1.5">
                     <Copy size={14} className="text-[#109E58]" />
-                    Salin Tugas dari Pekan Sebelumnya
+                    Salin Tugas dari Periode Sebelumnya
                   </h4>
                   <p className="text-[10px] text-gray-400 font-bold leading-none">Menyalin teks instruksi tugas per bidang. Tidak menyalin progres siswa.</p>
                 </div>
@@ -827,9 +1241,9 @@ export default function LearningPowerUpTeacherPage() {
                     onChange={(e) => setCopiedFromWeekId(e.target.value)}
                     className="bg-white border border-slate-200 text-xs px-3 py-2 rounded-lg font-semibold flex-1 sm:flex-initial"
                   >
-                    <option value="">-- Pilih Pekan --</option>
+                    <option value="">-- Pilih Periode --</option>
                     {packages.map(p => (
-                      <option key={p.id} value={p.id}>{p.weekLabel}</option>
+                      <option key={p.id} value={p.id}>{formatDateRange(p.weekStartDate, p.weekEndDate)}</option>
                     ))}
                   </select>
                   <button
@@ -852,7 +1266,7 @@ export default function LearningPowerUpTeacherPage() {
                 </label>
                 <textarea
                   rows={4}
-                  placeholder="Tulis instruksi tugas Bahasa Indonesia pekan ini..."
+                  placeholder="Tulis instruksi tugas Bahasa Indonesia..."
                   value={tasksForm.bahasaIndonesia}
                   onChange={(e) => setTasksForm(prev => ({ ...prev, bahasaIndonesia: e.target.value }))}
                   className="w-full bg-white border border-slate-200 text-xs px-4 py-3 rounded-xl focus:outline-none font-medium leading-relaxed"
@@ -866,7 +1280,7 @@ export default function LearningPowerUpTeacherPage() {
                 </label>
                 <textarea
                   rows={4}
-                  placeholder="Tulis instruksi tugas English pekan ini..."
+                  placeholder="Tulis instruksi tugas English..."
                   value={tasksForm.english}
                   onChange={(e) => setTasksForm(prev => ({ ...prev, english: e.target.value }))}
                   className="w-full bg-white border border-slate-200 text-xs px-4 py-3 rounded-xl focus:outline-none font-medium leading-relaxed"
@@ -880,7 +1294,7 @@ export default function LearningPowerUpTeacherPage() {
                 </label>
                 <textarea
                   rows={4}
-                  placeholder="Tulis instruksi tugas Mengaji pekan ini..."
+                  placeholder="Tulis instruksi tugas Mengaji..."
                   value={tasksForm.mengaji}
                   onChange={(e) => setTasksForm(prev => ({ ...prev, mengaji: e.target.value }))}
                   className="w-full bg-white border border-slate-200 text-xs px-4 py-3 rounded-xl focus:outline-none font-medium leading-relaxed"
@@ -894,7 +1308,7 @@ export default function LearningPowerUpTeacherPage() {
                 </label>
                 <textarea
                   rows={4}
-                  placeholder="Tulis instruksi tugas Numerasi pekan ini..."
+                  placeholder="Tulis instruksi tugas Numerasi..."
                   value={tasksForm.numerasi}
                   onChange={(e) => setTasksForm(prev => ({ ...prev, numerasi: e.target.value }))}
                   className="w-full bg-white border border-slate-200 text-xs px-4 py-3 rounded-xl focus:outline-none font-medium leading-relaxed"
@@ -909,7 +1323,7 @@ export default function LearningPowerUpTeacherPage() {
                 className="px-6 py-3.5 bg-[#109E58] hover:bg-[#0d854a] text-white text-xs font-black uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center gap-2"
               >
                 {loadingData ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                Simpan Paket Tugas Pekan Ini
+                Simpan Tugas
               </button>
             </div>
           </form>
@@ -917,8 +1331,8 @@ export default function LearningPowerUpTeacherPage() {
           {/* List of Created Packages */}
           <div className="space-y-4">
             <div className="border-b border-slate-100 pb-2">
-              <h3 className="text-md font-black text-gray-900">Riwayat Paket Tugas Terdaftar</h3>
-              <p className="text-xs font-semibold text-gray-400">Seluruh paket pekanan kelas yang telah disimpan.</p>
+              <h3 className="text-md font-black text-gray-900">Daftar Tugas</h3>
+              <p className="text-xs font-semibold text-gray-400">Daftar tugas berdasarkan rentang tanggal.</p>
             </div>
 
             {packages.length > 0 ? (
@@ -934,14 +1348,14 @@ export default function LearningPowerUpTeacherPage() {
                           <button
                             onClick={() => handleEditPackage(pkg)}
                             className="p-1.5 hover:bg-slate-50 text-gray-500 hover:text-[#109E58] rounded-lg transition-all"
-                            title="Edit Paket"
+                            title="Edit Tugas"
                           >
                             <Edit size={16} />
                           </button>
                           <button
                             onClick={() => handleDeletePackage(pkg.id)}
                             className="p-1.5 hover:bg-rose-50 text-gray-500 hover:text-rose-600 rounded-lg transition-all"
-                            title="Hapus Paket"
+                            title="Hapus Tugas"
                           >
                             <Trash2 size={16} />
                           </button>
@@ -950,7 +1364,7 @@ export default function LearningPowerUpTeacherPage() {
 
                       <div className="space-y-1">
                         <h4 className="text-md font-black text-gray-900 tracking-tight leading-snug">
-                          {pkg.weekLabel}
+                          {formatDateRange(pkg.weekStartDate, pkg.weekEndDate)}
                         </h4>
                         <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">
                           Mulai: {formatDateFull(pkg.weekStartDate)}
@@ -994,9 +1408,9 @@ export default function LearningPowerUpTeacherPage() {
                   <FileText size={32} />
                 </div>
                 <div className="space-y-1">
-                  <h3 className="text-lg font-black text-gray-900">Belum Ada Paket Tugas</h3>
+                  <h3 className="text-lg font-black text-gray-900">Belum Ada Tugas</h3>
                   <p className="text-sm text-gray-500 font-semibold leading-relaxed">
-                    Gunakan form di atas untuk mengatur paket tugas penguatan belajar pekanan bagi siswa.
+                    Gunakan form di atas untuk mengatur tugas penguatan belajar bagi siswa berdasarkan rentang tanggal.
                   </p>
                 </div>
               </div>
@@ -1171,6 +1585,189 @@ export default function LearningPowerUpTeacherPage() {
                     </div>
                   )}
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* BULK VERIFICATION CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {bulkConfirm && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50" id="bulk-verify-confirm-overlay">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[2rem] shadow-2xl max-w-md w-full p-8 space-y-6 relative border border-slate-100"
+              id="bulk-verify-confirm-body"
+            >
+              <button 
+                onClick={() => setBulkConfirm(null)}
+                className="absolute top-6 right-6 p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-700 transition-all z-10"
+              >
+                <X size={16} />
+              </button>
+
+              <div className="space-y-2">
+                <span className="px-3 py-1 bg-[#109E58]/10 text-[#109E58] text-[9px] font-black uppercase tracking-widest rounded-full border border-[#109E58]/20 inline-block">
+                  Konfirmasi Verifikasi Massal
+                </span>
+                <h3 className="text-xl font-black text-gray-900 tracking-tight">
+                  Selesaikan Semua Tugas?
+                </h3>
+                <p className="text-xs text-gray-400 font-semibold leading-relaxed">
+                  Tindakan ini akan menandai seluruh siswa aktif di kelas ini sebagai <strong className="text-emerald-600 uppercase">Selesai (Verified)</strong> untuk bidang studi terpilih.
+                </p>
+              </div>
+
+              {/* Details list */}
+              <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-3.5 text-xs font-semibold text-gray-600">
+                <div className="flex justify-between items-center pb-2 border-b border-slate-200/60">
+                  <span className="text-gray-400 font-bold uppercase tracking-wider text-[9px]">Bidang Studi</span>
+                  <span className="text-gray-900 font-black">{CATEGORY_CONFIG[bulkConfirm.field].label}</span>
+                </div>
+                <div className="flex justify-between items-center pb-2 border-b border-slate-200/60">
+                  <span className="text-gray-400 font-bold uppercase tracking-wider text-[9px]">Kelas</span>
+                  <span className="text-gray-900 font-black">{classes.find(c => c.id === selectedClassId)?.name}</span>
+                </div>
+                <div className="flex justify-between items-center pb-2 border-b border-slate-200/60">
+                  <span className="text-gray-400 font-bold uppercase tracking-wider text-[9px]">Rentang Tanggal</span>
+                  <span className="text-gray-900 font-black">
+                    {activePackage ? formatDateRange(activePackage.weekStartDate, activePackage.weekEndDate) : '-'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center pb-2 border-b border-slate-200/60">
+                  <span className="text-gray-400 font-bold uppercase tracking-wider text-[9px]">Jumlah Siswa</span>
+                  <span className="text-gray-900 font-black">{bulkConfirm.studentCount} Siswa</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-400 font-bold uppercase tracking-wider text-[9px]">Diverifikasi Oleh</span>
+                  <span className="text-gray-900 font-black">{currentUser.displayName || currentUser.email}</span>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setBulkConfirm(null)}
+                  className="py-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 font-black text-xs uppercase tracking-widest rounded-xl transition-all"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkVerifySubmit}
+                  className="py-3 bg-[#109E58] hover:bg-[#0d854a] text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5"
+                >
+                  <Check size={16} strokeWidth={3} />
+                  Ya, Selesai Semua
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* INDIVIDUAL UNVERIFICATION CONFIRMATION DIALOG MODAL */}
+      <AnimatePresence>
+        {unverifyingProgress && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50" id="individual-unverify-confirm-overlay">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[2rem] shadow-2xl max-w-md w-full p-8 space-y-6 relative border border-slate-100"
+              id="individual-unverify-confirm-body"
+            >
+              <button 
+                onClick={() => setUnverifyingProgress(null)}
+                className="absolute top-6 right-6 p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-700 transition-all z-10"
+              >
+                <X size={16} />
+              </button>
+
+              <div className="space-y-2">
+                <span className="px-3 py-1 bg-rose-50 text-rose-700 text-[9px] font-black uppercase tracking-widest rounded-full border border-rose-200 inline-block">
+                  Batalkan Verifikasi Tugas
+                </span>
+                <h3 className="text-xl font-black text-gray-900 tracking-tight leading-snug">
+                  Batalkan verifikasi tugas {CATEGORY_CONFIG[unverifyingProgress.field].label} untuk {unverifyingProgress.student.name}?
+                </h3>
+                <p className="text-xs text-gray-400 font-semibold leading-relaxed">
+                  Status tugas akan kembali menjadi <span className="text-rose-600 font-bold uppercase">Belum Selesai (Not Started)</span>. Reminder tugas akan kembali aktif di akun siswa.
+                </p>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setUnverifyingProgress(null)}
+                  className="py-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 font-black text-xs uppercase tracking-widest rounded-xl transition-all"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleUnverifySubmit}
+                  className="py-3 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5"
+                >
+                  Ya, Batalkan Verifikasi
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* BULK UNVERIFICATION CONFIRMATION DIALOG MODAL */}
+      <AnimatePresence>
+        {bulkUnverifyConfirm && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50" id="bulk-unverify-confirm-overlay">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[2rem] shadow-2xl max-w-md w-full p-8 space-y-6 relative border border-slate-100"
+              id="bulk-unverify-confirm-body"
+            >
+              <button 
+                onClick={() => setBulkUnverifyConfirm(null)}
+                className="absolute top-6 right-6 p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-700 transition-all z-10"
+              >
+                <X size={16} />
+              </button>
+
+              <div className="space-y-2">
+                <span className="px-3 py-1 bg-rose-50 text-rose-700 text-[9px] font-black uppercase tracking-widest rounded-full border border-rose-200 inline-block">
+                  Konfirmasi Pembatalan Massal
+                </span>
+                <h3 className="text-xl font-black text-gray-900 tracking-tight leading-snug">
+                  Batalkan Semua Verifikasi?
+                </h3>
+                <p className="text-xs text-gray-400 font-semibold leading-relaxed">
+                  Tindakan ini akan mengembalikan tugas seluruh siswa aktif di kelas ini pada bidang <strong className="text-rose-600 font-bold uppercase">{CATEGORY_CONFIG[bulkUnverifyConfirm.field].label}</strong> menjadi <strong className="text-gray-600 font-bold uppercase">Belum Selesai (Not Started)</strong>.
+                </p>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setBulkUnverifyConfirm(null)}
+                  className="py-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 font-black text-xs uppercase tracking-widest rounded-xl transition-all"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkUnverifySubmit}
+                  className="py-3 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5"
+                >
+                  Ya, Batalkan Semua
+                </button>
               </div>
             </motion.div>
           </div>
