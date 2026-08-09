@@ -6,11 +6,11 @@ import {
   LineChart, Line, AreaChart, Area, PieChart, Pie, Cell, Legend
 } from 'recharts';
 import { 
-  AlertTriangle, CheckCircle, Clock, ChevronRight, ShieldAlert, Activity, 
+  AlertTriangle, CheckCircle, Clock, ChevronRight, ChevronLeft, ShieldAlert, Activity, 
   LayoutGrid, Timer, Loader2, BarChart3, Users, Calendar, Filter, Search, 
   UserX, Info, ArrowUpRight, ArrowDownRight, BookOpen, ThumbsUp, AlertCircle,
   TrendingUp, FileSpreadsheet, Plus, CornerDownRight, MessageSquare, CheckSquare,
-  Sparkles, X, Star, FileText
+  Sparkles, X, Star, FileText, CheckCircle2, ArrowRight
 } from 'lucide-react';
 import { Link, useOutletContext } from 'react-router-dom';
 import { cn } from '../../lib/utils';
@@ -60,6 +60,12 @@ export default function HeadDashboard() {
   const [modalType, setModalType] = useState<string>('');
   const [modalSearch, setModalSearch] = useState('');
 
+  // --- Junior High Kehadiran Tab UI States ---
+  const [schoolHolidays, setSchoolHolidays] = useState<string[]>([]);
+  const [jhSearchTerm, setJhSearchTerm] = useState('');
+  const [jhCurrentPage, setJhCurrentPage] = useState(1);
+  const [selectedClassForMissingDates, setSelectedClassForMissingDates] = useState<any | null>(null);
+
   // --- Initial Sync of academic context ---
   useEffect(() => {
     if (activeYear) setSelectedYear(activeYear);
@@ -84,7 +90,8 @@ export default function HeadDashboard() {
           trackersSnap,
           assignmentsSnap,
           literacySnap,
-          enrollmentsSnap
+          enrollmentsSnap,
+          holidaysSnap
         ] = await Promise.all([
           getDocs(query(collection(db, 'classes'), where('unitId', '==', 'JUNIOR_HIGH'))),
           Promise.all([
@@ -101,7 +108,11 @@ export default function HeadDashboard() {
           getDocs(collection(db, 'smartGoalTrackerEntries')),
           getDocs(collection(db, 'mentorAssignments')),
           getDocs(collection(db, 'junior_high_literacy_numeracy_records')),
-          getDocs(query(collection(db, 'enrollments'), where('unitId', '==', 'JUNIOR_HIGH')))
+          getDocs(query(collection(db, 'enrollments'), where('unitId', '==', 'JUNIOR_HIGH'))),
+          getDocs(collection(db, 'school_holidays')).catch(err => {
+            console.warn('Failed to fetch school_holidays:', err);
+            return { docs: [] } as any;
+          })
         ]);
 
         const loadedClasses = classesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -123,6 +134,7 @@ export default function HeadDashboard() {
         const loadedAssignments = assignmentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         const loadedLiteracy = literacySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         const loadedEnrollments = enrollmentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const loadedHolidays = holidaysSnap.docs.map((doc: any) => doc.data().date || doc.id).filter(Boolean);
 
         setClasses(loadedClasses);
         setStudents(loadedStudents);
@@ -137,6 +149,7 @@ export default function HeadDashboard() {
         setMentorAssignments(loadedAssignments);
         setLiteracyRecords(loadedLiteracy);
         setEnrollments(loadedEnrollments);
+        setSchoolHolidays(loadedHolidays);
 
         // Batch Concerns retrieval
         const loadedConcerns: any[] = [];
@@ -586,92 +599,296 @@ export default function HeadDashboard() {
     return { totalCount, avgMin, topDayName: topDay ? topDay[0] : '-', topDayCount: topDay ? topDay[1] : 0, classRank, studentRank, chartData };
   }, [filteredLateness, classes, selectedYear]);
 
-  // 2. Kehadiran Tab Analysis
-  const attendanceAnalysis = useMemo(() => {
-    const recs = filteredAttendance;
-    const total = recs.length;
-    const hadir = recs.filter(r => r.status === 'HADIR' || r.status === 'LATE').length;
-    const sakit = recs.filter(r => r.status === 'SAKIT').length;
-    const izin = recs.filter(r => r.status === 'IZIN').length;
-    const alpa = recs.filter(r => r.status === 'ALPA').length;
+  // 2. Kehadiran Tab Analysis (Junior High Revised version)
+  
+  // Convert date string "YYYY-MM-DD" to working days count
+  const getWorkingDaysCount = (startStr: string, endStr: string, holidays: string[]): number => {
+    const start = new Date(startStr);
+    const end = new Date(endStr);
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) return 0;
     
-    const rate = total > 0 ? Math.round((hadir / total) * 100) : 0;
-
-    // Cohort rate
-    const cohorts: Record<string, { present: number, total: number }> = { '7': { present: 0, total: 0 }, '8': { present: 0, total: 0 }, '9': { present: 0, total: 0 } };
-    recs.forEach(r => {
-      let g = '';
-      const s = resolvedStudents.find(stud => stud.id === r.studentId);
-      if (s) {
-        const gradeVal = getStudentGrade(s);
-        if (gradeVal) g = String(gradeVal);
-      }
-      if (!g && r.classId) {
-        const cls = findClass(r.classId);
-        if (cls && cls.name) {
-          const gradeVal = parseInt(cls.name);
-          if (!isNaN(gradeVal)) g = String(gradeVal);
-        } else {
-          const numericMatch = r.classId.match(/\d+/);
-          if (numericMatch) g = numericMatch[0];
+    let count = 0;
+    const current = new Date(start);
+    while (current <= end) {
+      const day = current.getDay();
+      if (day !== 0 && day !== 6) { // 0 = Sunday, 6 = Saturday
+        const dateStr = current.getFullYear() + '-' + 
+                        String(current.getMonth() + 1).padStart(2, '0') + '-' + 
+                        String(current.getDate()).padStart(2, '0');
+        if (!holidays.includes(dateStr)) {
+          count++;
         }
       }
-      if (cohorts[g]) {
-        cohorts[g].total++;
-        if (r.status === 'HADIR' || r.status === 'LATE') cohorts[g].present++;
+      current.setDate(current.getDate() + 1);
+    }
+    return count;
+  };
+
+  const jhWorkingDaysForAnalysis = useMemo(() => {
+    return getWorkingDaysCount(startDate, endDate, schoolHolidays);
+  }, [startDate, endDate, schoolHolidays]);
+
+  // Audit Range definition
+  const auditStartDate = '2026-07-20';
+  const auditEndDate = useMemo(() => {
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+    const yesterdayStr = yesterday.getFullYear() + '-' + 
+                         String(yesterday.getMonth() + 1).padStart(2, '0') + '-' + 
+                         String(yesterday.getDate()).padStart(2, '0');
+    
+    return endDate < yesterdayStr ? endDate : yesterdayStr;
+  }, [endDate]);
+
+  const auditWorkingDaysCount = useMemo(() => {
+    return getWorkingDaysCount(auditStartDate, auditEndDate, schoolHolidays);
+  }, [auditEndDate, schoolHolidays]);
+
+  const isAuditValid = useMemo(() => {
+    return auditEndDate >= auditStartDate;
+  }, [auditEndDate]);
+
+  // Generate audit dates
+  const auditDates = useMemo(() => {
+    if (!isAuditValid) return [];
+    
+    const dates: string[] = [];
+    const start = new Date(auditStartDate);
+    const end = new Date(auditEndDate);
+    const temp = new Date(start);
+    
+    while (temp <= end) {
+      const day = temp.getDay();
+      const isWeekend = day === 0 || day === 6;
+      const dateStr = temp.getFullYear() + '-' + 
+                      String(temp.getMonth() + 1).padStart(2, '0') + '-' + 
+                      String(temp.getDate()).padStart(2, '0');
+      
+      const isHoliday = schoolHolidays.includes(dateStr);
+      if (!isWeekend && !isHoliday) {
+        dates.push(dateStr);
+      }
+      temp.setDate(temp.getDate() + 1);
+    }
+    return dates;
+  }, [auditEndDate, schoolHolidays, isAuditValid]);
+
+  // Students list ignored by selectedCohort filter
+  const jhFilteredStudentsForAttendance = useMemo(() => {
+    return resolvedStudents.filter(s => {
+      if (s.academicYear && s.academicYear !== selectedYear) return false;
+      if (selectedClassId !== 'ALL' && !isStudentInClass(s.classId, selectedClassId)) return false;
+      return true;
+    });
+  }, [resolvedStudents, selectedClassId, selectedYear]);
+
+  const jhFilteredStudentIdsForAttendance = useMemo(() => new Set(jhFilteredStudentsForAttendance.map(s => s.id)), [jhFilteredStudentsForAttendance]);
+  const isStudentFilteredForAttendance = (sid: string) => jhFilteredStudentIdsForAttendance.has(sid);
+
+  const jhRekapPengisian = useMemo(() => {
+    return filteredClasses.map(cls => {
+      // Get roster of active students for this class in selected year
+      const roster = resolvedStudents.filter(s => {
+        if (s.academicYear && s.academicYear !== selectedYear) return false;
+        return isStudentInClass(s.classId, cls.id);
+      });
+
+      const rosterIds = new Set(roster.map(s => s.id));
+      const rosterCount = roster.length;
+
+      // Group records of this class by date
+      const classKeys = [cls.id, cls.name].filter(Boolean);
+      
+      const classRecordsForAudit = attendanceRecords.filter(rec => {
+        if (rec.academicYear && rec.academicYear !== selectedYear) return false;
+        if (rec.semester && String(rec.semester) !== String(selectedSemester)) return false;
+        if (!classKeys.includes(rec.classId)) return false;
+        return rec.date >= auditStartDate && rec.date <= auditEndDate;
+      });
+
+      const dateRecordsMap = new Map<string, any[]>();
+      classRecordsForAudit.forEach(rec => {
+        if (rec.date) {
+          if (!dateRecordsMap.has(rec.date)) {
+            dateRecordsMap.set(rec.date, []);
+          }
+          dateRecordsMap.get(rec.date)!.push(rec);
+        }
+      });
+
+      const missingDatesList: string[] = [];
+      
+      auditDates.forEach(dateStr => {
+        const dayRecords = dateRecordsMap.get(dateStr) || [];
+        
+        const filledStudentsCount = dayRecords.filter(rec => {
+          if (!rosterIds.has(rec.studentId)) return false;
+          const hasStatus = rec.status && typeof rec.status === 'string' && rec.status.trim() !== '';
+          const isDraftStatus = rec.status === 'DRAFT' || rec.isDraft;
+          return hasStatus && !isDraftStatus;
+        }).length;
+
+        if (rosterCount === 0 || filledStudentsCount < rosterCount) {
+          missingDatesList.push(dateStr);
+        }
+      });
+
+      missingDatesList.sort((a, b) => a.localeCompare(b));
+
+      let clsPresent = 0;
+      let clsTotal = 0;
+      
+      attendanceRecords
+        .filter(rec => {
+          if (rec.academicYear && rec.academicYear !== selectedYear) return false;
+          if (rec.semester && String(rec.semester) !== String(selectedSemester)) return false;
+          if (!classKeys.includes(rec.classId)) return false;
+          return rec.date >= startDate && rec.date <= endDate;
+        })
+        .forEach(rec => {
+          if (!rec.status) return;
+          const s = String(rec.status).toUpperCase();
+          if (['HADIR', 'LATE', 'H', 'T'].includes(s)) {
+            clsPresent++;
+            clsTotal++;
+          } else if (['SAKIT', 'IZIN', 'ALPA', 'S', 'I', 'A'].includes(s)) {
+            clsTotal++;
+          }
+        });
+
+      const attendanceRate = clsTotal > 0 ? Math.min(100, Math.round((clsPresent / clsTotal) * 100)) : 100;
+      const filledDaysCount = Math.max(0, auditWorkingDaysCount - missingDatesList.length);
+
+      return {
+        id: cls.id,
+        name: cls.name,
+        teacher: cls.homeroomTeacherName || 'Guru',
+        filledDaysCount,
+        missingDates: missingDatesList,
+        rate: attendanceRate,
+        rosterCount
+      };
+    }).sort((a, b) => b.missingDates.length - a.missingDates.length);
+  }, [filteredClasses, resolvedStudents, attendanceRecords, selectedYear, selectedSemester, auditDates, auditWorkingDaysCount, startDate, endDate]);
+
+  const lowestClassAudit = useMemo(() => {
+    if (!isAuditValid || auditWorkingDaysCount === 0 || jhRekapPengisian.length === 0) {
+      return '—';
+    }
+    
+    const lowest = jhRekapPengisian[0];
+    
+    if (lowest.missingDates.length === 0) {
+      return 'Semua kelas lengkap';
+    }
+    
+    return `${lowest.name} (${lowest.filledDaysCount}/${auditWorkingDaysCount} Hari)`;
+  }, [jhRekapPengisian, auditWorkingDaysCount, isAuditValid]);
+
+  const jhAverageAttendance = useMemo(() => {
+    let presentCount = 0;
+    let totalCount = 0;
+    
+    attendanceRecords.forEach(rec => {
+      if (!isStudentFilteredForAttendance(rec.studentId)) return;
+      if (rec.academicYear && rec.academicYear !== selectedYear) return;
+      if (rec.semester && String(rec.semester) !== String(selectedSemester)) return;
+      if (rec.date < startDate || rec.date > endDate) return;
+      
+      if (!rec.status) return;
+      const s = String(rec.status).toUpperCase();
+      if (['HADIR', 'LATE', 'H', 'T'].includes(s)) {
+        presentCount++;
+        totalCount++;
+      } else if (['SAKIT', 'IZIN', 'ALPA', 'S', 'I', 'A'].includes(s)) {
+        totalCount++;
       }
     });
-    const cohortRates = Object.entries(cohorts).map(([g, d]) => ({
-      cohort: `Grade ${g}`,
-      rate: d.total > 0 ? Math.round((d.present / d.total) * 100) : 0
-    }));
+    
+    return totalCount > 0 ? Math.min(100, Math.round((presentCount / totalCount) * 100)) : 100;
+  }, [attendanceRecords, isStudentFilteredForAttendance, selectedYear, selectedSemester, startDate, endDate]);
 
-    // Class Rate
-    const classMap: Record<string, { present: number, total: number }> = {};
-    recs.forEach(r => {
-      const cls = findClass(r.classId);
-      const cid = cls ? cls.id : r.classId;
-      if (!cid) return;
-      if (!classMap[cid]) classMap[cid] = { present: 0, total: 0 };
-      classMap[cid].total++;
-      if (r.status === 'HADIR' || r.status === 'LATE') classMap[cid].present++;
+  const jhAttentionStudents = useMemo(() => {
+    const studentStatsMap = new Map<string, { hadir: number; sakit: number; izin: number; alpa: number; total: number }>();
+    
+    jhFilteredStudentsForAttendance.forEach(st => {
+      studentStatsMap.set(st.id, { hadir: 0, sakit: 0, izin: 0, alpa: 0, total: 0 });
     });
-    const classRates = Object.entries(classMap).map(([cid, d]) => ({
-      classId: cid,
-      name: findClass(cid)?.name || cid,
-      rate: d.total > 0 ? Math.round((d.present / d.total) * 100) : 0
-    })).sort((a,b) => b.rate - a.rate);
 
-    // Low presence (< 90%)
-    const studentMap: Record<string, { name: string, classId: string, present: number, total: number }> = {};
-    recs.forEach(r => {
-      if (!studentMap[r.studentId]) studentMap[r.studentId] = { name: r.studentName, classId: r.classId, present: 0, total: 0 };
-      studentMap[r.studentId].total++;
-      if (r.status === 'HADIR' || r.status === 'LATE') studentMap[r.studentId].present++;
+    attendanceRecords.forEach(rec => {
+      if (!rec.studentId || !rec.status) return;
+      if (!studentStatsMap.has(rec.studentId)) return;
+      
+      if (rec.academicYear && rec.academicYear !== selectedYear) return;
+      if (rec.semester && String(rec.semester) !== String(selectedSemester)) return;
+      if (rec.date < startDate || rec.date > endDate) return;
+
+      const current = studentStatsMap.get(rec.studentId)!;
+      const s = String(rec.status).toUpperCase();
+      
+      if (['HADIR', 'LATE', 'H', 'T'].includes(s)) {
+        current.hadir++;
+        current.total++;
+      } else if (['SAKIT', 'S'].includes(s)) {
+        current.sakit++;
+        current.total++;
+      } else if (['IZIN', 'I'].includes(s)) {
+        current.izin++;
+        current.total++;
+      } else if (['ALPA', 'A'].includes(s)) {
+        current.alpa++;
+        current.total++;
+      }
     });
-    const lowPresence = Object.entries(studentMap).map(([id, d]) => ({
-      id, name: d.name, className: findClass(d.classId)?.name || d.classId, rate: d.total > 0 ? Math.round((d.present / d.total) * 100) : 0, total: d.total
-    })).filter(s => s.rate < 90 && s.total >= 3).sort((a,b) => a.rate - b.rate);
 
-    const classesFollowUp = classRates.filter(c => c.rate < 95);
+    const list: any[] = [];
+    jhFilteredStudentsForAttendance.forEach(st => {
+      const stats = studentStatsMap.get(st.id) || { hadir: 0, sakit: 0, izin: 0, alpa: 0, total: 0 };
+      const rate = stats.total > 0 ? Math.min(100, Math.round((stats.hadir / stats.total) * 100)) : 100;
+      
+      const totalAbsence = stats.sakit + stats.izin + stats.alpa;
+      const needsAttention = stats.alpa > 1 || totalAbsence > 3;
 
-    // Trends of status over days
-    const dailyMap: Record<string, { hadir: number, sakit: number, izin: number, alpa: number }> = {};
-    recs.forEach(r => {
-      if (!dailyMap[r.date]) dailyMap[r.date] = { hadir: 0, sakit: 0, izin: 0, alpa: 0 };
-      if (r.status === 'HADIR' || r.status === 'LATE') dailyMap[r.date].hadir++;
-      else if (r.status === 'SAKIT') dailyMap[r.date].sakit++;
-      else if (r.status === 'IZIN') dailyMap[r.date].izin++;
-      else if (r.status === 'ALPA') dailyMap[r.date].alpa++;
+      if (needsAttention) {
+        list.push({
+          id: st.id,
+          name: st.name,
+          classId: st.classId,
+          className: filteredClasses.find(c => c.id === st.classId || c.name === st.classId)?.name || '—',
+          ...stats,
+          totalAbsence,
+          rate
+        });
+      }
     });
-    const trendData = Object.entries(dailyMap).map(([date, val]) => ({
-      date,
-      displayDate: date.substring(5),
-      ...val
-    })).sort((a,b) => a.date.localeCompare(b.date));
 
-    return { rate, sakit, izin, alpa, cohortRates, classRates, lowPresence, classesFollowUp, trendData };
-  }, [filteredAttendance, classes, resolvedStudents, selectedYear]);
+    return list;
+  }, [jhFilteredStudentsForAttendance, attendanceRecords, selectedYear, selectedSemester, startDate, endDate, filteredClasses]);
+
+  const filteredJhAttentionStudents = useMemo(() => {
+    const term = jhSearchTerm.toLowerCase();
+    return jhAttentionStudents.filter(item => {
+      return item.name.toLowerCase().includes(term) || item.className.toLowerCase().includes(term);
+    }).sort((a, b) => b.alpa - a.alpa || a.rate - b.rate);
+  }, [jhAttentionStudents, jhSearchTerm]);
+
+  const jhItemsPerPage = 10;
+  const jhTotalPages = Math.max(1, Math.ceil(filteredJhAttentionStudents.length / jhItemsPerPage));
+  const paginatedJhAttentionStudents = useMemo(() => {
+    const start = (jhCurrentPage - 1) * jhItemsPerPage;
+    return filteredJhAttentionStudents.slice(start, start + jhItemsPerPage);
+  }, [filteredJhAttentionStudents, jhCurrentPage]);
+
+  const isAttendanceDataEmpty = useMemo(() => {
+    const rangeRecords = attendanceRecords.filter(rec => {
+      if (!isStudentFilteredForAttendance(rec.studentId)) return false;
+      if (rec.academicYear && rec.academicYear !== selectedYear) return false;
+      if (rec.semester && String(rec.semester) !== String(selectedSemester)) return false;
+      return rec.date >= startDate && rec.date <= endDate;
+    });
+    return rangeRecords.length === 0;
+  }, [attendanceRecords, isStudentFilteredForAttendance, selectedYear, selectedSemester, startDate, endDate]);
 
   // 3. MTSS Academic Tab Analysis
   const academicAnalysis = useMemo(() => {
@@ -1369,110 +1586,274 @@ export default function HeadDashboard() {
           {/* TAB 2: KEHADIRAN */}
           {activeAnalysisTab === 'kehadiran' && (
             <div className="space-y-6">
-              
-              {/* KPIs Row */}
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-6">
-                <div className="bg-slate-50 p-5 rounded-2xl border border-gray-100">
-                  <p className="text-[10px] font-black uppercase text-gray-400">Persentase Kehadiran</p>
-                  <p className="text-2xl font-black text-emerald-600 tracking-tight mt-1">{attendanceAnalysis.rate}%</p>
+              {isAttendanceDataEmpty ? (
+                <div className="text-center py-12 text-slate-400 font-bold text-xs uppercase tracking-wider bg-white rounded-3xl border border-gray-100 shadow-sm">
+                  Belum ada data kehadiran untuk periode yang dipilih.
                 </div>
-                <div className="bg-slate-50 p-5 rounded-2xl border border-gray-100">
-                  <p className="text-[10px] font-black uppercase text-gray-400">Total Sakit (S)</p>
-                  <p className="text-2xl font-black text-[#002366] tracking-tight mt-1">{attendanceAnalysis.sakit} Siswa</p>
-                </div>
-                <div className="bg-slate-50 p-5 rounded-2xl border border-gray-100">
-                  <p className="text-[10px] font-black uppercase text-gray-400">Total Izin (I)</p>
-                  <p className="text-2xl font-black text-blue-600 tracking-tight mt-1">{attendanceAnalysis.izin} Siswa</p>
-                </div>
-                <div className="bg-slate-50 p-5 rounded-2xl border border-gray-100">
-                  <p className="text-[10px] font-black uppercase text-gray-400">Total Alpa (A)</p>
-                  <p className="text-2xl font-black text-red-600 tracking-tight mt-1">{attendanceAnalysis.alpa} Siswa</p>
-                </div>
-              </div>
-
-              {/* Cohort & Classes */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                
-                {/* Cohort presence rates */}
-                <div className="bg-white border border-gray-100 rounded-3xl p-6 flex flex-col justify-between h-[300px]">
-                  <h4 className="text-xs font-black uppercase text-gray-400 mb-4">Persentase Kehadiran per Cohort</h4>
-                  <div className="space-y-4 flex-1 flex flex-col justify-center">
-                    {attendanceAnalysis.cohortRates.map(cohort => (
-                      <div key={cohort.cohort} className="space-y-1">
-                        <div className="flex justify-between text-xs font-black text-gray-700">
-                          <span>{cohort.cohort}</span>
-                          <span>{cohort.rate}%</span>
-                        </div>
-                        <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                          <div className="bg-emerald-500 h-full rounded-full transition-all duration-500" style={{ width: `${cohort.rate}%` }}></div>
+              ) : (
+                <>
+                  {/* Summary Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                    {/* Average Attendance Card */}
+                    <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Rata-rata Kehadiran</span>
+                        <div className="flex items-baseline gap-1.5">
+                          <span className="text-3xl font-black text-slate-900 tracking-tight">{jhAverageAttendance}%</span>
+                          <span className="text-[10px] font-semibold text-slate-500">kehadiran siswa</span>
                         </div>
                       </div>
-                    ))}
+                      <div className="p-3 bg-emerald-50 rounded-2xl text-emerald-600">
+                        <Users size={22} />
+                      </div>
+                    </div>
+
+                    {/* Effective Working Days Card */}
+                    <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Hari Kerja Efektif</span>
+                        <div className="flex items-baseline gap-1.5">
+                          <span className="text-3xl font-black text-slate-900 tracking-tight">{jhWorkingDaysForAnalysis}</span>
+                          <span className="text-[10px] font-semibold text-slate-500">Hari Sekolah</span>
+                        </div>
+                      </div>
+                      <div className="p-3 bg-blue-50 rounded-2xl text-blue-600">
+                        <Calendar size={22} />
+                      </div>
+                    </div>
+
+                    {/* Lowest Input Card */}
+                    <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Pengisian Terendah</span>
+                        <div className="flex items-baseline gap-1.5">
+                          <span className="text-sm font-black text-slate-900 tracking-tight block max-w-[180px] truncate">
+                            {lowestClassAudit}
+                          </span>
+                        </div>
+                      </div>
+                      <div className={`p-3 rounded-2xl ${lowestClassAudit.includes('Semua') || lowestClassAudit === '—' ? 'bg-emerald-50 text-emerald-600' : 'bg-orange-50 text-orange-600'}`}>
+                        {lowestClassAudit.includes('Semua') || lowestClassAudit === '—' ? <CheckCircle2 size={22} /> : <AlertTriangle size={22} />}
+                      </div>
+                    </div>
                   </div>
-                </div>
 
-                {/* Trend Chart */}
-                <div className="bg-white border border-gray-100 rounded-3xl p-6 h-[300px] flex flex-col">
-                  <h4 className="text-xs font-black uppercase text-gray-400 mb-4">Tren Hadir, Sakit, Izin, Alpa</h4>
-                  <div className="flex-1 min-h-0">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={attendanceAnalysis.trendData}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                        <XAxis dataKey="displayDate" tick={{ fontSize: 9, fill: '#9ca3af' }} />
-                        <YAxis tick={{ fontSize: 9, fill: '#9ca3af' }} />
-                        <Tooltip />
-                        <Area type="monotone" dataKey="hadir" stackId="1" stroke="#10b981" fill="#10b981" fillOpacity={0.1} />
-                        <Area type="monotone" dataKey="sakit" stackId="1" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.1} />
-                        <Area type="monotone" dataKey="izin" stackId="1" stroke="#6366f1" fill="#6366f1" fillOpacity={0.1} />
-                        <Area type="monotone" dataKey="alpa" stackId="1" stroke="#ef4444" fill="#ef4444" fillOpacity={0.1} />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
+                  {/* Audit and Recap Panels */}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    {/* Left Panel: Rekap Pengisian Kehadiran */}
+                    <div className="lg:col-span-5 bg-white border border-gray-100 rounded-3xl p-6 shadow-sm flex flex-col space-y-4">
+                      <div>
+                        <h4 className="text-sm font-black text-slate-900">Rekap Pengisian Kehadiran</h4>
+                        <p className="text-[11px] text-slate-400 font-bold leading-relaxed">
+                          Memastikan kelengkapan input kehadiran guru kelas Junior High sejak 20 Juli 2026.
+                        </p>
+                      </div>
 
-              </div>
+                      {!isAuditValid ? (
+                        <div className="p-4 bg-orange-50 rounded-2xl border border-orange-100 text-orange-700 space-y-1">
+                          <div className="flex items-center gap-2 font-bold text-xs">
+                            <AlertCircle size={14} />
+                            <span>Audit Belum Dimulai</span>
+                          </div>
+                          <p className="text-[10px] font-semibold">
+                            Audit kelengkapan input kehadiran dimulai pada 20 Juli 2026. Sila ubah filter Tanggal Sampai untuk melihat audit pengisian.
+                          </p>
+                        </div>
+                      ) : jhRekapPengisian.length === 0 ? (
+                        <div className="text-center py-12 text-slate-400 font-bold text-xs uppercase tracking-wider">
+                          Tidak ada kelas Junior High yang terdaftar.
+                        </div>
+                      ) : (
+                        <div className="space-y-3 overflow-y-auto max-h-[500px] pr-1">
+                          {jhRekapPengisian.map((cls) => {
+                            const isComplete = cls.missingDates.length === 0;
+                            return (
+                              <div 
+                                key={cls.id}
+                                onClick={() => {
+                                  setSelectedClassId(cls.id);
+                                  setSelectedClassForMissingDates(cls);
+                                }}
+                                className="group cursor-pointer p-3.5 rounded-2xl border border-gray-50 hover:border-blue-100 hover:bg-slate-50/50 transition-all duration-200 flex flex-col space-y-2"
+                              >
+                                <div className="flex justify-between items-start">
+                                  <div>
+                                    <h5 className="text-xs font-black text-slate-900 group-hover:text-blue-600 transition-colors">
+                                      Kelas {cls.name}
+                                    </h5>
+                                    <p className="text-[10px] text-slate-400 font-bold">
+                                      Wali Kelas: {cls.teacher}
+                                    </p>
+                                  </div>
+                                  <div className="text-right">
+                                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black tracking-wide uppercase ${isComplete ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-orange-50 text-orange-600 border border-orange-100'}`}>
+                                      {isComplete ? (
+                                        <>
+                                          <CheckCircle2 size={10} />
+                                          <span>Lengkap</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <AlertTriangle size={10} />
+                                          <span>Belum Lengkap</span>
+                                        </>
+                                      )}
+                                    </span>
+                                  </div>
+                                </div>
 
-              {/* Low Attendance & Follow-up */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                
-                {/* Students with low attendance */}
-                <div className="bg-white border border-gray-100 rounded-3xl p-6">
-                  <h4 className="text-xs font-black uppercase text-gray-400 mb-4">Siswa dengan Kehadiran Rendah (&lt; 90%)</h4>
-                  <div className="overflow-y-auto max-h-[250px] space-y-2">
-                    {attendanceAnalysis.lowPresence.length > 0 ? attendanceAnalysis.lowPresence.map(s => (
-                      <div key={s.id} className="flex justify-between items-center bg-rose-50/50 p-3 rounded-xl border border-rose-100">
+                                <div className="flex justify-between items-center text-[10px] font-bold text-slate-500">
+                                  <span>
+                                    {isComplete 
+                                      ? 'Semua hari sekolah terisi' 
+                                      : `${cls.missingDates.length} hari belum diisi`
+                                    }
+                                  </span>
+                                  <span className="text-slate-600">
+                                    {cls.filledDaysCount} / {auditWorkingDaysCount} Hari Terisi
+                                  </span>
+                                </div>
+
+                                <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                  <div 
+                                    className={`h-full rounded-full transition-all duration-500 ${isComplete ? 'bg-emerald-500' : 'bg-orange-500'}`}
+                                    style={{ width: `${auditWorkingDaysCount > 0 ? (cls.filledDaysCount / auditWorkingDaysCount) * 100 : 100}%` }}
+                                  ></div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Right Panel: Siswa yang Butuh Perhatian */}
+                    <div className="lg:col-span-7 bg-white border border-gray-100 rounded-3xl p-6 shadow-sm flex flex-col space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                         <div>
-                          <p className="text-xs font-black text-gray-900">{s.name}</p>
-                          <p className="text-[10px] text-gray-400 font-bold">Kelas: {s.className}</p>
+                          <h4 className="text-sm font-black text-slate-900">Siswa yang Butuh Perhatian</h4>
+                          <p className="text-[11px] text-slate-400 font-bold leading-relaxed">
+                            Siswa dengan Alpa &gt; 1 hari atau total tidak hadir &gt; 3 hari pada rentang filter tanggal.
+                          </p>
                         </div>
-                        <span className="text-xs font-black text-red-600 bg-red-100 px-2.5 py-1 rounded-lg">{s.rate}% Presensi</span>
-                      </div>
-                    )) : (
-                      <div className="text-center py-8 text-gray-400 text-xs font-bold uppercase tracking-wider opacity-60">Tidak ada siswa berisiko kehadiran rendah</div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Highlight classes need follow-up */}
-                <div className="bg-white border border-gray-100 rounded-3xl p-6">
-                  <h4 className="text-xs font-black uppercase text-gray-400 mb-4">Highlight Kelas Butuh Intervensi (&lt; 95%)</h4>
-                  <div className="overflow-y-auto max-h-[250px] space-y-2">
-                    {attendanceAnalysis.classesFollowUp.length > 0 ? attendanceAnalysis.classesFollowUp.map(c => (
-                      <div key={c.classId} className="flex justify-between items-center bg-amber-50/50 p-3 rounded-xl border border-amber-100">
-                        <div>
-                          <p className="text-xs font-black text-gray-900">{c.name}</p>
-                          <p className="text-[10px] text-gray-400 font-bold">SMP Homeroom</p>
+                        <div className="relative min-w-[180px]">
+                          <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
+                          <input
+                            type="text"
+                            placeholder="Cari siswa..."
+                            value={jhSearchTerm}
+                            onChange={(e) => setJhSearchTerm(e.target.value)}
+                            className="w-full bg-slate-50 border border-gray-100 rounded-xl pl-9 pr-4 py-2 text-xs font-semibold text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-600"
+                          />
                         </div>
-                        <span className="text-xs font-black text-amber-700 bg-amber-100 px-2.5 py-1 rounded-lg">{c.rate}% Presensi</span>
                       </div>
-                    )) : (
-                      <div className="text-center py-8 text-gray-400 text-xs font-bold uppercase tracking-wider opacity-60">Semua kelas memenuhi target kehadiran 95%</div>
-                    )}
+
+                      <div className="flex-1 overflow-x-auto">
+                        {filteredJhAttentionStudents.length === 0 ? (
+                          <div className="text-center py-16 space-y-3">
+                            <div className="inline-flex p-3 bg-emerald-50 rounded-full text-emerald-500">
+                              <CheckCircle2 size={24} />
+                            </div>
+                            <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">
+                              Tidak ada siswa yang membutuhkan perhatian kehadiran pada periode ini.
+                            </p>
+                          </div>
+                        ) : (
+                          <table className="w-full text-left border-collapse">
+                            <thead>
+                              <tr className="border-b border-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                                <th className="py-3 px-4">Nama Siswa</th>
+                                <th className="py-3 px-2">Kelas</th>
+                                <th className="py-3 px-2 text-center">S</th>
+                                <th className="py-3 px-2 text-center">I</th>
+                                <th className="py-3 px-2 text-center">A</th>
+                                <th className="py-3 px-2 text-center">Tidak Hadir</th>
+                                <th className="py-3 px-2 text-center">Rasio</th>
+                                <th className="py-3 px-4 text-right">Aksi</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-50 text-xs font-semibold text-slate-700">
+                              {paginatedJhAttentionStudents.map((student) => {
+                                let badgeColor = 'bg-emerald-50 text-emerald-600 border-emerald-100';
+                                if (student.rate < 90) {
+                                  badgeColor = 'bg-red-50 text-red-600 border-red-100';
+                                } else if (student.rate < 95) {
+                                  badgeColor = 'bg-amber-50 text-amber-600 border-amber-100';
+                                }
+
+                                return (
+                                  <tr key={student.id} className="hover:bg-slate-50/50 transition-colors font-medium text-slate-600">
+                                    <td className="py-3 px-4 font-bold text-slate-900">
+                                      {student.name}
+                                    </td>
+                                    <td className="py-3 px-2 text-slate-500">
+                                      {student.className}
+                                    </td>
+                                    <td className="py-3 px-2 text-center font-bold">
+                                      {student.sakit}
+                                    </td>
+                                    <td className="py-3 px-2 text-center font-bold">
+                                      {student.izin}
+                                    </td>
+                                    <td className="py-3 px-2 text-center font-black text-red-600">
+                                      {student.alpa}
+                                    </td>
+                                    <td className="py-3 px-2 text-center font-bold text-slate-700">
+                                      {student.totalAbsence}
+                                    </td>
+                                    <td className="py-3 px-2 text-center">
+                                      <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold border ${badgeColor}`}>
+                                        {student.rate}%
+                                      </span>
+                                    </td>
+                                    <td className="py-3 px-4 text-right">
+                                      <button
+                                        onClick={() => setSelectedClassId(student.classId)}
+                                        className="inline-flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-100 text-blue-600 rounded-lg text-[10px] font-bold transition-all"
+                                      >
+                                        <span>Detail Kelas</span>
+                                        <ArrowRight size={10} />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+
+                      {/* Pagination Footer */}
+                      {filteredJhAttentionStudents.length > jhItemsPerPage && (
+                        <div className="flex items-center justify-between pt-4 border-t border-slate-50">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">
+                            Menampilkan {Math.min(filteredJhAttentionStudents.length, (jhCurrentPage - 1) * jhItemsPerPage + 1)}-{Math.min(filteredJhAttentionStudents.length, jhCurrentPage * jhItemsPerPage)} dari {filteredJhAttentionStudents.length} siswa
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setJhCurrentPage(prev => Math.max(1, prev - 1))}
+                              disabled={jhCurrentPage === 1}
+                              className="p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                            >
+                              <ChevronLeft size={14} />
+                            </button>
+                            <span className="text-xs font-bold text-slate-600">
+                              {jhCurrentPage} / {jhTotalPages}
+                            </span>
+                            <button
+                              onClick={() => setJhCurrentPage(prev => Math.min(jhTotalPages, prev + 1))}
+                              disabled={jhCurrentPage === jhTotalPages}
+                              className="p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                            >
+                              <ChevronRight size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-
-              </div>
-
+                </>
+              )}
             </div>
           )}
 
@@ -1982,6 +2363,99 @@ export default function HeadDashboard() {
                 </button>
               </div>
 
+            </motion.div>
+          </div>
+        )}
+
+        {selectedClassForMissingDates && (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col border border-slate-100"
+            >
+              {/* Modal Header */}
+              <div className="p-6 md:p-8 bg-slate-50 border-b border-gray-100 flex justify-between items-center">
+                <div className="space-y-1">
+                  <h3 className="text-base font-black text-slate-900 uppercase italic tracking-tight">
+                    Kelengkapan Input Kelas {selectedClassForMissingDates.name}
+                  </h3>
+                  <p className="text-[11px] text-slate-400 font-bold">
+                    Wali Kelas: {selectedClassForMissingDates.teacher}
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setSelectedClassForMissingDates(null)}
+                  className="w-10 h-10 rounded-full bg-slate-200/50 hover:bg-slate-200 text-gray-600 transition-colors flex items-center justify-center"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Modal Content */}
+              <div className="p-6 md:p-8 overflow-y-auto max-h-[60vh] space-y-6">
+                {/* Stats row */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Persentase Pengisian</p>
+                    <p className="text-lg font-black text-slate-900 mt-1">
+                      {auditWorkingDaysCount > 0 ? Math.round((selectedClassForMissingDates.filledDaysCount / auditWorkingDaysCount) * 100) : 100}%
+                    </p>
+                    <p className="text-[10px] text-slate-500 font-semibold mt-0.5">
+                      {selectedClassForMissingDates.filledDaysCount} dari {auditWorkingDaysCount} Hari Efektif
+                    </p>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Kehadiran Kelas</p>
+                    <p className="text-lg font-black text-emerald-600 mt-1">{selectedClassForMissingDates.rate}%</p>
+                    <p className="text-[10px] text-slate-500 font-semibold mt-0.5">Rata-rata presensi terisi</p>
+                  </div>
+                </div>
+
+                {/* Missing Dates List */}
+                <div className="space-y-3">
+                  <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                    <AlertTriangle size={14} className="text-orange-500" />
+                    <span>Daftar Hari Sekolah Belum Diinput ({selectedClassForMissingDates.missingDates.length})</span>
+                  </h4>
+                  {selectedClassForMissingDates.missingDates.length === 0 ? (
+                    <div className="p-6 text-center bg-emerald-50 rounded-2xl border border-emerald-100 space-y-2">
+                      <CheckCircle2 size={32} className="text-emerald-500 mx-auto" />
+                      <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Sempurna & Lengkap!</p>
+                      <p className="text-[10px] text-emerald-600 font-semibold">Semua hari sekolah beroperasi telah diisi dan dilaporkan oleh wali kelas.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[250px] overflow-y-auto pr-1">
+                      {selectedClassForMissingDates.missingDates.map((dateStr: string) => {
+                        const dateObj = new Date(dateStr);
+                        const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+                        const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+                        const formatted = !isNaN(dateObj.getTime()) 
+                          ? `${days[dateObj.getDay()]}, ${dateObj.getDate()} ${months[dateObj.getMonth()]} ${dateObj.getFullYear()}`
+                          : dateStr;
+
+                        return (
+                          <div key={dateStr} className="p-3 bg-red-50/50 border border-red-100 rounded-xl flex items-center justify-between">
+                            <span className="text-xs font-bold text-red-700">{formatted}</span>
+                            <span className="text-[10px] font-black text-red-500 uppercase tracking-wider">Belum Isi</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-6 md:p-8 bg-slate-50 border-t border-gray-100 flex justify-end">
+                <button 
+                  onClick={() => setSelectedClassForMissingDates(null)}
+                  className="bg-[#002366] text-white px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-blue-900 transition-colors shadow-lg"
+                >
+                  Tutup
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
