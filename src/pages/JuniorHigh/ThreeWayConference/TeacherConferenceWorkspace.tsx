@@ -60,6 +60,21 @@ export default function TeacherConferenceWorkspace() {
   const [mentorFilter, setMentorFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<string>('name_asc');
 
+  const [hasLoadedDefaults, setHasLoadedDefaults] = useState<boolean>(false);
+  const [hasMentorAssignments, setHasMentorAssignments] = useState<boolean>(true);
+
+  const isUnitHead = profile?.role === 'HEAD_UNIT' || profile?.role === 'HEAD_JUNIOR';
+  const isSuperAdmin = profile?.role === 'SUPER_ADMIN';
+
+  const canLoadStudents = !!(
+    (mentorFilter && mentorFilter !== 'all') ||
+    (gradeFilter && gradeFilter !== 'all') ||
+    (classFilter && classFilter !== 'all') ||
+    search.trim() !== '' ||
+    isUnitHead ||
+    isSuperAdmin
+  );
+
   // Dialogs State
   const [selectedStudentForMentor, setSelectedStudentForMentor] = useState<Student | null>(null);
   const [selectedAssignmentForMentor, setSelectedAssignmentForMentor] = useState<MentorAssignment | null>(null);
@@ -110,6 +125,66 @@ export default function TeacherConferenceWorkspace() {
     }
   }, [activeYear, activeSemester, isYearLoading]);
 
+  // Reset hasLoadedDefaults if active period/year changes
+  useEffect(() => {
+    setHasLoadedDefaults(false);
+  }, [activePeriod, activeYear, activeSemester]);
+
+  // Load defaults based on role and assignment of the user
+  useEffect(() => {
+    if (!activePeriod || !profile || hasLoadedDefaults) return;
+
+    const initializeDefaults = async () => {
+      try {
+        const isUnitHead = profile.role === 'HEAD_UNIT' || profile.role === 'HEAD_JUNIOR';
+        const isSuperAdmin = profile.role === 'SUPER_ADMIN';
+
+        if (isUnitHead || isSuperAdmin) {
+          setMentorFilter('all');
+          setGradeFilter('all');
+          setHasMentorAssignments(true);
+          setHasLoadedDefaults(true);
+        } else {
+          // It's a standard teacher/mentor
+          const assignments = await threeWayConferenceService.getMentorAssignmentsForPeriod(activePeriod.id);
+          const myAssignments = assignments.filter(
+            a => a.mentorId === profile.uid && a.status !== 'REMOVED'
+          );
+
+          // Set Mentor = currentUser.id
+          setMentorFilter(profile.uid);
+
+          if (myAssignments.length > 0) {
+            setHasMentorAssignments(true);
+
+            // Load workspace students to determine unique grades
+            const allRows = await threeWayConferenceService.getConferenceWorkspaceStudents(activePeriod.id, activeYear, 'all', 'all');
+            const myStudentRows = allRows.filter(row => 
+              row.assignment?.mentorId === profile.uid && row.assignment?.status !== 'REMOVED'
+            );
+
+            const uniqueGrades = Array.from(new Set(myStudentRows.map(r => String(r.grade)).filter(Boolean)));
+
+            if (uniqueGrades.length === 1) {
+              setGradeFilter(uniqueGrades[0]);
+            } else {
+              setGradeFilter('all');
+            }
+          } else {
+            setHasMentorAssignments(false);
+            setGradeFilter('all');
+          }
+          setHasLoadedDefaults(true);
+        }
+      } catch (err) {
+        console.error('Failed to initialize defaults:', err);
+        setHasLoadedDefaults(true);
+      }
+    };
+
+    initializeDefaults();
+  }, [activePeriod, profile, activeYear, hasLoadedDefaults]);
+
   // Load Eligible Mentors independently when activePeriod changes
   useEffect(() => {
     const loadMentors = async () => {
@@ -126,10 +201,9 @@ export default function TeacherConferenceWorkspace() {
 
   // Load Students and Mentors Data
   const loadWorkspaceData = useCallback(async () => {
-    if (!activePeriod) return;
+    if (!activePeriod || !hasLoadedDefaults) return;
     
-    // JANGAN load data siswa jika gradeFilter === 'all' && classFilter === 'all'
-    if (gradeFilter === 'all' && classFilter === 'all') {
+    if (!canLoadStudents) {
       setStudents([]);
       return;
     }
@@ -177,7 +251,7 @@ export default function TeacherConferenceWorkspace() {
     } finally {
       setIsLoadingData(false);
     }
-  }, [activePeriod, activeYear, gradeFilter, classFilter]);
+  }, [activePeriod, activeYear, gradeFilter, classFilter, mentorFilter, search, isUnitHead, isSuperAdmin, hasLoadedDefaults]);
 
   useEffect(() => {
     loadWorkspaceData();
@@ -230,12 +304,24 @@ export default function TeacherConferenceWorkspace() {
     }
   };
 
+  const handleClosePanel = () => {
+    setIsDetailDialogOpen(false);
+    setSelectedStudentForDetail(null);
+    setSelectedClassNameForDetail('');
+    setSelectedGradeForDetail('');
+    setSelectedAssignmentForDetail(null);
+    if (classFilter === initialClassId) {
+      setClassFilter('all');
+    }
+    navigate("/junior-high/conference/workspace", { replace: true });
+  };
+
   const handleClearFilters = () => {
     setSearch('');
     setGradeFilter('all');
     setClassFilter('all');
     setStatusFilter('all');
-    setMentorFilter('all');
+    setMentorFilter(isUnitHead || isSuperAdmin ? 'all' : (profile?.uid || 'all'));
     setSortBy('name_asc');
   };
 
@@ -417,7 +503,7 @@ export default function TeacherConferenceWorkspace() {
       </div>
 
       {/* Loading States */}
-      {isPeriodLoading ? (
+      {isPeriodLoading || (activePeriod && !hasLoadedDefaults) ? (
         <div className="flex flex-col items-center justify-center p-12 bg-white rounded-xl border border-gray-100 shadow-sm" id="period-loading-state">
           <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
           <p className="text-sm text-gray-500 mt-3 font-semibold">Checking conference periods...</p>
@@ -495,10 +581,12 @@ export default function TeacherConferenceWorkspace() {
             availableMentors={availableMentorsList}
             onClear={handleClearFilters}
             resultsCount={sortedStudents.length}
+            disableMentorFilter={!(isUnitHead || isSuperAdmin)}
+            hideResultsCount={mentorFilter === profile?.uid && !hasMentorAssignments}
           />
 
           {/* Table Container */}
-          {gradeFilter === 'all' && classFilter === 'all' ? (
+          {!canLoadStudents ? (
             <div className="bg-white rounded-xl border border-gray-100 p-12 text-center shadow-sm space-y-4" id="select-grade-class-empty-state">
               <BookOpen className="h-10 w-10 text-gray-300 mx-auto" />
               <h3 className="text-base font-bold text-gray-800">Pilih Grade atau Class</h3>
@@ -510,6 +598,14 @@ export default function TeacherConferenceWorkspace() {
             <div className="flex flex-col items-center justify-center p-12 bg-white rounded-xl border border-gray-100 shadow-sm" id="table-loading-state">
               <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
               <p className="text-sm text-gray-500 mt-3 font-semibold">Loading students data...</p>
+            </div>
+          ) : mentorFilter === profile?.uid && !hasMentorAssignments ? (
+            <div className="bg-white rounded-xl border border-gray-100 p-12 text-center shadow-sm space-y-4" id="no-mentor-assignments-empty-state">
+              <UserCheck className="h-10 w-10 text-gray-300 mx-auto" />
+              <h3 className="text-base font-bold text-gray-800">Belum Ada Siswa</h3>
+              <p className="text-sm text-gray-500 max-w-sm mx-auto leading-relaxed">
+                Belum ada siswa Three-Way Conference yang ditugaskan kepada Anda pada periode aktif.
+              </p>
             </div>
           ) : (
             <ConferenceResponsesTable
@@ -540,13 +636,7 @@ export default function TeacherConferenceWorkspace() {
       {activePeriod && selectedStudentForDetail && (
         <ConferenceResponseDetailDialog
           isOpen={isDetailDialogOpen}
-          onClose={() => {
-            setIsDetailDialogOpen(false);
-            setSelectedStudentForDetail(null);
-            setSelectedClassNameForDetail('');
-            setSelectedGradeForDetail('');
-            setSelectedAssignmentForDetail(null);
-          }}
+          onClose={handleClosePanel}
           student={selectedStudentForDetail}
           className={selectedClassNameForDetail}
           grade={selectedGradeForDetail}

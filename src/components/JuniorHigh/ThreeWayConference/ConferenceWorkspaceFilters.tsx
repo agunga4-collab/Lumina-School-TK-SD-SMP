@@ -19,6 +19,8 @@ interface ConferenceWorkspaceFiltersProps {
   availableMentors: Array<{ id: string; name: string }>;
   onClear: () => void;
   resultsCount: number;
+  hideResultsCount?: boolean;
+  disableMentorFilter?: boolean;
 }
 
 export const ConferenceWorkspaceFilters: React.FC<ConferenceWorkspaceFiltersProps> = ({
@@ -39,6 +41,8 @@ export const ConferenceWorkspaceFilters: React.FC<ConferenceWorkspaceFiltersProp
   availableMentors,
   onClear,
   resultsCount,
+  hideResultsCount = false,
+  disableMentorFilter = false,
 }) => {
   const hasActiveFilters =
     search !== '' ||
@@ -167,7 +171,8 @@ export const ConferenceWorkspaceFilters: React.FC<ConferenceWorkspaceFiltersProp
             id="filter-mentor-select"
             value={mentorFilter}
             onChange={(e) => setMentorFilter(e.target.value)}
-            className="block w-full py-2 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+            disabled={disableMentorFilter}
+            className="block w-full py-2 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500"
           >
             <option value="all">All Mentors</option>
             <option value="unassigned">Unassigned</option>
@@ -182,9 +187,13 @@ export const ConferenceWorkspaceFilters: React.FC<ConferenceWorkspaceFiltersProp
 
       {/* Results and Clear Button */}
       <div className="flex items-center justify-between pt-2 border-t border-gray-50 text-xs">
-        <span id="filters-results-count" className="text-gray-500 font-medium">
-          Showing <strong className="text-gray-800">{resultsCount}</strong> Junior High student{resultsCount !== 1 ? 's' : ''}
-        </span>
+        {!hideResultsCount ? (
+          <span id="filters-results-count" className="text-gray-500 font-medium">
+            Showing <strong className="text-gray-800">{resultsCount}</strong> Junior High student{resultsCount !== 1 ? 's' : ''}
+          </span>
+        ) : (
+          <span className="text-gray-400 italic font-medium">No assignments</span>
+        )}
         {hasActiveFilters && (
           <button
             id="clear-all-filters-btn"
