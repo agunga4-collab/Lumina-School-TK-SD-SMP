@@ -24,7 +24,21 @@ export const ConferenceResponsesTable: React.FC<ConferenceResponsesTableProps> =
   onAssignMentor,
   onPresentConference,
 }) => {
-  const getStatusBadge = (status: 'NOT_STARTED' | 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'RETURNED' | 'CONFERENCE_COMPLETED') => {
+  const mapResponseStatus = (response: any): 'NOT_STARTED' | 'DRAFT' | 'RETURNED' | 'APPROVED' => {
+    if (!response) {
+      return 'NOT_STARTED';
+    }
+    const { status, summary } = calculateConferenceStatus(response);
+    if (status === 'RETURNED') {
+      return 'RETURNED';
+    }
+    if (status === 'APPROVED' || summary.allRequiredApproved) {
+      return 'APPROVED';
+    }
+    return 'DRAFT';
+  };
+
+  const getStatusBadge = (status: 'NOT_STARTED' | 'DRAFT' | 'RETURNED' | 'APPROVED') => {
     switch (status) {
       case 'NOT_STARTED':
         return (
@@ -38,12 +52,6 @@ export const ConferenceResponsesTable: React.FC<ConferenceResponsesTableProps> =
             Draft
           </span>
         );
-      case 'SUBMITTED':
-        return (
-          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
-            Submitted
-          </span>
-        );
       case 'APPROVED':
         return (
           <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -54,12 +62,6 @@ export const ConferenceResponsesTable: React.FC<ConferenceResponsesTableProps> =
         return (
           <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
             Returned
-          </span>
-        );
-      case 'CONFERENCE_COMPLETED':
-        return (
-          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-            Completed
           </span>
         );
     }
@@ -144,7 +146,7 @@ export const ConferenceResponsesTable: React.FC<ConferenceResponsesTableProps> =
               </tr>
             ) : (
               rows.map((row) => {
-                const responseStatus = row.response ? calculateConferenceStatus(row.response).status : 'NOT_STARTED';
+                const responseStatus = mapResponseStatus(row.response);
                 const goals = row.response?.goals || [];
                 const mentorName = row.assignment?.status !== 'REMOVED' ? row.assignment?.mentorName : null;
 

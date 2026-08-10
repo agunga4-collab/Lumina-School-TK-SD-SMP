@@ -20,6 +20,20 @@ interface ConferenceWorkspaceRow {
   grade: string | number;
 }
 
+const mapResponseStatus = (response: StudentConferenceResponse | null): 'NOT_STARTED' | 'DRAFT' | 'RETURNED' | 'APPROVED' => {
+  if (!response) {
+    return 'NOT_STARTED';
+  }
+  const { status, summary } = threeWayConferenceService.calculateConferenceStatus(response);
+  if (status === 'RETURNED') {
+    return 'RETURNED';
+  }
+  if (status === 'APPROVED' || summary.allRequiredApproved) {
+    return 'APPROVED';
+  }
+  return 'DRAFT';
+};
+
 export default function TeacherConferenceWorkspace() {
   const navigate = useNavigate();
   const { activeYear, activeSemester, isLoading: isYearLoading } = useAcademicYear();
@@ -262,7 +276,7 @@ export default function TeacherConferenceWorkspace() {
 
     // 4. Response Status Filter
     if (statusFilter !== 'all') {
-      const status = row.response ? row.response.status : 'NOT_STARTED';
+      const status = mapResponseStatus(row.response);
       if (status !== statusFilter) return false;
     }
 
@@ -303,9 +317,9 @@ export default function TeacherConferenceWorkspace() {
         return timeB - timeA;
       }
       case 'status_desc': {
-        const statusOrder = { CONFERENCE_COMPLETED: 4, SUBMITTED: 3, DRAFT: 2, NOT_STARTED: 1 };
-        const statusA = statusOrder[a?.response ? a.response.status : 'NOT_STARTED'] || 1;
-        const statusB = statusOrder[b?.response ? b.response.status : 'NOT_STARTED'] || 1;
+        const statusOrder = { APPROVED: 4, RETURNED: 3, DRAFT: 2, NOT_STARTED: 1 };
+        const statusA = statusOrder[mapResponseStatus(a.response)] || 1;
+        const statusB = statusOrder[mapResponseStatus(b.response)] || 1;
         return statusB - statusA;
       }
       case 'mentor_asc': {

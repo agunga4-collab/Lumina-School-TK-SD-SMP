@@ -153,8 +153,8 @@ export const ConferenceWorkspaceFilters: React.FC<ConferenceWorkspaceFiltersProp
             <option value="all">All Statuses</option>
             <option value="NOT_STARTED">Not Started</option>
             <option value="DRAFT">Draft</option>
-            <option value="SUBMITTED">Submitted</option>
-            <option value="CONFERENCE_COMPLETED">Conference Completed</option>
+            <option value="RETURNED">Returned</option>
+            <option value="APPROVED">Approved</option>
           </select>
         </div>
 
