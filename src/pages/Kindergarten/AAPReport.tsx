@@ -680,6 +680,7 @@ export default function AAPReport() {
     try {
       const alreadyConnected = connectedEvidences.filter(e => e.planId === planId);
       
+      let addedCount = 0;
       for (const source of selectedSources) {
         const exists = alreadyConnected.some(e => e.sourceType === source.sourceType && e.sourceDocumentId === source.sourceDocumentId);
         if (!exists) {
@@ -702,12 +703,13 @@ export default function AAPReport() {
             cachedThumbnailUrl: source.thumbnailUrl || null
           };
           await addDoc(collection(db, 'aap_followup_plan_evidence'), payload);
+          addedCount++;
         }
       }
       toast.success("Bukti berhasil dihubungkan! 🎉");
       
       const currentPlan = followupPlans[aspectId];
-      if (currentPlan && currentPlan.status === 'Belum Dimulai') {
+      if (currentPlan && currentPlan.status === 'Belum Dimulai' && alreadyConnected.length === 0 && addedCount > 0) {
         setSuggestStatusChangeAspectId(aspectId);
       }
       
@@ -1649,7 +1651,7 @@ export default function AAPReport() {
                                     <div>
                                       <p className="text-[11px] font-bold text-amber-800">Saran Pembaruan Status</p>
                                       <p className="text-[10px] text-amber-600 leading-normal">
-                                        Bukti pertama telah berhasil dihubungkan. Apakah Anda ingin memperbarui status rencana ini menjadi <strong>"Berjalan"</strong>?
+                                        Bukti pelaksanaan pertama telah ditambahkan. Apakah rencana ini sudah mulai berjalan?
                                       </p>
                                     </div>
                                   </div>
@@ -1657,16 +1659,16 @@ export default function AAPReport() {
                                     <button
                                       type="button"
                                       onClick={() => setSuggestStatusChangeAspectId(null)}
-                                      className="px-2.5 py-1 text-[10px] font-black text-gray-500 hover:text-gray-700 uppercase"
+                                      className="px-2.5 py-1 text-[10px] font-black text-gray-500 hover:text-gray-700 uppercase cursor-pointer"
                                     >
-                                      Nanti Saja
+                                      Tetap Belum Dimulai
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => handleUpdatePlanStatus(aspect.id, 'Berjalan')}
                                       className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-black text-[10px] rounded-lg uppercase tracking-wider shadow-sm cursor-pointer"
                                     >
-                                      Ubah ke Berjalan
+                                      Ubah menjadi Berjalan
                                     </button>
                                   </div>
                                 </div>
