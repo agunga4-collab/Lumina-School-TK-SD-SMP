@@ -65,6 +65,7 @@ export default function HeadDashboard() {
   const [jhSearchTerm, setJhSearchTerm] = useState('');
   const [jhCurrentPage, setJhCurrentPage] = useState(1);
   const [selectedClassForMissingDates, setSelectedClassForMissingDates] = useState<any | null>(null);
+  const [selectedStudentForAttendanceDetail, setSelectedStudentForAttendanceDetail] = useState<any | null>(null);
 
   // --- Initial Sync of academic context ---
   useEffect(() => {
@@ -812,17 +813,82 @@ export default function HeadDashboard() {
   const jhAttentionStudents = useMemo(() => {
     const studentStatsMap = new Map<string, { hadir: number; sakit: number; izin: number; alpa: number; total: number }>();
     
+    // Helper to resolve student info strictly following the mandatory data flow
+    const resolveStudentInfo = (studentId: string, attendanceRecord?: any) => {
+      // Find active enrollment for the selectedYear
+      const activeEnrollment = enrollments.find(e => 
+        (e.studentId === studentId) && 
+        e.academicYear === selectedYear && 
+        e.status === 'active'
+      );
+
+      // Find student profile in students (filtered to JUNIOR_HIGH in fetch)
+      const studentProfile = students.find(s => 
+        s.id === studentId || 
+        s.luminaId === studentId || 
+        (activeEnrollment && (s.id === activeEnrollment.studentId || s.luminaId === activeEnrollment.studentId))
+      );
+
+      // Fallback display values
+      const studentName =
+        studentProfile?.fullName ||
+        studentProfile?.name ||
+        attendanceRecord?.studentName ||
+        "Siswa tidak ditemukan";
+
+      const studentNis =
+        studentProfile?.nis ||
+        attendanceRecord?.nis ||
+        "-";
+
+      if (studentId && !studentProfile) {
+        console.warn(`[WARNING] Profil tidak ditemukan untuk studentId: ${studentId}. Relasi data perlu diperbaiki.`);
+      }
+
+      // Class resolution
+      const classId = activeEnrollment?.classId || studentProfile?.classId || attendanceRecord?.classId;
+      const classObj = classes.find(c => c.id === classId || c.name === classId);
+      const className = classObj?.name || '—';
+
+      return {
+        id: studentId,
+        name: studentName,
+        nis: studentNis,
+        classId: classId || '',
+        className: className,
+        isProfileFound: !!studentProfile
+      };
+    };
+
+    // 1. Initialize with all filtered students
     jhFilteredStudentsForAttendance.forEach(st => {
       studentStatsMap.set(st.id, { hadir: 0, sakit: 0, izin: 0, alpa: 0, total: 0 });
     });
 
+    // 2. Accumulate attendance record stats
     attendanceRecords.forEach(rec => {
       if (!rec.studentId || !rec.status) return;
-      if (!studentStatsMap.has(rec.studentId)) return;
       
+      // Filter by academic year, semester, date range
       if (rec.academicYear && rec.academicYear !== selectedYear) return;
       if (rec.semester && String(rec.semester) !== String(selectedSemester)) return;
       if (rec.date < startDate || rec.date > endDate) return;
+
+      // If not yet in map, check if this is a JUNIOR_HIGH student that should be in the stats
+      if (!studentStatsMap.has(rec.studentId)) {
+        const resolved = resolveStudentInfo(rec.studentId, rec);
+        // Is it part of the filtered class?
+        const isClassMatched = selectedClassId === 'ALL' || resolved.classId === selectedClassId;
+        
+        // Is it part of Junior High? Yes, if resolved in Junior High students or class
+        const isJuniorHigh = resolved.isProfileFound || classes.some(c => c.id === resolved.classId);
+        
+        if (isJuniorHigh && isClassMatched) {
+          studentStatsMap.set(rec.studentId, { hadir: 0, sakit: 0, izin: 0, alpa: 0, total: 0 });
+        } else {
+          return; // Skip this record if not matching our JUNIOR_HIGH filters
+        }
+      }
 
       const current = studentStatsMap.get(rec.studentId)!;
       const s = String(rec.status).toUpperCase();
@@ -843,19 +909,21 @@ export default function HeadDashboard() {
     });
 
     const list: any[] = [];
-    jhFilteredStudentsForAttendance.forEach(st => {
-      const stats = studentStatsMap.get(st.id) || { hadir: 0, sakit: 0, izin: 0, alpa: 0, total: 0 };
+    studentStatsMap.forEach((stats, studentId) => {
+      // Resolve student profile & class metadata for final list
+      const resolved = resolveStudentInfo(studentId);
+
       const rate = stats.total > 0 ? Math.min(100, Math.round((stats.hadir / stats.total) * 100)) : 100;
-      
       const totalAbsence = stats.sakit + stats.izin + stats.alpa;
       const needsAttention = stats.alpa > 1 || totalAbsence > 3;
 
       if (needsAttention) {
         list.push({
-          id: st.id,
-          name: st.name,
-          classId: st.classId,
-          className: filteredClasses.find(c => c.id === st.classId || c.name === st.classId)?.name || '—',
+          id: studentId,
+          name: resolved.name,
+          nis: resolved.nis,
+          classId: resolved.classId,
+          className: resolved.className,
           ...stats,
           totalAbsence,
           rate
@@ -864,7 +932,45 @@ export default function HeadDashboard() {
     });
 
     return list;
-  }, [jhFilteredStudentsForAttendance, attendanceRecords, selectedYear, selectedSemester, startDate, endDate, filteredClasses]);
+  }, [jhFilteredStudentsForAttendance, attendanceRecords, enrollments, students, classes, selectedYear, selectedSemester, startDate, endDate, selectedClassId]);
+
+  const absentDatesForSelectedStudent = useMemo(() => {
+    if (!selectedStudentForAttendanceDetail) return [];
+    
+    return attendanceRecords
+      .filter(rec => {
+        if (rec.studentId !== selectedStudentForAttendanceDetail.id) return false;
+        if (rec.academicYear && rec.academicYear !== selectedYear) return false;
+        if (rec.semester && String(rec.semester) !== String(selectedSemester)) return false;
+        if (rec.date < startDate || rec.date > endDate) return false;
+        
+        const s = String(rec.status || '').toUpperCase();
+        return ['SAKIT', 'S', 'IZIN', 'I', 'ALPA', 'A'].includes(s);
+      })
+      .map(rec => {
+        let statusLabel = 'Belum Diketahui';
+        let statusColor = 'text-gray-600 bg-gray-50 border-gray-100';
+        const s = String(rec.status).toUpperCase();
+        if (['SAKIT', 'S'].includes(s)) {
+          statusLabel = 'Sakit';
+          statusColor = 'text-amber-700 bg-amber-50 border-amber-100';
+        } else if (['IZIN', 'I'].includes(s)) {
+          statusLabel = 'Izin';
+          statusColor = 'text-blue-700 bg-blue-50 border-blue-100';
+        } else if (['ALPA', 'A'].includes(s)) {
+          statusLabel = 'Alpa (Tanpa Keterangan)';
+          statusColor = 'text-red-700 bg-red-50 border-red-100';
+        }
+        
+        return {
+          date: rec.date,
+          statusLabel,
+          statusColor,
+          note: rec.note || rec.reason || rec.keterangan || '—'
+        };
+      })
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [selectedStudentForAttendanceDetail, attendanceRecords, selectedYear, selectedSemester, startDate, endDate]);
 
   const filteredJhAttentionStudents = useMemo(() => {
     const term = (jhSearchTerm || '').trim().toLowerCase();
@@ -1816,10 +1922,10 @@ export default function HeadDashboard() {
                                     </td>
                                     <td className="py-3 px-4 text-right">
                                       <button
-                                        onClick={() => setSelectedClassId(student.classId)}
+                                        onClick={() => setSelectedStudentForAttendanceDetail(student)}
                                         className="inline-flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-100 text-blue-600 rounded-lg text-[10px] font-bold transition-all"
                                       >
-                                        <span>Detail Kelas</span>
+                                        <span>Detail Siswa</span>
                                         <ArrowRight size={10} />
                                       </button>
                                     </td>
@@ -2459,6 +2565,128 @@ export default function HeadDashboard() {
               <div className="p-6 md:p-8 bg-slate-50 border-t border-gray-100 flex justify-end">
                 <button 
                   onClick={() => setSelectedClassForMissingDates(null)}
+                  className="bg-[#002366] text-white px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-blue-900 transition-colors shadow-lg"
+                >
+                  Tutup
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {selectedStudentForAttendanceDetail && (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col border border-slate-100"
+            >
+              {/* Modal Header */}
+              <div className="p-6 md:p-8 bg-slate-50 border-b border-gray-100 flex justify-between items-center">
+                <div className="space-y-1">
+                  <h3 className="text-base font-black text-slate-900 uppercase italic tracking-tight">
+                    Detail Kehadiran Siswa
+                  </h3>
+                  <p className="text-[11px] text-slate-400 font-bold">
+                    Unit: Junior High • Tahun Ajaran: {selectedYear} • Semester: {selectedSemester}
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setSelectedStudentForAttendanceDetail(null)}
+                  className="w-10 h-10 rounded-full bg-slate-200/50 hover:bg-slate-200 text-gray-600 transition-colors flex items-center justify-center"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Modal Content */}
+              <div className="p-6 md:p-8 overflow-y-auto max-h-[60vh] space-y-6">
+                
+                {/* Profile header */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 gap-3">
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Identitas Siswa</p>
+                    <p className="text-sm font-black text-slate-900">{selectedStudentForAttendanceDetail.name}</p>
+                    <p className="text-xs text-slate-500 font-bold">NIS: {selectedStudentForAttendanceDetail.nis || '-'}</p>
+                  </div>
+                  <div className="text-left sm:text-right space-y-1">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Kelas</p>
+                    <span className="inline-flex px-3 py-1 bg-blue-50 text-blue-800 text-xs font-black rounded-full border border-blue-100">
+                      Kelas {selectedStudentForAttendanceDetail.className}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Stats Summary Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
+                    <p className="text-[9px] font-black text-slate-400 uppercase">Hadir</p>
+                    <p className="text-sm font-black text-slate-800 mt-0.5">{selectedStudentForAttendanceDetail.hadir}</p>
+                  </div>
+                  <div className="bg-amber-50/50 p-3 rounded-xl border border-amber-100 text-center">
+                    <p className="text-[9px] font-black text-amber-700 uppercase">Sakit</p>
+                    <p className="text-sm font-black text-amber-800 mt-0.5">{selectedStudentForAttendanceDetail.sakit}</p>
+                  </div>
+                  <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100 text-center">
+                    <p className="text-[9px] font-black text-blue-700 uppercase">Izin</p>
+                    <p className="text-sm font-black text-blue-800 mt-0.5">{selectedStudentForAttendanceDetail.izin}</p>
+                  </div>
+                  <div className="bg-red-50/50 p-3 rounded-xl border border-red-100 text-center">
+                    <p className="text-[9px] font-black text-red-700 uppercase">Alpa</p>
+                    <p className="text-sm font-black text-red-800 mt-0.5">{selectedStudentForAttendanceDetail.alpa}</p>
+                  </div>
+                  <div className="col-span-2 sm:col-span-1 bg-[#002366]/5 p-3 rounded-xl border border-[#002366]/10 text-center">
+                    <p className="text-[9px] font-black text-[#002366] uppercase">Rasio</p>
+                    <p className="text-sm font-black text-[#002366] mt-0.5">{selectedStudentForAttendanceDetail.rate}%</p>
+                  </div>
+                </div>
+
+                {/* Absent Dates List */}
+                <div className="space-y-3">
+                  <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                    <Calendar size={14} className="text-blue-600" />
+                    <span>Daftar Ketidakhadiran ({absentDatesForSelectedStudent.length})</span>
+                  </h4>
+                  
+                  {absentDatesForSelectedStudent.length === 0 ? (
+                    <div className="p-6 text-center bg-emerald-50 rounded-2xl border border-emerald-100 space-y-2">
+                      <CheckCircle2 size={32} className="text-emerald-500 mx-auto" />
+                      <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Hadir Sempurna!</p>
+                      <p className="text-[10px] text-emerald-600 font-semibold">Siswa ini tercatat hadir penuh tanpa ketidakhadiran pada rentang filter ini.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-[250px] overflow-y-auto pr-1">
+                      {absentDatesForSelectedStudent.map((row: any, idx: number) => {
+                        const dateObj = new Date(row.date);
+                        const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+                        const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+                        const formattedDate = !isNaN(dateObj.getTime()) 
+                          ? `${days[dateObj.getDay()]}, ${dateObj.getDate()} ${months[dateObj.getMonth()]} ${dateObj.getFullYear()}`
+                          : row.date;
+
+                        return (
+                          <div key={idx} className="p-3.5 bg-slate-50 border border-slate-100 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div className="space-y-1">
+                              <span className="text-xs font-black text-slate-800">{formattedDate}</span>
+                              <p className="text-[10px] font-semibold text-slate-500">Keterangan: {row.note}</p>
+                            </div>
+                            <span className={cn("px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border self-start sm:self-auto", row.statusColor)}>
+                              {row.statusLabel}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-6 md:p-8 bg-slate-50 border-t border-gray-100 flex justify-end">
+                <button 
+                  onClick={() => setSelectedStudentForAttendanceDetail(null)}
                   className="bg-[#002366] text-white px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-blue-900 transition-colors shadow-lg"
                 >
                   Tutup
