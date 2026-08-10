@@ -318,11 +318,27 @@ export default function TeacherConferenceWorkspace() {
 
   const handleClearFilters = () => {
     setSearch('');
-    setGradeFilter('all');
     setClassFilter('all');
     setStatusFilter('all');
-    setMentorFilter(isUnitHead || isSuperAdmin ? 'all' : (profile?.uid || 'all'));
     setSortBy('name_asc');
+
+    if (isUnitHead || isSuperAdmin) {
+      setMentorFilter('all');
+      setGradeFilter('all');
+    } else {
+      const myUid = profile?.uid || 'all';
+      setMentorFilter(myUid);
+      
+      const myStudentRows = students.filter(row => 
+        row.assignment?.mentorId === myUid && row.assignment?.status !== 'REMOVED'
+      );
+      const uniqueGrades = Array.from(new Set(myStudentRows.map(r => String(r.grade)).filter(Boolean)));
+      if (uniqueGrades.length === 1) {
+        setGradeFilter(uniqueGrades[0]);
+      } else {
+        setGradeFilter('all');
+      }
+    }
   };
 
   // Extract unique filter dropdown values dynamically from master classes list
@@ -581,7 +597,7 @@ export default function TeacherConferenceWorkspace() {
             availableMentors={availableMentorsList}
             onClear={handleClearFilters}
             resultsCount={sortedStudents.length}
-            disableMentorFilter={!(isUnitHead || isSuperAdmin)}
+            disableMentorFilter={false}
             hideResultsCount={mentorFilter === profile?.uid && !hasMentorAssignments}
           />
 
