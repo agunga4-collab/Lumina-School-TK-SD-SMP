@@ -558,6 +558,14 @@ export default function WeeklyReview() {
   const [publishedClassFilter, setPublishedClassFilter] = React.useState<string>('ALL');
   const [publishedSearchQuery, setPublishedSearchQuery] = React.useState<string>('');
 
+  const [imageRatios, setImageRatios] = React.useState<Record<string, 'landscape' | 'portrait'>>({});
+  const [imageErrors, setImageErrors] = React.useState<Record<string, boolean>>({});
+
+  React.useEffect(() => {
+    setImageErrors({});
+    setImageRatios({});
+  }, [selectedStudentId, startDateStr]);
+
   const getPeriodLabel = React.useCallback((report: any) => {
     const weekVal = report.week ? String(report.week).trim() : '';
     const dateRange = `${report.startDate} s/d ${report.endDate}`;
@@ -689,18 +697,19 @@ export default function WeeklyReview() {
         return;
       }
 
-      // 2. Locate report container
+      // 2. Locate report container pages
       toast.loading("Membuat file PDF dari laporan...", { id: "publish-kg" });
-      const element = document.getElementById("formal-weekly-report");
-      if (!element) {
+      const page1Element = document.getElementById("weekly-report-page-1");
+      const page2Element = document.getElementById("weekly-report-page-2");
+      if (!page1Element || !page2Element) {
         toast.dismiss("publish-kg");
-        toast.error("Elemen laporan (#formal-weekly-report) tidak ditemukan.");
+        toast.error("Elemen halaman laporan tidak lengkap.");
         setIsPublishing(false);
         return;
       }
 
-      // 3. Render container to Canvas & PDF
-      const canvas = await html2canvasWithModernColors(element, {
+      // 3. Render pages to Canvas & PDF
+      const canvas1 = await html2canvasWithModernColors(page1Element, {
         scale: 2,
         useCORS: true,
         logging: false,
@@ -711,18 +720,36 @@ export default function WeeklyReview() {
         }
       });
 
-      const imgData = canvas.toDataURL('image/png');
+      const canvas2 = await html2canvasWithModernColors(page2Element, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        onclone: (clonedDoc, clonedElement) => {
+          if (clonedElement) {
+            clonedElement.style.fontFamily = '"Inter", sans-serif';
+          }
+        }
+      });
+
+      const imgData1 = canvas1.toDataURL('image/png');
+      const imgData2 = canvas2.toDataURL('image/png');
+
       const pdf = new jsPDF({
         orientation: 'portrait',
         unit: 'mm',
         format: 'a4'
       });
       
-      const imgProps = pdf.getImageProperties(imgData);
       const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      const pdfHeight = pdf.internal.pageSize.getHeight();
       
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      // Page 1
+      pdf.addImage(imgData1, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      
+      // Page 2
+      pdf.addPage();
+      pdf.addImage(imgData2, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      
       const pdfBlob = pdf.output('blob');
 
       // 4. Transform blob to base64
@@ -934,27 +961,80 @@ export default function WeeklyReview() {
     return finalSnapshots?.find((s: any) => s.dayKey?.toUpperCase() === dayKey.toUpperCase());
   };
 
+  const getCaptionForDay = (dayKey: string) => {
+    if (!loadedDraft?.weeklyObservationItems) return null;
+    const items = loadedDraft.weeklyObservationItems.filter((item: any) => {
+      const itemDay = item.dayLabel || '';
+      return itemDay.toUpperCase() === dayKey.toUpperCase() || 
+             (dayKey === 'MONDAY' && (itemDay === 'Monday' || itemDay === 'Senin')) ||
+             (dayKey === 'TUESDAY' && (itemDay === 'Tuesday' || itemDay === 'Selasa')) ||
+             (dayKey === 'WEDNESDAY' && (itemDay === 'Wednesday' || itemDay === 'Rabu')) ||
+             (dayKey === 'THURSDAY' && (itemDay === 'Thursday' || itemDay === 'Kamis')) ||
+             (dayKey === 'FRIDAY' && (itemDay === 'Friday' || itemDay === 'Jumat'));
+    });
+    
+    if (items.length === 0) return null;
+    const notesList = items.map((i: any) => i.notes || i.activity).filter(Boolean);
+    if (notesList.length === 0) return null;
+    return notesList.join('; ');
+  };
+
+  const handleImageLoad = (dayKey: string, event: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = event.currentTarget;
+    const isPortrait = img.naturalHeight > img.naturalWidth;
+    setImageRatios(prev => ({
+      ...prev,
+      [dayKey]: isPortrait ? 'portrait' : 'landscape'
+    }));
+  };
+
+  const handleImageError = (dayKey: string) => {
+    setImageErrors(prev => ({
+      ...prev,
+      [dayKey]: true
+    }));
+  };
+
   const renderSnapshotCard = (dayKey: string, snap: any) => {
+    const isPortrait = imageRatios[dayKey] === 'portrait';
+    const hasError = imageErrors[dayKey];
+    const caption = getCaptionForDay(dayKey);
+
     return (
-      <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col h-full">
-        <div className="bg-[#109E58] text-white text-center py-1 font-extrabold text-[10.5px] tracking-wider uppercase">
+      <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col h-full shadow-sm">
+        <div className="bg-[#109E58] text-white text-center py-1 font-extrabold text-[10px] tracking-wider uppercase">
           SNAPSHOT - {dayKey}
         </div>
-        <div className="p-1.5 flex-1 flex flex-col justify-center bg-white min-h-[120px]">
-          {snap?.photoUrl ? (
-            <div className="w-full h-[110px] overflow-hidden rounded-sm border border-gray-100">
+        <div className="p-1.5 flex-1 flex flex-col justify-start bg-white gap-2">
+          {snap?.photoUrl && !hasError ? (
+            <div className="w-full aspect-[4/3] overflow-hidden rounded-sm border border-gray-100 bg-gray-50 flex items-center justify-center">
               <img 
                 src={snap.photoUrl} 
                 alt={`Snapshot ${dayKey}`} 
-                className="w-full h-full object-cover" 
+                onLoad={(e) => handleImageLoad(dayKey, e)}
+                onError={() => handleImageError(dayKey)}
+                className={isPortrait 
+                  ? "max-w-full max-h-full object-contain" 
+                  : "w-full h-full object-cover object-center"
+                }
                 referrerPolicy="no-referrer"
                 crossOrigin="anonymous"
               />
             </div>
-          ) : (
-            <div className="w-full h-[110px] bg-[#fdfdfd] border border-dashed border-gray-200 flex items-center justify-center p-2 text-center">
-              <span className="text-[9px] text-gray-400 font-bold italic leading-tight">No Documentation</span>
+          ) : hasError ? (
+            <div className="w-full aspect-[4/3] bg-red-50/50 border border-red-100 flex flex-col items-center justify-center p-2 text-center rounded-sm">
+              <span className="text-[10px] text-red-600 font-bold leading-tight">Dokumentasi tidak dapat dimuat</span>
             </div>
+          ) : (
+            <div className="w-full py-3 px-2 bg-gray-50/50 border border-dashed border-gray-200 flex items-center justify-center rounded-sm">
+              <span className="text-[9px] text-gray-400 font-bold italic leading-tight">Belum ada dokumentasi</span>
+            </div>
+          )}
+          
+          {caption && caption.trim() !== '' && (
+            <p className="text-[9.5px] leading-relaxed text-gray-600 italic font-medium px-0.5 line-clamp-3" title={caption}>
+              {caption}
+            </p>
           )}
         </div>
       </div>
@@ -1237,7 +1317,7 @@ export default function WeeklyReview() {
         </div>
       ) : (
         /* 4. FORMAL REPORT DOCUMENT PRINTABLE VIEW */
-        <div className="bg-white px-8 py-4 md:px-12 md:py-6 shadow-sm border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-between gap-3.5 print:border-none print:shadow-none print:p-0 print:m-0" id="formal-weekly-report">
+        <div id="formal-weekly-report" className="space-y-6 print:space-y-0 w-full flex flex-col items-center bg-transparent">
           
           <style dangerouslySetInnerHTML={{__html: `
             @media print {
@@ -1251,205 +1331,265 @@ export default function WeeklyReview() {
                 display: none !important;
               }
               #formal-weekly-report {
+                background: transparent !important;
                 border: none !important;
                 box-shadow: none !important;
                 padding: 0 !important;
                 margin: 0 !important;
                 width: 100% !important;
                 max-width: 100% !important;
+                display: block !important;
+              }
+              .weekly-report-page {
+                border: none !important;
+                box-shadow: none !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                width: 100% !important;
+                height: 297mm !important;
+                max-height: 297mm !important;
+                page-break-after: always !important;
+                break-after: page !important;
+                overflow: hidden !important;
+                display: flex !important;
+                flex-direction: column !important;
+                justify-content: space-between !important;
               }
               @page {
                 size: A4 portrait;
-                margin: 0.4cm 1cm 0.4cm 1cm;
+                margin: 0.6cm 1cm 0.6cm 1cm;
               }
             }
           `}} />
 
-          {/* Lazuardi school design banner (Height reduced to 75% of original) */}
-          <div className="bg-[#109E58] py-3.5 px-4 text-white relative flex flex-col justify-between rounded-sm">
-            {/* Top row with Logo and Title */}
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-white/20 pb-2.5 mb-2.5 gap-2">
+          {/* PAGE 1 — DOKUMENTASI KEGIATAN MINGGUAN */}
+          <div className="weekly-report-page page-1 bg-white px-8 py-4 md:px-12 md:py-6 shadow-sm border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-between gap-3.5 print:border-none print:shadow-none print:p-0 print:m-0" id="weekly-report-page-1">
+            
+            {/* Lazuardi school design banner */}
+            <div className="bg-[#109E58] py-3.5 px-4 text-white relative flex flex-col justify-between rounded-sm">
+              {/* Top row with Logo and Title */}
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-white/20 pb-2.5 mb-2.5 gap-2">
+                
+                {/* Left Column: Logo & Name */}
+                <div className="flex items-center gap-2.5">
+                  {tkLogoUrl ? (
+                    <img 
+                      src={tkLogoUrl} 
+                      alt="Logo Rapor" 
+                      className="h-12 w-auto object-contain"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <>
+                      <div className="bg-white/10 p-1.5 rounded-lg shrink-0">
+                        <svg className="w-8 h-8 text-white" viewBox="0 0 100 100" fill="currentColor">
+                          <path d="M50 10 C42 35 25 45 10 50 C25 55 42 65 50 90 C58 65 75 55 90 50 C75 45 58 35 50 10 Z" />
+                          <path d="M50 25 C45 40 35 48 25 50 C35 52 45 60 50 75 C55 60 65 52 75 50 C65 48 55 40 50 25 Z" fill="#109E58" />
+                        </svg>
+                      </div>
+                      <div className="text-left leading-none">
+                        <span className="block font-sans text-base font-black tracking-widest text-white m-0">Lazuardi</span>
+                        <span className="block font-sans text-[9px] font-bold tracking-[0.25em] text-emerald-100 m-0 uppercase leading-none mt-0.5">KINDERGARTEN</span>
+                        <span className="block font-sans text-[6.5px] text-emerald-200 mt-0.5 uppercase tracking-wider leading-none font-semibold">Global Compassionate School</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Right Column: Large report title */}
+                <div className="text-right sm:text-right w-full sm:w-auto flex flex-col items-end justify-center">
+                  <span className="block text-[10px] font-sans font-black tracking-widest text-emerald-100 uppercase mb-1">
+                    LAZUARDI GCS KINDERGARTEN
+                  </span>
+                  <h1 className="text-base sm:text-lg font-sans font-black tracking-wider text-white uppercase leading-none mt-1">
+                    STUDENT'S WEEKLY REPORT
+                  </h1>
+                </div>
+
+              </div>
+
+              {/* Bottom row: Student Metadata details grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-1.5 gap-x-12 text-[10px] font-sans">
+                <div className="space-y-1">
+                  <div className="grid grid-cols-12 leading-none">
+                    <span className="col-span-4 font-bold text-emerald-100">Student's name</span>
+                    <span className="col-span-1 text-emerald-100/70 text-center">:</span>
+                    <span className="col-span-7 font-extrabold text-white text-[11px] -mt-0.5">{loadedDraft.studentName}</span>
+                  </div>
+                  <div className="grid grid-cols-12 leading-none">
+                    <span className="col-span-4 font-bold text-emerald-100">Class</span>
+                    <span className="col-span-1 text-emerald-100/70 text-center">:</span>
+                    <span className="col-span-7 font-bold text-white">
+                      {loadedDraft?.classGroup || loadedDraft?.className || (DEFAULT_STUDENTS.find(s => s.id === selectedStudentId)?.ageGroup === 'TK_B' ? 'TK-B Butterfly' : 'TK-A Caterpillar')}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-12 leading-none">
+                    <span className="col-span-4 font-bold text-emerald-100">Theme</span>
+                    <span className="col-span-1 text-emerald-100/70 text-center">:</span>
+                    <span className="col-span-7 font-bold text-white leading-normal">{finalTheme}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-1 sm:pl-8">
+                  <div className="grid grid-cols-12 leading-none">
+                    <span className="col-span-3 font-bold text-emerald-100">Month</span>
+                    <span className="col-span-1 text-emerald-100/70 text-center">:</span>
+                    <span className="col-span-8 font-bold text-white">{formattedMonth}</span>
+                  </div>
+                  <div className="grid grid-cols-12 leading-none">
+                    <span className="col-span-3 font-bold text-emerald-100">Week</span>
+                    <span className="col-span-1 text-emerald-100/70 text-center">:</span>
+                    <span className="col-span-8 font-bold text-white">{finalWeek}</span>
+                  </div>
+                  <div className="grid grid-cols-12 leading-none">
+                    <span className="col-span-3 font-bold text-emerald-100">Date</span>
+                    <span className="col-span-1 text-emerald-100/70 text-center">:</span>
+                    <span className="col-span-8 font-bold text-white">{formattedDateRange}</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Section Banner: WEEKLY ACTIVITY DOCUMENTATION */}
+            <div className="border-b border-dashed border-emerald-600 pb-1 mt-1 text-center">
+              <h2 className="text-xs font-black text-emerald-800 uppercase tracking-widest">WEEKLY ACTIVITY DOCUMENTATION</h2>
+            </div>
+
+            {/* Five snapshot cards */}
+            <div className="flex-1 flex flex-col justify-center gap-4 py-2">
+              {/* Baris pertama: Monday | Tuesday | Wednesday */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {renderSnapshotCard('MONDAY', getSnapForDay('MONDAY'))}
+                {renderSnapshotCard('TUESDAY', getSnapForDay('TUESDAY'))}
+                {renderSnapshotCard('WEDNESDAY', getSnapForDay('WEDNESDAY'))}
+              </div>
               
-              {/* Left Column: Logo & Name */}
-              <div className="flex items-center gap-2.5">
+              {/* Baris kedua: Thursday | Friday */}
+              <div className="flex flex-col sm:flex-row justify-center gap-3">
+                <div className="w-full sm:w-[calc((100%-24px)/3)]">
+                  {renderSnapshotCard('THURSDAY', getSnapForDay('THURSDAY'))}
+                </div>
+                <div className="w-full sm:w-[calc((100%-24px)/3)]">
+                  {renderSnapshotCard('FRIDAY', getSnapForDay('FRIDAY'))}
+                </div>
+              </div>
+            </div>
+
+            {/* FOOTER BLOCK: Exact matching of Griya Cinere school contacts */}
+            <div className="bg-[#109E58] text-white text-center py-2 px-4 text-[8px] font-sans rounded-sm border-t border-emerald-300">
+              <div className="font-bold tracking-wide uppercase">{`Griya Cinere I, Jl. Garuda Ujung No. 35, Cinere, Kec Limo, Kota Depok, Jawa Barat 16515`}</div>
+              <div className="text-[7.5px] mt-0.5 opacity-90 font-medium">{`Telp. (021) 753 4841   Email: information@lazuardi.sch.id   WhatsApp: +62 813 8925 7784`}</div>
+            </div>
+
+          </div>
+
+          {/* PAGE 2 — TEACHER COMMENTS & SOCIAL-EMOTIONAL LEARNING DEVELOPMENT */}
+          <div className="weekly-report-page page-2 bg-white px-8 py-4 md:px-12 md:py-6 shadow-sm border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-between gap-3.5 print:border-none print:shadow-none print:p-0 print:m-0" id="weekly-report-page-2">
+            
+            {/* Header ringkas */}
+            <div className="border-b-2 border-emerald-600 pb-2 flex justify-between items-center text-xs">
+              <div className="flex items-center gap-2">
                 {tkLogoUrl ? (
-                  <img 
-                    src={tkLogoUrl} 
-                    alt="Logo Rapor" 
-                    className="h-12 w-auto object-contain"
-                    referrerPolicy="no-referrer"
-                  />
+                  <img src={tkLogoUrl} alt="Logo" className="h-8 w-auto object-contain" referrerPolicy="no-referrer" />
                 ) : (
-                  <>
-                    <div className="bg-white/10 p-1.5 rounded-lg shrink-0">
-                      <svg className="w-8 h-8 text-white" viewBox="0 0 100 100" fill="currentColor">
+                  <div className="flex items-center gap-1.5">
+                    <div className="bg-[#109E58] p-1 rounded">
+                      <svg className="w-4 h-4 text-white" viewBox="0 0 100 100" fill="currentColor">
                         <path d="M50 10 C42 35 25 45 10 50 C25 55 42 65 50 90 C58 65 75 55 90 50 C75 45 58 35 50 10 Z" />
-                        <path d="M50 25 C45 40 35 48 25 50 C35 52 45 60 50 75 C55 60 65 52 75 50 C65 48 55 40 50 25 Z" fill="#109E58" />
                       </svg>
                     </div>
-                    <div className="text-left leading-none">
-                      <span className="block font-sans text-base font-black tracking-widest text-white m-0">Lazuardi</span>
-                      <span className="block font-sans text-[9px] font-bold tracking-[0.25em] text-emerald-100 m-0 uppercase leading-none mt-0.5">KINDERGARTEN</span>
-                      <span className="block font-sans text-[6.5px] text-emerald-200 mt-0.5 uppercase tracking-wider leading-none font-semibold">Global Compassionate School</span>
-                    </div>
-                  </>
+                    <span className="font-extrabold text-[#109E58] text-[11px] tracking-wide">LAZUARDI SCHOOL</span>
+                  </div>
                 )}
               </div>
-
-              {/* Right Column: Large report title */}
-              <div className="text-right sm:text-right w-full sm:w-auto flex flex-col items-end justify-center">
-                <span className="block text-[10px] font-sans font-black tracking-widest text-emerald-100 uppercase mb-1">
-                  LAZUARDI GCS KINDERGARTEN
-                </span>
-                <h1 className="text-base sm:text-lg font-sans font-black tracking-wider text-white uppercase leading-none mt-1">
-                  STUDENT'S WEEKLY REPORT
-                </h1>
-              </div>
-
-            </div>
-
-            {/* Bottom row: Student Metadata details grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-1.5 gap-x-12 text-[10px] font-sans">
-              <div className="space-y-1">
-                <div className="grid grid-cols-12 leading-none">
-                  <span className="col-span-4 font-bold text-emerald-100">Student's name</span>
-                  <span className="col-span-1 text-emerald-100/70 text-center">:</span>
-                  <span className="col-span-7 font-extrabold text-white text-[11px] -mt-0.5">{loadedDraft.studentName}</span>
-                </div>
-                <div className="grid grid-cols-12 leading-none">
-                  <span className="col-span-4 font-bold text-emerald-100">Class</span>
-                  <span className="col-span-1 text-emerald-100/70 text-center">:</span>
-                  <span className="col-span-7 font-bold text-white">
-                    {loadedDraft?.classGroup || loadedDraft?.className || (DEFAULT_STUDENTS.find(s => s.id === selectedStudentId)?.ageGroup === 'TK_B' ? 'TK-B Butterfly' : 'TK-A Caterpillar')}
-                  </span>
-                </div>
-                <div className="grid grid-cols-12 leading-none">
-                  <span className="col-span-4 font-bold text-emerald-100">Theme</span>
-                  <span className="col-span-1 text-emerald-100/70 text-center">:</span>
-                  <span className="col-span-7 font-bold text-white leading-normal">{finalTheme}</span>
-                </div>
-              </div>
-
-              <div className="space-y-1 sm:pl-8">
-                <div className="grid grid-cols-12 leading-none">
-                  <span className="col-span-3 font-bold text-emerald-100">Month</span>
-                  <span className="col-span-1 text-emerald-100/70 text-center">:</span>
-                  <span className="col-span-8 font-bold text-white">{formattedMonth}</span>
-                </div>
-                <div className="grid grid-cols-12 leading-none">
-                  <span className="col-span-3 font-bold text-emerald-100">Week</span>
-                  <span className="col-span-1 text-emerald-100/70 text-center">:</span>
-                  <span className="col-span-8 font-bold text-white">{finalWeek}</span>
-                </div>
-                <div className="grid grid-cols-12 leading-none">
-                  <span className="col-span-3 font-bold text-emerald-100">Date</span>
-                  <span className="col-span-1 text-emerald-100/70 text-center">:</span>
-                  <span className="col-span-8 font-bold text-white">{formattedDateRange}</span>
-                </div>
+              <div className="text-right leading-tight">
+                <span className="block font-black text-emerald-800 uppercase text-[9.5px] tracking-wider">STUDENT'S WEEKLY REPORT</span>
+                <span className="block font-bold text-gray-500 text-[8.5px] mt-0.5 uppercase">{loadedDraft.studentName} • {loadedDraft?.classGroup || loadedDraft?.className || 'Class'} • {formattedDateRange}</span>
               </div>
             </div>
 
-          </div>
-
-          {/* SECTION I: WEEKLY COMMENTS */}
-          <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white min-h-[168px] flex flex-col">
-            <div className="bg-[#109E58] text-white text-center py-1 font-extrabold text-[10.5px] tracking-wider uppercase">
-              WEEKLY COMMENTS
-            </div>
-            <div className="p-3.5 text-[11px] leading-relaxed text-left text-gray-800 bg-white flex-1">
-              {finalWeeklyComments || (
-                <span className="text-gray-400 italic">Komentar perkembangan mingguan belum diisi oleh guru.</span>
-              )}
-            </div>
-          </div>
-
-          {/* SECTION II: SNAPSHOTS GRID ROUND 1 (Monday, Tuesday, Wednesday) */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {renderSnapshotCard('MONDAY', getSnapForDay('MONDAY'))}
-            {renderSnapshotCard('TUESDAY', getSnapForDay('TUESDAY'))}
-            {renderSnapshotCard('WEDNESDAY', getSnapForDay('WEDNESDAY'))}
-          </div>
-
-          {/* SECTION II.B: SNAPSHOTS GRID ROUND 2 (Thursday, Friday - Centered & exactly same size as Row 1) */}
-          <div className="flex flex-col sm:flex-row justify-center gap-3">
-            <div className="w-full sm:w-[calc((100%-24px)/3)]">
-              {renderSnapshotCard('THURSDAY', getSnapForDay('THURSDAY'))}
-            </div>
-            <div className="w-full sm:w-[calc((100%-24px)/3)]">
-              {renderSnapshotCard('FRIDAY', getSnapForDay('FRIDAY'))}
-            </div>
-          </div>
-
-          {/* SECTION III & IV: COHESIVE LOWER GRID (Uneven 8:4 of 12 col grid for wider Social-Emotional and narrowed Signature) */}
-          <div className="grid grid-cols-12 gap-3 items-stretch">
-            
-            {/* Column A (Left): Social Emotional progress (col-span-8, widened) */}
-            <div className="col-span-8 flex flex-col">
-              {/* SOCIAL-EMOTIONAL LEARNING DEVELOPMENT (Height reduced to 75%) */}
-              <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col flex-1 min-h-[105px] md:min-h-[112px]">
-                <div className="bg-[#109E58] text-white text-center py-1 font-extrabold text-[10.5px] tracking-wider uppercase">
-                  SOCIAL-EMOTIONAL LEARNING DEVELOPMENT
-                </div>
-                <div className="p-2.5 bg-white flex-1 flex flex-col justify-start">
-                  <p className="text-[10.5px] leading-normal text-left text-gray-800 font-sans whitespace-pre-wrap">
-                    {finalSocialEmotional || (
-                      <span className="text-gray-400 italic block">Komentar sosial emosional belum diisi oleh guru.</span>
-                    )}
-                  </p>
-                </div>
+            {/* Section pertama: WEEKLY COMMENTS */}
+            <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex-1 flex flex-col min-h-[180px] my-3">
+              <div className="bg-[#109E58] text-white text-center py-1 font-extrabold text-[10px] tracking-wider uppercase">
+                WEEKLY COMMENTS
+              </div>
+              <div className="p-3.5 text-[10.5px] leading-relaxed text-left text-gray-800 bg-white flex-1 whitespace-pre-wrap font-medium">
+                {finalWeeklyComments || (
+                  <span className="text-gray-400 italic">Komentar perkembangan mingguan belum diisi oleh guru.</span>
+                )}
               </div>
             </div>
 
-            {/* Column B (Right): Teacher Signature area (col-span-4, narrowed) */}
-            <div className="col-span-4 flex flex-col">
-              {/* Signature block with date (Height reduced to 75%) */}
-              <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col flex-1 min-h-[105px] md:min-h-[112px]">
-                <div className="bg-[#109E58] text-white text-center py-1 font-extrabold text-[10.5px] tracking-wider uppercase">
-                  {formattedSignDate}
-                </div>
-                <div className="p-2 bg-white flex-1 flex flex-col items-center justify-center min-h-[75px] py-1">
-                  <div className="h-10 flex items-center justify-center">
-                    {activeClassObj?.teacherSignatureUrl ? (
-                      <img
-                        src={activeClassObj.teacherSignatureUrl}
-                        alt="Tanda Tangan Guru"
-                        className="max-h-10 max-w-[140px] object-contain mix-blend-multiply"
-                        referrerPolicy="no-referrer"
-                      />
-                    ) : (
-                      <span className="text-[8px] text-red-550 italic font-bold select-none py-1 block text-center leading-tight">
-                        Tanda tangan guru belum diunggah
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-center font-sans mt-1 flex flex-col items-center gap-0.5 w-full">
-                    <span className="text-center font-extrabold text-[10px] text-gray-900 border-b border-solid border-gray-900 w-36 pb-0.5 mx-auto uppercase">
-                      {activeClassObj?.homeroomTeacherName ? activeClassObj.homeroomTeacherName.replace(/^\s*\(UNDANGAN\)\s*/i, "") : (
-                        <span className="text-red-550 italic font-bold">Wali Kelas Belum Diatur</span>
-                      )}
-                    </span>
-                    <input 
-                      type="text"
-                      value={teacherNip}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setTeacherNip(val);
-                        localStorage.setItem('kg_teacher_nip', val);
-                      }}
-                      placeholder="NIP / No Registrasi"
-                      className="text-center text-[8.5px] text-gray-500 font-bold uppercase w-32 outline-none border-b border-dotted border-gray-200 focus:border-solid focus:border-emerald-500 print:border-none print:p-0 print:m-0"
+            {/* Section kedua: SOCIAL-EMOTIONAL LEARNING DEVELOPMENT */}
+            <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex-1 flex flex-col min-h-[180px] mb-3">
+              <div className="bg-[#109E58] text-white text-center py-1 font-extrabold text-[10px] tracking-wider uppercase">
+                SOCIAL-EMOTIONAL LEARNING DEVELOPMENT
+              </div>
+              <div className="p-3.5 text-[10.5px] leading-relaxed text-left text-gray-800 bg-white flex-1 whitespace-pre-wrap font-medium">
+                {finalSocialEmotional || (
+                  <span className="text-gray-400 italic block">Komentar sosial-emosional belum diisi oleh guru.</span>
+                )}
+              </div>
+            </div>
+
+            {/* Area Tanda Tangan */}
+            <div className="grid grid-cols-2 gap-8 text-center text-xs mt-3 mb-1">
+              {/* Parent Signature (Left) */}
+              <div className="flex flex-col items-center justify-between h-20">
+                <span className="font-bold text-gray-500 text-[9.5px]">Mengetahui, Orang Tua / Wali</span>
+                <div className="w-32 border-b border-gray-400 mt-6"></div>
+                <span className="font-extrabold text-gray-900 text-[9.5px] mt-1">(............................................)</span>
+              </div>
+
+              {/* Teacher Signature (Right) */}
+              <div className="flex flex-col items-center justify-between h-20">
+                <span className="font-bold text-gray-500 text-[9.5px]">{formattedSignDate}</span>
+                <div className="h-8 flex items-center justify-center">
+                  {activeClassObj?.teacherSignatureUrl ? (
+                    <img
+                      src={activeClassObj.teacherSignatureUrl}
+                      alt="Tanda Tangan Guru"
+                      className="max-h-8 max-w-[120px] object-contain mix-blend-multiply"
+                      referrerPolicy="no-referrer"
                     />
-                  </div>
+                  ) : (
+                    <span className="text-[7.5px] text-red-500 italic font-bold select-none leading-tight">
+                      Belum ditandatangani
+                    </span>
+                  )}
+                </div>
+                <div className="text-center font-sans flex flex-col items-center gap-0.5 w-full">
+                  <span className="text-center font-extrabold text-[10px] text-gray-900 border-b border-solid border-gray-900 w-36 pb-0.5 mx-auto uppercase">
+                    {activeClassObj?.homeroomTeacherName ? activeClassObj.homeroomTeacherName.replace(/^\s*\(UNDANGAN\)\s*/i, "") : (
+                      <span className="text-red-500 italic font-bold text-[9px]">Guru Kelas Belum Diatur</span>
+                    )}
+                  </span>
+                  
+                  <span className="print:block hidden text-center text-[8.5px] text-gray-500 font-bold uppercase mt-0.5">
+                    {teacherNip ? `NIP. ${teacherNip}` : ''}
+                  </span>
+                  <input 
+                    type="text"
+                    value={teacherNip}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setTeacherNip(val);
+                      localStorage.setItem('kg_teacher_nip', val);
+                    }}
+                    placeholder="NIP / No Registrasi"
+                    className="print:hidden text-center text-[8.5px] text-gray-500 font-bold uppercase w-32 outline-none border-b border-dotted border-gray-200 focus:border-solid focus:border-emerald-500 mt-0.5"
+                  />
                 </div>
               </div>
             </div>
 
-          </div>
+            {/* FOOTER BLOCK: Exact matching of Griya Cinere school contacts */}
+            <div className="bg-[#109E58] text-white text-center py-2 px-4 text-[8px] font-sans rounded-sm border-t border-emerald-300">
+              <div className="font-bold tracking-wide uppercase">{`Griya Cinere I, Jl. Garuda Ujung No. 35, Cinere, Kec Limo, Kota Depok, Jawa Barat 16515`}</div>
+              <div className="text-[7.5px] mt-0.5 opacity-90 font-medium">{`Telp. (021) 753 4841   Email: information@lazuardi.sch.id   WhatsApp: +62 813 8925 7784`}</div>
+            </div>
 
-          {/* FOOTER BLOCK: Exact matching of Griya Cinere school contacts */}
-          <div className="bg-[#109E58] text-white text-center py-2 px-4 text-[8px] font-sans rounded-sm mt-3 border-t border-emerald-300">
-            <div className="font-bold tracking-wide uppercase">{`Griya Cinere I, Jl. Garuda Ujung No. 35, Cinere, Kec Limo, Kota Depok, Jawa Barat 16515`}</div>
-            <div className="text-[7.5px] mt-0.5 opacity-90 font-medium">{`Telp. (021) 753 4841   Email: information@lazuardi.sch.id   WhatsApp: +62 813 8925 7784`}</div>
           </div>
 
         </div>
