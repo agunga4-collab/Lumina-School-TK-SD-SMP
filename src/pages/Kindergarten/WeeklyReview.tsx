@@ -1007,7 +1007,7 @@ export default function WeeklyReview() {
         </div>
         <div className="p-1.5 flex-1 flex flex-col justify-start bg-white gap-2">
           {snap?.photoUrl && !hasError ? (
-            <div className="w-full aspect-[4/3] overflow-hidden rounded-sm border border-gray-100 bg-gray-50 flex items-center justify-center">
+            <div className="h-[180px] aspect-[3/4] mx-auto overflow-hidden rounded-sm border border-gray-100 bg-gray-50 flex items-center justify-center">
               <img 
                 src={snap.photoUrl} 
                 alt={`Snapshot ${dayKey}`} 
@@ -1022,17 +1022,17 @@ export default function WeeklyReview() {
               />
             </div>
           ) : hasError ? (
-            <div className="w-full aspect-[4/3] bg-red-50/50 border border-red-100 flex flex-col items-center justify-center p-2 text-center rounded-sm">
+            <div className="h-[180px] aspect-[3/4] mx-auto bg-red-50/50 border border-red-100 flex flex-col items-center justify-center p-2 text-center rounded-sm">
               <span className="text-[10px] text-red-600 font-bold leading-tight">Dokumentasi tidak dapat dimuat</span>
             </div>
           ) : (
-            <div className="w-full py-3 px-2 bg-gray-50/50 border border-dashed border-gray-200 flex items-center justify-center rounded-sm">
+            <div className="h-[180px] aspect-[3/4] mx-auto bg-gray-50/50 border border-dashed border-gray-200 flex items-center justify-center p-2 text-center rounded-sm">
               <span className="text-[9px] text-gray-400 font-bold italic leading-tight">Belum ada dokumentasi</span>
             </div>
           )}
           
           {caption && caption.trim() !== '' && (
-            <p className="text-[9.5px] leading-relaxed text-gray-600 italic font-medium px-0.5 line-clamp-3" title={caption}>
+            <p className="text-[9.5px] leading-relaxed text-gray-600 italic font-medium px-0.5 line-clamp-3 text-center" title={caption}>
               {caption}
             </p>
           )}
@@ -1457,20 +1457,18 @@ export default function WeeklyReview() {
             </div>
 
             {/* Five snapshot cards */}
-            <div className="flex-1 flex flex-col justify-center gap-4 py-2">
-              {/* Baris pertama: Monday | Tuesday | Wednesday */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="flex-1 flex flex-col justify-start gap-4 pt-5 pb-2">
+              {/* Row 1 & 2: Monday, Tuesday, Wednesday, Thursday */}
+              <div className="grid grid-cols-2 gap-4">
                 {renderSnapshotCard('MONDAY', getSnapForDay('MONDAY'))}
                 {renderSnapshotCard('TUESDAY', getSnapForDay('TUESDAY'))}
                 {renderSnapshotCard('WEDNESDAY', getSnapForDay('WEDNESDAY'))}
+                {renderSnapshotCard('THURSDAY', getSnapForDay('THURSDAY'))}
               </div>
               
-              {/* Baris kedua: Thursday | Friday */}
-              <div className="flex flex-col sm:flex-row justify-center gap-3">
-                <div className="w-full sm:w-[calc((100%-24px)/3)]">
-                  {renderSnapshotCard('THURSDAY', getSnapForDay('THURSDAY'))}
-                </div>
-                <div className="w-full sm:w-[calc((100%-24px)/3)]">
+              {/* Row 3: Friday centered with identical width */}
+              <div className="w-full flex justify-center">
+                <div style={{ width: 'calc((100% - 16px) / 2)' }}>
                   {renderSnapshotCard('FRIDAY', getSnapForDay('FRIDAY'))}
                 </div>
               </div>
