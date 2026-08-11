@@ -110,7 +110,7 @@ export default function AAPReport() {
   const { profile } = useAuth();
 
   // Navigation state / Active tabs
-  const [activeTab, setActiveTab] = React.useState<'individual' | 'followup' | 'class'>('individual');
+  const [activeTab, setActiveTab] = React.useState<'individual' | 'followup' | 'midterm' | 'class'>('individual');
 
   // Metadata states
   const [students, setStudents] = React.useState<any[]>([]);
@@ -171,6 +171,23 @@ export default function AAPReport() {
   const [isDetailViewOpen, setIsDetailViewOpen] = React.useState(false);
   const [detailViewEvidence, setDetailViewEvidence] = React.useState<any | null>(null);
 
+  // Phase 3: Review Midterm states
+  const [midtermReview, setMidtermReview] = React.useState<any>(null);
+  const [isLoadingMidterm, setIsLoadingMidterm] = React.useState(false);
+  const [selectedTermId, setSelectedTermId] = React.useState<string>('Term 1');
+  const [isSavingMidterm, setIsSavingMidterm] = React.useState(false);
+  const [showCompletePlanConfirm, setShowCompletePlanConfirm] = React.useState<{ aspectId: string; aspectName: string } | null>(null);
+  const [showRevertConfirm, setShowRevertConfirm] = React.useState(false);
+  const [allEvidenceModalAspectId, setAllEvidenceModalAspectId] = React.useState<string | null>(null); // For viewing all connected evidences
+  const [midtermForm, setMidtermForm] = React.useState<Record<string, {
+    summary: string;
+    progressRating: string;
+    followupDecision: string;
+    teacherNotes: string;
+    recommendation: string;
+  }>>({});
+  const [overallTeacherSummary, setOverallTeacherSummary] = React.useState('');
+
   // Temporary edit states for Follow-up Plan form
   const [editSummary, setEditSummary] = React.useState('');
   const [editRecommendation, setEditRecommendation] = React.useState('');
@@ -208,6 +225,56 @@ export default function AAPReport() {
 
     loadFollowupPlans();
   }, [selectedStudentId, activeYear]);
+
+  // Load midterm review when student/academicYear/term changes
+  React.useEffect(() => {
+    if (!selectedStudentId || !activeYear || !selectedTermId) {
+      setMidtermReview(null);
+      return;
+    }
+
+    async function loadMidtermReview() {
+      try {
+        setIsLoadingMidterm(true);
+        const docId = `${selectedStudentId}_${activeYear.replace('/', '_')}_${selectedTermId.replace(' ', '_')}`;
+        const docRef = doc(db, 'aap_midterm_reviews', docId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setMidtermReview(docSnap.data());
+        } else {
+          setMidtermReview(null);
+        }
+      } catch (err) {
+        console.error("Error loading midterm review:", err);
+      } finally {
+        setIsLoadingMidterm(false);
+      }
+    }
+
+    loadMidtermReview();
+  }, [selectedStudentId, activeYear, selectedTermId]);
+
+  // Sync loaded midterm review to local state
+  React.useEffect(() => {
+    if (midtermReview) {
+      setMidtermForm(midtermReview.aspectReviews || {});
+      setOverallTeacherSummary(midtermReview.overallTeacherSummary || '');
+    } else {
+      // Initialize with empty form
+      const initialForm: Record<string, any> = {};
+      KM_ASPECTS.forEach(aspect => {
+        initialForm[aspect.id] = {
+          summary: '',
+          progressRating: 'MB', // Default to Mulai Berkembang
+          followupDecision: 'Lanjutkan', // Default to Lanjutkan
+          teacherNotes: '',
+          recommendation: ''
+        };
+      });
+      setMidtermForm(initialForm);
+      setOverallTeacherSummary('');
+    }
+  }, [midtermReview, selectedStudentId, selectedTermId]);
 
   // Read URL parameters if redirecting from Assessment Page
   const urlClassId = searchParams.get('classId');
@@ -853,6 +920,114 @@ export default function AAPReport() {
     }
   };
 
+  // Save or Complete Midterm Review
+  const handleSaveMidtermReview = async (status: 'draft' | 'completed') => {
+    if (!selectedStudentId || !selectedClassId || !activeYear || !selectedTermId) {
+      toast.error("Pastikan kelas, siswa, dan term terpilih.");
+      return;
+    }
+
+    setIsSavingMidterm(true);
+    try {
+      const docId = `${selectedStudentId}_${activeYear.replace('/', '_')}_${selectedTermId.replace(' ', '_')}`;
+      const payload: any = {
+        studentId: selectedStudentId,
+        studentName: activeStudentObj?.name || 'Siswa',
+        classId: selectedClassId,
+        className: activeClassObj?.name || 'Kelas',
+        academicYearId: activeYear,
+        termId: selectedTermId,
+        reviewStatus: status,
+        aspectReviews: midtermForm,
+        overallTeacherSummary: overallTeacherSummary,
+        updatedAt: new Date().toISOString(),
+        ...(status === 'completed' ? {
+          completedAt: new Date().toISOString(),
+          completedBy: profile?.email || 'Teacher'
+        } : {})
+      };
+
+      if (!midtermReview) {
+        payload.createdAt = new Date().toISOString();
+      } else {
+        payload.createdAt = midtermReview.createdAt || new Date().toISOString();
+      }
+
+      const docRef = doc(db, 'aap_midterm_reviews', docId);
+      await setDoc(docRef, payload, { merge: true });
+
+      setMidtermReview(payload);
+      if (status === 'completed') {
+        toast.success("Review Midterm berhasil diselesaikan dan disimpan!");
+      } else {
+        toast.success("Draf Review Midterm berhasil disimpan!");
+      }
+    } catch (err) {
+      console.error("Error saving midterm review:", err);
+      toast.error("Gagal menyimpan review midterm.");
+    } finally {
+      setIsSavingMidterm(false);
+    }
+  };
+
+  // Revert Midterm Review back to Draft
+  const handleRevertMidtermToDraft = async () => {
+    if (!selectedStudentId || !activeYear || !selectedTermId || !midtermReview) return;
+    setIsSavingMidterm(true);
+    try {
+      const docId = `${selectedStudentId}_${activeYear.replace('/', '_')}_${selectedTermId.replace(' ', '_')}`;
+      const updated = {
+        ...midtermReview,
+        reviewStatus: 'draft',
+        updatedAt: new Date().toISOString()
+      };
+      const docRef = doc(db, 'aap_midterm_reviews', docId);
+      await setDoc(docRef, updated, { merge: true });
+      setMidtermReview(updated);
+      toast.success("Review dikembalikan menjadi Draf.");
+    } catch (err) {
+      console.error("Error reverting midterm review:", err);
+      toast.error("Gagal mengembalikan review.");
+    } finally {
+      setIsSavingMidterm(false);
+      setShowRevertConfirm(false);
+    }
+  };
+
+  // Confirm completing the plan from midterm review
+  const handleConfirmCompletePlan = async () => {
+    if (!showCompletePlanConfirm || !selectedStudentId || !activeYear) return;
+    const { aspectId } = showCompletePlanConfirm;
+    
+    try {
+      const existingPlan = followupPlans[aspectId];
+      if (!existingPlan) return;
+
+      const updatedPlans = {
+        ...followupPlans,
+        [aspectId]: {
+          ...existingPlan,
+          status: 'Selesai' as const,
+          updatedAt: new Date().toISOString()
+        }
+      };
+
+      const docRef = doc(db, 'aap_followup_plans', `${selectedStudentId}_${activeYear.replace('/', '_')}`);
+      await setDoc(docRef, {
+        plans: updatedPlans,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
+      setFollowupPlans(updatedPlans);
+      toast.success(`Rencana stimulasi aspek "${showCompletePlanConfirm.aspectName}" diubah menjadi Selesai!`);
+    } catch (err) {
+      console.error("Error setting plan to complete:", err);
+      toast.error("Gagal menyelesaikan rencana stimulasi.");
+    } finally {
+      setShowCompletePlanConfirm(null);
+    }
+  };
+
   if (isRestrictedToAssignedClasses && classes.length === 0 && !isLoadingClasses) {
     return (
       <div className="min-h-screen bg-gray-50/50 p-6 md:p-8 space-y-8 pb-20">
@@ -922,11 +1097,11 @@ export default function AAPReport() {
         </div>
 
         {/* Global Nav Tabs */}
-        <div className="bg-white border border-gray-150 p-1.5 rounded-2xl flex items-center gap-1 max-w-xl">
+        <div className="bg-white border border-gray-150 p-1.5 rounded-2xl flex flex-wrap items-center gap-1 max-w-3xl">
           <button
             onClick={() => setActiveTab('individual')}
             className={cn(
-              "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all",
+              "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all min-w-[140px]",
               activeTab === 'individual' 
                 ? "bg-indigo-600 text-white shadow-md" 
                 : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
@@ -937,7 +1112,7 @@ export default function AAPReport() {
           <button
             onClick={() => setActiveTab('followup')}
             className={cn(
-              "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all",
+              "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all min-w-[170px]",
               activeTab === 'followup' 
                 ? "bg-indigo-600 text-white shadow-md" 
                 : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
@@ -946,9 +1121,20 @@ export default function AAPReport() {
             <ClipboardCheck size={14} /> Rencana Tindak Lanjut
           </button>
           <button
+            onClick={() => setActiveTab('midterm')}
+            className={cn(
+              "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all min-w-[140px]",
+              activeTab === 'midterm' 
+                ? "bg-indigo-600 text-white shadow-md" 
+                : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+            )}
+          >
+            <BookOpen size={14} /> Review Midterm
+          </button>
+          <button
             onClick={() => setActiveTab('class')}
             className={cn(
-              "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all",
+              "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all min-w-[160px]",
               activeTab === 'class' 
                 ? "bg-indigo-600 text-white shadow-md" 
                 : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
@@ -978,7 +1164,7 @@ export default function AAPReport() {
               </select>
             </div>
 
-            {activeTab === 'individual' && (
+            {(activeTab === 'individual' || activeTab === 'midterm') && (
               <div className="flex flex-col gap-1.5 min-w-[220px]">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Pilih Siswa</label>
                 <select
@@ -994,6 +1180,22 @@ export default function AAPReport() {
                       </option>
                     );
                   })}
+                </select>
+              </div>
+            )}
+
+            {activeTab === 'midterm' && (
+              <div className="flex flex-col gap-1.5 min-w-[150px]">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Pilih Term</label>
+                <select
+                  value={selectedTermId}
+                  onChange={(e) => setSelectedTermId(e.target.value)}
+                  className="w-full bg-gray-50/50 border border-gray-150 rounded-2xl px-4 py-2.5 text-xs font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                >
+                  <option value="Term 1">Term 1</option>
+                  <option value="Term 2">Term 2</option>
+                  <option value="Term 3">Term 3</option>
+                  <option value="Term 4">Term 4</option>
                 </select>
               </div>
             )}
@@ -1822,6 +2024,530 @@ export default function AAPReport() {
             </div>
           </div>
         )
+      ) : activeTab === 'midterm' ? (
+        // === REVIEW MIDTERM TAB ===
+        <div className="space-y-8 animate-fade-in">
+          {/* Summary / Progress Stats Panel */}
+          <div className="bg-white border border-gray-150 rounded-3xl p-6 md:p-8 shadow-sm flex flex-col md:flex-row items-stretch justify-between gap-6">
+            <div className="space-y-2 max-w-md">
+              <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-black uppercase tracking-wider">
+                Midterm Review Progress
+              </span>
+              <h3 className="text-base font-black text-gray-900 uppercase tracking-tight">
+                Ringkasan Evaluasi Midterm - {activeStudentObj?.name || 'Siswa'}
+              </h3>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                Evaluasi tengah semester (midterm) untuk memantau efektivitas stimulasi berdasarkan rencana tindak lanjut dan bukti pelaksanaan pembelajaran yang terhubung.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 flex-1 max-w-3xl">
+              {/* Stat 1: Aspek Direview */}
+              <div className="bg-gray-50/50 border border-gray-100 rounded-2xl p-4 flex flex-col justify-between space-y-1">
+                <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Aspek Direview</span>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-xl font-black text-gray-900">
+                    {KM_ASPECTS.filter(aspect => midtermForm[aspect.id]?.summary?.trim()).length}
+                  </span>
+                  <span className="text-xs font-bold text-gray-400">/ 3 Aspek</span>
+                </div>
+              </div>
+
+              {/* Stat 2: Total Bukti */}
+              <div className="bg-gray-50/50 border border-gray-100 rounded-2xl p-4 flex flex-col justify-between space-y-1">
+                <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Total Bukti</span>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-xl font-black text-gray-900">
+                    {connectedEvidences.length}
+                  </span>
+                  <span className="text-xs font-bold text-gray-400">Terhubung</span>
+                </div>
+              </div>
+
+              {/* Stat 3: Rencana Berjalan/Selesai */}
+              <div className="bg-gray-50/50 border border-gray-100 rounded-2xl p-4 flex flex-col justify-between space-y-1">
+                <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Status Rencana</span>
+                <div className="flex flex-col gap-0.5 text-[10px] font-bold text-gray-600">
+                  <div className="flex justify-between">
+                    <span>Berjalan:</span>
+                    <span className="font-extrabold text-blue-600">
+                      {KM_ASPECTS.filter(a => followupPlans[a.id]?.status === 'Berjalan').length}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Selesai:</span>
+                    <span className="font-extrabold text-emerald-600">
+                      {KM_ASPECTS.filter(a => followupPlans[a.id]?.status === 'Selesai').length}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Stat 4: Dokumen Status */}
+              <div className="bg-gray-50/50 border border-gray-100 rounded-2xl p-4 flex flex-col justify-between space-y-1">
+                <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Status Dokumen</span>
+                <div>
+                  {midtermReview?.reviewStatus === 'completed' ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-[9px] font-black uppercase">
+                      <CheckCircle2 size={10} /> Selesai
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-[9px] font-black uppercase animate-pulse">
+                      Draf
+                    </span>
+                  )}
+                  {midtermReview?.completedAt && (
+                    <p className="text-[9px] text-gray-400 font-bold mt-1 uppercase">
+                      {new Date(midtermReview.updatedAt).toLocaleDateString('id-ID', {day: 'numeric', month: 'short'})}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Aspect Evaluator Section */}
+          <div className="space-y-8">
+            {KM_ASPECTS.map((aspect, idx) => {
+              const plan = followupPlans[aspect.id] || {};
+              const aspectForm = midtermForm[aspect.id] || {
+                summary: '',
+                progressRating: 'MB',
+                followupDecision: 'Lanjutkan',
+                teacherNotes: '',
+                recommendation: '',
+                adjustmentStrategy: ''
+              };
+
+              const updateAspectFormField = (field: string, value: any) => {
+                setMidtermForm(prev => ({
+                  ...prev,
+                  [aspect.id]: {
+                    ...prev[aspect.id],
+                    [field]: value
+                  }
+                }));
+              };
+
+              // Retrieve connected evidences for this aspect's plan
+              const aspectEvidences = connectedEvidences.filter(
+                e => e.planId === `${selectedStudentId}_${activeYear.replace('/', '_')}_${aspect.id}`
+              );
+
+              // Get baseline assessment for this aspect
+              const draftBaseline = getDraftForAspect(aspect.id, currentAssessment);
+
+              return (
+                <div key={aspect.id} className="bg-white border border-gray-150 rounded-3xl overflow-hidden shadow-sm">
+                  {/* Aspect Header Banner */}
+                  <div className="bg-gray-50/50 border-b border-gray-100 px-6 py-5 md:px-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">
+                        Aspek {idx + 1}: Kurikulum Merdeka
+                      </span>
+                      <h4 className="text-sm font-black text-gray-950 tracking-tight">
+                        {aspect.name}
+                      </h4>
+                      <p className="text-[11px] text-gray-500">
+                        {aspect.description}
+                      </p>
+                    </div>
+
+                    {/* Status Badge of Current Plan */}
+                    {plan.hasPlan ? (
+                      <span className={cn(
+                        "px-3 py-1 text-[10px] font-black rounded-xl border uppercase tracking-wider self-start sm:self-center shrink-0",
+                        plan.status === 'Selesai' ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                        plan.status === 'Berjalan' ? "bg-blue-50 text-blue-700 border-blue-200" :
+                        plan.status === 'Disesuaikan' ? "bg-amber-50 text-amber-700 border-amber-200" :
+                        "bg-gray-100 text-gray-600 border-gray-200"
+                      )}>
+                        Rencana: {plan.status || 'Belum Dimulai'}
+                      </span>
+                    ) : (
+                      <span className="px-3 py-1 text-[10px] font-black rounded-xl border border-dashed border-gray-200 bg-gray-50 text-gray-400 uppercase tracking-wider self-start sm:self-center shrink-0">
+                        Belum Ada Rencana Stimulasi
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-gray-150">
+                    {/* LEFT COLUMN: Data Source & Evidences */}
+                    <div className="lg:col-span-5 p-6 md:p-8 space-y-6 bg-gray-50/20">
+                      {/* Section 1: Baseline AAP */}
+                      <div className="space-y-2">
+                        <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                          <CheckCircle2 size={12} className="text-indigo-600" /> Hasil Asesmen Awal (Baseline)
+                        </h5>
+                        <div className="bg-white border border-gray-150 rounded-2xl p-4 space-y-2 text-[11px]">
+                          {currentAssessment ? (
+                            <>
+                              <div className="flex flex-wrap items-center gap-2">
+                                {aspect.aapAspects.map(subName => {
+                                  const subData = currentAssessment.aspects?.find((a: any) => a.aspectName === subName);
+                                  return (
+                                    <span key={subName} className="inline-flex items-center gap-1 bg-indigo-50/50 border border-indigo-100 px-2 py-0.5 rounded-lg font-bold text-[10px] text-indigo-700">
+                                      {subName}: <b className="uppercase">{subData?.stage || '-'}</b>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                              <p className="font-bold text-gray-900 mt-2">Ringkasan:</p>
+                              <p className="text-gray-600 leading-relaxed whitespace-pre-wrap">{draftBaseline.summary}</p>
+                            </>
+                          ) : (
+                            <p className="text-gray-400 italic">Belum ada data Asesmen Awal Pembelajaran (AAP).</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Section 2: Rencana Tindak Lanjut */}
+                      <div className="space-y-2">
+                        <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                          <ClipboardCheck size={12} className="text-indigo-600" /> Rencana Stimulasi Terkini
+                        </h5>
+                        <div className="bg-white border border-gray-150 rounded-2xl p-4 space-y-3 text-[11px] leading-relaxed">
+                          {plan.hasPlan ? (
+                            <>
+                              <div>
+                                <span className="font-bold text-gray-900">Target Perkembangan:</span>
+                                <p className="text-gray-600 mt-0.5 font-medium">{plan.targetDevelopment || '-'}</p>
+                              </div>
+                              <div>
+                                <span className="font-bold text-gray-900">Strategi & Aktivitas:</span>
+                                <p className="text-gray-600 mt-0.5">{plan.stimulationStrategy || '-'}</p>
+                              </div>
+                              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-gray-100">
+                                <div>
+                                  <span className="font-bold text-gray-900">Frekuensi:</span>
+                                  <p className="text-gray-600 font-medium">{plan.frequency || '-'}</p>
+                                </div>
+                                <div>
+                                  <span className="font-bold text-gray-900">Periode:</span>
+                                  <p className="text-gray-600 font-medium">
+                                    {plan.startDate || plan.endDate ? `${plan.startDate || '-'} s/d ${plan.endDate || '-'}` : '-'}
+                                  </p>
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="text-center py-2 text-gray-400 italic">
+                              Belum ada rencana stimulasi dibuat untuk aspek ini.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Section 3: Bukti Pelaksanaan */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                            <Paperclip size={12} className="text-indigo-600" /> Bukti Pelaksanaan ({aspectEvidences.length})
+                          </h5>
+                          {aspectEvidences.length > 3 && (
+                            <button
+                              type="button"
+                              onClick={() => setAllEvidenceModalAspectId(aspect.id)}
+                              className="text-[9px] font-black text-indigo-600 uppercase tracking-wider hover:underline cursor-pointer"
+                            >
+                              Lihat Semua ({aspectEvidences.length})
+                            </button>
+                          )}
+                        </div>
+
+                        {aspectEvidences.length === 0 ? (
+                          <div className="bg-amber-50/50 border border-amber-150 rounded-2xl p-4 text-center">
+                            <p className="text-[10px] text-amber-700 font-extrabold leading-normal">
+                              Belum ada bukti pelaksanaan terhubung.
+                            </p>
+                            <p className="text-[9px] text-amber-600/80 leading-normal mt-0.5">
+                              Review tengah semester dapat tetap disimpan sebagai draf tanpa melampirkan bukti.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {aspectEvidences.slice(0, 3).map((ev: any) => (
+                              <div key={ev.id} className="bg-white border border-gray-150 rounded-2xl p-3 space-y-1.5 text-[10px] leading-relaxed relative hover:border-gray-300 transition-colors">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-extrabold text-gray-800 line-clamp-1">{ev.cachedTitle}</span>
+                                  <span className="text-[8px] font-mono text-gray-400 shrink-0 uppercase">
+                                    {ev.evidenceDate ? new Date(ev.evidenceDate).toLocaleDateString('id-ID', {day: 'numeric', month: 'short'}) : ''}
+                                  </span>
+                                </div>
+                                {ev.teacherRelevanceNote && (
+                                  <p className="text-gray-500 italic bg-gray-50 p-2 rounded-lg border border-gray-100">
+                                    " {ev.teacherRelevanceNote} "
+                                  </p>
+                                )}
+                                <div className="flex justify-end gap-1.5 pt-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenDetailView(ev)}
+                                    className="text-[8px] font-black uppercase text-indigo-600 bg-indigo-50/50 hover:bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100 cursor-pointer"
+                                  >
+                                    Lihat Detail
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* RIGHT COLUMN: Review Editor Form */}
+                    <div className="lg:col-span-7 p-6 md:p-8 space-y-6">
+                      <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+                        <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                          <Edit3 size={12} className="text-indigo-600" /> Pengisian Evaluasi Midterm
+                        </h5>
+                        {midtermReview?.reviewStatus === 'completed' && (
+                          <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-lg text-[9px] font-black uppercase">
+                            Terkunci (Read Only)
+                          </span>
+                        )}
+                      </div>
+
+                      <fieldset disabled={midtermReview?.reviewStatus === 'completed'} className="space-y-5 disabled:opacity-90">
+                        {/* 1. Ringkasan Perkembangan */}
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
+                            Ringkasan Perkembangan Anak hingga Midterm <span className="text-rose-500">*</span>
+                          </label>
+                          <textarea
+                            value={aspectForm.summary || ''}
+                            onChange={(e) => updateAspectFormField('summary', e.target.value)}
+                            rows={3}
+                            className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal"
+                            placeholder="Deskripsikan kemajuan riil anak hingga pertengahan term berdasarkan capaian harian, observasi, dan bukti pelaksanaan..."
+                            required
+                          />
+                        </div>
+
+                        {/* 2. Rating & Keputusan */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          {/* Progress Rating */}
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
+                              Penilaian Perkembangan Midterm <span className="text-rose-500">*</span>
+                            </label>
+                            <select
+                              value={aspectForm.progressRating || 'MB'}
+                              onChange={(e) => updateAspectFormField('progressRating', e.target.value)}
+                              className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                            >
+                              <option value="BT">Belum Terlihat (BT)</option>
+                              <option value="MB">Mulai Berkembang (MB)</option>
+                              <option value="BSH">Berkembang Sesuai Harapan (BSH)</option>
+                              <option value="MH">Melampaui Harapan (MH)</option>
+                            </select>
+                          </div>
+
+                          {/* Follow up Decision */}
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
+                              Keputusan Tindak Lanjut <span className="text-rose-500">*</span>
+                            </label>
+                            <select
+                              value={aspectForm.followupDecision || 'Lanjutkan'}
+                              onChange={(e) => updateAspectFormField('followupDecision', e.target.value)}
+                              className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                            >
+                              <option value="Lanjutkan">Lanjutkan Rencana</option>
+                              <option value="Sesuaikan">Sesuaikan Rencana</option>
+                              <option value="Selesaikan">Selesaikan Rencana</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Interactive Decision Actions */}
+                        {aspectForm.followupDecision === 'Sesuaikan' && (
+                          <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-4 space-y-4 animate-fade-in">
+                            <div className="space-y-1.5">
+                              <label className="text-[10px] font-black text-amber-800 uppercase tracking-wider block">
+                                Strategi Penyesuaian Baru <span className="text-rose-500">*</span>
+                              </label>
+                              <textarea
+                                value={aspectForm.adjustmentStrategy || ''}
+                                onChange={(e) => updateAspectFormField('adjustmentStrategy', e.target.value)}
+                                rows={2}
+                                className="w-full text-xs font-bold text-amber-950 bg-white border border-amber-200 rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-amber-500/20 leading-relaxed placeholder:font-normal"
+                                placeholder="Jelaskan perubahan target perkembangan, modifikasi strategi stimulasi, atau penyesuaian frekuensi/alat..."
+                                required
+                              />
+                            </div>
+                            <div className="flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  // Open Rencana Tindak Lanjut card for this aspect
+                                  setActiveTab('followup');
+                                  setEditingAspectId(aspect.id);
+                                  // Seed the edit states
+                                  setEditSummary(plan.aapSummary || draftBaseline.summary);
+                                  setEditRecommendation(plan.aapRecommendation || draftBaseline.recommendation);
+                                  setEditTargetDevelopment(plan.targetDevelopment || '');
+                                  setEditFrequency(plan.frequency || '');
+                                  setEditStatus('Disesuaikan');
+                                  setEditStimulationStrategy(plan.stimulationStrategy || '');
+                                  setEditTeacherNotes(plan.teacherNotes || '');
+                                  setEditStartDate(plan.startDate || '');
+                                  setEditEndDate(plan.endDate || '');
+                                  toast.info(`Membuka form penyesuaian rencana stimulasi untuk "${aspect.name}".`);
+                                }}
+                                className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-black rounded-lg text-[10px] uppercase tracking-wider transition-all shadow-sm cursor-pointer"
+                              >
+                                <Edit3 size={12} /> Buka & Edit Rencana
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {aspectForm.followupDecision === 'Selesaikan' && plan.status !== 'Selesai' && (
+                          <div className="bg-emerald-50/60 border border-emerald-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in">
+                            <div className="space-y-1">
+                              <p className="text-[11px] font-bold text-emerald-800">Selesaikan Rencana Stimulasi?</p>
+                              <p className="text-[10px] text-emerald-600 leading-normal max-w-md">
+                                Anda merekomendasikan penyelesaian rencana ini. Konfirmasikan penyelesaian rencana stimulasi agar status di Rencana Tindak Lanjut berganti menjadi "Selesai".
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowCompletePlanConfirm({
+                                  aspectId: aspect.id,
+                                  aspectName: aspect.name
+                                });
+                              }}
+                              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] rounded-lg uppercase tracking-wider shadow-sm shrink-0 cursor-pointer self-end sm:self-center"
+                            >
+                              Selesaikan Sekarang
+                            </button>
+                          </div>
+                        )}
+
+                        {/* 3. Pertimbangan/Catatan Guru */}
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
+                            Pertimbangan / Catatan Guru
+                          </label>
+                          <textarea
+                            value={aspectForm.teacherNotes || ''}
+                            onChange={(e) => updateAspectFormField('teacherNotes', e.target.value)}
+                            rows={2}
+                            className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal"
+                            placeholder="Tuliskan faktor pendukung, kendala yang dihadapi, atau alasan penyesuaian/penyelesaian rencana..."
+                          />
+                        </div>
+
+                        {/* 4. Rekomendasi Sisa Periode */}
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
+                            Rekomendasi Stimulasi Sisa Periode Term <span className="text-rose-500">*</span>
+                          </label>
+                          <textarea
+                            value={aspectForm.recommendation || ''}
+                            onChange={(e) => updateAspectFormField('recommendation', e.target.value)}
+                            rows={2}
+                            className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal"
+                            placeholder="Berikan saran stimulasi praktis lanjutan untuk guru dan orang tua di sisa periode term ini..."
+                            required
+                          />
+                        </div>
+                      </fieldset>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Overall Teacher Summary Area */}
+          <div className="bg-white border border-gray-150 rounded-3xl p-6 md:p-8 shadow-sm space-y-4">
+            <div className="space-y-1 border-b border-gray-100 pb-3">
+              <h4 className="text-sm font-black text-gray-950 uppercase tracking-tight flex items-center gap-2">
+                <span className="w-1.5 h-3 bg-indigo-600 rounded"></span> Kesimpulan Akhir Midterm Guru
+              </h4>
+              <p className="text-xs text-gray-500">
+                Tulis draf kesimpulan umum capaian perkembangan dan stimulasi murid secara holistik melintasi seluruh aspek pada tengah semester.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <textarea
+                value={overallTeacherSummary}
+                onChange={(e) => setOverallTeacherSummary(e.target.value)}
+                disabled={midtermReview?.reviewStatus === 'completed'}
+                rows={4}
+                className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed disabled:opacity-90 placeholder:font-normal"
+                placeholder="Tuliskan narasi kesimpulan tengah semester secara menyeluruh tentang kemajuan perkembangan murid..."
+              />
+            </div>
+
+            {/* Actions Panel */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-4 border-t border-gray-100">
+              <div className="text-[11px] text-gray-400 font-bold uppercase">
+                {midtermReview ? (
+                  `Terakhir diperbarui: ${new Date(midtermReview.updatedAt).toLocaleDateString('id-ID', {day: 'numeric', month: 'long', year: 'numeric'})}`
+                ) : (
+                  "Evaluasi belum pernah disimpan"
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                {midtermReview?.reviewStatus === 'completed' ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowRevertConfirm(true)}
+                    className="px-5 py-2.5 bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-100 rounded-xl text-xs font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer flex items-center gap-2"
+                  >
+                    <Edit3 size={14} /> Buka Kunci (Kembalikan ke Draf)
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      disabled={isSavingMidterm}
+                      onClick={() => handleSaveMidtermReview('draft')}
+                      className="px-5 py-2.5 bg-white text-gray-700 hover:bg-gray-50 border border-gray-200 rounded-xl text-xs font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                    >
+                      {isSavingMidterm ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />} Simpan Draf
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isSavingMidterm}
+                      onClick={() => {
+                        // Check if required fields are filled
+                        let allValid = true;
+                        KM_ASPECTS.forEach(aspect => {
+                          const form = midtermForm[aspect.id];
+                          if (!form?.summary?.trim() || !form?.recommendation?.trim() || (form?.followupDecision === 'Sesuaikan' && !form?.adjustmentStrategy?.trim())) {
+                            allValid = false;
+                          }
+                        });
+                        if (!overallTeacherSummary.trim()) {
+                          allValid = false;
+                        }
+
+                        if (!allValid) {
+                          toast.error("Mohon lengkapi semua field wajib (*) sebelum menyelesaikan dan mengunci review.");
+                          return;
+                        }
+
+                        if (window.confirm("Apakah Anda yakin ingin menyelesaikan dan mengunci Review Midterm ini? Status akan menjadi Selesai dan tidak bisa diedit kecuali dibuka kuncinya.")) {
+                          handleSaveMidtermReview('completed');
+                        }
+                      }}
+                      className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shadow-md"
+                    >
+                      {isSavingMidterm ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Selesaikan & Kunci Review
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       ) : (
         // === REKAPITULASI KELAS (CLASS SUMMARY) ===
         <div className="bg-white rounded-3xl border border-gray-150 overflow-hidden shadow-sm">
@@ -2311,6 +3037,152 @@ export default function AAPReport() {
                 className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs uppercase tracking-wider shadow-sm transition-all active:scale-95 cursor-pointer"
               >
                 Tutup Detail
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 3: Selesaikan Rencana Stimulasi Confirmation */}
+      {showCompletePlanConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-md flex flex-col border border-gray-150 overflow-hidden">
+            <div className="p-6 border-b border-gray-150 flex items-center gap-3 bg-emerald-50/50">
+              <CheckCircle2 className="text-emerald-600" size={20} />
+              <h3 className="text-sm font-black text-emerald-950 uppercase tracking-tight">Selesaikan Rencana Stimulasi</h3>
+            </div>
+            <div className="p-6 space-y-3 text-xs leading-relaxed text-gray-600">
+              <p>Apakah Anda yakin ingin mengubah status rencana stimulasi aspek <b className="text-gray-900">"{showCompletePlanConfirm.aspectName}"</b> menjadi <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 font-extrabold rounded-md border border-emerald-150">Selesai</span>?</p>
+              <p className="text-gray-400">Tindakan ini akan langsung memperbarui status rencana stimulasi di tab Rencana Tindak Lanjut untuk murid <b>{activeStudentObj?.name}</b>.</p>
+            </div>
+            <div className="p-6 border-t border-gray-150 bg-gray-50/50 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowCompletePlanConfirm(null)}
+                className="px-4 py-2 bg-white text-gray-700 hover:bg-gray-50 border border-gray-200 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCompletePlan}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs uppercase tracking-wider shadow-sm transition-all active:scale-95 cursor-pointer"
+              >
+                Ya, Selesaikan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 4: Revert Midterm back to Draft Confirmation */}
+      {showRevertConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-md flex flex-col border border-gray-150 overflow-hidden">
+            <div className="p-6 border-b border-gray-150 flex items-center gap-3 bg-amber-50/50">
+              <AlertCircle className="text-amber-600" size={20} />
+              <h3 className="text-sm font-black text-amber-950 uppercase tracking-tight">Buka Kunci Evaluasi</h3>
+            </div>
+            <div className="p-6 space-y-3 text-xs leading-relaxed text-gray-600">
+              <p>Apakah Anda yakin ingin membuka kunci Review Midterm ini?</p>
+              <p className="text-gray-400">Status dokumen akan dikembalikan menjadi <b className="text-amber-700">Draf</b>, sehingga Anda dapat mengubah ringkasan perkembangan, rating perkembangan, dan rekomendasi aspek kembali.</p>
+            </div>
+            <div className="p-6 border-t border-gray-150 bg-gray-50/50 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowRevertConfirm(false)}
+                className="px-4 py-2 bg-white text-gray-700 hover:bg-gray-50 border border-gray-200 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleRevertMidtermToDraft}
+                className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-black rounded-xl text-xs uppercase tracking-wider shadow-sm transition-all active:scale-95 cursor-pointer"
+              >
+                Ya, Buka Kunci
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 5: View All Connected Evidences Modal */}
+      {allEvidenceModalAspectId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col border border-gray-150 overflow-hidden">
+            <div className="p-6 border-b border-gray-150 flex items-center justify-between bg-gray-50/50">
+              <div className="flex items-center gap-2.5">
+                <Paperclip className="text-indigo-600" size={18} />
+                <div>
+                  <h3 className="text-sm font-black text-gray-900 uppercase tracking-tight">Semua Bukti Pelaksanaan Terhubung</h3>
+                  <p className="text-[10px] text-gray-400 font-bold uppercase mt-0.5">
+                    Aspek: {KM_ASPECTS.find(a => a.id === allEvidenceModalAspectId)?.name}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAllEvidenceModalAspectId(null)}
+                className="p-1.5 hover:bg-gray-100 rounded-full transition-colors text-gray-400 hover:text-gray-600"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {connectedEvidences
+                .filter(e => e.planId === `${selectedStudentId}_${activeYear.replace('/', '_')}_${allEvidenceModalAspectId}`)
+                .map((ev: any) => (
+                  <div key={ev.id} className="bg-gray-50 border border-gray-150 rounded-2xl p-4 space-y-2 text-xs hover:border-gray-300 transition-colors">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-2">
+                      <div className="flex items-center gap-2">
+                        <span className={cn(
+                          "px-2 py-0.5 text-[8px] font-black rounded border uppercase tracking-wider",
+                          ev.sourceType === 'OBSERVATION' ? "bg-purple-50 text-purple-700 border-purple-150" :
+                          ev.sourceType === 'CHECKLIST' ? "bg-teal-50 text-teal-700 border-teal-150" :
+                          ev.sourceType === 'WEEKLY_SUMMARY' ? "bg-amber-50 text-amber-700 border-amber-150" :
+                          "bg-blue-50 text-blue-700 border-blue-150"
+                        )}>
+                          {ev.cachedSourceLabel}
+                        </span>
+                        <h4 className="font-extrabold text-gray-800">{ev.cachedTitle}</h4>
+                      </div>
+                      <span className="text-[10px] font-mono text-gray-400 font-bold">
+                        {ev.evidenceDate ? new Date(ev.evidenceDate).toLocaleDateString('id-ID', {day: 'numeric', month: 'long', year: 'numeric'}) : ''}
+                      </span>
+                    </div>
+
+                    {ev.teacherRelevanceNote && (
+                      <div className="text-[11px] leading-relaxed text-gray-600 bg-white p-3 rounded-xl border border-gray-100 italic">
+                        <span className="font-black text-indigo-700 not-italic uppercase text-[8px] tracking-wider block mb-1">Catatan Keterkaitan Guru</span>
+                        "{ev.teacherRelevanceNote}"
+                      </div>
+                    )}
+
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDetailViewEvidence(ev);
+                          setIsDetailViewOpen(true);
+                        }}
+                        className="text-[10px] font-black uppercase text-indigo-600 hover:underline px-3 py-1 bg-white hover:bg-gray-50 border border-gray-200 rounded-lg cursor-pointer"
+                      >
+                        Lihat Detail Bukti
+                      </button>
+                    </div>
+                  </div>
+                ))}
+            </div>
+
+            <div className="p-6 border-t border-gray-150 bg-gray-50/50 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setAllEvidenceModalAspectId(null)}
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs uppercase tracking-wider shadow-sm transition-all active:scale-95 cursor-pointer"
+              >
+                Tutup
               </button>
             </div>
           </div>

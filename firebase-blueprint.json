@@ -787,6 +787,64 @@
         "history": { "type": "array" }
       },
       "required": ["id", "packageId", "studentId", "classId", "academicYearId", "field", "status", "updatedAt"]
+    },
+    "AAPFollowupPlan": {
+      "title": "AAPFollowupPlan",
+      "description": "Followup plans for Kindergarten Academic Achievement Profile (AAP).",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "classId": { "type": "string" },
+        "className": { "type": "string" },
+        "plans": { "type": "object" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["studentId", "academicYear", "plans"]
+    },
+    "AAPFollowupPlanEvidence": {
+      "title": "AAPFollowupPlanEvidence",
+      "description": "Connected evidence for AAP followup plans.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "planId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "classId": { "type": "string" },
+        "evidenceId": { "type": "string" },
+        "evidenceDate": { "type": "string" },
+        "sourceType": { "type": "string" },
+        "cachedSourceLabel": { "type": "string" },
+        "cachedDomain": { "type": "string" },
+        "cachedTitle": { "type": "string" },
+        "cachedSummary": { "type": "string" },
+        "cachedThumbnailUrl": { "type": "string" },
+        "teacherRelevanceNote": { "type": "string" },
+        "connectedAt": { "type": "string" },
+        "connectedBy": { "type": "string" }
+      },
+      "required": ["planId", "studentId", "evidenceId"]
+    },
+    "AAPMidtermReview": {
+      "title": "AAPMidtermReview",
+      "description": "Midterm reviews for Kindergarten Academic Achievement Profile (AAP).",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "classId": { "type": "string" },
+        "academicYearId": { "type": "string" },
+        "termId": { "type": "string" },
+        "reviewStatus": { "type": "string", "enum": ["draft", "completed"] },
+        "aspectReviews": { "type": "object" },
+        "overallTeacherSummary": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "completedAt": { "type": "string" },
+        "completedBy": { "type": "string" }
+      },
+      "required": ["studentId", "classId", "academicYearId", "termId", "reviewStatus", "aspectReviews", "overallTeacherSummary"]
     }
   },
   "firestore": {
@@ -985,6 +1043,18 @@
     "learning_power_up_progress/{progressId}": {
       "schema": "LearningPowerUpProgress",
       "description": "Progress tracking for an individual task in a weekly package."
+    },
+    "aap_followup_plans/{planId}": {
+      "schema": "AAPFollowupPlan",
+      "description": "Followup plans for Kindergarten children."
+    },
+    "aap_followup_plan_evidence/{evidenceId}": {
+      "schema": "AAPFollowupPlanEvidence",
+      "description": "Evidences connected to followup plans."
+    },
+    "aap_midterm_reviews/{reviewId}": {
+      "schema": "AAPMidtermReview",
+      "description": "Midterm reviews for Kindergarten aspects."
     }
   }
 }

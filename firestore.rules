@@ -538,6 +538,30 @@ service cloud.firestore {
       allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
     }
 
+    match /aap_followup_plans/{planId} {
+      allow read: if isActive() && isTeacher();
+      allow read: if isActive() && isJuniorHighStaff();
+      allow read: if isAdmin();
+      allow read: if isActive() && isLinkedStudent(existing().studentId);
+      allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
+    }
+
+    match /aap_followup_plan_evidence/{evidenceId} {
+      allow read: if isActive() && isTeacher();
+      allow read: if isActive() && isJuniorHighStaff();
+      allow read: if isAdmin();
+      allow read: if isActive() && isLinkedStudent(existing().studentId);
+      allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
+    }
+
+    match /aap_midterm_reviews/{reviewId} {
+      allow read: if isActive() && isTeacher();
+      allow read: if isActive() && isJuniorHighStaff();
+      allow read: if isAdmin();
+      allow read: if isActive() && isLinkedStudent(existing().studentId);
+      allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
+    }
+
     match /learning_goals/{goalId} {
       allow read, write: if isJuniorHighStaff();
     }
