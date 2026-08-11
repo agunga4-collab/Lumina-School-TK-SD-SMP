@@ -109,6 +109,42 @@ service cloud.firestore {
         currentUser().luminaId == studentId;
     }
 
+    function isTeacherAssignedToClass(classId) {
+      return exists(/databases/$(database)/documents/classes/$(classId)) && (
+        get(/databases/$(database)/documents/classes/$(classId)).data.homeroomTeacherId == request.auth.uid ||
+        (get(/databases/$(database)/documents/classes/$(classId)).data.homeroomTeacherIds != null && request.auth.uid in get(/databases/$(database)/documents/classes/$(classId)).data.homeroomTeacherIds) ||
+        (get(/databases/$(database)/documents/classes/$(classId)).data.waliKelasIds != null && request.auth.uid in get(/databases/$(database)/documents/classes/$(classId)).data.waliKelasIds) ||
+        (get(/databases/$(database)/documents/classes/$(classId)).data.assignedTeacherIds != null && request.auth.uid in get(/databases/$(database)/documents/classes/$(classId)).data.assignedTeacherIds) ||
+        (get(/databases/$(database)/documents/classes/$(classId)).data.gpkTeacherIds != null && request.auth.uid in get(/databases/$(database)/documents/classes/$(classId)).data.gpkTeacherIds)
+      );
+    }
+
+    function isValidAAPAssessment(data) {
+      return data.studentId != null && data.studentId != "" &&
+             data.classId != null && data.classId != "" &&
+             data.academicYear != null && data.academicYear != "";
+    }
+
+    function isValidAAPFollowupPlan(data) {
+      return data.studentId != null && data.studentId != "" &&
+             data.classId != null && data.classId != "" &&
+             data.academicYear != null && data.academicYear != "";
+    }
+
+    function isValidAAPMidtermReview(data) {
+      return data.studentId != null && data.studentId != "" &&
+             data.classId != null && data.classId != "" &&
+             data.academicYearId != null && data.academicYearId != "" &&
+             data.termId != null && data.termId != "";
+    }
+
+    function isValidAAPEndOfTermReport(data) {
+      return data.studentId != null && data.studentId != "" &&
+             data.classId != null && data.classId != "" &&
+             data.academicYearId != null && data.academicYearId != "" &&
+             data.termId != null && data.termId != "";
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -531,35 +567,86 @@ service cloud.firestore {
     }
 
     match /aap_assessments/{assessmentId} {
-      allow read: if isActive() && isTeacher();
-      allow read: if isActive() && isJuniorHighStaff();
-      allow read: if isAdmin();
-      allow read: if isActive() && isLinkedStudent(existing().studentId);
-      allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
+      allow read: if isActive() && (
+        isAdmin() ||
+        (userRole() == 'HEAD_UNIT') ||
+        (isTeacher() && isTeacherAssignedToClass(resource.data.classId)) ||
+        isLinkedStudent(resource.data.studentId)
+      );
+      allow write: if isActive() && (
+        isAdmin() ||
+        (userRole() == 'HEAD_UNIT') ||
+        (isTeacher() && isTeacherAssignedToClass(incoming().classId))
+      ) && isValidAAPAssessment(incoming());
     }
 
     match /aap_followup_plans/{planId} {
-      allow read: if isActive() && isTeacher();
-      allow read: if isActive() && isJuniorHighStaff();
-      allow read: if isAdmin();
-      allow read: if isActive() && isLinkedStudent(existing().studentId);
-      allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
+      allow read: if isActive() && (
+        isAdmin() ||
+        (userRole() == 'HEAD_UNIT') ||
+        (isTeacher() && isTeacherAssignedToClass(resource.data.classId)) ||
+        isLinkedStudent(resource.data.studentId)
+      );
+      allow write: if isActive() && (
+        isAdmin() ||
+        (userRole() == 'HEAD_UNIT') ||
+        (isTeacher() && isTeacherAssignedToClass(incoming().classId))
+      ) && isValidAAPFollowupPlan(incoming());
     }
 
     match /aap_followup_plan_evidence/{evidenceId} {
-      allow read: if isActive() && isTeacher();
-      allow read: if isActive() && isJuniorHighStaff();
-      allow read: if isAdmin();
-      allow read: if isActive() && isLinkedStudent(existing().studentId);
-      allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
+      allow read: if isActive() && (
+        isAdmin() ||
+        (userRole() == 'HEAD_UNIT') ||
+        (isTeacher() && isTeacherAssignedToClass(resource.data.classId)) ||
+        isLinkedStudent(resource.data.studentId)
+      );
+      allow create, update: if isActive() && (
+        isAdmin() ||
+        (userRole() == 'HEAD_UNIT') ||
+        (isTeacher() && isTeacherAssignedToClass(incoming().classId))
+      );
+      allow delete: if isActive() && (
+        isAdmin() ||
+        (userRole() == 'HEAD_UNIT') ||
+        (isTeacher() && isTeacherAssignedToClass(resource.data.classId))
+      );
     }
 
     match /aap_midterm_reviews/{reviewId} {
-      allow read: if isActive() && isTeacher();
-      allow read: if isActive() && isJuniorHighStaff();
-      allow read: if isAdmin();
-      allow read: if isActive() && isLinkedStudent(existing().studentId);
-      allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
+      allow read: if isActive() && (
+        isAdmin() ||
+        (userRole() == 'HEAD_UNIT') ||
+        (isTeacher() && isTeacherAssignedToClass(resource.data.classId)) ||
+        isLinkedStudent(resource.data.studentId)
+      );
+      allow write: if isActive() && (
+        isAdmin() ||
+        (userRole() == 'HEAD_UNIT') ||
+        (isTeacher() && isTeacherAssignedToClass(incoming().classId))
+      ) && isValidAAPMidtermReview(incoming()) && (
+        (existing() == null) ||
+        (existing().reviewStatus != 'completed') ||
+        (existing().reviewStatus == 'completed' && incoming().reviewStatus == 'draft')
+      );
+    }
+
+    match /aap_end_of_term_reports/{reportId} {
+      allow read: if isActive() && (
+        isAdmin() ||
+        (userRole() == 'HEAD_UNIT') ||
+        (isTeacher() && isTeacherAssignedToClass(resource.data.classId)) ||
+        isLinkedStudent(resource.data.studentId)
+      );
+      allow write: if isActive() && (
+        isAdmin() ||
+        (userRole() == 'HEAD_UNIT') ||
+        (isTeacher() && isTeacherAssignedToClass(incoming().classId))
+      ) && isValidAAPEndOfTermReport(incoming()) && (
+        (existing() == null) ||
+        (existing().reportStatus != 'completed') ||
+        (existing().reportStatus == 'completed' && incoming().reportStatus == 'draft')
+      );
     }
 
     match /learning_goals/{goalId} {

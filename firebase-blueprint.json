@@ -845,6 +845,25 @@
         "completedBy": { "type": "string" }
       },
       "required": ["studentId", "classId", "academicYearId", "termId", "reviewStatus", "aspectReviews", "overallTeacherSummary"]
+    },
+    "AAPEndOfTermReport": {
+      "title": "AAPEndOfTermReport",
+      "description": "End of term reports for Kindergarten Academic Achievement Profile (AAP).",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "classId": { "type": "string" },
+        "academicYearId": { "type": "string" },
+        "termId": { "type": "string" },
+        "reportStatus": { "type": "string", "enum": ["draft", "completed"] },
+        "overallTeacherSummary": { "type": "string" },
+        "aspectReports": { "type": "object" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "completedAt": { "type": "string" },
+        "completedBy": { "type": "string" }
+      },
+      "required": ["studentId", "classId", "academicYearId", "termId", "reportStatus", "aspectReports", "overallTeacherSummary"]
     }
   },
   "firestore": {
@@ -1055,6 +1074,10 @@
     "aap_midterm_reviews/{reviewId}": {
       "schema": "AAPMidtermReview",
       "description": "Midterm reviews for Kindergarten aspects."
+    },
+    "aap_end_of_term_reports/{reportId}": {
+      "schema": "AAPEndOfTermReport",
+      "description": "End of term reports for Kindergarten aspects."
     }
   }
 }

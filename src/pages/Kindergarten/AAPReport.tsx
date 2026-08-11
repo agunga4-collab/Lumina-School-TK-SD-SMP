@@ -109,8 +109,12 @@ export default function AAPReport() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { profile } = useAuth();
 
+  const [tkLogoUrl] = React.useState<string>(() => {
+    return localStorage.getItem("weekly_report_tk_logo") || "";
+  });
+
   // Navigation state / Active tabs
-  const [activeTab, setActiveTab] = React.useState<'individual' | 'followup' | 'midterm' | 'class'>('individual');
+  const [activeTab, setActiveTab] = React.useState<'individual' | 'followup' | 'midterm' | 'endofterm' | 'class'>('individual');
 
   // Metadata states
   const [students, setStudents] = React.useState<any[]>([]);
@@ -144,6 +148,8 @@ export default function AAPReport() {
   // Phase 2: Evidence of Implementation (Bukti Pelaksanaan) states
   const [connectedEvidences, setConnectedEvidences] = React.useState<any[]>([]);
   const [isLoadingConnectedEvidences, setIsLoadingConnectedEvidences] = React.useState(false);
+  const [existingSourceKeys, setExistingSourceKeys] = React.useState<Set<string>>(new Set());
+  const [isLoadingSourceKeys, setIsLoadingSourceKeys] = React.useState(false);
   const [expandedEvidenceAspects, setExpandedEvidenceAspects] = React.useState<Record<string, boolean>>({});
   
   // Modal state for linking evidence
@@ -188,6 +194,22 @@ export default function AAPReport() {
   }>>({});
   const [overallTeacherSummary, setOverallTeacherSummary] = React.useState('');
 
+  // Phase 4: End of Term states
+  const [endOfTermReport, setEndOfTermReport] = React.useState<any>(null);
+  const [isLoadingEndOfTerm, setIsLoadingEndOfTerm] = React.useState(false);
+  const [isSavingEndOfTerm, setIsSavingEndOfTerm] = React.useState(false);
+  const [showRevertEndOfTermConfirm, setShowRevertEndOfTermConfirm] = React.useState(false);
+  const [revertReason, setRevertReason] = React.useState('');
+  const [overallEndOfTermSummary, setOverallEndOfTermSummary] = React.useState('');
+  const [endOfTermForm, setEndOfTermForm] = React.useState<Record<string, {
+    finalAchievementStatus: 'Perlu Stimulasi Lanjutan' | 'Mulai Berkembang' | 'Berkembang Sesuai Harapan' | 'Melampaui Harapan';
+    finalProgressNarrative: string;
+    stimulationSummary: string;
+    mainEvidenceSummary: string;
+    nextTermRecommendation: string;
+    homeCollaborationRecommendation: string;
+  }>>({});
+
   // Temporary edit states for Follow-up Plan form
   const [editSummary, setEditSummary] = React.useState('');
   const [editRecommendation, setEditRecommendation] = React.useState('');
@@ -201,8 +223,8 @@ export default function AAPReport() {
 
   // Effect to load follow-up plans when student changes
   React.useEffect(() => {
+    setFollowupPlans({}); // Clear state immediately to prevent leakage of old data
     if (!selectedStudentId || !activeYear) {
-      setFollowupPlans({});
       return;
     }
 
@@ -228,8 +250,8 @@ export default function AAPReport() {
 
   // Load midterm review when student/academicYear/term changes
   React.useEffect(() => {
+    setMidtermReview(null); // Clear state immediately to prevent leakage of old data
     if (!selectedStudentId || !activeYear || !selectedTermId) {
-      setMidtermReview(null);
       return;
     }
 
@@ -276,6 +298,70 @@ export default function AAPReport() {
     }
   }, [midtermReview, selectedStudentId, selectedTermId]);
 
+  // Load End of Term Report when student/academicYear/term changes
+  React.useEffect(() => {
+    setEndOfTermReport(null); // Clear state immediately to prevent leakage of old data
+    if (!selectedStudentId || !activeYear || !selectedTermId) {
+      return;
+    }
+
+    async function loadEndOfTermReport() {
+      try {
+        setIsLoadingEndOfTerm(true);
+        const docId = `${selectedStudentId}_${activeYear.replace('/', '_')}_${selectedTermId.replace(' ', '_')}`;
+        const docRef = doc(db, 'aap_end_of_term_reports', docId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setEndOfTermReport(docSnap.data());
+        } else {
+          setEndOfTermReport(null);
+        }
+      } catch (err) {
+        console.error("Error loading end of term report:", err);
+      } finally {
+        setIsLoadingEndOfTerm(false);
+      }
+    }
+
+    loadEndOfTermReport();
+  }, [selectedStudentId, activeYear, selectedTermId]);
+
+  // Sync loaded end of term report to local state
+  React.useEffect(() => {
+    if (endOfTermReport) {
+      // Map loaded aspectReports map back to form values
+      const loadedForm: Record<string, any> = {};
+      KM_ASPECTS.forEach(aspect => {
+        const loadedAspect = endOfTermReport.aspectReports?.[aspect.id] || {};
+        loadedForm[aspect.id] = {
+          finalAchievementStatus: loadedAspect.finalAchievementStatus || 'Mulai Berkembang',
+          finalProgressNarrative: loadedAspect.finalProgressNarrative || '',
+          stimulationSummary: loadedAspect.stimulationSummary || '',
+          mainEvidenceSummary: loadedAspect.mainEvidenceSummary || '',
+          nextTermRecommendation: loadedAspect.nextTermRecommendation || '',
+          homeCollaborationRecommendation: loadedAspect.homeCollaborationRecommendation || ''
+        };
+      });
+      setEndOfTermForm(loadedForm);
+      setOverallEndOfTermSummary(endOfTermReport.overallTeacherSummary || '');
+    } else {
+      // Initialize with empty form
+      const initialForm: Record<string, any> = {};
+      KM_ASPECTS.forEach(aspect => {
+        initialForm[aspect.id] = {
+          finalAchievementStatus: 'Mulai Berkembang',
+          finalProgressNarrative: '',
+          stimulationSummary: '',
+          mainEvidenceSummary: '',
+          nextTermRecommendation: '',
+          homeCollaborationRecommendation: ''
+        };
+      });
+      setEndOfTermForm(initialForm);
+      setOverallEndOfTermSummary('');
+    }
+  }, [endOfTermReport, selectedStudentId, selectedTermId]);
+
   // Read URL parameters if redirecting from Assessment Page
   const urlClassId = searchParams.get('classId');
   const urlStudentId = searchParams.get('studentId');
@@ -306,6 +392,11 @@ export default function AAPReport() {
   // Load students and assessments for the selected class
   React.useEffect(() => {
     if (!selectedClassId) return;
+
+    // Clear old data immediately to prevent stale states
+    setStudents([]);
+    setAssessments({});
+    setGeneralConclusion('');
 
     async function loadStudentsAndAssessments() {
       try {
@@ -479,9 +570,67 @@ export default function AAPReport() {
   // PHASE 2: BUKTI PELAKSANAAN IMPLEMENTATION
   // ==========================================
 
+  const loadExistingSourceKeys = React.useCallback(async () => {
+    setExistingSourceKeys(new Set()); // Clear immediately
+    if (!selectedStudentId || !selectedClassId) {
+      return;
+    }
+    setIsLoadingSourceKeys(true);
+    try {
+      const keys = new Set<string>();
+      
+      // 1. Observations
+      const obsSnap = await getDocs(query(collection(db, 'observations'), where('classId', '==', selectedClassId)));
+      obsSnap.forEach(docSnap => {
+        const d = docSnap.data();
+        const studentObs = d.observations?.[selectedStudentId] ||
+          (activeStudentObj?.oldLuminaId && d.observations?.[activeStudentObj.oldLuminaId]) ||
+          (activeStudentObj?.nis && d.observations?.[activeStudentObj.nis]) ||
+          (activeStudentObj?.name && Object.entries(d.observations || {}).find(([k]) => normalizeStudentName(k) === normalizeStudentName(activeStudentObj.name))?.[1]);
+        if (studentObs && (studentObs.notes || studentObs.photoUrl || studentObs.photo)) {
+          keys.add(`OBSERVATION_${docSnap.id}`);
+        }
+      });
+
+      // 2. Attendance
+      const attSnap = await getDocs(query(collection(db, 'attendance'), where('classId', '==', selectedClassId)));
+      attSnap.forEach(docSnap => {
+        const d = docSnap.data();
+        const studentRecord = d.students?.find((s: any) => s.studentId === selectedStudentId);
+        if (studentRecord && (studentRecord.emotion || studentRecord.notes)) {
+          keys.add(`CHECKLIST_${docSnap.id}`);
+        }
+      });
+
+      // 3. Weekly Summary drafts
+      const wsSnap = await getDocs(query(collection(db, 'weekly_summary_drafts'), where('studentId', '==', selectedStudentId)));
+      wsSnap.forEach(docSnap => {
+        const d = docSnap.data();
+        if (d.socialEmotional || d.weeklyComments || d.notes) {
+          keys.add(`WEEKLY_SUMMARY_${docSnap.id}`);
+        }
+      });
+
+      // 4. Weekly Report / Published KG Reports
+      const pSnap = await getDocs(query(collection(db, 'published_kg_reports'), where('studentId', '==', selectedStudentId)));
+      pSnap.forEach(docSnap => {
+        const d = docSnap.data();
+        if (d.weeklyComments || d.socialEmotional) {
+          keys.add(`WEEKLY_REPORT_${docSnap.id}`);
+        }
+      });
+
+      setExistingSourceKeys(keys);
+    } catch (err) {
+      console.error("Error loading existing source keys:", err);
+    } finally {
+      setIsLoadingSourceKeys(false);
+    }
+  }, [selectedStudentId, selectedClassId, activeStudentObj]);
+
   const loadConnectedEvidences = React.useCallback(async () => {
-    if (!selectedStudentId || !activeYear) {
-      setConnectedEvidences([]);
+    setConnectedEvidences([]); // Clear state immediately to prevent leakage of old data
+    if (!selectedStudentId || !activeYear || !selectedTermId) {
       return;
     }
     setIsLoadingConnectedEvidences(true);
@@ -489,7 +638,8 @@ export default function AAPReport() {
       const q = query(
         collection(db, 'aap_followup_plan_evidence'),
         where('studentId', '==', selectedStudentId),
-        where('academicYearId', '==', activeYear)
+        where('academicYearId', '==', activeYear),
+        where('termId', '==', selectedTermId)
       );
       const snap = await getDocs(q);
       const items: any[] = [];
@@ -506,11 +656,12 @@ export default function AAPReport() {
     } finally {
       setIsLoadingConnectedEvidences(false);
     }
-  }, [selectedStudentId, activeYear]);
+  }, [selectedStudentId, activeYear, selectedTermId]);
 
   React.useEffect(() => {
     loadConnectedEvidences();
-  }, [selectedStudentId, activeYear, loadConnectedEvidences]);
+    loadExistingSourceKeys();
+  }, [selectedStudentId, activeYear, selectedTermId, loadConnectedEvidences, loadExistingSourceKeys]);
 
   const toggleEvidenceExpanded = (aspectId: string) => {
     setExpandedEvidenceAspects(prev => ({
@@ -525,16 +676,21 @@ export default function AAPReport() {
   };
 
   const handleUnlinkEvidence = async (evidenceId: string) => {
+    if (isSavingEvidence) return; // Prevent double submit
     const confirmUnlink = window.confirm("Apakah Anda yakin ingin menghapus hubungan bukti ini? (Dokumen asli tidak akan dihapus)");
     if (!confirmUnlink) return;
 
+    setIsSavingEvidence(true);
     try {
       await deleteDoc(doc(db, 'aap_followup_plan_evidence', evidenceId));
       toast.success("Hubungan bukti berhasil dihapus.");
       await loadConnectedEvidences();
+      await loadExistingSourceKeys(); // Refresh missing/available indicators
     } catch (err: any) {
       console.error("Error unlinking evidence:", err);
       toast.error(`Gagal menghapus hubungan bukti: ${err.message}`);
+    } finally {
+      setIsSavingEvidence(false);
     }
   };
 
@@ -741,20 +897,25 @@ export default function AAPReport() {
 
   const handleSaveEvidence = async (aspectId: string, selectedSources: any[]) => {
     if (!selectedStudentId || !activeYear) return;
+    if (isSavingEvidence) return; // Prevent double submit
     const planId = `${selectedStudentId}_${activeYear.replace('/', '_')}_${aspectId}`;
     
     setIsSavingEvidence(true);
     try {
       const alreadyConnected = connectedEvidences.filter(e => e.planId === planId);
+      const alreadyConnectedIds = new Set(alreadyConnected.map(e => `${e.sourceType}_${e.sourceDocumentId}`));
       
       let addedCount = 0;
       for (const source of selectedSources) {
-        const exists = alreadyConnected.some(e => e.sourceType === source.sourceType && e.sourceDocumentId === source.sourceDocumentId);
-        if (!exists) {
+        const key = `${source.sourceType}_${source.sourceDocumentId}`;
+        if (!alreadyConnectedIds.has(key)) {
+          alreadyConnectedIds.add(key);
           const payload = {
             planId,
             studentId: selectedStudentId,
+            classId: selectedClassId,
             academicYearId: activeYear,
+            termId: selectedTermId, // Store current termId for strict isolation
             aspectId,
             sourceType: source.sourceType,
             sourceDocumentId: source.sourceDocumentId,
@@ -769,7 +930,11 @@ export default function AAPReport() {
             cachedDomain: source.domain,
             cachedThumbnailUrl: source.thumbnailUrl || null
           };
-          await addDoc(collection(db, 'aap_followup_plan_evidence'), payload);
+          
+          // Construct a deterministic document ID to prevent duplicate linking
+          const docId = `${planId}_${source.sourceType}_${source.sourceDocumentId}`.replace(/\s+/g, '_');
+          const docRef = doc(db, 'aap_followup_plan_evidence', docId);
+          await setDoc(docRef, payload, { merge: true });
           addedCount++;
         }
       }
@@ -781,6 +946,7 @@ export default function AAPReport() {
       }
       
       await loadConnectedEvidences();
+      await loadExistingSourceKeys(); // Sync available/existing source indicators
       setIsEvidenceModalOpen(false);
     } catch (err: any) {
       console.error("Error linking evidence:", err);
@@ -876,6 +1042,7 @@ export default function AAPReport() {
   // Save Plan
   const handleSaveFollowupPlan = async (aspectId: string) => {
     if (!selectedStudentId || !activeYear) return;
+    if (isSavingPlan[aspectId]) return; // Prevent double submit
 
     setIsSavingPlan(prev => ({ ...prev, [aspectId]: true }));
     try {
@@ -926,6 +1093,7 @@ export default function AAPReport() {
       toast.error("Pastikan kelas, siswa, dan term terpilih.");
       return;
     }
+    if (isSavingMidterm) return; // Prevent double submit
 
     setIsSavingMidterm(true);
     try {
@@ -973,17 +1141,23 @@ export default function AAPReport() {
   // Revert Midterm Review back to Draft
   const handleRevertMidtermToDraft = async () => {
     if (!selectedStudentId || !activeYear || !selectedTermId || !midtermReview) return;
+    if (isSavingMidterm) return; // Prevent double submit
     setIsSavingMidterm(true);
     try {
       const docId = `${selectedStudentId}_${activeYear.replace('/', '_')}_${selectedTermId.replace(' ', '_')}`;
       const updated = {
         ...midtermReview,
         reviewStatus: 'draft',
+        unlockedAt: new Date().toISOString(),
+        unlockedBy: profile?.uid || 'Unknown',
+        unlockedByEmail: profile?.email || '',
+        unlockReason: revertReason || 'Tidak ada alasan yang ditulis',
         updatedAt: new Date().toISOString()
       };
       const docRef = doc(db, 'aap_midterm_reviews', docId);
       await setDoc(docRef, updated, { merge: true });
       setMidtermReview(updated);
+      setRevertReason('');
       toast.success("Review dikembalikan menjadi Draf.");
     } catch (err) {
       console.error("Error reverting midterm review:", err);
@@ -1026,6 +1200,230 @@ export default function AAPReport() {
     } finally {
       setShowCompletePlanConfirm(null);
     }
+  };
+
+  // Save or Complete End of Term Report
+  const handleSaveEndOfTermReport = async (status: 'draft' | 'completed') => {
+    if (!selectedStudentId || !selectedClassId || !activeYear || !selectedTermId) {
+      toast.error("Pastikan kelas, siswa, dan term terpilih.");
+      return;
+    }
+    if (isSavingEndOfTerm) return; // Prevent double submit
+
+    setIsSavingEndOfTerm(true);
+    try {
+      const docId = `${selectedStudentId}_${activeYear.replace('/', '_')}_${selectedTermId.replace(' ', '_')}`;
+      
+      // Build aspectReports map with required schema fields
+      const formattedAspectReports: Record<string, any> = {};
+      KM_ASPECTS.forEach(aspect => {
+        const form = endOfTermForm[aspect.id] || {
+          finalAchievementStatus: 'Mulai Berkembang',
+          finalProgressNarrative: '',
+          stimulationSummary: '',
+          mainEvidenceSummary: '',
+          nextTermRecommendation: '',
+          homeCollaborationRecommendation: ''
+        };
+        const aspectEvidences = connectedEvidences.filter(
+          e => e.planId === `${selectedStudentId}_${activeYear.replace('/', '_')}_${aspect.id}`
+        );
+        const plan = followupPlans[aspect.id] || {};
+        
+        formattedAspectReports[aspect.id] = {
+          aspectId: aspect.id,
+          aspectName: aspect.name,
+          baselineSummary: getDraftForAspect(aspect.id, currentAssessment)?.summary || '',
+          relatedPlanIds: plan.hasPlan ? [`${selectedStudentId}_${activeYear.replace('/', '_')}_${aspect.id}`] : [],
+          relatedEvidenceIds: aspectEvidences.map(e => e.id),
+          midtermReviewId: `${selectedStudentId}_${activeYear.replace('/', '_')}_${selectedTermId.replace(' ', '_')}`,
+          finalAchievementStatus: form.finalAchievementStatus,
+          finalProgressNarrative: form.finalProgressNarrative,
+          stimulationSummary: form.stimulationSummary,
+          mainEvidenceSummary: form.mainEvidenceSummary,
+          nextTermRecommendation: form.nextTermRecommendation,
+          homeCollaborationRecommendation: form.homeCollaborationRecommendation
+        };
+      });
+
+      const payload: any = {
+        studentId: selectedStudentId,
+        studentName: activeStudentObj?.name || 'Siswa',
+        classId: selectedClassId,
+        className: activeClassObj?.name || 'Kelas',
+        academicYearId: activeYear,
+        termId: selectedTermId,
+        reportStatus: status,
+        aspectReports: formattedAspectReports,
+        overallTeacherSummary: overallEndOfTermSummary,
+        updatedAt: new Date().toISOString(),
+        ...(status === 'completed' ? {
+          completedAt: new Date().toISOString(),
+          completedBy: profile?.email || 'Teacher'
+        } : {})
+      };
+
+      if (!endOfTermReport) {
+        payload.createdAt = new Date().toISOString();
+      } else {
+        payload.createdAt = endOfTermReport.createdAt || new Date().toISOString();
+      }
+
+      const docRef = doc(db, 'aap_end_of_term_reports', docId);
+      await setDoc(docRef, payload, { merge: true });
+
+      setEndOfTermReport(payload);
+      if (status === 'completed') {
+        toast.success("Laporan Akhir Term berhasil diselesaikan dan disimpan!");
+      } else {
+        toast.success("Draf Laporan Akhir Term berhasil disimpan!");
+      }
+    } catch (err) {
+      console.error("Error saving end of term report:", err);
+      toast.error("Gagal menyimpan laporan akhir term.");
+    } finally {
+      setIsSavingEndOfTerm(false);
+    }
+  };
+
+  // Revert End of Term Report back to Draft
+  const handleRevertEndOfTermToDraft = async () => {
+    if (!selectedStudentId || !activeYear || !selectedTermId || !endOfTermReport) return;
+    if (isSavingEndOfTerm) return; // Prevent double submit
+    setIsSavingEndOfTerm(true);
+    try {
+      const docId = `${selectedStudentId}_${activeYear.replace('/', '_')}_${selectedTermId.replace(' ', '_')}`;
+      const updated = {
+        ...endOfTermReport,
+        reportStatus: 'draft',
+        unlockedAt: new Date().toISOString(),
+        unlockedBy: profile?.uid || 'Unknown',
+        unlockedByEmail: profile?.email || '',
+        unlockReason: revertReason || 'Tidak ada alasan yang ditulis',
+        updatedAt: new Date().toISOString()
+      };
+      const docRef = doc(db, 'aap_end_of_term_reports', docId);
+      await setDoc(docRef, updated, { merge: true });
+      setEndOfTermReport(updated);
+      setRevertReason('');
+      toast.success("Laporan dikembalikan menjadi Draf.");
+    } catch (err) {
+      console.error("Error reverting end of term report:", err);
+      toast.error("Gagal mengembalikan status laporan.");
+    } finally {
+      setIsSavingEndOfTerm(false);
+      setShowRevertEndOfTermConfirm(false);
+    }
+  };
+
+  // AI-like but rule-based data synthesizer (Generates a beautiful professional draft)
+  const generateDraftForAspect = (aspectId: string) => {
+    const aspect = KM_ASPECTS.find(a => a.id === aspectId);
+    if (!aspect) return;
+
+    const draftBaseline = getDraftForAspect(aspectId, currentAssessment);
+    const plan = followupPlans[aspectId] || {};
+    const aspectEvidences = connectedEvidences.filter(
+      e => e.planId === `${selectedStudentId}_${activeYear.replace('/', '_')}_${aspectId}`
+    );
+    const mReview = midtermForm[aspectId];
+
+    // 1. Stimulation Summary
+    let stimulationSummaryText = '';
+    if (plan.hasPlan) {
+      stimulationSummaryText += `Pada term ini, strategi stimulasi difokuskan pada: "${plan.stimulationStrategy}". `;
+      if (plan.targetDevelopment) {
+        stimulationSummaryText += `Stimulasi dilakukan untuk mendukung target perkembangan: "${plan.targetDevelopment}". `;
+      }
+      if (plan.frequency) {
+        stimulationSummaryText += `Aktivitas ini diterapkan dengan frekuensi: ${plan.frequency}. `;
+      }
+      if (mReview && mReview.followupDecision === 'Sesuaikan' && mReview.teacherNotes) {
+        stimulationSummaryText += `Berdasarkan evaluasi tengah semester, dilakukan penyesuaian strategi berupa: "${mReview.teacherNotes}".`;
+      }
+    } else {
+      stimulationSummaryText = "Pada term ini, stimulasi umum dilakukan secara berkala mengikuti panduan kurikulum harian di kelas.";
+    }
+
+    // 2. Main Evidence Summary
+    let mainEvidenceSummaryText = '';
+    if (aspectEvidences.length > 0) {
+      mainEvidenceSummaryText += `Terdapat ${aspectEvidences.length} bukti pelaksanaan pembelajaran yang teramati. `;
+      const sampleNotes = aspectEvidences
+        .map(e => e.teacherRelevanceNote || e.cachedTitle)
+        .filter(Boolean)
+        .slice(0, 3);
+      if (sampleNotes.length > 0) {
+        mainEvidenceSummaryText += `Beberapa catatan perkembangan utama meliputi: \n- ` + sampleNotes.join('\n- ');
+      }
+    } else {
+      mainEvidenceSummaryText = "Perkembangan masih perlu dipantau melalui stimulasi dan observasi berkelanjutan karena belum ada bukti spesifik yang terhubung.";
+    }
+
+    // 3. Final Progress Narrative
+    let finalProgressNarrativeText = '';
+    finalProgressNarrativeText += `Perkembangan anak pada aspek ${aspect.name} menunjukkan dinamika yang positif sejak awal semester. `;
+    
+    if (draftBaseline?.summary) {
+      finalProgressNarrativeText += `Berdasarkan asesmen awal, anak teridentifikasi berada pada tahap perkembangan awal dengan catatan: "${draftBaseline.summary}". `;
+    }
+
+    if (mReview?.summary) {
+      const progressRatingLabel = 
+        mReview.progressRating === 'MH' ? 'Melampaui Harapan' :
+        mReview.progressRating === 'BSH' ? 'Berkembang Sesuai Harapan' :
+        mReview.progressRating === 'MB' ? 'Mulai Berkembang' : 'Belum Terlihat';
+      finalProgressNarrativeText += `Pada evaluasi tengah semester, perkembangan anak dinilai "${progressRatingLabel}" dengan kemajuan: "${mReview.summary}". `;
+    }
+
+    if (aspectEvidences.length > 0) {
+      finalProgressNarrativeText += `Melalui serangkaian bukti harian yang terkumpul, anak secara konsisten menunjukkan kemajuan nyata. `;
+    } else {
+      finalProgressNarrativeText += `Perkembangan masih perlu dipantau melalui stimulasi dan observasi berkelanjutan. `;
+    }
+
+    // 4. Next Term Recommendation
+    let nextTermRecommendationText = '';
+    if (mReview?.recommendation) {
+      nextTermRecommendationText += `Melanjutkan rekomendasi tengah semester: "${mReview.recommendation}". `;
+    }
+    if (plan.status === 'Selesai') {
+      nextTermRecommendationText += `Karena target stimulasi term ini telah diselesaikan dengan baik, direkomendasikan untuk meningkatkan tingkat kompleksitas aktivitas pada term berikutnya.`;
+    } else {
+      nextTermRecommendationText += `Direkomendasikan untuk melanjutkan pemantauan dan pengulangan stimulasi yang konsisten pada term berikutnya guna memperkuat kompetensi anak.`;
+    }
+
+    // 5. Home Collaboration Recommendation
+    let homeCollaborationRecommendationText = '';
+    if (plan.stimulationStrategy) {
+      homeCollaborationRecommendationText += `Orang tua dapat berkolaborasi di rumah dengan mereplikasi aktivitas stimulasi seperti: "${plan.stimulationStrategy}" secara menyenangkan dan tanpa tekanan. `;
+    } else {
+      homeCollaborationRecommendationText += `Diharapkan orang tua dapat meluangkan waktu bersama untuk melakukan aktivitas interaktif yang mendukung perkembangan anak secara berkala di rumah.`;
+    }
+
+    // Map progress rating to achievement status
+    let finalAchievementStatus: 'Perlu Stimulasi Lanjutan' | 'Mulai Berkembang' | 'Berkembang Sesuai Harapan' | 'Melampaui Harapan' = 'Mulai Berkembang';
+    if (mReview?.progressRating) {
+      if (mReview.progressRating === 'MH') finalAchievementStatus = 'Melampaui Harapan';
+      else if (mReview.progressRating === 'BSH') finalAchievementStatus = 'Berkembang Sesuai Harapan';
+      else if (mReview.progressRating === 'MB') finalAchievementStatus = 'Mulai Berkembang';
+      else if (mReview.progressRating === 'BT') finalAchievementStatus = 'Perlu Stimulasi Lanjutan';
+    }
+
+    // Update form state
+    setEndOfTermForm(prev => ({
+      ...prev,
+      [aspectId]: {
+        finalAchievementStatus,
+        finalProgressNarrative: finalProgressNarrativeText.trim(),
+        stimulationSummary: stimulationSummaryText.trim(),
+        mainEvidenceSummary: mainEvidenceSummaryText.trim(),
+        nextTermRecommendation: nextTermRecommendationText.trim(),
+        homeCollaborationRecommendation: homeCollaborationRecommendationText.trim()
+      }
+    }));
+
+    toast.success(`Berhasil membuat draf narasi aspek "${aspect.name}"!`);
   };
 
   if (isRestrictedToAssignedClasses && classes.length === 0 && !isLoadingClasses) {
@@ -1130,6 +1528,17 @@ export default function AAPReport() {
             )}
           >
             <BookOpen size={14} /> Review Midterm
+          </button>
+          <button
+            onClick={() => setActiveTab('endofterm')}
+            className={cn(
+              "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all min-w-[170px]",
+              activeTab === 'endofterm' 
+                ? "bg-indigo-600 text-white shadow-md" 
+                : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+            )}
+          >
+            <Award size={14} /> Ringkasan End of Term
           </button>
           <button
             onClick={() => setActiveTab('class')}
@@ -1887,6 +2296,7 @@ export default function AAPReport() {
                                     .filter(e => e.planId === `${selectedStudentId}_${activeYear.replace('/', '_')}_${aspect.id}`)
                                     .map((evidence, idx) => {
                                       const hasThumbnail = !!evidence.cachedThumbnailUrl;
+                                      const isSourceAvailable = existingSourceKeys.has(`${evidence.sourceType}_${evidence.sourceDocumentId}`);
                                       return (
                                         <div key={evidence.id} className={cn("py-4 first:pt-0 last:pb-0 flex flex-col md:flex-row gap-4 justify-between items-start", idx > 0 && "pt-4")}>
                                           <div className="flex gap-3 items-start flex-1 min-w-0">
@@ -1919,6 +2329,11 @@ export default function AAPReport() {
                                                 )}>
                                                   {evidence.cachedSourceLabel || evidence.sourceType}
                                                 </span>
+                                                {!isSourceAvailable && !isLoadingSourceKeys && (
+                                                  <span className="px-2 py-0.5 text-[8px] font-black rounded border bg-rose-50 text-rose-700 border-rose-150 uppercase tracking-wider animate-pulse">
+                                                    Sumber bukti tidak tersedia
+                                                  </span>
+                                                )}
                                                 {evidence.cachedDomain && (
                                                   <span className="text-[9px] font-bold text-gray-400 italic">
                                                     ({evidence.cachedDomain})
@@ -2548,6 +2963,524 @@ export default function AAPReport() {
             </div>
           </div>
         </div>
+      ) : activeTab === 'endofterm' ? (
+        // === RINGKASAN END OF TERM TAB ===
+        <div className="space-y-8 animate-fade-in">
+          {/* Summary / Progress Stats Panel */}
+          <div className="bg-white border border-gray-150 rounded-3xl p-6 md:p-8 shadow-sm flex flex-col md:flex-row items-stretch justify-between gap-6">
+            <div className="space-y-2 max-w-md">
+              <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-black uppercase tracking-wider">
+                End of Term Laporan Akhir
+              </span>
+              <h3 className="text-base font-black text-gray-900 uppercase tracking-tight">
+                Laporan Perkembangan Akhir - {activeStudentObj?.name || 'Siswa'}
+              </h3>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                Menyusun rekapitulasi capaian akhir semester secara berbasis data, komprehensif, dan siap dibagikan kepada orang tua.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 flex-1 max-w-3xl">
+              {/* Stat 1: Aspek Diisi */}
+              <div className="bg-gray-50/50 border border-gray-100 rounded-2xl p-4 flex flex-col justify-between space-y-1">
+                <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider font-sans">Aspek Diisi</span>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-xl font-black text-gray-900">
+                    {KM_ASPECTS.filter(aspect => endOfTermForm[aspect.id]?.finalProgressNarrative?.trim()).length}
+                  </span>
+                  <span className="text-xs font-bold text-gray-400">/ 3 Aspek</span>
+                </div>
+              </div>
+
+              {/* Stat 2: Total Bukti */}
+              <div className="bg-gray-50/50 border border-gray-100 rounded-2xl p-4 flex flex-col justify-between space-y-1">
+                <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider font-sans">Bukti Dasar</span>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-xl font-black text-gray-900">
+                    {connectedEvidences.length}
+                  </span>
+                  <span className="text-xs font-bold text-gray-400 font-sans">Dipakai</span>
+                </div>
+              </div>
+
+              {/* Stat 3: Status Rencana */}
+              <div className="bg-gray-50/50 border border-gray-100 rounded-2xl p-4 flex flex-col justify-between space-y-1">
+                <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider font-sans">Rencana Stimulasi</span>
+                <div className="flex flex-col gap-0.5 text-[10px] font-bold text-gray-600">
+                  <div className="flex justify-between">
+                    <span>Berjalan:</span>
+                    <span className="font-extrabold text-blue-600">
+                      {KM_ASPECTS.filter(a => followupPlans[a.id]?.status === 'Berjalan').length}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Selesai:</span>
+                    <span className="font-extrabold text-emerald-600">
+                      {KM_ASPECTS.filter(a => followupPlans[a.id]?.status === 'Selesai').length}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Stat 4: Laporan Status */}
+              <div className="bg-gray-50/50 border border-gray-100 rounded-2xl p-4 flex flex-col justify-between space-y-1">
+                <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider font-sans">Status Laporan</span>
+                <div>
+                  {endOfTermReport?.reportStatus === 'completed' ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-[9px] font-black uppercase">
+                      <CheckCircle2 size={10} /> Selesai
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-[9px] font-black uppercase animate-pulse">
+                      Draf
+                    </span>
+                  )}
+                  {endOfTermReport?.completedAt && (
+                    <p className="text-[9px] text-gray-400 font-bold mt-1 uppercase">
+                      {new Date(endOfTermReport.updatedAt).toLocaleDateString('id-ID', {day: 'numeric', month: 'short'})}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Aspect Evaluator Section */}
+          <div className="space-y-8">
+            {KM_ASPECTS.map((aspect, idx) => {
+              const plan = followupPlans[aspect.id] || {};
+              const aspectForm = endOfTermForm[aspect.id] || {
+                finalAchievementStatus: 'Mulai Berkembang',
+                finalProgressNarrative: '',
+                stimulationSummary: '',
+                mainEvidenceSummary: '',
+                nextTermRecommendation: '',
+                homeCollaborationRecommendation: ''
+              };
+
+              const updateAspectFormField = (field: string, value: any) => {
+                setEndOfTermForm(prev => ({
+                  ...prev,
+                  [aspect.id]: {
+                    ...prev[aspect.id],
+                    [field]: value
+                  }
+                }));
+              };
+
+              // Retrieve connected evidences for this aspect
+              const aspectEvidences = connectedEvidences.filter(
+                e => e.planId === `${selectedStudentId}_${activeYear.replace('/', '_')}_${aspect.id}`
+              );
+
+              // Get baseline assessment for this aspect
+              const draftBaseline = getDraftForAspect(aspect.id, currentAssessment);
+
+              // Get midterm review for this aspect
+              const midtermAspectReview = midtermForm[aspect.id] || null;
+
+              return (
+                <div key={aspect.id} className="bg-white border border-gray-150 rounded-3xl overflow-hidden shadow-sm">
+                  {/* Aspect Header Banner */}
+                  <div className="bg-gray-50/50 border-b border-gray-100 px-6 py-5 md:px-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">
+                        Aspek {idx + 1}: Kurikulum Merdeka
+                      </span>
+                      <h4 className="text-sm font-black text-gray-950 tracking-tight">
+                        {aspect.name}
+                      </h4>
+                      <p className="text-[11px] text-gray-500 font-medium">
+                        {aspect.description}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={endOfTermReport?.reportStatus === 'completed'}
+                        onClick={() => generateDraftForAspect(aspect.id)}
+                        className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-black rounded-xl text-[10px] uppercase tracking-wider transition-all shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Sparkles size={11} /> Buat Draft Narasi dari Data
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-gray-150">
+                    {/* LEFT COLUMN: Data Dasar */}
+                    <div className="lg:col-span-5 p-6 md:p-8 space-y-6 bg-gray-50/20">
+                      <div className="flex items-center gap-1.5 pb-2 border-b border-gray-100">
+                        <Award size={14} className="text-indigo-600" />
+                        <h5 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">
+                          Kompilasi Data Dasar (Sumber Otomatis)
+                        </h5>
+                      </div>
+
+                      {/* 1. Baseline AAP */}
+                      <div className="space-y-2">
+                        <h6 className="text-[10px] font-black text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <CheckCircle2 size={11} className="text-indigo-500" /> Asesmen Awal (Baseline)
+                        </h6>
+                        <div className="bg-white border border-gray-150 rounded-2xl p-4 space-y-2 text-[11px]">
+                          {currentAssessment ? (
+                            <>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {aspect.aapAspects.map(subName => {
+                                  const subData = currentAssessment.aspects?.find((a: any) => a.aspectName === subName);
+                                  return (
+                                    <span key={subName} className="inline-flex items-center gap-1 bg-indigo-50/40 border border-indigo-100 px-2 py-0.5 rounded-lg font-bold text-[9px] text-indigo-700 uppercase">
+                                      {subName}: <b>{subData?.stage || '-'}</b>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                              <p className="font-bold text-gray-900 mt-2">Ringkasan:</p>
+                              <p className="text-gray-650 leading-relaxed whitespace-pre-wrap">{draftBaseline?.summary || '-'}</p>
+                              <p className="font-bold text-gray-900 mt-2">Rekomendasi AAP Awal:</p>
+                              <p className="text-gray-650 leading-relaxed whitespace-pre-wrap">{draftBaseline?.recommendation || '-'}</p>
+                            </>
+                          ) : (
+                            <p className="text-gray-400 italic font-medium">Belum ada data Asesmen Awal Pembelajaran (AAP).</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* 2. Rencana Tindak Lanjut */}
+                      <div className="space-y-2">
+                        <h6 className="text-[10px] font-black text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <ClipboardCheck size={11} className="text-indigo-500" /> Rencana Tindak Lanjut
+                        </h6>
+                        <div className="bg-white border border-gray-150 rounded-2xl p-4 space-y-2 text-[11px] leading-relaxed">
+                          {plan.hasPlan ? (
+                            <>
+                              <div>
+                                <span className="font-bold text-gray-900">Target Perkembangan:</span>
+                                <p className="text-gray-650 mt-0.5 font-medium">{plan.targetDevelopment || '-'}</p>
+                              </div>
+                              <div>
+                                <span className="font-bold text-gray-900">Strategi & Aktivitas:</span>
+                                <p className="text-gray-655 mt-0.5">{plan.stimulationStrategy || '-'}</p>
+                              </div>
+                              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-gray-100">
+                                <div>
+                                  <span className="font-bold text-gray-900">Frekuensi:</span>
+                                  <p className="text-gray-650 font-medium">{plan.frequency || '-'}</p>
+                                </div>
+                                <div>
+                                  <span className="font-bold text-gray-900">Status:</span>
+                                  <span className={cn(
+                                    "inline-block px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider mt-0.5",
+                                    plan.status === 'Selesai' ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
+                                    plan.status === 'Berjalan' ? "bg-blue-50 text-blue-700 border border-blue-200" :
+                                    plan.status === 'Disesuaikan' ? "bg-amber-50 text-amber-700 border-amber-200" :
+                                    "bg-gray-100 text-gray-600 border border-gray-200"
+                                  )}>
+                                    {plan.status || 'Belum Dimulai'}
+                                  </span>
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="text-center py-2 text-gray-400 italic font-medium">
+                              Belum ada rencana stimulasi dibuat untuk aspek ini.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* 3. Bukti Pelaksanaan */}
+                      <div className="space-y-2">
+                        <h6 className="text-[10px] font-black text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <Paperclip size={11} className="text-indigo-500" /> Bukti Pelaksanaan ({aspectEvidences.length})
+                        </h6>
+                        {aspectEvidences.length === 0 ? (
+                          <div className="bg-amber-50/50 border border-amber-150 rounded-2xl p-4 text-center">
+                            <p className="text-[10px] text-amber-700 font-extrabold leading-normal">
+                              Belum ada bukti pelaksanaan terhubung.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {aspectEvidences.slice(0, 2).map((ev: any) => (
+                              <div key={ev.id} className="bg-white border border-gray-150 rounded-2xl p-3 space-y-1.5 text-[10px] leading-relaxed">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-extrabold text-gray-800 line-clamp-1">{ev.cachedTitle}</span>
+                                  <span className="text-[8px] font-mono text-gray-400 shrink-0">
+                                    {ev.evidenceDate ? new Date(ev.evidenceDate).toLocaleDateString('id-ID', {day: 'numeric', month: 'short'}) : ''}
+                                  </span>
+                                </div>
+                                {ev.teacherRelevanceNote && (
+                                  <p className="text-gray-550 italic bg-gray-50 p-2 rounded-lg border border-gray-100">
+                                    " {ev.teacherRelevanceNote} "
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                            {aspectEvidences.length > 2 && (
+                              <p className="text-[9px] text-gray-400 font-bold text-right uppercase">
+                                + {aspectEvidences.length - 2} Bukti Pelaksanaan lainnya
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 4. Review Midterm */}
+                      <div className="space-y-2">
+                        <h6 className="text-[10px] font-black text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <BookOpen size={11} className="text-indigo-500" /> Review Midterm
+                        </h6>
+                        <div className="bg-white border border-gray-150 rounded-2xl p-4 space-y-2 text-[11px] leading-relaxed">
+                          {midtermAspectReview ? (
+                            <>
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-gray-900">Rating Midterm:</span>
+                                <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 font-black text-[9px] rounded-md border border-indigo-100 uppercase">
+                                  {midtermAspectReview.progressRating || 'MB'}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="font-bold text-gray-900">Keputusan:</span>
+                                <span className="text-gray-600 ml-1.5 font-medium">{midtermAspectReview.followupDecision || 'Lanjutkan'}</span>
+                              </div>
+                              <div>
+                                <span className="font-bold text-gray-900">Kemajuan / Ringkasan:</span>
+                                <p className="text-gray-650 mt-0.5">{midtermAspectReview.summary || '-'}</p>
+                              </div>
+                            </>
+                          ) : (
+                            <p className="text-gray-400 italic font-medium">Review midterm untuk aspek ini belum disimpan.</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* RIGHT COLUMN: Narasi Laporan Akhir */}
+                    <div className="lg:col-span-7 p-6 md:p-8 space-y-6">
+                      <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+                        <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                          <Edit3 size={12} className="text-indigo-600" /> Penyusunan Laporan Akhir Term
+                        </h5>
+                        {endOfTermReport?.reportStatus === 'completed' && (
+                          <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-lg text-[9px] font-black uppercase">
+                            Terkunci (Read Only)
+                          </span>
+                        )}
+                      </div>
+
+                      <fieldset disabled={endOfTermReport?.reportStatus === 'completed'} className="space-y-5 disabled:opacity-90">
+                        {/* 1. Status Capaian Akhir Term */}
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
+                            Capaian Akhir Term <span className="text-rose-500">*</span>
+                          </label>
+                          <select
+                            value={aspectForm.finalAchievementStatus || 'Mulai Berkembang'}
+                            onChange={(e) => updateAspectFormField('finalAchievementStatus', e.target.value)}
+                            className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                          >
+                            <option value="Perlu Stimulasi Lanjutan">Perlu Stimulasi Lanjutan</option>
+                            <option value="Mulai Berkembang">Mulai Berkembang</option>
+                            <option value="Berkembang Sesuai Harapan">Berkembang Sesuai Harapan</option>
+                            <option value="Melampaui Harapan">Melampaui Harapan</option>
+                          </select>
+                        </div>
+
+                        {/* 2. Narasi Perkembangan Anak */}
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
+                            Narasi Perkembangan Anak <span className="text-rose-500">*</span>
+                          </label>
+                          <textarea
+                            value={aspectForm.finalProgressNarrative || ''}
+                            onChange={(e) => updateAspectFormField('finalProgressNarrative', e.target.value)}
+                            rows={4}
+                            className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal"
+                            placeholder="Deskripsikan secara detail capaian riil dan kemajuan anak melintasi term ini harian berdasarkan fakta perkembangan..."
+                            required
+                          />
+                        </div>
+
+                        {/* 3. Strategi/Stimulasi Yang Telah Dilakukan */}
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
+                            Strategi & Stimulasi Yang Telah Dilakukan <span className="text-rose-500">*</span>
+                          </label>
+                          <textarea
+                            value={aspectForm.stimulationSummary || ''}
+                            onChange={(e) => updateAspectFormField('stimulationSummary', e.target.value)}
+                            rows={3}
+                            className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal"
+                            placeholder="Tuliskan kompilasi stimulasi yang dijalankan sekolah dalam program tindak lanjut term ini..."
+                            required
+                          />
+                        </div>
+
+                        {/* 4. Bukti Perkembangan Utama */}
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
+                            Bukti Perkembangan Utama <span className="text-rose-500">*</span>
+                          </label>
+                          <textarea
+                            value={aspectForm.mainEvidenceSummary || ''}
+                            onChange={(e) => updateAspectFormField('mainEvidenceSummary', e.target.value)}
+                            rows={3}
+                            className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal"
+                            placeholder="Tuliskan ringkasan bukti nyata (observasi relevan atau catatan anekdot) yang memvalidasi capaian di atas..."
+                            required
+                          />
+                        </div>
+
+                        {/* 5. Rekomendasi Tindak Lanjut Term Berikutnya */}
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
+                            Rekomendasi Tindak Lanjut Term Berikutnya <span className="text-rose-500">*</span>
+                          </label>
+                          <textarea
+                            value={aspectForm.nextTermRecommendation || ''}
+                            onChange={(e) => updateAspectFormField('nextTermRecommendation', e.target.value)}
+                            rows={3}
+                            className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal"
+                            placeholder="Saran fokus stimulasi, metode, atau target perkembangkan baru di term berikutnya..."
+                            required
+                          />
+                        </div>
+
+                        {/* 6. Rekomendasi Kolaborasi Di Rumah (Opsional) */}
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
+                            Rekomendasi Kolaborasi Di Rumah <span className="text-gray-400 font-bold">(Opsional)</span>
+                          </label>
+                          <textarea
+                            value={aspectForm.homeCollaborationRecommendation || ''}
+                            onChange={(e) => updateAspectFormField('homeCollaborationRecommendation', e.target.value)}
+                            rows={2}
+                            className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal"
+                            placeholder="Saran tips aktivitas menyenangkan yang dapat direplikasi orang tua bersama anak di rumah..."
+                          />
+                        </div>
+                      </fieldset>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Overall Teacher Summary Area */}
+          <div className="bg-white border border-gray-150 rounded-3xl p-6 md:p-8 shadow-sm space-y-4">
+            <div className="space-y-1 border-b border-gray-100 pb-3">
+              <h4 className="text-sm font-black text-gray-950 uppercase tracking-tight flex items-center gap-2">
+                <span className="w-1.5 h-3 bg-indigo-600 rounded"></span> Ringkasan Umum Guru (Kesimpulan Keseluruhan)
+              </h4>
+              <p className="text-xs text-gray-500">
+                Gambarkan kemajuan perkembangan anak secara holistik dan menyeluruh pada akhir semester ini.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <textarea
+                value={overallEndOfTermSummary}
+                onChange={(e) => setOverallEndOfTermSummary(e.target.value)}
+                disabled={endOfTermReport?.reportStatus === 'completed'}
+                rows={4}
+                className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed disabled:opacity-90 placeholder:font-normal"
+                placeholder="Tuliskan kesimpulan akhir perkembangan anak secara komprehensif melintasi seluruh aspek untuk orang tua..."
+              />
+            </div>
+
+            {/* Actions Panel */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-4 border-t border-gray-100">
+              <div className="text-[11px] text-gray-400 font-bold uppercase">
+                {endOfTermReport ? (
+                  `Terakhir diperbarui: ${new Date(endOfTermReport.updatedAt).toLocaleDateString('id-ID', {day: 'numeric', month: 'long', year: 'numeric'})}`
+                ) : (
+                  "Laporan Akhir belum pernah disimpan"
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                {endOfTermReport?.reportStatus === 'completed' ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setShowRevertEndOfTermConfirm(true)}
+                      className="px-5 py-2.5 bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-100 rounded-xl text-xs font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer flex items-center gap-2"
+                    >
+                      <Edit3 size={14} /> Buka Kunci (Kembalikan ke Draf)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer flex items-center gap-2 shadow-md animate-fade-in"
+                    >
+                      <Printer size={14} /> Cetak Laporan
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      disabled={isSavingEndOfTerm}
+                      onClick={() => handleSaveEndOfTermReport('draft')}
+                      className="px-5 py-2.5 bg-white text-gray-700 hover:bg-gray-50 border border-gray-200 rounded-xl text-xs font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                    >
+                      {isSavingEndOfTerm ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />} Simpan Draf
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isSavingEndOfTerm}
+                      onClick={() => {
+                        // Check validation
+                        const incompleteAspects: string[] = [];
+                        KM_ASPECTS.forEach(aspect => {
+                          const form = endOfTermForm[aspect.id];
+                          if (!form?.finalProgressNarrative?.trim() || !form?.stimulationSummary?.trim() || !form?.mainEvidenceSummary?.trim() || !form?.nextTermRecommendation?.trim()) {
+                            incompleteAspects.push(aspect.name);
+                          }
+                        });
+
+                        if (incompleteAspects.length > 0) {
+                          toast.error(
+                            `Mohon lengkapi semua field wajib (*) sebelum menyelesaikan. Aspek belum lengkap: \n- ` + 
+                            incompleteAspects.join('\n- ')
+                          );
+                          return;
+                        }
+
+                        if (!overallEndOfTermSummary.trim()) {
+                          toast.error("Mohon tulis Ringkasan Umum Guru sebelum menyelesaikan laporan.");
+                          return;
+                        }
+
+                        if (window.confirm("Apakah Anda yakin ingin menyelesaikan dan mengunci Laporan Akhir Term ini? Status akan menjadi Selesai dan tidak bisa diedit kecuali dibuka kuncinya.")) {
+                          handleSaveEndOfTermReport('completed');
+                        }
+                      }}
+                      className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shadow-md"
+                    >
+                      {isSavingEndOfTerm ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Selesaikan Laporan Akhir
+                    </button>
+                    <div className="relative group">
+                      <button
+                        type="button"
+                        disabled
+                        className="px-5 py-2.5 bg-gray-100 text-gray-400 border border-gray-200 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 cursor-not-allowed opacity-60"
+                        title="Selesaikan laporan akhir terlebih dahulu untuk mencetak laporan."
+                      >
+                        <Printer size={14} /> Cetak Laporan
+                      </button>
+                      <div className="absolute bottom-full mb-2 hidden group-hover:block w-64 p-2.5 bg-gray-950 text-white text-[10px] font-bold rounded-xl shadow-lg text-center z-50 left-1/2 -translate-x-1/2 leading-relaxed">
+                        Selesaikan laporan akhir terlebih dahulu untuk mencetak laporan.
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       ) : (
         // === REKAPITULASI KELAS (CLASS SUMMARY) ===
         <div className="bg-white rounded-3xl border border-gray-150 overflow-hidden shadow-sm">
@@ -3086,6 +4019,15 @@ export default function AAPReport() {
             <div className="p-6 space-y-3 text-xs leading-relaxed text-gray-600">
               <p>Apakah Anda yakin ingin membuka kunci Review Midterm ini?</p>
               <p className="text-gray-400">Status dokumen akan dikembalikan menjadi <b className="text-amber-700">Draf</b>, sehingga Anda dapat mengubah ringkasan perkembangan, rating perkembangan, dan rekomendasi aspek kembali.</p>
+              <div className="mt-3">
+                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Alasan Membuka Kunci (Opsional):</label>
+                <textarea
+                  value={revertReason}
+                  onChange={(e) => setRevertReason(e.target.value)}
+                  placeholder="Contoh: Koreksi catatan guru atau penambahan bukti..."
+                  className="w-full p-2.5 text-xs border border-gray-200 rounded-xl focus:outline-none focus:border-amber-500 bg-gray-50 resize-none h-16"
+                />
+              </div>
             </div>
             <div className="p-6 border-t border-gray-150 bg-gray-50/50 flex justify-end gap-3">
               <button
@@ -3098,6 +4040,47 @@ export default function AAPReport() {
               <button
                 type="button"
                 onClick={handleRevertMidtermToDraft}
+                className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-black rounded-xl text-xs uppercase tracking-wider shadow-sm transition-all active:scale-95 cursor-pointer"
+              >
+                Ya, Buka Kunci
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 4b: Revert End of Term back to Draft Confirmation */}
+      {showRevertEndOfTermConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-md flex flex-col border border-gray-150 overflow-hidden">
+            <div className="p-6 border-b border-gray-150 flex items-center gap-3 bg-amber-50/50">
+              <AlertCircle className="text-amber-600" size={20} />
+              <h3 className="text-sm font-black text-amber-950 uppercase tracking-tight">Buka Kunci Laporan Akhir</h3>
+            </div>
+            <div className="p-6 space-y-3 text-xs leading-relaxed text-gray-600">
+              <p>Apakah Anda yakin ingin membuka kunci Laporan Akhir Term ini?</p>
+              <p className="text-gray-400">Status dokumen akan dikembalikan menjadi <b className="text-amber-700">Draf</b>, sehingga Anda dapat mengubah isi draf, status capaian akhir, rekomendasi, dan ringkasan umum kembali.</p>
+              <div className="mt-3">
+                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Alasan Membuka Kunci (Opsional):</label>
+                <textarea
+                  value={revertReason}
+                  onChange={(e) => setRevertReason(e.target.value)}
+                  placeholder="Contoh: Koreksi catatan guru atau penambahan bukti..."
+                  className="w-full p-2.5 text-xs border border-gray-200 rounded-xl focus:outline-none focus:border-amber-500 bg-gray-50 resize-none h-16"
+                />
+              </div>
+            </div>
+            <div className="p-6 border-t border-gray-150 bg-gray-50/50 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowRevertEndOfTermConfirm(false)}
+                className="px-4 py-2 bg-white text-gray-700 hover:bg-gray-50 border border-gray-200 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleRevertEndOfTermToDraft}
                 className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-black rounded-xl text-xs uppercase tracking-wider shadow-sm transition-all active:scale-95 cursor-pointer"
               >
                 Ya, Buka Kunci
@@ -3189,25 +4172,215 @@ export default function AAPReport() {
         </div>
       )}
 
+      {/* Formal End of Term Print-only Report Container */}
+      <div 
+        id="formal-end-of-term-report" 
+        className="hidden print:block font-sans text-gray-900 bg-white p-0 m-0 w-full leading-relaxed"
+      >
+        {/* Kop Sekolah */}
+        <div className="border-b-2 border-emerald-800 pb-4 mb-6 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            {tkLogoUrl ? (
+              <img 
+                src={tkLogoUrl} 
+                alt="Logo Rapor" 
+                className="h-14 w-auto object-contain"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <>
+                <div className="bg-[#109E58] p-2 rounded-xl shrink-0">
+                  <svg className="w-10 h-10 text-white" viewBox="0 0 100 100" fill="currentColor">
+                    <path d="M50 10 C42 35 25 45 10 50 C25 55 42 65 50 90 C58 65 75 55 90 50 C75 45 58 35 50 10 Z" />
+                    <path d="M50 25 C45 40 35 48 25 50 C35 52 45 60 50 75 C55 60 65 52 75 50 C65 48 55 40 50 25 Z" fill="#109E58" />
+                  </svg>
+                </div>
+                <div className="text-left leading-tight">
+                  <span className="block font-sans text-lg font-black tracking-widest text-[#109E58] m-0">Lazuardi</span>
+                  <span className="block font-sans text-[10px] font-bold tracking-[0.25em] text-emerald-800 m-0 uppercase leading-none mt-0.5">KINDERGARTEN</span>
+                  <span className="block font-sans text-[7.5px] text-[#109E58]/80 mt-0.5 uppercase tracking-wider leading-none font-semibold">Global Compassionate School</span>
+                </div>
+              </>
+            )}
+          </div>
+          <div className="text-right">
+            <span className="block text-[10px] font-bold text-emerald-800 tracking-widest uppercase">LAZUARDI GCS KINDERGARTEN</span>
+            <span className="block text-xs font-black text-gray-500 uppercase mt-1">EOT REPORT • {selectedTermId?.toUpperCase()}</span>
+          </div>
+        </div>
+
+        {/* Judul Laporan */}
+        <div className="text-center mb-6">
+          <h1 className="text-lg font-black text-gray-900 tracking-wide uppercase">LAPORAN PERKEMBANGAN AKHIR TERM</h1>
+          <p className="text-xs font-bold text-gray-500 uppercase mt-1">TAHUN AJARAN {activeYear} • {selectedTermId}</p>
+        </div>
+
+        {/* Identitas Anak */}
+        <div className="border border-gray-300 rounded-xl p-4 mb-6 bg-gray-50/50">
+          <div className="grid grid-cols-2 gap-y-2 text-xs">
+            <div className="grid grid-cols-12">
+              <span className="col-span-4 font-bold text-gray-500">Nama Anak</span>
+              <span className="col-span-1 text-gray-400 text-center">:</span>
+              <span className="col-span-7 font-extrabold text-gray-900">{activeStudentObj?.name || '-'}</span>
+            </div>
+            <div className="grid grid-cols-12">
+              <span className="col-span-4 font-bold text-gray-500">Tahun Ajaran</span>
+              <span className="col-span-1 text-gray-400 text-center">:</span>
+              <span className="col-span-7 font-extrabold text-gray-900">{activeYear}</span>
+            </div>
+            <div className="grid grid-cols-12">
+              <span className="col-span-4 font-bold text-gray-500">Kelas</span>
+              <span className="col-span-1 text-gray-400 text-center">:</span>
+              <span className="col-span-7 font-extrabold text-gray-900">{activeClassObj?.name || '-'}</span>
+            </div>
+            <div className="grid grid-cols-12">
+              <span className="col-span-4 font-bold text-gray-500">Term / Kuartal</span>
+              <span className="col-span-1 text-gray-400 text-center">:</span>
+              <span className="col-span-7 font-extrabold text-gray-900">{selectedTermId}</span>
+            </div>
+            <div className="grid grid-cols-12">
+              <span className="col-span-4 font-bold text-gray-500">Diselesaikan</span>
+              <span className="col-span-1 text-gray-400 text-center">:</span>
+              <span className="col-span-7 font-extrabold text-gray-900">
+                {endOfTermReport?.completedAt ? (
+                  new Date(endOfTermReport.completedAt).toLocaleDateString('id-ID', {day: 'numeric', month: 'long', year: 'numeric'})
+                ) : (
+                  new Date().toLocaleDateString('id-ID', {day: 'numeric', month: 'long', year: 'numeric'})
+                )}
+              </span>
+            </div>
+            <div className="grid grid-cols-12">
+              <span className="col-span-4 font-bold text-gray-500">Guru Kelas</span>
+              <span className="col-span-1 text-gray-400 text-center">:</span>
+              <span className="col-span-7 font-extrabold text-gray-900">{profile?.name || '-'}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Ringkasan Umum Guru */}
+        <div className="mb-6 avoid-break">
+          <h2 className="text-xs font-black text-emerald-800 uppercase tracking-widest border-l-4 border-emerald-600 pl-2.5 mb-3">RINGKASAN UMUM PERKEMBANGAN (OVERALL SUMMARY)</h2>
+          <div className="border border-gray-200 rounded-xl p-4 bg-white shadow-sm leading-relaxed text-xs text-gray-800 whitespace-pre-wrap font-medium">
+            {overallEndOfTermSummary || 'Belum ada ringkasan perkembangan umum.'}
+          </div>
+        </div>
+
+        {/* Perkembangan per Aspek */}
+        <div className="space-y-6">
+          <h2 className="text-xs font-black text-emerald-800 uppercase tracking-widest border-l-4 border-emerald-600 pl-2.5 mb-4">CAPAIAN PERKEMBANGAN BERDASARKAN ASPEK AKTIF</h2>
+          
+          {KM_ASPECTS.map((aspect) => {
+            const form = endOfTermForm[aspect.id] || {};
+            const achievementStatus = form.finalAchievementStatus || 'Mulai Berkembang';
+            const progressNarrative = form.finalProgressNarrative || '';
+            const stimulationSummary = form.stimulationSummary || '';
+            const mainEvidenceSummary = form.mainEvidenceSummary || '';
+            const nextTermRecommendation = form.nextTermRecommendation || '';
+            const homeCollaborationRecommendation = form.homeCollaborationRecommendation || '';
+
+            return (
+              <div key={aspect.id} className="border border-gray-200 rounded-xl p-4 bg-white avoid-break shadow-sm space-y-4">
+                {/* Header Aspek */}
+                <div className="flex justify-between items-start border-b border-gray-100 pb-2">
+                  <div className="max-w-[70%]">
+                    <h3 className="text-xs font-extrabold text-gray-900 uppercase leading-snug">{aspect.name}</h3>
+                    <p className="text-[10px] text-gray-400 font-bold mt-0.5">{aspect.description}</p>
+                  </div>
+                  <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 font-black text-[10px] uppercase rounded-lg border border-emerald-100 shrink-0">
+                    {achievementStatus}
+                  </span>
+                </div>
+
+                {/* Grid Konten Detail */}
+                <div className="space-y-3.5 text-xs text-gray-800">
+                  <div>
+                    <h4 className="text-[10px] font-black text-emerald-800 uppercase tracking-wider mb-1">Narasi Perkembangan</h4>
+                    <p className="leading-relaxed font-medium whitespace-pre-wrap bg-gray-50/50 p-2.5 rounded-lg border border-gray-100">{progressNarrative || '-'}</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <h4 className="text-[10px] font-black text-emerald-800 uppercase tracking-wider mb-1">Strategi Stimulasi yang Telah Dilakukan</h4>
+                      <p className="leading-relaxed font-medium whitespace-pre-wrap bg-gray-50/50 p-2.5 rounded-lg border border-gray-100">{stimulationSummary || '-'}</p>
+                    </div>
+                    <div>
+                      <h4 className="text-[10px] font-black text-emerald-800 uppercase tracking-wider mb-1">Bukti Perkembangan Utama</h4>
+                      <p className="leading-relaxed font-medium whitespace-pre-wrap bg-gray-50/50 p-2.5 rounded-lg border border-gray-100">{mainEvidenceSummary || '-'}</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="text-[10px] font-black text-emerald-800 uppercase tracking-wider mb-1">Rekomendasi Tindak Lanjut Term Berikutnya</h4>
+                    <p className="leading-relaxed font-medium whitespace-pre-wrap bg-gray-50/50 p-2.5 rounded-lg border border-gray-100">{nextTermRecommendation || '-'}</p>
+                  </div>
+
+                  {homeCollaborationRecommendation && homeCollaborationRecommendation.trim() !== '' && (
+                    <div>
+                      <h4 className="text-[10px] font-black text-emerald-800 uppercase tracking-wider mb-1">Rekomendasi Kolaborasi di Rumah</h4>
+                      <p className="leading-relaxed font-medium whitespace-pre-wrap bg-gray-50/50 p-2.5 rounded-lg border border-gray-100">{homeCollaborationRecommendation}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Penutup */}
+        <div className="mt-8 mb-12 avoid-break text-center">
+          <p className="text-xs font-semibold text-gray-500 italic">
+            "Terima kasih atas kerja sama Bapak/Ibu dalam mendukung perkembangan dan potensi ananda secara menyeluruh selama term ini. Mari kita terus berkolaborasi demi stimulasi terbaik anak."
+          </p>
+        </div>
+
+        {/* Tanda Tangan */}
+        <div className="grid grid-cols-2 gap-8 text-center text-xs mt-12 avoid-break">
+          <div className="flex flex-col items-center justify-between h-24">
+            <span className="font-bold text-gray-500">Mengetahui, Orang Tua / Wali</span>
+            <div className="w-32 border-b border-gray-400 mt-8"></div>
+            <span className="font-extrabold text-gray-900 mt-1">(............................................)</span>
+          </div>
+          <div className="flex flex-col items-center justify-between h-24">
+            <span className="font-bold text-gray-500">Yogyakarta, {new Date(endOfTermReport?.completedAt || Date.now()).toLocaleDateString('id-ID', {day: 'numeric', month: 'long', year: 'numeric'})}</span>
+            <div className="w-32 border-b border-gray-400 mt-8"></div>
+            <span className="font-extrabold text-gray-900 mt-1">{profile?.name || 'Guru Kelas'}</span>
+          </div>
+        </div>
+      </div>
+
       {/* Modern styles injection */}
       <style>{`
         @media print {
           body {
             background-color: #ffffff !important;
             color: #000000 !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
-          .print\\:hidden {
-            display: none !important;
+          /* Hide all screen elements */
+          body * {
+            visibility: hidden !important;
           }
-          #printable-aap-report {
-            border: none !important;
-            box-shadow: none !important;
-            padding: 0 !important;
-            margin: 0 !important;
+          /* Show only our printable EOT report */
+          #formal-end-of-term-report,
+          #formal-end-of-term-report * {
+            visibility: visible !important;
+          }
+          /* Absolute layout for printing */
+          #formal-end-of-term-report {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
             width: 100% !important;
+            display: block !important;
+          }
+          @page {
+            size: A4 portrait;
+            margin: 1cm 1.2cm 1cm 1.2cm;
           }
           .avoid-break {
             page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
         }
       `}</style>
