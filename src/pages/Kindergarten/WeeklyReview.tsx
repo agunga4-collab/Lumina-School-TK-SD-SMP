@@ -1002,12 +1002,12 @@ export default function WeeklyReview() {
 
     return (
       <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col h-full shadow-sm">
-        <div className="bg-[#109E58] text-white text-center py-1 font-extrabold text-[10px] tracking-wider uppercase">
-          SNAPSHOT - {dayKey}
+        <div className="bg-[#109E58] text-white text-center flex items-center justify-center h-[23px] font-bold text-[12px] leading-[1.2] tracking-wider uppercase">
+          SNAPSHOT – {dayKey}
         </div>
         <div className="p-1.5 flex-1 flex flex-col justify-start bg-white gap-2">
           {snap?.photoUrl && !hasError ? (
-            <div className="h-[180px] aspect-[3/4] mx-auto overflow-hidden rounded-sm border border-gray-100 bg-gray-50 flex items-center justify-center">
+            <div className="h-[160px] aspect-[3/4] mx-auto overflow-hidden rounded-sm border border-gray-100 bg-gray-50 flex items-center justify-center">
               <img 
                 src={snap.photoUrl} 
                 alt={`Snapshot ${dayKey}`} 
@@ -1022,20 +1022,24 @@ export default function WeeklyReview() {
               />
             </div>
           ) : hasError ? (
-            <div className="h-[180px] aspect-[3/4] mx-auto bg-red-50/50 border border-red-100 flex flex-col items-center justify-center p-2 text-center rounded-sm">
+            <div className="h-[160px] aspect-[3/4] mx-auto bg-red-50/50 border border-red-100 flex flex-col items-center justify-center p-2 text-center rounded-sm">
               <span className="text-[10px] text-red-600 font-bold leading-tight">Dokumentasi tidak dapat dimuat</span>
             </div>
           ) : (
-            <div className="h-[180px] aspect-[3/4] mx-auto bg-gray-50/50 border border-dashed border-gray-200 flex items-center justify-center p-2 text-center rounded-sm">
+            <div className="h-[160px] aspect-[3/4] mx-auto bg-gray-50/50 border border-dashed border-gray-200 flex items-center justify-center p-2 text-center rounded-sm">
               <span className="text-[9px] text-gray-400 font-bold italic leading-tight">Belum ada dokumentasi</span>
             </div>
           )}
           
-          {caption && caption.trim() !== '' && (
-            <p className="text-[9.5px] leading-relaxed text-gray-600 italic font-medium px-0.5 line-clamp-3 text-center" title={caption}>
-              {caption}
-            </p>
-          )}
+          <div className="min-h-[26px] px-2 py-[5px] flex items-center justify-center">
+            {caption && caption.trim() !== '' ? (
+              <p className="text-[10.5px] leading-[1.3] text-gray-600 italic font-medium text-center line-clamp-2" title={caption}>
+                {caption}
+              </p>
+            ) : (
+              <span className="text-[9.5px] text-gray-300 italic">-</span>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -1509,24 +1513,26 @@ export default function WeeklyReview() {
 
             {/* Section pertama: WEEKLY COMMENTS */}
             <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex-1 flex flex-col min-h-[180px] my-3">
-              <div className="bg-[#109E58] text-white text-center py-1 font-extrabold text-[10px] tracking-wider uppercase">
+              <div className="bg-[#109E58] text-white text-center flex items-center justify-center h-[27px] font-bold text-[13px] leading-[1.2] tracking-wider uppercase">
                 WEEKLY COMMENTS
               </div>
-              <div className="p-3.5 text-[10.5px] leading-relaxed text-left text-gray-800 bg-white flex-1 whitespace-pre-wrap font-medium">
+              <div className="px-[16px] py-[14px] text-[14px] leading-[1.58] text-left text-gray-900 bg-white flex-1 whitespace-pre-wrap font-normal">
                 {finalWeeklyComments || (
-                  <span className="text-gray-400 italic">Komentar perkembangan mingguan belum diisi oleh guru.</span>
+                  <span className="text-[13px] text-gray-400 italic">Komentar perkembangan mingguan belum diisi oleh guru.</span>
                 )}
               </div>
             </div>
 
             {/* Section kedua: SOCIAL-EMOTIONAL LEARNING DEVELOPMENT */}
             <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex-1 flex flex-col min-h-[180px] mb-3">
-              <div className="bg-[#109E58] text-white text-center py-1 font-extrabold text-[10px] tracking-wider uppercase">
+              <div className="bg-[#109E58] text-white text-center flex items-center justify-center h-[27px] font-bold text-[13px] leading-[1.2] tracking-wider uppercase">
                 SOCIAL-EMOTIONAL LEARNING DEVELOPMENT
               </div>
-              <div className="p-3.5 text-[10.5px] leading-relaxed text-left text-gray-800 bg-white flex-1 whitespace-pre-wrap font-medium">
-                {finalSocialEmotional || (
-                  <span className="text-gray-400 italic block">Komentar sosial-emosional belum diisi oleh guru.</span>
+              <div className="px-[16px] py-[14px] text-left text-gray-900 bg-white flex-1 whitespace-pre-wrap font-normal">
+                {finalSocialEmotional ? (
+                  <div className="text-[14px] leading-[1.55]">{finalSocialEmotional}</div>
+                ) : (
+                  <span className="text-[13px] text-gray-400 italic block">Komentar sosial-emosional belum diisi oleh guru.</span>
                 )}
               </div>
             </div>
