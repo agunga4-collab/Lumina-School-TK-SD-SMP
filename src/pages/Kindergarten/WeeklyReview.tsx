@@ -1487,7 +1487,7 @@ export default function WeeklyReview() {
           </div>
 
           {/* PAGE 2 — TEACHER COMMENTS & SOCIAL-EMOTIONAL LEARNING DEVELOPMENT */}
-          <div className="weekly-report-page page-2 bg-white px-8 py-4 md:px-12 md:py-6 shadow-sm border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-between gap-3.5 print:border-none print:shadow-none print:p-0 print:m-0" id="weekly-report-page-2">
+          <div className="weekly-report-page page-2 bg-white px-8 py-4 md:px-12 md:py-6 shadow-sm border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-start gap-0 print:border-none print:shadow-none print:p-0 print:m-0" id="weekly-report-page-2">
             
             {/* Header ringkas */}
             <div className="border-b-2 border-emerald-600 pb-2 flex justify-between items-center text-xs">
@@ -1512,7 +1512,7 @@ export default function WeeklyReview() {
             </div>
 
             {/* Section pertama: WEEKLY COMMENTS */}
-            <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex-1 flex flex-col min-h-[180px] my-3">
+            <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col min-h-[145px] mt-4">
               <div className="bg-[#109E58] text-white text-center flex items-center justify-center h-[27px] font-bold text-[13px] leading-[1.2] tracking-wider uppercase">
                 WEEKLY COMMENTS
               </div>
@@ -1523,8 +1523,11 @@ export default function WeeklyReview() {
               </div>
             </div>
 
+            {/* Spasi antara komentar */}
+            <div className="h-[22px]"></div>
+
             {/* Section kedua: SOCIAL-EMOTIONAL LEARNING DEVELOPMENT */}
-            <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex-1 flex flex-col min-h-[180px] mb-3">
+            <div className={`border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col ${finalSocialEmotional ? 'min-h-[145px]' : 'min-h-[150px]'}`}>
               <div className="bg-[#109E58] text-white text-center flex items-center justify-center h-[27px] font-bold text-[13px] leading-[1.2] tracking-wider uppercase">
                 SOCIAL-EMOTIONAL LEARNING DEVELOPMENT
               </div>
@@ -1537,40 +1540,35 @@ export default function WeeklyReview() {
               </div>
             </div>
 
-            {/* Area Tanda Tangan */}
-            <div className="grid grid-cols-2 gap-8 text-center text-xs mt-3 mb-1">
-              {/* Parent Signature (Left) */}
-              <div className="flex flex-col items-center justify-between h-20">
-                <span className="font-bold text-gray-500 text-[9.5px]">Mengetahui, Orang Tua / Wali</span>
-                <div className="w-32 border-b border-gray-400 mt-6"></div>
-                <span className="font-extrabold text-gray-900 text-[9.5px] mt-1">(............................................)</span>
-              </div>
-
-              {/* Teacher Signature (Right) */}
-              <div className="flex flex-col items-center justify-between h-20">
-                <span className="font-bold text-gray-500 text-[9.5px]">{formattedSignDate}</span>
-                <div className="h-8 flex items-center justify-center">
+            {/* Area Tanda Tangan: Guru Kelas Centered */}
+            <div className="w-full flex justify-center mt-8 mb-4">
+              <div className="flex flex-col items-center text-center text-xs w-64">
+                <span className="font-bold text-gray-500 text-[10px]">{formattedSignDate}</span>
+                <span className="font-bold text-gray-600 text-[10.5px] mt-0.5">Guru Kelas</span>
+                
+                <div className="h-[68px] flex items-center justify-center my-2">
                   {activeClassObj?.teacherSignatureUrl ? (
                     <img
                       src={activeClassObj.teacherSignatureUrl}
                       alt="Tanda Tangan Guru"
-                      className="max-h-8 max-w-[120px] object-contain mix-blend-multiply"
+                      className="max-h-[64px] object-contain mix-blend-multiply"
                       referrerPolicy="no-referrer"
                     />
                   ) : (
-                    <span className="text-[7.5px] text-red-500 italic font-bold select-none leading-tight">
+                    <span className="text-[9px] text-red-500 italic font-bold select-none leading-tight">
                       Belum ditandatangani
                     </span>
                   )}
                 </div>
+
                 <div className="text-center font-sans flex flex-col items-center gap-0.5 w-full">
-                  <span className="text-center font-extrabold text-[10px] text-gray-900 border-b border-solid border-gray-900 w-36 pb-0.5 mx-auto uppercase">
+                  <span className="text-center font-extrabold text-[11px] text-gray-900 border-b border-solid border-gray-900 w-44 pb-0.5 mx-auto uppercase">
                     {activeClassObj?.homeroomTeacherName ? activeClassObj.homeroomTeacherName.replace(/^\s*\(UNDANGAN\)\s*/i, "") : (
-                      <span className="text-red-500 italic font-bold text-[9px]">Guru Kelas Belum Diatur</span>
+                      <span className="text-red-500 italic font-bold text-[10px]">Guru Kelas Belum Diatur</span>
                     )}
                   </span>
                   
-                  <span className="print:block hidden text-center text-[8.5px] text-gray-500 font-bold uppercase mt-0.5">
+                  <span className="print:block hidden text-center text-[9px] text-gray-500 font-bold uppercase mt-1">
                     {teacherNip ? `NIP. ${teacherNip}` : ''}
                   </span>
                   <input 
@@ -1582,14 +1580,14 @@ export default function WeeklyReview() {
                       localStorage.setItem('kg_teacher_nip', val);
                     }}
                     placeholder="NIP / No Registrasi"
-                    className="print:hidden text-center text-[8.5px] text-gray-500 font-bold uppercase w-32 outline-none border-b border-dotted border-gray-200 focus:border-solid focus:border-emerald-500 mt-0.5"
+                    className="print:hidden text-center text-[9px] text-gray-500 font-bold uppercase w-36 outline-none border-b border-dotted border-gray-200 focus:border-solid focus:border-emerald-500 mt-1"
                   />
                 </div>
               </div>
             </div>
 
             {/* FOOTER BLOCK: Exact matching of Griya Cinere school contacts */}
-            <div className="bg-[#109E58] text-white text-center py-2 px-4 text-[8px] font-sans rounded-sm border-t border-emerald-300">
+            <div className="bg-[#109E58] text-white text-center py-2 px-4 text-[8px] font-sans rounded-sm border-t border-emerald-300 mt-auto">
               <div className="font-bold tracking-wide uppercase">{`Griya Cinere I, Jl. Garuda Ujung No. 35, Cinere, Kec Limo, Kota Depok, Jawa Barat 16515`}</div>
               <div className="text-[7.5px] mt-0.5 opacity-90 font-medium">{`Telp. (021) 753 4841   Email: information@lazuardi.sch.id   WhatsApp: +62 813 8925 7784`}</div>
             </div>
