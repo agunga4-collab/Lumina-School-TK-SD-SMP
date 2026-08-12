@@ -816,6 +816,66 @@ export default function WeeklyReview() {
 
       toast.loading("Menyimpan arsip publikasi...", { id: "publish-kg" });
 
+      const attPresent = (finalAttendance.happy || 0) + (finalAttendance.sad || 0) + (finalAttendance.angry || 0) + (finalAttendance.ok || 0);
+      const attSick = finalAttendance.sick || 0;
+      const attPermission = finalAttendance.izin || 0;
+      const attAbsentWithoutNotice = finalAttendance.noNews || 0;
+      const attTotalSchoolDays = attPresent + attSick + attPermission + attAbsentWithoutNotice;
+
+      const getDayDateStr = (mondayStr: string, addDays: number): string => {
+        try {
+          const d = new Date(mondayStr);
+          d.setDate(d.getDate() + addDays);
+          const yr = d.getFullYear();
+          const mo = String(d.getMonth() + 1).padStart(2, '0');
+          const da = String(d.getDate()).padStart(2, '0');
+          return `${yr}-${mo}-${da}`;
+        } catch (e) {
+          return '';
+        }
+      };
+
+      const buildDayDocumentation = (dayKey: string, addDays: number, dayNameEn: string) => {
+        const snap = finalSnapshots?.find((s: any) => s.dayKey?.toUpperCase() === dayKey.toUpperCase());
+        const captionVal = getCaptionForDay(dayKey);
+        
+        const items = (loadedDraft?.weeklyObservationItems || []).filter((item: any) => {
+          const itemDay = item.dayLabel || '';
+          return itemDay.toUpperCase() === dayKey.toUpperCase() || 
+                 (dayKey === 'MONDAY' && (itemDay === 'Monday' || itemDay === 'Senin')) ||
+                 (dayKey === 'TUESDAY' && (itemDay === 'Tuesday' || itemDay === 'Selasa')) ||
+                 (dayKey === 'WEDNESDAY' && (itemDay === 'Wednesday' || itemDay === 'Rabu')) ||
+                 (dayKey === 'THURSDAY' && (itemDay === 'Thursday' || itemDay === 'Kamis')) ||
+                 (dayKey === 'FRIDAY' && (itemDay === 'Friday' || itemDay === 'Jumat'));
+        });
+        
+        const activities = items.map((i: any) => i.activity).filter(Boolean);
+        const activityName = activities.length > 0 ? Array.from(new Set(activities)).join(', ') : null;
+        
+        const rawUrls: string[] = [];
+        if (snap?.photoUrl) {
+          rawUrls.push(snap.photoUrl);
+        }
+        items.forEach((item: any) => {
+          if (item.photoUrl) rawUrls.push(item.photoUrl);
+          if (item.generalPhotoUrl) rawUrls.push(item.generalPhotoUrl);
+        });
+        const imageUrls = Array.from(new Set(rawUrls)).filter(Boolean);
+        const imageUrl = imageUrls.length > 0 ? imageUrls[0] : null;
+
+        const hasDocumentation = imageUrls.length > 0 || (captionVal !== null && captionVal.trim() !== '');
+
+        return {
+          date: getDayDateStr(startDateStr, addDays),
+          dayLabel: dayNameEn,
+          activityName: hasDocumentation ? (activityName || null) : null,
+          caption: hasDocumentation ? (captionVal || null) : null,
+          imageUrl: hasDocumentation ? (imageUrl || null) : null,
+          imageUrls: hasDocumentation ? imageUrls : [],
+          hasDocumentation
+        };
+      };
+
       const reportPayload = {
         classId: selectedClassId,
         className: activeClassObj?.name || 'Unknown Class',
@@ -830,7 +890,59 @@ export default function WeeklyReview() {
         socialEmotional: finalSocialEmotional,
         publishedAt: Date.now(),
         driveFileId,
-        driveFileUrl
+        driveFileUrl,
+
+        // Metadata publisher
+        publishedBy: profile?.uid || 'Unknown',
+        publishedByEmail: profile?.email || 'Unknown',
+
+        // Snapshot data
+        reportSnapshot: {
+          version: 1,
+          createdAt: Date.now(),
+
+          student: {
+            id: selectedStudentId,
+            name: loadedDraft.studentName,
+            classId: selectedClassId,
+            className: activeClassObj?.name || 'Unknown Class'
+          },
+
+          period: {
+            startDate: startDateStr,
+            endDate: endDateStr,
+            month: loadedDraft?.monthLabel || formattedMonth || '',
+            weekLabel: String(finalWeek),
+            theme: finalTheme
+          },
+
+          weeklyComments: finalWeeklyComments,
+          socialEmotionalComment: finalSocialEmotional,
+
+          attendanceSummary: {
+            present: attPresent,
+            sick: attSick,
+            permission: attPermission,
+            absentWithoutNotice: attAbsentWithoutNotice,
+            totalSchoolDays: attTotalSchoolDays
+          },
+
+          moodSummary: {
+            happy: finalAttendance.happy || 0,
+            okay: finalAttendance.ok || 0,
+            sad: finalAttendance.sad || 0,
+            angry: finalAttendance.angry || 0,
+            other: finalAttendance.earlyLeave || 0
+          },
+
+          dailyDocumentation: {
+            monday: buildDayDocumentation('MONDAY', 0, 'Monday'),
+            tuesday: buildDayDocumentation('TUESDAY', 1, 'Tuesday'),
+            wednesday: buildDayDocumentation('WEDNESDAY', 2, 'Wednesday'),
+            thursday: buildDayDocumentation('THURSDAY', 3, 'Thursday'),
+            friday: buildDayDocumentation('FRIDAY', 4, 'Friday')
+          }
+        }
       };
       
       await addDoc(collection(db, 'published_kg_reports'), reportPayload);

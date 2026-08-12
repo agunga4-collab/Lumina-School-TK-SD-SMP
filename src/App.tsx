@@ -112,6 +112,7 @@ import ParentStudents from './pages/Parent/ParentStudents';
 import ReportConfigPage from './pages/Settings/ReportConfig';
 import LearningPowerUpStudentPage from './pages/Student/LearningPowerUpStudentPage';
 import LearningPowerUpTeacherPage from './pages/JuniorHigh/LearningPowerUpTeacherPage';
+import WeeklyReportDetail from './pages/Kindergarten/WeeklyReportDetail';
 
 // High-level wrapper for Admin-only access
 function AdminGuard({ children }: { children: React.ReactNode }) {
@@ -585,6 +586,16 @@ export default function App() {
                   </RoleGuard>
                 } 
              />
+             <Route 
+                path="weekly-report/:reportId" 
+                element={
+                  <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
+                    <MenuVisibilityGuard menuKey="reportCards">
+                      <WeeklyReportDetail />
+                    </MenuVisibilityGuard>
+                  </RoleGuard>
+                } 
+             />
           </Route>
 
           {/* Parent Portal */}
@@ -608,6 +619,7 @@ export default function App() {
                   </RoleGuard>
                 } 
              />
+
              <Route 
                 path="students" 
                 element={

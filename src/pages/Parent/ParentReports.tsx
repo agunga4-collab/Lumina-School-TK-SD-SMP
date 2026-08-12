@@ -39,6 +39,7 @@ type WeeklyReport = {
   endDate?: string;
   theme?: string;
   className?: string;
+  reportSnapshot?: any;
 };
 
 function uniqueStrings(values: Array<string | undefined | null>) {
@@ -197,46 +198,8 @@ export default function ParentReports() {
           });
 
         setReports(filteredReports);
-
-        // Weekly KG reports can still be queried narrowly by studentId
-        try {
-          const fetchedWeekly: WeeklyReport[] = [];
-          const seenIds = new Set<string>();
-
-          for (const sid of studentIdsToSearch) {
-            try {
-              const qWeekly = query(
-                collection(db, 'published_kg_reports'),
-                where('studentId', '==', sid)
-              );
-
-              const weeklySnap = await getDocs(qWeekly);
-
-              weeklySnap.docs.forEach((docSnap) => {
-                if (!seenIds.has(docSnap.id)) {
-                  seenIds.add(docSnap.id);
-                  fetchedWeekly.push({
-                    id: docSnap.id,
-                    ...(docSnap.data() as Omit<WeeklyReport, 'id'>)
-                  });
-                }
-              });
-            } catch (subErr) {
-              console.warn(`[ParentReports] Weekly query failed for ${sid}:`, subErr);
-            }
-          }
-
-          const sentWeekly = fetchedWeekly
-            .filter((report) => report.sentToParent === true)
-            .sort((a, b) => Number(b.publishedAt || 0) - Number(a.publishedAt || 0));
-
-          setWeeklyReports(sentWeekly);
-          setActiveTab(sentWeekly.length > 0 ? 'WEEKLY' : 'ACADEMIC');
-        } catch (weeklyErr) {
-          console.error('Error fetching weekly reports for parent view:', weeklyErr);
-          setWeeklyReports([]);
-          setActiveTab('ACADEMIC');
-        }
+        setWeeklyReports([]);
+        setActiveTab('ACADEMIC');
       } catch (err) {
         console.error(err);
         setReports([]);
@@ -315,18 +278,6 @@ export default function ParentReports() {
           )}
         >
           Rapor Akhir Semester & Academic
-        </button>
-        <button
-          id="tab-btn-weekly"
-          onClick={() => setActiveTab('WEEKLY')}
-          className={cn(
-            'px-4 py-2 font-bold uppercase text-[11px] tracking-wider transition-all border-b-2 -mb-[2px] text-left sm:text-center cursor-pointer',
-            activeTab === 'WEEKLY'
-              ? 'border-emerald-600 text-emerald-600'
-              : 'border-transparent text-gray-400 hover:text-gray-600'
-          )}
-        >
-          Laporan Mingguan (Weekly Report)
         </button>
       </div>
 
@@ -502,7 +453,7 @@ export default function ParentReports() {
                       href={report.driveFileUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-gray-900 text-white rounded-xl font-extrabold uppercase text-[9px] tracking-widest hover:bg-[#109E58] transition-all shadow-sm cursor-pointer"
+                      className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-gray-900 text-white rounded-xl font-extrabold uppercase text-[9px] tracking-widest hover:bg-[#109E58] transition-all shadow-sm cursor-pointer text-center"
                     >
                       <Eye size={12} /> Buka di Drive
                     </a>

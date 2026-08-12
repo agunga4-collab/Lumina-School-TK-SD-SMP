@@ -135,15 +135,36 @@ export default function StudentReports() {
                           </span>
                         </td>
                         <td className="py-5 px-6 text-right">
-                          <div className="flex justify-end gap-2">
+                          <div className="flex flex-col sm:flex-row justify-end items-end sm:items-center gap-2">
+                            {report.reportSnapshot ? (
+                              <Link
+                                to={`/student/weekly-report/${report.id}`}
+                                className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm"
+                              >
+                                <Eye size={12} /> Lihat Mobile
+                              </Link>
+                            ) : (
+                              <div className="flex flex-col items-end">
+                                <button
+                                  disabled
+                                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-gray-100 text-gray-400 rounded-xl text-xs font-black uppercase tracking-wider border border-gray-200 cursor-not-allowed"
+                                >
+                                  <Eye size={12} /> Lihat Mobile
+                                </button>
+                                <span className="text-[9px] text-gray-400 font-bold mt-1 text-right max-w-[180px] leading-normal">
+                                  Tampilan mobile tersedia untuk laporan setelah pembaruan sistem.
+                                </span>
+                              </div>
+                            )}
+
                             {report.driveFileUrl && (
                               <a
                                 href={report.driveFileUrl}
                                 target="_blank"
                                 rel="referrer noopener noreferrer"
-                                className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm"
+                                className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm whitespace-nowrap"
                               >
-                                <Eye size={14} /> Lihat Rapor
+                                <FileText size={12} /> Lihat PDF
                               </a>
                             )}
                           </div>
