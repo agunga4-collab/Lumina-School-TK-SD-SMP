@@ -98,18 +98,25 @@ export default function WeeklyReportDetail() {
           return;
         }
 
-        // Student-only restriction
-        const userStudentId = currentUser?.luminaId;
-        if (!userStudentId || userStudentId.trim() !== reportStudentId.trim()) {
-          setError("Anda tidak memiliki izin untuk melihat laporan ini.");
-          setLoading(false);
-          return;
+        // Access controls
+        const isStudent = currentUser?.role === 'STUDENT';
+        if (isStudent) {
+          const userStudentId = currentUser?.luminaId;
+          if (!userStudentId || userStudentId.trim() !== reportStudentId.trim()) {
+            setError("Anda tidak memiliki izin untuk melihat laporan ini.");
+            setLoading(false);
+            return;
+          }
+          if (reportData.status !== 'sent') {
+            setError("Laporan ini belum dikirim atau tidak dapat diakses.");
+            setLoading(false);
+            return;
+          }
         }
 
         setReport(reportData);
 
         // Tracking viewed status for authenticated students (not for admin/teachers/BK)
-        const isStudent = currentUser?.role === 'STUDENT';
         if (isStudent && trackedReportIdRef.current !== reportId) {
           trackedReportIdRef.current = reportId;
           const updatePayload: any = {

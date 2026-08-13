@@ -41,15 +41,15 @@ export default function StudentReports() {
             const q = query(
               collection(db, 'published_kg_reports'),
               where('studentId', '==', studentId.trim()),
-              where('academicYear', '==', activeYear)
+              where('academicYear', '==', activeYear),
+              where('status', '==', 'sent')
             );
             const snap = await getDocs(q);
             const list = snap.docs.map(docSnap => ({
               id: docSnap.id,
               ...docSnap.data()
             } as any));
-            const filteredList = list.filter((r: any) => !r.status || r.status.toLowerCase() === 'published');
-            setKgReports(filteredList.sort((a: any, b: any) => (b.publishedAt || 0) - (a.publishedAt || 0)));
+            setKgReports(list.sort((a: any, b: any) => (b.publishedAt || 0) - (a.publishedAt || 0)));
           } else {
             const allReports = await getReportCards({
                unitId: student.unitId as any,

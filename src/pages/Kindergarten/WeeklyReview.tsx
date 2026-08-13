@@ -617,13 +617,17 @@ export default function WeeklyReview() {
 
   const [publishedReports, setPublishedReports] = React.useState<any[]>([]);
   const [archivedReports, setArchivedReports] = React.useState<any[]>([]);
-  const [publishedSubTab, setPublishedSubTab] = React.useState<'PUBLISHED' | 'ARCHIVED'>('PUBLISHED');
+  const [publishedSubTab, setPublishedSubTab] = React.useState<'READY_TO_SEND' | 'SENT' | 'ARCHIVED'>('READY_TO_SEND');
   
   const [archiveModalOpen, setArchiveModalOpen] = React.useState(false);
   const [reportToArchive, setReportToArchive] = React.useState<any | null>(null);
   const [archiveReason, setArchiveReason] = React.useState('');
   const [isArchiving, setIsArchiving] = React.useState(false);
   const [expandedReasons, setExpandedReasons] = React.useState<Record<string, boolean>>({});
+
+  const [sendConfirmModalOpen, setSendConfirmModalOpen] = React.useState(false);
+  const [reportToSend, setReportToSend] = React.useState<any | null>(null);
+  const [isSending, setIsSending] = React.useState(false);
 
   const [isPublishing, setIsPublishing] = React.useState(false);
 
@@ -665,6 +669,10 @@ export default function WeeklyReview() {
 
   const filteredPublishedReports = React.useMemo(() => {
     return publishedReports.filter(report => {
+      const expectedStatus = publishedSubTab === 'READY_TO_SEND' ? 'ready_to_send' : 'sent';
+      if (report.status !== expectedStatus) {
+        return false;
+      }
       if (publishedClassFilter !== 'ALL' && report.classId !== publishedClassFilter && report.className !== publishedClassFilter) {
         return false;
       }
@@ -679,7 +687,7 @@ export default function WeeklyReview() {
       }
       return true;
     });
-  }, [publishedReports, publishedClassFilter, publishedSearchQuery]);
+  }, [publishedReports, publishedSubTab, publishedClassFilter, publishedSearchQuery]);
 
   const filteredArchivedReports = React.useMemo(() => {
     return archivedReports.filter(report => {
@@ -698,6 +706,14 @@ export default function WeeklyReview() {
       return true;
     });
   }, [archivedReports, publishedClassFilter, publishedSearchQuery]);
+
+  const readyToSendReportsCount = React.useMemo(() => {
+    return publishedReports.filter(r => r.status === 'ready_to_send').length;
+  }, [publishedReports]);
+
+  const sentReportsCount = React.useMemo(() => {
+    return publishedReports.filter(r => r.status === 'sent').length;
+  }, [publishedReports]);
 
   const groupedPublishedReports = React.useMemo(() => {
     const groups: { [key: string]: { label: string; startDate: string; reports: any[] } } = {};
@@ -744,11 +760,42 @@ export default function WeeklyReview() {
         where('academicYear', '==', activeYear)
       );
       const snap = await getDocs(q);
-      const list = snap.docs.map(docSnap => ({
-        id: docSnap.id,
-        ...docSnap.data()
-      })).sort((a: any, b: any) => b.publishedAt - a.publishedAt);
+      const list = snap.docs.map(docSnap => {
+        const data = docSnap.data();
+        let status = data.status;
+        if (!status || status === 'published' || status === 'PUBLISHED') {
+          status = data.sentToParent ? 'sent' : 'ready_to_send';
+        }
+        return {
+          id: docSnap.id,
+          ...data,
+          status
+        };
+      }).sort((a: any, b: any) => b.publishedAt - a.publishedAt);
+      
       setPublishedReports(list);
+
+      // Background self-healing audit for legacy records to align physical DB states
+      const legacyDocs = snap.docs.filter(docSnap => {
+        const data = docSnap.data();
+        return !data.status || data.status === 'published' || data.status === 'PUBLISHED';
+      });
+
+      if (legacyDocs.length > 0) {
+        console.log(`[Audit] Found ${legacyDocs.length} legacy Kindergarten reports. Performing status alignment.`);
+        for (const docSnap of legacyDocs) {
+          const data = docSnap.data();
+          const targetStatus = data.sentToParent ? 'sent' : 'ready_to_send';
+          try {
+            await updateDoc(doc(db, 'published_kg_reports', docSnap.id), {
+              status: targetStatus
+            });
+            console.log(`[Audit] Successfully corrected Firestore report ID ${docSnap.id} to status: "${targetStatus}"`);
+          } catch (auditErr) {
+            console.error(`[Audit] Failed to correct report ID ${docSnap.id}:`, auditErr);
+          }
+        }
+      }
     } catch (err) {
       console.error("Error fetching published reports:", err);
     }
@@ -1026,6 +1073,7 @@ export default function WeeklyReview() {
         // Metadata publisher
         publishedBy: profile?.uid || 'Unknown',
         publishedByEmail: profile?.email || 'Unknown',
+        status: 'ready_to_send',
 
         // Snapshot data
         reportSnapshot: {
@@ -1077,7 +1125,7 @@ export default function WeeklyReview() {
       };
       
       await addDoc(collection(db, 'published_kg_reports'), reportPayload);
-      toast.success(`Berhasil dipublikasikan & diunggah ke Shared Drive untuk ${loadedDraft.studentName}! 🎉`, { id: "publish-kg" });
+      toast.success(`PDF berhasil dibuat & disimpan sebagai draft untuk ${loadedDraft.studentName}! 🎉`, { id: "publish-kg" });
       
       await fetchPublishedReports();
     } catch (err: any) {
@@ -1145,19 +1193,27 @@ export default function WeeklyReview() {
     }
   };
 
-  const handleSendToParent = async (reportId: string, currentStatus: boolean) => {
-    if (currentStatus) return;
+  const handleConfirmSendToParent = async () => {
+    if (!reportToSend) return;
+    setIsSending(true);
     const toastId = toast.loading("Mengirim laporan ke akun orang tua...");
     try {
-      await updateDoc(doc(db, 'published_kg_reports', reportId), {
+      await updateDoc(doc(db, 'published_kg_reports', reportToSend.id), {
+        status: 'sent',
         sentToParent: true,
-        sentAt: Date.now()
+        sentAt: Date.now(),
+        sentBy: profile?.uid || 'Unknown',
+        sentByName: profile?.displayName || profile?.email || 'Unknown'
       });
-      toast.success("Laporan berhasil dikirim ke akun orang tua! 🎉", { id: toastId });
+      toast.success(`Weekly Report untuk ${reportToSend.studentName} berhasil dikirim ke orang tua! 🎉`, { id: toastId });
+      setSendConfirmModalOpen(false);
+      setReportToSend(null);
       fetchPublishedReports();
     } catch (err: any) {
       console.error("Error sending to parent:", err);
       toast.error(`Gagal mengirim laporan: ${err.message}`, { id: toastId });
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -1397,7 +1453,7 @@ export default function WeeklyReview() {
                 ) : (
                   <>
                     <CheckCircle2 size={13} />
-                    Publish PDF
+                    Buat PDF & Simpan Draft
                   </>
                 )}
               </button>
@@ -1897,23 +1953,37 @@ export default function WeeklyReview() {
             </p>
           </div>
           <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 text-[10px] font-black uppercase shrink-0 self-start md:self-center">
-            {publishedSubTab === 'PUBLISHED' ? `${publishedReports.length} Terpublikasi` : `${archivedReports.length} Diarsipkan`}
+            {publishedSubTab === 'READY_TO_SEND' ? `${readyToSendReportsCount} Siap Dikirim` : 
+             publishedSubTab === 'SENT' ? `${sentReportsCount} Terkirim` : 
+             `${archivedReports.length} Diarsipkan`}
           </span>
         </div>
 
         {/* Sub-tab Switcher */}
         <div className="flex border-b border-gray-150 -mt-2">
           <button
-            onClick={() => setPublishedSubTab('PUBLISHED')}
+            onClick={() => setPublishedSubTab('READY_TO_SEND')}
             className={cn(
               "px-5 py-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-2",
-              publishedSubTab === 'PUBLISHED'
+              publishedSubTab === 'READY_TO_SEND'
                 ? "border-emerald-600 text-emerald-700 font-black"
                 : "border-transparent text-gray-400 hover:text-gray-600"
             )}
           >
-            <CheckCircle2 size={13} />
-            Terbit ({publishedReports.length})
+            <Clock size={13} />
+            Siap Dikirim ({readyToSendReportsCount})
+          </button>
+          <button
+            onClick={() => setPublishedSubTab('SENT')}
+            className={cn(
+              "px-5 py-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-2",
+              publishedSubTab === 'SENT'
+                ? "border-emerald-600 text-emerald-700 font-black"
+                : "border-transparent text-gray-400 hover:text-gray-600"
+            )}
+          >
+            <Send size={13} />
+            Terkirim ({sentReportsCount})
           </button>
           <button
             onClick={() => setPublishedSubTab('ARCHIVED')}
@@ -1961,10 +2031,12 @@ export default function WeeklyReview() {
           </div>
         )}
 
-        {publishedSubTab === 'PUBLISHED' ? (
-          publishedReports.length === 0 ? (
+        {publishedSubTab === 'READY_TO_SEND' || publishedSubTab === 'SENT' ? (
+          publishedReports.filter(r => r.status === (publishedSubTab === 'READY_TO_SEND' ? 'ready_to_send' : 'sent')).length === 0 ? (
             <div className="text-center py-12 text-gray-400 text-xs italic bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
-              Belum ada laporan mingguan yang dipublikasikan dalam tahun ajaran ini.
+              {publishedSubTab === 'READY_TO_SEND' 
+                ? "Belum ada laporan mingguan siap dikirim." 
+                : "Belum ada laporan mingguan terkirim."}
             </div>
           ) : filteredPublishedReports.length === 0 ? (
             <div className="text-center py-12 text-gray-400 text-xs italic bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
@@ -1989,11 +2061,20 @@ export default function WeeklyReview() {
                   <div className="overflow-x-auto rounded-xl border border-gray-150">
                     <table className="w-full text-left border-collapse text-xs">
                       <thead>
-                        <tr className="bg-gray-50/50 border-b border-gray-150 font-black text-gray-500 uppercase tracking-wider text-[10px]">
-                          <th className="p-3.5">Nama Siswa</th>
-                          <th className="p-3.5">Status Dilihat</th>
-                          <th className="p-3.5 text-right">File PDF / Tindakan</th>
-                        </tr>
+                        {publishedSubTab === 'READY_TO_SEND' ? (
+                          <tr className="bg-gray-50/50 border-b border-gray-150 font-black text-gray-500 uppercase tracking-wider text-[10px]">
+                            <th className="p-3.5">Nama Siswa</th>
+                            <th className="p-3.5">Status Laporan</th>
+                            <th className="p-3.5 text-right">File PDF / Tindakan</th>
+                          </tr>
+                        ) : (
+                          <tr className="bg-gray-50/50 border-b border-gray-150 font-black text-gray-500 uppercase tracking-wider text-[10px]">
+                            <th className="p-3.5">Nama Siswa</th>
+                            <th className="p-3.5">Status Dilihat</th>
+                            <th className="p-3.5">Status Laporan</th>
+                            <th className="p-3.5 text-right">File PDF / Tindakan</th>
+                          </tr>
+                        )}
                       </thead>
                       <tbody className="divide-y divide-gray-100 font-bold text-gray-700">
                         {group.reports.map((report) => (
@@ -2005,65 +2086,85 @@ export default function WeeklyReview() {
                                   <span className="text-[9px] bg-emerald-100 text-emerald-800 font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
                                     {report.className}
                                   </span>
-                                  {report.publishedAt && (
-                                    <span className="text-[9.5px] text-gray-400 font-medium whitespace-nowrap">
-                                      Dipublish: {new Date(report.publishedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                                    </span>
+                                  {publishedSubTab === 'READY_TO_SEND' ? (
+                                    report.publishedAt && (
+                                      <span className="text-[9.5px] text-gray-400 font-medium whitespace-nowrap">
+                                        PDF dibuat: {new Date(report.publishedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                      </span>
+                                    )
+                                  ) : (
+                                    report.sentAt && (
+                                      <span className="text-[9.5px] text-gray-400 font-medium whitespace-nowrap">
+                                        Dikirim: {new Date(report.sentAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                      </span>
+                                    )
                                   )}
                                 </div>
                               </div>
                             </td>
-                            <td className="p-3.5 text-left">
-                              {(() => {
-                                const hasViewed = !!report.studentViewedAt;
-                                const hasPdfOpened = !!report.pdfOpenedAt;
-                                
-                                return (
-                                  <div className="flex flex-col gap-1.5 max-w-[240px]">
-                                    {/* Mobile View Status */}
-                                    <div className="flex items-start gap-1 flex-col">
-                                      {hasViewed ? (
-                                        <>
-                                          <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border border-emerald-100">
-                                            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
-                                            Sudah Dilihat
-                                          </span>
-                                          <div className="text-[10px] text-gray-500 font-bold space-y-0.5 mt-0.5 leading-tight">
-                                            <div>Pertama: <span className="text-gray-700">{formatIndonesianDateTime(report.studentViewedAt)}</span></div>
-                                            {report.lastStudentViewedAt && (
-                                              <div>Terakhir: <span className="text-gray-700">{formatIndonesianDateTime(report.lastStudentViewedAt)}</span></div>
-                                            )}
-                                            {report.viewCount !== undefined && report.viewCount > 0 && (
-                                              <div className="text-[9.5px] text-emerald-600 font-extrabold bg-emerald-50/50 px-1.5 py-0.2 rounded w-fit mt-0.5">
-                                                Dibuka {report.viewCount}×
-                                              </div>
-                                            )}
+                            {publishedSubTab === 'SENT' && (
+                              <td className="p-3.5 text-left">
+                                {(() => {
+                                  const hasViewed = !!report.studentViewedAt;
+                                  const hasPdfOpened = !!report.pdfOpenedAt;
+                                  
+                                  return (
+                                    <div className="flex flex-col gap-1.5 max-w-[240px]">
+                                      <div className="flex items-start gap-1 flex-col">
+                                        {hasViewed ? (
+                                          <>
+                                            <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border border-emerald-100">
+                                              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
+                                              Sudah Dilihat
+                                            </span>
+                                            <div className="text-[10px] text-gray-500 font-bold space-y-0.5 mt-0.5 leading-tight">
+                                              <div>Pertama: <span className="text-gray-700">{formatIndonesianDateTime(report.studentViewedAt)}</span></div>
+                                              {report.lastStudentViewedAt && (
+                                                <div>Terakhir: <span className="text-gray-700">{formatIndonesianDateTime(report.lastStudentViewedAt)}</span></div>
+                                              )}
+                                              {report.viewCount !== undefined && report.viewCount > 0 && (
+                                                <div className="text-[9.5px] text-emerald-600 font-extrabold bg-emerald-50/50 px-1.5 py-0.2 rounded w-fit mt-0.5">
+                                                  Dibuka {report.viewCount}×
+                                                </div>
+                                              )}
+                                            </div>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-500 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border border-gray-200">
+                                              Belum Dilihat
+                                            </span>
+                                            <span className="text-[10px] text-gray-400 font-medium leading-tight mt-0.5">
+                                              Belum dibuka oleh siswa.
+                                            </span>
+                                          </>
+                                        )}
+                                      </div>
+                                      {hasPdfOpened && (
+                                        <div className="border-t border-dashed border-gray-150 pt-1 mt-1 text-[10px] text-blue-700 font-semibold leading-tight">
+                                          <div className="flex items-center gap-1">
+                                            <span className="inline-block w-1 h-1 bg-blue-500 rounded-full" />
+                                            <span>PDF dibuka: <span className="font-extrabold">{formatIndonesianDateTime(report.pdfOpenedAt)}</span></span>
                                           </div>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-500 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border border-gray-200">
-                                            Belum Dilihat
-                                          </span>
-                                          <span className="text-[10px] text-gray-400 font-medium leading-tight mt-0.5">
-                                            Belum dibuka oleh siswa.
-                                          </span>
-                                        </>
+                                        </div>
                                       )}
                                     </div>
-
-                                    {/* PDF Opened Status */}
-                                    {hasPdfOpened && (
-                                      <div className="border-t border-dashed border-gray-150 pt-1 mt-1 text-[10px] text-blue-700 font-semibold leading-tight">
-                                        <div className="flex items-center gap-1">
-                                          <span className="inline-block w-1 h-1 bg-blue-500 rounded-full" />
-                                          <span>PDF dibuka: <span className="font-extrabold">{formatIndonesianDateTime(report.pdfOpenedAt)}</span></span>
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })()}
+                                  );
+                                })()}
+                              </td>
+                            )}
+                            <td className="p-3.5 text-left">
+                              {publishedSubTab === 'READY_TO_SEND' ? (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-[10px] font-black uppercase tracking-wider">
+                                  <Clock size={11} className="text-amber-500" />
+                                  Siap Dikirim
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[10px] font-black uppercase tracking-wider">
+                                  <CheckCircle2 size={11} className="text-emerald-500" />
+                                  Terkirim
+                                </span>
+                              )}
                             </td>
                             <td className="p-3.5 text-right">
                               <div className="flex items-center justify-end gap-2">
@@ -2079,20 +2180,19 @@ export default function WeeklyReview() {
                                       <FileText size={12} className="text-blue-500" />
                                       Drive
                                     </a>
-                                    <button
-                                      onClick={() => handleSendToParent(report.id, report.sentToParent || false)}
-                                      disabled={report.sentToParent || false}
-                                      className={cn(
-                                        "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer",
-                                        report.sentToParent
-                                          ? "bg-emerald-50 text-emerald-700 opacity-80 cursor-default"
-                                          : "bg-orange-50 hover:bg-orange-100 text-orange-700"
-                                      )}
-                                      title={report.sentToParent ? "Laporan sudah dikirim ke orang tua" : "Kirim link laporan ini ke akun orang tua"}
-                                    >
-                                      <Send size={12} className={report.sentToParent ? "text-emerald-500" : "text-orange-500"} />
-                                      {report.sentToParent ? "Terkirim" : "Kirim ke Orang Tua"}
-                                    </button>
+                                    {publishedSubTab === 'READY_TO_SEND' && (
+                                      <button
+                                        onClick={() => {
+                                          setReportToSend(report);
+                                          setSendConfirmModalOpen(true);
+                                        }}
+                                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10.5px] font-black bg-orange-50 hover:bg-orange-100 text-orange-700 transition-all cursor-pointer"
+                                        title="Kirim link laporan ini ke akun orang tua"
+                                      >
+                                        <Send size={12} className="text-orange-500" />
+                                        Kirim ke Orang Tua
+                                      </button>
+                                    )}
                                   </>
                                 )}
                                 <button
@@ -2319,6 +2419,52 @@ export default function WeeklyReview() {
               >
                 {isArchiving && <Loader2 size={12} className="animate-spin" />}
                 Arsipkan Laporan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SEND TO PARENT CONFIRMATION MODAL */}
+      {sendConfirmModalOpen && reportToSend && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-[9999] p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-100 space-y-5 animate-scale-up">
+            <div className="flex items-center gap-3 border-b border-gray-100 pb-3">
+              <div className="p-2.5 bg-emerald-50 rounded-2xl text-emerald-600">
+                <Send size={24} />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-gray-900 leading-snug">Kirim Weekly Report?</h3>
+                <p className="text-[10.5px] text-gray-500 font-bold uppercase tracking-wider mt-0.5">Unit Kindergarten (TK)</p>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 p-4 rounded-2xl border border-gray-150 space-y-2 text-xs font-bold text-gray-700 leading-relaxed">
+              <p>
+                Weekly Report <span className="text-gray-900 font-extrabold">{reportToSend.studentName}</span> untuk periode <span className="text-gray-900 font-extrabold">{getPeriodLabel(reportToSend)}</span> akan diterbitkan dan dapat dilihat oleh siswa/orang tua.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSendConfirmModalOpen(false);
+                  setReportToSend(null);
+                }}
+                disabled={isSending}
+                className="px-4 py-2 text-xs font-black uppercase tracking-wider text-gray-500 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl cursor-pointer disabled:opacity-50 transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmSendToParent}
+                disabled={isSending}
+                className="px-4 py-2 text-xs font-black uppercase tracking-wider text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl cursor-pointer disabled:opacity-50 transition-all inline-flex items-center gap-1.5 shadow-sm"
+              >
+                {isSending && <Loader2 size={12} className="animate-spin" />}
+                Kirim Laporan
               </button>
             </div>
           </div>
