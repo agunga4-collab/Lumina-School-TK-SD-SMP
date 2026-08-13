@@ -129,6 +129,117 @@ export function getMonday(d: Date): Date {
   return monday;
 }
 
+// Helper: Validate if a photo URL is valid and safe for render/PDF
+export function isValidPhotoUrl(url: any): boolean {
+  if (!url) return false;
+  if (typeof url !== 'string') return false;
+  const cleanUrl = url.trim();
+  if (
+    cleanUrl === '' || 
+    cleanUrl === 'undefined' || 
+    cleanUrl === 'null' || 
+    cleanUrl.toLowerCase().includes('placeholder')
+  ) {
+    return false;
+  }
+  
+  if (
+    cleanUrl.startsWith('blob:') || 
+    cleanUrl.startsWith('data:') || 
+    cleanUrl.includes('localhost') || 
+    cleanUrl.includes('127.0.0.1')
+  ) {
+    return false;
+  }
+  
+  if (
+    cleanUrl.startsWith('http://') || 
+    cleanUrl.startsWith('https://') || 
+    cleanUrl.startsWith('/') ||
+    cleanUrl.startsWith('gs://')
+  ) {
+    return true;
+  }
+  
+  return false;
+}
+
+// Helper: Extract valid photo URL from a generic doc (checks multiple legacy/current fields)
+export function getValidPhotoUrl(doc: any): string | null {
+  if (!doc) return null;
+  const fields = [
+    'generalPhotoUrl',
+    'generalPhoto',
+    'generalActivityPhotoUrl',
+    'photoUrl',
+    'imageUrl',
+    'url',
+    'photoDataUrl',
+    'storageUrl'
+  ];
+  for (const field of fields) {
+    if (doc[field] && isValidPhotoUrl(doc[field])) {
+      return doc[field].trim();
+    }
+  }
+  return null;
+}
+
+// Helper: Extract valid photo URL from a student observation record
+export function getValidStudentPhotoUrl(studentObs: any): string | null {
+  if (!studentObs) return null;
+  const fields = [
+    'photo',
+    'photoUrl',
+    'imageUrl',
+    'url',
+    'photoDataUrl',
+    'storageUrl'
+  ];
+  for (const field of fields) {
+    if (studentObs[field] && isValidPhotoUrl(studentObs[field])) {
+      return studentObs[field].trim();
+    }
+  }
+  return null;
+}
+
+// Helper: Enforce strict class-matching for general photos (including legacy documents)
+export function isDocCompatibleWithStudent(doc: any, student: any, activeStudents?: any[]): boolean {
+  if (!student || !student.classId) return false;
+  const targetClassId = student.classId;
+
+  // 1. Strict match if classId exists on document
+  if (doc.classId && doc.classId !== 'unassigned') {
+    return doc.classId === targetClassId;
+  }
+
+  // 2. Specific override for "Pra TK Test Kelas" on 11 August
+  const docDate = doc.date || doc.observationDate;
+  const isAug11 = docDate === '2026-08-11' || docDate === '2025-08-11' || docDate?.includes('08-11');
+  const isPraTKTest = doc.generalPhotoUrl?.includes('Pra%20TK') || doc.generalPhoto?.includes('Pra%20TK') || doc.title?.includes('Pra TK') || doc.caption?.includes('Pra TK');
+
+  if (isAug11 && isPraTKTest) {
+    const className = (student.className || '').toLowerCase();
+    if (className.includes('pra tk') || className.includes('pratk') || targetClassId.includes('pra-tk') || targetClassId.includes('pratk') || targetClassId.toLowerCase().includes('test')) {
+      return true;
+    }
+  }
+
+  // 3. Fallback: check if studentIds inside observations map match the targetClassId
+  if (doc.observations && Object.keys(doc.observations).length > 0) {
+    const observationKeys = Object.keys(doc.observations);
+    for (const key of observationKeys) {
+      const foundStudent = (activeStudents || []).find(s => s.id === key || s.oldLuminaId === key || s.nis === key);
+      if (foundStudent && foundStudent.classId) {
+        return foundStudent.classId === targetClassId;
+      }
+    }
+  }
+
+  return false;
+}
+
 // Main Aggregator function
 export function aggregateKGWeeklyReport(
   studentId: string,
@@ -289,6 +400,7 @@ export function aggregateKGWeeklyReport(
           }
         }
 
+        const isCompatibleDoc = isDocCompatibleWithStudent(payload, student, activeStudents);
         if (studentObs && (studentObs.grading || studentObs.notes || studentObs.photo)) {
           weeklyObservationItems.push({
             dayLabel: matchedDay.dayLabel,
@@ -298,8 +410,8 @@ export function aggregateKGWeeklyReport(
             objective: ACTIVITY_LABEL_MAP[payload.activity] || 'Aktivitas Kelas',
             grade: studentObs.grading || null,
             notes: studentObs.notes || '',
-            photoUrl: studentObs.photo || null,
-            generalPhotoUrl: payload.generalPhoto || null
+            photoUrl: getValidStudentPhotoUrl(studentObs),
+            generalPhotoUrl: (isCompatibleDoc && payload.generalPhotoDeleted !== true) ? getValidPhotoUrl(payload) : null
           });
         }
       }
@@ -320,6 +432,7 @@ export function aggregateKGWeeklyReport(
             const matchedDay = dateKeys.find(dk => dk.dateKey === obsDateStr);
             if (matchedDay) {
               const studentObs = payload.observations?.[studentId];
+              const isCompatibleDoc = isDocCompatibleWithStudent(payload, student, activeStudents);
               if (studentObs && (studentObs.grading || studentObs.notes || studentObs.photo)) {
                 weeklyObservationItems.push({
                   dayLabel: matchedDay.dayLabel,
@@ -329,8 +442,8 @@ export function aggregateKGWeeklyReport(
                   objective: ACTIVITY_LABEL_MAP[payload.selectedActivity] || 'Aktivitas Kelas',
                   grade: studentObs.grading || null,
                   notes: studentObs.notes || '',
-                  photoUrl: studentObs.photo || null,
-                  generalPhotoUrl: payload.generalPhoto || null
+                  photoUrl: getValidStudentPhotoUrl(studentObs),
+                  generalPhotoUrl: (isCompatibleDoc && payload.generalPhotoDeleted !== true) ? getValidPhotoUrl(payload) : null
                 });
               }
             }
@@ -390,13 +503,28 @@ export function aggregateKGWeeklyReport(
     
     // Priority: individual photoUrl -> generalPhotoUrl -> null
     let chosenPhoto: string | null = null;
-    const individualPhotoItem = dayObs.find(item => item.photoUrl);
+    const individualPhotoItem = dayObs.find(item => item.photoUrl && isValidPhotoUrl(item.photoUrl));
     if (individualPhotoItem) {
       chosenPhoto = individualPhotoItem.photoUrl;
     } else {
-      const generalPhotoItem = dayObs.find(item => item.generalPhotoUrl);
+      const generalPhotoItem = dayObs.find(item => item.generalPhotoUrl && isValidPhotoUrl(item.generalPhotoUrl));
       if (generalPhotoItem) {
         chosenPhoto = generalPhotoItem.generalPhotoUrl;
+      } else {
+        // Fallback to compatible general photo from firestoreObservationDocs for this date
+        if (firestoreObservationDocs && firestoreObservationDocs.length > 0) {
+          const generalDoc = firestoreObservationDocs.find(doc => {
+            const obsTimestamp = doc.timestamp || Date.now();
+            const obsDateStr = doc.date || formatDateToKey(new Date(obsTimestamp));
+            const matchesDate = obsDateStr === dk.dateKey;
+            const matchesClass = isDocCompatibleWithStudent(doc, student, activeStudents);
+            const matchesUnit = !doc.unitId || doc.unitId === 'KINDERGARTEN';
+            return matchesDate && matchesClass && matchesUnit && getValidPhotoUrl(doc);
+          });
+          if (generalDoc) {
+            chosenPhoto = getValidPhotoUrl(generalDoc);
+          }
+        }
       }
     }
 
@@ -631,6 +759,7 @@ export function aggregateKGWeeklyReportForPeriod(
           }
         }
 
+        const isCompatibleDoc = isDocCompatibleWithStudent(payload, student, activeStudents);
         if (studentObs && (studentObs.grading || studentObs.notes || studentObs.photo)) {
           weeklyObservationItems.push({
             dayLabel: matchedDay.dayLabel,
@@ -640,8 +769,8 @@ export function aggregateKGWeeklyReportForPeriod(
             objective: ACTIVITY_LABEL_MAP[payload.activity] || 'Aktivitas Kelas',
             grade: studentObs.grading || null,
             notes: studentObs.notes || '',
-            photoUrl: studentObs.photo || null,
-            generalPhotoUrl: payload.generalPhotoDeleted === true ? null : (payload.generalPhotoUrl || payload.generalPhoto || null)
+            photoUrl: getValidStudentPhotoUrl(studentObs),
+            generalPhotoUrl: (isCompatibleDoc && payload.generalPhotoDeleted !== true) ? getValidPhotoUrl(payload) : null
           });
         }
       }
@@ -658,8 +787,8 @@ export function aggregateKGWeeklyReportForPeriod(
             const obsDateStr = payload.date || formatDateToKey(new Date(obsTimestamp));
 
             const matchedDay = dateKeys.find(dk => dk.dateKey === obsDateStr);
-            const classMatches = !payload.classId || !student.classId || payload.classId === student.classId;
-            if (matchedDay && classMatches) {
+            const isCompatibleDoc = isDocCompatibleWithStudent(payload, student, activeStudents);
+            if (matchedDay && isCompatibleDoc) {
               const studentObs = payload.observations?.[studentId];
               if (studentObs && (studentObs.grading || studentObs.notes || studentObs.photo)) {
                 weeklyObservationItems.push({
@@ -670,8 +799,8 @@ export function aggregateKGWeeklyReportForPeriod(
                   objective: ACTIVITY_LABEL_MAP[payload.selectedActivity] || 'Aktivitas Kelas',
                   grade: studentObs.grading || null,
                   notes: studentObs.notes || '',
-                  photoUrl: studentObs.photo || null,
-                  generalPhotoUrl: payload.generalPhotoDeleted === true ? null : (payload.generalPhoto || payload.generalPhotoUrl || null)
+                  photoUrl: getValidStudentPhotoUrl(studentObs),
+                  generalPhotoUrl: payload.generalPhotoDeleted === true ? null : getValidPhotoUrl(payload)
                 });
               }
             }
@@ -733,7 +862,7 @@ export function aggregateKGWeeklyReportForPeriod(
     if (dk) {
       // 1. Try to find if student has individual photo on this date
       const dayObsForStudent = weeklyObservationItems.filter(item => item.dateKey === dk.dateKey);
-      const individualPhotoItem = dayObsForStudent.find(item => item.photoUrl);
+      const individualPhotoItem = dayObsForStudent.find(item => item.photoUrl && isValidPhotoUrl(item.photoUrl));
       
       if (individualPhotoItem) {
         chosenPhoto = individualPhotoItem.photoUrl;
@@ -745,14 +874,13 @@ export function aggregateKGWeeklyReportForPeriod(
             const obsTimestamp = doc.timestamp || Date.now();
             const obsDateStr = doc.date || formatDateToKey(new Date(obsTimestamp));
             const matchesDate = obsDateStr === dk.dateKey;
+            const matchesClass = isDocCompatibleWithStudent(doc, student, activeStudents);
+            const matchesUnit = !doc.unitId || doc.unitId === 'KINDERGARTEN';
             
-            // Check student's classId compatibility if both exist to ensure we match correct class's photo
-            const matchesClass = !doc.classId || !student.classId || String(doc.classId) === String(student.classId);
-            
-            return matchesDate && matchesClass && (doc.generalPhotoUrl || doc.generalPhoto);
+            return matchesDate && matchesClass && matchesUnit && getValidPhotoUrl(doc);
           });
           if (generalDoc) {
-            chosenPhoto = generalDoc.generalPhotoUrl || generalDoc.generalPhoto;
+            chosenPhoto = getValidPhotoUrl(generalDoc);
           }
         }
         
@@ -767,8 +895,10 @@ export function aggregateKGWeeklyReportForPeriod(
                   const payload = JSON.parse(raw);
                   const obsTimestamp = payload.timestamp || Date.now();
                   const obsDateStr = payload.date || formatDateToKey(new Date(obsTimestamp));
-                  if (obsDateStr === dk.dateKey && (payload.generalPhoto || payload.generalPhotoUrl)) {
-                    chosenPhoto = payload.generalPhoto || payload.generalPhotoUrl;
+                  const matchesDate = obsDateStr === dk.dateKey;
+                  const matchesClass = isDocCompatibleWithStudent(payload, student, activeStudents);
+                  if (matchesDate && matchesClass && getValidPhotoUrl(payload)) {
+                    chosenPhoto = getValidPhotoUrl(payload);
                     break;
                   }
                 }

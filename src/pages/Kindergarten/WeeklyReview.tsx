@@ -3,7 +3,8 @@ import { motion } from 'motion/react';
 import { 
   Smile, Meh, Frown, Angry, AlertCircle, Calendar, ChevronLeft, ChevronRight, 
   Printer, BookOpen, Clock, Heart, ShieldAlert, FileText, ArrowRight, Sparkles, ChevronDown,
-  Loader2, CheckCircle2, FileDown, Trash2, Send, RefreshCw, Upload, Archive
+  Loader2, CheckCircle2, FileDown, Trash2, Send, RefreshCw, Upload, Archive,
+  Image as ImageIcon
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -1307,13 +1308,13 @@ export default function WeeklyReview() {
                 crossOrigin="anonymous"
               />
             </div>
-          ) : hasError ? (
-            <div className="h-[160px] aspect-[3/4] mx-auto bg-red-50/50 border border-red-100 flex flex-col items-center justify-center p-2 text-center rounded-sm">
-              <span className="text-[10px] text-red-600 font-bold leading-tight">Dokumentasi tidak dapat dimuat</span>
-            </div>
           ) : (
-            <div className="h-[160px] aspect-[3/4] mx-auto bg-gray-50/50 border border-dashed border-gray-200 flex items-center justify-center p-2 text-center rounded-sm">
-              <span className="text-[9px] text-gray-400 font-bold italic leading-tight">Belum ada dokumentasi</span>
+            <div className="h-[160px] aspect-[3/4] mx-auto bg-gray-50/70 border border-dashed border-gray-200 flex flex-col items-center justify-center p-2 text-center rounded-sm">
+              <ImageIcon className="w-5 h-5 text-gray-400 mb-1" />
+              <span className="text-[10px] text-gray-500 font-bold leading-tight">Dokumentasi belum tersedia</span>
+              <span className="text-[8.5px] text-gray-400 font-medium leading-tight mt-0.5 max-w-[130px]">
+                Foto kegiatan untuk kelas ini belum diunggah atau tidak dapat dimuat.
+              </span>
             </div>
           )}
           
