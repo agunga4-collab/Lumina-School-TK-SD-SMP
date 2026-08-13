@@ -3,7 +3,10 @@ import { useParams, useNavigate, useOutletContext } from 'react-router-dom';
 import { 
   collection, 
   doc, 
-  getDoc 
+  getDoc,
+  updateDoc,
+  serverTimestamp,
+  increment
 } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { 
@@ -37,6 +40,7 @@ export default function WeeklyReportDetail() {
   const { reportId } = useParams<{ reportId: string }>();
   const navigate = useNavigate();
   const { currentUser } = useOutletContext<{ currentUser: AppUser }>();
+  const trackedReportIdRef = React.useRef<string | null>(null);
 
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -103,6 +107,24 @@ export default function WeeklyReportDetail() {
         }
 
         setReport(reportData);
+
+        // Tracking viewed status for authenticated students (not for admin/teachers/BK)
+        const isStudent = currentUser?.role === 'STUDENT';
+        if (isStudent && trackedReportIdRef.current !== reportId) {
+          trackedReportIdRef.current = reportId;
+          const updatePayload: any = {
+            lastStudentViewedAt: serverTimestamp(),
+            viewCount: increment(1)
+          };
+          if (!reportData.studentViewedAt) {
+            updatePayload.studentViewedAt = serverTimestamp();
+          }
+          try {
+            await updateDoc(reportRef, updatePayload);
+          } catch (trackErr) {
+            console.warn("Failed to update student viewed status:", trackErr);
+          }
+        }
       } catch (err) {
         console.error("Error loading report detail:", err);
         setError("Gagal memuat detail laporan mingguan. Silakan coba lagi.");

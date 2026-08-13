@@ -17,7 +17,7 @@ import {
 } from '../../lib/firebase';
 import { cn } from '../../lib/utils';
 import { useAcademicYear } from '../../context/AcademicYearContext';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 
 export default function StudentReports() {
@@ -73,6 +73,17 @@ export default function StudentReports() {
     };
     fetchReports();
   }, [currentUser, activeYear]);
+
+  const handlePdfClick = async (reportId: string) => {
+    try {
+      const reportRef = doc(db, 'published_kg_reports', reportId);
+      await updateDoc(reportRef, {
+        pdfOpenedAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.warn("Failed to track PDF open status:", err);
+    }
+  };
 
   if (loading) {
     return (
@@ -160,6 +171,7 @@ export default function StudentReports() {
                             {report.driveFileUrl && (
                               <a
                                 href={report.driveFileUrl}
+                                onClick={() => handlePdfClick(report.id)}
                                 target="_blank"
                                 rel="referrer noopener noreferrer"
                                 className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm whitespace-nowrap"

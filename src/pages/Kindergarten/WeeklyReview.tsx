@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { 
   Smile, Meh, Frown, Angry, AlertCircle, Calendar, ChevronLeft, ChevronRight, 
   Printer, BookOpen, Clock, Heart, ShieldAlert, FileText, ArrowRight, Sparkles, ChevronDown,
-  Loader2, CheckCircle2, FileDown, Trash2, Send, RefreshCw, Upload
+  Loader2, CheckCircle2, FileDown, Trash2, Send, RefreshCw, Upload, Archive
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -15,7 +15,7 @@ import {
   saveStoredStudents,
   aggregateKGWeeklyReportForPeriod
 } from '../../lib/kindergartenWeeklyReport';
-import { collection, query, where, getDocs, addDoc, deleteDoc, doc, updateDoc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, deleteDoc, doc, updateDoc, getDoc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { useAuth } from '../../context/AuthContext';
@@ -24,6 +24,19 @@ import { logFirestoreRead, getKindergartenClasses, getKindergartenStudents } fro
 import { toast } from 'sonner';
 import { html2canvasWithModernColors } from '../../lib/html2canvasPatch';
 import { jsPDF } from 'jspdf';
+
+const formatIndonesianDateTime = (val: any) => {
+  if (!val) return '';
+  const date = val.toDate ? val.toDate() : new Date(val);
+  if (isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('id-ID', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }) + ' WIB';
+};
 
 export default function WeeklyReview() {
   const navigate = useNavigate();
@@ -553,6 +566,15 @@ export default function WeeklyReview() {
   }, [selectedStudentId, startDateStr, endDateStr, students, activeClassObj, firestoreAttendance, firestoreObservations]);
 
   const [publishedReports, setPublishedReports] = React.useState<any[]>([]);
+  const [archivedReports, setArchivedReports] = React.useState<any[]>([]);
+  const [publishedSubTab, setPublishedSubTab] = React.useState<'PUBLISHED' | 'ARCHIVED'>('PUBLISHED');
+  
+  const [archiveModalOpen, setArchiveModalOpen] = React.useState(false);
+  const [reportToArchive, setReportToArchive] = React.useState<any | null>(null);
+  const [archiveReason, setArchiveReason] = React.useState('');
+  const [isArchiving, setIsArchiving] = React.useState(false);
+  const [expandedReasons, setExpandedReasons] = React.useState<Record<string, boolean>>({});
+
   const [isPublishing, setIsPublishing] = React.useState(false);
 
   const [publishedClassFilter, setPublishedClassFilter] = React.useState<string>('ALL');
@@ -609,6 +631,24 @@ export default function WeeklyReview() {
     });
   }, [publishedReports, publishedClassFilter, publishedSearchQuery]);
 
+  const filteredArchivedReports = React.useMemo(() => {
+    return archivedReports.filter(report => {
+      if (publishedClassFilter !== 'ALL' && report.classId !== publishedClassFilter && report.className !== publishedClassFilter) {
+        return false;
+      }
+      if (publishedSearchQuery.trim()) {
+        const q = publishedSearchQuery.toLowerCase();
+        const studentNameMatches = report.studentName?.toLowerCase().includes(q);
+        const classNameMatches = report.className?.toLowerCase().includes(q);
+        const weekMatches = report.week && String(report.week).toLowerCase().includes(q);
+        if (!studentNameMatches && !classNameMatches && !weekMatches) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [archivedReports, publishedClassFilter, publishedSearchQuery]);
+
   const groupedPublishedReports = React.useMemo(() => {
     const groups: { [key: string]: { label: string; startDate: string; reports: any[] } } = {};
     
@@ -628,6 +668,25 @@ export default function WeeklyReview() {
     return Object.values(groups).sort((a, b) => b.startDate.localeCompare(a.startDate));
   }, [filteredPublishedReports, getPeriodLabel]);
 
+  const groupedArchivedReports = React.useMemo(() => {
+    const groups: { [key: string]: { label: string; startDate: string; reports: any[] } } = {};
+    
+    filteredArchivedReports.forEach(report => {
+      const label = getPeriodLabel(report);
+      const key = `${report.startDate}_${report.endDate}_${report.week || ''}`;
+      if (!groups[key]) {
+        groups[key] = {
+          label,
+          startDate: report.startDate || '',
+          reports: []
+        };
+      }
+      groups[key].reports.push(report);
+    });
+    
+    return Object.values(groups).sort((a, b) => b.startDate.localeCompare(a.startDate));
+  }, [filteredArchivedReports, getPeriodLabel]);
+
   const fetchPublishedReports = React.useCallback(async () => {
     try {
       const q = query(
@@ -645,9 +704,31 @@ export default function WeeklyReview() {
     }
   }, [activeYear]);
 
+  const fetchArchivedReports = React.useCallback(async () => {
+    try {
+      const q = query(
+        collection(db, 'archived_kg_reports'),
+        where('academicYear', '==', activeYear)
+      );
+      const snap = await getDocs(q);
+      const list = snap.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...docSnap.data()
+      })).sort((a: any, b: any) => {
+        const atA = a.archivedAt?.seconds ? a.archivedAt.seconds * 1000 : (Number(a.archivedAt) || 0);
+        const atB = b.archivedAt?.seconds ? b.archivedAt.seconds * 1000 : (Number(b.archivedAt) || 0);
+        return atB - atA;
+      });
+      setArchivedReports(list);
+    } catch (err) {
+      console.error("Error fetching archived reports:", err);
+    }
+  }, [activeYear]);
+
   React.useEffect(() => {
     fetchPublishedReports();
-  }, [fetchPublishedReports]);
+    fetchArchivedReports();
+  }, [fetchPublishedReports, fetchArchivedReports]);
 
   const handlePrint = () => {
     window.print();
@@ -967,6 +1048,50 @@ export default function WeeklyReview() {
       } catch (err: any) {
         toast.error(`Gagal menghapus arsip: ${err.message}`);
       }
+    }
+  };
+
+  const handleArchiveReport = async () => {
+    if (!reportToArchive || !archiveReason.trim()) return;
+    setIsArchiving(true);
+    const toastId = toast.loading("Sedang mengarsipkan laporan...");
+    try {
+      const batch = writeBatch(db);
+      
+      const newArchivedRef = doc(db, 'archived_kg_reports', reportToArchive.id);
+      const originalRef = doc(db, 'published_kg_reports', reportToArchive.id);
+      
+      const archivePayload = {
+        ...reportToArchive,
+        originalReportId: reportToArchive.id,
+        archivedAt: serverTimestamp(),
+        archivedBy: profile?.uid || 'Unknown',
+        archivedByEmail: profile?.email || 'Unknown',
+        archiveReason: archiveReason.trim(),
+        archiveSource: "published_kg_reports",
+        archiveVersion: 1
+      };
+      
+      // Remove local UI 'id' property if present to keep Firestore clean
+      delete archivePayload.id;
+      
+      batch.set(newArchivedRef, archivePayload);
+      batch.delete(originalRef);
+      
+      await batch.commit();
+      
+      toast.success("Laporan berhasil diarsipkan! 🎉", { id: toastId });
+      setArchiveModalOpen(false);
+      setReportToArchive(null);
+      setArchiveReason('');
+      
+      fetchPublishedReports();
+      fetchArchivedReports();
+    } catch (err: any) {
+      console.error("Error archiving report:", err);
+      toast.error(`Gagal mengarsipkan laporan: ${err.message}`, { id: toastId });
+    } finally {
+      setIsArchiving(false);
     }
   };
 
@@ -1722,12 +1847,40 @@ export default function WeeklyReview() {
             </p>
           </div>
           <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 text-[10px] font-black uppercase shrink-0 self-start md:self-center">
-            {publishedReports.length} Terpublikasi
+            {publishedSubTab === 'PUBLISHED' ? `${publishedReports.length} Terpublikasi` : `${archivedReports.length} Diarsipkan`}
           </span>
         </div>
 
+        {/* Sub-tab Switcher */}
+        <div className="flex border-b border-gray-150 -mt-2">
+          <button
+            onClick={() => setPublishedSubTab('PUBLISHED')}
+            className={cn(
+              "px-5 py-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-2",
+              publishedSubTab === 'PUBLISHED'
+                ? "border-emerald-600 text-emerald-700 font-black"
+                : "border-transparent text-gray-400 hover:text-gray-600"
+            )}
+          >
+            <CheckCircle2 size={13} />
+            Terbit ({publishedReports.length})
+          </button>
+          <button
+            onClick={() => setPublishedSubTab('ARCHIVED')}
+            className={cn(
+              "px-5 py-2.5 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-2",
+              publishedSubTab === 'ARCHIVED'
+                ? "border-amber-600 text-amber-700 font-black"
+                : "border-transparent text-gray-400 hover:text-gray-600"
+            )}
+          >
+            <Archive size={13} />
+            Arsip ({archivedReports.length})
+          </button>
+        </div>
+
         {/* Filters and Search Bar */}
-        {publishedReports.length > 0 && (
+        {(publishedReports.length > 0 || archivedReports.length > 0) && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-gray-50 p-4 rounded-2xl border border-gray-150">
             <div className="space-y-1">
               <label className="text-[10px] font-black text-emerald-700 uppercase tracking-wider block">Filter Kelas</label>
@@ -1758,105 +1911,369 @@ export default function WeeklyReview() {
           </div>
         )}
 
-        {publishedReports.length === 0 ? (
-          <div className="text-center py-12 text-gray-400 text-xs italic bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
-            Belum ada laporan mingguan yang dipublikasikan dalam tahun ajaran ini.
-          </div>
-        ) : filteredPublishedReports.length === 0 ? (
-          <div className="text-center py-12 text-gray-400 text-xs italic bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
-            Tidak ada laporan yang cocok dengan filter atau pencarian Anda.
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {groupedPublishedReports.map((group) => (
-              <div key={group.label} className="space-y-3">
-                {/* Section Header for the period/week */}
-                <div className="bg-emerald-50/70 border border-emerald-100/50 text-emerald-900 px-4 py-2.5 rounded-xl flex items-center justify-between font-extrabold text-xs">
-                  <span className="flex items-center gap-2">
-                    <Calendar size={14} className="text-[#109E58]" />
-                    {group.label}
-                  </span>
-                  <span className="text-[10px] bg-white text-emerald-800 font-extrabold px-2.5 py-0.5 rounded-full border border-emerald-100">
-                    {group.reports.length} Laporan
-                  </span>
-                </div>
-                
-                {/* Table for students in this period */}
-                <div className="overflow-x-auto rounded-xl border border-gray-150">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="bg-gray-50/50 border-b border-gray-150 font-black text-gray-500 uppercase tracking-wider text-[10px]">
-                        <th className="p-3.5">Nama Siswa</th>
-                        <th className="p-3.5 text-right">File PDF / Tindakan</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 font-bold text-gray-700">
-                      {group.reports.map((report) => (
-                        <tr key={report.id} className="hover:bg-gray-50/30 transition-colors">
-                          <td className="p-3.5">
-                            <div className="flex flex-col gap-1">
-                              <span className="font-extrabold text-gray-900 text-sm">{report.studentName}</span>
-                              <div className="flex items-center flex-wrap gap-2">
-                                <span className="text-[9px] bg-emerald-100 text-emerald-800 font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
-                                  {report.className}
-                                </span>
-                                {report.publishedAt && (
-                                  <span className="text-[9.5px] text-gray-400 font-medium whitespace-nowrap">
-                                    Dipublish: {new Date(report.publishedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+        {publishedSubTab === 'PUBLISHED' ? (
+          publishedReports.length === 0 ? (
+            <div className="text-center py-12 text-gray-400 text-xs italic bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
+              Belum ada laporan mingguan yang dipublikasikan dalam tahun ajaran ini.
+            </div>
+          ) : filteredPublishedReports.length === 0 ? (
+            <div className="text-center py-12 text-gray-400 text-xs italic bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
+              Tidak ada laporan yang cocok dengan filter atau pencarian Anda.
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {groupedPublishedReports.map((group) => (
+                <div key={group.label} className="space-y-3">
+                  {/* Section Header for the period/week */}
+                  <div className="bg-emerald-50/70 border border-emerald-100/50 text-emerald-900 px-4 py-2.5 rounded-xl flex items-center justify-between font-extrabold text-xs">
+                    <span className="flex items-center gap-2">
+                      <Calendar size={14} className="text-[#109E58]" />
+                      {group.label}
+                    </span>
+                    <span className="text-[10px] bg-white text-emerald-800 font-extrabold px-2.5 py-0.5 rounded-full border border-emerald-100">
+                      {group.reports.length} Laporan
+                    </span>
+                  </div>
+                  
+                  {/* Table for students in this period */}
+                  <div className="overflow-x-auto rounded-xl border border-gray-150">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-gray-50/50 border-b border-gray-150 font-black text-gray-500 uppercase tracking-wider text-[10px]">
+                          <th className="p-3.5">Nama Siswa</th>
+                          <th className="p-3.5">Status Dilihat</th>
+                          <th className="p-3.5 text-right">File PDF / Tindakan</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 font-bold text-gray-700">
+                        {group.reports.map((report) => (
+                          <tr key={report.id} className="hover:bg-gray-50/30 transition-colors">
+                            <td className="p-3.5">
+                              <div className="flex flex-col gap-1">
+                                <span className="font-extrabold text-gray-900 text-sm">{report.studentName}</span>
+                                <div className="flex items-center flex-wrap gap-2">
+                                  <span className="text-[9px] bg-emerald-100 text-emerald-800 font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                    {report.className}
                                   </span>
-                                )}
+                                  {report.publishedAt && (
+                                    <span className="text-[9.5px] text-gray-400 font-medium whitespace-nowrap">
+                                      Dipublish: {new Date(report.publishedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                          </td>
-                          <td className="p-3.5 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              {report.driveFileUrl && (
-                                <>
+                            </td>
+                            <td className="p-3.5 text-left">
+                              {(() => {
+                                const hasViewed = !!report.studentViewedAt;
+                                const hasPdfOpened = !!report.pdfOpenedAt;
+                                
+                                return (
+                                  <div className="flex flex-col gap-1.5 max-w-[240px]">
+                                    {/* Mobile View Status */}
+                                    <div className="flex items-start gap-1 flex-col">
+                                      {hasViewed ? (
+                                        <>
+                                          <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border border-emerald-100">
+                                            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
+                                            Sudah Dilihat
+                                          </span>
+                                          <div className="text-[10px] text-gray-500 font-bold space-y-0.5 mt-0.5 leading-tight">
+                                            <div>Pertama: <span className="text-gray-700">{formatIndonesianDateTime(report.studentViewedAt)}</span></div>
+                                            {report.lastStudentViewedAt && (
+                                              <div>Terakhir: <span className="text-gray-700">{formatIndonesianDateTime(report.lastStudentViewedAt)}</span></div>
+                                            )}
+                                            {report.viewCount !== undefined && report.viewCount > 0 && (
+                                              <div className="text-[9.5px] text-emerald-600 font-extrabold bg-emerald-50/50 px-1.5 py-0.2 rounded w-fit mt-0.5">
+                                                Dibuka {report.viewCount}×
+                                              </div>
+                                            )}
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-500 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border border-gray-200">
+                                            Belum Dilihat
+                                          </span>
+                                          <span className="text-[10px] text-gray-400 font-medium leading-tight mt-0.5">
+                                            Belum dibuka oleh siswa.
+                                          </span>
+                                        </>
+                                      )}
+                                    </div>
+
+                                    {/* PDF Opened Status */}
+                                    {hasPdfOpened && (
+                                      <div className="border-t border-dashed border-gray-150 pt-1 mt-1 text-[10px] text-blue-700 font-semibold leading-tight">
+                                        <div className="flex items-center gap-1">
+                                          <span className="inline-block w-1 h-1 bg-blue-500 rounded-full" />
+                                          <span>PDF dibuka: <span className="font-extrabold">{formatIndonesianDateTime(report.pdfOpenedAt)}</span></span>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+                            </td>
+                            <td className="p-3.5 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                {report.driveFileUrl && (
+                                  <>
+                                    <a
+                                      href={report.driveFileUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 px-2.5 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer"
+                                      title="Buka dokumen di Google Drive"
+                                    >
+                                      <FileText size={12} className="text-blue-500" />
+                                      Drive
+                                    </a>
+                                    <button
+                                      onClick={() => handleSendToParent(report.id, report.sentToParent || false)}
+                                      disabled={report.sentToParent || false}
+                                      className={cn(
+                                        "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer",
+                                        report.sentToParent
+                                          ? "bg-emerald-50 text-emerald-700 opacity-80 cursor-default"
+                                          : "bg-orange-50 hover:bg-orange-100 text-orange-700"
+                                      )}
+                                      title={report.sentToParent ? "Laporan sudah dikirim ke orang tua" : "Kirim link laporan ini ke akun orang tua"}
+                                    >
+                                      <Send size={12} className={report.sentToParent ? "text-emerald-500" : "text-orange-500"} />
+                                      {report.sentToParent ? "Terkirim" : "Kirim ke Orang Tua"}
+                                    </button>
+                                  </>
+                                )}
+                                <button
+                                  onClick={() => {
+                                    setReportToArchive(report);
+                                    setArchiveReason('');
+                                    setArchiveModalOpen(true);
+                                  }}
+                                  className="p-1.5 hover:bg-amber-50 text-amber-600 hover:text-amber-800 rounded-lg transition-all cursor-pointer"
+                                  title="Arsipkan laporan agar tidak dapat dilihat siswa."
+                                >
+                                  <Archive size={13} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeletePublished(report.id, report.studentName)}
+                                  className="p-1.5 hover:bg-red-50 text-red-500 hover:text-red-700 rounded-lg transition-all cursor-pointer"
+                                  title="Hapus Publikasi"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        ) : (
+          archivedReports.length === 0 ? (
+            <div className="text-center py-12 text-gray-400 text-xs italic bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
+              Belum ada laporan mingguan yang diarsipkan.
+            </div>
+          ) : filteredArchivedReports.length === 0 ? (
+            <div className="text-center py-12 text-gray-400 text-xs italic bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
+              Tidak ada arsip laporan yang cocok dengan filter atau pencarian Anda.
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {groupedArchivedReports.map((group) => (
+                <div key={group.label} className="space-y-3">
+                  {/* Section Header for the period/week */}
+                  <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-2.5 rounded-xl flex items-center justify-between font-extrabold text-xs">
+                    <span className="flex items-center gap-2">
+                      <Calendar size={14} className="text-amber-600" />
+                      {group.label}
+                    </span>
+                    <span className="text-[10px] bg-white text-amber-800 font-extrabold px-2.5 py-0.5 rounded-full border border-amber-200">
+                      {group.reports.length} Diarsipkan
+                    </span>
+                  </div>
+                  
+                  {/* Table for students in this period */}
+                  <div className="overflow-x-auto rounded-xl border border-gray-150">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-gray-50/50 border-b border-gray-150 font-black text-gray-500 uppercase tracking-wider text-[10px]">
+                          <th className="p-3.5">Nama Siswa</th>
+                          <th className="p-3.5">Detail Arsip</th>
+                          <th className="p-3.5">Alasan Pengarsipan</th>
+                          <th className="p-3.5 text-right">File PDF</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 font-bold text-gray-700">
+                        {group.reports.map((report) => {
+                          const isExpanded = !!expandedReasons[report.id];
+                          const reasonText = report.archiveReason || '';
+                          const needsExpansion = reasonText.length > 60;
+                          const displayText = isExpanded ? reasonText : (needsExpansion ? reasonText.substring(0, 60) + '...' : reasonText);
+
+                          return (
+                            <tr key={report.id} className="hover:bg-gray-50/30 transition-colors">
+                              <td className="p-3.5">
+                                <div className="flex flex-col gap-1">
+                                  <span className="font-extrabold text-gray-900 text-sm">{report.studentName}</span>
+                                  <div className="flex items-center flex-wrap gap-2">
+                                    <span className="text-[9px] bg-amber-100 text-amber-800 font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                      {report.className}
+                                    </span>
+                                    <span className="text-[10px] bg-amber-50 text-amber-700 px-2.5 py-0.5 rounded-full border border-amber-100 uppercase tracking-wider font-extrabold flex items-center gap-1">
+                                      <Archive size={10} />
+                                      Diarsipkan
+                                    </span>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="p-3.5 text-left text-[11.5px] text-gray-600 leading-relaxed font-semibold">
+                                <div className="space-y-1">
+                                  <div>
+                                    <span className="text-gray-400 font-medium">Dipublish awal: </span>
+                                    <span className="text-gray-700 font-extrabold">
+                                      {report.publishedAt ? new Date(report.publishedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-400 font-medium">Diarsipkan: </span>
+                                    <span className="text-gray-700 font-extrabold">
+                                      {formatIndonesianDateTime(report.archivedAt)}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-400 font-medium">Oleh: </span>
+                                    <span className="text-gray-700 font-extrabold">{report.archivedByEmail || report.archivedBy || 'Guru'}</span>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="p-3.5 text-left text-[11.5px] max-w-[300px]">
+                                <p className="text-gray-700 whitespace-pre-wrap font-medium leading-relaxed italic">
+                                  "{displayText}"
+                                </p>
+                                {needsExpansion && (
+                                  <button
+                                    onClick={() => setExpandedReasons(prev => ({ ...prev, [report.id]: !prev[report.id] }))}
+                                    className="text-blue-600 hover:text-blue-800 font-extrabold underline text-[10.5px] mt-1 inline-block cursor-pointer"
+                                  >
+                                    {isExpanded ? 'Sembunyikan' : 'Lihat Lengkap'}
+                                  </button>
+                                )}
+                              </td>
+                              <td className="p-3.5 text-right">
+                                {report.driveFileUrl && (
                                   <a
                                     href={report.driveFileUrl}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 px-2.5 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer"
-                                    title="Buka dokumen di Google Drive"
+                                    className="inline-flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-2 rounded-lg text-xs font-black transition-all cursor-pointer"
+                                    title="Lihat PDF Drive"
                                   >
-                                    <FileText size={12} className="text-blue-500" />
-                                    Drive
+                                    <FileText size={13} className="text-blue-500" />
+                                    Lihat PDF Drive
                                   </a>
-                                  <button
-                                    onClick={() => handleSendToParent(report.id, report.sentToParent || false)}
-                                    disabled={report.sentToParent || false}
-                                    className={cn(
-                                      "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer",
-                                      report.sentToParent
-                                        ? "bg-emerald-50 text-emerald-700 opacity-80 cursor-default"
-                                        : "bg-orange-50 hover:bg-orange-100 text-orange-700"
-                                    )}
-                                    title={report.sentToParent ? "Laporan sudah dikirim ke orang tua" : "Kirim link laporan ini ke akun orang tua"}
-                                  >
-                                    <Send size={12} className={report.sentToParent ? "text-emerald-500" : "text-orange-500"} />
-                                    {report.sentToParent ? "Terkirim" : "Kirim ke Orang Tua"}
-                                  </button>
-                                </>
-                              )}
-                              <button
-                                onClick={() => handleDeletePublished(report.id, report.studentName)}
-                                className="p-1.5 hover:bg-red-50 text-red-500 hover:text-red-700 rounded-lg transition-all cursor-pointer"
-                                title="Hapus Publikasi"
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )
         )}
       </section>
+
+      {/* ARCHIVE CONFIRMATION MODAL */}
+      {archiveModalOpen && reportToArchive && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-[9999] p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-100 space-y-5 animate-scale-up">
+            <div className="flex items-center gap-3 border-b border-gray-100 pb-3">
+              <div className="p-2.5 bg-amber-50 rounded-2xl text-amber-600">
+                <Archive size={24} />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-gray-900 leading-snug">Konfirmasi Arsipkan Laporan</h3>
+                <p className="text-[10.5px] text-gray-500 font-bold uppercase tracking-wider mt-0.5">Unit Kindergarten (TK)</p>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 p-4 rounded-2xl border border-gray-150 space-y-2 text-xs font-bold text-gray-700">
+              <div className="grid grid-cols-3 gap-1">
+                <span className="text-gray-400">Nama Siswa:</span>
+                <span className="col-span-2 text-gray-900 font-extrabold">{reportToArchive.studentName}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-1">
+                <span className="text-gray-400">Kelas:</span>
+                <span className="col-span-2 text-gray-900 font-extrabold">{reportToArchive.className}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-1">
+                <span className="text-gray-400">Periode:</span>
+                <span className="col-span-2 text-gray-900 font-extrabold">{getPeriodLabel(reportToArchive)}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-1">
+                <span className="text-gray-400">Tgl Terbit:</span>
+                <span className="col-span-2 text-gray-900 font-extrabold">
+                  {reportToArchive.publishedAt ? new Date(reportToArchive.publishedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
+                </span>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-red-50 border border-red-100 rounded-2xl flex items-start gap-2.5 text-[11.5px] text-red-800 font-bold leading-relaxed">
+              <ShieldAlert className="text-red-500 shrink-0 mt-0.5" size={16} />
+              <div>
+                Peringatan: Laporan akan hilang dari Rapor Saya siswa dan Mobile View Lumina. Data laporan tetap tersimpan di Arsip.
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10.5px] font-black text-gray-500 uppercase tracking-wider block">
+                Alasan Pengarsipan <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={archiveReason}
+                onChange={(e) => setArchiveReason(e.target.value)}
+                placeholder="Contoh: Terdapat kesalahan dokumentasi/foto. Laporan akan diterbitkan ulang."
+                rows={3}
+                required
+                className="w-full bg-white border border-gray-200 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 rounded-xl p-3 text-xs font-semibold text-gray-800 outline-none placeholder-gray-400 resize-none"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setArchiveModalOpen(false);
+                  setReportToArchive(null);
+                  setArchiveReason('');
+                }}
+                disabled={isArchiving}
+                className="px-4 py-2 text-xs font-black uppercase tracking-wider text-gray-500 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl cursor-pointer disabled:opacity-50 transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleArchiveReport}
+                disabled={isArchiving || !archiveReason.trim()}
+                className="px-4 py-2 text-xs font-black uppercase tracking-wider text-white bg-amber-600 hover:bg-amber-700 rounded-xl cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all inline-flex items-center gap-1.5 shadow-sm"
+              >
+                {isArchiving && <Loader2 size={12} className="animate-spin" />}
+                Arsipkan Laporan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -766,7 +766,18 @@ service cloud.firestore {
     match /published_kg_reports/{reportId} {
       allow read: if isActive() &&
         (isJuniorHighStaff() || isTeacher() || isOwnStudentData(existing().studentId));
-      allow write: if isJuniorHighStaff() || isAdmin() || isTeacher();
+      allow create: if isJuniorHighStaff() || isAdmin() || isTeacher();
+      allow update: if (isJuniorHighStaff() || isAdmin() || isTeacher()) ||
+        (isActive() && isOwnStudentData(existing().studentId) &&
+         incoming().diff(existing()).affectedKeys().hasOnly(['studentViewedAt', 'lastStudentViewedAt', 'pdfOpenedAt', 'viewCount']));
+      allow delete: if isJuniorHighStaff() || isAdmin() || isTeacher();
+    }
+
+    match /archived_kg_reports/{reportId} {
+      allow read: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin());
+      allow create: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin());
+      allow update: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin());
+      allow delete: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin());
     }
 
     match /weekly_summary_drafts/{draftId} {
