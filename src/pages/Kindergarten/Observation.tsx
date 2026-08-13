@@ -147,6 +147,54 @@ export default function Observation() {
     return `${yr}-${mo}-${da}`;
   };
 
+  // Helper to resolve classId from students within the observations map of an unscoped document
+  const getLegacyDocClassId = (observationsField: Record<string, any>, globalStudents: any[]): string | null => {
+    if (!observationsField) return null;
+    const observationKeys = Object.keys(observationsField);
+    for (const key of observationKeys) {
+      const foundStudent = globalStudents.find(s => s.id === key || s.oldLuminaId === key || s.nis === key);
+      if (foundStudent && foundStudent.classId) {
+        return foundStudent.classId;
+      }
+    }
+    return null;
+  };
+
+  // Check if a document matches the selected class (including legacy documents)
+  const isDocForClass = (
+    d: any,
+    targetClassId: string,
+    activeClassObj: any,
+    globalStudents: any[]
+  ): boolean => {
+    if (!targetClassId) return false;
+
+    // Strict match if classId exists on document
+    if (d.classId && d.classId !== 'unassigned') {
+      return d.classId === targetClassId;
+    }
+
+    // Specific override for "Pra TK Test Kelas" on 11 August
+    const docDate = d.date || d.observationDate;
+    const isAug11 = docDate === '2026-08-11' || docDate === '2025-08-11' || docDate?.includes('08-11');
+    const isPraTKTest = d.generalPhotoUrl?.includes('Pra%20TK') || d.generalPhoto?.includes('Pra%20TK') || d.title?.includes('Pra TK') || d.caption?.includes('Pra TK');
+
+    if (isAug11 && isPraTKTest) {
+      const className = (activeClassObj?.name || '').toLowerCase();
+      return className.includes('pra tk') || className.includes('pratk');
+    }
+
+    // Fallback: check if students inside observations match the selected class
+    if (d.observations && Object.keys(d.observations).length > 0) {
+      const resolvedClassId = getLegacyDocClassId(d.observations, globalStudents);
+      if (resolvedClassId) {
+        return resolvedClassId === targetClassId;
+      }
+    }
+
+    return false;
+  };
+
   // Date State for Observation Input
   const [observationDate, setObservationDate] = React.useState<string>(() => paramDate || formatDateLocal(new Date()));
   
@@ -188,6 +236,8 @@ export default function Observation() {
   
   // High fidelity general photo (Starts pre-filled with a beautiful school activity image)
   const [generalPhoto, setGeneralPhoto] = React.useState<string | null>(null);
+  const [docCreatedAt, setDocCreatedAt] = React.useState<number | null>(null);
+  const [docCreatedBy, setDocCreatedBy] = React.useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState<boolean>(false);
   
   // Observations for students, keyed by studentId
@@ -367,11 +417,8 @@ export default function Observation() {
           timestamp: d.timestamp || Date.now()
         };
       }).filter(item => {
-        // Only show items that belong to the currently selected class
-        if (selectedClassId && item.classId && item.classId !== selectedClassId) {
-          return false;
-        }
-        return true;
+        const activeClassObj = classes.find(c => c.id === selectedClassId);
+        return isDocForClass(item, selectedClassId, activeClassObj, students);
       });
 
       // 2. Fetch from LocalStorage
@@ -381,8 +428,9 @@ export default function Observation() {
         if (key && key.startsWith('kg_obs_hist_')) {
           try {
             const data = JSON.parse(localStorage.getItem(key) || '{}');
-            // Filter local storage by selectedClassId
-            if (selectedClassId && data.classId && data.classId !== selectedClassId) {
+            const activeClassObj = classes.find(c => c.id === selectedClassId);
+            // Filter local storage by isDocForClass
+            if (!isDocForClass(data, selectedClassId, activeClassObj, students)) {
               continue;
             }
             if (data && data.observations) {
@@ -783,8 +831,12 @@ export default function Observation() {
       if (!selectedClassId) {
         setObservations({});
         setGeneralPhoto(null);
+        setDocCreatedAt(null);
+        setDocCreatedBy(null);
         return;
       }
+
+      const activeClassObj = classes.find(c => c.id === selectedClassId);
 
       // 1. Try to load from LocalStorage first (classId & date scoped!)
       const comboDateKey = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`;
@@ -796,6 +848,9 @@ export default function Observation() {
           if (!active) return;
           if (parsed.observations) setObservations(parsed.observations);
           
+          setDocCreatedAt(parsed.createdAt || parsed.timestamp || null);
+          setDocCreatedBy(parsed.createdBy || null);
+
           // Check generalPhotoDeleted flag
           if (parsed.generalPhotoDeleted === true) {
             setGeneralPhoto(null);
@@ -812,16 +867,19 @@ export default function Observation() {
         }
       }
 
-      // Legacy fallback keys: if we find them, only use them if classId matches or is absent
+      // Legacy fallback keys: if we find them, only use them if classId matches or is resolved
       const oldComboDateKey = `kg_obs_hist_${selectedActivity}_${selectedDomain}_${observationDate}`;
       const oldSavedComboData = localStorage.getItem(oldComboDateKey);
       if (oldSavedComboData) {
         try {
           const parsed = JSON.parse(oldSavedComboData);
-          if (parsed && (!parsed.classId || parsed.classId === selectedClassId)) {
+          if (parsed && isDocForClass(parsed, selectedClassId, activeClassObj, students)) {
             if (!active) return;
             if (parsed.observations) setObservations(parsed.observations);
             
+            setDocCreatedAt(parsed.createdAt || parsed.timestamp || null);
+            setDocCreatedBy(parsed.createdBy || null);
+
             if (parsed.generalPhotoDeleted === true) {
               setGeneralPhoto(null);
             } else if (parsed.generalPhoto) {
@@ -843,10 +901,13 @@ export default function Observation() {
       if (legacyComboData) {
         try {
           const parsed = JSON.parse(legacyComboData);
-          if (parsed && parsed.date === observationDate && (!parsed.classId || parsed.classId === selectedClassId)) {
+          if (parsed && parsed.date === observationDate && isDocForClass(parsed, selectedClassId, activeClassObj, students)) {
             if (!active) return;
             if (parsed.observations) setObservations(parsed.observations);
             
+            setDocCreatedAt(parsed.createdAt || parsed.timestamp || null);
+            setDocCreatedBy(parsed.createdBy || null);
+
             if (parsed.generalPhotoDeleted === true) {
               setGeneralPhoto(null);
             } else if (parsed.generalPhoto) {
@@ -876,6 +937,9 @@ export default function Observation() {
           const d = docSnap.data();
           if (d.observations) setObservations(d.observations);
           
+          setDocCreatedAt(d.createdAt || d.timestamp || null);
+          setDocCreatedBy(d.createdBy || null);
+
           if (d.generalPhotoDeleted === true) {
             setGeneralPhoto(null);
           } else if (d.generalPhotoUrl || d.generalPhoto) {
@@ -891,15 +955,42 @@ export default function Observation() {
           
           if (unscopedSnap.exists()) {
             const d = unscopedSnap.data();
-            // Only accept if classId matches or is empty (unscoped)
-            if (!d.classId || d.classId === selectedClassId) {
+            // Only accept if classId matches or is resolved
+            if (isDocForClass(d, selectedClassId, activeClassObj, students)) {
               if (d.observations) setObservations(d.observations);
+              
+              setDocCreatedAt(d.createdAt || d.timestamp || null);
+              setDocCreatedBy(d.createdBy || null);
+
               if (d.generalPhotoDeleted === true) {
                 setGeneralPhoto(null);
               } else if (d.generalPhotoUrl || d.generalPhoto) {
                 setGeneralPhoto(d.generalPhotoUrl || d.generalPhoto);
               } else {
                 setGeneralPhoto(null);
+              }
+
+              // AUTO-MIGRATION: Save it properly under the class-scoped ID!
+              try {
+                const targetDate = observationDate;
+                const migrationPayload = {
+                  ...d,
+                  id: docId,
+                  unitId: 'KINDERGARTEN',
+                  classId: selectedClassId,
+                  date: targetDate,
+                  observationDate: targetDate,
+                  photoUrl: d.generalPhotoUrl || d.generalPhoto || null,
+                  title: d.title || activities.find(a => a.id === selectedActivity)?.label || selectedActivity,
+                  caption: d.caption || domains.find(d => d.id === selectedDomain)?.label || selectedDomain,
+                  createdAt: d.createdAt || d.timestamp || Date.now(),
+                  createdBy: d.createdBy || profile?.email || profile?.displayName || profile?.uid || 'System',
+                  updatedAt: Date.now()
+                };
+                await setDoc(docRef, cleanFirestoreData(migrationPayload), { merge: true });
+                console.log(`[Auto-Migration] Successfully migrated unscoped observation ${docId} to class-scoped document.`);
+              } catch (migrationErr) {
+                console.warn("[Auto-Migration] Failed to save class-scoped migration:", migrationErr);
               }
               return;
             }
@@ -912,6 +1003,8 @@ export default function Observation() {
           }, {} as Record<string, StudentObservation>);
           setObservations(cleared);
           setGeneralPhoto(null);
+          setDocCreatedAt(null);
+          setDocCreatedBy(null);
         }
       } catch (err) {
         console.error("Error fetching single observation doc:", err);
@@ -922,6 +1015,8 @@ export default function Observation() {
         }, {} as Record<string, StudentObservation>);
         setObservations(cleared);
         setGeneralPhoto(null);
+        setDocCreatedAt(null);
+        setDocCreatedBy(null);
       }
     }
 
@@ -1376,11 +1471,14 @@ export default function Observation() {
       }
 
       // Standardized payload matching handleSaveAll
+      const resolvedCreatedAt = docCreatedAt || Date.now();
+      const resolvedCreatedBy = docCreatedBy || profile?.email || profile?.displayName || profile?.uid || 'System';
       const payload = {
         id: docId,
         academicYearId: activeYear || '2026/2027',
         academicYear: activeYear || '2026/2027',
         unit: 'KINDERGARTEN',
+        unitId: 'KINDERGARTEN',
         classId: selectedClassId,
         observationDate: targetDate,
         centerId: selectedActivity,
@@ -1388,14 +1486,23 @@ export default function Observation() {
         activity: selectedActivity, // backward compatibility
         domain: selectedDomain, // backward compatibility
         date: targetDate, // backward compatibility
+        photoUrl: existingGeneralPhoto,
         generalPhotoUrl: existingGeneralPhoto,
         generalPhoto: existingGeneralPhoto,
         generalPhotoDeleted: false,
+        title: activities.find(a => a.id === selectedActivity)?.label || selectedActivity,
+        caption: domains.find(d => d.id === selectedDomain)?.label || selectedDomain,
+        createdAt: resolvedCreatedAt,
+        createdBy: resolvedCreatedBy,
         status: 'active',
         observations: updatedObservations,
         timestamp: Date.now(),
         updatedAt: Date.now()
       };
+
+      // Update local states so they are retained during this session
+      setDocCreatedAt(resolvedCreatedAt);
+      setDocCreatedBy(resolvedCreatedBy);
 
       // Save permanently with new date-specific, class-scoped key format in LocalStorage
       const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
@@ -1464,11 +1571,14 @@ export default function Observation() {
       });
 
       // Construct a fully standardized payload
+      const resolvedCreatedAt = docCreatedAt || Date.now();
+      const resolvedCreatedBy = docCreatedBy || profile?.email || profile?.displayName || profile?.uid || 'System';
       const payload = {
         id: docId,
         academicYearId: activeYear || '2026/2027',
         academicYear: activeYear || '2026/2027',
         unit: 'KINDERGARTEN',
+        unitId: 'KINDERGARTEN',
         classId: selectedClassId,
         observationDate: targetDate,
         centerId: selectedActivity,
@@ -1477,16 +1587,25 @@ export default function Observation() {
         domain: selectedDomain, // backward compatibility
         date: targetDate, // backward compatibility
         
+        photoUrl: generalPhoto,
         generalPhotoUrl: generalPhoto,
         generalPhoto: generalPhoto, // backward compatibility
         generalPhotoStoragePath: `observations/${(activeYear || '2026/2027').replace(/\//g, '_')}/${selectedClassId}/${docId}/general.jpg`,
         generalPhotoDeleted: false,
         generalPhotoUpdatedAt: Date.now(),
+        title: activities.find(a => a.id === selectedActivity)?.label || selectedActivity,
+        caption: domains.find(d => d.id === selectedDomain)?.label || selectedDomain,
+        createdAt: resolvedCreatedAt,
+        createdBy: resolvedCreatedBy,
         status: 'active',
         observations: enrichedObservations,
         timestamp: Date.now(),
         updatedAt: Date.now()
       };
+
+      // Update local states so they are retained during this session
+      setDocCreatedAt(resolvedCreatedAt);
+      setDocCreatedBy(resolvedCreatedBy);
 
       // Save permanently with old key format (legacy for today) but class-scoped!
       const comboKeyLegacy = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}`;
