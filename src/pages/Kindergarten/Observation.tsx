@@ -7,7 +7,7 @@ import {
   Languages, Brain, Activity, Palette, Compass,
   Music, Film, Star, CheckCircle2, Loader2, Image as ImageIcon,
   UserCheck, RefreshCw, AlertTriangle, HelpCircle, Check, Info, Trash2, ClipboardList,
-  Mic, MicOff
+  Mic, MicOff, ArrowLeftRight
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
@@ -230,6 +230,17 @@ export default function Observation() {
   // Popup/Modal detail states
   const [selectedDetailCell, setSelectedDetailCell] = React.useState<{ student: any; domain: any; entries: any[] } | null>(null);
   const [selectedDetailSession, setSelectedDetailSession] = React.useState<any | null>(null);
+
+  // States for Editing Sesi and Pindahkan Siswa in Sesi Detail Popup
+  const [isEditingPopupSession, setIsEditingPopupSession] = React.useState<boolean>(false);
+  const [popupActivity, setPopupActivity] = React.useState<KGActivity | "">("");
+  const [popupDomain, setPopupDomain] = React.useState<KGDomain | "">("");
+  
+  const [movingStudent, setMovingStudent] = React.useState<any | null>(null);
+  const [movingStudentObs, setMovingStudentObs] = React.useState<any | null>(null);
+  const [moveTargetActivity, setMoveTargetActivity] = React.useState<KGActivity | "">("");
+  const [moveTargetDomain, setMoveTargetDomain] = React.useState<KGDomain | "">("");
+  const [showMoveModal, setShowMoveModal] = React.useState<boolean>(false);
 
   const [selectedActivity, setSelectedActivity] = React.useState<KGActivity | "">(() => (paramActivity as KGActivity) || "");
   const [selectedDomain, setSelectedDomain] = React.useState<KGDomain | "">(() => (paramDomain as KGDomain) || "");
@@ -715,6 +726,189 @@ export default function Observation() {
     } catch (err: any) {
       console.error(err);
       toast.error(`Gagal menghapus sesi: ${err.message || String(err)}`);
+    }
+  };
+
+  const handleSavePopupSession = async () => {
+    if (!selectedDetailSession) return;
+    if (!popupActivity || !popupDomain) {
+      toast.error("Silakan pilih Sentra & Domain terlebih dahulu.");
+      return;
+    }
+
+    const confirmMsg = "Perubahan Sentra dan Domain akan berlaku untuk seluruh siswa pada sesi ini.";
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      const classId = selectedDetailSession.classId || selectedClassId;
+      const targetDate = selectedDetailSession.date;
+      const oldDocId = selectedDetailSession.id;
+      const newDocId = `${classId}_${popupActivity}_${popupDomain}_${targetDate}`;
+
+      const payload = {
+        ...selectedDetailSession,
+        id: newDocId,
+        classId,
+        activity: popupActivity,
+        domain: popupDomain,
+        centerId: popupActivity,
+        domainId: popupDomain,
+        sentraId: popupActivity,
+        sentraName: activities.find(a => a.id === popupActivity)?.label || popupActivity,
+        domainName: domains.find(d => d.id === popupDomain)?.label || popupDomain,
+        timestamp: Date.now()
+      };
+
+      // Write updated document to firestore
+      await setDoc(doc(db, 'observations', newDocId), cleanFirestoreData(payload), { merge: true });
+
+      // Save to local storage
+      const newLsKey = `kg_obs_hist_${classId}_${popupActivity}_${popupDomain}_${targetDate}`;
+      localStorage.setItem(newLsKey, JSON.stringify(payload));
+
+      // If document ID changed, clean up the old documents/localstorage
+      if (oldDocId !== newDocId) {
+        await deleteDoc(doc(db, 'observations', oldDocId));
+        localStorage.removeItem(`kg_obs_hist_${oldDocId}`);
+        localStorage.removeItem(`kg_obs_hist_${classId}_${selectedDetailSession.activity}_${selectedDetailSession.domain}_${targetDate}`);
+        localStorage.removeItem(`kg_obs_hist_${selectedDetailSession.activity}_${selectedDetailSession.domain}_${targetDate}`);
+      }
+
+      toast.success("Sesi berhasil diperbarui");
+      setIsEditingPopupSession(false);
+      setSelectedDetailSession(null);
+      loadRecapData();
+    } catch (err: any) {
+      console.error(err);
+      toast.error(`Gagal memperbarui sesi: ${err.message || String(err)}`);
+    }
+  };
+
+  const handleInitMoveStudent = (student: any, obs: any) => {
+    if (!selectedDetailSession) return;
+    setMovingStudent(student);
+    setMovingStudentObs(obs);
+    setMoveTargetActivity(selectedDetailSession.activity);
+    setMoveTargetDomain(selectedDetailSession.domain);
+    setShowMoveModal(true);
+  };
+
+  const handleExecuteMoveStudent = async () => {
+    if (!selectedDetailSession || !movingStudent || !movingStudentObs) return;
+    if (!moveTargetActivity || !moveTargetDomain) {
+      toast.error("Silakan pilih Sentra & Domain tujuan.");
+      return;
+    }
+
+    if (moveTargetActivity === selectedDetailSession.activity && moveTargetDomain === selectedDetailSession.domain) {
+      toast.error("Siswa sudah berada di sesi tujuan tersebut.");
+      return;
+    }
+
+    const targetSentraLabel = activities.find(a => a.id === moveTargetActivity)?.label || moveTargetActivity;
+    const targetDomainLabel = domains.find(d => d.id === moveTargetDomain)?.label || moveTargetDomain;
+    const confirmMsg = `Apakah Anda yakin ingin memindahkan siswa ini?\n\nPindahkan ${movingStudent.name} ke Sentra "${targetSentraLabel}" dan Domain "${targetDomainLabel}"?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      const classId = selectedDetailSession.classId || selectedClassId;
+      const targetDate = selectedDetailSession.date;
+      const oldDocId = selectedDetailSession.id;
+      const destDocId = `${classId}_${moveTargetActivity}_${moveTargetDomain}_${targetDate}`;
+
+      // 1. Remove student observation from the source (old) session
+      const updatedOldObservations = { ...selectedDetailSession.observations };
+      delete updatedOldObservations[movingStudent.id];
+
+      const hasObservationsLeft = Object.keys(updatedOldObservations).some(sid => {
+        const studentObs = updatedOldObservations[sid];
+        return studentObs && studentObs.grading;
+      });
+
+      if (!hasObservationsLeft) {
+        // If no student observations left, delete the source session completely
+        await deleteDoc(doc(db, 'observations', oldDocId));
+        localStorage.removeItem(`kg_obs_hist_${oldDocId}`);
+        localStorage.removeItem(`kg_obs_hist_${classId}_${selectedDetailSession.activity}_${selectedDetailSession.domain}_${targetDate}`);
+        localStorage.removeItem(`kg_obs_hist_${selectedDetailSession.activity}_${selectedDetailSession.domain}_${targetDate}`);
+      } else {
+        // Otherwise update the source session doc with the student's entry removed
+        const updatedOldSession = {
+          ...selectedDetailSession,
+          observations: updatedOldObservations,
+          timestamp: Date.now()
+        };
+        await setDoc(doc(db, 'observations', oldDocId), cleanFirestoreData(updatedOldSession), { merge: true });
+        localStorage.setItem(`kg_obs_hist_${classId}_${selectedDetailSession.activity}_${selectedDetailSession.domain}_${targetDate}`, JSON.stringify(updatedOldSession));
+      }
+
+      // 2. Fetch destination session and merge or create a new one
+      const destDocRef = doc(db, 'observations', destDocId);
+      const destDocSnap = await getDoc(destDocRef);
+      let destObservations: Record<string, any> = {};
+      let destGeneralPhoto = null;
+      let destDocCreatedAt = Date.now();
+      let destDocCreatedBy = selectedDetailSession.createdBy || '';
+
+      if (destDocSnap.exists()) {
+        const destData = destDocSnap.data();
+        destObservations = destData.observations || {};
+        destGeneralPhoto = destData.generalPhotoUrl || destData.generalPhoto || null;
+        destDocCreatedAt = destData.createdAt || Date.now();
+        destDocCreatedBy = destData.createdBy || '';
+      } else {
+        const destLsKey = `kg_obs_hist_${classId}_${moveTargetActivity}_${moveTargetDomain}_${targetDate}`;
+        const savedDest = localStorage.getItem(destLsKey);
+        if (savedDest) {
+          try {
+            const parsed = JSON.parse(savedDest);
+            destObservations = parsed.observations || {};
+            destGeneralPhoto = parsed.generalPhoto || null;
+            destDocCreatedAt = parsed.createdAt || Date.now();
+            destDocCreatedBy = parsed.createdBy || '';
+          } catch (e) {
+            console.error(e);
+          }
+        }
+      }
+
+      // Add student's observation to the destination
+      destObservations[movingStudent.id] = movingStudentObs;
+
+      const destPayload = {
+        id: destDocId,
+        classId,
+        activity: moveTargetActivity,
+        domain: moveTargetDomain,
+        centerId: moveTargetActivity,
+        domainId: moveTargetDomain,
+        sentraId: moveTargetActivity,
+        sentraName: targetSentraLabel,
+        domainName: targetDomainLabel,
+        date: targetDate,
+        generalPhoto: destGeneralPhoto || selectedDetailSession.generalPhoto,
+        observations: destObservations,
+        createdAt: destDocCreatedAt,
+        createdBy: destDocCreatedBy,
+        timestamp: Date.now()
+      };
+
+      // Write destination document
+      await setDoc(destDocRef, cleanFirestoreData(destPayload), { merge: true });
+
+      // Save to local storage
+      const newLsKey = `kg_obs_hist_${classId}_${moveTargetActivity}_${moveTargetDomain}_${targetDate}`;
+      localStorage.setItem(newLsKey, JSON.stringify(destPayload));
+
+      toast.success("Siswa berhasil dipindahkan");
+      setShowMoveModal(false);
+      setMovingStudent(null);
+      setMovingStudentObs(null);
+      setSelectedDetailSession(null);
+      loadRecapData();
+    } catch (err: any) {
+      console.error(err);
+      toast.error(`Gagal memindahkan siswa: ${err.message || String(err)}`);
     }
   };
 
@@ -3545,29 +3739,86 @@ export default function Observation() {
               className="bg-white rounded-[2rem] max-w-3xl w-full max-h-[85vh] overflow-hidden shadow-2xl flex flex-col border border-gray-100"
             >
               {/* Header */}
-              <div className="p-6 bg-gradient-to-r from-teal-700 to-indigo-800 text-white flex items-center justify-between border-0">
-                <div>
-                  <span className="text-[9px] font-black tracking-widest uppercase text-indigo-100">Lumina Sesi Evaluasi Detail</span>
-                  <h3 className="text-lg font-black tracking-tight uppercase leading-tight mt-0.5">
-                    Sesi: {activities.find(a => a.id === selectedDetailSession.activity)?.label || selectedDetailSession.activity}
-                  </h3>
-                  <p className="text-xs text-indigo-100 font-bold mt-1">
-                    Domain: {domains.find(d => d.id === selectedDetailSession.domain)?.label || selectedDetailSession.domain} | Tanggal: {selectedDetailSession.date}
-                  </p>
+              {isEditingPopupSession ? (
+                <div className="p-6 bg-gradient-to-r from-amber-600 to-indigo-800 text-white flex flex-col gap-4 border-0">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-[9px] font-black tracking-widest uppercase text-amber-100">Lumina Sesi Evaluasi Detail — Edit Sesi</span>
+                      <h3 className="text-lg font-black tracking-tight uppercase leading-tight mt-0.5">
+                        Ubah Sentra & Domain Sesi
+                      </h3>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        setIsEditingPopupSession(false);
+                        setSelectedDetailSession(null);
+                      }}
+                      className="p-1.5 hover:bg-white/10 rounded-xl transition cursor-pointer text-white border-0 bg-transparent"
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                    <div className="flex flex-col gap-1 text-left">
+                      <label className="text-[9px] font-black uppercase text-amber-200">Sentra (Activity)</label>
+                      <select
+                        value={popupActivity}
+                        onChange={(e) => setPopupActivity(e.target.value as KGActivity)}
+                        className="bg-amber-900/60 text-white text-xs font-bold border border-amber-500/50 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-amber-400 cursor-pointer"
+                      >
+                        {activities.map(act => (
+                          <option key={act.id} value={act.id} className="text-gray-900 bg-white font-semibold">
+                            {act.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col gap-1 text-left">
+                      <label className="text-[9px] font-black uppercase text-amber-200">Domain Perkembangan</label>
+                      <select
+                        value={popupDomain}
+                        onChange={(e) => setPopupDomain(e.target.value as KGDomain)}
+                        className="bg-indigo-900/60 text-white text-xs font-bold border border-indigo-500/50 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-amber-400 cursor-pointer"
+                      >
+                        {domains.map(dom => (
+                          <option key={dom.id} value={dom.id} className="text-gray-900 bg-white font-semibold">
+                            {dom.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
                 </div>
-                <button 
-                  onClick={() => setSelectedDetailSession(null)}
-                  className="p-1.5 hover:bg-white/10 rounded-xl transition cursor-pointer text-white border-0 bg-transparent"
-                >
-                  <X size={20} />
-                </button>
-              </div>
+              ) : (
+                <div className="p-6 bg-gradient-to-r from-teal-700 to-indigo-800 text-white flex items-center justify-between border-0">
+                  <div className="text-left">
+                    <span className="text-[9px] font-black tracking-widest uppercase text-indigo-100">Lumina Sesi Evaluasi Detail</span>
+                    <h3 className="text-lg font-black tracking-tight uppercase leading-tight mt-0.5">
+                      Sesi: {activities.find(a => a.id === selectedDetailSession.activity)?.label || selectedDetailSession.activity}
+                    </h3>
+                    <p className="text-xs text-indigo-100 font-bold mt-1">
+                      Domain: {domains.find(d => d.id === selectedDetailSession.domain)?.label || selectedDetailSession.domain} | Tanggal: {selectedDetailSession.date}
+                    </p>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      setIsEditingPopupSession(false);
+                      setSelectedDetailSession(null);
+                    }}
+                    className="p-1.5 hover:bg-white/10 rounded-xl transition cursor-pointer text-white border-0 bg-transparent"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+              )}
 
               {/* Body */}
               <div className="p-6 overflow-y-auto space-y-6 flex-1 bg-gray-50/50">
                 {/* General session photo if available */}
                 {selectedDetailSession.generalPhoto && (
-                  <div className="space-y-2">
+                  <div className="space-y-2 text-left">
                     <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider block">Foto Kegiatan Utama (General)</span>
                     <div className="aspect-video w-full max-h-[160px] rounded-2xl overflow-hidden bg-gray-100 border border-gray-200">
                       <img src={selectedDetailSession.generalPhoto} alt="General session photo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
@@ -3575,7 +3826,7 @@ export default function Observation() {
                   </div>
                 )}
 
-                <div className="space-y-4">
+                <div className="space-y-4 text-left">
                   <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider block">Daftar Penilaian Siswa</span>
                   
                   {(() => {
@@ -3599,44 +3850,58 @@ export default function Observation() {
                             : 'bg-gray-50 text-gray-400 border-gray-100';
                           
                           return (
-                            <div key={student.id} className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex gap-4">
-                              <div className="w-16 h-16 rounded-xl overflow-hidden bg-gray-50 border border-gray-100 shrink-0 flex items-center justify-center">
-                                {studentPhoto ? (
-                                  <img src={studentPhoto} alt={student.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                ) : (
-                                  <div className="text-center p-1 font-black text-xs text-gray-300">
-                                    {student.name.charAt(0)}
-                                  </div>
-                                )}
-                              </div>
-
-                              <div className="flex-1 min-w-0 space-y-1.5">
-                                <div className="flex items-center justify-between gap-2 min-w-0">
-                                  <h4 className="text-xs font-black text-gray-800 uppercase truncate pr-1">{student.name}</h4>
-                                  <div className="flex items-center gap-1.5 shrink-0">
-                                    <span className={cn("px-2 py-0.5 text-[8px] font-black uppercase rounded-lg border leading-none", gradeColor)}>
-                                      {grConfig?.id || '—'}
-                                    </span>
-                                    {obs.grading && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDeleteIndividualObservation(student.id, student.name);
-                                        }}
-                                        title="Hapus penilaian anak ini"
-                                        className="text-red-500 hover:text-red-700 hover:scale-110 transition cursor-pointer p-0.5 border-0 bg-transparent flex items-center justify-center rounded"
-                                      >
-                                        <Trash2 size={13} />
-                                      </button>
-                                    )}
-                                  </div>
+                            <div key={student.id} className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex flex-col justify-between">
+                              <div className="flex gap-4">
+                                <div className="w-16 h-16 rounded-xl overflow-hidden bg-gray-50 border border-gray-100 shrink-0 flex items-center justify-center">
+                                  {studentPhoto ? (
+                                    <img src={studentPhoto} alt={student.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                  ) : (
+                                    <div className="text-center p-1 font-black text-xs text-gray-300">
+                                      {student.name.charAt(0)}
+                                    </div>
+                                  )}
                                 </div>
 
-                                <p className="text-[10px] text-gray-500 font-semibold italic line-clamp-2">
-                                  {obs.notes || '— Tidak ada catatan khusus —'}
-                                </p>
+                                <div className="flex-1 min-w-0 space-y-1.5">
+                                  <div className="flex items-center justify-between gap-2 min-w-0">
+                                    <h4 className="text-xs font-black text-gray-800 uppercase truncate pr-1">{student.name}</h4>
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      <span className={cn("px-2 py-0.5 text-[8px] font-black uppercase rounded-lg border leading-none", gradeColor)}>
+                                        {grConfig?.id || '—'}
+                                      </span>
+                                      {obs.grading && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDeleteIndividualObservation(student.id, student.name);
+                                          }}
+                                          title="Hapus penilaian anak ini"
+                                          className="text-red-500 hover:text-red-700 hover:scale-110 transition cursor-pointer p-0.5 border-0 bg-transparent flex items-center justify-center rounded"
+                                        >
+                                          <Trash2 size={13} />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <p className="text-[10px] text-gray-500 font-semibold italic line-clamp-2">
+                                    {obs.notes || '— Tidak ada catatan khusus —'}
+                                  </p>
+                                </div>
                               </div>
+
+                              {obs.grading && (
+                                <div className="pt-2 border-t border-gray-50 mt-2 flex justify-end">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleInitMoveStudent(student, obs)}
+                                    className="text-indigo-600 hover:text-indigo-800 text-[9px] font-black uppercase tracking-wider flex items-center gap-1 transition cursor-pointer border-0 bg-transparent py-1 px-2.5 hover:bg-indigo-50 rounded-xl"
+                                  >
+                                    <ArrowLeftRight size={10} /> Pindahkan Siswa
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -3648,26 +3913,136 @@ export default function Observation() {
 
               {/* Footer */}
               <div className="p-4 border-t border-gray-100 bg-white flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={handleDeleteEntireSession}
-                  className="px-4 py-2 bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 font-extrabold rounded-xl text-[10px] uppercase tracking-wider cursor-pointer flex items-center gap-1.5 transition active:scale-95"
-                >
-                  <Trash2 size={12} />
-                  Hapus Sesi Hari Ini
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedDetailSession(null)}
-                  className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 font-black rounded-xl text-[10px] uppercase tracking-wider cursor-pointer border-0"
-                >
-                  Tutup Rincian
-                </button>
+                {isEditingPopupSession ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingPopupSession(false)}
+                      className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 font-black rounded-xl text-[10px] uppercase tracking-wider cursor-pointer border-0"
+                    >
+                      Batal Edit Sesi
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSavePopupSession}
+                      className="px-6 py-2.5 bg-emerald-650 hover:bg-emerald-700 text-white font-black rounded-xl text-[10px] uppercase tracking-wider cursor-pointer border-0 transition active:scale-95 flex items-center gap-1.5 shadow-sm"
+                    >
+                      <Save size={13} />
+                      Simpan Perubahan
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleDeleteEntireSession}
+                      className="px-4 py-2 bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 font-extrabold rounded-xl text-[10px] uppercase tracking-wider cursor-pointer flex items-center gap-1.5 transition active:scale-95"
+                    >
+                      <Trash2 size={12} />
+                      Hapus Sesi Hari Ini
+                    </button>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsEditingPopupSession(true);
+                          setPopupActivity(selectedDetailSession.activity);
+                          setPopupDomain(selectedDetailSession.domain);
+                        }}
+                        className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-gray-950 font-black rounded-xl text-[10px] uppercase tracking-wider cursor-pointer border-0 transition active:scale-95 flex items-center gap-1.5"
+                      >
+                        <Sparkles size={12} />
+                        Edit Sentra & Domain
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsEditingPopupSession(false);
+                          setSelectedDetailSession(null);
+                        }}
+                        className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 font-black rounded-xl text-[10px] uppercase tracking-wider cursor-pointer border-0"
+                      >
+                        Tutup Rincian
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             </motion.div>
           </div>
         )}
       </AnimatePresence>
+
+      {/* MOVE STUDENT TARGET MODAL */}
+      {showMoveModal && movingStudent && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-[2rem] max-w-md w-full overflow-hidden shadow-2xl border border-gray-100 flex flex-col p-8 space-y-5">
+            <div className="flex items-center gap-3.5 text-indigo-600">
+              <div className="p-3 bg-indigo-50 rounded-2xl">
+                <ArrowLeftRight size={24} className="text-indigo-600" />
+              </div>
+              <h3 className="text-sm font-black text-gray-900 uppercase tracking-wider">Pindahkan Siswa</h3>
+            </div>
+            
+            <p className="text-[11px] text-gray-600 leading-relaxed font-semibold font-sans text-left">
+              Pindahkan data observasi <strong className="text-gray-900 font-extrabold">{movingStudent.name}</strong> ke sesi lain pada kelas dan tanggal yang sama (<strong className="text-gray-900 font-extrabold">{selectedDetailSession?.date}</strong>).
+            </p>
+
+            <div className="space-y-4 text-left">
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] font-black uppercase text-gray-400">Pilih Sentra Tujuan</label>
+                <select
+                  value={moveTargetActivity}
+                  onChange={(e) => setMoveTargetActivity(e.target.value as KGActivity)}
+                  className="bg-gray-50 text-gray-800 text-xs font-bold border border-gray-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                >
+                  {activities.map(act => (
+                    <option key={act.id} value={act.id}>
+                      {act.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[9px] font-black uppercase text-gray-400">Pilih Domain Tujuan</label>
+                <select
+                  value={moveTargetDomain}
+                  onChange={(e) => setMoveTargetDomain(e.target.value as KGDomain)}
+                  className="bg-gray-50 text-gray-800 text-xs font-bold border border-gray-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                >
+                  {domains.map(dom => (
+                    <option key={dom.id} value={dom.id}>
+                      {dom.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMoveModal(false);
+                  setMovingStudent(null);
+                  setMovingStudentObs(null);
+                }}
+                className="px-5 py-3 bg-gray-100 hover:bg-gray-200 text-gray-800 font-black rounded-xl text-[10px] uppercase tracking-wider border-0 cursor-pointer transition active:scale-95"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteMoveStudent}
+                className="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-[10px] uppercase tracking-wider border-0 cursor-pointer transition active:scale-95"
+              >
+                Konfirmasi Pindahkan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 1. CONFIRM EDIT SESSION MODAL */}
       {showEditConfirm && (
