@@ -517,6 +517,7 @@ function KindergartenStudentDashboard({
       'MUSIC': 'Music',
       'OUTSIDE': 'Outside',
       'AUDIO_VISUAL': 'Audio Visual',
+      'SPECIAL_PROGRAM': 'Special Program',
     };
 
     const domainLabels: Record<string, string> = {

@@ -77,6 +77,7 @@ const activities: { id: KGActivity; label: string; icon: React.ReactNode; color:
   { id: 'MUSIC', label: 'Music', icon: <Music />, color: 'rose' },
   { id: 'OUTSIDE', label: 'Outside', icon: <Activity />, color: 'lime' },
   { id: 'AUDIO_VISUAL', label: 'Audio Visual', icon: <Film />, color: 'violet' },
+  { id: 'SPECIAL_PROGRAM', label: 'Special Program', icon: <Sparkles />, color: 'pink' },
 ];
 
 const domains: { id: KGDomain; label: string; desc: string }[] = [
@@ -94,7 +95,7 @@ const grades: { id: KGGrading; label: string; color: string; desc: string }[] = 
   { id: 'BSH', label: 'Berkembang Sesuai Harapan', color: 'bg-emerald-100 text-emerald-800 border-emerald-200', desc: 'Anak konsisten melakukan secara mandiri' },
   { id: 'BSB', label: 'Berkembang Sangat Baik', color: 'bg-teal-100 text-teal-800 border-teal-200', desc: 'Anak mandiri dan mampu membantu teman' },
   { id: 'ABSENT', label: 'Tidak Masuk', color: 'bg-gray-100 text-gray-500 border-gray-200', desc: 'Siswa tidak datang ke sekolah' },
-  { id: 'NOT_PARTICIPATING', label: 'Tidak Mengikuti', color: 'bg-gray-100 text-gray-500 border-gray-200', desc: 'Ada di sekolah tapi tidak mengikuti sesi' },
+  { id: 'NOT_PARTICIPATING', label: 'Tidak Mengikuti Kegiatan', color: 'bg-gray-100 text-gray-500 border-gray-200', desc: 'Ada di sekolah tapi tidak mengikuti sesi' },
 ];
 
 const months = [
@@ -239,6 +240,7 @@ export default function Observation() {
   const [docCreatedAt, setDocCreatedAt] = React.useState<number | null>(null);
   const [docCreatedBy, setDocCreatedBy] = React.useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState<boolean>(false);
+  const [gradingSaveStatus, setGradingSaveStatus] = React.useState<Record<string, 'idle' | 'saving' | 'success' | 'error'>>({});
   
   // Observations for students, keyed by studentId
   const [observations, setObservations] = React.useState<Record<string, StudentObservation>>(() => {
@@ -1068,6 +1070,128 @@ export default function Observation() {
       localStorage.setItem('kg_observation_data', JSON.stringify(updated));
       return updated;
     });
+  };
+
+  const handleGradingChange = async (studentId: string, value: KGGrading | null) => {
+    // 1. Update state immediately
+    updateStudentField(studentId, 'grading', value);
+
+    // Set save status to 'saving'
+    setGradingSaveStatus(prev => ({ ...prev, [studentId]: 'saving' }));
+
+    try {
+      if (!selectedClassId) {
+        throw new Error('Kelas belum dipilih.');
+      }
+      const student = students.find(s => s.id === studentId);
+      if (!student) {
+        throw new Error('Siswa tidak ditemukan.');
+      }
+
+      const currentStudentObs = getStudentObs(observations, student);
+      const enrichedStudentObs = {
+        ...currentStudentObs,
+        studentName: student.name,
+        grading: value
+      };
+
+      const targetDate = observationDate;
+      const todayStr = formatDateLocal(new Date());
+
+      // Fetch existing doc from Firestore to merge (using class-scoped prefix)
+      const docId = `${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const docRef = doc(db, 'observations', docId);
+
+      let existingObservations: Record<string, any> = {};
+      let existingGeneralPhoto = generalPhoto;
+
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const d = docSnap.data();
+        existingObservations = d.observations || {};
+        if (d.generalPhotoUrl) {
+          existingGeneralPhoto = d.generalPhotoUrl;
+        }
+      } else {
+        // Fallback checks for legacy unscoped document in Firestore
+        const legacyDocId = `${selectedActivity}_${selectedDomain}_${targetDate}`;
+        const legacyDocRef = doc(db, 'observations', legacyDocId);
+        const legacyDocSnap = await getDoc(legacyDocRef);
+        if (legacyDocSnap.exists()) {
+          const d = legacyDocSnap.data();
+          existingObservations = d.observations || {};
+          if (d.generalPhotoUrl) {
+            existingGeneralPhoto = d.generalPhotoUrl;
+          }
+        }
+      }
+
+      // Merge only this student's observation
+      const updatedObservations = {
+        ...observations, // merge with current state
+        ...existingObservations, // and with firestore
+        [studentId]: enrichedStudentObs
+      };
+
+      if (student.oldLuminaId) {
+        updatedObservations[student.oldLuminaId] = enrichedStudentObs;
+      }
+      if (student.nis) {
+        updatedObservations[student.nis] = enrichedStudentObs;
+      }
+
+      const resolvedCreatedAt = docCreatedAt || Date.now();
+      const resolvedCreatedBy = docCreatedBy || profile?.email || profile?.displayName || profile?.uid || 'System';
+      const payload = {
+        id: docId,
+        academicYearId: activeYear || '2026/2027',
+        academicYear: activeYear || '2026/2027',
+        unit: 'KINDERGARTEN',
+        unitId: 'KINDERGARTEN',
+        classId: selectedClassId,
+        observationDate: targetDate,
+        centerId: selectedActivity,
+        domainId: selectedDomain,
+        activity: selectedActivity,
+        domain: selectedDomain,
+        date: targetDate,
+        photoUrl: existingGeneralPhoto,
+        generalPhotoUrl: existingGeneralPhoto,
+        generalPhoto: existingGeneralPhoto,
+        generalPhotoDeleted: false,
+        title: activities.find(a => a.id === selectedActivity)?.label || selectedActivity,
+        caption: domains.find(d => d.id === selectedDomain)?.label || selectedDomain,
+        createdAt: resolvedCreatedAt,
+        createdBy: resolvedCreatedBy,
+        status: 'active',
+        observations: updatedObservations,
+        timestamp: Date.now(),
+        updatedAt: Date.now()
+      };
+
+      setDocCreatedAt(resolvedCreatedAt);
+      setDocCreatedBy(resolvedCreatedBy);
+
+      // Save permanently with new format in LocalStorage
+      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      localStorage.setItem(comboKeyDateSpecific, JSON.stringify(payload));
+      
+      if (targetDate === todayStr) {
+        const comboKeyLegacy = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}`;
+        localStorage.setItem(comboKeyLegacy, JSON.stringify(payload));
+      }
+
+      // Save permanently to Firestore
+      await setDoc(docRef, cleanFirestoreData(payload), { merge: true });
+
+      // Update local state observations to include our updated ones
+      setObservations(updatedObservations);
+      setGradingSaveStatus(prev => ({ ...prev, [studentId]: 'success' }));
+    } catch (err: any) {
+      console.error("Gagal menyimpan otomatis grading:", err);
+      setGradingSaveStatus(prev => ({ ...prev, [studentId]: 'error' }));
+      toast.error(`Gagal menyimpan otomatis: ${err.message || String(err)}`);
+    }
   };
 
   // Real uploader for general activity photo
@@ -2243,35 +2367,57 @@ export default function Observation() {
 
                   {/* Middle block: grading metrics selector & notes */}
                   <div className="md:col-span-6 space-y-4">
-                    {/* Capaian Pill selector */}
+                    {/* Grading Dropdown Selector */}
                     <div className="space-y-1.5">
-                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1 leading-none">
-                        Tingkat Capaian <HelpCircle size={10} className="text-gray-300" />
-                      </label>
-                      <div className="flex flex-wrap gap-1">
-                        {grades.map((gr) => {
-                          const isCurrentGrading = obs.grading === gr.id;
-                          return (
-                            <button
-                              key={gr.id}
-                              type="button"
-                              onClick={() => updateStudentField(student.id, 'grading', obs.grading === gr.id ? null : gr.id)}
-                              title={gr.desc}
-                              className={cn(
-                                "px-2.5 py-1.5 rounded-xl text-[9px] font-bold transition-all border shrink-0",
-                                isCurrentGrading 
-                                  ? gr.color + " border-transparent shadow-sm scale-103 font-black" 
-                                  : "bg-white text-gray-400 border-gray-200 hover:border-emerald-300 hover:text-emerald-600"
-                              )}
-                            >
-                              {gr.id}
-                            </button>
-                          );
-                        })}
+                      <div className="flex items-center justify-between h-4">
+                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1 leading-none">
+                          Grading <HelpCircle size={10} className="text-gray-300" />
+                        </label>
+                        
+                        {/* Status UX indicator */}
+                        {gradingSaveStatus[student.id] === 'saving' && (
+                          <span className="text-[10px] font-bold text-emerald-600 animate-pulse flex items-center gap-1">
+                            <Loader2 className="animate-spin" size={10} /> Menyimpan…
+                          </span>
+                        )}
+                        {gradingSaveStatus[student.id] === 'success' && (
+                          <span className="text-[10px] font-bold text-emerald-600 flex items-center gap-1">
+                            ✓ Tersimpan
+                          </span>
+                        )}
+                        {gradingSaveStatus[student.id] === 'error' && (
+                          <span className="text-[10px] font-bold text-rose-600 flex items-center gap-1">
+                            Gagal menyimpan. Coba lagi.
+                          </span>
+                        )}
                       </div>
-                      <p className="text-[9.5px] italic text-gray-400 pl-1 leading-normal">
-                        Keterangan: {grades.find(g => g.id === obs.grading)?.desc || '-'}
-                      </p>
+                      
+                      <select
+                        value={obs.grading || ''}
+                        disabled={gradingSaveStatus[student.id] === 'saving'}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          handleGradingChange(student.id, val ? (val as KGGrading) : null);
+                        }}
+                        className={cn(
+                          "w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 outline-none transition focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30",
+                          gradingSaveStatus[student.id] === 'saving' && "opacity-60 cursor-not-allowed bg-gray-50"
+                        )}
+                      >
+                        <option value="" disabled>Pilih grading</option>
+                        <option value="BB">Belum Berkembang</option>
+                        <option value="MB">Mulai Berkembang</option>
+                        <option value="BSH">Berkembang Sesuai Harapan</option>
+                        <option value="BSB">Berkembang Sangat Baik</option>
+                        <option value="ABSENT">Tidak Masuk</option>
+                        <option value="NOT_PARTICIPATING">Tidak Mengikuti Kegiatan</option>
+                      </select>
+                      
+                      {obs.grading && (
+                        <p className="text-[9.5px] italic text-gray-400 pl-1 leading-normal">
+                          Keterangan: {grades.find(g => g.id === obs.grading)?.desc || '-'}
+                        </p>
+                      )}
                     </div>
 
                     {/* Notes textarea with Speech-to-Text */}
