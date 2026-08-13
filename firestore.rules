@@ -904,22 +904,25 @@ service cloud.firestore {
       
       allow create: if isActive() && (
         isAdmin() ||
-        (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL'))
+        (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL')) ||
+        (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL') && isTeacherAssignedToClass(incoming().classId))
       ) && isValidClassAnecdote(incoming());
       
       allow update: if isActive() && (
         isAdmin() ||
-        (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL'))
+        (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL')) ||
+        (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL') && isTeacherAssignedToClass(incoming().classId))
       ) && isValidClassAnecdoteUpdate(incoming())
         && incoming().studentId == existing().studentId
         && incoming().classId == existing().classId
-        && incoming().createdBy.uid == existing().createdBy.uid
+        && (incoming().createdBy.uid == existing().createdBy.uid || isAdmin() || (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL')))
         && incoming().createdAt == existing().createdAt
         && incoming().academicYearId == existing().academicYearId;
         
       allow delete: if isActive() && (
         isAdmin() ||
-        (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL'))
+        (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL')) ||
+        (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL') && isTeacherAssignedToClass(existing().classId))
       );
     }
   }

@@ -106,7 +106,7 @@ export default function ClassAnecdotePage() {
   const isElementaryHead = profile && profile.role === "HEAD_UNIT" && profile.unitId === "ELEMENTARY";
   const isSuperAdmin = profile && profile.role === "SUPER_ADMIN";
   const isAuthorized = isSuperAdmin || isElementaryHead || isElementaryTeacher;
-  const canWrite = isSuperAdmin || isElementaryTeacher;
+  const canWrite = isSuperAdmin || isElementaryHead || isElementaryTeacher;
 
   // Local state
   const [classes, setClasses] = React.useState<Class[]>([]);
