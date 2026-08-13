@@ -31,6 +31,116 @@ export function getSummaryKey(studentId: string, startDate: string, endDate: str
 
 export default function WeeklySummary() {
   const navigate = useNavigate();
+
+  const renderObservationDataSummary = (obsItems: any[]) => {
+    if (!obsItems || obsItems.length === 0) {
+      return <div className="text-[10px] text-gray-400 italic font-sans">Belum ada data observasi pada periode ini.</div>;
+    }
+
+    // Group items by domain
+    const domainGroups: Record<string, any[]> = {};
+    obsItems.forEach(item => {
+      const dom = item.domain || 'Lainnya';
+      if (!domainGroups[dom]) {
+        domainGroups[dom] = [];
+      }
+      domainGroups[dom].push(item);
+    });
+
+    const domains = Object.keys(domainGroups);
+
+    const shortGrade = (g: string) => {
+      const clean = (g || '').trim().toUpperCase();
+      if (clean === 'BB') return 'BB';
+      if (clean === 'MB') return 'MB';
+      if (clean === 'BSH') return 'BSH';
+      if (clean === 'BSB') return 'BSB';
+      if (clean === 'ABSENT') return 'ABSENT';
+      if (clean === 'NOT_PARTICIPATING') return 'NOT_PARTICIPATING';
+      return g;
+    };
+
+    const longGrade = (g: string) => {
+      const clean = (g || '').trim().toUpperCase();
+      if (clean === 'BB') return 'Belum Berkembang (BB)';
+      if (clean === 'MB') return 'Mulai Berkembang (MB)';
+      if (clean === 'BSH') return 'Berkembang Sesuai Harapan (BSH)';
+      if (clean === 'BSB') return 'Berkembang Sangat Baik (BSB)';
+      if (clean === 'ABSENT') return 'Tidak Masuk (ABSENT)';
+      if (clean === 'NOT_PARTICIPATING') return 'Tidak Mengikuti Kegiatan (NOT_PARTICIPATING)';
+      return g;
+    };
+
+    if (domains.length === 1) {
+      const dom = domains[0];
+      const items = domainGroups[dom];
+      const totalCount = items.length;
+
+      const activities = Array.from(new Set(items.map(i => i.activity).filter(Boolean)));
+      const activityStr = activities.length > 0 ? ` melalui sesi ${activities.join(', ')}` : '';
+
+      const gradeCounts: Record<string, number> = {};
+      items.forEach(item => {
+        const g = item.grade;
+        if (g) {
+          gradeCounts[g] = (gradeCounts[g] || 0) + 1;
+        }
+      });
+
+      return (
+        <div className="space-y-1 text-[10.5px] leading-relaxed text-gray-700 font-sans">
+          <div className="font-extrabold text-gray-800">
+            {totalCount} observasi pada domain <span className="text-emerald-700">{dom}</span>{activityStr}:
+          </div>
+          <ul className="list-disc pl-4 space-y-0.5">
+            {Object.entries(gradeCounts).map(([g, count]) => (
+              <li key={g} className="font-medium text-gray-600">
+                <span className="font-bold text-gray-800">{count} kali</span> {longGrade(g)}
+              </li>
+            ))}
+            {Object.entries(gradeCounts).length === 0 && (
+              <li className="text-gray-400 italic">Belum ada grading yang tersimpan.</li>
+            )}
+          </ul>
+        </div>
+      );
+    }
+
+    const totalCount = obsItems.length;
+    return (
+      <div className="space-y-1 text-[10.5px] leading-relaxed text-gray-700 font-sans">
+        <div className="font-extrabold text-gray-800">
+          Total {totalCount} observasi:
+        </div>
+        <ul className="list-disc pl-4 space-y-1">
+          {domains.map(dom => {
+            const items = domainGroups[dom];
+            const activities = Array.from(new Set(items.map(i => i.activity).filter(Boolean)));
+            const activityStr = activities.length > 0 ? ` (via ${activities.join(', ')})` : '';
+
+            const gradeCounts: Record<string, number> = {};
+            items.forEach(item => {
+              const g = item.grade;
+              if (g) {
+                gradeCounts[g] = (gradeCounts[g] || 0) + 1;
+              }
+            });
+
+            const gradeListStr = Object.entries(gradeCounts)
+              .map(([g, count]) => `${shortGrade(g)} (${count}x)`)
+              .join(', ');
+
+            return (
+              <li key={dom} className="font-semibold text-gray-800">
+                <span className="text-emerald-700 font-bold">{dom}</span>{activityStr}:{' '}
+                <span className="font-normal text-gray-600">{gradeListStr || 'Tanpa grading'}</span>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    );
+  };
   const [searchParams] = useSearchParams();
   const paramClassId = searchParams.get('classId');
   const paramDate = searchParams.get('date');
@@ -126,6 +236,54 @@ export default function WeeklySummary() {
     
     return false;
   }, []);
+
+  // Helper to resolve classId from students within the observations map of an unscoped document
+  const getLegacyDocClassId = React.useCallback((observationsField: Record<string, any>, globalStudents: any[]): string | null => {
+    if (!observationsField) return null;
+    const observationKeys = Object.keys(observationsField);
+    for (const key of observationKeys) {
+      const foundStudent = globalStudents.find(s => s.id === key || s.oldLuminaId === key || s.nis === key);
+      if (foundStudent && foundStudent.classId) {
+        return foundStudent.classId;
+      }
+    }
+    return null;
+  }, []);
+
+  // Check if a document matches the selected class (including legacy documents)
+  const isDocForClass = React.useCallback((
+    d: any,
+    targetClassId: string,
+    activeClass: any,
+    globalStudents: any[]
+  ): boolean => {
+    if (!targetClassId) return false;
+
+    // Strict match if classId exists on document
+    if (d.classId && d.classId !== 'unassigned') {
+      return d.classId === targetClassId;
+    }
+
+    // Specific override for "Pra TK Test Kelas" on 11 August
+    const docDate = d.date || d.observationDate;
+    const isAug11 = docDate === '2026-08-11' || docDate === '2025-08-11' || docDate?.includes('08-11');
+    const isPraTKTest = d.generalPhotoUrl?.includes('Pra%20TK') || d.generalPhoto?.includes('Pra%20TK') || d.title?.includes('Pra TK') || d.caption?.includes('Pra TK');
+
+    if (isAug11 && isPraTKTest) {
+      const className = (activeClass?.name || '').toLowerCase();
+      return className.includes('pra tk') || className.includes('pratk');
+    }
+
+    // Fallback: check if students inside observations match the selected class
+    if (d.observations && Object.keys(d.observations).length > 0) {
+      const resolvedClassId = getLegacyDocClassId(d.observations, globalStudents);
+      if (resolvedClassId) {
+        return resolvedClassId === targetClassId;
+      }
+    }
+
+    return false;
+  }, [getLegacyDocClassId]);
 
   const filteredStudents = React.useMemo(() => {
     if (!selectedClassId || !activeClassObj) {
@@ -569,10 +727,11 @@ export default function WeeklySummary() {
           );
           const snapObs = await getDocs(qObs);
           logFirestoreRead('observations', snapObs.docs.length || 1);
-          fetchedObs = snapObs.docs.map(doc => ({
+          const rawObsList = snapObs.docs.map(doc => ({
             id: doc.id,
             ...doc.data()
           }));
+          fetchedObs = rawObsList.filter(item => isDocForClass(item, selectedClassId, activeClassObj, students));
         } catch (err: any) {
           if (process.env.NODE_ENV !== 'production') {
             console.warn("[WeeklySummary] Observations list query fell back to empty due to potential rules limits/permissions:", err);
@@ -1736,23 +1895,8 @@ export default function WeeklySummary() {
                         </td>
 
                         {/* 5. Observation Summary */}
-                        <td className="py-5 px-4 bg-emerald-50/5 font-sans">
-                          {obsItemsCount === 0 ? (
-                            <div className="text-[10px] text-gray-400 italic">No observation logs found</div>
-                          ) : (
-                            <div className="space-y-1">
-                              <div className="text-[10.5px] text-gray-800 font-extrabold">
-                                {obsItemsCount} log(s) di pekan ini
-                              </div>
-                              <div className="flex flex-wrap gap-1 pt-0.5">
-                                {obsDomains.map((dom: string, i: number) => (
-                                  <span key={i} className="text-[8.5px] font-extrabold bg-gray-50 text-gray-600 px-1 rounded border border-gray-200 leading-none py-0.5">
-                                    {dom.slice(0, 15)}...
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
+                        <td className="py-5 px-4 bg-emerald-50/5 font-sans min-w-[200px]">
+                          {renderObservationDataSummary(draft?.weeklyObservationItems)}
                         </td>
 
                         {/* 6. Generate Comment Actions (Observation) */}

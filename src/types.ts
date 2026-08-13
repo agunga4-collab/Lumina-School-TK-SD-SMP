@@ -1670,6 +1670,7 @@ export type KGWeeklyReportDraft = {
     activityList: string[];
     objectiveList: string[];
     grades: string[];
+    gradeCounts?: Record<string, number>;
     mergedNotes: string[];
   }>;
 

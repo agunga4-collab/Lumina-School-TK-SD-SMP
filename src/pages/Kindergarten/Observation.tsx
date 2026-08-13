@@ -2786,14 +2786,16 @@ export default function Observation() {
               });
             });
 
-            let dominantGrade = 'Belum Ada';
             let maxCount = 0;
-            Object.entries(gradingCounts).forEach(([grade, count]) => {
+            Object.values(gradingCounts).forEach(count => {
               if (count > maxCount) {
                 maxCount = count;
-                dominantGrade = grade;
               }
             });
+
+            const maxGrades = Object.entries(gradingCounts)
+              .filter(([_, count]) => count === maxCount && count > 0)
+              .map(([grade, _]) => grade);
 
             const gradeLabelMap = {
               'BB': 'Belum Berkembang',
@@ -2801,7 +2803,11 @@ export default function Observation() {
               'BSH': 'Capaian Harapan (BSH)',
               'BSB': 'Sangat Baik (BSB)'
             };
-            const readableDominant = dominantGrade === 'Belum Ada' ? 'Tidak ada data' : gradeLabelMap[dominantGrade as keyof typeof gradeLabelMap];
+            const readableDominant = maxGrades.length === 0 
+              ? 'Tidak ada data' 
+              : maxGrades.length === 1 
+                ? gradeLabelMap[maxGrades[0] as keyof typeof gradeLabelMap]
+                : `${maxGrades.join(' & ')} (masing-masing ${maxCount} observasi)`;
 
             return (
               <>

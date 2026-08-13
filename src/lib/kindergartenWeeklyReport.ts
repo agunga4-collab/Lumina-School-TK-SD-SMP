@@ -137,7 +137,8 @@ export function aggregateKGWeeklyReport(
   firestoreObservationDocs?: any[],
   activeStudents?: any[]
 ): KGWeeklyReportDraft {
-  const student = DEFAULT_STUDENTS.find(s => s.id === studentId) || {
+  const student = (activeStudents || []).find(s => s.id === studentId) ||
+                  DEFAULT_STUDENTS.find(s => s.id === studentId) || {
     id: studentId,
     name: 'Siswa Kindergarten',
     nickName: 'Ananda',
@@ -295,7 +296,7 @@ export function aggregateKGWeeklyReport(
             activity: ACTIVITY_LABEL_MAP[payload.activity] || payload.activity,
             domain: DOMAIN_LABEL_MAP[payload.domain] || payload.domain,
             objective: ACTIVITY_LABEL_MAP[payload.activity] || 'Aktivitas Kelas',
-            grade: studentObs.grading || 'Belum Berkembang',
+            grade: studentObs.grading || null,
             notes: studentObs.notes || '',
             photoUrl: studentObs.photo || null,
             generalPhotoUrl: payload.generalPhoto || null
@@ -326,7 +327,7 @@ export function aggregateKGWeeklyReport(
                   activity: ACTIVITY_LABEL_MAP[payload.selectedActivity] || payload.selectedActivity,
                   domain: DOMAIN_LABEL_MAP[payload.selectedDomain] || payload.selectedDomain,
                   objective: ACTIVITY_LABEL_MAP[payload.selectedActivity] || 'Aktivitas Kelas',
-                  grade: studentObs.grading || 'Belum Berkembang',
+                  grade: studentObs.grading || null,
                   notes: studentObs.notes || '',
                   photoUrl: studentObs.photo || null,
                   generalPhotoUrl: payload.generalPhoto || null
@@ -346,6 +347,7 @@ export function aggregateKGWeeklyReport(
     activityList: Set<string>;
     objectiveList: Set<string>;
     grades: Set<string>;
+    gradeCounts: Record<string, number>;
     mergedNotes: string[];
   }> = {};
 
@@ -356,12 +358,19 @@ export function aggregateKGWeeklyReport(
         activityList: new Set(),
         objectiveList: new Set(),
         grades: new Set(),
+        gradeCounts: {},
         mergedNotes: []
       };
     }
     if (item.activity) groupedMap[dom].activityList.add(item.activity);
     if (item.objective) groupedMap[dom].objectiveList.add(item.objective);
-    if (item.grade) groupedMap[dom].grades.add(item.grade);
+    if (item.grade) {
+      const gClean = String(item.grade).trim().toUpperCase();
+      if (gClean !== 'ABSENT' && gClean !== 'NOT_PARTICIPATING') {
+        groupedMap[dom].grades.add(item.grade);
+        groupedMap[dom].gradeCounts[item.grade] = (groupedMap[dom].gradeCounts[item.grade] || 0) + 1;
+      }
+    }
     if (item.notes && item.notes.trim() !== '') groupedMap[dom].mergedNotes.push(item.notes.trim());
   });
 
@@ -370,6 +379,7 @@ export function aggregateKGWeeklyReport(
     activityList: Array.from(val.activityList),
     objectiveList: Array.from(val.objectiveList),
     grades: Array.from(val.grades),
+    gradeCounts: val.gradeCounts,
     mergedNotes: val.mergedNotes
   }));
 
@@ -473,7 +483,8 @@ export function aggregateKGWeeklyReportForPeriod(
   firestoreObservationDocs?: any[],
   activeStudents?: any[]
 ) {
-  const student = DEFAULT_STUDENTS.find(s => s.id === studentId) || {
+  const student = (activeStudents || []).find(s => s.id === studentId) ||
+                  DEFAULT_STUDENTS.find(s => s.id === studentId) || {
     id: studentId,
     name: 'Siswa Kindergarten',
     nickName: 'Ananda',
@@ -627,7 +638,7 @@ export function aggregateKGWeeklyReportForPeriod(
             activity: ACTIVITY_LABEL_MAP[payload.activity] || payload.activity,
             domain: DOMAIN_LABEL_MAP[payload.domain] || payload.domain,
             objective: ACTIVITY_LABEL_MAP[payload.activity] || 'Aktivitas Kelas',
-            grade: studentObs.grading || 'Belum Berkembang',
+            grade: studentObs.grading || null,
             notes: studentObs.notes || '',
             photoUrl: studentObs.photo || null,
             generalPhotoUrl: payload.generalPhotoDeleted === true ? null : (payload.generalPhotoUrl || payload.generalPhoto || null)
@@ -657,7 +668,7 @@ export function aggregateKGWeeklyReportForPeriod(
                   activity: ACTIVITY_LABEL_MAP[payload.selectedActivity] || payload.selectedActivity,
                   domain: DOMAIN_LABEL_MAP[payload.selectedDomain] || payload.selectedDomain,
                   objective: ACTIVITY_LABEL_MAP[payload.selectedActivity] || 'Aktivitas Kelas',
-                  grade: studentObs.grading || 'Belum Berkembang',
+                  grade: studentObs.grading || null,
                   notes: studentObs.notes || '',
                   photoUrl: studentObs.photo || null,
                   generalPhotoUrl: payload.generalPhotoDeleted === true ? null : (payload.generalPhoto || payload.generalPhotoUrl || null)
@@ -676,6 +687,7 @@ export function aggregateKGWeeklyReportForPeriod(
     activityList: Set<string>;
     objectiveList: Set<string>;
     grades: Set<string>;
+    gradeCounts: Record<string, number>;
     mergedNotes: string[];
   }> = {};
 
@@ -686,12 +698,19 @@ export function aggregateKGWeeklyReportForPeriod(
         activityList: new Set(),
         objectiveList: new Set(),
         grades: new Set(),
+        gradeCounts: {},
         mergedNotes: []
       };
     }
     if (item.activity) groupedMap[dom].activityList.add(item.activity);
     if (item.objective) groupedMap[dom].objectiveList.add(item.objective);
-    if (item.grade) groupedMap[dom].grades.add(item.grade);
+    if (item.grade) {
+      const gClean = String(item.grade).trim().toUpperCase();
+      if (gClean !== 'ABSENT' && gClean !== 'NOT_PARTICIPATING') {
+        groupedMap[dom].grades.add(item.grade);
+        groupedMap[dom].gradeCounts[item.grade] = (groupedMap[dom].gradeCounts[item.grade] || 0) + 1;
+      }
+    }
     if (item.notes && item.notes.trim() !== '') groupedMap[dom].mergedNotes.push(item.notes.trim());
   });
 
@@ -700,6 +719,7 @@ export function aggregateKGWeeklyReportForPeriod(
     activityList: Array.from(val.activityList),
     objectiveList: Array.from(val.objectiveList),
     grades: Array.from(val.grades),
+    gradeCounts: val.gradeCounts,
     mergedNotes: val.mergedNotes
   }));
 

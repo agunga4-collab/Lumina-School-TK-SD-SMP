@@ -142,6 +142,54 @@ export default function WeeklyReview() {
     return false;
   };
 
+  // Helper to resolve classId from students within the observations map of an unscoped document
+  const getLegacyDocClassId = (observationsField: Record<string, any>, globalStudents: any[]): string | null => {
+    if (!observationsField) return null;
+    const observationKeys = Object.keys(observationsField);
+    for (const key of observationKeys) {
+      const foundStudent = globalStudents.find(s => s.id === key || s.oldLuminaId === key || s.nis === key);
+      if (foundStudent && foundStudent.classId) {
+        return foundStudent.classId;
+      }
+    }
+    return null;
+  };
+
+  // Check if a document matches the selected class (including legacy documents)
+  const isDocForClass = (
+    d: any,
+    targetClassId: string,
+    activeClass: any,
+    globalStudents: any[]
+  ): boolean => {
+    if (!targetClassId) return false;
+
+    // Strict match if classId exists on document
+    if (d.classId && d.classId !== 'unassigned') {
+      return d.classId === targetClassId;
+    }
+
+    // Specific override for "Pra TK Test Kelas" on 11 August
+    const docDate = d.date || d.observationDate;
+    const isAug11 = docDate === '2026-08-11' || docDate === '2025-08-11' || docDate?.includes('08-11');
+    const isPraTKTest = d.generalPhotoUrl?.includes('Pra%20TK') || d.generalPhoto?.includes('Pra%20TK') || d.title?.includes('Pra TK') || d.caption?.includes('Pra TK');
+
+    if (isAug11 && isPraTKTest) {
+      const className = (activeClass?.name || '').toLowerCase();
+      return className.includes('pra tk') || className.includes('pratk');
+    }
+
+    // Fallback: check if students inside observations match the selected class
+    if (d.observations && Object.keys(d.observations).length > 0) {
+      const resolvedClassId = getLegacyDocClassId(d.observations, globalStudents);
+      if (resolvedClassId) {
+        return resolvedClassId === targetClassId;
+      }
+    }
+
+    return false;
+  };
+
   // Set default selection and handle URL/storage redirection rules
   React.useEffect(() => {
     if (!isLoadingClasses && classes.length > 0) {
@@ -315,10 +363,11 @@ export default function WeeklyReview() {
           );
           const snapObs = await getDocs(qObs);
           logFirestoreRead('observations', snapObs.docs.length || 1);
-          fetchedObs = snapObs.docs.map(doc => ({
+          const rawObsList = snapObs.docs.map(doc => ({
             id: doc.id,
             ...doc.data()
           }));
+          fetchedObs = rawObsList.filter(item => isDocForClass(item, selectedClassId, activeClassObj, students));
         } catch (err: any) {
           console.warn("[WeeklyReview] Observations list query fell back to empty due to potential rules limits/permissions:", err);
         }
