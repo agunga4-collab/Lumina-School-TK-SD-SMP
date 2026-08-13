@@ -231,8 +231,8 @@ export default function Observation() {
   const [selectedDetailCell, setSelectedDetailCell] = React.useState<{ student: any; domain: any; entries: any[] } | null>(null);
   const [selectedDetailSession, setSelectedDetailSession] = React.useState<any | null>(null);
 
-  const [selectedActivity, setSelectedActivity] = React.useState<KGActivity>(() => (paramActivity as KGActivity) || 'ART_EXPLORATIONS');
-  const [selectedDomain, setSelectedDomain] = React.useState<KGDomain>(() => (paramDomain as KGDomain) || 'SOSIAL_EMOSIONAL');
+  const [selectedActivity, setSelectedActivity] = React.useState<KGActivity | "">(() => (paramActivity as KGActivity) || "");
+  const [selectedDomain, setSelectedDomain] = React.useState<KGDomain | "">(() => (paramDomain as KGDomain) || "");
   const [isImportOpen, setIsImportOpen] = React.useState<boolean>(false);
   
   // High fidelity general photo (Starts pre-filled with a beautiful school activity image)
@@ -240,6 +240,17 @@ export default function Observation() {
   const [docCreatedAt, setDocCreatedAt] = React.useState<number | null>(null);
   const [docCreatedBy, setDocCreatedBy] = React.useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState<boolean>(false);
+
+  // New session level state management for "Sesi Terkunci" & "Edit Sentra & Domain"
+  const [isSessionLocked, setIsSessionLocked] = React.useState<boolean>(false);
+  const [isEditingSession, setIsEditingSession] = React.useState<boolean>(false);
+  const [sessionStatus, setSessionStatus] = React.useState<'new' | 'locked'>('new');
+  const [isLoadingSession, setIsLoadingSession] = React.useState<boolean>(false);
+  const [currentDocId, setCurrentDocId] = React.useState<string | null>(null);
+  const [originalActivity, setOriginalActivity] = React.useState<KGActivity | null>(null);
+  const [originalDomain, setOriginalDomain] = React.useState<KGDomain | null>(null);
+  const [showEditConfirm, setShowEditConfirm] = React.useState<boolean>(false);
+  const [showSaveEditConfirm, setShowSaveEditConfirm] = React.useState<boolean>(false);
   const [gradingSaveStatus, setGradingSaveStatus] = React.useState<Record<string, 'idle' | 'saving' | 'success' | 'error'>>({});
   
   // Observations for students, keyed by studentId
@@ -828,6 +839,11 @@ export default function Observation() {
   // Triggered when selected Sentra + Domain combo, Class, or Observation Date changes: load / initialize specific data
   React.useEffect(() => {
     let active = true;
+
+    // If we are actively editing the session's Sentra & Domain, do NOT trigger fetchComboDoc
+    if (isEditingSession) {
+      return;
+    }
     
     async function fetchComboDoc() {
       if (!selectedClassId) {
@@ -835,10 +851,25 @@ export default function Observation() {
         setGeneralPhoto(null);
         setDocCreatedAt(null);
         setDocCreatedBy(null);
+        setIsSessionLocked(false);
+        setSessionStatus('new');
+        setCurrentDocId(null);
+        return;
+      }
+
+      if (!selectedActivity || !selectedDomain) {
+        setObservations({});
+        setGeneralPhoto(null);
+        setDocCreatedAt(null);
+        setDocCreatedBy(null);
+        setIsSessionLocked(false);
+        setSessionStatus('new');
+        setCurrentDocId(null);
         return;
       }
 
       const activeClassObj = classes.find(c => c.id === selectedClassId);
+      const expectedDocId = `${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`;
 
       // 1. Try to load from LocalStorage first (classId & date scoped!)
       const comboDateKey = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`;
@@ -863,6 +894,10 @@ export default function Observation() {
           } else {
             setGeneralPhoto(null);
           }
+
+          setIsSessionLocked(true);
+          setSessionStatus('locked');
+          setCurrentDocId(expectedDocId);
           return; // Found in local, load that first
         } catch (e) {
           console.error(e);
@@ -885,12 +920,16 @@ export default function Observation() {
             if (parsed.generalPhotoDeleted === true) {
               setGeneralPhoto(null);
             } else if (parsed.generalPhoto) {
-              setGeneralPhoto(parsed.generalPhoto);
+               setGeneralPhoto(parsed.generalPhoto);
             } else if (parsed.generalPhotoUrl) {
               setGeneralPhoto(parsed.generalPhotoUrl);
             } else {
               setGeneralPhoto(null);
             }
+
+            setIsSessionLocked(true);
+            setSessionStatus('locked');
+            setCurrentDocId(expectedDocId);
             return;
           }
         } catch (e) {
@@ -919,6 +958,10 @@ export default function Observation() {
             } else {
               setGeneralPhoto(null);
             }
+
+            setIsSessionLocked(true);
+            setSessionStatus('locked');
+            setCurrentDocId(expectedDocId);
             return;
           }
         } catch (e) {
@@ -949,6 +992,10 @@ export default function Observation() {
           } else {
             setGeneralPhoto(null);
           }
+
+          setIsSessionLocked(true);
+          setSessionStatus('locked');
+          setCurrentDocId(docId);
         } else {
           // Fallback to unscoped query (backward compatibility for old saved records without classId prefix)
           const unscopedDocId = `${selectedActivity}_${selectedDomain}_${observationDate}`;
@@ -994,6 +1041,10 @@ export default function Observation() {
               } catch (migrationErr) {
                 console.warn("[Auto-Migration] Failed to save class-scoped migration:", migrationErr);
               }
+
+              setIsSessionLocked(true);
+              setSessionStatus('locked');
+              setCurrentDocId(docId);
               return;
             }
           }
@@ -1007,6 +1058,10 @@ export default function Observation() {
           setGeneralPhoto(null);
           setDocCreatedAt(null);
           setDocCreatedBy(null);
+
+          setIsSessionLocked(false);
+          setSessionStatus('new');
+          setCurrentDocId(null);
         }
       } catch (err) {
         console.error("Error fetching single observation doc:", err);
@@ -1019,6 +1074,10 @@ export default function Observation() {
         setGeneralPhoto(null);
         setDocCreatedAt(null);
         setDocCreatedBy(null);
+
+        setIsSessionLocked(false);
+        setSessionStatus('new');
+        setCurrentDocId(null);
       }
     }
 
@@ -1055,7 +1114,100 @@ export default function Observation() {
   return () => {
       active = false;
     };
-  }, [selectedClassId, selectedActivity, selectedDomain, observationDate]);
+  }, [selectedClassId, selectedActivity, selectedDomain, observationDate, isEditingSession]);
+
+  const handleCancelEditSession = () => {
+    if (originalActivity) setSelectedActivity(originalActivity);
+    if (originalDomain) setSelectedDomain(originalDomain);
+    setIsEditingSession(false);
+    setOriginalActivity(null);
+    setOriginalDomain(null);
+  };
+
+  const handleSaveSessionChanges = async () => {
+    setIsSaving(true);
+    try {
+      if (!selectedClassId) throw new Error('Kelas belum dipilih.');
+      if (!selectedActivity || !selectedDomain) throw new Error('Sentra dan Domain wajib dipilih.');
+
+      const targetDate = observationDate;
+      const newDocId = `${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const newDocRef = doc(db, 'observations', newDocId);
+
+      // Determine creation metadata
+      const resolvedCreatedAt = docCreatedAt || Date.now();
+      const resolvedCreatedBy = docCreatedBy || profile?.email || profile?.displayName || profile?.uid || 'System';
+
+      // Build payload matching handleSaveAll exactly
+      const payload = {
+        id: newDocId,
+        academicYearId: activeYear || '2026/2027',
+        academicYear: activeYear || '2026/2027',
+        unit: 'KINDERGARTEN',
+        unitId: 'KINDERGARTEN',
+        classId: selectedClassId,
+        observationDate: targetDate,
+        centerId: selectedActivity,
+        domainId: selectedDomain,
+        activity: selectedActivity, // backward compatibility
+        domain: selectedDomain, // backward compatibility
+        date: targetDate, // backward compatibility
+        sentraId: selectedActivity,
+        sentraName: activities.find(a => a.id === selectedActivity)?.label || selectedActivity,
+        domainName: domains.find(d => d.id === selectedDomain)?.label || selectedDomain,
+        photoUrl: generalPhoto,
+        generalPhotoUrl: generalPhoto,
+        generalPhoto: generalPhoto, // backward compatibility
+        generalPhotoDeleted: !generalPhoto,
+        title: activities.find(a => a.id === selectedActivity)?.label || selectedActivity,
+        caption: domains.find(d => d.id === selectedDomain)?.label || selectedDomain,
+        createdAt: resolvedCreatedAt,
+        createdBy: resolvedCreatedBy,
+        status: 'active',
+        observations: observations,
+        timestamp: Date.now(),
+        updatedAt: Date.now(),
+        updatedBy: profile?.email || profile?.displayName || profile?.uid || 'System'
+      };
+
+      // Set new doc in Firestore
+      await setDoc(newDocRef, cleanFirestoreData(payload), { merge: true });
+
+      // Save to LocalStorage under new key
+      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      localStorage.setItem(comboKeyDateSpecific, JSON.stringify(payload));
+
+      // If the docId actually changed (different activity or domain), delete the old one to avoid duplicates!
+      if (currentDocId && currentDocId !== newDocId) {
+        if (currentDocId.startsWith('kg_obs_hist_')) {
+          localStorage.removeItem(currentDocId);
+        } else {
+          const oldDocRef = doc(db, 'observations', currentDocId);
+          await deleteDoc(oldDocRef);
+          
+          // Also remove old local storage entry if there was one
+          const oldLocalKey = `kg_obs_hist_${currentDocId}`;
+          localStorage.removeItem(oldLocalKey);
+        }
+      }
+
+      // Update state
+      setCurrentDocId(newDocId);
+      setIsSessionLocked(true);
+      setIsEditingSession(false);
+      setSessionStatus('locked');
+      setOriginalActivity(null);
+      setOriginalDomain(null);
+      setShowSaveEditConfirm(false);
+
+      toast.success('Sentra & Domain berhasil diperbarui untuk seluruh siswa di sesi ini! ✨');
+    } catch (err: any) {
+      console.error("Gagal memperbarui Sentra & Domain:", err);
+      toast.error(`Gagal memperbarui: ${err.message || String(err)}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const updateStudentField = (studentId: string, field: keyof StudentObservation, value: any) => {
     setObservations(prev => {
@@ -1186,6 +1338,12 @@ export default function Observation() {
 
       // Update local state observations to include our updated ones
       setObservations(updatedObservations);
+
+      // Lock the session now that the first grading has been saved
+      setIsSessionLocked(true);
+      setSessionStatus('locked');
+      setCurrentDocId(docId);
+
       setGradingSaveStatus(prev => ({ ...prev, [studentId]: 'success' }));
     } catch (err: any) {
       console.error("Gagal menyimpan otomatis grading:", err);
@@ -1643,6 +1801,11 @@ export default function Observation() {
       // Update our local page observations state
       setObservations(updatedObservations);
 
+      // Lock the session now that the observation has been saved
+      setIsSessionLocked(true);
+      setSessionStatus('locked');
+      setCurrentDocId(docId);
+
       toast.success(`Observasi untuk ${student.name} berhasil disimpan ke sistem & Firestore! ✨`);
     } catch (err: any) {
       console.error("Gagal menyimpan data observasi siswa:", err);
@@ -1743,6 +1906,11 @@ export default function Observation() {
 
       // Save permanently to Firestore 'observations' collection
       await setDoc(docRef, cleanFirestoreData(payload), { merge: true });
+
+      // Lock the session now that the session has been saved
+      setIsSessionLocked(true);
+      setSessionStatus('locked');
+      setCurrentDocId(docId);
 
       toast.success('Observation Data berhasil disimpan ke sistem & Firestore! ✨', {
         description: `Sentra: ${activities.find(a => a.id === selectedActivity)?.label}, Domain: ${domains.find(d => d.id === selectedDomain)?.label}`
@@ -2002,12 +2170,21 @@ export default function Observation() {
                 return (
                   <button
                     key={act.id}
-                    onClick={() => setSelectedActivity(act.id)}
+                    onClick={() => {
+                      if (isSessionLocked && !isEditingSession) {
+                        toast.error("Sesi ini sudah dikunci. Silakan klik tombol 'Edit Sentra & Domain' untuk mengubahnya.");
+                        return;
+                      }
+                      setSelectedActivity(act.id);
+                    }}
+                    disabled={isSessionLocked && !isEditingSession && !isSelected}
                     className={cn(
                       "w-full flex items-center justify-between p-3 rounded-2xl text-left transition-all border border-transparent",
                       isSelected 
                         ? "bg-emerald-600 text-white shadow-md shadow-emerald-100 font-bold border-emerald-500 scale-[1.01]" 
-                        : "text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 bg-gray-50/50"
+                        : (isSessionLocked && !isEditingSession)
+                          ? "opacity-40 bg-gray-50 text-gray-400 cursor-not-allowed"
+                          : "text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 bg-gray-50/50"
                     )}
                   >
                     <div className="flex items-center gap-3">
@@ -2046,12 +2223,21 @@ export default function Observation() {
                 return (
                   <button
                     key={dom.id}
-                    onClick={() => setSelectedDomain(dom.id)}
+                    onClick={() => {
+                      if (isSessionLocked && !isEditingSession) {
+                        toast.error("Sesi ini sudah dikunci. Silakan klik tombol 'Edit Sentra & Domain' untuk mengubahnya.");
+                        return;
+                      }
+                      setSelectedDomain(dom.id);
+                    }}
+                    disabled={isSessionLocked && !isEditingSession && !isSelected}
                     className={cn(
                       "w-full flex flex-col p-3 rounded-2xl text-left transition-all border",
                       isSelected 
                         ? "bg-gray-900 text-white border-gray-900 shadow-lg scale-[1.01]" 
-                        : "text-gray-700 hover:bg-gray-50 border-gray-100 bg-white"
+                        : (isSessionLocked && !isEditingSession)
+                          ? "opacity-40 bg-gray-50 border-gray-150 text-gray-400 cursor-not-allowed"
+                          : "text-gray-700 hover:bg-gray-50 border-gray-100 bg-white"
                     )}
                   >
                     <div className="flex items-center justify-between w-full">
@@ -2236,33 +2422,110 @@ export default function Observation() {
         {/* RIGHT COLUMN: Active Evaluator Workspace (8 grid columns) */}
         <div className="lg:col-span-8 space-y-6">
           
-          {/* Sesi Header Context Card */}
-          <div className="bg-gray-900 rounded-[2rem] p-6 text-white flex flex-col md:flex-row justify-between items-start md:items-center shadow-lg gap-4 relative overflow-hidden">
-            <div className="absolute right-0 top-0 translate-x-12 -translate-y-12 w-48 h-48 bg-white/5 rounded-full pointer-events-none" />
-            <div className="space-y-1 bg-white/5 py-3.5 px-5 rounded-2xl border border-white/5">
-              <span className="text-[9px] font-black text-emerald-400 tracking-widest uppercase">Target Evaluasi Sesi</span>
-              <div className="flex flex-wrap items-center gap-2 md:gap-3 mt-1">
-                <span className="text-sm font-black tracking-tight">{currentSentraObj?.label}</span>
-                <span className="text-gray-500 text-xs">&gt;</span>
-                <span className="text-xs font-bold text-gray-300">{currentDomainObj?.label}</span>
+          {!selectedActivity || !selectedDomain ? (
+            <div className="bg-white rounded-[2rem] p-12 text-center border border-gray-100 shadow-sm flex flex-col items-center justify-center gap-4 py-20">
+              <div className="p-5 bg-emerald-50 text-emerald-600 rounded-full">
+                <Compass size={40} className="animate-spin text-emerald-500" style={{ animationDuration: '8s' }} />
+              </div>
+              <div className="space-y-2">
+                <p className="text-lg font-black text-gray-850 uppercase tracking-wider">Silakan Pilih Sentra & Domain</p>
+                <p className="text-xs text-gray-500 max-w-md mx-auto leading-relaxed font-medium">
+                  Pilih Sentra (Langkah 1) dan Domain Perkembangan (Langkah 2) pada kolom sebelah kiri terlebih dahulu untuk menampilkan lembar observasi dan penilaian siswa Lumina Kindergarten.
+                </p>
               </div>
             </div>
-            
-            <div className="text-left md:text-right flex flex-col gap-1.5 min-w-[170px]">
-              <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest leading-none">Waktu Observasi</span>
-              <div className="flex items-center gap-2">
-                <input
-                  type="date"
-                  value={observationDate}
-                  onChange={(e) => setObservationDate(e.target.value)}
-                  className="bg-gray-800 text-emerald-400 text-xs font-bold border border-gray-700 rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer text-center w-full"
-                />
+          ) : (
+            <>
+              {/* Sesi Header Context Card */}
+              <div className="bg-gray-900 rounded-[2rem] p-6 text-white flex flex-col md:flex-row justify-between items-start md:items-center shadow-lg gap-4 relative overflow-hidden">
+                <div className="absolute right-0 top-0 translate-x-12 -translate-y-12 w-48 h-48 bg-white/5 rounded-full pointer-events-none" />
+                
+                <div className="flex flex-col gap-3">
+                  <div className="space-y-1 bg-white/5 py-3.5 px-5 rounded-2xl border border-white/5">
+                    <span className="text-[9px] font-black text-emerald-400 tracking-widest uppercase">Target Evaluasi Sesi</span>
+                    <div className="flex flex-wrap items-center gap-2 md:gap-3 mt-1">
+                      <span className="text-sm font-black tracking-tight">{currentSentraObj?.label}</span>
+                      <span className="text-gray-500 text-xs">&gt;</span>
+                      <span className="text-xs font-bold text-gray-300">{currentDomainObj?.label}</span>
+                    </div>
+                  </div>
+
+                  {/* Session Status & Actions */}
+                  <div className="flex items-center gap-2 px-1">
+                    {isSessionLocked ? (
+                      isEditingSession ? (
+                        <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/25 px-3 py-1.5 rounded-xl">
+                          <span className="text-[9.5px] font-black text-amber-400 uppercase tracking-wider flex items-center gap-1">
+                            <Sparkles size={11} className="animate-pulse" /> Mode Edit Sesi
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setShowSaveEditConfirm(true)}
+                            className="bg-amber-500 hover:bg-amber-650 text-gray-950 text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-lg border-0 transition cursor-pointer"
+                          >
+                            Simpan Sesi
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCancelEditSession}
+                            className="bg-gray-800 hover:bg-gray-700 text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-lg border-0 transition cursor-pointer"
+                          >
+                            Batal
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/25 px-3 py-1.5 rounded-xl">
+                          <span className="text-[9.5px] font-black text-emerald-400 uppercase tracking-widest flex items-center gap-1">
+                            🔒 Sesi Terkunci
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOriginalActivity(selectedActivity as KGActivity);
+                              setOriginalDomain(selectedDomain as KGDomain);
+                              setShowEditConfirm(true);
+                            }}
+                            className="bg-emerald-650 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-lg border-0 transition cursor-pointer"
+                          >
+                            Ubah Sentra & Domain
+                          </button>
+                        </div>
+                      )
+                    ) : (
+                      <div className="flex items-center gap-2 bg-sky-500/10 border border-sky-500/25 px-3 py-1.5 rounded-xl">
+                        <span className="text-[9.5px] font-black text-sky-400 uppercase tracking-wider flex items-center gap-1">
+                          ✨ Sesi Baru
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="text-left md:text-right flex flex-col gap-1.5 min-w-[170px]">
+                  <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest leading-none">Waktu Observasi</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={observationDate}
+                      onChange={(e) => {
+                        if (isSessionLocked && !isEditingSession) {
+                          toast.error("Tanggal observasi terkunci karena sudah ada data observasi yang tersimpan.");
+                          return;
+                        }
+                        setObservationDate(e.target.value);
+                      }}
+                      disabled={isSessionLocked && !isEditingSession}
+                      className={cn(
+                        "bg-gray-800 text-emerald-400 text-xs font-bold border border-gray-700 rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer text-center w-full",
+                        isSessionLocked && !isEditingSession && "opacity-60 cursor-not-allowed"
+                      )}
+                    />
+                  </div>
+                  <span className="text-[9px] text-gray-400 italic font-sans">
+                    {observationDate === formatDateLocal(new Date()) ? '🗓️ Hari Ini (Otomatis)' : '📅 Tanggal Terpilih'}
+                  </span>
+                </div>
               </div>
-              <span className="text-[9px] text-gray-400 italic font-sans">
-                {observationDate === formatDateLocal(new Date()) ? '🗓️ Hari Ini (Otomatis)' : '📅 Tanggal Terpilih'}
-              </span>
-            </div>
-          </div>
 
           {/* Student Observations Loop Container */}
           <div className="space-y-6">
@@ -2585,6 +2848,8 @@ export default function Observation() {
               Simpan Observation Data
             </button>
           </div>
+          </>
+          )}
 
         </div>
 
@@ -3403,6 +3668,87 @@ export default function Observation() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* 1. CONFIRM EDIT SESSION MODAL */}
+      {showEditConfirm && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-[2rem] max-w-md w-full overflow-hidden shadow-2xl border border-gray-100 flex flex-col p-8 space-y-5">
+            <div className="flex items-center gap-3.5 text-amber-500">
+              <div className="p-3 bg-amber-50 rounded-2xl">
+                <AlertTriangle size={24} />
+              </div>
+              <h3 className="text-sm font-black text-gray-900 uppercase tracking-wider">Konfirmasi Edit Sesi</h3>
+            </div>
+            
+            <p className="text-[11px] text-gray-600 leading-relaxed font-semibold font-sans">
+              Apakah Anda yakin ingin mengubah Sentra atau Domain untuk sesi observasi ini? 
+              Mengubahnya akan menempatkan Anda pada <strong className="text-gray-900 font-extrabold">Mode Edit Sesi</strong>. 
+              Perubahan tidak akan disimpan secara permanen sebelum Anda menekan tombol <strong className="text-gray-900 font-extrabold">Simpan Sesi</strong>.
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowEditConfirm(false)}
+                className="px-5 py-3 bg-gray-100 hover:bg-gray-200 text-gray-800 font-black rounded-xl text-[10px] uppercase tracking-wider border-0 cursor-pointer transition active:scale-95"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowEditConfirm(false);
+                  setIsEditingSession(true);
+                  toast.success("Mode Edit Sesi aktif. Silakan ubah Sentra & Domain di kolom sebelah kiri.");
+                }}
+                className="px-5 py-3 bg-amber-500 hover:bg-amber-600 text-gray-950 font-black rounded-xl text-[10px] uppercase tracking-wider border-0 cursor-pointer transition active:scale-95"
+              >
+                Ya, Masuk Mode Edit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. CONFIRM SAVE EDIT SESSION MODAL */}
+      {showSaveEditConfirm && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-[2rem] max-w-md w-full overflow-hidden shadow-2xl border border-gray-100 flex flex-col p-8 space-y-5">
+            <div className="flex items-center gap-3.5 text-emerald-600">
+              <div className="p-3 bg-emerald-50 rounded-2xl">
+                <Sparkles size={24} className="text-emerald-500" />
+              </div>
+              <h3 className="text-sm font-black text-gray-900 uppercase tracking-wider">Simpan Perubahan Sesi</h3>
+            </div>
+            
+            <p className="text-[11px] text-gray-600 leading-relaxed font-semibold font-sans">
+              Apakah Anda yakin ingin menyimpan perubahan Sentra & Domain untuk sesi ini?
+              Tindakan ini akan memperbarui Sentra dan Domain untuk <strong className="text-gray-900 font-extrabold">seluruh catatan observasi siswa</strong> di sesi ini.
+              Grading, catatan pembelajaran, foto siswa, dan status kehadiran siswa <strong className="text-gray-900 font-extrabold">tidak akan berubah</strong> sama sekali.
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowSaveEditConfirm(false)}
+                className="px-5 py-3 bg-gray-100 hover:bg-gray-200 text-gray-800 font-black rounded-xl text-[10px] uppercase tracking-wider border-0 cursor-pointer transition active:scale-95"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setShowSaveEditConfirm(false);
+                  await handleSaveSessionChanges();
+                }}
+                className="px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-[10px] uppercase tracking-wider border-0 cursor-pointer transition active:scale-95"
+              >
+                Ya, Simpan Perubahan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* CAMERA CAPTURE MODAL */}
       {activeCameraTarget && (
