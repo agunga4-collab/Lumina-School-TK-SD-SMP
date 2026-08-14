@@ -252,6 +252,23 @@ export default function Observation() {
   const [docCreatedBy, setDocCreatedBy] = React.useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState<boolean>(false);
 
+  // General note state declarations
+  const [generalNote, setGeneralNote] = React.useState<string>("");
+  const [generalNoteUpdatedAt, setGeneralNoteUpdatedAt] = React.useState<number | null>(null);
+  const [generalNoteUpdatedBy, setGeneralNoteUpdatedBy] = React.useState<string | null>(null);
+  const [generalNoteUpdatedByName, setGeneralNoteUpdatedByName] = React.useState<string | null>(null);
+
+  // Popup detail general note editing states
+  const [isEditingPopupGeneralNote, setIsEditingPopupGeneralNote] = React.useState<boolean>(false);
+  const [popupGeneralNoteText, setPopupGeneralNoteText] = React.useState<string>("");
+
+  React.useEffect(() => {
+    if (selectedDetailSession) {
+      setPopupGeneralNoteText(selectedDetailSession.generalNote || "");
+      setIsEditingPopupGeneralNote(false);
+    }
+  }, [selectedDetailSession]);
+
   // New session level state management for "Sesi Terkunci" & "Edit Sentra & Domain"
   const [isSessionLocked, setIsSessionLocked] = React.useState<boolean>(false);
   const [isEditingSession, setIsEditingSession] = React.useState<boolean>(false);
@@ -784,6 +801,50 @@ export default function Observation() {
     }
   };
 
+  const handleSavePopupGeneralNote = async () => {
+    if (!selectedDetailSession) return;
+    try {
+      const classId = selectedDetailSession.classId || selectedClassId;
+      const targetDate = selectedDetailSession.date;
+      const docId = selectedDetailSession.id;
+      const docRef = doc(db, 'observations', docId);
+
+      const noteUpdatedAt = Date.now();
+      const noteUpdatedBy = profile?.email || profile?.uid || 'System';
+      const noteUpdatedByName = profile?.displayName || profile?.email || 'System';
+
+      const updatedSession = {
+        ...selectedDetailSession,
+        generalNote: popupGeneralNoteText,
+        generalNoteUpdatedAt: noteUpdatedAt,
+        generalNoteUpdatedBy: noteUpdatedBy,
+        generalNoteUpdatedByName: noteUpdatedByName,
+        updatedAt: Date.now()
+      };
+
+      // Save to Firestore
+      await setDoc(docRef, cleanFirestoreData(updatedSession), { merge: true });
+
+      // Save to LocalStorage
+      const lsKeyNew = `kg_obs_hist_${classId}_${selectedDetailSession.activity}_${selectedDetailSession.domain}_${targetDate}`;
+      localStorage.setItem(lsKeyNew, JSON.stringify(updatedSession));
+
+      // Also support legacy key format if present
+      const lsKeyOld = `kg_obs_hist_${selectedDetailSession.activity}_${selectedDetailSession.domain}_${targetDate}`;
+      if (localStorage.getItem(lsKeyOld)) {
+        localStorage.setItem(lsKeyOld, JSON.stringify(updatedSession));
+      }
+
+      toast.success("Catatan Umum berhasil disimpan! ✨");
+      setSelectedDetailSession(updatedSession);
+      setIsEditingPopupGeneralNote(false);
+      loadRecapData();
+    } catch (err: any) {
+      console.error("Gagal menyimpan Catatan Umum:", err);
+      toast.error(`Gagal menyimpan Catatan Umum: ${err.message || String(err)}`);
+    }
+  };
+
   const handleInitMoveStudent = (student: any, obs: any) => {
     if (!selectedDetailSession) return;
     setMovingStudent(student);
@@ -1045,6 +1106,10 @@ export default function Observation() {
         setGeneralPhoto(null);
         setDocCreatedAt(null);
         setDocCreatedBy(null);
+        setGeneralNote("");
+        setGeneralNoteUpdatedAt(null);
+        setGeneralNoteUpdatedBy(null);
+        setGeneralNoteUpdatedByName(null);
         setIsSessionLocked(false);
         setSessionStatus('new');
         setCurrentDocId(null);
@@ -1056,6 +1121,10 @@ export default function Observation() {
         setGeneralPhoto(null);
         setDocCreatedAt(null);
         setDocCreatedBy(null);
+        setGeneralNote("");
+        setGeneralNoteUpdatedAt(null);
+        setGeneralNoteUpdatedBy(null);
+        setGeneralNoteUpdatedByName(null);
         setIsSessionLocked(false);
         setSessionStatus('new');
         setCurrentDocId(null);
@@ -1077,6 +1146,10 @@ export default function Observation() {
           
           setDocCreatedAt(parsed.createdAt || parsed.timestamp || null);
           setDocCreatedBy(parsed.createdBy || null);
+          setGeneralNote(parsed.generalNote || "");
+          setGeneralNoteUpdatedAt(parsed.generalNoteUpdatedAt || null);
+          setGeneralNoteUpdatedBy(parsed.generalNoteUpdatedBy || null);
+          setGeneralNoteUpdatedByName(parsed.generalNoteUpdatedByName || null);
 
           // Check generalPhotoDeleted flag
           if (parsed.generalPhotoDeleted === true) {
@@ -1110,6 +1183,10 @@ export default function Observation() {
             
             setDocCreatedAt(parsed.createdAt || parsed.timestamp || null);
             setDocCreatedBy(parsed.createdBy || null);
+            setGeneralNote(parsed.generalNote || "");
+            setGeneralNoteUpdatedAt(parsed.generalNoteUpdatedAt || null);
+            setGeneralNoteUpdatedBy(parsed.generalNoteUpdatedBy || null);
+            setGeneralNoteUpdatedByName(parsed.generalNoteUpdatedByName || null);
 
             if (parsed.generalPhotoDeleted === true) {
               setGeneralPhoto(null);
@@ -1142,6 +1219,10 @@ export default function Observation() {
             
             setDocCreatedAt(parsed.createdAt || parsed.timestamp || null);
             setDocCreatedBy(parsed.createdBy || null);
+            setGeneralNote(parsed.generalNote || "");
+            setGeneralNoteUpdatedAt(parsed.generalNoteUpdatedAt || null);
+            setGeneralNoteUpdatedBy(parsed.generalNoteUpdatedBy || null);
+            setGeneralNoteUpdatedByName(parsed.generalNoteUpdatedByName || null);
 
             if (parsed.generalPhotoDeleted === true) {
               setGeneralPhoto(null);
@@ -1178,6 +1259,10 @@ export default function Observation() {
           
           setDocCreatedAt(d.createdAt || d.timestamp || null);
           setDocCreatedBy(d.createdBy || null);
+          setGeneralNote(d.generalNote || "");
+          setGeneralNoteUpdatedAt(d.generalNoteUpdatedAt || null);
+          setGeneralNoteUpdatedBy(d.generalNoteUpdatedBy || null);
+          setGeneralNoteUpdatedByName(d.generalNoteUpdatedByName || null);
 
           if (d.generalPhotoDeleted === true) {
             setGeneralPhoto(null);
@@ -1204,6 +1289,10 @@ export default function Observation() {
               
               setDocCreatedAt(d.createdAt || d.timestamp || null);
               setDocCreatedBy(d.createdBy || null);
+              setGeneralNote(d.generalNote || "");
+              setGeneralNoteUpdatedAt(d.generalNoteUpdatedAt || null);
+              setGeneralNoteUpdatedBy(d.generalNoteUpdatedBy || null);
+              setGeneralNoteUpdatedByName(d.generalNoteUpdatedByName || null);
 
               if (d.generalPhotoDeleted === true) {
                 setGeneralPhoto(null);
@@ -1252,6 +1341,10 @@ export default function Observation() {
           setGeneralPhoto(null);
           setDocCreatedAt(null);
           setDocCreatedBy(null);
+          setGeneralNote("");
+          setGeneralNoteUpdatedAt(null);
+          setGeneralNoteUpdatedBy(null);
+          setGeneralNoteUpdatedByName(null);
 
           setIsSessionLocked(false);
           setSessionStatus('new');
@@ -1268,6 +1361,10 @@ export default function Observation() {
         setGeneralPhoto(null);
         setDocCreatedAt(null);
         setDocCreatedBy(null);
+        setGeneralNote("");
+        setGeneralNoteUpdatedAt(null);
+        setGeneralNoteUpdatedBy(null);
+        setGeneralNoteUpdatedByName(null);
 
         setIsSessionLocked(false);
         setSessionStatus('new');
@@ -1332,6 +1429,10 @@ export default function Observation() {
       const resolvedCreatedAt = docCreatedAt || Date.now();
       const resolvedCreatedBy = docCreatedBy || profile?.email || profile?.displayName || profile?.uid || 'System';
 
+      const resolvedNoteUpdatedAt = generalNote ? (generalNoteUpdatedAt || Date.now()) : null;
+      const resolvedNoteUpdatedBy = generalNote ? (generalNoteUpdatedBy || profile?.email || profile?.uid || 'System') : null;
+      const resolvedNoteUpdatedByName = generalNote ? (generalNoteUpdatedByName || profile?.displayName || profile?.email || 'System') : null;
+
       // Build payload matching handleSaveAll exactly
       const payload = {
         id: newDocId,
@@ -1357,6 +1458,12 @@ export default function Observation() {
         caption: domains.find(d => d.id === selectedDomain)?.label || selectedDomain,
         createdAt: resolvedCreatedAt,
         createdBy: resolvedCreatedBy,
+        
+        generalNote: generalNote || "",
+        generalNoteUpdatedAt: resolvedNoteUpdatedAt,
+        generalNoteUpdatedBy: resolvedNoteUpdatedBy,
+        generalNoteUpdatedByName: resolvedNoteUpdatedByName,
+
         status: 'active',
         observations: observations,
         timestamp: Date.now(),
@@ -2054,6 +2161,11 @@ export default function Observation() {
       // Construct a fully standardized payload
       const resolvedCreatedAt = docCreatedAt || Date.now();
       const resolvedCreatedBy = docCreatedBy || profile?.email || profile?.displayName || profile?.uid || 'System';
+      
+      const resolvedNoteUpdatedAt = generalNote ? (generalNoteUpdatedAt || Date.now()) : null;
+      const resolvedNoteUpdatedBy = generalNote ? (generalNoteUpdatedBy || profile?.email || profile?.uid || 'System') : null;
+      const resolvedNoteUpdatedByName = generalNote ? (generalNoteUpdatedByName || profile?.displayName || profile?.email || 'System') : null;
+
       const payload = {
         id: docId,
         academicYearId: activeYear || '2026/2027',
@@ -2078,6 +2190,12 @@ export default function Observation() {
         caption: domains.find(d => d.id === selectedDomain)?.label || selectedDomain,
         createdAt: resolvedCreatedAt,
         createdBy: resolvedCreatedBy,
+        
+        generalNote: generalNote || "",
+        generalNoteUpdatedAt: resolvedNoteUpdatedAt,
+        generalNoteUpdatedBy: resolvedNoteUpdatedBy,
+        generalNoteUpdatedByName: resolvedNoteUpdatedByName,
+
         status: 'active',
         observations: enrichedObservations,
         timestamp: Date.now(),
@@ -2724,6 +2842,29 @@ export default function Observation() {
                     {observationDate === formatDateLocal(new Date()) ? '🗓️ Hari Ini (Otomatis)' : '📅 Tanggal Terpilih'}
                   </span>
                 </div>
+              </div>
+
+              {/* Catatan Umum Hari Ini Section */}
+              <div className="bg-white rounded-3xl p-6 border border-gray-150 shadow-sm space-y-3 text-left">
+                <div className="flex items-center gap-2">
+                  <ClipboardList size={16} className="text-indigo-600" />
+                  <label className="text-xs font-black text-gray-900 uppercase tracking-wider block">
+                    Catatan Umum Hari Ini
+                  </label>
+                  <span className="text-[10px] bg-gray-100 text-gray-500 font-extrabold px-1.5 py-0.5 rounded-md leading-none uppercase ml-auto">
+                    Sesi / Kelas
+                  </span>
+                </div>
+                <textarea
+                  id="input-general-note"
+                  value={generalNote}
+                  onChange={(e) => setGeneralNote(e.target.value)}
+                  placeholder="Tulis catatan umum kegiatan kelas pada hari ini (opsional)…"
+                  className="w-full h-24 p-3.5 text-xs bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium text-gray-800 placeholder-gray-400"
+                />
+                <p className="text-[10px] text-gray-400 font-semibold italic">
+                  * Catatan ini bersifat internal kelas dan tidak dibagikan ke siswa atau laporan perkembangan berkala.
+                </p>
               </div>
 
           {/* Student Observations Loop Container */}
@@ -3488,6 +3629,20 @@ export default function Observation() {
                                   </p>
                                 </div>
 
+                                {session.generalNote && (
+                                  <div className="mt-2 text-left bg-indigo-50/40 border border-indigo-150/40 rounded-xl p-2.5 text-[10.5px] leading-relaxed text-gray-650">
+                                    <strong className="text-indigo-950 block text-[9px] uppercase tracking-wider font-extrabold mb-0.5">Catatan Umum:</strong>
+                                    <div className="font-medium text-gray-700 line-clamp-3">
+                                      {session.generalNote}
+                                    </div>
+                                    {session.generalNote.length > 90 && (
+                                      <span className="text-[9px] font-black text-indigo-600 block mt-1">
+                                        Lihat selengkapnya...
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+
                                 <p className="text-[10px] text-emerald-600 font-black uppercase tracking-wider flex items-center gap-1 hover:text-emerald-800 transition">
                                   Lihat Sesi Rincian <ChevronRight size={12} strokeWidth={2.5} />
                                 </p>
@@ -3830,6 +3985,56 @@ export default function Observation() {
                     </div>
                   </div>
                 )}
+
+                {/* Catatan Umum Hari Ini */}
+                <div className="bg-white rounded-3xl p-5 border border-gray-150/60 shadow-sm space-y-3 text-left">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider block">Catatan Umum Hari Ini</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEditingPopupGeneralNote(prev => !prev);
+                        setPopupGeneralNoteText(selectedDetailSession.generalNote || "");
+                      }}
+                      className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-black rounded-lg text-[9px] uppercase tracking-wider transition cursor-pointer border-0"
+                    >
+                      {isEditingPopupGeneralNote ? "Batal" : "Edit Catatan Umum"}
+                    </button>
+                  </div>
+
+                  {isEditingPopupGeneralNote ? (
+                    <div className="space-y-2 mt-1">
+                      <textarea
+                        value={popupGeneralNoteText}
+                        onChange={(e) => setPopupGeneralNoteText(e.target.value)}
+                        placeholder="Tulis catatan umum kegiatan kelas pada hari ini (opsional)…"
+                        className="w-full h-24 p-3.5 text-xs bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium text-gray-800 placeholder-gray-400"
+                      />
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={handleSavePopupGeneralNote}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-lg text-[9px] uppercase tracking-wider flex items-center gap-1 transition shadow-sm border-0 cursor-pointer"
+                        >
+                          <Save size={11} />
+                          Simpan Catatan
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-700 font-medium whitespace-pre-wrap leading-relaxed mt-1">
+                      {selectedDetailSession.generalNote || (
+                        <span className="text-gray-400 italic font-medium">— Belum ada catatan umum untuk sesi ini —</span>
+                      )}
+                    </p>
+                  )}
+
+                  {(selectedDetailSession.generalNoteUpdatedAt || selectedDetailSession.generalNoteUpdatedByName) && (
+                    <span className="text-[8.5px] text-gray-400 font-medium block pt-1.5 border-t border-gray-100">
+                      Terakhir diperbarui{selectedDetailSession.generalNoteUpdatedByName ? ` oleh ${selectedDetailSession.generalNoteUpdatedByName}` : ""}{selectedDetailSession.generalNoteUpdatedAt ? ` pada ${new Date(selectedDetailSession.generalNoteUpdatedAt).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })}` : ""}
+                    </span>
+                  )}
+                </div>
 
                 <div className="space-y-4 text-left">
                   <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider block">Daftar Penilaian Siswa</span>
