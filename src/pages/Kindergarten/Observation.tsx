@@ -455,6 +455,10 @@ export default function Observation() {
           date: d.date, // 'YYYY-MM-DD'
           generalPhoto: d.generalPhotoDeleted === true ? null : (d.generalPhotoUrl || d.generalPhoto),
           observations: d.observations || {},
+          generalNote: d.generalNote || "",
+          generalNoteUpdatedAt: d.generalNoteUpdatedAt || null,
+          generalNoteUpdatedBy: d.generalNoteUpdatedBy || null,
+          generalNoteUpdatedByName: d.generalNoteUpdatedByName || null,
           timestamp: d.timestamp || Date.now()
         };
       }).filter(item => {
@@ -495,6 +499,10 @@ export default function Observation() {
                 date: dateStr,
                 generalPhoto: data.generalPhotoDeleted === true ? null : (data.generalPhoto || data.generalPhotoUrl),
                 observations: data.observations,
+                generalNote: data.generalNote || "",
+                generalNoteUpdatedAt: data.generalNoteUpdatedAt || null,
+                generalNoteUpdatedBy: data.generalNoteUpdatedBy || null,
+                generalNoteUpdatedByName: data.generalNoteUpdatedByName || null,
                 timestamp: data.timestamp || Date.now()
               });
             }
@@ -2056,6 +2064,11 @@ export default function Observation() {
       // Standardized payload matching handleSaveAll
       const resolvedCreatedAt = docCreatedAt || Date.now();
       const resolvedCreatedBy = docCreatedBy || profile?.email || profile?.displayName || profile?.uid || 'System';
+      
+      const resolvedNoteUpdatedAt = generalNote ? (generalNoteUpdatedAt || Date.now()) : null;
+      const resolvedNoteUpdatedBy = generalNote ? (generalNoteUpdatedBy || profile?.email || profile?.uid || 'System') : null;
+      const resolvedNoteUpdatedByName = generalNote ? (generalNoteUpdatedByName || profile?.displayName || profile?.email || 'System') : null;
+
       const payload = {
         id: docId,
         academicYearId: activeYear || '2026/2027',
@@ -2077,6 +2090,12 @@ export default function Observation() {
         caption: domains.find(d => d.id === selectedDomain)?.label || selectedDomain,
         createdAt: resolvedCreatedAt,
         createdBy: resolvedCreatedBy,
+        
+        generalNote: generalNote || "",
+        generalNoteUpdatedAt: resolvedNoteUpdatedAt,
+        generalNoteUpdatedBy: resolvedNoteUpdatedBy,
+        generalNoteUpdatedByName: resolvedNoteUpdatedByName,
+
         status: 'active',
         observations: updatedObservations,
         timestamp: Date.now(),
@@ -2098,6 +2117,9 @@ export default function Observation() {
 
       // Save permanently to Firestore 'observations' collection
       await setDoc(docRef, cleanFirestoreData(payload), { merge: true });
+
+      // Refresh monthly recap cache with the new values
+      loadRecapData();
 
       // Update our local page observations state
       setObservations(updatedObservations);
@@ -2218,6 +2240,9 @@ export default function Observation() {
 
       // Save permanently to Firestore 'observations' collection
       await setDoc(docRef, cleanFirestoreData(payload), { merge: true });
+
+      // Refresh monthly recap cache with the new values
+      loadRecapData();
 
       // Lock the session now that the session has been saved
       setIsSessionLocked(true);
