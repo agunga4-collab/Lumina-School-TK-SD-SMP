@@ -16,6 +16,15 @@ export default function ClassDataPage() {
   const { profile } = useAuth();
   const { activeYear } = useAcademicYear();
 
+  if (profile?.role === 'kindergarten_subject_teacher') {
+    return (
+      <div className="p-8 text-center">
+        <h1 className="text-xl font-bold text-red-600">Akses Ditolak</h1>
+        <p className="text-gray-500 mt-2">Anda tidak memiliki izin untuk membuka halaman ini.</p>
+      </div>
+    );
+  }
+
   // Active unit from useOutletContext (layout context) or user profile/unitId fallback
   const outletCtx = useOutletContext<{ activeUnit?: string }>() || {};
   const activeUnit = outletCtx.activeUnit || profile?.currentUnit || profile?.unitId || "JUNIOR_HIGH";

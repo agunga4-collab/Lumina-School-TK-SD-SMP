@@ -1936,6 +1936,7 @@ export default function SuperAdminPage() {
                 "BK_MENTOR",
                 "HEAD_UNIT",
                 "HEAD_JUNIOR",
+                "kindergarten_subject_teacher",
               ].includes(i.role),
           ).length,
           classes: classes.filter((c) => c.unitId === unit).length,
@@ -2016,6 +2017,7 @@ export default function SuperAdminPage() {
           "BK_MENTOR",
           "STAFF",
           "PROFILE_TEACHER",
+          "kindergarten_subject_teacher",
         ].includes(i.role) || [
           "SUPER_ADMIN",
           "HEAD_UNIT",
@@ -2023,6 +2025,7 @@ export default function SuperAdminPage() {
           "TEACHER",
           "BK_MENTOR",
           "STAFF",
+          "kindergarten_subject_teacher",
         ].includes(i.role))
       );
     }
@@ -2234,6 +2237,7 @@ export default function SuperAdminPage() {
           "HEAD_UNIT",
           "HEAD_JUNIOR",
           "SUPER_ADMIN",
+          "kindergarten_subject_teacher",
         ].includes(i.role),
     ).length,
     STUDENT: invites.filter(
@@ -6510,6 +6514,7 @@ export default function SuperAdminPage() {
                     className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100"
                   >
                     <option value="TEACHER">TEACHER</option>
+                    <option value="kindergarten_subject_teacher">Guru Bidang Studi TK</option>
                     <option value="HEAD_UNIT">HEAD_UNIT</option>
                     <option value="HEAD_JUNIOR">HEAD_JUNIOR</option>
                     <option value="BK_MENTOR">BK_MENTOR</option>

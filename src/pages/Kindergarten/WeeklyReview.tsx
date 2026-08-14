@@ -73,6 +73,15 @@ export default function WeeklyReview() {
 
   const { profile } = useAuth();
 
+  if (profile?.role === 'kindergarten_subject_teacher') {
+    return (
+      <div className="p-8 text-center">
+        <h1 className="text-xl font-bold text-red-600">Akses Ditolak</h1>
+        <p className="text-gray-500 mt-2">Anda tidak memiliki izin untuk membuka halaman ini.</p>
+      </div>
+    );
+  }
+
   // Class Selection states using useTeacherAssignedClasses
   const {
     assignedClasses: classes,
@@ -891,9 +900,18 @@ export default function WeeklyReview() {
         scale: 2,
         useCORS: true,
         logging: false,
+        windowWidth: 1200,
+        windowHeight: 1600,
         onclone: (clonedDoc, clonedElement) => {
           if (clonedElement) {
             clonedElement.style.fontFamily = '"Inter", sans-serif';
+            clonedElement.style.width = '794px';
+            clonedElement.style.height = '1123px';
+            clonedElement.style.minWidth = '794px';
+            clonedElement.style.minHeight = '1123px';
+            clonedElement.style.maxWidth = '794px';
+            clonedElement.style.maxHeight = '1123px';
+            clonedElement.style.boxSizing = 'border-box';
           }
         }
       });
@@ -902,15 +920,24 @@ export default function WeeklyReview() {
         scale: 2,
         useCORS: true,
         logging: false,
+        windowWidth: 1200,
+        windowHeight: 1600,
         onclone: (clonedDoc, clonedElement) => {
           if (clonedElement) {
             clonedElement.style.fontFamily = '"Inter", sans-serif';
+            clonedElement.style.width = '794px';
+            clonedElement.style.height = '1123px';
+            clonedElement.style.minWidth = '794px';
+            clonedElement.style.minHeight = '1123px';
+            clonedElement.style.maxWidth = '794px';
+            clonedElement.style.maxHeight = '1123px';
+            clonedElement.style.boxSizing = 'border-box';
           }
         }
       });
 
-      const imgData1 = canvas1.toDataURL('image/png');
-      const imgData2 = canvas2.toDataURL('image/png');
+      const imgData1 = canvas1.toDataURL('image/jpeg', 0.8);
+      const imgData2 = canvas2.toDataURL('image/jpeg', 0.8);
 
       const pdf = new jsPDF({
         orientation: 'portrait',
@@ -922,11 +949,11 @@ export default function WeeklyReview() {
       const pdfHeight = pdf.internal.pageSize.getHeight();
       
       // Page 1
-      pdf.addImage(imgData1, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      pdf.addImage(imgData1, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
       
       // Page 2
       pdf.addPage();
-      pdf.addImage(imgData2, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      pdf.addImage(imgData2, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
       
       const pdfBlob = pdf.output('blob');
 
@@ -1911,20 +1938,28 @@ export default function WeeklyReview() {
                     )}
                   </span>
                   
-                  <span className="print:block hidden text-center text-[9px] text-gray-500 font-bold uppercase mt-1">
-                    {teacherNip ? `NIP. ${teacherNip}` : ''}
-                  </span>
-                  <input 
-                    type="text"
-                    value={teacherNip}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setTeacherNip(val);
-                      localStorage.setItem('kg_teacher_nip', val);
-                    }}
-                    placeholder="NIP / No Registrasi"
-                    className="print:hidden text-center text-[9px] text-gray-500 font-bold uppercase w-36 outline-none border-b border-dotted border-gray-200 focus:border-solid focus:border-emerald-500 mt-1"
-                  />
+                  {isPublishing ? (
+                    <span className="text-center text-[9px] text-gray-500 font-bold uppercase mt-1">
+                      {teacherNip ? `NIP. ${teacherNip}` : ''}
+                    </span>
+                  ) : (
+                    <>
+                      <span className="print:block hidden text-center text-[9px] text-gray-500 font-bold uppercase mt-1">
+                        {teacherNip ? `NIP. ${teacherNip}` : ''}
+                      </span>
+                      <input 
+                        type="text"
+                        value={teacherNip}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setTeacherNip(val);
+                          localStorage.setItem('kg_teacher_nip', val);
+                        }}
+                        placeholder="NIP / No Registrasi"
+                        className="print:hidden text-center text-[9px] text-gray-500 font-bold uppercase w-36 outline-none border-b border-dotted border-gray-200 focus:border-solid focus:border-emerald-500 mt-1"
+                      />
+                    </>
+                  )}
                 </div>
               </div>
             </div>

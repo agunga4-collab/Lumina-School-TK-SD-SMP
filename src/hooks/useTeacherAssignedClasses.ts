@@ -24,8 +24,17 @@ export function useTeacherAssignedClasses({
   // Whether user is restricted to assigned classes
   const isRestrictedToAssignedClasses = useMemo(() => {
     if (!userRole) return true; // Default to restricted if no profile loaded yet
+    
+    const hasKgSubjectTeacherPermission = 
+      userRole === 'kindergarten_subject_teacher' || 
+      (profile?.permissions && profile.permissions.includes('kindergarten_observation_all_classes'));
+
+    if (unit === 'KINDERGARTEN' && hasKgSubjectTeacherPermission) {
+      return false;
+    }
+
     return !['SUPER_ADMIN', 'HEAD_UNIT'].includes(userRole);
-  }, [userRole]);
+  }, [userRole, profile?.permissions, unit]);
 
   useEffect(() => {
     let active = true;

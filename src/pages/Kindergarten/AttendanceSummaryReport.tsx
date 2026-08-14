@@ -38,6 +38,15 @@ export default function AttendanceSummaryReport() {
   const { activeYear } = useAcademicYear();
   const { profile } = useAuth();
 
+  if (profile?.role === 'kindergarten_subject_teacher') {
+    return (
+      <div className="p-8 text-center">
+        <h1 className="text-xl font-bold text-red-600">Akses Ditolak</h1>
+        <p className="text-gray-500 mt-2">Anda tidak memiliki izin untuk membuka halaman ini.</p>
+      </div>
+    );
+  }
+
   // Filter States using useTeacherAssignedClasses
   const {
     assignedClasses: classes,

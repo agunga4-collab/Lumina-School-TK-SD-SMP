@@ -161,7 +161,8 @@ service cloud.firestore {
           'TEACHER', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR',
           'PARENT', 'STUDENT', 'SUPER_ADMIN', 'GUEST',
           'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL',
-          'COORDINATOR', 'HOMEROOM_TEACHER', 'COUNSELOR'
+          'COORDINATOR', 'HOMEROOM_TEACHER', 'COUNSELOR',
+          'kindergarten_subject_teacher'
         ]
         && data.status in ['active', 'pending', 'disabled'];
     }
@@ -558,12 +559,29 @@ service cloud.firestore {
       allow write: if isAdmin() || isJuniorHighStaff();
     }
 
+    function isKindergartenClass(classId) {
+      return exists(/databases/$(database)/documents/classes/$(classId)) &&
+        get(/databases/$(database)/documents/classes/$(classId)).data.unitId == 'KINDERGARTEN';
+    }
+
     match /observations/{observationId} {
-      allow read: if isActive() && isTeacher();
-      allow read: if isActive() && isJuniorHighStaff();
+      allow read: if isActive() && (
+        isTeacher() ||
+        isJuniorHighStaff() ||
+        (userRole() == 'kindergarten_subject_teacher' && currentUser().unitId == 'KINDERGARTEN')
+      );
       allow read: if isAdmin();
       allow read: if isActive() && isLinkedStudent(existing().studentId);
-      allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
+      allow write: if isActive() && (
+        isTeacher() ||
+        isJuniorHighStaff() ||
+        isAdmin() ||
+        (userRole() == 'kindergarten_subject_teacher' && currentUser().unitId == 'KINDERGARTEN' && (
+          (request.method == 'create' && isKindergartenClass(incoming().classId)) ||
+          (request.method == 'update' && isKindergartenClass(existing().classId) && isKindergartenClass(incoming().classId)) ||
+          (request.method == 'delete' && isKindergartenClass(existing().classId))
+        ))
+      );
     }
 
     match /aap_assessments/{assessmentId} {

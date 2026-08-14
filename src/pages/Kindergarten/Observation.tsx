@@ -2289,6 +2289,11 @@ export default function Observation() {
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="px-3 py-1 bg-emerald-100 text-emerald-700 text-xs font-black uppercase rounded-full tracking-widest">Kindergarten Unit</span>
+            {(profile?.role === 'kindergarten_subject_teacher' || profile?.permissions?.includes('kindergarten_observation_all_classes')) && (
+              <span className="px-3 py-1 bg-blue-100 text-blue-700 text-xs font-black uppercase rounded-full tracking-widest">
+                Akses Guru Bidang Studi TK
+              </span>
+            )}
           </div>
           <h1 className="text-3xl font-black text-gray-900 tracking-tight">Observation Data</h1>
         </div>

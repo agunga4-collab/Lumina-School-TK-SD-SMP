@@ -341,7 +341,9 @@ export function Layout() {
 
   if (!currentUser) return null;
 
-  const currentUnit = activeUnit || (currentUser.unitId as UnitType) || 'JUNIOR_HIGH';
+  const currentUnit = currentUser.role === 'kindergarten_subject_teacher'
+    ? 'KINDERGARTEN'
+    : (activeUnit || (currentUser.unitId as UnitType) || 'JUNIOR_HIGH');
 
   if (location.pathname.includes('/conference/presentation/')) {
     return (
@@ -435,7 +437,7 @@ export function Layout() {
   };
 
   // If activeUnit is not chosen yet, show unit selection dashboard for staff and parents
-  if (!activeUnit && currentUser.role !== 'STUDENT') {
+  if (!activeUnit && currentUser.role !== 'STUDENT' && currentUser.role !== 'kindergarten_subject_teacher') {
     const accessibleUnits = getAccessibleUnits(currentUser);
 
     if (showChatView && currentUser.role !== 'PARENT' && currentUser.role !== 'STUDENT') {
@@ -691,22 +693,30 @@ export function Layout() {
           </div>
 
           {/* Unit Specific Menus (Teacher & Admin Only) */}
-          {(currentUser.role === 'TEACHER' || currentUser.role === 'HEAD_UNIT' || currentUser.role === 'HEAD_JUNIOR' || currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'BK_MENTOR') && (
+          {(currentUser.role === 'TEACHER' || currentUser.role === 'HEAD_UNIT' || currentUser.role === 'HEAD_JUNIOR' || currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'BK_MENTOR' || currentUser.role === 'kindergarten_subject_teacher') && (
             <>
               {currentUnit === 'KINDERGARTEN' && (
                 <div className="space-y-1">
                   <NavSectionLabel label="Keseharian & Belajar" />
-                  {(['SUPER_ADMIN', 'HEAD_UNIT'].includes(currentUser.role) || hasKindyClassAssignment) && (
-                    <NavItem to="/kindy/dashboard" icon={<LayoutDashboard size={18} />} label="Dashboard" />
+                  {currentUser.role !== 'kindergarten_subject_teacher' && (
+                    <>
+                      {(['SUPER_ADMIN', 'HEAD_UNIT'].includes(currentUser.role) || hasKindyClassAssignment) && (
+                        <NavItem to="/kindy/dashboard" icon={<LayoutDashboard size={18} />} label="Dashboard" />
+                      )}
+                      <NavItem to="/class-data" icon={<Users size={18} />} label="Data Kelas" />
+                      <NavItem to="/kindy/aap-assessment" icon={<ClipboardCheck size={18} />} label="Asesmen Awal Pembelajaran" />
+                      <NavItem to="/kindy/aap-report" icon={<FileText size={18} />} label="Hasil & Analisis AAP" />
+                      <NavItem to="/kindy/checklist" icon={<Smile size={18} />} label="Attendance & Emotional Checklist" />
+                    </>
                   )}
-                  <NavItem to="/class-data" icon={<Users size={18} />} label="Data Kelas" />
-                  <NavItem to="/kindy/aap-assessment" icon={<ClipboardCheck size={18} />} label="Asesmen Awal Pembelajaran" />
-                  <NavItem to="/kindy/aap-report" icon={<FileText size={18} />} label="Hasil & Analisis AAP" />
-                  <NavItem to="/kindy/checklist" icon={<Smile size={18} />} label="Attendance & Emotional Checklist" />
                   <NavItem to="/kindy/observation" icon={<Camera size={18} />} label="Observation Data" />
-                  <NavItem to="/kindy/weekly-summary" icon={<Sparkles size={18} />} label="Weekly Summary & AI" />
-                  <NavItem to="/kindy/weekly-review" icon={<History size={18} />} label="Weekly Report (Final)" />
-                  <NavItem to="/kindy/attendance-recap" icon={<FileText size={18} />} label="Rekap Absensi (H/S/I/A)" />
+                  {currentUser.role !== 'kindergarten_subject_teacher' && (
+                    <>
+                      <NavItem to="/kindy/weekly-summary" icon={<Sparkles size={18} />} label="Weekly Summary & AI" />
+                      <NavItem to="/kindy/weekly-review" icon={<History size={18} />} label="Weekly Report (Final)" />
+                      <NavItem to="/kindy/attendance-recap" icon={<FileText size={18} />} label="Rekap Absensi (H/S/I/A)" />
+                    </>
+                  )}
                 </div>
               )}
 
@@ -858,7 +868,7 @@ export function Layout() {
                 <p className="text-[10px] lg:text-[11px] font-medium text-gray-500">Beranda Portal Lumina</p>
              </div>
 
-             {currentUser.role !== 'STUDENT' && (
+             {currentUser.role !== 'STUDENT' && currentUser.role !== 'kindergarten_subject_teacher' && (
                 <div className="ml-4 pl-4 border-l border-gray-100">
                    <button 
                      onClick={() => setActiveUnit(null)}

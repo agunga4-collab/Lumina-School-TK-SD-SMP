@@ -729,7 +729,8 @@ export type UserRole =
   | 'VICE_PRINCIPAL'
   | 'COORDINATOR'
   | 'HOMEROOM_TEACHER'
-  | 'COUNSELOR';
+  | 'COUNSELOR'
+  | 'kindergarten_subject_teacher';
 
 export type UserStatus = 'active' | 'pending' | 'disabled';
 export type UnitType = 'KINDERGARTEN' | 'ELEMENTARY' | 'JUNIOR_HIGH';
@@ -1324,6 +1325,7 @@ export interface User {
   fatherName?: string;
   motherName?: string;
   createdAt: number;
+  permissions?: string[];
 }
 
 export interface RoleInvite {
