@@ -78,6 +78,7 @@ const activities: { id: KGActivity; label: string; icon: React.ReactNode; color:
   { id: 'OUTSIDE', label: 'Outside', icon: <Activity />, color: 'lime' },
   { id: 'AUDIO_VISUAL', label: 'Audio Visual', icon: <Film />, color: 'violet' },
   { id: 'SPECIAL_PROGRAM', label: 'Special Program', icon: <Sparkles />, color: 'pink' },
+  { id: 'SPECIAL_ACTIVITY', label: 'Kegiatan Khusus', icon: <Star />, color: 'amber' },
 ];
 
 const domains: { id: KGDomain; label: string; desc: string }[] = [
@@ -258,6 +259,10 @@ export default function Observation() {
   const [generalNoteUpdatedBy, setGeneralNoteUpdatedBy] = React.useState<string | null>(null);
   const [generalNoteUpdatedByName, setGeneralNoteUpdatedByName] = React.useState<string | null>(null);
 
+  // Special Activity state declarations
+  const [specialActivityName, setSpecialActivityName] = React.useState<string>("");
+  const [specialActivityType, setSpecialActivityType] = React.useState<'activity' | 'holiday'>('activity');
+
   // Popup detail general note editing states
   const [isEditingPopupGeneralNote, setIsEditingPopupGeneralNote] = React.useState<boolean>(false);
   const [popupGeneralNoteText, setPopupGeneralNoteText] = React.useState<string>("");
@@ -268,6 +273,12 @@ export default function Observation() {
       setIsEditingPopupGeneralNote(false);
     }
   }, [selectedDetailSession]);
+
+  React.useEffect(() => {
+    if (selectedActivity === 'SPECIAL_ACTIVITY') {
+      setSelectedDomain(null);
+    }
+  }, [selectedActivity]);
 
   // New session level state management for "Sesi Terkunci" & "Edit Sentra & Domain"
   const [isSessionLocked, setIsSessionLocked] = React.useState<boolean>(false);
@@ -834,11 +845,12 @@ export default function Observation() {
       await setDoc(docRef, cleanFirestoreData(updatedSession), { merge: true });
 
       // Save to LocalStorage
-      const lsKeyNew = `kg_obs_hist_${classId}_${selectedDetailSession.activity}_${selectedDetailSession.domain}_${targetDate}`;
+      const domainVal = selectedDetailSession.activity === 'SPECIAL_ACTIVITY' ? 'none' : (selectedDetailSession.domain || 'none');
+      const lsKeyNew = `kg_obs_hist_${classId}_${selectedDetailSession.activity}_${domainVal}_${targetDate}`;
       localStorage.setItem(lsKeyNew, JSON.stringify(updatedSession));
 
       // Also support legacy key format if present
-      const lsKeyOld = `kg_obs_hist_${selectedDetailSession.activity}_${selectedDetailSession.domain}_${targetDate}`;
+      const lsKeyOld = `kg_obs_hist_${selectedDetailSession.activity}_${domainVal}_${targetDate}`;
       if (localStorage.getItem(lsKeyOld)) {
         localStorage.setItem(lsKeyOld, JSON.stringify(updatedSession));
       }
@@ -1118,13 +1130,15 @@ export default function Observation() {
         setGeneralNoteUpdatedAt(null);
         setGeneralNoteUpdatedBy(null);
         setGeneralNoteUpdatedByName(null);
+        setSpecialActivityName("");
+        setSpecialActivityType("activity");
         setIsSessionLocked(false);
         setSessionStatus('new');
         setCurrentDocId(null);
         return;
       }
 
-      if (!selectedActivity || !selectedDomain) {
+      if (!selectedActivity || (selectedActivity !== 'SPECIAL_ACTIVITY' && !selectedDomain)) {
         setObservations({});
         setGeneralPhoto(null);
         setDocCreatedAt(null);
@@ -1133,6 +1147,8 @@ export default function Observation() {
         setGeneralNoteUpdatedAt(null);
         setGeneralNoteUpdatedBy(null);
         setGeneralNoteUpdatedByName(null);
+        setSpecialActivityName("");
+        setSpecialActivityType("activity");
         setIsSessionLocked(false);
         setSessionStatus('new');
         setCurrentDocId(null);
@@ -1140,10 +1156,14 @@ export default function Observation() {
       }
 
       const activeClassObj = classes.find(c => c.id === selectedClassId);
-      const expectedDocId = `${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`;
+      const expectedDocId = selectedActivity === 'SPECIAL_ACTIVITY'
+        ? `${selectedClassId}_${selectedActivity}_none_${observationDate}`
+        : `${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`;
 
       // 1. Try to load from LocalStorage first (classId & date scoped!)
-      const comboDateKey = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`;
+      const comboDateKey = selectedActivity === 'SPECIAL_ACTIVITY'
+        ? `kg_obs_hist_${selectedClassId}_${selectedActivity}_none_${observationDate}`
+        : `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`;
       const savedComboData = localStorage.getItem(comboDateKey);
       
       if (savedComboData) {
@@ -1158,6 +1178,14 @@ export default function Observation() {
           setGeneralNoteUpdatedAt(parsed.generalNoteUpdatedAt || null);
           setGeneralNoteUpdatedBy(parsed.generalNoteUpdatedBy || null);
           setGeneralNoteUpdatedByName(parsed.generalNoteUpdatedByName || null);
+          
+          if (selectedActivity === 'SPECIAL_ACTIVITY') {
+            setSpecialActivityName(parsed.specialActivityName || "");
+            setSpecialActivityType(parsed.specialActivityType || "activity");
+          } else {
+            setSpecialActivityName("");
+            setSpecialActivityType("activity");
+          }
 
           // Check generalPhotoDeleted flag
           if (parsed.generalPhotoDeleted === true) {
@@ -1180,80 +1208,88 @@ export default function Observation() {
       }
 
       // Legacy fallback keys: if we find them, only use them if classId matches or is resolved
-      const oldComboDateKey = `kg_obs_hist_${selectedActivity}_${selectedDomain}_${observationDate}`;
-      const oldSavedComboData = localStorage.getItem(oldComboDateKey);
-      if (oldSavedComboData) {
-        try {
-          const parsed = JSON.parse(oldSavedComboData);
-          if (parsed && isDocForClass(parsed, selectedClassId, activeClassObj, students)) {
-            if (!active) return;
-            if (parsed.observations) setObservations(parsed.observations);
-            
-            setDocCreatedAt(parsed.createdAt || parsed.timestamp || null);
-            setDocCreatedBy(parsed.createdBy || null);
-            setGeneralNote(parsed.generalNote || "");
-            setGeneralNoteUpdatedAt(parsed.generalNoteUpdatedAt || null);
-            setGeneralNoteUpdatedBy(parsed.generalNoteUpdatedBy || null);
-            setGeneralNoteUpdatedByName(parsed.generalNoteUpdatedByName || null);
+      if (selectedActivity !== 'SPECIAL_ACTIVITY') {
+        const oldComboDateKey = `kg_obs_hist_${selectedActivity}_${selectedDomain}_${observationDate}`;
+        const oldSavedComboData = localStorage.getItem(oldComboDateKey);
+        if (oldSavedComboData) {
+          try {
+            const parsed = JSON.parse(oldSavedComboData);
+            if (parsed && isDocForClass(parsed, selectedClassId, activeClassObj, students)) {
+              if (!active) return;
+              if (parsed.observations) setObservations(parsed.observations);
+              
+              setDocCreatedAt(parsed.createdAt || parsed.timestamp || null);
+              setDocCreatedBy(parsed.createdBy || null);
+              setGeneralNote(parsed.generalNote || "");
+              setGeneralNoteUpdatedAt(parsed.generalNoteUpdatedAt || null);
+              setGeneralNoteUpdatedBy(parsed.generalNoteUpdatedBy || null);
+              setGeneralNoteUpdatedByName(parsed.generalNoteUpdatedByName || null);
+              setSpecialActivityName("");
+              setSpecialActivityType("activity");
 
-            if (parsed.generalPhotoDeleted === true) {
-              setGeneralPhoto(null);
-            } else if (parsed.generalPhoto) {
-               setGeneralPhoto(parsed.generalPhoto);
-            } else if (parsed.generalPhotoUrl) {
-              setGeneralPhoto(parsed.generalPhotoUrl);
-            } else {
-              setGeneralPhoto(null);
+              if (parsed.generalPhotoDeleted === true) {
+                setGeneralPhoto(null);
+              } else if (parsed.generalPhoto) {
+                 setGeneralPhoto(parsed.generalPhoto);
+              } else if (parsed.generalPhotoUrl) {
+                setGeneralPhoto(parsed.generalPhotoUrl);
+              } else {
+                setGeneralPhoto(null);
+              }
+
+              setIsSessionLocked(true);
+              setSessionStatus('locked');
+              setCurrentDocId(expectedDocId);
+              return;
             }
-
-            setIsSessionLocked(true);
-            setSessionStatus('locked');
-            setCurrentDocId(expectedDocId);
-            return;
+          } catch (e) {
+            console.error(e);
           }
-        } catch (e) {
-          console.error(e);
         }
-      }
 
-      const fallbackKey = `kg_obs_hist_${selectedActivity}_${selectedDomain}`;
-      const legacyComboData = localStorage.getItem(fallbackKey);
-      if (legacyComboData) {
-        try {
-          const parsed = JSON.parse(legacyComboData);
-          if (parsed && parsed.date === observationDate && isDocForClass(parsed, selectedClassId, activeClassObj, students)) {
-            if (!active) return;
-            if (parsed.observations) setObservations(parsed.observations);
-            
-            setDocCreatedAt(parsed.createdAt || parsed.timestamp || null);
-            setDocCreatedBy(parsed.createdBy || null);
-            setGeneralNote(parsed.generalNote || "");
-            setGeneralNoteUpdatedAt(parsed.generalNoteUpdatedAt || null);
-            setGeneralNoteUpdatedBy(parsed.generalNoteUpdatedBy || null);
-            setGeneralNoteUpdatedByName(parsed.generalNoteUpdatedByName || null);
+        const fallbackKey = `kg_obs_hist_${selectedActivity}_${selectedDomain}`;
+        const legacyComboData = localStorage.getItem(fallbackKey);
+        if (legacyComboData) {
+          try {
+            const parsed = JSON.parse(legacyComboData);
+            if (parsed && parsed.date === observationDate && isDocForClass(parsed, selectedClassId, activeClassObj, students)) {
+              if (!active) return;
+              if (parsed.observations) setObservations(parsed.observations);
+              
+              setDocCreatedAt(parsed.createdAt || parsed.timestamp || null);
+              setDocCreatedBy(parsed.createdBy || null);
+              setGeneralNote(parsed.generalNote || "");
+              setGeneralNoteUpdatedAt(parsed.generalNoteUpdatedAt || null);
+              setGeneralNoteUpdatedBy(parsed.generalNoteUpdatedBy || null);
+              setGeneralNoteUpdatedByName(parsed.generalNoteUpdatedByName || null);
+              setSpecialActivityName("");
+              setSpecialActivityType("activity");
 
-            if (parsed.generalPhotoDeleted === true) {
-              setGeneralPhoto(null);
-            } else if (parsed.generalPhoto) {
-              setGeneralPhoto(parsed.generalPhoto);
-            } else if (parsed.generalPhotoUrl) {
-              setGeneralPhoto(parsed.generalPhotoUrl);
-            } else {
-              setGeneralPhoto(null);
+              if (parsed.generalPhotoDeleted === true) {
+                setGeneralPhoto(null);
+              } else if (parsed.generalPhoto) {
+                setGeneralPhoto(parsed.generalPhoto);
+              } else if (parsed.generalPhotoUrl) {
+                setGeneralPhoto(parsed.generalPhotoUrl);
+              } else {
+                setGeneralPhoto(null);
+              }
+
+              setIsSessionLocked(true);
+              setSessionStatus('locked');
+              setCurrentDocId(expectedDocId);
+              return;
             }
-
-            setIsSessionLocked(true);
-            setSessionStatus('locked');
-            setCurrentDocId(expectedDocId);
-            return;
+          } catch (e) {
+            console.error(e);
           }
-        } catch (e) {
-          console.error(e);
         }
       }
 
       // 2. Fetch from Firestore for the specific doc ID (classId scoped)
-      const docId = `${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`;
+      const docId = selectedActivity === 'SPECIAL_ACTIVITY'
+        ? `${selectedClassId}_${selectedActivity}_none_${observationDate}`
+        : `${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`;
       const docRef = doc(db, 'observations', docId);
       
       try {
@@ -1271,6 +1307,14 @@ export default function Observation() {
           setGeneralNoteUpdatedAt(d.generalNoteUpdatedAt || null);
           setGeneralNoteUpdatedBy(d.generalNoteUpdatedBy || null);
           setGeneralNoteUpdatedByName(d.generalNoteUpdatedByName || null);
+          
+          if (selectedActivity === 'SPECIAL_ACTIVITY') {
+            setSpecialActivityName(d.specialActivityName || "");
+            setSpecialActivityType(d.specialActivityType || "activity");
+          } else {
+            setSpecialActivityName("");
+            setSpecialActivityType("activity");
+          }
 
           if (d.generalPhotoDeleted === true) {
             setGeneralPhoto(null);
@@ -1284,59 +1328,63 @@ export default function Observation() {
           setSessionStatus('locked');
           setCurrentDocId(docId);
         } else {
-          // Fallback to unscoped query (backward compatibility for old saved records without classId prefix)
-          const unscopedDocId = `${selectedActivity}_${selectedDomain}_${observationDate}`;
-          const unscopedRef = doc(db, 'observations', unscopedDocId);
-          const unscopedSnap = await getDoc(unscopedRef);
-          
-          if (unscopedSnap.exists()) {
-            const d = unscopedSnap.data();
-            // Only accept if classId matches or is resolved
-            if (isDocForClass(d, selectedClassId, activeClassObj, students)) {
-              if (d.observations) setObservations(d.observations);
-              
-              setDocCreatedAt(d.createdAt || d.timestamp || null);
-              setDocCreatedBy(d.createdBy || null);
-              setGeneralNote(d.generalNote || "");
-              setGeneralNoteUpdatedAt(d.generalNoteUpdatedAt || null);
-              setGeneralNoteUpdatedBy(d.generalNoteUpdatedBy || null);
-              setGeneralNoteUpdatedByName(d.generalNoteUpdatedByName || null);
+          if (selectedActivity !== 'SPECIAL_ACTIVITY') {
+            // Fallback to unscoped query (backward compatibility for old saved records without classId prefix)
+            const unscopedDocId = `${selectedActivity}_${selectedDomain}_${observationDate}`;
+            const unscopedRef = doc(db, 'observations', unscopedDocId);
+            const unscopedSnap = await getDoc(unscopedRef);
+            
+            if (unscopedSnap.exists()) {
+              const d = unscopedSnap.data();
+              // Only accept if classId matches or is resolved
+              if (isDocForClass(d, selectedClassId, activeClassObj, students)) {
+                if (d.observations) setObservations(d.observations);
+                
+                setDocCreatedAt(d.createdAt || d.timestamp || null);
+                setDocCreatedBy(d.createdBy || null);
+                setGeneralNote(d.generalNote || "");
+                setGeneralNoteUpdatedAt(d.generalNoteUpdatedAt || null);
+                setGeneralNoteUpdatedBy(d.generalNoteUpdatedBy || null);
+                setGeneralNoteUpdatedByName(d.generalNoteUpdatedByName || null);
+                setSpecialActivityName("");
+                setSpecialActivityType("activity");
 
-              if (d.generalPhotoDeleted === true) {
-                setGeneralPhoto(null);
-              } else if (d.generalPhotoUrl || d.generalPhoto) {
-                setGeneralPhoto(d.generalPhotoUrl || d.generalPhoto);
-              } else {
-                setGeneralPhoto(null);
+                if (d.generalPhotoDeleted === true) {
+                  setGeneralPhoto(null);
+                } else if (d.generalPhotoUrl || d.generalPhoto) {
+                  setGeneralPhoto(d.generalPhotoUrl || d.generalPhoto);
+                } else {
+                  setGeneralPhoto(null);
+                }
+
+                // AUTO-MIGRATION: Save it properly under the class-scoped ID!
+                try {
+                  const targetDate = observationDate;
+                  const migrationPayload = {
+                    ...d,
+                    id: docId,
+                    unitId: 'KINDERGARTEN',
+                    classId: selectedClassId,
+                    date: targetDate,
+                    observationDate: targetDate,
+                    photoUrl: d.generalPhotoUrl || d.generalPhoto || null,
+                    title: d.title || activities.find(a => a.id === selectedActivity)?.label || selectedActivity,
+                    caption: d.caption || domains.find(d => d.id === selectedDomain)?.label || selectedDomain,
+                    createdAt: d.createdAt || d.timestamp || Date.now(),
+                    createdBy: d.createdBy || profile?.email || profile?.displayName || profile?.uid || 'System',
+                    updatedAt: Date.now()
+                  };
+                  await setDoc(docRef, cleanFirestoreData(migrationPayload), { merge: true });
+                  console.log(`[Auto-Migration] Successfully migrated unscoped observation ${docId} to class-scoped document.`);
+                } catch (migrationErr) {
+                  console.warn("[Auto-Migration] Failed to save class-scoped migration:", migrationErr);
+                }
+
+                setIsSessionLocked(true);
+                setSessionStatus('locked');
+                setCurrentDocId(docId);
+                return;
               }
-
-              // AUTO-MIGRATION: Save it properly under the class-scoped ID!
-              try {
-                const targetDate = observationDate;
-                const migrationPayload = {
-                  ...d,
-                  id: docId,
-                  unitId: 'KINDERGARTEN',
-                  classId: selectedClassId,
-                  date: targetDate,
-                  observationDate: targetDate,
-                  photoUrl: d.generalPhotoUrl || d.generalPhoto || null,
-                  title: d.title || activities.find(a => a.id === selectedActivity)?.label || selectedActivity,
-                  caption: d.caption || domains.find(d => d.id === selectedDomain)?.label || selectedDomain,
-                  createdAt: d.createdAt || d.timestamp || Date.now(),
-                  createdBy: d.createdBy || profile?.email || profile?.displayName || profile?.uid || 'System',
-                  updatedAt: Date.now()
-                };
-                await setDoc(docRef, cleanFirestoreData(migrationPayload), { merge: true });
-                console.log(`[Auto-Migration] Successfully migrated unscoped observation ${docId} to class-scoped document.`);
-              } catch (migrationErr) {
-                console.warn("[Auto-Migration] Failed to save class-scoped migration:", migrationErr);
-              }
-
-              setIsSessionLocked(true);
-              setSessionStatus('locked');
-              setCurrentDocId(docId);
-              return;
             }
           }
 
@@ -1353,6 +1401,8 @@ export default function Observation() {
           setGeneralNoteUpdatedAt(null);
           setGeneralNoteUpdatedBy(null);
           setGeneralNoteUpdatedByName(null);
+          setSpecialActivityName("");
+          setSpecialActivityType("activity");
 
           setIsSessionLocked(false);
           setSessionStatus('new');
@@ -1373,6 +1423,8 @@ export default function Observation() {
         setGeneralNoteUpdatedAt(null);
         setGeneralNoteUpdatedBy(null);
         setGeneralNoteUpdatedByName(null);
+        setSpecialActivityName("");
+        setSpecialActivityType("activity");
 
         setIsSessionLocked(false);
         setSessionStatus('new');
@@ -1427,10 +1479,22 @@ export default function Observation() {
     setIsSaving(true);
     try {
       if (!selectedClassId) throw new Error('Kelas belum dipilih.');
-      if (!selectedActivity || !selectedDomain) throw new Error('Sentra dan Domain wajib dipilih.');
+      
+      if (selectedActivity === 'SPECIAL_ACTIVITY') {
+        if (!specialActivityName || !specialActivityName.trim()) {
+          throw new Error('Nama Kegiatan wajib diisi.');
+        }
+        if (specialActivityType === 'activity' && !generalPhoto) {
+          throw new Error('Foto General (kegiatan utama) wajib diisi untuk jenis Ada Kegiatan.');
+        }
+      } else {
+        if (!selectedActivity || !selectedDomain) throw new Error('Sentra dan Domain wajib dipilih.');
+      }
 
       const targetDate = observationDate;
-      const newDocId = `${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const newDocId = selectedActivity === 'SPECIAL_ACTIVITY'
+        ? `${selectedClassId}_${selectedActivity}_none_${targetDate}`
+        : `${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
       const newDocRef = doc(db, 'observations', newDocId);
 
       // Determine creation metadata
@@ -1451,19 +1515,19 @@ export default function Observation() {
         classId: selectedClassId,
         observationDate: targetDate,
         centerId: selectedActivity,
-        domainId: selectedDomain,
+        domainId: selectedActivity === 'SPECIAL_ACTIVITY' ? null : selectedDomain,
         activity: selectedActivity, // backward compatibility
-        domain: selectedDomain, // backward compatibility
+        domain: selectedActivity === 'SPECIAL_ACTIVITY' ? null : selectedDomain, // backward compatibility
         date: targetDate, // backward compatibility
         sentraId: selectedActivity,
-        sentraName: activities.find(a => a.id === selectedActivity)?.label || selectedActivity,
-        domainName: domains.find(d => d.id === selectedDomain)?.label || selectedDomain,
-        photoUrl: generalPhoto,
-        generalPhotoUrl: generalPhoto,
-        generalPhoto: generalPhoto, // backward compatibility
+        sentraName: selectedActivity === 'SPECIAL_ACTIVITY' ? "Kegiatan Khusus" : (activities.find(a => a.id === selectedActivity)?.label || selectedActivity),
+        domainName: selectedActivity === 'SPECIAL_ACTIVITY' ? "Kegiatan Khusus" : (domains.find(d => d.id === selectedDomain)?.label || selectedDomain),
+        photoUrl: generalPhoto || null,
+        generalPhotoUrl: generalPhoto || null,
+        generalPhoto: generalPhoto || null, // backward compatibility
         generalPhotoDeleted: !generalPhoto,
-        title: activities.find(a => a.id === selectedActivity)?.label || selectedActivity,
-        caption: domains.find(d => d.id === selectedDomain)?.label || selectedDomain,
+        title: selectedActivity === 'SPECIAL_ACTIVITY' ? "Kegiatan Khusus" : (activities.find(a => a.id === selectedActivity)?.label || selectedActivity),
+        caption: selectedActivity === 'SPECIAL_ACTIVITY' ? "Kegiatan Khusus" : (domains.find(d => d.id === selectedDomain)?.label || selectedDomain),
         createdAt: resolvedCreatedAt,
         createdBy: resolvedCreatedBy,
         
@@ -1472,8 +1536,11 @@ export default function Observation() {
         generalNoteUpdatedBy: resolvedNoteUpdatedBy,
         generalNoteUpdatedByName: resolvedNoteUpdatedByName,
 
+        specialActivityName: selectedActivity === 'SPECIAL_ACTIVITY' ? specialActivityName : "",
+        specialActivityType: selectedActivity === 'SPECIAL_ACTIVITY' ? specialActivityType : "activity",
+
         status: 'active',
-        observations: observations,
+        observations: selectedActivity === 'SPECIAL_ACTIVITY' ? {} : observations,
         timestamp: Date.now(),
         updatedAt: Date.now(),
         updatedBy: profile?.email || profile?.displayName || profile?.uid || 'System'
@@ -1483,7 +1550,8 @@ export default function Observation() {
       await setDoc(newDocRef, cleanFirestoreData(payload), { merge: true });
 
       // Save to LocalStorage under new key
-      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const domainVal = selectedActivity === 'SPECIAL_ACTIVITY' ? 'none' : selectedDomain;
+      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${domainVal}_${targetDate}`;
       localStorage.setItem(comboKeyDateSpecific, JSON.stringify(payload));
 
       // If the docId actually changed (different activity or domain), delete the old one to avoid duplicates!
@@ -2139,46 +2207,65 @@ export default function Observation() {
   };
 
   const handleSaveAll = async () => {
-    // 1. Mandatory check: general photo MUST escape empty or null values
-    if (!generalPhoto) {
-      toast.error('Gagal menyimpan! Foto General (kegiatan utama) wajib diisi.', {
-        style: { background: '#fecaca', color: '#b91c1c', border: '1px solid #fee2e2' }
-      });
-      return;
-    }
-
     if (!selectedClassId) {
       toast.error('Gagal menyimpan! Kelas belum dipilih.');
       return;
+    }
+
+    // 1. Mandatory check based on activity type
+    if (selectedActivity === 'SPECIAL_ACTIVITY') {
+      if (!specialActivityName || !specialActivityName.trim()) {
+        toast.error('Gagal menyimpan! Nama Kegiatan wajib diisi.', {
+          style: { background: '#fecaca', color: '#b91c1c', border: '1px solid #fee2e2' }
+        });
+        return;
+      }
+      if (specialActivityType === 'activity' && !generalPhoto) {
+        toast.error('Gagal menyimpan! Foto General (kegiatan utama) wajib diisi untuk jenis Ada Kegiatan.', {
+          style: { background: '#fecaca', color: '#b91c1c', border: '1px solid #fee2e2' }
+        });
+        return;
+      }
+    } else {
+      if (!generalPhoto) {
+        toast.error('Gagal menyimpan! Foto General (kegiatan utama) wajib diisi.', {
+          style: { background: '#fecaca', color: '#b91c1c', border: '1px solid #fee2e2' }
+        });
+        return;
+      }
     }
 
     setIsSaving(true);
     try {
       const targetDate = observationDate;
       const todayStr = formatDateLocal(new Date());
-      const docId = `${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const docId = selectedActivity === 'SPECIAL_ACTIVITY'
+        ? `${selectedClassId}_${selectedActivity}_none_${targetDate}`
+        : `${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
       const docRef = doc(db, 'observations', docId);
 
-      // Enrich with student's names
+      // Enrich with student's names (only if not a special activity)
       const enrichedObservations = { ...observations };
-      students.forEach(student => {
-        if (enrichedObservations[student.id]) {
-          enrichedObservations[student.id] = {
-            ...enrichedObservations[student.id],
-            studentName: student.name
-          };
-        } else if (student.oldLuminaId && enrichedObservations[student.oldLuminaId]) {
-          enrichedObservations[student.oldLuminaId] = {
-            ...enrichedObservations[student.oldLuminaId],
-            studentName: student.name
-          };
-        } else if (student.nis && enrichedObservations[student.nis]) {
-          enrichedObservations[student.nis] = {
-            ...enrichedObservations[student.nis],
-            studentName: student.name
-          };
-        }
-      });
+      if (selectedActivity !== 'SPECIAL_ACTIVITY') {
+        students.forEach(student => {
+          if (enrichedObservations[student.id]) {
+            enrichedObservations[student.id] = {
+              ...enrichedObservations[student.id],
+              studentName: student.name
+            };
+          } else if (student.oldLuminaId && enrichedObservations[student.oldLuminaId]) {
+            enrichedObservations[student.oldLuminaId] = {
+              ...enrichedObservations[student.oldLuminaId],
+              studentName: student.name
+            };
+          } else if (student.nis && enrichedObservations[student.nis]) {
+            enrichedObservations[student.nis] = {
+              ...enrichedObservations[student.nis],
+              studentName: student.name
+            };
+          }
+        });
+      }
 
       // Construct a fully standardized payload
       const resolvedCreatedAt = docCreatedAt || Date.now();
@@ -2197,19 +2284,19 @@ export default function Observation() {
         classId: selectedClassId,
         observationDate: targetDate,
         centerId: selectedActivity,
-        domainId: selectedDomain,
+        domainId: selectedActivity === 'SPECIAL_ACTIVITY' ? null : selectedDomain,
         activity: selectedActivity, // backward compatibility
-        domain: selectedDomain, // backward compatibility
+        domain: selectedActivity === 'SPECIAL_ACTIVITY' ? null : selectedDomain, // backward compatibility
         date: targetDate, // backward compatibility
         
-        photoUrl: generalPhoto,
-        generalPhotoUrl: generalPhoto,
-        generalPhoto: generalPhoto, // backward compatibility
+        photoUrl: generalPhoto || null,
+        generalPhotoUrl: generalPhoto || null,
+        generalPhoto: generalPhoto || null, // backward compatibility
         generalPhotoStoragePath: `observations/${(activeYear || '2026/2027').replace(/\//g, '_')}/${selectedClassId}/${docId}/general.jpg`,
-        generalPhotoDeleted: false,
+        generalPhotoDeleted: !generalPhoto,
         generalPhotoUpdatedAt: Date.now(),
-        title: activities.find(a => a.id === selectedActivity)?.label || selectedActivity,
-        caption: domains.find(d => d.id === selectedDomain)?.label || selectedDomain,
+        title: selectedActivity === 'SPECIAL_ACTIVITY' ? "Kegiatan Khusus" : (activities.find(a => a.id === selectedActivity)?.label || selectedActivity),
+        caption: selectedActivity === 'SPECIAL_ACTIVITY' ? "Kegiatan Khusus" : (domains.find(d => d.id === selectedDomain)?.label || selectedDomain),
         createdAt: resolvedCreatedAt,
         createdBy: resolvedCreatedBy,
         
@@ -2218,8 +2305,11 @@ export default function Observation() {
         generalNoteUpdatedBy: resolvedNoteUpdatedBy,
         generalNoteUpdatedByName: resolvedNoteUpdatedByName,
 
+        specialActivityName: selectedActivity === 'SPECIAL_ACTIVITY' ? specialActivityName : "",
+        specialActivityType: selectedActivity === 'SPECIAL_ACTIVITY' ? specialActivityType : "activity",
+
         status: 'active',
-        observations: enrichedObservations,
+        observations: selectedActivity === 'SPECIAL_ACTIVITY' ? {} : enrichedObservations,
         timestamp: Date.now(),
         updatedAt: Date.now()
       };
@@ -2229,13 +2319,14 @@ export default function Observation() {
       setDocCreatedBy(resolvedCreatedBy);
 
       // Save permanently with old key format (legacy for today) but class-scoped!
-      const comboKeyLegacy = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}`;
+      const domainVal = selectedActivity === 'SPECIAL_ACTIVITY' ? 'none' : selectedDomain;
+      const comboKeyLegacy = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${domainVal}`;
       if (targetDate === todayStr) {
         localStorage.setItem(comboKeyLegacy, JSON.stringify(payload));
       }
 
       // Save permanently with new date-specific, class-scoped key format in LocalStorage
-      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${domainVal}_${targetDate}`;
       localStorage.setItem(comboKeyDateSpecific, JSON.stringify(payload));
 
       // Save permanently to Firestore 'observations' collection
@@ -2250,7 +2341,9 @@ export default function Observation() {
       setCurrentDocId(docId);
 
       toast.success('Observation Data berhasil disimpan ke sistem & Firestore! ✨', {
-        description: `Sentra: ${activities.find(a => a.id === selectedActivity)?.label}, Domain: ${domains.find(d => d.id === selectedDomain)?.label}`
+        description: selectedActivity === 'SPECIAL_ACTIVITY'
+          ? `Sesi: Kegiatan Khusus - ${specialActivityName}`
+          : `Sentra: ${activities.find(a => a.id === selectedActivity)?.label}, Domain: ${domains.find(d => d.id === selectedDomain)?.label}`
       });
     } catch (err: any) {
       console.error("Gagal menyimpan ke Firestore:", err);
@@ -2556,62 +2649,141 @@ export default function Observation() {
                 <Brain size={18} className="text-emerald-500" />
                 <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">2. Pilih Domain Perkembangan</h3>
               </div>
-              <span className="px-2.5 py-0.5 bg-gray-100 text-gray-600 text-[9px] font-black uppercase rounded-full">Pilih 1</span>
+              <span className="px-2.5 py-0.5 bg-gray-100 text-gray-600 text-[9px] font-black uppercase rounded-full">
+                {selectedActivity === 'SPECIAL_ACTIVITY' ? "Disabled" : "Pilih 1"}
+              </span>
             </div>
             
-            <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
-              {domains.map(dom => {
-                const isSelected = selectedDomain === dom.id;
-                return (
-                  <button
-                    key={dom.id}
-                    onClick={() => {
-                      if (isSessionLocked && !isEditingSession) {
-                        toast.error("Sesi ini sudah dikunci. Silakan klik tombol 'Edit Sentra & Domain' untuk mengubahnya.");
-                        return;
-                      }
-                      setSelectedDomain(dom.id);
-                    }}
-                    disabled={isSessionLocked && !isEditingSession && !isSelected}
-                    className={cn(
-                      "w-full flex flex-col p-3 rounded-2xl text-left transition-all border",
-                      isSelected 
-                        ? "bg-gray-900 text-white border-gray-900 shadow-lg scale-[1.01]" 
-                        : (isSessionLocked && !isEditingSession)
-                          ? "opacity-40 bg-gray-50 border-gray-150 text-gray-400 cursor-not-allowed"
-                          : "text-gray-700 hover:bg-gray-50 border-gray-100 bg-white"
-                    )}
-                  >
-                    <div className="flex items-center justify-between w-full">
-                      <span className="text-[11px] font-black tracking-wide">{dom.label}</span>
-                      {isSelected ? (
-                        <div className="w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center text-white scale-90">
-                          <Check size={10} strokeWidth={3} />
-                        </div>
-                      ) : (
-                        <div className="w-4 h-4 rounded-full bg-gray-100 border border-gray-200" />
+            {selectedActivity === 'SPECIAL_ACTIVITY' ? (
+              <div className="p-4 bg-gray-50 rounded-2xl border border-gray-150 text-center">
+                <p className="text-xs text-gray-500 font-bold">
+                  Tidak ada domain perkembangan untuk kegiatan khusus.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
+                {domains.map(dom => {
+                  const isSelected = selectedDomain === dom.id;
+                  return (
+                    <button
+                      key={dom.id}
+                      onClick={() => {
+                        if (isSessionLocked && !isEditingSession) {
+                          toast.error("Sesi ini sudah dikunci. Silakan klik tombol 'Edit Sentra & Domain' untuk mengubahnya.");
+                          return;
+                        }
+                        setSelectedDomain(dom.id);
+                      }}
+                      disabled={isSessionLocked && !isEditingSession && !isSelected}
+                      className={cn(
+                        "w-full flex flex-col p-3 rounded-2xl text-left transition-all border",
+                        isSelected 
+                          ? "bg-gray-900 text-white border-gray-900 shadow-lg scale-[1.01]" 
+                          : (isSessionLocked && !isEditingSession)
+                            ? "opacity-40 bg-gray-50 border-gray-150 text-gray-400 cursor-not-allowed"
+                            : "text-gray-700 hover:bg-gray-50 border-gray-100 bg-white"
                       )}
-                    </div>
-                    <span className={cn(
-                      "text-[9px] mt-1 line-clamp-1 leading-snug",
-                      isSelected ? "text-gray-300" : "text-gray-400"
-                    )}>
-                      {dom.desc}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+                    >
+                      <div className="flex items-center justify-between w-full">
+                        <span className="text-[11px] font-black tracking-wide">{dom.label}</span>
+                        {isSelected ? (
+                          <div className="w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center text-white scale-90">
+                            <Check size={10} strokeWidth={3} />
+                          </div>
+                        ) : (
+                          <div className="w-4 h-4 rounded-full bg-gray-100 border border-gray-200" />
+                        )}
+                      </div>
+                      <span className={cn(
+                        "text-[9px] mt-1 line-clamp-1 leading-snug",
+                        isSelected ? "text-gray-300" : "text-gray-400"
+                      )}>
+                        {dom.desc}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
-          {/* 3. General Photo (Wajib Diisi) */}
+          {/* 2b. Form Kegiatan Khusus */}
+          {selectedActivity === 'SPECIAL_ACTIVITY' && (
+            <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4">
+              <div className="flex items-center justify-between border-b border-gray-50 pb-3">
+                <div className="flex items-center gap-2">
+                  <Activity size={18} className="text-emerald-500" />
+                  <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Form Kegiatan Khusus</h3>
+                </div>
+                <span className="px-2.5 py-0.5 bg-rose-100 text-rose-700 text-[9.5px] font-black uppercase rounded-full">Wajib</span>
+              </div>
+              
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-[11px] font-bold text-gray-700 uppercase tracking-wider block">
+                    Jenis Hari
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      disabled={isSessionLocked && !isEditingSession}
+                      onClick={() => setSpecialActivityType('activity')}
+                      className={cn(
+                        "p-2.5 rounded-xl border text-center font-bold text-xs transition-all",
+                        specialActivityType === 'activity'
+                          ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
+                          : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100"
+                      )}
+                    >
+                      Ada Kegiatan
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isSessionLocked && !isEditingSession}
+                      onClick={() => setSpecialActivityType('holiday')}
+                      className={cn(
+                        "p-2.5 rounded-xl border text-center font-bold text-xs transition-all",
+                        specialActivityType === 'holiday'
+                          ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
+                          : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100"
+                      )}
+                    >
+                      Libur / Tidak Ada Kegiatan
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[11px] font-bold text-gray-700 uppercase tracking-wider block">
+                    Nama Kegiatan
+                  </label>
+                  <input
+                    type="text"
+                    disabled={isSessionLocked && !isEditingSession}
+                    value={specialActivityName}
+                    onChange={(e) => setSpecialActivityName(e.target.value)}
+                    placeholder="Contoh: Upacara 17 Agustus, Field Trip, Perayaan Hari Anak, Libur Kemerdekaan"
+                    className="w-full p-3 rounded-2xl border border-gray-200 text-xs font-medium focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-white"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 3. General Photo */}
           <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4">
             <div className="flex items-center justify-between border-b border-gray-50 pb-3">
               <div className="flex items-center gap-2">
                 <Camera size={18} className="text-rose-500" />
-                <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">3. Foto General (Wajib)</h3>
+                <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">
+                  3. Foto General {selectedActivity === 'SPECIAL_ACTIVITY' && specialActivityType === 'holiday' ? '(Opsional)' : '(Wajib)'}
+                </h3>
               </div>
-              <span className="px-2.5 py-0.5 bg-rose-100 text-rose-700 text-[9.5px] font-black uppercase rounded-full animate-pulse">Required</span>
+              {!(selectedActivity === 'SPECIAL_ACTIVITY' && specialActivityType === 'holiday') ? (
+                <span className="px-2.5 py-0.5 bg-rose-100 text-rose-700 text-[9.5px] font-black uppercase rounded-full animate-pulse">Required</span>
+              ) : (
+                <span className="px-2.5 py-0.5 bg-gray-100 text-gray-600 text-[9.5px] font-black uppercase rounded-full">Optional</span>
+              )}
             </div>
 
             <AnimatePresence mode="wait">
@@ -2653,6 +2825,12 @@ export default function Observation() {
                     <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
                     <span>Lolos verifikasi. Foto ini akan melengkapi arsip harian siswa secara otomatis.</span>
                   </div>
+                  {selectedActivity === 'SPECIAL_ACTIVITY' && (
+                    <div className="p-3 bg-amber-50/50 border border-amber-150 rounded-xl space-y-0.5 text-left mt-2.5">
+                      <span className="text-[9px] text-amber-800 font-black uppercase tracking-widest block">Kegiatan Khusus</span>
+                      <span className="text-xs font-black text-amber-950 block">{specialActivityName || '— Belum Diberi Nama —'}</span>
+                    </div>
+                  )}
                 </motion.div>
               ) : (
                 <motion.div
@@ -2764,7 +2942,7 @@ export default function Observation() {
         {/* RIGHT COLUMN: Active Evaluator Workspace (8 grid columns) */}
         <div className="lg:col-span-8 space-y-6">
           
-          {!selectedActivity || !selectedDomain ? (
+          {!selectedActivity || (selectedActivity !== 'SPECIAL_ACTIVITY' && !selectedDomain) ? (
             <div className="bg-white rounded-[2rem] p-12 text-center border border-gray-100 shadow-sm flex flex-col items-center justify-center gap-4 py-20">
               <div className="p-5 bg-emerald-50 text-emerald-600 rounded-full">
                 <Compass size={40} className="animate-spin text-emerald-500" style={{ animationDuration: '8s' }} />
@@ -2786,9 +2964,18 @@ export default function Observation() {
                   <div className="space-y-1 bg-white/5 py-3.5 px-5 rounded-2xl border border-white/5">
                     <span className="text-[9px] font-black text-emerald-400 tracking-widest uppercase">Target Evaluasi Sesi</span>
                     <div className="flex flex-wrap items-center gap-2 md:gap-3 mt-1">
-                      <span className="text-sm font-black tracking-tight">{currentSentraObj?.label}</span>
-                      <span className="text-gray-500 text-xs">&gt;</span>
-                      <span className="text-xs font-bold text-gray-300">{currentDomainObj?.label}</span>
+                      <span className="text-sm font-black tracking-tight">{selectedActivity === 'SPECIAL_ACTIVITY' ? 'Kegiatan Khusus' : currentSentraObj?.label}</span>
+                      {selectedActivity !== 'SPECIAL_ACTIVITY' ? (
+                        <>
+                          <span className="text-gray-500 text-xs">&gt;</span>
+                          <span className="text-xs font-bold text-gray-300">{currentDomainObj?.label}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-gray-500 text-xs">&gt;</span>
+                          <span className="text-xs font-bold text-amber-300">{specialActivityName || '— Belum diberi nama —'}</span>
+                        </>
+                      )}
                     </div>
                   </div>
 
@@ -2893,7 +3080,30 @@ export default function Observation() {
               </div>
 
           {/* Student Observations Loop Container */}
-          <div className="space-y-6">
+          {selectedActivity === 'SPECIAL_ACTIVITY' ? (
+            <div className="bg-amber-50/40 rounded-[2rem] p-8 border border-amber-200 text-center flex flex-col items-center justify-center gap-4 py-12 animate-fade-in">
+              <div className="p-4 bg-amber-100/60 text-amber-500 rounded-full">
+                <Star size={32} className="animate-pulse" />
+              </div>
+              <div className="space-y-2 max-w-lg">
+                <h4 className="text-sm font-black text-amber-950 uppercase tracking-widest">
+                  Sesi Kegiatan Khusus Terpilih
+                </h4>
+                <p className="text-xs text-amber-850 leading-relaxed font-semibold">
+                  {specialActivityType === 'holiday'
+                    ? `Sesi "${specialActivityName || 'Kegiatan Khusus'}" dikonfigurasi sebagai hari Libur / Tidak Ada Kegiatan. Sesi ini akan tersimpan di tingkat sesi tanpa evaluasi siswa.`
+                    : `Sesi "${specialActivityName || 'Kegiatan Khusus'}" berjalan di tingkat kelas/sesi tanpa evaluasi capaian individu siswa.`
+                  }
+                </p>
+                <div className="pt-2">
+                  <span className="px-3 py-1 bg-amber-100 text-amber-800 text-[10px] font-bold rounded-lg uppercase tracking-wider">
+                    {specialActivityType === 'holiday' ? 'Libur / Tidak Ada Kegiatan' : 'Ada Kegiatan'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-2">
               <h2 className="text-sm font-black text-gray-900 uppercase tracking-widest flex items-center gap-2">
                 <UserCheck size={16} className="text-emerald-600" /> Lembar Penilaian Siswa KKG
@@ -3192,6 +3402,7 @@ export default function Observation() {
             });
           })()}
           </div>
+          )}
                {/* Bottom Save Action Panel */}
           <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -3640,17 +3851,31 @@ export default function Observation() {
                                   <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-100 px-2 py-0.5 rounded-lg text-gray-400">
                                     <span className="text-[8.5px] font-bold text-gray-400 font-mono">{session.date}</span>
                                   </div>
-                                  <span className="text-[8px] font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded uppercase tracking-wide">
-                                    {totalGradedCount} Siswa Dinilai
-                                  </span>
+                                  {session.activity === 'SPECIAL_ACTIVITY' ? (
+                                    <span className={cn(
+                                      "text-[8px] font-black px-2 py-0.5 rounded uppercase tracking-wide",
+                                      session.specialActivityType === 'holiday'
+                                        ? "text-rose-700 bg-rose-50"
+                                        : "text-amber-700 bg-amber-50"
+                                    )}>
+                                      {session.specialActivityType === 'holiday' ? 'Libur' : 'Kegiatan Khusus'}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[8px] font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded uppercase tracking-wide">
+                                      {totalGradedCount} Siswa Dinilai
+                                    </span>
+                                  )}
                                 </div>
 
                                 <div className="space-y-0.5 mt-1">
                                   <h4 className="text-sm font-black text-gray-850 tracking-tight leading-snug truncate uppercase">
-                                    {actConfig?.label || session.activity}
+                                    {session.activity === 'SPECIAL_ACTIVITY' ? 'Kegiatan Khusus' : (actConfig?.label || session.activity)}
                                   </h4>
                                   <p className="text-[10px] text-gray-400 font-black tracking-widest uppercase">
-                                    {domains.find(d => d.id === session.domain)?.label || session.domain}
+                                    {session.activity === 'SPECIAL_ACTIVITY'
+                                      ? (session.specialActivityName || '— Belum Diberi Nama —')
+                                      : (domains.find(d => d.id === session.domain)?.label || session.domain)
+                                    }
                                   </p>
                                 </div>
 
@@ -3981,10 +4206,14 @@ export default function Observation() {
                   <div className="text-left">
                     <span className="text-[9px] font-black tracking-widest uppercase text-indigo-100">Lumina Sesi Evaluasi Detail</span>
                     <h3 className="text-lg font-black tracking-tight uppercase leading-tight mt-0.5">
-                      Sesi: {activities.find(a => a.id === selectedDetailSession.activity)?.label || selectedDetailSession.activity}
+                      Sesi: {selectedDetailSession.activity === 'SPECIAL_ACTIVITY' ? 'Kegiatan Khusus' : (activities.find(a => a.id === selectedDetailSession.activity)?.label || selectedDetailSession.activity)}
                     </h3>
                     <p className="text-xs text-indigo-100 font-bold mt-1">
-                      Domain: {domains.find(d => d.id === selectedDetailSession.domain)?.label || selectedDetailSession.domain} | Tanggal: {selectedDetailSession.date}
+                      {selectedDetailSession.activity === 'SPECIAL_ACTIVITY' ? (
+                        <>Nama Kegiatan: {selectedDetailSession.specialActivityName || '—'} | Jenis: {selectedDetailSession.specialActivityType === 'holiday' ? 'Libur' : 'Ada Kegiatan'} | Tanggal: {selectedDetailSession.date}</>
+                      ) : (
+                        <>Domain: {domains.find(d => d.id === selectedDetailSession.domain)?.label || selectedDetailSession.domain} | Tanggal: {selectedDetailSession.date}</>
+                      )}
                     </p>
                   </div>
                   <button 
@@ -4061,89 +4290,91 @@ export default function Observation() {
                   )}
                 </div>
 
-                <div className="space-y-4 text-left">
-                  <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider block">Daftar Penilaian Siswa</span>
-                  
-                  {(() => {
-                    const activeClassObj = classes.find(c => c.id === selectedClassId);
-                    const classStudents = students.filter(student => {
-                      if (!selectedClassId || !activeClassObj) return false;
-                      return isStudentInClass(student.classId, activeClassObj);
-                    });
+                {selectedDetailSession.activity !== 'SPECIAL_ACTIVITY' && (
+                  <div className="space-y-4 text-left">
+                    <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider block">Daftar Penilaian Siswa</span>
+                    
+                    {(() => {
+                      const activeClassObj = classes.find(c => c.id === selectedClassId);
+                      const classStudents = students.filter(student => {
+                        if (!selectedClassId || !activeClassObj) return false;
+                        return isStudentInClass(student.classId, activeClassObj);
+                      });
 
-                    return (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {classStudents.map(student => {
-                          const obs = getStudentObs(selectedDetailSession.observations, student);
-                          const studentPhoto = obs.photo || selectedDetailSession.generalPhoto;
-                          const grConfig = grades.find(g => g.id === obs.grading);
-                          
-                          const gradeColor = obs.grading === 'BB' ? 'bg-rose-50 text-rose-700 border-rose-100'
-                            : obs.grading === 'MB' ? 'bg-amber-50 text-amber-700 border-amber-100'
-                            : obs.grading === 'BSH' ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
-                            : obs.grading === 'BSB' ? 'bg-teal-50 text-teal-700 border-teal-100'
-                            : 'bg-gray-50 text-gray-400 border-gray-100';
-                          
-                          return (
-                            <div key={student.id} className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex flex-col justify-between">
-                              <div className="flex gap-4">
-                                <div className="w-16 h-16 rounded-xl overflow-hidden bg-gray-50 border border-gray-100 shrink-0 flex items-center justify-center">
-                                  {studentPhoto ? (
-                                    <img src={studentPhoto} alt={student.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                  ) : (
-                                    <div className="text-center p-1 font-black text-xs text-gray-300">
-                                      {student.name.charAt(0)}
-                                    </div>
-                                  )}
-                                </div>
-
-                                <div className="flex-1 min-w-0 space-y-1.5">
-                                  <div className="flex items-center justify-between gap-2 min-w-0">
-                                    <h4 className="text-xs font-black text-gray-800 uppercase truncate pr-1">{student.name}</h4>
-                                    <div className="flex items-center gap-1.5 shrink-0">
-                                      <span className={cn("px-2 py-0.5 text-[8px] font-black uppercase rounded-lg border leading-none", gradeColor)}>
-                                        {grConfig?.id || '—'}
-                                      </span>
-                                      {obs.grading && (
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleDeleteIndividualObservation(student.id, student.name);
-                                          }}
-                                          title="Hapus penilaian anak ini"
-                                          className="text-red-500 hover:text-red-700 hover:scale-110 transition cursor-pointer p-0.5 border-0 bg-transparent flex items-center justify-center rounded"
-                                        >
-                                          <Trash2 size={13} />
-                                        </button>
-                                      )}
-                                    </div>
+                      return (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {classStudents.map(student => {
+                            const obs = getStudentObs(selectedDetailSession.observations, student);
+                            const studentPhoto = obs.photo || selectedDetailSession.generalPhoto;
+                            const grConfig = grades.find(g => g.id === obs.grading);
+                            
+                            const gradeColor = obs.grading === 'BB' ? 'bg-rose-50 text-rose-700 border-rose-100'
+                              : obs.grading === 'MB' ? 'bg-amber-50 text-amber-700 border-amber-100'
+                              : obs.grading === 'BSH' ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                              : obs.grading === 'BSB' ? 'bg-teal-50 text-teal-700 border-teal-100'
+                              : 'bg-gray-50 text-gray-400 border-gray-100';
+                            
+                            return (
+                              <div key={student.id} className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex flex-col justify-between">
+                                <div className="flex gap-4">
+                                  <div className="w-16 h-16 rounded-xl overflow-hidden bg-gray-50 border border-gray-100 shrink-0 flex items-center justify-center">
+                                    {studentPhoto ? (
+                                      <img src={studentPhoto} alt={student.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                    ) : (
+                                      <div className="text-center p-1 font-black text-xs text-gray-300">
+                                        {student.name.charAt(0)}
+                                      </div>
+                                    )}
                                   </div>
 
-                                  <p className="text-[10px] text-gray-500 font-semibold italic line-clamp-2">
-                                    {obs.notes || '— Tidak ada catatan khusus —'}
-                                  </p>
-                                </div>
-                              </div>
+                                  <div className="flex-1 min-w-0 space-y-1.5">
+                                    <div className="flex items-center justify-between gap-2 min-w-0">
+                                      <h4 className="text-xs font-black text-gray-800 uppercase truncate pr-1">{student.name}</h4>
+                                      <div className="flex items-center gap-1.5 shrink-0">
+                                        <span className={cn("px-2 py-0.5 text-[8px] font-black uppercase rounded-lg border leading-none", gradeColor)}>
+                                          {grConfig?.id || '—'}
+                                        </span>
+                                        {obs.grading && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleDeleteIndividualObservation(student.id, student.name);
+                                            }}
+                                            title="Hapus penilaian anak ini"
+                                            className="text-red-500 hover:text-red-700 hover:scale-110 transition cursor-pointer p-0.5 border-0 bg-transparent flex items-center justify-center rounded"
+                                          >
+                                            <Trash2 size={13} />
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
 
-                              {obs.grading && (
-                                <div className="pt-2 border-t border-gray-50 mt-2 flex justify-end">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleInitMoveStudent(student, obs)}
-                                    className="text-indigo-600 hover:text-indigo-800 text-[9px] font-black uppercase tracking-wider flex items-center gap-1 transition cursor-pointer border-0 bg-transparent py-1 px-2.5 hover:bg-indigo-50 rounded-xl"
-                                  >
-                                    <ArrowLeftRight size={10} /> Pindahkan Siswa
-                                  </button>
+                                    <p className="text-[10px] text-gray-500 font-semibold italic line-clamp-2">
+                                      {obs.notes || '— Tidak ada catatan khusus —'}
+                                    </p>
+                                  </div>
                                 </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })()}
-                </div>
+
+                                {obs.grading && (
+                                  <div className="pt-2 border-t border-gray-50 mt-2 flex justify-end">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleInitMoveStudent(student, obs)}
+                                      className="text-indigo-600 hover:text-indigo-800 text-[9px] font-black uppercase tracking-wider flex items-center gap-1 transition cursor-pointer border-0 bg-transparent py-1 px-2.5 hover:bg-indigo-50 rounded-xl"
+                                    >
+                                      <ArrowLeftRight size={10} /> Pindahkan Siswa
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
 
               {/* Footer */}
