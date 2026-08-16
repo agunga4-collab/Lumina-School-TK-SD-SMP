@@ -450,7 +450,7 @@ export default function HeadDashboard() {
     });
   }, [filteredClasses, resolvedStudents, attendanceRecords, todayStr, selectedClassId, selectedCohort, selectedYear]);
 
-  // 3. Daily Case Record (Individual Case Record - created today)
+  // 3. Daily Case Record (Behavior Intervention Records - created today)
   const todayCases = useMemo(() => {
     const tStart = new Date(todayStr + 'T00:00:00').getTime();
     const tEnd = new Date(todayStr + 'T23:59:59.999').getTime();
@@ -1529,7 +1529,7 @@ export default function HeadDashboard() {
                     {/* Combine new behavior cases created today and incidents */}
                     {(() => {
                       const caseActivities = todayCases.raw.map(c => ({
-                        type: 'Daily Case Record (ICR)',
+                        type: 'Behavior Intervention Record (BIR)',
                         typeColor: 'bg-indigo-50 text-indigo-700 border-indigo-100',
                         student: c.studentName || 'Siswa',
                         classId: c.classId || 'SMP',
@@ -2232,7 +2232,7 @@ export default function HeadDashboard() {
         <span className="text-[9px] font-black uppercase tracking-wider text-white/50 border-r border-white/10 pr-6 mr-1 italic">Akses Pintasan:</span>
         <Link to="/junior-high/behavior/mtss/cases" className="text-xs font-black text-white hover:text-blue-300 transition-colors uppercase tracking-widest italic flex items-center gap-1.5">
           <ShieldAlert size={14} className="text-blue-300" />
-          Individual Case Record
+          Behavior Intervention Records
         </Link>
         <div className="w-px h-4 bg-white/10"></div>
         <Link to="/junior-high/behavior/mtss/spreadsheet" className="text-xs font-black text-white hover:text-emerald-300 transition-colors uppercase tracking-widest italic flex items-center gap-1.5">

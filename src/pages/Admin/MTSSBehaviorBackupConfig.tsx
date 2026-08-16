@@ -164,7 +164,7 @@ export default function MTSSBehaviorBackupConfigPage() {
           <section className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
             <div className="flex items-center gap-3 border-b border-gray-50 pb-4">
               <FileSpreadsheet size={20} className="text-emerald-500" />
-              <h2 className="text-xl font-black text-gray-900 italic uppercase">Individual Case Record</h2>
+              <h2 className="text-xl font-black text-gray-900 italic uppercase">Behavior Intervention Records</h2>
             </div>
             
             <div>

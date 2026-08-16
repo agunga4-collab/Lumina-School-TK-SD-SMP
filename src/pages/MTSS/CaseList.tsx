@@ -105,7 +105,7 @@ export default function CaseList() {
           setStudents(roster);
         }
       } catch (err) {
-        console.error("Error loading active student roster for Individual Case Record:", err);
+        console.error("Error loading active student roster for Behavior Intervention Records:", err);
       } finally {
         if (active) {
           setLoading(false);
@@ -268,7 +268,7 @@ export default function CaseList() {
     return (
       <div className="h-[60vh] flex flex-col items-center justify-center space-y-4">
         <Activity className="animate-pulse text-blue-600" size={48} />
-        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-400">Loading Case Record</p>
+        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-400">Loading Behavior Intervention Records</p>
       </div>
     );
   }
@@ -296,7 +296,7 @@ export default function CaseList() {
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-black text-gray-900 uppercase italic tracking-tight flex items-center gap-2">
               <ShieldAlert className="text-blue-900" size={20} />
-              Individual <span className="text-blue-600">Case Record</span>
+              Behavior Intervention <span className="text-blue-600">Records</span>
             </h2>
             {loadingConcerns && (
               <span className="flex items-center gap-1 text-[9px] text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded-md">
@@ -480,19 +480,19 @@ export default function CaseList() {
       {/* Main Operational Spreadsheet Table - Directly Visible Immediately */}
       <div className="bg-white rounded-xl border border-gray-200/80 shadow-md overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse table-fixed min-w-[1300px]">
+          <table className="w-full text-left border-collapse table-fixed min-w-[1600px]">
             <thead>
-              <tr className="bg-gray-50 border-b border-gray-200 text-[9px] font-black text-gray-400 uppercase tracking-widest sticky top-0 bg-white z-10">
-                <th className="w-[180px] px-4 py-2.5">Nama Siswa</th>
-                <th className="w-[80px] px-2 py-2.5 text-center">NIS</th>
-                <th className="w-[80px] px-2 py-2.5 text-center">Kelas</th>
-                <th className="w-[130px] px-2 py-2.5">Status Kasus / Tier</th>
-                <th className="w-[250px] px-3 py-2.5">Concern Terakhir</th>
-                <th className="w-[180px] px-3 py-2.5">Intervensi Terakhir</th>
-                <th className="w-[180px] px-3 py-2.5">Progress Terakhir</th>
-                <th className="w-[180px] px-3 py-2.5">Next Step</th>
-                <th className="w-[130px] px-3 py-2.5">PJ / Responsible</th>
-                <th className="w-[110px] px-4 py-2.5 text-right">Aksi</th>
+              <tr className="bg-gray-50 border-b border-gray-200 text-xs font-bold text-gray-500 uppercase tracking-wider sticky top-0 z-10">
+                <th className="w-[220px] min-w-[220px] px-4 py-3 sticky left-0 z-20 bg-gray-50 border-r border-gray-200/80 shadow-[2px_0_5px_rgba(0,0,0,0.03)]">Nama Siswa</th>
+                <th className="w-[85px] px-3 py-3 text-center">NIS</th>
+                <th className="w-[85px] px-3 py-3 text-center">Kelas</th>
+                <th className="w-[140px] px-3 py-3">Status Kasus / Tier</th>
+                <th className="w-[260px] px-3 py-3">Concern Terakhir</th>
+                <th className="w-[200px] px-3 py-3">Intervensi Terakhir</th>
+                <th className="w-[200px] px-3 py-3">Progress Terakhir</th>
+                <th className="w-[200px] px-3 py-3">Next Step</th>
+                <th className="w-[150px] px-3 py-3">PJ / Responsible</th>
+                <th className="w-[160px] px-4 py-3 text-right">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -544,22 +544,27 @@ export default function CaseList() {
                     )}
                   >
                     {/* Nama Siswa */}
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-2">
+                    <td className={cn(
+                      "px-4 py-3 sticky left-0 z-10 border-r border-gray-200/60 shadow-[2px_0_4px_rgba(0,0,0,0.02)] transition-colors",
+                      hasActiveCase 
+                        ? "bg-[#faf6eb] group-hover:bg-[#f5ebd2]" 
+                        : "bg-white group-hover:bg-slate-50"
+                    )}>
+                      <div className="flex items-center gap-2.5">
                         <div className={cn(
-                          "w-6 h-6 rounded flex items-center justify-center font-black text-[9px] uppercase tracking-tighter shrink-0 border",
+                          "w-7 h-7 rounded flex items-center justify-center font-bold text-[11px] uppercase tracking-normal shrink-0 border",
                           hasActiveCase 
-                            ? "bg-amber-50 text-amber-700 border-amber-200" 
-                            : "bg-blue-50 text-blue-700 border-blue-100"
+                            ? "bg-amber-100 text-amber-800 border-amber-300" 
+                            : "bg-blue-100 text-blue-800 border-blue-200"
                         )}>
                           {student.name.split(' ').map(n => n[0]).slice(0, 2).join('')}
                         </div>
                         <div className="min-w-0">
-                          <p className="font-black text-gray-900 tracking-tight leading-snug truncate text-xs" title={student.name}>
+                          <p className="font-semibold text-[13px] text-gray-900 tracking-tight leading-snug truncate" title={student.name}>
                             {student.name}
                           </p>
                           {student.nickname && (
-                            <span className="text-[9px] text-gray-400 font-bold tracking-tight">
+                            <span className="text-[11px] text-gray-400 font-medium tracking-tight block">
                               ({student.nickname})
                             </span>
                           )}
@@ -568,26 +573,26 @@ export default function CaseList() {
                     </td>
 
                     {/* NIS */}
-                    <td className="px-2 py-2.5 text-center">
-                      <span className="font-mono text-[9px] font-bold text-gray-500">
+                    <td className="px-3 py-3 text-center">
+                      <span className="font-mono text-xs font-semibold text-gray-600">
                         {student.id.slice(0, 8)}
                       </span>
                     </td>
 
                     {/* Kelas */}
-                    <td className="px-2 py-2.5 text-center">
-                      <span className="inline-block px-1.5 py-0.5 bg-slate-100 text-slate-800 rounded font-bold text-[9px] uppercase tracking-wider border border-slate-200">
+                    <td className="px-3 py-3 text-center">
+                      <span className="inline-block px-2 py-1 bg-slate-100 text-slate-800 rounded font-bold text-[11px] uppercase tracking-wider border border-slate-200">
                         {className}
                       </span>
                     </td>
 
                     {/* Status Kasus / Tier */}
-                    <td className="px-2 py-2.5 space-y-1">
+                    <td className="px-3 py-3 space-y-1.5">
                       {studentCase ? (
                         <>
                           <div>
                             <span className={cn(
-                              "inline-block px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider border",
+                              "inline-block px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider border",
                               studentCase.tier === 'Tier 1' ? "bg-green-50 text-green-700 border-green-200" :
                               studentCase.tier === 'Tier 2' ? "bg-amber-50 text-amber-700 border-amber-200" :
                               "bg-red-50 text-red-700 border-red-200"
@@ -597,7 +602,7 @@ export default function CaseList() {
                           </div>
                           <div>
                             <span className={cn(
-                              "inline-block px-1.5 py-0.5 rounded text-[7.5px] font-black uppercase tracking-wider border",
+                              "inline-block px-2 py-0.5 rounded text-[10.5px] font-bold uppercase tracking-wider border",
                               studentCase.status === 'OPEN' ? "bg-blue-50 text-blue-700 border-blue-200" :
                               studentCase.status === 'IN_PROGRESS' ? "bg-yellow-50 text-yellow-800 border-yellow-200" :
                               studentCase.status === 'ESCALATED' ? "bg-orange-50 text-orange-700 border-orange-200" :
@@ -609,85 +614,85 @@ export default function CaseList() {
                           </div>
                         </>
                       ) : (
-                        <span className="inline-block px-1.5 py-0.5 rounded text-[7.5px] font-bold uppercase tracking-wider text-gray-400 bg-gray-50 border border-gray-100">
+                        <span className="inline-block px-2 py-0.5 rounded text-[10.5px] font-semibold uppercase tracking-wider text-gray-400 bg-gray-50 border border-gray-100">
                           Belum ada kasus
                         </span>
                       )}
                     </td>
 
                     {/* Concern Terakhir */}
-                    <td className="px-3 py-2.5">
+                    <td className="px-3 py-3">
                       {concernDesc ? (
-                        <p className="text-[10.5px] text-gray-600 font-medium leading-relaxed line-clamp-2 italic pr-1" title={concernDesc}>
+                        <p className="text-xs text-gray-600 font-medium leading-relaxed line-clamp-2 italic pr-1" title={concernDesc}>
                           "{concernDesc}"
                         </p>
                       ) : (
-                        <span className="text-[9px] text-gray-300 font-bold">—</span>
+                        <span className="text-xs text-gray-300 font-bold">—</span>
                       )}
                     </td>
 
                     {/* Intervensi Terakhir */}
-                    <td className="px-3 py-2.5">
+                    <td className="px-3 py-3">
                       {interventionsTried.length > 0 ? (
-                        <div className="flex flex-wrap gap-1 max-h-[45px] overflow-y-auto pr-1 no-scrollbar">
+                        <div className="flex flex-wrap gap-1 max-h-[50px] overflow-y-auto pr-1 no-scrollbar">
                           {interventionsTried.map((item, i) => (
                             <span 
                               key={i} 
-                              className="px-1 py-0.5 bg-blue-50 text-blue-800 border border-blue-100/50 rounded text-[8px] font-bold uppercase tracking-wide"
+                              className="px-2 py-0.5 bg-blue-50 text-blue-800 border border-blue-100/50 rounded text-[10.5px] font-semibold uppercase tracking-wide"
                             >
                               {item}
                             </span>
                           ))}
                         </div>
                       ) : (
-                        <span className="text-[9px] text-gray-300 font-bold">—</span>
+                        <span className="text-xs text-gray-300 font-bold">—</span>
                       )}
                     </td>
 
                     {/* Progress Terakhir */}
-                    <td className="px-3 py-2.5">
+                    <td className="px-3 py-3">
                       {progressNotes ? (
-                        <p className="text-[10px] text-gray-500 font-medium leading-relaxed line-clamp-2 italic pr-1" title={progressNotes}>
+                        <p className="text-xs text-gray-500 font-medium leading-relaxed line-clamp-2 italic pr-1" title={progressNotes}>
                           {progressNotes}
                         </p>
                       ) : (
-                        <span className="text-[9px] text-gray-300 font-bold">—</span>
+                        <span className="text-xs text-gray-300 font-bold">—</span>
                       )}
                     </td>
 
                     {/* Next Step */}
-                    <td className="px-3 py-2.5">
+                    <td className="px-3 py-3">
                       {nextStep ? (
-                        <p className="text-[10px] text-gray-700 font-bold leading-relaxed line-clamp-2 pr-1" title={nextStep}>
+                        <p className="text-xs text-gray-700 font-bold leading-relaxed line-clamp-2 pr-1" title={nextStep}>
                           {nextStep}
                         </p>
                       ) : (
-                        <span className="text-[9px] text-gray-300 font-bold">—</span>
+                        <span className="text-xs text-gray-300 font-bold">—</span>
                       )}
                     </td>
 
                     {/* PJ / Responsible */}
-                    <td className="px-3 py-2.5">
+                    <td className="px-3 py-3">
                       {personResponsible ? (
                         <div className="flex items-center gap-1.5">
-                          <div className="w-4 h-4 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600 font-black text-[8px] uppercase tracking-tighter shrink-0">
+                          <div className="w-5 h-5 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600 font-bold text-[10px] uppercase tracking-normal shrink-0">
                             {personResponsible.split(' ').map(n => n[0]).slice(0, 2).join('')}
                           </div>
-                          <span className="text-[10px] font-bold text-gray-600 truncate max-w-[85px]" title={personResponsible}>
+                          <span className="text-xs font-semibold text-gray-600 truncate max-w-[100px]" title={personResponsible}>
                             {personResponsible}
                           </span>
                         </div>
                       ) : (
-                        <span className="text-[9px] text-gray-300 font-bold">—</span>
+                        <span className="text-xs text-gray-300 font-bold">—</span>
                       )}
                     </td>
 
                     {/* Aksi */}
-                    <td className="px-4 py-2.5 text-right relative">
+                    <td className="px-4 py-3 text-right relative">
                       <div className="flex items-center justify-end gap-1.5">
                         <Link
                           to={`/junior-high/behavior/mtss/spreadsheet?studentId=${student.id}&classId=${classFilter}`}
-                          className="inline-flex items-center gap-1 border border-blue-200 hover:border-blue-400 hover:bg-blue-50 text-blue-700 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap"
+                          className="inline-flex items-center gap-1 border border-blue-200 hover:border-blue-400 hover:bg-blue-50 text-blue-700 px-2.5 py-1 rounded-md text-[10.5px] font-bold uppercase tracking-wider transition-all whitespace-nowrap"
                           title="Buka Spreadsheet CICO"
                         >
                           CICO Sheet
@@ -696,18 +701,18 @@ export default function CaseList() {
                           <>
                             <Link
                               to={`/junior-high/behavior/mtss/cases/${studentCase.id}`}
-                              className="inline-flex items-center gap-0.5 bg-[#002366] hover:bg-blue-800 text-white px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 whitespace-nowrap"
+                              className="inline-flex items-center gap-0.5 bg-[#002366] hover:bg-blue-800 text-white px-2.5 py-1 rounded-md text-[10.5px] font-bold uppercase tracking-wider transition-all shadow-sm active:scale-95 whitespace-nowrap"
                             >
                               View Log
-                              <ChevronRight size={10} />
+                              <ChevronRight size={11} />
                             </Link>
 
                             <div className="relative inline-block text-left">
                               <button
                                 onClick={() => setActiveLaporSiswaId(activeLaporSiswaId === student.id ? null : student.id)}
-                                className="inline-flex items-center gap-1 border border-dashed border-blue-300 hover:border-blue-500 hover:bg-blue-50/50 text-blue-600 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all active:scale-95 whitespace-nowrap cursor-pointer"
+                                className="inline-flex items-center gap-1 border border-dashed border-blue-300 hover:border-blue-500 hover:bg-blue-50/50 text-blue-600 px-2.5 py-1 rounded-md text-[10.5px] font-bold uppercase tracking-wider transition-all active:scale-95 whitespace-nowrap cursor-pointer"
                               >
-                                <Plus size={10} />
+                                <Plus size={11} />
                                 Lapor
                               </button>
 
@@ -719,18 +724,18 @@ export default function CaseList() {
                                   />
                                   <div className="absolute right-0 mt-1 w-64 rounded-xl bg-white border border-gray-200 shadow-xl z-50 py-2.5 text-left animate-in fade-in slide-in-from-top-1 duration-100">
                                     <div className="px-3.5 py-1 border-b border-gray-100 mb-1">
-                                      <p className="text-[8.5px] font-black text-gray-400 uppercase tracking-wider">Opsi Penanganan</p>
+                                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Opsi Penanganan</p>
                                     </div>
                                     <Link
                                       to={`/junior-high/behavior/mtss/cases/new?studentId=${student.id}&mode=NEW`}
                                       onClick={() => setActiveLaporSiswaId(null)}
                                       className="flex flex-col gap-0.5 px-3.5 py-2 hover:bg-blue-50/80 transition-colors"
                                     >
-                                      <span className="text-[10px] font-black text-blue-800 uppercase tracking-tight flex items-center gap-1">
-                                        <PlusCircle size={10} />
+                                      <span className="text-[11px] font-bold text-blue-800 uppercase tracking-tight flex items-center gap-1">
+                                        <PlusCircle size={11} />
                                         Buat Kasus Baru (Ulang Cycle)
                                       </span>
-                                      <span className="text-[9px] text-gray-500 font-bold tracking-tight leading-normal">
+                                      <span className="text-[10px] text-gray-500 font-medium tracking-tight leading-normal">
                                         Memulai penanganan kasus kategori berbeda dari awal.
                                       </span>
                                     </Link>
@@ -739,11 +744,11 @@ export default function CaseList() {
                                       onClick={() => setActiveLaporSiswaId(null)}
                                       className="flex flex-col gap-0.5 px-3.5 py-2 hover:bg-amber-50/80 transition-colors"
                                     >
-                                      <span className="text-[10px] font-black text-amber-800 uppercase tracking-tight flex items-center gap-1">
-                                        <History size={10} />
+                                      <span className="text-[11px] font-bold text-amber-800 uppercase tracking-tight flex items-center gap-1">
+                                        <History size={11} />
                                         Lanjutkan Kasus Aktif
                                       </span>
-                                      <span className="text-[9px] text-gray-500 font-bold tracking-tight leading-normal">
+                                      <span className="text-[10px] text-gray-500 font-medium tracking-tight leading-normal">
                                         Melanjutkan log penanganan kasus yang sedang aktif.
                                       </span>
                                     </Link>
@@ -755,9 +760,9 @@ export default function CaseList() {
                         ) : (
                           <Link
                             to={`/junior-high/behavior/mtss/cases/new?studentId=${student.id}&mode=NEW`}
-                            className="inline-flex items-center gap-1 border border-dashed border-blue-300 hover:border-blue-500 hover:bg-blue-50/50 text-blue-600 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all active:scale-95 whitespace-nowrap cursor-pointer"
+                            className="inline-flex items-center gap-1 border border-dashed border-blue-300 hover:border-blue-500 hover:bg-blue-50/50 text-blue-600 px-2.5 py-1 rounded-md text-[10.5px] font-bold uppercase tracking-wider transition-all active:scale-95 whitespace-nowrap cursor-pointer"
                           >
-                            <Plus size={10} />
+                            <Plus size={11} />
                             Lapor
                           </Link>
                         )}

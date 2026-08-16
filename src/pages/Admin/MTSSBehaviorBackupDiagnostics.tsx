@@ -130,7 +130,7 @@ export default function MTSSBehaviorBackupDiagnostics() {
           </div>
           <div>
             <h1 className="text-3xl font-black text-gray-900 tracking-tight">Behavior Diagnostics</h1>
-            <p className="text-gray-500 font-medium text-sm">Monitoring & Repairing Individual Case Record v1</p>
+            <p className="text-gray-500 font-medium text-sm">Monitoring & Repairing Behavior Intervention Records v1</p>
           </div>
         </div>
         
