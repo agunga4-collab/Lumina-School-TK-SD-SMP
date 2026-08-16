@@ -671,10 +671,31 @@ export async function getBehaviorNotifications(userId: string): Promise<Behavior
     );
     const snap = await getDocs(q);
     const now = Date.now();
-    // Filter out dismissed ones and expired ones client-side
-    return snap.docs
+    const notifications = snap.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as BehaviorNotification))
-      .filter(n => !n.isDismissed?.[userId] && n.expiresAt > now)
+      .filter(n => !n.isDismissed?.[userId] && n.expiresAt > now);
+
+    if (notifications.length === 0) return [];
+
+    const caseIds = Array.from(new Set(notifications.map(n => n.caseId).filter(Boolean)));
+    const activeCaseIds = new Set<string>();
+
+    await Promise.all(caseIds.map(async (caseId) => {
+      try {
+        const caseDoc = await getDoc(doc(db, 'behaviorCases', caseId));
+        if (caseDoc.exists()) {
+          const cData = caseDoc.data();
+          if (cData && cData.status !== 'CLOSED' && (cData.status as string) !== 'archived') {
+            activeCaseIds.add(caseId);
+          }
+        }
+      } catch (err) {
+        console.error("Error checking case status for notification", caseId, err);
+      }
+    }));
+
+    return notifications
+      .filter(n => !n.caseId || activeCaseIds.has(n.caseId))
       .sort((a, b) => b.createdAt - a.createdAt);
   } catch (err: any) {
     handleFirestoreError(err, 'list', 'behavior_notifications');
@@ -714,6 +735,41 @@ export async function markAllBehaviorNotificationsRead(userId: string, notifIds:
     await batch.commit();
   } catch (err: any) {
     handleFirestoreError(err, 'update', 'behavior_notifications/markAllRead');
+  }
+}
+
+export async function cleanupClosedNotifications(): Promise<number> {
+  try {
+    const cases = await getMTSSCases() || [];
+    const closedOrArchivedCases = cases.filter(c => c.status === 'CLOSED' || (c.status as string) === 'archived');
+    const closedCaseIds = closedOrArchivedCases.map(c => c.id);
+
+    if (closedCaseIds.length === 0) return 0;
+
+    let deletedCount = 0;
+    const chunkSize = 30;
+    for (let i = 0; i < closedCaseIds.length; i += chunkSize) {
+      const chunk = closedCaseIds.slice(i, i + chunkSize);
+      const q = query(
+        collection(db, 'behavior_notifications'),
+        where('caseId', 'in', chunk)
+      );
+      const snapshot = await getDocs(q);
+      if (!snapshot.empty) {
+        const batch = writeBatch(db);
+        snapshot.docs.forEach((doc) => {
+          batch.delete(doc.ref);
+          deletedCount++;
+        });
+        await batch.commit();
+      }
+    }
+
+    console.log(`[cleanupClosedNotifications] Successfully cleaned up ${deletedCount} notifications for CLOSED/archived cases.`);
+    return deletedCount;
+  } catch (err) {
+    console.error("[cleanupClosedNotifications] Error during cleanup:", err);
+    return 0;
   }
 }
 

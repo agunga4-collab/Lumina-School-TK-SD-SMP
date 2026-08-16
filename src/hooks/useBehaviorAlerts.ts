@@ -6,7 +6,8 @@ import {
   getCICODailyReport, 
   getTeachers, 
   createBehaviorAlert,
-  getBIPPlan
+  getBIPPlan,
+  cleanupClosedNotifications
 } from '../lib/firebase';
 import { MTSSCase, BehaviorNotification, User as AppUser, BIPPlan } from '../types';
 
@@ -22,11 +23,14 @@ export function useBehaviorAlerts() {
       const lastCheck = sessionStorage.getItem('mtss_last_scan');
       if (lastCheck && Date.now() - parseInt(lastCheck) < 60 * 60 * 1000) return; // Check once per hour
 
-      console.log("[useBehaviorAlerts] Running diagnostic scan...");
+      console.log("[useBehaviorAlerts] Running diagnostic scan and cleaning up...");
       
       try {
+        // Run historical notification cleanup for CLOSED/archived cases
+        await cleanupClosedNotifications();
+
         const cases = await getMTSSCases() || [];
-        const allActiveCases = cases.filter(c => c.status !== 'CLOSED');
+        const allActiveCases = cases.filter(c => c.status !== 'CLOSED' && (c.status as string) !== 'archived');
         
         const allTeachers = await getTeachers();
         const counselors = allTeachers.filter(t => ['BK_MENTOR', 'HEAD_JUNIOR', 'SUPER_ADMIN'].includes(t.role));

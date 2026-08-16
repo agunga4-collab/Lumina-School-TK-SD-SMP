@@ -731,7 +731,7 @@ export default function CaseDetail() {
           {activeTab === 'overview' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-5">
               {/* Active Alerts Banner */}
-              {activeAlerts.length > 0 && (
+              {activeAlerts.length > 0 && mtssCase?.status !== 'CLOSED' && mtssCase?.status !== 'archived' && (
                 <div className="space-y-3">
                   {activeAlerts.map(alert => (
                     <motion.div 
