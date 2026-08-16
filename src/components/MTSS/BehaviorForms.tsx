@@ -143,22 +143,11 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
   }, []);
 
   const jhTeachers = React.useMemo(() => {
-    return teachers.filter(t => {
-      const unit = (t.unitId || '').toUpperCase();
-      const role = (t.role || '').toUpperCase();
-      const job = (t.jobTitle || '').toLowerCase();
-      const name = (t.displayName || '').toLowerCase();
-      return (
-        unit === 'JUNIOR_HIGH' || 
-        role === 'HEAD_JUNIOR' || 
-        role === 'BK_MENTOR' ||
-        job.includes('junior') ||
-        job.includes('smp') ||
-        job.includes('high') ||
-        name.includes('guru smp') ||
-        name.includes('smp')
-      );
-    });
+    return teachers.filter(t => 
+      t.unitId === 'JUNIOR_HIGH' || 
+      t.role === 'HEAD_JUNIOR' || 
+      t.role === 'SUPER_ADMIN'
+    );
   }, [teachers]);
 
   const suggestions = React.useMemo(() => {

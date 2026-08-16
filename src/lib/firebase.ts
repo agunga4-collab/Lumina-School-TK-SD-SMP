@@ -2102,6 +2102,21 @@ export async function closeMTSSCase(caseId: string, closingData: MTSSCase['close
       closedInfo: closingData,
       lastUpdatedAt: Date.now()
     });
+    
+    // Clear any active behavior alerts for this case
+    const q = query(
+      collection(db, 'behavior_notifications'),
+      where('caseId', '==', caseId)
+    );
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const batch = writeBatch(db);
+      snap.docs.forEach(doc => {
+        batch.delete(doc.ref);
+      });
+      await batch.commit();
+    }
+
     mtssSnapshotTriggerService.trigger('BEHAVIOR', caseId);
   } catch (err: any) {
     handleFirestoreError(err, 'update', `behaviorCases/${caseId}`);

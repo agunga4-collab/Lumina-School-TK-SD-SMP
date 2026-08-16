@@ -58,8 +58,13 @@ export default function CreateCase() {
   React.useEffect(() => {
     const fetchTeachers = async () => {
       try {
-        const list = await getTeachers();
-        setTeachers(list || []);
+        const list = await getTeachers() || [];
+        const filteredList = list.filter(u => 
+          u.unitId === 'JUNIOR_HIGH' || 
+          u.role === 'HEAD_JUNIOR' || 
+          u.role === 'SUPER_ADMIN'
+        );
+        setTeachers(filteredList);
       } catch (err) {
         console.error("Error loading teachers:", err);
       }

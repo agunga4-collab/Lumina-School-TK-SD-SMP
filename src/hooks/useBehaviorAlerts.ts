@@ -25,10 +25,8 @@ export function useBehaviorAlerts() {
       console.log("[useBehaviorAlerts] Running diagnostic scan...");
       
       try {
-        const cases = await getMTSSCases({ status: 'OPEN' }); // Also need IN_PROGRESS
-        const inProgressCases = await getMTSSCases({ status: 'IN_PROGRESS' });
-        const underReviewCases = await getMTSSCases({ status: 'UNDER_REVIEW' });
-        const allActiveCases = [...cases, ...inProgressCases, ...underReviewCases];
+        const cases = await getMTSSCases() || [];
+        const allActiveCases = cases.filter(c => c.status !== 'CLOSED');
         
         const allTeachers = await getTeachers();
         const counselors = allTeachers.filter(t => ['BK_MENTOR', 'HEAD_JUNIOR', 'SUPER_ADMIN'].includes(t.role));
