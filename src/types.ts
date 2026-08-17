@@ -2092,6 +2092,34 @@ export interface UnitActivityEnrollment {
   cancelledBy?: string;
   cancelledByName?: string;
   cancelReason?: string;
+  importBatchId?: string;
+  rolledBackAt?: number;
+  rolledBackBy?: string;
+  rolledBackByName?: string;
+  rollbackReason?: string;
+  rollbackBatchId?: string;
+}
+
+export interface JuniorHighUnitActivityImportBatch {
+  id: string;
+  originalFileName: string;
+  importedAt: number;
+  importedBy: string;
+  importedByName?: string;
+  academicYearsDetected: string[];
+  semestersDetected: string[];
+  totalRowsRead: number;
+  validRowsImported: number;
+  warningRowsSkipped: number;
+  errorRowsSkipped: number;
+  duplicateExistingCount: number;
+  duplicateInFileCount: number;
+  studentNotFoundCount: number;
+  unknownUaCount: number;
+  invalidPeriodCount: number;
+  importStatus: 'COMPLETED' | 'PARTIAL' | 'FAILED' | 'ROLLED_BACK';
+  enrollmentIdsCreated: string[];
+  notes?: string;
 }
 
 
