@@ -2064,6 +2064,36 @@ export interface SmartGoalTrackerEntry {
 
 export type ThreeWayConference = StudentConferenceResponse;
 
+export interface UnitActivityEnrollment {
+  id: string;
+  studentId: string;
+  studentName: string;
+  classId: string;
+  className: string;
+  grade: string;
+  academicYear: string;
+  semester: string;
+  category: string;
+  sourceUaId: string;
+  sourceUaName: string;
+  normalizedUaId: string;
+  normalizedUaName: string;
+  isLgp: boolean;
+  status: 'CONFIRMED' | 'CANCELLED' | 'MOVED';
+  source: 'MANUAL' | 'IMPORT' | 'TICKETING';
+  notes?: string;
+  createdAt: number;
+  createdBy: string;
+  createdByName?: string;
+  updatedAt: number;
+  updatedBy: string;
+  updatedByName?: string;
+  cancelledAt?: number;
+  cancelledBy?: string;
+  cancelledByName?: string;
+  cancelReason?: string;
+}
+
 
 
 

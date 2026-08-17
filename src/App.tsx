@@ -112,6 +112,7 @@ import ParentStudents from './pages/Parent/ParentStudents';
 import ReportConfigPage from './pages/Settings/ReportConfig';
 import LearningPowerUpStudentPage from './pages/Student/LearningPowerUpStudentPage';
 import LearningPowerUpTeacherPage from './pages/JuniorHigh/LearningPowerUpTeacherPage';
+import UnitActivitiesPage from './pages/JuniorHigh/UnitActivitiesPage';
 import WeeklyReportDetail from './pages/Kindergarten/WeeklyReportDetail';
 
 // High-level wrapper for Admin-only access
@@ -440,6 +441,11 @@ export default function App() {
             <Route path="learning-power-up" element={
               <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'COORDINATOR']}>
                 <LearningPowerUpTeacherPage />
+              </RoleGuard>
+            } />
+            <Route path="unit-activities" element={
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER']}>
+                <UnitActivitiesPage />
               </RoleGuard>
             } />
             <Route path="conference/admin" element={
