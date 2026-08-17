@@ -46,6 +46,7 @@ import { toast } from 'sonner';
 import StudentSearch from '../../components/StudentSearch';
 import AttendanceStatusSelector from '../../components/AttendanceStatusSelector';
 import AttendanceStudentCard from '../../components/AttendanceStudentCard';
+import { isAttendanceSchoolDay } from '../../lib/attendanceCalendar';
 
 interface StudentAttendance {
   id: string;
@@ -88,6 +89,7 @@ export default function Attendance() {
   });
   const [selectedClass, setSelectedClass] = React.useState(searchParams.get('classId') || '');
   const [selectedDate, setSelectedDate] = React.useState(searchParams.get('date') || new Date().toISOString().split('T')[0]);
+  const [isSchoolDay, setIsSchoolDay] = React.useState<boolean>(true);
   
   const [searchTerm, setSearchTerm] = React.useState('');
   const [isFiltersExpanded, setIsFiltersExpanded] = React.useState(false);
@@ -225,6 +227,15 @@ export default function Attendance() {
 
   React.useEffect(() => {
     const loadStudents = async () => {
+      // Check if selected date is a school day for the active unit
+      try {
+        const schoolDayVal = await isAttendanceSchoolDay(selectedDate, activeUnit as any);
+        setIsSchoolDay(schoolDayVal);
+      } catch (calErr) {
+        console.warn('Failed to check if selected date is a school day:', calErr);
+        setIsSchoolDay(true); // default to true on error to avoid blocking teachers
+      }
+
       if (!selectedClass) {
         setStudents([]);
         setLoading(false);
@@ -1468,6 +1479,23 @@ export default function Attendance() {
             </div>
           </div>
 
+          {!isSchoolDay && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-center space-y-2 mb-6">
+              <div className="mx-auto bg-amber-100 h-12 w-12 rounded-full flex items-center justify-center text-amber-600 mb-2">
+                <AlertTriangle size={24} />
+              </div>
+              <h3 className="font-bold text-amber-900 text-lg">Libur / Bukan Hari Presensi</h3>
+              <p className="text-amber-800 text-sm font-semibold max-w-lg mx-auto">
+                Libur / bukan hari presensi — presensi tidak diperlukan pada tanggal ini.
+              </p>
+              {students.some(s => s.status !== null) && (
+                <p className="text-amber-700 text-xs mt-1 max-w-md mx-auto">
+                  Tanggal ini telah ditandai sebagai hari libur di Kalender Kehadiran, tetapi memiliki data presensi tersimpan. Data presensi ini dikecualikan dari perhitungan harian efektif.
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="block md:hidden space-y-4" id="attendance-student-cards-mobile">
             {loading ? (
               <div className="bg-white p-12 text-center text-gray-400 font-medium border border-gray-100 rounded-2xl shadow-sm">
@@ -1490,7 +1518,7 @@ export default function Attendance() {
                   onDeleteOne={() => handleDeleteOne(student.id)}
                   deleting={deleting}
                   threshold={threshold}
-                  disabled={saving || deleting}
+                  disabled={saving || deleting || !isSchoolDay}
                 />
               ))
             )}
@@ -1534,7 +1562,7 @@ export default function Attendance() {
                         onChange={(newStatus) => handleStatusChange(student.id, newStatus)}
                         attendanceType={attendanceType}
                         layout="desktop"
-                        disabled={saving || deleting}
+                        disabled={saving || deleting || !isSchoolDay}
                       />
                     </td>
                     <td className="px-6 py-4">
@@ -1542,10 +1570,11 @@ export default function Attendance() {
                         <MessageSquare size={14} className="absolute left-0 top-1/2 -translate-y-1/2 text-gray-300 group-hover:text-blue-400 transition-colors" />
                         <input 
                           type="text" 
-                          placeholder="Tambahkan catatan..."
+                          placeholder={!isSchoolDay ? "" : "Tambahkan catatan..."}
                           className="w-full bg-transparent border-b border-transparent focus:border-blue-300 outline-none text-sm transition-all py-1 pl-6 placeholder:text-gray-300"
                           value={student.note}
                           onChange={(e) => handleNoteChange(student.id, e.target.value)}
+                          disabled={saving || deleting || !isSchoolDay}
                         />
                       </div>
                     </td>
@@ -1554,7 +1583,7 @@ export default function Attendance() {
                         {student.status && (
                           <button 
                             onClick={() => handleDeleteOne(student.id)}
-                            disabled={deleting}
+                            disabled={deleting || !isSchoolDay}
                             className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all disabled:opacity-50"
                             title="Hapus Kehadiran Siswa Ini"
                           >
@@ -1579,7 +1608,8 @@ export default function Attendance() {
             </table>
           </div>
 
-          <div className="flex flex-col sm:flex-row justify-end items-stretch sm:items-center gap-3 pt-4 w-full">
+          {isSchoolDay && (
+            <div className="flex flex-col sm:flex-row justify-end items-stretch sm:items-center gap-3 pt-4 w-full">
              {lastSaved && lastSaved.date === selectedDate && lastSaved.classId === selectedClass && (
                <div className={cn(
                  "flex items-center justify-center gap-1.5 font-bold text-sm px-4 py-2 rounded-xl border animate-in fade-in slide-in-from-right-2 self-stretch sm:self-auto",
@@ -1778,6 +1808,7 @@ export default function Attendance() {
                </button>
              )}
           </div>
+          )}
         </div>
       )}
 

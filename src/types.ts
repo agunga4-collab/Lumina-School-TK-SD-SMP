@@ -2122,7 +2122,21 @@ export interface JuniorHighUnitActivityImportBatch {
   notes?: string;
 }
 
-
-
-
-
+export interface AttendanceCalendarEvent {
+  id: string; // "{YYYY-MM-DD}_{UNIT}"
+  date: string; // "YYYY-MM-DD"
+  unit: "KINDERGARTEN" | "ELEMENTARY" | "JUNIOR_HIGH";
+  type:
+    | "NATIONAL_HOLIDAY"
+    | "SCHOOL_HOLIDAY"
+    | "SPECIAL_NO_ATTENDANCE_DAY"
+    | "REPLACEMENT_SCHOOL_DAY"
+    | "HALF_DAY";
+  isSchoolDay: boolean;
+  description: string;
+  academicYear: string;
+  createdAt: any;
+  createdBy: string;
+  updatedAt: any;
+  updatedBy: string;
+}
