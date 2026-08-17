@@ -26,9 +26,40 @@ const UA_BY_CATEGORY: Record<string, string[]> = {
   'Digital Literacy': ['Animation', 'Videography', 'Graphic Design', '3D Structure Building', 'Coding']
 };
 
+export function normalizeEnrollmentForUI(e: UnitActivityEnrollment): UnitActivityEnrollment {
+  const isLgp = e.isLgp || 
+    ['LGP', 'Choir', 'Theatre', 'Musical Theatre Band'].includes(e.normalizedUaName) || 
+    ['Choir', 'Theatre', 'Musical Theatre Band'].includes(e.sourceUaName || '');
+
+  const normalizedUaName = isLgp ? 'LGP' : e.normalizedUaName;
+
+  let category = e.category || 'Performing Arts';
+  if (isLgp || ['Performing Arts', 'Choir', 'Theatre', 'Musical Theatre Band'].includes(category)) {
+    category = 'Performing Arts';
+  } else if (['Sports', 'Physical Education'].includes(category)) {
+    category = 'Physical Education';
+  } else if (['Art', 'Arts & Makerspace'].includes(category)) {
+    category = 'Arts & Makerspace';
+  } else if (category === 'Digital Literacy') {
+    category = 'Digital Literacy';
+  } else {
+    if (!CATEGORIES.includes(category)) {
+      category = 'Performing Arts';
+    }
+  }
+
+  return {
+    ...e,
+    normalizedUaName,
+    category
+  };
+}
+
 export default function UnitActivitiesPage() {
   const { profile } = useAuth();
   const { activeYear, activeSemester } = useAcademicYear();
+
+  const canManage = profile?.role === 'SUPER_ADMIN' || profile?.role === 'HEAD_JUNIOR';
 
   // Selected period
   const [selectedYear, setSelectedYear] = React.useState<string>(activeYear || '2026/2027');
@@ -46,6 +77,21 @@ export default function UnitActivitiesPage() {
   // Enrollments State
   const [enrollments, setEnrollments] = React.useState<UnitActivityEnrollment[]>([]);
   const [loadingEnrollments, setLoadingEnrollments] = React.useState(false);
+
+  // Tab State
+  const [activeTab, setActiveTab] = React.useState<'active_semester' | 'student_history'>('active_semester');
+
+  // History Tab States & Filters
+  const [allActiveStudents, setAllActiveStudents] = React.useState<Student[]>([]);
+  const [loadingActiveStudents, setLoadingActiveStudents] = React.useState(false);
+  const [allHistoryEnrollments, setAllHistoryEnrollments] = React.useState<UnitActivityEnrollment[]>([]);
+  const [loadingHistoryEnrollments, setLoadingHistoryEnrollments] = React.useState(false);
+  const [selectedStudentForDetail, setSelectedStudentForDetail] = React.useState<Student | null>(null);
+
+  const [histFilterClassId, setHistFilterClassId] = React.useState<string>('ALL');
+  const [histFilterGrade, setHistFilterGrade] = React.useState<string>('ALL');
+  const [histFilterCategory, setHistFilterCategory] = React.useState<string>('ALL');
+  const [histSearchKeyword, setHistSearchKeyword] = React.useState<string>('');
 
   // Filters
   const [filterClassId, setFilterClassId] = React.useState<string>('ALL');
@@ -97,7 +143,7 @@ export default function UnitActivitiesPage() {
       );
       const snapshot = await getDocs(q);
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as UnitActivityEnrollment));
-      setEnrollments(list);
+      setEnrollments(list.map(normalizeEnrollmentForUI));
     } catch (err) {
       console.error('Error loading enrollments:', err);
       toast.error('Gagal memuat data peserta');
@@ -109,6 +155,46 @@ export default function UnitActivitiesPage() {
   React.useEffect(() => {
     fetchClasses();
   }, []);
+
+  const fetchAllActiveStudents = async () => {
+    setLoadingActiveStudents(true);
+    try {
+      const list = await getActiveStudents('all', selectedYear);
+      // Filter only for Junior High classes
+      const jhStudents = (list || []).filter(s => 
+        classesList.some(c => c.id === s.classId)
+      );
+      setAllActiveStudents(jhStudents);
+    } catch (err) {
+      console.error('Error fetching all active students:', err);
+    } finally {
+      setLoadingActiveStudents(false);
+    }
+  };
+
+  const fetchAllHistoryEnrollments = async () => {
+    setLoadingHistoryEnrollments(true);
+    try {
+      const q = query(collection(db, 'junior_high_unit_activity_enrollments'));
+      const snapshot = await getDocs(q);
+      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as UnitActivityEnrollment));
+      setAllHistoryEnrollments(list.map(normalizeEnrollmentForUI));
+    } catch (err) {
+      console.error('Error loading history enrollments:', err);
+    } finally {
+      setLoadingHistoryEnrollments(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (classesList.length > 0) {
+      fetchAllActiveStudents();
+    }
+  }, [selectedYear, classesList]);
+
+  React.useEffect(() => {
+    fetchAllHistoryEnrollments();
+  }, [selectedYear, selectedSemester]);
 
   React.useEffect(() => {
     fetchEnrollments();
@@ -146,6 +232,10 @@ export default function UnitActivitiesPage() {
 
   // Trigger Bulk Save
   const handleBulkSave = async () => {
+    if (!canManage) {
+      toast.error('Akses ditolak: Anda tidak memiliki wewenang untuk mengelola peserta.');
+      return;
+    }
     if (!formCategory || !formUa || !formClassId || selectedStudentIds.length === 0) {
       toast.error('Harap isi semua form dan pilih minimal 1 siswa');
       return;
@@ -223,6 +313,10 @@ export default function UnitActivitiesPage() {
 
   // Soft cancel an enrollment
   const handleConfirmCancel = async () => {
+    if (!canManage) {
+      toast.error('Akses ditolak: Anda tidak memiliki wewenang untuk mengelola peserta.');
+      return;
+    }
     if (!cancellingEnrollment) return;
 
     try {
@@ -275,6 +369,35 @@ export default function UnitActivitiesPage() {
     return true;
   });
 
+  // Filter Logic for Student History (Client-side)
+  const filteredStudentsForHistory = allActiveStudents.filter(student => {
+    // Search keyword
+    if (histSearchKeyword) {
+      const keyword = histSearchKeyword.toLowerCase();
+      const nameMatch = student.name?.toLowerCase().includes(keyword);
+      const nisMatch = student.id?.toLowerCase().includes(keyword);
+      if (!nameMatch && !nisMatch) return false;
+    }
+
+    // Class filter
+    if (histFilterClassId !== 'ALL' && student.classId !== histFilterClassId) return false;
+
+    // Grade filter
+    if (histFilterGrade !== 'ALL') {
+      const classObj = classesList.find(c => c.id === student.classId);
+      if (!classObj || String(classObj.grade) !== histFilterGrade) return false;
+    }
+
+    // Category filter
+    if (histFilterCategory !== 'ALL') {
+      const studentHistory = allHistoryEnrollments.filter(e => e.studentId === student.id && e.status === 'CONFIRMED');
+      const hasCategory = studentHistory.some(e => e.category === histFilterCategory);
+      if (!hasCategory) return false;
+    }
+
+    return true;
+  });
+
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       {/* Header Panel */}
@@ -316,17 +439,45 @@ export default function UnitActivitiesPage() {
             </select>
           </div>
 
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="inline-flex items-center gap-1.5 bg-[#002366] hover:bg-blue-800 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 shadow-sm cursor-pointer whitespace-nowrap"
-          >
-            <Plus size={15} />
-            Tambah Peserta
-          </button>
+          {canManage && (
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="inline-flex items-center gap-1.5 bg-[#002366] hover:bg-blue-800 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 shadow-sm cursor-pointer whitespace-nowrap"
+            >
+              <Plus size={15} />
+              Tambah Peserta
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Filter Card */}
+      {/* Tab Switcher */}
+      <div className="flex gap-1 border-b border-gray-200">
+        <button
+          onClick={() => setActiveTab('active_semester')}
+          className={`pb-3 px-4 text-xs font-bold transition-all border-b-2 -mb-[1px] cursor-pointer ${
+            activeTab === 'active_semester'
+              ? 'border-[#002366] text-[#002366]'
+              : 'border-transparent text-gray-400 hover:text-gray-600'
+          }`}
+        >
+          Peserta Semester Aktif
+        </button>
+        <button
+          onClick={() => setActiveTab('student_history')}
+          className={`pb-3 px-4 text-xs font-bold transition-all border-b-2 -mb-[1px] cursor-pointer ${
+            activeTab === 'student_history'
+              ? 'border-[#002366] text-[#002366]'
+              : 'border-transparent text-gray-400 hover:text-gray-600'
+          }`}
+        >
+          Riwayat Siswa
+        </button>
+      </div>
+
+      {activeTab === 'active_semester' && (
+        <>
+          {/* Filter Card */}
       <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm space-y-4">
         <div className="flex items-center gap-1.5 border-b border-gray-50 pb-2.5">
           <Filter size={14} className="text-gray-400" />
@@ -452,7 +603,7 @@ export default function UnitActivitiesPage() {
                 <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
                 <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Sumber</th>
                 <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Pembaruan Terakhir</th>
-                <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Aksi</th>
+                {canManage && <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Aksi</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -525,17 +676,19 @@ export default function UnitActivitiesPage() {
                         <span className="text-[10px] text-gray-400">Oleh: {e.updatedByName || e.createdByName || 'Admin'}</span>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      {e.status === 'CONFIRMED' && (
-                        <button
-                          onClick={() => setCancellingEnrollment(e)}
-                          className="inline-flex items-center gap-1 border border-dashed border-red-200 hover:border-red-400 hover:bg-red-50 text-red-600 px-2 py-1 rounded-lg text-[11px] font-bold transition-all active:scale-95 cursor-pointer"
-                        >
-                          <Trash2 size={12} />
-                          Batalkan
-                        </button>
-                      )}
-                    </td>
+                    {canManage && (
+                      <td className="px-4 py-3 text-right">
+                        {e.status === 'CONFIRMED' && (
+                          <button
+                            onClick={() => setCancellingEnrollment(e)}
+                            className="inline-flex items-center gap-1 border border-dashed border-red-200 hover:border-red-400 hover:bg-red-50 text-red-600 px-2 py-1 rounded-lg text-[11px] font-bold transition-all active:scale-95 cursor-pointer"
+                          >
+                            <Trash2 size={12} />
+                            Batalkan
+                          </button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))
               )}
@@ -543,6 +696,265 @@ export default function UnitActivitiesPage() {
           </table>
         </div>
       </div>
+        </>
+      )}
+
+      {/* --- Part A: STUDENT HISTORY VIEW --- */}
+      {activeTab === 'student_history' && (
+        <>
+          {/* Filters for history */}
+          <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm space-y-4">
+            <div className="flex items-center gap-1.5 border-b border-gray-50 pb-2.5">
+              <Filter size={14} className="text-gray-400" />
+              <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Filter Riwayat Siswa</h2>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+              {/* Class Filter */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Kelas</label>
+                <select
+                  value={histFilterClassId}
+                  onChange={(e) => setHistFilterClassId(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-gray-700 focus:ring-1 focus:ring-blue-500 focus:outline-none transition-colors"
+                >
+                  <option value="ALL">Semua Kelas</option>
+                  {classesList.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Grade Filter */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Grade</label>
+                <select
+                  value={histFilterGrade}
+                  onChange={(e) => setHistFilterGrade(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-gray-700 focus:ring-1 focus:ring-blue-500 focus:outline-none transition-colors"
+                >
+                  <option value="ALL">Semua Grade</option>
+                  <option value="7">Grade 7</option>
+                  <option value="8">Grade 8</option>
+                  <option value="9">Grade 9</option>
+                </select>
+              </div>
+
+              {/* Category Filter */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Kategori UA</label>
+                <select
+                  value={histFilterCategory}
+                  onChange={(e) => setHistFilterCategory(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-gray-700 focus:ring-1 focus:ring-blue-500 focus:outline-none transition-colors"
+                >
+                  <option value="ALL">Semua Kategori</option>
+                  {CATEGORIES.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Student Search */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Nama / NIS</label>
+                <div className="relative">
+                  <Search size={12} className="absolute left-2.5 top-2.5 text-gray-400" />
+                  <input
+                    type="text"
+                    value={histSearchKeyword}
+                    onChange={(e) => setHistSearchKeyword(e.target.value)}
+                    placeholder="Cari siswa..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-7 pr-2.5 py-1.5 text-xs font-semibold text-gray-700 placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:outline-none transition-colors"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Main Table for history */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto relative">
+              <table className="w-full text-left border-collapse min-w-[1000px]">
+                <thead>
+                  <tr className="bg-slate-50/50 border-b border-gray-100">
+                    <th className="sticky left-0 z-20 bg-slate-50 px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider shadow-[2px_0_5px_rgba(0,0,0,0.02)] min-w-[200px]">
+                      Nama Siswa
+                    </th>
+                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">NIS</th>
+                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Kelas Saat Ini</th>
+                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Riwayat Unit Aktivitas</th>
+                    <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Jumlah UA</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {loadingActiveStudents || loadingHistoryEnrollments ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-8 text-center text-xs text-gray-400">
+                        Memuat data...
+                      </td>
+                    </tr>
+                  ) : filteredStudentsForHistory.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-8 text-center text-xs text-gray-400">
+                        Siswa tidak ditemukan
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredStudentsForHistory.map(student => {
+                      const currentClassObj = classesList.find(c => c.id === student.classId);
+                      const studentHistory = allHistoryEnrollments
+                        .filter(e => e.studentId === student.id && e.status === 'CONFIRMED')
+                        .sort((a, b) => {
+                          if (a.academicYear !== b.academicYear) {
+                            return a.academicYear.localeCompare(b.academicYear);
+                          }
+                          return a.semester.localeCompare(b.semester);
+                        });
+
+                      const hasRecords = studentHistory.length > 0;
+
+                      return (
+                        <tr
+                          key={student.id}
+                          onClick={() => setSelectedStudentForDetail(student)}
+                          className="hover:bg-slate-50/50 transition-colors cursor-pointer group"
+                        >
+                          <td className="sticky left-0 z-10 bg-white group-hover:bg-slate-50/50 px-4 py-3 text-xs font-semibold text-gray-900 shadow-[2px_0_5px_rgba(0,0,0,0.02)] min-w-[200px]">
+                            {student.name}
+                          </td>
+                          <td className="px-4 py-3 text-xs font-semibold text-gray-500">{student.id}</td>
+                          <td className="px-4 py-3 text-xs text-gray-600 font-medium">{currentClassObj?.name || '-'}</td>
+                          <td className="px-4 py-3 text-xs">
+                            <div className="flex flex-wrap gap-1.5 max-w-2xl">
+                              {hasRecords ? (
+                                studentHistory.map(e => {
+                                  const isLgp = e.isLgp || ['LGP', 'Choir', 'Theatre', 'Musical Theatre Band'].includes(e.normalizedUaName);
+                                  const displayName = isLgp ? 'LGP' : e.normalizedUaName;
+                                  return (
+                                    <span
+                                      key={e.id}
+                                      className="inline-flex items-center gap-1 bg-blue-50 text-[#002366] text-[10px] font-bold px-2 py-0.5 rounded border border-blue-100/50"
+                                    >
+                                      TA {e.academicYear} S{e.semester} — {displayName}
+                                    </span>
+                                  );
+                                })
+                              ) : (
+                                <span className="text-xs text-gray-400 italic font-medium">Data belum diimpor</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-xs font-bold text-[#002366]">{studentHistory.length}</td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Detail Read-Only Student History Modal */}
+      {selectedStudentForDetail && (
+        <div className="fixed inset-0 bg-slate-950/40 z-50 flex items-center justify-center p-4 backdrop-blur-[2px]">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-2xl shadow-2xl border border-gray-200 max-w-2xl w-full overflow-hidden"
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <Users size={18} className="text-[#002366]" />
+                <h3 className="text-sm font-bold text-gray-900">Detail Riwayat Siswa</h3>
+              </div>
+              <button
+                onClick={() => setSelectedStudentForDetail(null)}
+                className="text-gray-400 hover:text-gray-600 cursor-pointer p-1 rounded-lg hover:bg-gray-50"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+              {/* Profile Card */}
+              <div className="grid grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                <div>
+                  <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Nama Siswa</span>
+                  <span className="text-xs font-bold text-gray-800">{selectedStudentForDetail.name}</span>
+                </div>
+                <div>
+                  <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">NIS</span>
+                  <span className="text-xs font-semibold text-gray-700">{selectedStudentForDetail.id}</span>
+                </div>
+                <div>
+                  <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Kelas</span>
+                  <span className="text-xs font-semibold text-gray-700">
+                    {classesList.find(c => c.id === selectedStudentForDetail.classId)?.name || '-'}
+                  </span>
+                </div>
+              </div>
+
+              {/* History Table */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Riwayat Unit Aktivitas</h4>
+                <div className="border border-gray-100 rounded-xl overflow-hidden">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-gray-100">
+                        <th className="px-4 py-2 font-bold text-gray-500 uppercase tracking-wider">Tahun Ajaran</th>
+                        <th className="px-4 py-2 font-bold text-gray-500 uppercase tracking-wider text-center">Semester</th>
+                        <th className="px-4 py-2 font-bold text-gray-500 uppercase tracking-wider">Kategori</th>
+                        <th className="px-4 py-2 font-bold text-gray-500 uppercase tracking-wider">Unit Aktivitas</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {allHistoryEnrollments
+                        .filter(e => e.studentId === selectedStudentForDetail.id && e.status === 'CONFIRMED')
+                        .sort((a, b) => {
+                          if (a.academicYear !== b.academicYear) {
+                            return a.academicYear.localeCompare(b.academicYear);
+                          }
+                          return a.semester.localeCompare(b.semester);
+                        })
+                        .map(e => {
+                          const isLgp = e.isLgp || ['LGP', 'Choir', 'Theatre', 'Musical Theatre Band'].includes(e.normalizedUaName);
+                          const displayName = isLgp ? 'LGP' : e.normalizedUaName;
+                          return (
+                            <tr key={e.id} className="hover:bg-slate-50/50">
+                              <td className="px-4 py-2.5 font-semibold text-gray-700">{e.academicYear}</td>
+                              <td className="px-4 py-2.5 text-center font-bold text-gray-500">{e.semester}</td>
+                              <td className="px-4 py-2.5 font-medium text-gray-500">{e.category}</td>
+                              <td className="px-4 py-2.5 font-bold text-[#002366]">{displayName}</td>
+                            </tr>
+                          );
+                        })}
+                      {allHistoryEnrollments.filter(e => e.studentId === selectedStudentForDetail.id && e.status === 'CONFIRMED').length === 0 && (
+                        <tr>
+                          <td colSpan={4} className="px-4 py-6 text-center text-gray-400 italic">
+                            Data belum diimpor
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end px-6 py-4 border-t border-gray-100 bg-slate-50">
+              <button
+                onClick={() => setSelectedStudentForDetail(null)}
+                className="bg-white hover:bg-slate-100 text-gray-600 px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 border border-gray-200 cursor-pointer"
+              >
+                Tutup
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {/* Add Modal (Form Bulk Assignment) */}
       {showAddModal && (

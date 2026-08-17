@@ -644,7 +644,10 @@ export function Layout() {
                     <NavItem to="/student/dashboard" icon={<Home size={18} />} label="Dashboard Siswa" />
                   )}
                   {currentUser.role === 'STUDENT' && currentUnit === 'JUNIOR_HIGH' && (
-                    <NavItem to="/student/learning-power-up" icon={<CheckSquare size={18} />} label="Learning Power-Up" />
+                    <>
+                      <NavItem to="/student/learning-power-up" icon={<CheckSquare size={18} />} label="Learning Power-Up" />
+                      <NavItem to="/student/unit-activities" icon={<Compass size={18} />} label="Unit Aktivitas" />
+                    </>
                   )}
                   {currentUnit !== 'KINDERGARTEN' && (
                     <>
@@ -771,7 +774,7 @@ export function Layout() {
                   <NavItem to="/junior-high/literasi-numerasi" icon={<BookOpen size={18} />} label="Literasi & Numerasi" />
                   <NavItem to="/junior-high/learning-power-up" icon={<CheckSquare size={18} />} label="Learning Power-Up" />
                   <NavItem to="/self-exploration" icon={<Sparkles size={18} />} label="Self-Exploration" />
-                  {['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER'].includes(currentUser.role) && (
+                  {['SUPER_ADMIN', 'HEAD_JUNIOR', 'TEACHER'].includes(currentUser.role) && (
                     <NavItem to="/junior-high/unit-activities" icon={<Compass size={18} />} label="Unit Aktivitas" />
                   )}
                   <NavItem to="/junior-high/behavior/mtss/overview" icon={<ShieldAlert size={18} />} label="MTSS Behavior" />

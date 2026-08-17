@@ -113,6 +113,7 @@ import ReportConfigPage from './pages/Settings/ReportConfig';
 import LearningPowerUpStudentPage from './pages/Student/LearningPowerUpStudentPage';
 import LearningPowerUpTeacherPage from './pages/JuniorHigh/LearningPowerUpTeacherPage';
 import UnitActivitiesPage from './pages/JuniorHigh/UnitActivitiesPage';
+import StudentUnitActivitiesPage from './pages/Student/StudentUnitActivitiesPage';
 import WeeklyReportDetail from './pages/Kindergarten/WeeklyReportDetail';
 
 // High-level wrapper for Admin-only access
@@ -444,7 +445,7 @@ export default function App() {
               </RoleGuard>
             } />
             <Route path="unit-activities" element={
-              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER']}>
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_JUNIOR', 'TEACHER']}>
                 <UnitActivitiesPage />
               </RoleGuard>
             } />
@@ -555,6 +556,14 @@ export default function App() {
                 element={
                   <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
                     <LearningPowerUpStudentPage />
+                  </RoleGuard>
+                } 
+             />
+             <Route 
+                path="unit-activities" 
+                element={
+                  <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
+                    <StudentUnitActivitiesPage />
                   </RoleGuard>
                 } 
              />
