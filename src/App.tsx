@@ -74,6 +74,7 @@ import AttendanceSummaryReport from './pages/Kindergarten/AttendanceSummaryRepor
 import StudentPassport from './pages/Student/StudentPassport';
 import LuminaHome from './pages/Home/LuminaHome';
 import SuperAdminPage from './pages/Admin/SuperAdminPage';
+import AttendanceCalendarPage from './pages/Admin/AttendanceCalendarPage';
 import AttendanceBackupConfigPage from './pages/Admin/AttendanceBackupConfig';
 import AttendanceBackupDiagnostics from './pages/Admin/AttendanceBackupDiagnostics';
 import MTSSAcademicBackupConfigPage from './pages/Admin/MTSSAcademicBackupConfig';
@@ -276,6 +277,14 @@ export default function App() {
               <AdminGuard>
                 <SuperAdminPage />
               </AdminGuard>
+            } 
+          />
+          <Route 
+            path="admin/attendance-calendar" 
+            element={
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'PRINCIPAL', 'VICE_PRINCIPAL']}>
+                <AttendanceCalendarPage />
+              </RoleGuard>
             } 
           />
           <Route path="dashboard">

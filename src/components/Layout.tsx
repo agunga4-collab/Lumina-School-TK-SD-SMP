@@ -4,7 +4,7 @@ import {
   Map as MapIcon, Smile, Camera, History, Heart, CheckSquare, BookOpen, 
   Eye, Clock, ShieldAlert, ShieldCheck, ClipboardList, ClipboardCheck, Target, Mail, RefreshCw,
   Baby, TrendingUp, Folder, BarChart3, FileText, Sparkles, Settings, GraduationCap, User, Users,
-  Menu, X, Presentation, MessageSquare, Compass
+  Menu, X, Presentation, MessageSquare, Compass, Calendar
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, Navigate, useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -805,6 +805,7 @@ export function Layout() {
             <div className="space-y-1">
               <NavSectionLabel label="Sistem" />
               <NavItem to="/settings/report-config" icon={<Settings size={18} />} label="Report Config" />
+              <NavItem to="/admin/attendance-calendar" icon={<Calendar size={18} />} label="Kalender Kehadiran" />
               {currentUser.role === 'SUPER_ADMIN' && (
                 <NavItem to="/admin" icon={<ShieldCheck size={18} />} label="Panel Super Admin" />
               )}
