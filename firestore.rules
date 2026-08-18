@@ -943,5 +943,10 @@ service cloud.firestore {
         (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL') && isTeacherAssignedToClass(existing().classId))
       );
     }
+
+    match /attendance_calendar/{eventId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
   }
 }

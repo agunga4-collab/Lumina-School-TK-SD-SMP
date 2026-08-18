@@ -864,6 +864,25 @@
         "completedBy": { "type": "string" }
       },
       "required": ["studentId", "classId", "academicYearId", "termId", "reportStatus", "aspectReports", "overallTeacherSummary"]
+    },
+    "AttendanceCalendarEvent": {
+      "title": "AttendanceCalendarEvent",
+      "description": "Lumina Attendance Calendar Event and Overrides config.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "unit": { "type": "string", "enum": ["KINDERGARTEN", "ELEMENTARY", "JUNIOR_HIGH"] },
+        "type": { "type": "string", "enum": ["NATIONAL_HOLIDAY", "SCHOOL_HOLIDAY", "SPECIAL_NO_ATTENDANCE_DAY", "REPLACEMENT_SCHOOL_DAY", "HALF_DAY"] },
+        "isSchoolDay": { "type": "boolean" },
+        "description": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["id", "date", "unit", "type", "isSchoolDay"]
     }
   },
   "firestore": {
@@ -1078,6 +1097,10 @@
     "aap_end_of_term_reports/{reportId}": {
       "schema": "AAPEndOfTermReport",
       "description": "End of term reports for Kindergarten aspects."
+    },
+    "attendance_calendar/{eventId}": {
+      "schema": "AttendanceCalendarEvent",
+      "description": "Lumina attendance calendar overrides and holidays."
     }
   }
 }
