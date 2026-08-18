@@ -23,6 +23,7 @@ export const firestoreReadStats = {
   enrollments: 0,
   attendanceReports: 0,
   observations: 0,
+  dailyContexts: 0,
   totalReadsTracked: 0
 };
 

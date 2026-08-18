@@ -609,7 +609,8 @@ export function aggregateKGWeeklyReportForPeriod(
   endDateStr: string,
   firestoreAttendanceDocs?: any[],
   firestoreObservationDocs?: any[],
-  activeStudents?: any[]
+  activeStudents?: any[],
+  dailyContexts?: any[]
 ) {
   const student = (activeStudents || []).find(s => s.id === studentId) ||
                   DEFAULT_STUDENTS.find(s => s.id === studentId) || {
@@ -910,7 +911,15 @@ export function aggregateKGWeeklyReportForPeriod(
         }
       }
 
-      if (dayObsForStudent.length > 0) {
+      const foundContext = (dailyContexts || []).find(dc => dc.observationDate === dk.dateKey || dc.date === dk.dateKey);
+      
+      if (foundContext) {
+        if (foundContext.sentraId === 'SPECIAL_ACTIVITY') {
+          fallbackText = `Mengikuti kegiatan khusus "${foundContext.sentraName || 'Kegiatan Khusus'}" bersama-sama teman-sekelas.`;
+        } else {
+          fallbackText = `Mengikuti aktivitas Sentra ${foundContext.sentraName || foundContext.sentraId} pada domain perkembangan ${foundContext.domainName || foundContext.domainId} bersama-sama teman-sekelas.`;
+        }
+      } else if (dayObsForStudent.length > 0) {
         const activitiesObserved = dayObsForStudent.map(o => o.activity).filter(Boolean);
         if (activitiesObserved.length > 0) {
           fallbackText = `Mengikuti aktivitas ${activitiesObserved.join(', ')} secara interaktif.`;

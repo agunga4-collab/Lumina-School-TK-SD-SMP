@@ -7,7 +7,7 @@ import {
   Languages, Brain, Activity, Palette, Compass,
   Music, Film, Star, CheckCircle2, Loader2, Image as ImageIcon,
   UserCheck, RefreshCw, AlertTriangle, HelpCircle, Check, Info, Trash2, ClipboardList,
-  Mic, MicOff, ArrowLeftRight
+  Mic, MicOff, ArrowLeftRight, Lock, Unlock, Edit
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
@@ -115,7 +115,7 @@ const months = [
 ];
 
 export default function Observation() {
-  const { activeYear } = useAcademicYear();
+  const { activeYear, activeSemester } = useAcademicYear();
   const [searchParams] = useSearchParams();
   const paramClassId = searchParams.get('classId');
   const paramDate = searchParams.get('date');
@@ -137,6 +137,12 @@ export default function Observation() {
   });
 
   const [selectedClassId, setSelectedClassId] = React.useState<string>('');
+
+  // Daily context state
+  const [dailyContext, setDailyContext] = React.useState<any>(null);
+  const [isDailyContextLoading, setIsDailyContextLoading] = React.useState<boolean>(false);
+  const [isEditingDailyContext, setIsEditingDailyContext] = React.useState<boolean>(false);
+  const isLockedByContext = !!(dailyContext && !isEditingDailyContext);
 
   // View States
   const [activeTab, setActiveTab] = React.useState<'input' | 'recap'>('input');
@@ -309,6 +315,107 @@ export default function Observation() {
       return acc;
     }, {} as Record<string, StudentObservation>);
   });
+
+  // Fetch Daily Context when Class or Date changes
+  React.useEffect(() => {
+    let active = true;
+    if (!selectedClassId || !observationDate) {
+      setDailyContext(null);
+      setIsEditingDailyContext(false);
+      return;
+    }
+
+    async function fetchDailyContext() {
+      setIsDailyContextLoading(true);
+      const contextId = `${selectedClassId}_${observationDate}`;
+      const contextRef = doc(db, 'kindergarten_observation_daily_contexts', contextId);
+      try {
+        const snap = await getDoc(contextRef);
+        logFirestoreRead('dailyContexts', 1);
+        if (!active) return;
+        if (snap.exists()) {
+          const data = snap.data();
+          setDailyContext(data);
+          setIsEditingDailyContext(false);
+          // Set selection states to match context automatically
+          if (data.sentraId) {
+            setSelectedActivity(data.sentraId);
+          }
+          if (data.domainId !== undefined) {
+            setSelectedDomain(data.domainId || "");
+          }
+        } else {
+          setDailyContext(null);
+          setIsEditingDailyContext(false);
+          // Only reset selections if they were not passed via URL parameters
+          if (!paramActivity && !paramDomain) {
+            setSelectedActivity("");
+            setSelectedDomain("");
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching daily context:", err);
+      } finally {
+        if (active) setIsDailyContextLoading(false);
+      }
+    }
+
+    fetchDailyContext();
+    return () => {
+      active = false;
+    };
+  }, [selectedClassId, observationDate, paramActivity, paramDomain]);
+
+  // Save/Update Daily Context to Firestore
+  const handleSaveDailyContext = async (targetActivity: KGActivity | "", targetDomain: KGDomain | "") => {
+    if (!selectedClassId || !observationDate) return;
+    if (!targetActivity) {
+      toast.error("Silakan pilih Sentra terlebih dahulu.");
+      return;
+    }
+    if (targetActivity !== 'SPECIAL_ACTIVITY' && !targetDomain) {
+      toast.error("Silakan pilih Domain terlebih dahulu.");
+      return;
+    }
+
+    const contextId = `${selectedClassId}_${observationDate}`;
+    const contextRef = doc(db, 'kindergarten_observation_daily_contexts', contextId);
+    
+    const activeClassObj = classes.find((c: any) => c.id === selectedClassId);
+    
+    const payload = {
+      classId: selectedClassId,
+      className: activeClassObj?.name || 'General',
+      observationDate: observationDate,
+      academicYear: activeYear || '2026/2027',
+      semester: activeSemester || '1',
+      sentraId: targetActivity,
+      sentraName: targetActivity === 'SPECIAL_ACTIVITY' ? "Kegiatan Khusus" : (activities.find(a => a.id === targetActivity)?.label || targetActivity),
+      domainId: targetActivity === 'SPECIAL_ACTIVITY' ? null : targetDomain,
+      domainName: targetActivity === 'SPECIAL_ACTIVITY' ? "Kegiatan Khusus" : (domains.find(d => d.id === targetDomain)?.label || targetDomain),
+      updatedAt: Date.now(),
+      updatedBy: profile?.uid || 'system',
+    };
+
+    try {
+      const isNew = !dailyContext;
+      const finalPayload = {
+        ...payload,
+        createdAt: isNew ? Date.now() : (dailyContext?.createdAt || Date.now()),
+        createdBy: isNew ? (profile?.uid || 'system') : (dailyContext?.createdBy || 'system'),
+      };
+
+      await setDoc(contextRef, finalPayload, { merge: true });
+      toast.success("Konteks Kegiatan berhasil disimpan!");
+      setDailyContext(finalPayload);
+      setIsEditingDailyContext(false);
+      setSelectedActivity(targetActivity);
+      setSelectedDomain(targetDomain);
+    } catch (err) {
+      console.error("Error saving daily context:", err);
+      toast.error("Gagal menyimpan Konteks Kegiatan.");
+    }
+  };
 
   const [isSaving, setIsSaving] = React.useState(false);
   const [isUploadingGeneral, setIsUploadingGeneral] = React.useState(false);
@@ -2588,6 +2695,114 @@ export default function Observation() {
         
         {/* LEFT COLUMN: Configuration Block (4 grid columns) */}
         <div className="lg:col-span-4 space-y-6">
+
+          {/* Daily Context Locking Widget */}
+          <div className={cn(
+            "bg-white rounded-3xl p-6 shadow-sm border transition-all duration-300",
+            dailyContext 
+              ? "border-emerald-100 bg-emerald-50/20" 
+              : "border-amber-100 bg-amber-50/10"
+          )}>
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-4">
+              <div className="flex items-center gap-2">
+                {dailyContext ? (
+                  <Lock size={18} className="text-emerald-600" />
+                ) : (
+                  <Unlock size={18} className="text-amber-500" />
+                )}
+                <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">
+                  Konteks Kegiatan Harian
+                </h3>
+              </div>
+              <span className={cn(
+                "px-2.5 py-0.5 text-[9px] font-black uppercase rounded-full",
+                dailyContext 
+                  ? "bg-emerald-100 text-emerald-800" 
+                  : "bg-amber-100 text-amber-800"
+              )}>
+                {dailyContext ? "Locked" : "Belum Dikunci"}
+              </span>
+            </div>
+
+            {isDailyContextLoading ? (
+              <div className="flex items-center gap-2 py-2 text-xs text-gray-500">
+                <Loader2 className="animate-spin" size={14} />
+                <span>Memuat konteks harian...</span>
+              </div>
+            ) : dailyContext ? (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-start gap-2">
+                    <span className="text-[10px] uppercase font-black text-gray-400 mt-0.5">Sentra:</span>
+                    <span className="text-xs font-bold text-gray-900">{dailyContext.sentraName}</span>
+                  </div>
+                  {dailyContext.domainName && (
+                    <div className="flex items-start gap-2">
+                      <span className="text-[10px] uppercase font-black text-gray-400 mt-0.5">Domain:</span>
+                      <span className="text-xs font-bold text-gray-900">{dailyContext.domainName}</span>
+                    </div>
+                  )}
+                </div>
+
+                {!isEditingDailyContext ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditingDailyContext(true);
+                      setSelectedActivity(dailyContext.sentraId);
+                      setSelectedDomain(dailyContext.domainId || "");
+                    }}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-white hover:bg-gray-50 text-gray-700 hover:text-gray-950 font-bold border border-gray-200 rounded-xl text-[11px] transition-all"
+                  >
+                    <Edit size={12} />
+                    Ubah Konteks Kegiatan Harian
+                  </button>
+                ) : (
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEditingDailyContext(false);
+                        setSelectedActivity(dailyContext.sentraId);
+                        setSelectedDomain(dailyContext.domainId || "");
+                      }}
+                      className="flex-1 py-2 px-3 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold rounded-xl text-[10px] transition-all"
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSaveDailyContext(selectedActivity, selectedDomain)}
+                      className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-[10px] transition-all"
+                    >
+                      Simpan Perubahan
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <p className="text-[11px] text-gray-600 leading-relaxed font-medium">
+                  Belum ada Sentra & Domain yang dikunci untuk kelas ini pada tanggal <span className="font-bold">{observationDate}</span>.
+                </p>
+                
+                {selectedActivity ? (
+                  <button
+                    type="button"
+                    onClick={() => handleSaveDailyContext(selectedActivity, selectedDomain)}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-[11px] transition-all shadow-md shadow-emerald-50"
+                  >
+                    <Lock size={12} />
+                    Kunci Sentra & Domain Hari Ini
+                  </button>
+                ) : (
+                  <div className="text-[10px] text-amber-700 bg-amber-50/50 p-2.5 rounded-xl border border-amber-100/50 font-bold leading-normal">
+                    Silakan pilih Sentra & Domain di bawah untuk mulai mengunci konteks hari ini.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
           
           {/* 1. Sentra Selection */}
           <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4">
@@ -2610,14 +2825,18 @@ export default function Observation() {
                         toast.error("Sesi ini sudah dikunci. Silakan klik tombol 'Edit Sentra & Domain' untuk mengubahnya.");
                         return;
                       }
+                      if (isLockedByContext) {
+                        toast.error("Konteks Kegiatan Harian terkunci. Klik 'Ubah Konteks' di atas untuk mengedit.");
+                        return;
+                      }
                       setSelectedActivity(act.id);
                     }}
-                    disabled={isSessionLocked && !isEditingSession && !isSelected}
+                    disabled={(isSessionLocked && !isEditingSession && !isSelected) || (isLockedByContext && !isSelected)}
                     className={cn(
                       "w-full flex items-center justify-between p-3 rounded-2xl text-left transition-all border border-transparent",
                       isSelected 
                         ? "bg-emerald-600 text-white shadow-md shadow-emerald-100 font-bold border-emerald-500 scale-[1.01]" 
-                        : (isSessionLocked && !isEditingSession)
+                        : (isSessionLocked && !isEditingSession) || isLockedByContext
                           ? "opacity-40 bg-gray-50 text-gray-400 cursor-not-allowed"
                           : "text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 bg-gray-50/50"
                     )}
@@ -2672,14 +2891,18 @@ export default function Observation() {
                           toast.error("Sesi ini sudah dikunci. Silakan klik tombol 'Edit Sentra & Domain' untuk mengubahnya.");
                           return;
                         }
+                        if (isLockedByContext) {
+                          toast.error("Konteks Kegiatan Harian terkunci. Klik 'Ubah Konteks' di atas untuk mengedit.");
+                          return;
+                        }
                         setSelectedDomain(dom.id);
                       }}
-                      disabled={isSessionLocked && !isEditingSession && !isSelected}
+                      disabled={(isSessionLocked && !isEditingSession && !isSelected) || (isLockedByContext && !isSelected)}
                       className={cn(
                         "w-full flex flex-col p-3 rounded-2xl text-left transition-all border",
                         isSelected 
                           ? "bg-gray-900 text-white border-gray-900 shadow-lg scale-[1.01]" 
-                          : (isSessionLocked && !isEditingSession)
+                          : (isSessionLocked && !isEditingSession) || isLockedByContext
                             ? "opacity-40 bg-gray-50 border-gray-150 text-gray-400 cursor-not-allowed"
                             : "text-gray-700 hover:bg-gray-50 border-gray-100 bg-white"
                       )}

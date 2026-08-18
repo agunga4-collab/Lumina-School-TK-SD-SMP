@@ -62,6 +62,7 @@ export function resolveAttendanceStudent(params: {
       (s) =>
         s.id === originalStudentId ||
         (s.luminaId && s.luminaId === originalStudentId) ||
+        (s.oldLuminaId && s.oldLuminaId === originalStudentId) ||
         (s.nis && s.nis === originalStudentId)
     );
     if (matchedById) {
@@ -73,6 +74,25 @@ export function resolveAttendanceStudent(params: {
         originalStudentName,
         resolvedStudentObj: matchedById,
       };
+    }
+
+    // Try matching originalStudentId directly as name if it doesn't look like a standard database ID (e.g., contains spaces or matches student names)
+    if (originalStudentId.length > 4) {
+      const normalizedIdName = normalizeStudentName(originalStudentId);
+      if (normalizedIdName) {
+        const matchedByNameKey = activeStudents.find(
+          (s) => s.name && normalizeStudentName(s.name) === normalizedIdName
+        );
+        if (matchedByNameKey) {
+          return {
+            resolvedStudentId: matchedByNameKey.id,
+            resolvedBy: "name",
+            originalStudentId,
+            originalStudentName: originalStudentName || matchedByNameKey.name,
+            resolvedStudentObj: matchedByNameKey,
+          };
+        }
+      }
     }
   }
 
@@ -103,7 +123,29 @@ export function resolveAttendanceStudent(params: {
       originalStudentName,
       resolvedStudentObj: matchedByName,
     };
-  } else if (candidates.length > 1) {
+  } else if (candidates.length === 0 && normalizedInputName.length >= 3) {
+    // Try substring matching or partial matches
+    const partialMatches = activeStudents.filter((s) => {
+      if (!s.name) return false;
+      const normalizedActiveName = normalizeStudentName(s.name);
+      return normalizedActiveName.includes(normalizedInputName) || normalizedInputName.includes(normalizedActiveName);
+    });
+    if (partialMatches.length === 1) {
+      const matchedByName = partialMatches[0];
+      console.log(
+        `[NameResolver] matched by partial name - "${originalStudentName}" (origID: ${originalStudentId}) => active "${matchedByName.name}" (ID: ${matchedByName.id})`
+      );
+      return {
+        resolvedStudentId: matchedByName.id,
+        resolvedBy: "name",
+        originalStudentId,
+        originalStudentName,
+        resolvedStudentObj: matchedByName,
+      };
+    }
+  }
+
+  if (candidates.length > 1) {
     const warning = `Konflik nama ganda ("${originalStudentName}"): ${candidates.length} target siswa aktif terdeteksi (${candidates
       .map((c) => `${c.name} [ID:${c.id}]`)
       .join(", ")}).`;

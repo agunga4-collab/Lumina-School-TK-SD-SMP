@@ -300,6 +300,7 @@ export default function WeeklyReview() {
   // States to hold Firestore Attendance and Observations for the active date range
   const [firestoreAttendance, setFirestoreAttendance] = React.useState<any[]>([]);
   const [firestoreObservations, setFirestoreObservations] = React.useState<any[]>([]);
+  const [firestoreDailyContexts, setFirestoreDailyContexts] = React.useState<any[]>([]);
   const [isFetchingFirestore, setIsFetchingFirestore] = React.useState(false);
 
   // Automatically fetch attendance and observations from Firestore when selection changes
@@ -382,10 +383,59 @@ export default function WeeklyReview() {
           console.warn("[WeeklyReview] Observations list query fell back to empty due to potential rules limits/permissions:", err);
         }
 
+        // 3. Fetch Daily Contexts
+        let fetchedContexts: any[] = [];
+        try {
+          const qContexts = query(
+            collection(db, 'kindergarten_observation_daily_contexts'),
+            where('classId', '==', selectedClassId),
+            where('observationDate', '>=', startDateStr),
+            where('observationDate', '<=', endDateStr)
+          );
+          const snapContexts = await getDocs(qContexts);
+          logFirestoreRead('dailyContexts', snapContexts.docs.length || 1);
+          fetchedContexts = snapContexts.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+        } catch (err: any) {
+          console.warn("[WeeklyReview] Daily contexts query fell back or failed:", err);
+          try {
+            const datesList: string[] = [];
+            let start = new Date(startDateStr + 'T00:00:00');
+            const end = new Date(endDateStr + 'T00:00:00');
+            while (start <= end) {
+              const yyyy = start.getFullYear();
+              const mm = String(start.getMonth() + 1).padStart(2, '0');
+              const dd = String(start.getDate()).padStart(2, '0');
+              datesList.push(`${yyyy}-${mm}-${dd}`);
+              start.setDate(start.getDate() + 1);
+            }
+            const contextDocs = await Promise.all(
+              datesList.map(async (dStr) => {
+                try {
+                  const docId = `${selectedClassId}_${dStr}`;
+                  const docSnap = await getDoc(doc(db, 'kindergarten_observation_daily_contexts', docId));
+                  if (docSnap.exists()) {
+                    return { id: docSnap.id, ...docSnap.data() };
+                  }
+                } catch (e) {
+                  // ignore
+                }
+                return null;
+              })
+            );
+            fetchedContexts = contextDocs.filter(Boolean) as any[];
+          } catch (fallbackErr) {
+            console.error("[WeeklyReview] Fallback daily context loading failed:", fallbackErr);
+          }
+        }
+
         if (active) {
           setFirestoreAttendance(fetchedAtt);
           setFirestoreObservations(fetchedObs);
-          console.log(`[WeeklyReview Firestore Sync] Set ${fetchedAtt.length} attendance docs and ${fetchedObs.length} observations`);
+          setFirestoreDailyContexts(fetchedContexts);
+          console.log(`[WeeklyReview Firestore Sync] Set ${fetchedAtt.length} attendance docs, ${fetchedObs.length} observations, and ${fetchedContexts.length} daily contexts`);
         }
       } catch (err) {
         console.error('Error fetching range data from Firestore:', err);
@@ -589,7 +639,8 @@ export default function WeeklyReview() {
           endDateStr,
           firestoreAttendance,
           firestoreObservations,
-          students
+          students,
+          firestoreDailyContexts
         );
         const studentObj = students.find(s => s.id === selectedStudentId);
         

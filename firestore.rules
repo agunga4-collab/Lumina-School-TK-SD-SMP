@@ -584,6 +584,15 @@ service cloud.firestore {
       );
     }
 
+    match /kindergarten_observation_daily_contexts/{contextId} {
+      allow read, write: if isActive() && (
+        isTeacher() ||
+        isJuniorHighStaff() ||
+        isAdmin() ||
+        (userRole() == 'kindergarten_subject_teacher' && currentUser().unitId == 'KINDERGARTEN')
+      );
+    }
+
     match /aap_assessments/{assessmentId} {
       allow read: if isActive() && (
         isAdmin() ||

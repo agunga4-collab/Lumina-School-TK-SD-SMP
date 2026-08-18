@@ -1101,6 +1101,9 @@
     "attendance_calendar/{eventId}": {
       "schema": "AttendanceCalendarEvent",
       "description": "Lumina attendance calendar overrides and holidays."
+    },
+    "kindergarten_observation_daily_contexts/{contextId}": {
+      "description": "Daily context (Sentra and Domain selection) for Kindergarten Observations."
     }
   }
 }
