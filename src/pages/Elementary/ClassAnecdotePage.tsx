@@ -74,6 +74,13 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
+const getInitials = (name: string) => {
+  if (!name) return "";
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + (parts[1]?.[0] || "")).toUpperCase();
+};
+
 interface AnecdoteRow {
   rowId: string; // Document ID from Firestore, or temporary draft ID
   studentId: string;
@@ -129,10 +136,20 @@ export default function ClassAnecdotePage() {
   // Modal State for custom/extra additions
   const [showAddModal, setShowAddModal] = React.useState(false);
   const [modalStudentId, setModalStudentId] = React.useState("");
+  const [modalStudentName, setModalStudentName] = React.useState("");
+  const [modalStudentLocked, setModalStudentLocked] = React.useState(false);
   const [modalTime, setModalTime] = React.useState("");
   const [modalActivity, setModalActivity] = React.useState("");
   const [modalAnecdote, setModalAnecdote] = React.useState("");
   const [modalFollowUp, setModalFollowUp] = React.useState("");
+  const [isEditingNote, setIsEditingNote] = React.useState(false);
+  const [currentEditingRowId, setCurrentEditingRowId] = React.useState<string | null>(null);
+  const [modalSaving, setModalSaving] = React.useState(false);
+  const [expandedNotes, setExpandedNotes] = React.useState<Record<string, boolean>>({});
+
+  const toggleExpandNote = (rowId: string) => {
+    setExpandedNotes((prev) => ({ ...prev, [rowId]: !prev[rowId] }));
+  };
 
   // Speech Recognition tracking
   const [recordingRowId, setRecordingRowId] = React.useState<string | null>(null);
@@ -822,23 +839,51 @@ export default function ClassAnecdotePage() {
   };
 
   // Modal manual note addition
-  const handleOpenAddModal = () => {
+  const openAddNoteModal = (studentId?: string) => {
     if (students.length === 0) {
       toast.warning("Daftar siswa kosong atau kelas belum dipilih.");
       return;
     }
-    setModalStudentId(students[0].id);
+
+    if (studentId) {
+      const student = students.find((s) => s.id === studentId);
+      if (student) {
+        setModalStudentId(student.id);
+        setModalStudentName(student.name);
+        setModalStudentLocked(true);
+      }
+    } else {
+      setModalStudentId(students[0].id);
+      setModalStudentName(students[0].name);
+      setModalStudentLocked(false);
+    }
+
     setModalTime(getCurrentLocalTime());
     setModalActivity("");
     setModalAnecdote("");
     setModalFollowUp("");
+    setIsEditingNote(false);
+    setCurrentEditingRowId(null);
     setShowAddModal(true);
   };
 
-  const handleAddFromModal = () => {
-    if (!modalStudentId) return;
+  const openEditNoteModal = (row: AnecdoteRow) => {
+    setModalStudentId(row.studentId);
+    setModalStudentName(row.studentName);
+    setModalStudentLocked(true);
+    setModalTime(row.time);
+    setModalActivity(row.activityContext);
+    setModalAnecdote(row.anecdote);
+    setModalFollowUp(row.followUp);
+    setIsEditingNote(true);
+    setCurrentEditingRowId(row.rowId);
+    setShowAddModal(true);
+  };
+
+  const handleSaveFromModal = async () => {
+    if (!modalStudentId || !selectedClass || !profile) return;
     const student = students.find((s) => s.id === modalStudentId);
-    if (!student) return;
+    const sName = student ? student.name : modalStudentName;
 
     if (!modalAnecdote.trim()) {
       toast.error("Catatan anekdot wajib diisi.");
@@ -853,42 +898,81 @@ export default function ClassAnecdotePage() {
       return;
     }
 
-    const newRowId = `draft_${student.id}_${Date.now()}`;
-    const newRow: AnecdoteRow = {
-      rowId: newRowId,
-      studentId: student.id,
-      studentName: student.name,
-      time: modalTime.trim(),
-      activityContext: modalActivity.trim(),
-      anecdote: modalAnecdote.trim(),
-      followUp: modalFollowUp.trim(),
-      isDraft: true,
-      status: "UNSAVED",
-    };
+    setModalSaving(true);
+    try {
+      const isDraftRow = !currentEditingRowId || currentEditingRowId.startsWith("draft_");
+      const finalDocId = isEditingNote && !isDraftRow
+        ? currentEditingRowId!
+        : `anecdote_${selectedClass.id}_${modalStudentId}_${Date.now()}`;
 
-    setRows((prev) => {
-      // Find if student currently has only one empty draft row
-      const existingRowsForStudent = prev.filter((r) => r.studentId === student.id);
-      const isSingleEmptyDraft =
-        existingRowsForStudent.length === 1 &&
-        existingRowsForStudent[0].isDraft &&
-        !existingRowsForStudent[0].anecdote.trim() &&
-        !existingRowsForStudent[0].activityContext.trim();
+      const docRef = doc(db, "class_anecdotes", finalDocId);
+      const observationDate = Timestamp.fromDate(new Date(`${selectedDate}T00:00:00`));
 
-      let updated: AnecdoteRow[];
-      if (isSingleEmptyDraft) {
-        // Replace the empty draft row with our modal row
-        updated = prev.map((r) => (r.studentId === student.id ? newRow : r));
-      } else {
-        // Append this as an additional row
-        updated = [...prev, newRow];
-      }
-      saveDraftsToLocal(updated);
-      return updated;
-    });
+      const payload = {
+        studentId: modalStudentId,
+        studentName: sName,
+        classId: selectedClass.id,
+        className: selectedClass.name,
+        unit: "ELEMENTARY",
+        academicYearId: activeYear,
+        date: observationDate,
+        time: modalTime.trim(),
+        activityContext: modalActivity.trim(),
+        anecdote: modalAnecdote.trim(),
+        followUp: modalFollowUp.trim() || null,
+        createdBy: {
+          uid: profile.uid,
+          name: profile.displayName || profile.email,
+          role: profile.role,
+        },
+        createdAt: (isEditingNote && !isDraftRow) ? (rows.find(r => r.rowId === finalDocId)?.createdAt || serverTimestamp()) : serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
 
-    setShowAddModal(false);
-    toast.success(`Draf anekdot baru ditambahkan untuk ${student.name}. Sila simpan draf ini.`);
+      await setDoc(docRef, payload);
+
+      const updatedRow: AnecdoteRow = {
+        rowId: finalDocId,
+        studentId: modalStudentId,
+        studentName: sName,
+        time: payload.time,
+        activityContext: payload.activityContext,
+        anecdote: payload.anecdote,
+        followUp: payload.followUp || "",
+        isDraft: false,
+        status: "SAVED",
+        createdAt: Timestamp.now(),
+        originalData: {
+          time: payload.time,
+          activityContext: payload.activityContext,
+          anecdote: payload.anecdote,
+          followUp: payload.followUp || "",
+          createdAt: Timestamp.now(),
+        }
+      };
+
+      setRows((prev) => {
+        let nextRows: AnecdoteRow[];
+        if (isEditingNote && !isDraftRow) {
+          nextRows = prev.map((r) => (r.rowId === currentEditingRowId ? updatedRow : r));
+        } else {
+          const filteredPrev = prev.filter(
+            (r) => !(r.studentId === modalStudentId && r.isDraft && !r.anecdote.trim() && !r.activityContext.trim())
+          );
+          nextRows = [...filteredPrev, updatedRow];
+        }
+        saveDraftsToLocal(nextRows);
+        return nextRows;
+      });
+
+      setShowAddModal(false);
+      toast.success(isEditingNote ? `Catatan untuk ${sName} berhasil diperbarui.` : `Catatan baru untuk ${sName} berhasil disimpan.`);
+    } catch (err) {
+      console.error("Modal save failed:", err);
+      toast.error("Gagal menyimpan catatan.");
+    } finally {
+      setModalSaving(false);
+    }
   };
 
   // Unauthorized screen
@@ -965,7 +1049,7 @@ export default function ClassAnecdotePage() {
         <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
           {canWrite && (
             <button
-              onClick={handleOpenAddModal}
+              onClick={() => openAddNoteModal()}
               className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl shadow-sm hover:shadow transition-all w-full sm:w-auto"
               id="btn-add-anecdote"
             >
@@ -1058,209 +1142,334 @@ export default function ClassAnecdotePage() {
         </div>
       </div>
 
-      {/* Main Roster & Anecdotes Table */}
-      <div className="bg-white border border-slate-100 rounded-2xl shadow-sm overflow-hidden">
+      {/* Main Roster & Anecdotes Container */}
+      <div className="bg-white border border-slate-100 rounded-2xl shadow-sm overflow-hidden" id="anecdotes-container">
         {loadingStudents || loadingAnecdotes ? (
-          <div className="py-24 flex flex-col items-center justify-center gap-3 text-slate-400">
+          <div className="py-24 flex flex-col items-center justify-center gap-3 text-slate-400" id="loading-spinner">
             <Loader2 className="animate-spin text-indigo-500" size={32} />
             <p className="text-sm font-semibold">Memuat data observasi kelas...</p>
           </div>
-        ) : rows.length === 0 ? (
-          <div className="py-16 text-center text-slate-400 space-y-2">
+        ) : students.length === 0 ? (
+          <div className="py-16 text-center text-slate-400 space-y-2" id="empty-students">
             <Info size={32} className="mx-auto text-slate-300" />
             <p className="text-sm font-semibold">Tidak ada siswa aktif ditemukan di kelas ini.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse table-auto min-w-[1000px]">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-100 text-[11px] font-black text-slate-500 uppercase tracking-wider">
-                  <th className="py-4 px-4 text-center w-12">No</th>
-                  <th className="py-4 px-4 w-52">Nama Siswa</th>
-                  <th className="py-4 px-4 w-24">Waktu</th>
-                  <th className="py-4 px-4 w-60">Aktivitas / Konteks</th>
-                  <th className="py-4 px-4">Catatan Anekdot</th>
-                  <th className="py-4 px-4 w-64">Tindak Lanjut</th>
-                  <th className="py-4 px-4 text-center w-40">Aksi</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-sm">
-                {rows.map((row, index) => {
-                  const isRecording = recordingRowId === row.rowId;
+          <div>
+            {/* DESKTOP VIEW (Visible on md and larger) */}
+            <div className="hidden md:block overflow-x-auto" id="desktop-view">
+              <table className="w-full text-left border-collapse table-auto min-w-[1000px]">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-100 text-[11px] font-black text-slate-500 uppercase tracking-wider">
+                    <th className="py-4 px-6 text-center w-16">No</th>
+                    <th className="py-4 px-6 w-72">Siswa</th>
+                    <th className="py-4 px-6">Daftar Catatan Anekdot (Hari Ini)</th>
+                    <th className="py-4 px-6 text-center w-48">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-sm">
+                  {students.map((student, index) => {
+                    const studentNotes = rows.filter(
+                      (r) =>
+                        r.studentId === student.id &&
+                        !(r.isDraft && !r.anecdote.trim() && !r.activityContext.trim())
+                    );
 
-                  return (
-                    <tr
-                      key={row.rowId}
-                      className={`hover:bg-slate-50/50 transition-colors ${
-                        row.status === "UNSAVED" ? "bg-amber-50/10" : ""
-                      }`}
-                    >
-                      {/* No */}
-                      <td className="py-4 px-4 text-center font-bold text-slate-400">
-                        {index + 1}
-                      </td>
+                    return (
+                      <tr
+                        key={student.id}
+                        className="hover:bg-slate-50/20 transition-colors align-top"
+                        id={`desktop-student-row-${student.id}`}
+                      >
+                        {/* No */}
+                        <td className="py-6 px-6 text-center font-bold text-slate-400">
+                          {index + 1}
+                        </td>
 
-                      {/* Name & status */}
-                      <td className="py-4 px-4 font-semibold text-slate-800 space-y-1">
-                        <div>{row.studentName}</div>
-                        <div>{renderStatusBadge(row.status)}</div>
-                      </td>
-
-                      {/* Time */}
-                      <td className="py-4 px-4">
-                        <input
-                          type="text"
-                          value={row.time}
-                          disabled={!canWrite}
-                          placeholder="09.15"
-                          onChange={(e) => handleInputChange(row.rowId, "time", e.target.value)}
-                          className="w-full h-10 px-2 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-lg text-sm text-center font-semibold text-slate-700 bg-white disabled:bg-slate-50"
-                          id={`input-time-${row.rowId}`}
-                        />
-                      </td>
-
-                      {/* Activity/Context */}
-                      <td className="py-4 px-4">
-                        <input
-                          type="text"
-                          value={row.activityContext}
-                          disabled={!canWrite}
-                          placeholder="e.g. Diskusi kelompok"
-                          onChange={(e) =>
-                            handleInputChange(row.rowId, "activityContext", e.target.value)
-                          }
-                          className="w-full h-10 px-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-lg text-sm text-slate-700 bg-white disabled:bg-slate-50"
-                          id={`input-activity-${row.rowId}`}
-                        />
-                      </td>
-
-                      {/* Anecdote text area with Mic */}
-                      <td className="py-4 px-4 relative">
-                        <div className="relative flex items-stretch gap-2">
-                          <textarea
-                            value={isRecording ? `${sttBaseText} ${sttFinalTranscript} ${sttInterimText}`.replace(/\s+/g, " ").trim() : row.anecdote}
-                            disabled={!canWrite}
-                            placeholder="Tuliskan kejadian faktual dan objektif di sini..."
-                            onChange={(e) => handleInputChange(row.rowId, "anecdote", e.target.value)}
-                            className="w-full min-h-[80px] p-3 pr-10 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-lg text-sm text-slate-700 bg-white disabled:bg-slate-50 resize-y"
-                            id={`textarea-anecdote-${row.rowId}`}
-                          />
-                          {canWrite && (
-                            <button
-                              onClick={() => handleToggleSpeech(row.rowId)}
-                              className={`absolute right-3 top-3 p-1.5 rounded-full shadow-xs hover:shadow transition-all flex items-center justify-center ${
-                                isRecording
-                                  ? "bg-rose-500 text-white animate-pulse hover:bg-rose-600"
-                                  : "bg-slate-50 text-slate-500 hover:bg-indigo-50 hover:text-indigo-600"
-                              }`}
-                              title={isRecording ? "Berhenti Merekam" : "Klik untuk Bicara (Speech-to-Text)"}
-                              id={`btn-speech-${row.rowId}`}
-                            >
-                              {isRecording ? <MicOff size={16} /> : <Mic size={16} />}
-                            </button>
-                          )}
-                        </div>
-                        {isRecording && (
-                          <div className="space-y-1 mt-1">
-                            <div className="text-[10px] font-semibold text-rose-500 flex items-center gap-1.5 animate-pulse">
-                              <span className="w-2 h-2 rounded-full bg-rose-500"></span>
-                              Mendengarkan transkripsi Bahasa Indonesia secara langsung...
+                        {/* Student Info & Badge */}
+                        <td className="py-6 px-6 space-y-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-sm shrink-0">
+                              {getInitials(student.name)}
                             </div>
-                            {sttInterimText && (
-                              <div className="text-xs text-slate-400 italic bg-slate-50 border border-slate-100 p-2 rounded-md">
-                                Preview: {sttInterimText}
+                            <div>
+                              <div className="font-extrabold text-slate-900 text-sm leading-snug">
+                                {student.name}
                               </div>
+                              <p className="text-xs text-slate-400 mt-0.5">
+                                NISN: {student.nisn || "-"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div>
+                            {studentNotes.length > 0 ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-full shadow-xs">
+                                {studentNotes.length} Catatan
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-slate-400 bg-slate-50 border border-slate-100 rounded-full">
+                                Belum ada catatan
+                              </span>
                             )}
                           </div>
-                        )}
-                      </td>
+                        </td>
 
-                      {/* Follow-up Action */}
-                      <td className="py-4 px-4">
-                        <textarea
-                          value={row.followUp}
-                          disabled={!canWrite}
-                          placeholder="e.g. Berikan apresiasi (opsional)"
-                          onChange={(e) => handleInputChange(row.rowId, "followUp", e.target.value)}
-                          className="w-full min-h-[80px] p-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-lg text-sm text-slate-700 bg-white disabled:bg-slate-50 resize-y"
-                          id={`textarea-followup-${row.rowId}`}
-                        />
-                      </td>
+                        {/* Stacked Notes Column */}
+                        <td className="py-6 px-6">
+                          {studentNotes.length === 0 ? (
+                            <div className="text-slate-400 italic text-sm py-2">
+                              Belum ada catatan observasi untuk hari ini.
+                            </div>
+                          ) : (
+                            <div className="space-y-4">
+                              {studentNotes.map((note) => {
+                                const isExpanded = !!expandedNotes[note.rowId];
+                                const isLongText = note.anecdote.length > 180;
+                                return (
+                                  <div
+                                    key={note.rowId}
+                                    className="bg-slate-50/50 border border-slate-100 rounded-2xl p-4 space-y-3 relative hover:bg-slate-50 hover:border-slate-200 transition-all shadow-xs"
+                                    id={`desktop-note-card-${note.rowId}`}
+                                  >
+                                    <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                                      <div className="flex items-center gap-2">
+                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-full">
+                                          <Clock size={12} className="text-indigo-500" />
+                                          {note.time}
+                                        </span>
+                                        {renderStatusBadge(note.status)}
+                                      </div>
+                                      
+                                      <div className="flex items-center gap-1.5">
+                                        {canWrite && (
+                                          <>
+                                            <button
+                                              onClick={() => openEditNoteModal(note)}
+                                              className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-white border border-transparent hover:border-slate-100 rounded-xl transition-all shadow-xs"
+                                              title="Edit Catatan"
+                                              id={`btn-edit-note-desktop-${note.rowId}`}
+                                            >
+                                              <Save size={13} className="text-indigo-600" />
+                                            </button>
+                                            <button
+                                              onClick={() => handleDeleteRow(note)}
+                                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-white border border-transparent hover:border-slate-100 rounded-xl transition-all shadow-xs"
+                                              title="Hapus Catatan"
+                                              id={`btn-delete-note-desktop-${note.rowId}`}
+                                            >
+                                              <Trash2 size={13} className="text-rose-500" />
+                                            </button>
+                                          </>
+                                        )}
+                                      </div>
+                                    </div>
 
-                      {/* Individual Actions */}
-                      <td className="py-4 px-4 text-center">
-                        <div className="flex items-center justify-center gap-2">
+                                    <div className="text-sm space-y-2 text-slate-700">
+                                      <div>
+                                        <span className="font-extrabold text-slate-400 text-[10px] uppercase tracking-wider block sm:inline mr-2">
+                                          Konteks:
+                                        </span>
+                                        <span className="font-semibold text-slate-800">
+                                          {note.activityContext}
+                                        </span>
+                                      </div>
+
+                                      <div>
+                                        <span className="font-extrabold text-slate-400 text-[10px] uppercase tracking-wider block sm:inline mr-2">
+                                          Catatan:
+                                        </span>
+                                        <span className="text-slate-700 leading-relaxed break-words font-medium">
+                                          {isLongText && !isExpanded
+                                            ? `${note.anecdote.slice(0, 180)}...`
+                                            : note.anecdote}
+                                        </span>
+                                        {isLongText && (
+                                          <button
+                                            onClick={() => toggleExpandNote(note.rowId)}
+                                            className="text-xs font-black text-indigo-600 hover:text-indigo-700 ml-1.5 focus:outline-none"
+                                          >
+                                            {isExpanded ? "Sembunyikan" : "Lihat selengkapnya"}
+                                          </button>
+                                        )}
+                                      </div>
+
+                                      {note.followUp && (
+                                        <div className="bg-amber-50/40 border border-amber-100/60 rounded-xl p-3 mt-2">
+                                          <span className="font-extrabold text-amber-800 text-[10px] uppercase tracking-wider block mb-1">
+                                            Tindak Lanjut:
+                                          </span>
+                                          <p className="text-slate-700 font-medium break-words leading-relaxed">
+                                            {note.followUp}
+                                          </p>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* Inline Add Note button */}
+                        <td className="py-6 px-6 text-center">
                           {canWrite && (
-                            <>
-                              <button
-                                onClick={() => saveRow(row.rowId)}
-                                disabled={row.status === "SAVED" || row.status === "SAVING"}
-                                className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs ${
-                                  row.status === "UNSAVED"
-                                    ? "bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer"
-                                    : "bg-slate-100 text-slate-400 cursor-not-allowed"
-                                }`}
-                                title="Simpan Catatan Baris Ini"
-                                id={`btn-save-row-${row.rowId}`}
-                              >
-                                {row.status === "SAVING" ? (
-                                  <Loader2 size={13} className="animate-spin" />
-                                ) : (
-                                  <Save size={13} />
-                                )}
-                                Simpan
-                              </button>
-                              <button
-                                onClick={() => handleDeleteRow(row)}
-                                className="inline-flex items-center justify-center p-1.5 text-rose-500 hover:bg-rose-50 border border-transparent hover:border-rose-100 rounded-xl transition-all"
-                                title="Hapus Catatan Anekdot"
-                                id={`btn-delete-row-${row.rowId}`}
-                              >
-                                <Trash2 size={15} />
-                              </button>
-                            </>
+                            <button
+                              onClick={() => openAddNoteModal(student.id)}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 border border-indigo-200 hover:border-indigo-300 text-indigo-600 hover:bg-indigo-50 text-xs font-extrabold rounded-xl transition-all cursor-pointer uppercase tracking-wider shadow-xs hover:shadow-md"
+                              id={`btn-add-student-note-desktop-${student.id}`}
+                            >
+                              <Plus size={14} />
+                              Catatan
+                            </button>
                           )}
-                          {!canWrite && (
-                            <span className="text-xs text-slate-400 italic">Hanya Baca</span>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
 
-        {/* Bulk Action Footer */}
-        {canWrite && rows.length > 0 && !loadingStudents && !loadingAnecdotes && (
-          <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-            <p className="text-xs text-slate-500 font-medium">
-              * Draf perubahan otomatis disimpan di browser lokal agar tidak hilang. Simpan permanen ke server Firestore dengan tombol Simpan.
-            </p>
-            <button
-              onClick={saveAllUnsaved}
-              disabled={savingAll || rows.filter((r) => r.status === "UNSAVED").length === 0}
-              className={`inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold shadow-sm transition-all ${
-                rows.filter((r) => r.status === "UNSAVED").length > 0
-                  ? "bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer"
-                  : "bg-slate-200 text-slate-400 cursor-not-allowed shadow-none"
-              }`}
-              id="btn-save-all-changes"
-            >
-              {savingAll ? (
-                <>
-                  <Loader2 size={16} className="animate-spin" />
-                  Menyimpan Semua...
-                </>
-              ) : (
-                <>
-                  <Save size={16} />
-                  Simpan Semua Perubahan
-                </>
-              )}
-            </button>
+            {/* MOBILE VIEW (Visible on md and smaller) */}
+            <div className="block md:hidden p-4 space-y-4" id="mobile-view">
+              {students.map((student) => {
+                const studentNotes = rows.filter(
+                  (r) =>
+                    r.studentId === student.id &&
+                    !(r.isDraft && !r.anecdote.trim() && !r.activityContext.trim())
+                );
+
+                return (
+                  <div
+                    key={student.id}
+                    className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm space-y-4 hover:border-indigo-100 transition-all"
+                    id={`mobile-student-card-${student.id}`}
+                  >
+                    {/* Header: Avatar, Name, + Add button */}
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-sm shrink-0">
+                          {getInitials(student.name)}
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-slate-800 text-sm leading-snug">
+                            {student.name}
+                          </h4>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            {studentNotes.length > 0 ? `${studentNotes.length} Catatan` : "Belum ada catatan"}
+                          </p>
+                        </div>
+                      </div>
+
+                      {canWrite && (
+                        <button
+                          onClick={() => openAddNoteModal(student.id)}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 text-indigo-600 rounded-xl text-xs font-bold transition-all uppercase tracking-wider"
+                          id={`btn-add-student-note-mobile-${student.id}`}
+                        >
+                          <Plus size={14} />
+                          Catatan
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Stacked Note Cards for Mobile */}
+                    {studentNotes.length > 0 && (
+                      <div className="space-y-3 pt-3 border-t border-slate-50">
+                        {studentNotes.map((note) => {
+                          const isExpanded = !!expandedNotes[note.rowId];
+                          const isLongText = note.anecdote.length > 100;
+
+                          return (
+                            <div
+                              key={note.rowId}
+                              className="bg-slate-50/50 border border-slate-100 rounded-xl p-3 space-y-2.5"
+                              id={`mobile-note-card-${note.rowId}`}
+                            >
+                              <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                                <div className="flex items-center gap-2">
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-full">
+                                    <Clock size={10} />
+                                    {note.time}
+                                  </span>
+                                  {renderStatusBadge(note.status)}
+                                </div>
+
+                                <div className="flex items-center gap-1">
+                                  {canWrite && (
+                                    <>
+                                      <button
+                                        onClick={() => openEditNoteModal(note)}
+                                        className="p-1.5 text-slate-400 hover:text-indigo-600 rounded-lg transition-all"
+                                        title="Edit Catatan"
+                                        id={`btn-edit-note-mobile-${note.rowId}`}
+                                      >
+                                        <Save size={13} className="text-indigo-500" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteRow(note)}
+                                        className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg transition-all"
+                                        title="Hapus Catatan"
+                                        id={`btn-delete-note-mobile-${note.rowId}`}
+                                      >
+                                        <Trash2 size={13} className="text-rose-500" />
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="text-xs space-y-1.5 text-slate-700">
+                                <div>
+                                  <span className="font-extrabold text-slate-400 uppercase tracking-wider text-[10px] mr-2">
+                                    Konteks:
+                                  </span>
+                                  <span className="font-semibold text-slate-800">
+                                    {note.activityContext}
+                                  </span>
+                                </div>
+
+                                <div>
+                                  <span className="font-extrabold text-slate-400 uppercase tracking-wider text-[10px] mr-2">
+                                    Catatan:
+                                  </span>
+                                  <span className="text-slate-700 font-medium break-words leading-relaxed">
+                                    {isLongText && !isExpanded
+                                      ? `${note.anecdote.slice(0, 100)}...`
+                                      : note.anecdote}
+                                  </span>
+                                  {isLongText && (
+                                    <button
+                                      onClick={() => toggleExpandNote(note.rowId)}
+                                      className="text-xs font-black text-indigo-600 hover:text-indigo-700 ml-1 focus:outline-none"
+                                    >
+                                      {isExpanded ? "Sembunyikan" : "Lihat selengkapnya"}
+                                    </button>
+                                  )}
+                                </div>
+
+                                {note.followUp && (
+                                  <div className="bg-amber-50/40 border border-amber-100/50 rounded-xl p-2.5 mt-1">
+                                    <span className="font-extrabold text-amber-800 text-[9px] uppercase tracking-wider block mb-0.5">
+                                      Tindak Lanjut:
+                                    </span>
+                                    <span className="text-slate-700 font-medium break-words leading-relaxed">
+                                      {note.followUp}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
@@ -1268,12 +1477,12 @@ export default function ClassAnecdotePage() {
       {/* MANUAL ADD ANECDOTE DIALOG MODAL */}
       {showAddModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in" id="modal-add-anecdote-wrapper">
-          <div className="bg-white border border-slate-100 rounded-2xl max-w-lg w-full shadow-xl overflow-hidden animate-slide-up">
+          <div className="bg-white border border-slate-100 rounded-2xl max-w-2xl w-full shadow-xl overflow-hidden animate-slide-up">
             <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
               <div className="flex items-center gap-2">
                 <MessageSquare className="text-indigo-600" size={20} />
                 <h3 className="font-extrabold text-slate-900 text-lg">
-                  Tambah Catatan Baru
+                  {isEditingNote ? "Edit Catatan Anekdot" : "Tambah Catatan Baru"}
                 </h3>
               </div>
               <button
@@ -1288,7 +1497,19 @@ export default function ClassAnecdotePage() {
               </button>
             </div>
 
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+              {/* Context Info (Class & Date) */}
+              <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-xl border border-slate-100 text-xs">
+                <div>
+                  <span className="text-slate-400 font-bold block uppercase tracking-wider text-[9px]">Kelas</span>
+                  <span className="text-slate-700 font-bold">{selectedClass?.name}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 font-bold block uppercase tracking-wider text-[9px]">Tanggal Observasi</span>
+                  <span className="text-slate-700 font-bold">{selectedDate}</span>
+                </div>
+              </div>
+
               {/* Student Select */}
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
@@ -1296,8 +1517,13 @@ export default function ClassAnecdotePage() {
                 </label>
                 <select
                   value={modalStudentId}
-                  onChange={(e) => setModalStudentId(e.target.value)}
-                  className="w-full h-10 px-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-xl text-sm text-slate-700 font-semibold bg-white"
+                  disabled={modalStudentLocked}
+                  onChange={(e) => {
+                    setModalStudentId(e.target.value);
+                    const match = students.find((s) => s.id === e.target.value);
+                    if (match) setModalStudentName(match.name);
+                  }}
+                  className="w-full h-11 px-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-xl text-sm text-slate-700 font-bold bg-white disabled:bg-slate-50 disabled:text-slate-500 cursor-pointer disabled:cursor-not-allowed"
                   id="modal-select-student"
                 >
                   {students.map((st) => (
@@ -1318,7 +1544,7 @@ export default function ClassAnecdotePage() {
                   value={modalTime}
                   onChange={(e) => setModalTime(e.target.value)}
                   placeholder="09.15"
-                  className="w-full h-10 px-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-xl text-sm text-slate-700 bg-white"
+                  className="w-full h-11 px-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-xl text-sm text-slate-700 bg-white"
                   id="modal-input-time"
                 />
               </div>
@@ -1333,7 +1559,7 @@ export default function ClassAnecdotePage() {
                   value={modalActivity}
                   onChange={(e) => setModalActivity(e.target.value)}
                   placeholder="Contoh: Diskusi kelompok, Membaca, Istirahat"
-                  className="w-full h-10 px-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-xl text-sm text-slate-700 bg-white"
+                  className="w-full h-11 px-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-xl text-sm text-slate-700 bg-white"
                   id="modal-input-activity"
                 />
               </div>
@@ -1361,7 +1587,7 @@ export default function ClassAnecdotePage() {
                   value={modalRecording ? `${sttBaseText} ${sttFinalTranscript} ${sttInterimText}`.replace(/\s+/g, " ").trim() : modalAnecdote}
                   onChange={(e) => setModalAnecdote(e.target.value)}
                   placeholder="Tuliskan kejadian faktual, objektif, dan terperinci..."
-                  className="w-full min-h-[100px] p-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-xl text-sm text-slate-700 bg-white resize-none"
+                  className="w-full min-h-[140px] p-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-xl text-sm text-slate-700 bg-white resize-y leading-relaxed"
                   id="modal-textarea-anecdote"
                 />
                 {modalRecording && (
@@ -1383,13 +1609,12 @@ export default function ClassAnecdotePage() {
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
                   Tindak Lanjut (Opsional)
                 </label>
-                <input
-                  type="text"
+                <textarea
                   value={modalFollowUp}
                   onChange={(e) => setModalFollowUp(e.target.value)}
-                  placeholder="Contoh: Apresiasi, Observasi lanjutan"
-                  className="w-full h-10 px-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-xl text-sm text-slate-700 bg-white"
-                  id="modal-input-followup"
+                  placeholder="Contoh: Apresiasi, Observasi lanjutan, Hubungi orang tua"
+                  className="w-full min-h-[80px] p-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-xl text-sm text-slate-700 bg-white resize-y leading-relaxed"
+                  id="modal-textarea-followup"
                 />
               </div>
             </div>
@@ -1400,17 +1625,28 @@ export default function ClassAnecdotePage() {
                   if (recognitionRef.current) recognitionRef.current.stop();
                   setShowAddModal(false);
                 }}
-                className="px-4 py-2 border border-slate-200 hover:bg-slate-100 text-slate-600 text-sm font-bold rounded-xl transition-colors"
+                disabled={modalSaving}
+                className="px-4 py-2 border border-slate-200 hover:bg-slate-100 text-slate-600 text-sm font-bold rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 id="modal-btn-cancel"
               >
                 Batal
               </button>
               <button
-                onClick={handleAddFromModal}
-                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl shadow-xs hover:shadow transition-all"
+                onClick={handleSaveFromModal}
+                disabled={modalSaving}
+                className="inline-flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl shadow-xs hover:shadow transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 id="modal-btn-confirm"
               >
-                + Tambah Catatan
+                {modalSaving ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    Menyimpan...
+                  </>
+                ) : (
+                  <>
+                    {isEditingNote ? "Simpan Perubahan" : "Tambah Catatan"}
+                  </>
+                )}
               </button>
             </div>
           </div>
