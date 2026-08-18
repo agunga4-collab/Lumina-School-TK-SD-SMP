@@ -1377,19 +1377,51 @@ export default function WeeklyReview() {
         </div>
         <div className="p-1.5 flex-1 flex flex-col justify-start bg-white gap-2">
           {snap?.photoUrl && !hasError ? (
-            <div className="h-[160px] aspect-[3/4] mx-auto overflow-hidden rounded-sm border border-gray-100 bg-gray-50 flex items-center justify-center">
+            <div 
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '100%',
+                height: '160px',
+                minHeight: '0',
+                backgroundColor: 'white',
+                overflow: 'visible'
+              }}
+              className="mx-auto rounded-sm border border-gray-100"
+            >
               <img 
                 src={snap.photoUrl} 
                 alt={`Snapshot ${dayKey}`} 
                 onLoad={(e) => handleImageLoad(dayKey, e)}
                 onError={() => handleImageError(dayKey)}
-                className="max-w-full max-h-full w-auto h-auto object-contain"
+                style={{
+                  display: 'block',
+                  width: 'auto',
+                  height: 'auto',
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  objectFit: 'contain',
+                  objectPosition: 'center',
+                }}
                 referrerPolicy="no-referrer"
                 crossOrigin="anonymous"
               />
             </div>
           ) : (
-            <div className="h-[160px] aspect-[3/4] mx-auto bg-gray-50/70 border border-dashed border-gray-200 flex flex-col items-center justify-center p-2 text-center rounded-sm">
+            <div 
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '100%',
+                height: '160px',
+                minHeight: '0',
+                backgroundColor: '#f9fafb',
+              }}
+              className="mx-auto border border-dashed border-gray-200 p-2 text-center rounded-sm"
+            >
               <ImageIcon className="w-5 h-5 text-gray-400 mb-1" />
               <span className="text-[10px] text-gray-500 font-bold leading-tight">Dokumentasi belum tersedia</span>
               <span className="text-[8.5px] text-gray-400 font-medium leading-tight mt-0.5 max-w-[130px]">
