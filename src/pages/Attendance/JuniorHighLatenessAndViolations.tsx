@@ -57,6 +57,25 @@ const getFormattedDateLong = (dateStr: string) => {
   return d.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 };
 
+const getInitials = (name: string) => {
+  if (!name) return '';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
+};
+
+const getLatenessMinutes = (timeStr: string) => {
+  if (!timeStr) return 0;
+  const parts = timeStr.split(':');
+  if (parts.length < 2) return 0;
+  const h = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  if (isNaN(h) || isNaN(m)) return 0;
+  const mins = h * 60 + m;
+  const limitMin = 7 * 60 + 30; // 07:30
+  return Math.max(0, mins - limitMin);
+};
+
 export default function JuniorHighLatenessAndViolations() {
   const navigate = useNavigate();
   const [searchParams, setSearchParamsState] = useSearchParams();
@@ -1254,30 +1273,31 @@ export default function JuniorHighLatenessAndViolations() {
             <div className="lg:col-span-2 space-y-6">
               
               {/* Form Card */}
-              <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-6">
-                <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="bg-white rounded-3xl p-4 md:p-6 shadow-sm border border-gray-100 space-y-6">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div className="flex items-center gap-3">
-                    <div className="p-2.5 bg-blue-50 text-blue-600 rounded-2xl border border-blue-100">
+                    <div className="p-2.5 bg-blue-50 text-blue-600 rounded-2xl border border-blue-100 shrink-0">
                       <Clock size={18} />
                     </div>
                     <div>
                       <h2 className="font-black text-gray-900 text-sm">Catat Kedatangan Siswa</h2>
-                      <p className="text-xs text-gray-400 mt-0.5">Waktu kedatangan di bawah jam 07:30 dianggap tepat waktu</p>
+                      <p className="text-xs text-gray-400 mt-0.5 md:block hidden">Waktu kedatangan di bawah jam 07:30 dianggap tepat waktu</p>
+                      <p className="text-xs text-amber-600 font-bold mt-0.5 block md:hidden">Batas tepat waktu: 07:30</p>
                     </div>
                   </div>
                   
                   {/* Date & Class Selectors */}
-                  <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
                     <input
                       type="date"
                       value={latenessDate}
                       onChange={(e) => setLatenessDate(e.target.value)}
-                      className="bg-gray-50/70 border border-gray-100 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      className="w-full sm:w-auto bg-gray-50/70 border border-gray-100 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 h-11 sm:h-auto"
                     />
                     <select
                       value={selectedClassId}
                       onChange={(e) => setSelectedClassId(e.target.value)}
-                      className="bg-gray-50/70 border border-gray-100 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer"
+                      className="w-full sm:w-auto bg-gray-50/70 border border-gray-100 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer h-11 sm:h-auto"
                     >
                       {classes.map(c => (
                         <option key={c.id} value={c.id}>{c.name}</option>
@@ -1296,12 +1316,24 @@ export default function JuniorHighLatenessAndViolations() {
                     placeholder="Cari siswa dalam kelas ini..."
                     value={latenessSearch}
                     onChange={(e) => setLatenessSearch(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-gray-50/50 border border-gray-100 rounded-2xl text-xs outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium"
+                    className="w-full pl-10 pr-4 py-3 md:py-2.5 bg-gray-50/50 border border-gray-100 rounded-2xl text-xs outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium h-11"
                   />
                 </div>
 
-                {/* Entry Table */}
-                <div className="overflow-x-auto rounded-2xl border border-gray-50">
+                {/* Mobile Ringkasan */}
+                {!loadingMetadata && filteredLatenessClassStudents.length > 0 && (
+                  <div className="block md:hidden flex items-center justify-between px-1 text-xs font-black text-gray-500 uppercase tracking-wider pb-1">
+                    <span>{filteredLatenessClassStudents.length} Siswa</span>
+                    {filteredLatenessClassStudents.filter(s => s.arrivalTime && s.arrivalTime > '07:30').length > 0 && (
+                      <span className="text-amber-600 bg-amber-50 px-2.5 py-0.5 rounded-lg">
+                        {filteredLatenessClassStudents.filter(s => s.arrivalTime && s.arrivalTime > '07:30').length} terlambat
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Entry List/Table Area */}
+                <div>
                   {loadingMetadata ? (
                     <div className="p-12 flex flex-col items-center justify-center gap-2 text-gray-400">
                       <Loader2 size={24} className="animate-spin text-blue-500" />
@@ -1318,59 +1350,212 @@ export default function JuniorHighLatenessAndViolations() {
                       )}
                     </div>
                   ) : (
-                    <table className="w-full text-left">
-                      <thead className="bg-gray-50/50">
-                        <tr>
-                          <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa</th>
-                          <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Waktu Tiba</th>
-                          <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Alasan / Keterangan</th>
-                          <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Aksi</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50/50">
-                        {filteredLatenessClassStudents.map(student => (
-                          <tr key={student.id} className="hover:bg-gray-50/30 transition-all">
-                            <td className="px-5 py-3.5">
-                              <p className="font-bold text-gray-900 text-sm">{student.name}</p>
-                              <p className="text-[10px] font-semibold text-gray-400 mt-0.5 uppercase tracking-wider">
-                                Frekuensi bulan ini: {student.countThisMonth}x
-                              </p>
-                            </td>
-                            <td className="px-5 py-3.5">
-                              <div className="flex items-center gap-1.5">
-                                <input
-                                  type="text"
-                                  placeholder="07:30"
-                                  inputMode="numeric"
-                                  value={student.arrivalTime}
-                                  onChange={(e) => handleTimeChange(student.id, e.target.value, updateLatenessTime)}
-                                  onBlur={(e) => handleTimeBlur(student.id, e.target.value, updateLatenessTime)}
-                                  className="bg-gray-50 border border-gray-100 rounded-lg px-2.5 py-1.5 text-xs font-black text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 w-24 text-center"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => updateLatenessTime(student.id, getCurrentTimeStr())}
-                                  className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                                  title="Set jam saat ini"
-                                >
-                                  <Clock size={14} />
-                                </button>
-                              </div>
-                            </td>
-                            <td className="px-5 py-3.5">
-                              {(() => {
-                                const isCustom = latenessCustomReasons[student.id] || 
-                                  (student.reason !== '' && !JUNIOR_HIGH_REASONS.includes(student.reason));
+                    <>
+                      {/* DESKTOP TABLE VIEW */}
+                      <div className="hidden md:block overflow-x-auto rounded-2xl border border-gray-50">
+                        <table className="w-full text-left">
+                          <thead className="bg-gray-50/50">
+                            <tr>
+                              <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa</th>
+                              <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Waktu Tiba</th>
+                              <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Alasan / Keterangan</th>
+                              <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Aksi</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-50/50">
+                            {filteredLatenessClassStudents.map(student => (
+                              <tr key={student.id} className="hover:bg-gray-50/30 transition-all">
+                                <td className="px-5 py-3.5">
+                                  <p className="font-bold text-gray-900 text-sm">{student.name}</p>
+                                  <p className="text-[10px] font-semibold text-gray-400 mt-0.5 uppercase tracking-wider">
+                                    Frekuensi bulan ini: {student.countThisMonth}x
+                                  </p>
+                                </td>
+                                <td className="px-5 py-3.5">
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      type="text"
+                                      placeholder="07:30"
+                                      inputMode="numeric"
+                                      value={student.arrivalTime}
+                                      onChange={(e) => handleTimeChange(student.id, e.target.value, updateLatenessTime)}
+                                      onBlur={(e) => handleTimeBlur(student.id, e.target.value, updateLatenessTime)}
+                                      className="bg-gray-50 border border-gray-100 rounded-lg px-2.5 py-1.5 text-xs font-black text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 w-24 text-center"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => updateLatenessTime(student.id, getCurrentTimeStr())}
+                                      className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                                      title="Set jam saat ini"
+                                    >
+                                      <Clock size={14} />
+                                    </button>
+                                  </div>
+                                </td>
+                                <td className="px-5 py-3.5">
+                                  {(() => {
+                                    const isCustom = latenessCustomReasons[student.id] || 
+                                      (student.reason !== '' && !JUNIOR_HIGH_REASONS.includes(student.reason));
 
-                                if (isCustom) {
-                                  return (
+                                    if (isCustom) {
+                                      return (
+                                        <div className="flex items-center gap-2">
+                                          <input
+                                            type="text"
+                                            placeholder="Tulis alasan..."
+                                            value={student.reason}
+                                            onChange={(e) => updateLatenessReason(student.id, e.target.value)}
+                                            className="bg-transparent border-b border-gray-200 focus:border-blue-500 outline-none text-xs py-1 placeholder:text-gray-300 font-bold text-gray-700 w-full"
+                                            autoFocus
+                                          />
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setLatenessCustomReasons(prev => ({ ...prev, [student.id]: false }));
+                                              updateLatenessReason(student.id, '');
+                                            }}
+                                            className="text-[10px] font-black text-gray-400 hover:text-blue-600 uppercase tracking-wider"
+                                          >
+                                            Batal
+                                          </button>
+                                        </div>
+                                      );
+                                    }
+
+                                    return (
+                                      <select
+                                        value={student.reason}
+                                        onChange={(e) => {
+                                          if (e.target.value === 'custom') {
+                                            setLatenessCustomReasons(prev => ({ ...prev, [student.id]: true }));
+                                            updateLatenessReason(student.id, '');
+                                          } else {
+                                            updateLatenessReason(student.id, e.target.value);
+                                          }
+                                        }}
+                                        className="bg-transparent border-b border-gray-100 hover:border-gray-200 focus:border-blue-500 outline-none text-xs py-1.5 font-bold text-gray-700 cursor-pointer w-full"
+                                      >
+                                        <option value="">-- Pilih Alasan --</option>
+                                        {JUNIOR_HIGH_REASONS.map(r => (
+                                          <option key={r} value={r}>{r}</option>
+                                        ))}
+                                        <option value="custom" className="text-blue-600 font-bold">Lainnya...</option>
+                                      </select>
+                                    );
+                                  })()}
+                                </td>
+                                <td className="px-5 py-3.5 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => removeLatenessDraft(student.id)}
+                                    className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                                    title="Reset"
+                                    disabled={!student.arrivalTime}
+                                  >
+                                    <X size={16} />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* MOBILE CARD VIEW */}
+                      <div className="block md:hidden space-y-3 pb-24">
+                        {filteredLatenessClassStudents.map(student => {
+                          const isLate = student.arrivalTime && student.arrivalTime > '07:30';
+                          const isOntime = student.arrivalTime && student.arrivalTime <= '07:30';
+                          const lateMins = getLatenessMinutes(student.arrivalTime);
+                          const initials = getInitials(student.name);
+
+                          const isCustom = latenessCustomReasons[student.id] || 
+                            (student.reason !== '' && !JUNIOR_HIGH_REASONS.includes(student.reason));
+
+                          return (
+                            <div 
+                              key={student.id}
+                              className="p-4 bg-gray-50/40 border border-gray-100 rounded-2xl space-y-3 shadow-sm hover:bg-gray-50/80 transition-all"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  {/* Avatar / Inisial */}
+                                  <div className="w-9 h-9 rounded-full bg-blue-50 border border-blue-100 text-blue-600 flex items-center justify-center font-bold text-xs shrink-0 uppercase">
+                                    {initials}
+                                  </div>
+                                  {/* Student Name & Metadata */}
+                                  <div className="min-w-0">
+                                    <p className="font-bold text-gray-900 text-sm leading-snug break-words">
+                                      {student.name}
+                                    </p>
+                                    <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[11px] font-semibold text-gray-500">
+                                      {isOntime && (
+                                        <span className="text-green-600 bg-green-50 px-1.5 py-0.5 rounded-md">
+                                          Tepat waktu
+                                        </span>
+                                      )}
+                                      {isLate && (
+                                        <span className="text-red-600 bg-red-50 px-1.5 py-0.5 rounded-md">
+                                          Terlambat +{lateMins} mnt
+                                        </span>
+                                      )}
+                                      {!student.arrivalTime && (
+                                        <span className="text-gray-400">Belum diisi</span>
+                                      )}
+                                      <span className="text-gray-300">•</span>
+                                      <span className={cn(
+                                        "px-1.5 py-0.5 rounded-md",
+                                        student.countThisMonth > 0 ? "text-amber-700 bg-amber-50" : "text-gray-400"
+                                      )}>
+                                        Bulan ini: {student.countThisMonth}×
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Inputs & Timings */}
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <input
+                                    type="text"
+                                    placeholder="07:30"
+                                    inputMode="numeric"
+                                    value={student.arrivalTime}
+                                    onChange={(e) => handleTimeChange(student.id, e.target.value, updateLatenessTime)}
+                                    onBlur={(e) => handleTimeBlur(student.id, e.target.value, updateLatenessTime)}
+                                    className="bg-white border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 rounded-xl px-2.5 py-2.5 text-sm font-black text-gray-700 w-20 text-center outline-none h-11"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => updateLatenessTime(student.id, getCurrentTimeStr())}
+                                    className="p-2.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 bg-white border border-gray-200 rounded-xl transition-all h-11 flex items-center justify-center shrink-0"
+                                    title="Set jam saat ini"
+                                  >
+                                    <Clock size={16} />
+                                  </button>
+                                  {student.arrivalTime && (
+                                    <button
+                                      type="button"
+                                      onClick={() => removeLatenessDraft(student.id)}
+                                      className="p-2.5 text-gray-400 hover:text-red-500 hover:bg-red-50 bg-white border border-gray-200 rounded-xl transition-all h-11 flex items-center justify-center shrink-0"
+                                      title="Reset"
+                                    >
+                                      <X size={16} />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Custom / select Reason drop down */}
+                              {student.arrivalTime && (
+                                <div className="pt-2 border-t border-gray-100">
+                                  {isCustom ? (
                                     <div className="flex items-center gap-2">
                                       <input
                                         type="text"
                                         placeholder="Tulis alasan..."
                                         value={student.reason}
                                         onChange={(e) => updateLatenessReason(student.id, e.target.value)}
-                                        className="bg-transparent border-b border-gray-200 focus:border-blue-500 outline-none text-xs py-1 placeholder:text-gray-300 font-bold text-gray-700 w-full"
+                                        className="bg-white border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 rounded-xl text-xs py-2 px-3 placeholder:text-gray-300 font-bold text-gray-700 w-full h-10 outline-none"
                                         autoFocus
                                       />
                                       <button
@@ -1379,60 +1564,47 @@ export default function JuniorHighLatenessAndViolations() {
                                           setLatenessCustomReasons(prev => ({ ...prev, [student.id]: false }));
                                           updateLatenessReason(student.id, '');
                                         }}
-                                        className="text-[10px] font-black text-gray-400 hover:text-blue-600 uppercase tracking-wider"
+                                        className="px-2.5 h-10 bg-gray-100 hover:bg-gray-200 text-gray-500 font-bold rounded-xl text-[10px] uppercase tracking-wider shrink-0"
                                       >
                                         Batal
                                       </button>
                                     </div>
-                                  );
-                                }
-
-                                return (
-                                  <select
-                                    value={student.reason}
-                                    onChange={(e) => {
-                                      if (e.target.value === 'custom') {
-                                        setLatenessCustomReasons(prev => ({ ...prev, [student.id]: true }));
-                                        updateLatenessReason(student.id, '');
-                                      } else {
-                                        updateLatenessReason(student.id, e.target.value);
-                                      }
-                                    }}
-                                    className="bg-transparent border-b border-gray-100 hover:border-gray-200 focus:border-blue-500 outline-none text-xs py-1.5 font-bold text-gray-700 cursor-pointer w-full"
-                                  >
-                                    <option value="">-- Pilih Alasan --</option>
-                                    {JUNIOR_HIGH_REASONS.map(r => (
-                                      <option key={r} value={r}>{r}</option>
-                                    ))}
-                                    <option value="custom" className="text-blue-600 font-bold">Lainnya...</option>
-                                  </select>
-                                );
-                              })()}
-                            </td>
-                            <td className="px-5 py-3.5 text-right">
-                              <button
-                                type="button"
-                                onClick={() => removeLatenessDraft(student.id)}
-                                className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
-                                title="Reset"
-                                disabled={!student.arrivalTime}
-                              >
-                                <X size={16} />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                                  ) : (
+                                    <select
+                                      value={student.reason}
+                                      onChange={(e) => {
+                                        if (e.target.value === 'custom') {
+                                          setLatenessCustomReasons(prev => ({ ...prev, [student.id]: true }));
+                                          updateLatenessReason(student.id, '');
+                                        } else {
+                                          updateLatenessReason(student.id, e.target.value);
+                                        }
+                                      }}
+                                      className="w-full bg-white border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 rounded-xl text-xs px-3 py-2.5 font-bold text-gray-700 cursor-pointer h-10 outline-none"
+                                    >
+                                      <option value="">-- Pilih Alasan --</option>
+                                      {JUNIOR_HIGH_REASONS.map(r => (
+                                        <option key={r} value={r}>{r}</option>
+                                      ))}
+                                      <option value="custom" className="text-blue-600 font-bold">Lainnya...</option>
+                                    </select>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
                   )}
                 </div>
 
                 {/* Save Button */}
-                <div className="flex justify-end pt-2">
+                <div className="pt-2 md:block flex flex-col w-full md:relative fixed bottom-0 left-0 right-0 p-4 md:p-0 bg-white md:bg-transparent border-t border-gray-100 md:border-0 z-20 shadow-[0_-4px_12px_rgba(0,0,0,0.03)] md:shadow-none">
                   <button
                     disabled={savingLateness || loadingMetadata}
                     onClick={handleSaveLateness}
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-black px-8 py-3 rounded-2xl shadow-lg shadow-blue-100 transition-all disabled:opacity-50 text-xs uppercase tracking-wider cursor-pointer"
+                    className="w-full md:w-auto flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-black px-8 py-3.5 rounded-2xl shadow-lg shadow-blue-100 transition-all disabled:opacity-50 text-xs uppercase tracking-wider cursor-pointer h-11"
                   >
                     {savingLateness ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
                     {savingLateness ? 'Menyimpan...' : 'Simpan'}
