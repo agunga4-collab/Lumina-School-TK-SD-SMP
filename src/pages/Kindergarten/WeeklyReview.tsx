@@ -1383,10 +1383,7 @@ export default function WeeklyReview() {
                 alt={`Snapshot ${dayKey}`} 
                 onLoad={(e) => handleImageLoad(dayKey, e)}
                 onError={() => handleImageError(dayKey)}
-                className={isPortrait 
-                  ? "max-w-full max-h-full object-contain" 
-                  : "w-full h-full object-cover object-center"
-                }
+                className="max-w-full max-h-full w-auto h-auto object-contain"
                 referrerPolicy="no-referrer"
                 crossOrigin="anonymous"
               />
