@@ -1386,7 +1386,9 @@ export default function WeeklyReview() {
                 height: '160px',
                 minHeight: '0',
                 backgroundColor: 'white',
-                overflow: 'visible'
+                overflow: 'visible',
+                padding: '12px',
+                boxSizing: 'border-box'
               }}
               className="mx-auto rounded-sm border border-gray-100"
             >
