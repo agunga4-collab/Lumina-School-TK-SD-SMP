@@ -370,44 +370,160 @@ export default function Observation() {
 
     async function fetchDailyContext() {
       setIsDailyContextLoading(true);
-      const contextId = `${selectedClassId}_${observationDate}`;
-      const contextRef = doc(db, 'kindergarten_observation_daily_contexts', contextId);
-      try {
-        const snap = await getDoc(contextRef);
-        logFirestoreRead('dailyContexts', 1);
-        if (!active) return;
-        if (snap.exists()) {
-          const data = snap.data();
-          setDailyContext(data);
-          setIsEditingDailyContext(false);
-          // Set selection states to match context automatically
-          if (data.sentraId) {
-            setSelectedActivity(data.sentraId);
-          }
-          if (data.domainId !== undefined) {
-            setSelectedDomain(data.domainId || "");
-          }
-        } else {
-          setDailyContext(null);
-          setIsEditingDailyContext(false);
-          // Only reset selections if they were not passed via URL parameters
-          if (!paramActivity && !paramDomain) {
-            setSelectedActivity("");
-            setSelectedDomain("");
+      const canonicalClassId = resolveCanonicalClassId(selectedClassId, classes) || selectedClassId;
+
+      // 1. Gather all existing sessions for canonicalClassId + selectedDate
+      const localSessions: any[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('kg_obs_hist_')) {
+          try {
+            const raw = localStorage.getItem(key);
+            if (raw) {
+              const payload = JSON.parse(raw);
+              const obsTimestamp = payload.timestamp || Date.now();
+              const obsDateStr = payload.date || formatDateLocal(new Date(obsTimestamp));
+              if (obsDateStr === observationDate) {
+                const rawDocClassId = payload.classId || '';
+                const docCanonicalClassId = resolveCanonicalClassId(rawDocClassId, classes) || rawDocClassId;
+                if (docCanonicalClassId === canonicalClassId) {
+                  localSessions.push({ ...payload, id: key });
+                }
+              }
+            }
+          } catch (e) {
+            // ignore
           }
         }
-      } catch (err) {
-        console.error("Error fetching daily context:", err);
-      } finally {
-        if (active) setIsDailyContextLoading(false);
       }
+
+      const firestoreSessions: any[] = [];
+      try {
+        const qObs = query(
+          collection(db, 'observations'),
+          where('date', '==', observationDate)
+        );
+        const qSnap = await getDocs(qObs);
+        logFirestoreRead('observations', qSnap.docs.length || 1);
+        qSnap.docs.forEach(docSnap => {
+          const d = docSnap.data();
+          const rawDocClassId = d.classId || '';
+          const docCanonicalClassId = resolveCanonicalClassId(rawDocClassId, classes) || rawDocClassId;
+          if (docCanonicalClassId === canonicalClassId) {
+            firestoreSessions.push({ ...d, id: docSnap.id });
+          }
+        });
+      } catch (fsErr) {
+        console.warn("[Fetch Session Context] Firestore error:", fsErr);
+      }
+
+      const allSessions = [...firestoreSessions, ...localSessions];
+
+      // Extract context fields helper
+      const extractSentraAndDomain = (docData: any) => {
+        const sentra = docData.activity || docData.centerId || docData.title || docData.selectedActivity || docData.sentraId;
+        const domain = docData.domain || docData.domainId || docData.caption || docData.selectedDomain;
+        return { sentra, domain };
+      };
+
+      let foundContextSource: 'SESSION' | 'DAILY_CONTEXT' | 'EMPTY' = 'EMPTY';
+      let resolvedSentraId: string = "";
+      let resolvedDomainId: string = "";
+      let resolvedDailyContextPayload: any = null;
+
+      // Rule 1: Precedence goes to an existing observation session
+      const validSession = allSessions.find(s => {
+        const { sentra, domain } = extractSentraAndDomain(s);
+        return sentra && (sentra === 'SPECIAL_ACTIVITY' || domain);
+      });
+
+      if (validSession) {
+        const { sentra, domain } = extractSentraAndDomain(validSession);
+        resolvedSentraId = sentra;
+        resolvedDomainId = (sentra === 'SPECIAL_ACTIVITY') ? "" : (domain || "");
+        foundContextSource = 'SESSION';
+        
+        resolvedDailyContextPayload = {
+          classId: selectedClassId,
+          className: classes.find((c: any) => c.id === selectedClassId)?.name || 'General',
+          observationDate: observationDate,
+          sentraId: resolvedSentraId,
+          sentraName: resolvedSentraId === 'SPECIAL_ACTIVITY' ? "Kegiatan Khusus" : (activities.find(a => a.id === resolvedSentraId)?.label || resolvedSentraId),
+          domainId: resolvedSentraId === 'SPECIAL_ACTIVITY' ? null : resolvedDomainId,
+          domainName: resolvedSentraId === 'SPECIAL_ACTIVITY' ? "Kegiatan Khusus" : (domains.find(d => d.id === resolvedDomainId)?.label || resolvedDomainId),
+          isSessionPrecedence: true,
+        };
+      }
+
+      // Rule 2: If no valid session context, query daily context
+      if (foundContextSource === 'EMPTY') {
+        const contextId = `${selectedClassId}_${observationDate}`;
+        const contextRef = doc(db, 'kindergarten_observation_daily_contexts', contextId);
+        try {
+          const snap = await getDoc(contextRef);
+          logFirestoreRead('dailyContexts', 1);
+          if (snap.exists()) {
+            const data = snap.data();
+            resolvedSentraId = data.sentraId || "";
+            resolvedDomainId = data.domainId || "";
+            resolvedDailyContextPayload = data;
+            foundContextSource = 'DAILY_CONTEXT';
+          }
+        } catch (err) {
+          console.error("Error fetching daily context doc:", err);
+        }
+      }
+
+      // Rule 3: If neither, empty optional context state
+      if (foundContextSource === 'EMPTY') {
+        resolvedDailyContextPayload = null;
+        if (!paramActivity && !paramDomain) {
+          resolvedSentraId = "";
+          resolvedDomainId = "";
+        } else {
+          resolvedSentraId = paramActivity || "";
+          resolvedDomainId = paramDomain || "";
+        }
+      }
+
+      // DEV-only console debugging
+      console.log(
+        `[DEV-only Context Diagnostic]\n` +
+        `- canonical classId: ${canonicalClassId}\n` +
+        `- selected date: ${observationDate}\n` +
+        `- session documents found count: ${allSessions.length}\n` +
+        `- session IDs: ${JSON.stringify(allSessions.map(s => s.id))}\n` +
+        `- activity/centerId/title values: ${JSON.stringify(allSessions.map(s => s.activity || s.centerId || s.title || s.selectedActivity || s.sentraId))}\n` +
+        `- domain/domainId/caption values: ${JSON.stringify(allSessions.map(s => s.domain || s.domainId || s.caption || s.selectedDomain))}\n` +
+        `- daily context found: ${foundContextSource === 'DAILY_CONTEXT' ? 'YES' : 'NO'}\n` +
+        `- final source chosen: ${foundContextSource}`
+      );
+
+      if (!active) return;
+
+      setDailyContext(resolvedDailyContextPayload);
+      setIsEditingDailyContext(false);
+
+      if (resolvedSentraId) {
+        setSelectedActivity(resolvedSentraId as any);
+      } else if (!paramActivity) {
+        setSelectedActivity("");
+      }
+
+      if (resolvedDomainId !== undefined) {
+        setSelectedDomain(resolvedDomainId as any);
+      } else if (!paramDomain) {
+        setSelectedDomain("");
+      }
+
+      setIsDailyContextLoading(false);
     }
 
     fetchDailyContext();
     return () => {
       active = false;
     };
-  }, [selectedClassId, observationDate, paramActivity, paramDomain]);
+  }, [selectedClassId, observationDate, paramActivity, paramDomain, classes]);
 
   // Save/Update Daily Context to Firestore
   const handleSaveDailyContext = async (targetActivity: KGActivity | "", targetDomain: KGDomain | "") => {
