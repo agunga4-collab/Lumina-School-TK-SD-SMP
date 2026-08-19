@@ -20,7 +20,7 @@ import { useAcademicYear } from '../../context/AcademicYearContext';
 import { useAuth } from '../../context/AuthContext';
 import { useTeacherAssignedClasses } from '../../hooks/useTeacherAssignedClasses';
 import { normalizeStudentName } from '../../lib/namecentricResolver';
-import { getKindergartenClasses, getKindergartenStudents, logFirestoreRead } from '../../lib/kindergartenMetadataCache';
+import { getKindergartenClasses, getKindergartenStudents, logFirestoreRead, resolveCanonicalClassId } from '../../lib/kindergartenMetadataCache';
 
 const getStudentObs = (obsSource: Record<string, StudentObservation> | undefined, student: any): StudentObservation => {
   if (!obsSource) return { grading: null, notes: '', photo: null };
@@ -299,22 +299,65 @@ export default function Observation() {
   const [gradingSaveStatus, setGradingSaveStatus] = React.useState<Record<string, 'idle' | 'saving' | 'success' | 'error'>>({});
   
   // Observations for students, keyed by studentId
-  const [observations, setObservations] = React.useState<Record<string, StudentObservation>>(() => {
-    // Try to load from localStorage first for stateful interactions
-    const saved = localStorage.getItem('kg_observation_data');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error(e);
+  const [observations, setObservations] = React.useState<Record<string, StudentObservation>>({});
+
+  // Enrollment Audit States
+  const [auditLoading, setAuditLoading] = React.useState<boolean>(false);
+  const [auditResults, setAuditResults] = React.useState<any[] | null>(null);
+  const [showAuditPanel, setShowAuditPanel] = React.useState<boolean>(false);
+
+  const handleRunEnrollmentAudit = async () => {
+    setAuditLoading(true);
+    setAuditResults(null);
+    try {
+      const canonicalIds = new Set(classes.map(c => c.id));
+      const enrollmentsRef = collection(db, 'enrollments');
+      const q = query(
+        enrollmentsRef,
+        where('unitId', '==', 'KINDERGARTEN'),
+        where('academicYear', '==', '2026/2027')
+      );
+      const snap = await getDocs(q);
+      logFirestoreRead('enrollments', snap.docs.length);
+
+      const auditList: any[] = [];
+      for (const docSnap of snap.docs) {
+        const data = docSnap.data();
+        const rawClassId = data.classId || '';
+
+        // Only audit if classId is non-canonical
+        if (rawClassId && !canonicalIds.has(rawClassId)) {
+          const resolvedCanonicalId = resolveCanonicalClassId(rawClassId, classes);
+          
+          let studentName = 'Unknown Student';
+          if (data.studentId) {
+            const studentDocRef = doc(db, 'students', data.studentId);
+            const studentSnap = await getDoc(studentDocRef);
+            logFirestoreRead('students', 1);
+            if (studentSnap.exists()) {
+              studentName = studentSnap.data().fullName || studentSnap.data().name || 'Unknown Student';
+            }
+          }
+
+          auditList.push({
+            enrollmentDocId: docSnap.id,
+            studentId: data.studentId || '',
+            studentName,
+            rawClassId,
+            resolvedCanonicalClassId: resolvedCanonicalId || 'Unresolved/Ambiguous'
+          });
+        }
       }
+
+      setAuditResults(auditList);
+      toast.success(`Audit Selesai! Menemukan ${auditList.length} data non-canonical.`);
+    } catch (auditErr: any) {
+      console.error("[Audit Error]", auditErr);
+      toast.error(`Gagal menjalankan audit: ${auditErr.message || String(auditErr)}`);
+    } finally {
+      setAuditLoading(false);
     }
-    // Default initial data
-    return getStoredStudents().reduce((acc, student) => {
-      acc[student.id] = { grading: null, notes: '', photo: null };
-      return acc;
-    }, {} as Record<string, StudentObservation>);
-  });
+  };
 
   // Fetch Daily Context when Class or Date changes
   React.useEffect(() => {
@@ -436,11 +479,22 @@ export default function Observation() {
   const recognitionRef = React.useRef<any>(null);
 
   const isStudentInClass = (studClassId: string, activeClassObj: { id: string; name: string }) => {
+    if (!studClassId || !activeClassObj) return false;
+
+    // Use deterministic shared resolveCanonicalClassId utility when classes list is loaded
+    if (classes && classes.length > 0) {
+      const studentCanonicalId = resolveCanonicalClassId(studClassId, classes);
+      if (studentCanonicalId && studentCanonicalId === activeClassObj.id) {
+        return true;
+      }
+      return false;
+    }
+
+    // Fallback during initial load when classes state is not yet populated
     const sClass = (studClassId || '').trim().toLowerCase();
     const actId = (activeClassObj.id || '').trim().toLowerCase();
     const actName = (activeClassObj.name || '').trim().toLowerCase();
     
-    if (!sClass) return false;
     if (sClass === actId || sClass === actName) return true;
     
     const norm = (str: string) => str.replace(/[\s\-_]+/g, '').toLowerCase();
@@ -536,6 +590,22 @@ export default function Observation() {
 
     loadKindergartenStudentsData();
   }, [activeYear]);
+
+  // Technical Dev/Admin Diagnostic Log for hidden non-roster legacy entries
+  React.useEffect(() => {
+    if (selectedClassId && observations && Object.keys(observations).length > 0) {
+      const activeClassObj = classes.find(c => c.id === selectedClassId);
+      if (activeClassObj) {
+        const classStudents = students.filter(student => isStudentInClass(student.classId, activeClassObj));
+        const classStudentIds = new Set(classStudents.map(s => s.id));
+        const totalKeys = Object.keys(observations);
+        const hiddenKeys = totalKeys.filter(k => !classStudentIds.has(k));
+        if (hiddenKeys.length > 0) {
+          console.warn(`Observation session contains ${hiddenKeys.length} hidden non-roster legacy entries`);
+        }
+      }
+    }
+  }, [selectedClassId, observations, students, classes]);
 
   // Unified monthly observation aggregator for Rekap Bulanan — optimized to load on-demand by month and year
   const loadRecapData = async () => {
@@ -1475,7 +1545,10 @@ export default function Observation() {
           }
 
           // No entry, initialize empty
-          const cleared = getStoredStudents().reduce((acc, kid) => {
+          const classStudents = activeClassObj
+            ? students.filter(student => isStudentInClass(student.classId, activeClassObj))
+            : [];
+          const cleared = classStudents.reduce((acc, kid) => {
             acc[kid.id] = { grading: null, notes: '', photo: null };
             return acc;
           }, {} as Record<string, StudentObservation>);
@@ -1497,7 +1570,10 @@ export default function Observation() {
       } catch (err) {
         console.error("Error fetching single observation doc:", err);
         if (!active) return;
-        const cleared = getStoredStudents().reduce((acc, kid) => {
+        const classStudents = activeClassObj
+          ? students.filter(student => isStudentInClass(student.classId, activeClassObj))
+          : [];
+        const cleared = classStudents.reduce((acc, kid) => {
           acc[kid.id] = { grading: null, notes: '', photo: null };
           return acc;
         }, {} as Record<string, StudentObservation>);
@@ -4878,6 +4954,113 @@ export default function Observation() {
             </div>
 
           </div>
+        </div>
+      )}
+
+      {/* DEVELOPER & ADMIN ENROLLMENT AUDIT PANEL */}
+      {profile?.role === 'SUPER_ADMIN' && (
+        <div className="bg-white rounded-3xl p-8 border border-gray-150 shadow-sm mt-8 space-y-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-100 pb-5">
+            <div>
+              <h2 className="text-lg font-black text-gray-900 tracking-tight uppercase flex items-center gap-2">
+                <ClipboardList size={18} className="text-indigo-600" />
+                Admin & Developer Enrollment Audit
+              </h2>
+              <p className="text-xs text-gray-500 font-medium mt-1">
+                Read-only diagnostic utility to audit Kindergarten enrollments in 2026/2027 for non-canonical classId references.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleRunEnrollmentAudit}
+              disabled={auditLoading}
+              className="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white font-black text-xs uppercase tracking-wider rounded-xl transition active:scale-95 flex items-center gap-2 cursor-pointer shadow-sm shadow-indigo-150 border-0"
+            >
+              {auditLoading ? (
+                <>
+                  <Loader2 className="animate-spin" size={14} />
+                  Running Audit...
+                </>
+              ) : (
+                <>
+                  <Activity size={14} />
+                  Run Non-Mutating Audit
+                </>
+              )}
+            </button>
+          </div>
+
+          {auditResults !== null && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-gray-700">
+                  Found <strong className="text-red-600 font-black">{auditResults.length}</strong> non-canonical enrollment records
+                </span>
+                <span className="text-[10px] bg-amber-50 border border-amber-200 text-amber-700 px-2.5 py-1 rounded-md font-bold uppercase tracking-wide">
+                  Read-Only Mode — No Data Altered
+                </span>
+              </div>
+
+              {auditResults.length === 0 ? (
+                <div className="text-center py-8 bg-gray-50 rounded-2xl border border-gray-100 text-xs font-bold text-gray-500">
+                  No non-canonical enrollment records found! All active enrollments are perfectly canonical.
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-2xl border border-gray-100">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-100 text-[10px] font-black text-gray-400 uppercase tracking-wider">
+                        <th className="p-4">Enrollment Doc ID</th>
+                        <th className="p-4">Student ID / Name</th>
+                        <th className="p-4">Raw classId (Incorrect)</th>
+                        <th className="p-4">Resolved Canonical classId</th>
+                        <th className="p-4">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50 font-semibold text-gray-700">
+                      {auditResults.map((res, idx) => {
+                        const isAlmahyra = res.studentId === '2602014';
+                        return (
+                          <tr key={idx} className={`hover:bg-gray-50/50 transition ${isAlmahyra ? 'bg-amber-50/50 hover:bg-amber-50' : ''}`}>
+                            <td className="p-4 font-mono text-[10px] text-gray-500">{res.enrollmentDocId}</td>
+                            <td className="p-4">
+                              <div className="font-extrabold text-gray-900">{res.studentName}</div>
+                              <div className="text-[10px] text-gray-400 font-mono mt-0.5">ID: {res.studentId}</div>
+                            </td>
+                            <td className="p-4">
+                              <span className="px-2 py-1 bg-red-50 text-red-700 rounded text-[10px] font-bold border border-red-100">
+                                {res.rawClassId}
+                              </span>
+                            </td>
+                            <td className="p-4">
+                              {res.resolvedCanonicalClassId === 'Unresolved/Ambiguous' ? (
+                                <span className="text-red-500 italic">Unresolved/Ambiguous</span>
+                              ) : (
+                                <span className="px-2 py-1 bg-emerald-50 text-emerald-700 rounded text-[10px] font-bold border border-emerald-100">
+                                  {res.resolvedCanonicalClassId}
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-4">
+                              {isAlmahyra ? (
+                                <span className="text-[10px] font-black text-amber-700 bg-amber-100 px-2.5 py-0.5 rounded-full uppercase tracking-wider animate-pulse">
+                                  Almahyra Confirmed
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                                  Resolvable
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

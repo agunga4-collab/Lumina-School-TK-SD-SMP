@@ -355,3 +355,62 @@ export function invalidateKindergartenCache() {
     delete cachedUnitStudents[k];
   }
 }
+
+/**
+ * Resolves a canonical class ID or legacy/raw class name to a canonical class ID.
+ * Returns the resolved canonical class ID, or null if unresolved/ambiguous.
+ */
+export function resolveCanonicalClassId(
+  inputClassId: string,
+  classesList: any[]
+): string | null {
+  if (!inputClassId) return null;
+
+  const trimmedInput = inputClassId.trim();
+
+  // 1. Direct match on exact ID (case-insensitive)
+  const directIdMatch = classesList.find(
+    c => c.id.toLowerCase() === trimmedInput.toLowerCase()
+  );
+  if (directIdMatch) {
+    return directIdMatch.id;
+  }
+
+  // 2. Direct match on exact Name (case-insensitive)
+  const directNameMatch = classesList.find(
+    c => c.name.toLowerCase() === trimmedInput.toLowerCase()
+  );
+  if (directNameMatch) {
+    return directNameMatch.id;
+  }
+
+  // 3. Fallback: Exact normalized name matching (removing spaces, dashes, underscores)
+  const normInput = trimmedInput.replace(/[\s\-_]+/g, '').toLowerCase();
+  
+  if (!normInput) return null;
+
+  const normalizedMatches = classesList.filter(c => {
+    const normId = c.id.replace(/[\s\-_]+/g, '').toLowerCase();
+    const normName = c.name.replace(/[\s\-_]+/g, '').toLowerCase();
+    return normInput === normName || normInput === normId;
+  });
+
+  if (normalizedMatches.length === 1) {
+    return normalizedMatches[0].id;
+  }
+
+  if (normalizedMatches.length > 1) {
+    console.warn(
+      `[Developer Warning] Ambiguous class reference: "${inputClassId}" matches multiple classes: ${normalizedMatches
+        .map(c => c.id)
+        .join(', ')}`
+    );
+    return null;
+  }
+
+  console.warn(
+    `[Developer Warning] Unresolved class reference: "${inputClassId}" could not be matched to any canonical class.`
+  );
+  return null;
+}
+
