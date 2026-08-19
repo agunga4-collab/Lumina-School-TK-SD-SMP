@@ -96,6 +96,7 @@ export async function getUnitClasses(unitId: string, academicYear: string, force
           gpkTeacherIds: data.gpkTeacherIds || [],
           homeroomTeacherId: data.homeroomTeacherId || null,
           homeroomTeacherName: data.homeroomTeacherName || null,
+          teacherSignatureUrl: data.teacherSignatureUrl || null,
           status: data.status || 'active'
         };
       }).sort((a, b) => a.name.localeCompare(b.name));

@@ -265,6 +265,59 @@ export default function WeeklyReview() {
     }
   }, [filteredStudents, selectedStudentId]);
 
+  const [resolvedSignatureUrl, setResolvedSignatureUrl] = React.useState<string | null>(null);
+  const [resolvedTeacherName, setResolvedTeacherName] = React.useState<string | null>(null);
+  const [isSignatureLoading, setIsSignatureLoading] = React.useState<boolean>(false);
+
+  React.useEffect(() => {
+    let active = true;
+    const currentStudentObj = students.find(s => s.id === selectedStudentId);
+    const studentClassIdRaw = currentStudentObj?.classId || selectedClassId || "";
+    const studentCanonicalClassId = resolveCanonicalClassId(studentClassIdRaw, classes) || studentClassIdRaw;
+
+    if (!studentCanonicalClassId) {
+      setResolvedSignatureUrl(null);
+      setResolvedTeacherName(null);
+      return;
+    }
+
+    async function fetchClassSignature() {
+      setIsSignatureLoading(true);
+      try {
+        const classRef = doc(db, 'classes', studentCanonicalClassId);
+        const classSnap = await getDoc(classRef);
+        logFirestoreRead('classes', 1);
+        
+        if (classSnap.exists() && active) {
+          const data = classSnap.data();
+          setResolvedSignatureUrl(data.teacherSignatureUrl || null);
+          setResolvedTeacherName(data.homeroomTeacherName || null);
+        } else if (active) {
+          const fallbackClass = classes.find(c => c.id === studentCanonicalClassId) || activeClassObj;
+          setResolvedSignatureUrl(fallbackClass?.teacherSignatureUrl || null);
+          setResolvedTeacherName(fallbackClass?.homeroomTeacherName || null);
+        }
+      } catch (err) {
+        console.error("Error fetching class signature from Firestore:", err);
+        if (active) {
+          const fallbackClass = classes.find(c => c.id === studentCanonicalClassId) || activeClassObj;
+          setResolvedSignatureUrl(fallbackClass?.teacherSignatureUrl || null);
+          setResolvedTeacherName(fallbackClass?.homeroomTeacherName || null);
+        }
+      } finally {
+        if (active) {
+          setIsSignatureLoading(false);
+        }
+      }
+    }
+
+    fetchClassSignature();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedStudentId, selectedClassId, students, classes, activeClassObj]);
+
   // Load start and end date from sessionStorage or use current week's Mon-Fri
   const [startDateStr, setStartDateStr] = React.useState<string>(() => {
     if (paramDate) {
@@ -1994,45 +2047,41 @@ export default function WeeklyReview() {
             </div>
 
             {/* Area Tanda Tangan: Guru Kelas Centered */}
-            {(() => {
-              const currentStudentObj = students.find(s => s.id === selectedStudentId);
-              const studentClassIdRaw = currentStudentObj?.classId || selectedClassId || "";
-              const studentCanonicalClassId = resolveCanonicalClassId(studentClassIdRaw, classes) || studentClassIdRaw;
-              const studentClassObj = classes.find(c => c.id === studentCanonicalClassId) || activeClassObj;
-
-              return (
-                <div className="w-full flex justify-center mt-8 mb-4">
-                  <div className="flex flex-col items-center text-center text-xs w-64">
-                    <span className="font-bold text-gray-500 text-[10px]">{formattedSignDate}</span>
-                    <span className="font-bold text-gray-600 text-[10.5px] mt-0.5">Guru Kelas</span>
-                    
-                    <div className="h-[68px] flex items-center justify-center my-2">
-                      {studentClassObj?.teacherSignatureUrl ? (
-                        <img
-                          src={studentClassObj.teacherSignatureUrl}
-                          alt="Tanda Tangan Guru"
-                          className="max-h-[64px] object-contain mix-blend-multiply"
-                          style={{ objectFit: 'contain' }}
-                          referrerPolicy="no-referrer"
-                        />
-                      ) : (
-                        <span className="text-[9px] text-gray-400 italic select-none leading-tight">
-                          Tanda tangan belum diatur
-                        </span>
-                      )}
+            <div className="w-full flex justify-center mt-8 mb-4">
+              <div className="flex flex-col items-center text-center text-xs w-64">
+                <span className="font-bold text-gray-500 text-[10px]">{formattedSignDate}</span>
+                <span className="font-bold text-gray-600 text-[10.5px] mt-0.5">Guru Kelas</span>
+                
+                <div className="h-[68px] flex items-center justify-center my-2">
+                  {isSignatureLoading ? (
+                    <div className="flex items-center gap-1 text-[9px] text-gray-400">
+                      <Loader2 className="animate-spin" size={10} />
+                      <span>Memuat...</span>
                     </div>
-
-                    <div className="text-center font-sans flex flex-col items-center gap-0.5 w-full">
-                      <span className="text-center font-extrabold text-[11px] text-gray-900 border-b border-solid border-gray-900 w-44 pb-0.5 mx-auto uppercase">
-                        {studentClassObj?.homeroomTeacherName ? studentClassObj.homeroomTeacherName.replace(/^\s*\(UNDANGAN\)\s*/i, "") : (
-                          <span className="text-gray-400 italic font-bold text-[10px]">Guru Kelas Belum Diatur</span>
-                        )}
-                      </span>
-                    </div>
-                  </div>
+                  ) : resolvedSignatureUrl ? (
+                    <img
+                      src={resolvedSignatureUrl}
+                      alt="Tanda Tangan Guru"
+                      className="max-h-[64px] object-contain mix-blend-multiply"
+                      style={{ objectFit: 'contain' }}
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <span className="text-[9px] text-gray-400 italic select-none leading-tight">
+                      Tanda tangan belum diatur
+                    </span>
+                  )}
                 </div>
-              );
-            })()}
+
+                <div className="text-center font-sans flex flex-col items-center gap-0.5 w-full">
+                  <span className="text-center font-extrabold text-[11px] text-gray-900 border-b border-solid border-gray-900 w-44 pb-0.5 mx-auto uppercase">
+                    {resolvedTeacherName ? resolvedTeacherName.replace(/^\s*\(UNDANGAN\)\s*/i, "") : (
+                      <span className="text-gray-400 italic font-bold text-[10px]">Guru Kelas Belum Diatur</span>
+                    )}
+                  </span>
+                </div>
+              </div>
+            </div>
 
             {/* FOOTER BLOCK: Exact matching of Griya Cinere school contacts */}
             <div className="bg-[#109E58] text-white text-center py-2 px-4 text-[8px] font-sans rounded-sm border-t border-emerald-300 mt-auto">
