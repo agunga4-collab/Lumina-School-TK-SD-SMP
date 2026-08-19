@@ -1120,11 +1120,12 @@ export default function WeeklySummary() {
         firestoreAttendance, 
         firestoreObservations, 
         students,
-        firestoreDailyContexts
+        firestoreDailyContexts,
+        classes
       );
     });
     return cache;
-  }, [filteredStudents, startDateStr, endDateStr, firestoreAttendance, firestoreObservations, students, firestoreDailyContexts]);
+  }, [filteredStudents, startDateStr, endDateStr, firestoreAttendance, firestoreObservations, students, firestoreDailyContexts, classes]);
 
   // Load drafts merging the aggregated data, local storage and firefighting states
   const loadAllStudentDrafts = React.useCallback(() => {
@@ -1310,7 +1311,8 @@ export default function WeeklySummary() {
         firestoreAttendance,
         firestoreObservations,
         students,
-        firestoreDailyContexts
+        firestoreDailyContexts,
+        classes
       );
       saveIndividualStudentDraft(studentId, {
         ...rawAggregation,
@@ -1339,7 +1341,8 @@ export default function WeeklySummary() {
         firestoreAttendance,
         firestoreObservations,
         students,
-        firestoreDailyContexts
+        firestoreDailyContexts,
+        classes
       );
     }
 
@@ -1406,7 +1409,8 @@ export default function WeeklySummary() {
         firestoreAttendance,
         firestoreObservations,
         students,
-        firestoreDailyContexts
+        firestoreDailyContexts,
+        classes
       );
     }
 

@@ -1,5 +1,6 @@
 import { KGWeeklyReportDraft, KGDomain, KGActivity } from '../types';
 import { buildStudentNameIndex, resolveAttendanceStudent } from './namecentricResolver';
+import { resolveCanonicalClassId } from './kindergartenMetadataCache';
 
 export const DOMAIN_LABEL_MAP: Record<string, string> = {
   AGAMA_BUDI_PEKERTI: 'Nilai Agama & Budi Pekerti',
@@ -205,13 +206,27 @@ export function getValidStudentPhotoUrl(studentObs: any): string | null {
 }
 
 // Helper: Enforce strict class-matching for general photos (including legacy documents)
-export function isDocCompatibleWithStudent(doc: any, student: any, activeStudents?: any[]): boolean {
-  if (!student || !student.classId) return false;
-  const targetClassId = student.classId;
+export function isDocCompatibleWithStudent(
+  doc: any,
+  student: any,
+  activeStudents?: any[],
+  allClasses?: any[]
+): boolean {
+  if (!student) return false;
+  const rawStudentClassId = student.classId;
+  if (!rawStudentClassId) return false;
 
-  // 1. Strict match if classId exists on document
-  if (doc.classId && doc.classId !== 'unassigned') {
-    return doc.classId === targetClassId;
+  const currentClasses = allClasses || [];
+
+  // Use deterministic class normalization helper to resolve both references to canonical
+  const canonicalStudentClassId = resolveCanonicalClassId(rawStudentClassId, currentClasses) || rawStudentClassId;
+  
+  const rawDocClassId = doc.classId || '';
+  const canonicalDocClassId = rawDocClassId ? (resolveCanonicalClassId(rawDocClassId, currentClasses) || rawDocClassId) : '';
+
+  // 1. Strict match if canonicalized classIds exist and are equal
+  if (canonicalDocClassId && canonicalDocClassId !== 'unassigned') {
+    return canonicalDocClassId === canonicalStudentClassId;
   }
 
   // 2. Specific override for "Pra TK Test Kelas" on 11 August
@@ -221,7 +236,7 @@ export function isDocCompatibleWithStudent(doc: any, student: any, activeStudent
 
   if (isAug11 && isPraTKTest) {
     const className = (student.className || '').toLowerCase();
-    if (className.includes('pra tk') || className.includes('pratk') || targetClassId.includes('pra-tk') || targetClassId.includes('pratk') || targetClassId.toLowerCase().includes('test')) {
+    if (className.includes('pra tk') || className.includes('pratk') || canonicalStudentClassId.includes('pra-tk') || canonicalStudentClassId.includes('pratk') || canonicalStudentClassId.toLowerCase().includes('test')) {
       return true;
     }
   }
@@ -232,7 +247,10 @@ export function isDocCompatibleWithStudent(doc: any, student: any, activeStudent
     for (const key of observationKeys) {
       const foundStudent = (activeStudents || []).find(s => s.id === key || s.oldLuminaId === key || s.nis === key);
       if (foundStudent && foundStudent.classId) {
-        return foundStudent.classId === targetClassId;
+        const foundStudentCanonicalClassId = resolveCanonicalClassId(foundStudent.classId, currentClasses) || foundStudent.classId;
+        if (foundStudentCanonicalClassId === canonicalStudentClassId) {
+          return true;
+        }
       }
     }
   }
@@ -246,7 +264,8 @@ export function aggregateKGWeeklyReport(
   selectedDate: Date,
   firestoreAttendanceDocs?: any[],
   firestoreObservationDocs?: any[],
-  activeStudents?: any[]
+  activeStudents?: any[],
+  allClasses?: any[]
 ): KGWeeklyReportDraft {
   const student = (activeStudents || []).find(s => s.id === studentId) ||
                   DEFAULT_STUDENTS.find(s => s.id === studentId) || {
@@ -400,7 +419,7 @@ export function aggregateKGWeeklyReport(
           }
         }
 
-        const isCompatibleDoc = isDocCompatibleWithStudent(payload, student, activeStudents);
+        const isCompatibleDoc = isDocCompatibleWithStudent(payload, student, activeStudents, allClasses);
         if (studentObs && (studentObs.grading || studentObs.notes || studentObs.photo)) {
           weeklyObservationItems.push({
             dayLabel: matchedDay.dayLabel,
@@ -427,12 +446,12 @@ export function aggregateKGWeeklyReport(
             const payload = JSON.parse(raw);
             const obsTimestamp = payload.timestamp || Date.now();
             const obsDateStr = formatDateToKey(new Date(obsTimestamp));
-
+ 
             // Check if this falls in our active week dates
             const matchedDay = dateKeys.find(dk => dk.dateKey === obsDateStr);
             if (matchedDay) {
               const studentObs = payload.observations?.[studentId];
-              const isCompatibleDoc = isDocCompatibleWithStudent(payload, student, activeStudents);
+              const isCompatibleDoc = isDocCompatibleWithStudent(payload, student, activeStudents, allClasses);
               if (studentObs && (studentObs.grading || studentObs.notes || studentObs.photo)) {
                 weeklyObservationItems.push({
                   dayLabel: matchedDay.dayLabel,
@@ -498,34 +517,115 @@ export function aggregateKGWeeklyReport(
 
   // 4. Construct daily snapshots (and fallback logic)
   const dailySnapshots: KGWeeklyReportDraft['dailySnapshots'] = dateKeys.map(dk => {
+    const rawStudentClassId = student.classId || '';
+    const canonicalClassId = resolveCanonicalClassId(rawStudentClassId, allClasses || []) || rawStudentClassId;
+
     // Look at observations on this specific date key
     const dayObs = weeklyObservationItems.filter(item => item.dateKey === dk.dateKey);
     
     // Priority: individual photoUrl -> generalPhotoUrl -> null
     let chosenPhoto: string | null = null;
+    let personalPhotoResult: string | null = null;
+    
     const individualPhotoItem = dayObs.find(item => item.photoUrl && isValidPhotoUrl(item.photoUrl));
     if (individualPhotoItem) {
-      chosenPhoto = individualPhotoItem.photoUrl;
+      personalPhotoResult = individualPhotoItem.photoUrl;
+      chosenPhoto = personalPhotoResult;
     } else {
       const generalPhotoItem = dayObs.find(item => item.generalPhotoUrl && isValidPhotoUrl(item.generalPhotoUrl));
       if (generalPhotoItem) {
         chosenPhoto = generalPhotoItem.generalPhotoUrl;
-      } else {
-        // Fallback to compatible general photo from firestoreObservationDocs for this date
-        if (firestoreObservationDocs && firestoreObservationDocs.length > 0) {
-          const generalDoc = firestoreObservationDocs.find(doc => {
-            const obsTimestamp = doc.timestamp || Date.now();
-            const obsDateStr = doc.date || formatDateToKey(new Date(obsTimestamp));
-            const matchesDate = obsDateStr === dk.dateKey;
-            const matchesClass = isDocCompatibleWithStudent(doc, student, activeStudents);
-            const matchesUnit = !doc.unitId || doc.unitId === 'KINDERGARTEN';
-            return matchesDate && matchesClass && matchesUnit && getValidPhotoUrl(doc);
-          });
-          if (generalDoc) {
-            chosenPhoto = getValidPhotoUrl(generalDoc);
+      }
+    }
+
+    // Fallback: If personal/general photo from current student observations are missing,
+    // find class session for: `canonical classId + exact snapshot date`.
+    let queriedSessionDoc: any = null;
+    let generalPhotoUrlAvailable: string | null = null;
+    let generalPhotoAvailable: string | null = null;
+
+    if (!chosenPhoto) {
+      if (firestoreObservationDocs && firestoreObservationDocs.length > 0) {
+        queriedSessionDoc = firestoreObservationDocs.find(doc => {
+          const obsTimestamp = doc.timestamp || Date.now();
+          const obsDateStr = doc.date || formatDateToKey(new Date(obsTimestamp));
+          const matchesDate = obsDateStr === dk.dateKey;
+          
+          const rawDocClassId = doc.classId || '';
+          const docCanonicalClassId = resolveCanonicalClassId(rawDocClassId, allClasses || []) || rawDocClassId;
+          const matchesClass = docCanonicalClassId === canonicalClassId;
+          const matchesUnit = !doc.unitId || doc.unitId === 'KINDERGARTEN';
+
+          return matchesDate && matchesClass && matchesUnit;
+        });
+      }
+
+      if (!queriedSessionDoc) {
+        // LocalStorage fallback
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('kg_obs_hist_')) {
+            try {
+              const raw = localStorage.getItem(key);
+              if (raw) {
+                const payload = JSON.parse(raw);
+                const obsTimestamp = payload.timestamp || Date.now();
+                const obsDateStr = payload.date || formatDateToKey(new Date(obsTimestamp));
+                const matchesDate = obsDateStr === dk.dateKey;
+                
+                const rawDocClassId = payload.classId || '';
+                const docCanonicalClassId = resolveCanonicalClassId(rawDocClassId, allClasses || []) || rawDocClassId;
+                const matchesClass = docCanonicalClassId === canonicalClassId;
+
+                if (matchesDate && matchesClass) {
+                  queriedSessionDoc = payload;
+                  break;
+                }
+              }
+            } catch (e) {
+              // ignore
+            }
           }
         }
       }
+
+      if (queriedSessionDoc) {
+        if (queriedSessionDoc.generalPhotoUrl && isValidPhotoUrl(queriedSessionDoc.generalPhotoUrl)) {
+          generalPhotoUrlAvailable = queriedSessionDoc.generalPhotoUrl;
+        }
+        if (queriedSessionDoc.generalPhoto && isValidPhotoUrl(queriedSessionDoc.generalPhoto)) {
+          generalPhotoAvailable = queriedSessionDoc.generalPhoto;
+        }
+        chosenPhoto = generalPhotoUrlAvailable || generalPhotoAvailable;
+      }
+    }
+
+    // DEV DIAGNOSTIC
+    if (!chosenPhoto) {
+      console.warn(
+        `[DEV DIAGNOSTIC] Fallback Failed:\n` +
+        `- studentId: ${studentId}\n` +
+        `- raw classId: ${rawStudentClassId}\n` +
+        `- resolved canonical classId: ${canonicalClassId}\n` +
+        `- snapshot date: ${dk.dateKey}\n` +
+        `- personal-photo result: ${personalPhotoResult || 'null'}\n` +
+        `- queried session document/key: ${queriedSessionDoc ? (queriedSessionDoc.id || 'found payload') : 'not found'}\n` +
+        `- availability of generalPhotoUrl: ${generalPhotoUrlAvailable || 'absent'}\n` +
+        `- availability of generalPhoto: ${generalPhotoAvailable || 'absent'}`
+      );
+    } else if (!personalPhotoResult) {
+      console.info(
+        `[DEV DIAGNOSTIC] Fallback Succeeded:\n` +
+        `- studentId: ${studentId}\n` +
+        `- raw classId: ${rawStudentClassId}\n` +
+        `- resolved canonical classId: ${canonicalClassId}\n` +
+        `- snapshot date: ${dk.dateKey}\n` +
+        `- personal-photo result: null\n` +
+        `- queried session document/key: ${queriedSessionDoc ? (queriedSessionDoc.id || 'found payload') : 'found in weekly items'}\n` +
+        `- availability of generalPhotoUrl: ${generalPhotoUrlAvailable || 'absent'}\n` +
+        `- availability of generalPhoto: ${generalPhotoAvailable || 'absent'}\n` +
+        `- resolved photo: ${chosenPhoto}`
+      );
     }
 
     // Fallback notes or text
@@ -610,7 +710,8 @@ export function aggregateKGWeeklyReportForPeriod(
   firestoreAttendanceDocs?: any[],
   firestoreObservationDocs?: any[],
   activeStudents?: any[],
-  dailyContexts?: any[]
+  dailyContexts?: any[],
+  allClasses?: any[]
 ) {
   const student = (activeStudents || []).find(s => s.id === studentId) ||
                   DEFAULT_STUDENTS.find(s => s.id === studentId) || {
@@ -740,7 +841,12 @@ export function aggregateKGWeeklyReportForPeriod(
       const obsDateStr = payload.date || formatDateToKey(new Date(obsTimestamp));
 
       const matchedDay = dateKeys.find(dk => dk.dateKey === obsDateStr);
-      const classMatches = !payload.classId || !student.classId || payload.classId === student.classId;
+      const rawStudentClassId = student.classId || '';
+      const studentCanonicalClassId = resolveCanonicalClassId(rawStudentClassId, allClasses || []) || rawStudentClassId;
+      const rawPayloadClassId = payload.classId || '';
+      const payloadCanonicalClassId = rawPayloadClassId ? (resolveCanonicalClassId(rawPayloadClassId, allClasses || []) || rawPayloadClassId) : '';
+      const classMatches = !rawPayloadClassId || !rawStudentClassId || payloadCanonicalClassId === studentCanonicalClassId;
+
       if (matchedDay && classMatches) {
         let studentObs = payload.observations?.[studentId];
         
@@ -760,7 +866,7 @@ export function aggregateKGWeeklyReportForPeriod(
           }
         }
 
-        const isCompatibleDoc = isDocCompatibleWithStudent(payload, student, activeStudents);
+        const isCompatibleDoc = isDocCompatibleWithStudent(payload, student, activeStudents, allClasses);
         if (studentObs && (studentObs.grading || studentObs.notes || studentObs.photo)) {
           weeklyObservationItems.push({
             dayLabel: matchedDay.dayLabel,
@@ -788,7 +894,7 @@ export function aggregateKGWeeklyReportForPeriod(
             const obsDateStr = payload.date || formatDateToKey(new Date(obsTimestamp));
 
             const matchedDay = dateKeys.find(dk => dk.dateKey === obsDateStr);
-            const isCompatibleDoc = isDocCompatibleWithStudent(payload, student, activeStudents);
+            const isCompatibleDoc = isDocCompatibleWithStudent(payload, student, activeStudents, allClasses);
             if (matchedDay && isCompatibleDoc) {
               const studentObs = payload.observations?.[studentId];
               if (studentObs && (studentObs.grading || studentObs.notes || studentObs.photo)) {
@@ -861,32 +967,49 @@ export function aggregateKGWeeklyReportForPeriod(
     let fallbackText = 'Belum ada dokumentasi foto kerja harian atau kegiatan observasi untuk hari ini.';
     
     if (dk) {
+      const rawStudentClassId = student.classId || '';
+      const canonicalClassId = resolveCanonicalClassId(rawStudentClassId, allClasses || []) || rawStudentClassId;
+
       // 1. Try to find if student has individual photo on this date
       const dayObsForStudent = weeklyObservationItems.filter(item => item.dateKey === dk.dateKey);
+      let personalPhotoResult: string | null = null;
       const individualPhotoItem = dayObsForStudent.find(item => item.photoUrl && isValidPhotoUrl(item.photoUrl));
       
       if (individualPhotoItem) {
-        chosenPhoto = individualPhotoItem.photoUrl;
+        personalPhotoResult = individualPhotoItem.photoUrl;
+        chosenPhoto = personalPhotoResult;
       } else {
-        // 2. If no individual photo, check for any general photo on this specific date
-        // A. From Firestore (filtered for class if applicable)
+        // Look for generalPhotoUrl/generalPhoto on weeklyObservationItems that matched the canonical class
+        const generalPhotoItem = dayObsForStudent.find(item => item.generalPhotoUrl && isValidPhotoUrl(item.generalPhotoUrl));
+        if (generalPhotoItem) {
+          chosenPhoto = generalPhotoItem.generalPhotoUrl;
+        }
+      }
+
+      // Fallback: If personal/general photo from current student observations are missing,
+      // find class session for: `canonical classId + exact snapshot date`.
+      let queriedSessionDoc: any = null;
+      let generalPhotoUrlAvailable: string | null = null;
+      let generalPhotoAvailable: string | null = null;
+
+      if (!chosenPhoto) {
         if (firestoreObservationDocs && firestoreObservationDocs.length > 0) {
-          const generalDoc = firestoreObservationDocs.find(doc => {
+          queriedSessionDoc = firestoreObservationDocs.find(doc => {
             const obsTimestamp = doc.timestamp || Date.now();
             const obsDateStr = doc.date || formatDateToKey(new Date(obsTimestamp));
             const matchesDate = obsDateStr === dk.dateKey;
-            const matchesClass = isDocCompatibleWithStudent(doc, student, activeStudents);
-            const matchesUnit = !doc.unitId || doc.unitId === 'KINDERGARTEN';
             
-            return matchesDate && matchesClass && matchesUnit && getValidPhotoUrl(doc);
+            const rawDocClassId = doc.classId || '';
+            const docCanonicalClassId = resolveCanonicalClassId(rawDocClassId, allClasses || []) || rawDocClassId;
+            const matchesClass = docCanonicalClassId === canonicalClassId;
+            const matchesUnit = !doc.unitId || doc.unitId === 'KINDERGARTEN';
+
+            return matchesDate && matchesClass && matchesUnit;
           });
-          if (generalDoc) {
-            chosenPhoto = getValidPhotoUrl(generalDoc);
-          }
         }
-        
-        // B. From LocalStorage
-        if (!chosenPhoto) {
+
+        if (!queriedSessionDoc) {
+          // LocalStorage fallback
           for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
             if (key && key.startsWith('kg_obs_hist_')) {
@@ -897,9 +1020,13 @@ export function aggregateKGWeeklyReportForPeriod(
                   const obsTimestamp = payload.timestamp || Date.now();
                   const obsDateStr = payload.date || formatDateToKey(new Date(obsTimestamp));
                   const matchesDate = obsDateStr === dk.dateKey;
-                  const matchesClass = isDocCompatibleWithStudent(payload, student, activeStudents);
-                  if (matchesDate && matchesClass && getValidPhotoUrl(payload)) {
-                    chosenPhoto = getValidPhotoUrl(payload);
+                  
+                  const rawDocClassId = payload.classId || '';
+                  const docCanonicalClassId = resolveCanonicalClassId(rawDocClassId, allClasses || []) || rawDocClassId;
+                  const matchesClass = docCanonicalClassId === canonicalClassId;
+
+                  if (matchesDate && matchesClass) {
+                    queriedSessionDoc = payload;
                     break;
                   }
                 }
@@ -909,6 +1036,44 @@ export function aggregateKGWeeklyReportForPeriod(
             }
           }
         }
+
+        if (queriedSessionDoc) {
+          if (queriedSessionDoc.generalPhotoUrl && isValidPhotoUrl(queriedSessionDoc.generalPhotoUrl)) {
+            generalPhotoUrlAvailable = queriedSessionDoc.generalPhotoUrl;
+          }
+          if (queriedSessionDoc.generalPhoto && isValidPhotoUrl(queriedSessionDoc.generalPhoto)) {
+            generalPhotoAvailable = queriedSessionDoc.generalPhoto;
+          }
+          chosenPhoto = generalPhotoUrlAvailable || generalPhotoAvailable;
+        }
+      }
+
+      // DEV DIAGNOSTIC
+      if (!chosenPhoto) {
+        console.warn(
+          `[DEV DIAGNOSTIC] Fallback Failed:\n` +
+          `- studentId: ${studentId}\n` +
+          `- raw classId: ${rawStudentClassId}\n` +
+          `- resolved canonical classId: ${canonicalClassId}\n` +
+          `- snapshot date: ${dk.dateKey}\n` +
+          `- personal-photo result: ${personalPhotoResult || 'null'}\n` +
+          `- queried session document/key: ${queriedSessionDoc ? (queriedSessionDoc.id || 'found payload') : 'not found'}\n` +
+          `- availability of generalPhotoUrl: ${generalPhotoUrlAvailable || 'absent'}\n` +
+          `- availability of generalPhoto: ${generalPhotoAvailable || 'absent'}`
+        );
+      } else if (!personalPhotoResult) {
+        console.info(
+          `[DEV DIAGNOSTIC] Fallback Succeeded:\n` +
+          `- studentId: ${studentId}\n` +
+          `- raw classId: ${rawStudentClassId}\n` +
+          `- resolved canonical classId: ${canonicalClassId}\n` +
+          `- snapshot date: ${dk.dateKey}\n` +
+          `- personal-photo result: null\n` +
+          `- queried session document/key: ${queriedSessionDoc ? (queriedSessionDoc.id || 'found payload') : 'found in weekly items'}\n` +
+          `- availability of generalPhotoUrl: ${generalPhotoUrlAvailable || 'absent'}\n` +
+          `- availability of generalPhoto: ${generalPhotoAvailable || 'absent'}\n` +
+          `- resolved photo: ${chosenPhoto}`
+        );
       }
 
       const foundContext = (dailyContexts || []).find(dc => dc.observationDate === dk.dateKey || dc.date === dk.dateKey);

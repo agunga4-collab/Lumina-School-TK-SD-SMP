@@ -640,7 +640,8 @@ export default function WeeklyReview() {
           firestoreAttendance,
           firestoreObservations,
           students,
-          firestoreDailyContexts
+          firestoreDailyContexts,
+          classes
         );
         const studentObj = students.find(s => s.id === selectedStudentId);
         
