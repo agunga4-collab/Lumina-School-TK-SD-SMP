@@ -2804,6 +2804,22 @@ export default function Observation() {
     );
   }
 
+  const activeSentraName = selectedActivity === 'SPECIAL_ACTIVITY' 
+    ? "Kegiatan Khusus" 
+    : (activities.find(a => a.id === selectedActivity)?.label || selectedActivity);
+  const activeDomainName = selectedActivity === 'SPECIAL_ACTIVITY' 
+    ? "Kegiatan Khusus" 
+    : (domains.find(d => d.id === selectedDomain)?.label || selectedDomain);
+
+  const resolvedContext = dailyContext || (isSessionLocked && selectedActivity ? {
+    sentraId: selectedActivity,
+    sentraName: activeSentraName,
+    domainId: selectedDomain,
+    domainName: activeDomainName,
+  } : null);
+
+  const isContextActiveAndLocked = !!resolvedContext;
+
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-16 px-4">
       
@@ -2879,13 +2895,13 @@ export default function Observation() {
           {/* Daily Context Locking Widget */}
           <div className={cn(
             "bg-white rounded-3xl p-6 shadow-sm border transition-all duration-300",
-            dailyContext 
+            isContextActiveAndLocked 
               ? "border-emerald-100 bg-emerald-50/20" 
               : "border-amber-100 bg-amber-50/10"
           )}>
             <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-4">
               <div className="flex items-center gap-2">
-                {dailyContext ? (
+                {isContextActiveAndLocked ? (
                   <Lock size={18} className="text-emerald-600" />
                 ) : (
                   <Unlock size={18} className="text-amber-500" />
@@ -2896,11 +2912,11 @@ export default function Observation() {
               </div>
               <span className={cn(
                 "px-2.5 py-0.5 text-[9px] font-black uppercase rounded-full",
-                dailyContext 
+                isContextActiveAndLocked 
                   ? "bg-emerald-100 text-emerald-800" 
                   : "bg-amber-100 text-amber-800"
               )}>
-                {dailyContext ? "Locked" : "Belum Dikunci"}
+                {isContextActiveAndLocked ? "Locked" : "Belum Dikunci"}
               </span>
             </div>
 
@@ -2909,17 +2925,17 @@ export default function Observation() {
                 <Loader2 className="animate-spin" size={14} />
                 <span>Memuat konteks harian...</span>
               </div>
-            ) : dailyContext ? (
+            ) : resolvedContext ? (
               <div className="space-y-4">
                 <div className="space-y-2">
                   <div className="flex items-start gap-2">
                     <span className="text-[10px] uppercase font-black text-gray-400 mt-0.5">Sentra:</span>
-                    <span className="text-xs font-bold text-gray-900">{dailyContext.sentraName}</span>
+                    <span className="text-xs font-bold text-gray-900">{resolvedContext.sentraName}</span>
                   </div>
-                  {dailyContext.domainName && (
+                  {resolvedContext.domainName && (
                     <div className="flex items-start gap-2">
                       <span className="text-[10px] uppercase font-black text-gray-400 mt-0.5">Domain:</span>
-                      <span className="text-xs font-bold text-gray-900">{dailyContext.domainName}</span>
+                      <span className="text-xs font-bold text-gray-900">{resolvedContext.domainName}</span>
                     </div>
                   )}
                 </div>
@@ -2929,10 +2945,10 @@ export default function Observation() {
                     type="button"
                     onClick={() => {
                       setIsEditingDailyContext(true);
-                      setSelectedActivity(dailyContext.sentraId);
-                      setSelectedDomain(dailyContext.domainId || "");
+                      setSelectedActivity(resolvedContext.sentraId);
+                      setSelectedDomain(resolvedContext.domainId || "");
                     }}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-white hover:bg-gray-50 text-gray-700 hover:text-gray-950 font-bold border border-gray-200 rounded-xl text-[11px] transition-all"
+                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-white hover:bg-gray-50 text-gray-700 hover:text-gray-950 font-bold border border-gray-200 rounded-xl text-[11px] transition-all cursor-pointer"
                   >
                     <Edit size={12} />
                     Ubah Konteks Kegiatan Harian
@@ -2943,17 +2959,17 @@ export default function Observation() {
                       type="button"
                       onClick={() => {
                         setIsEditingDailyContext(false);
-                        setSelectedActivity(dailyContext.sentraId);
-                        setSelectedDomain(dailyContext.domainId || "");
+                        setSelectedActivity(resolvedContext.sentraId);
+                        setSelectedDomain(resolvedContext.domainId || "");
                       }}
-                      className="flex-1 py-2 px-3 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold rounded-xl text-[10px] transition-all"
+                      className="flex-1 py-2 px-3 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold rounded-xl text-[10px] transition-all cursor-pointer"
                     >
                       Batal
                     </button>
                     <button
                       type="button"
                       onClick={() => handleSaveDailyContext(selectedActivity, selectedDomain)}
-                      className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-[10px] transition-all"
+                      className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-[10px] transition-all cursor-pointer"
                     >
                       Simpan Perubahan
                     </button>
@@ -2970,7 +2986,7 @@ export default function Observation() {
                   <button
                     type="button"
                     onClick={() => handleSaveDailyContext(selectedActivity, selectedDomain)}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-[11px] transition-all shadow-md shadow-emerald-50"
+                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-[11px] transition-all shadow-md shadow-emerald-50 cursor-pointer"
                   >
                     <Lock size={12} />
                     Kunci Sentra & Domain Hari Ini
@@ -3432,17 +3448,9 @@ export default function Observation() {
                       type="date"
                       value={observationDate}
                       onChange={(e) => {
-                        if (isSessionLocked && !isEditingSession) {
-                          toast.error("Tanggal observasi terkunci karena sudah ada data observasi yang tersimpan.");
-                          return;
-                        }
                         setObservationDate(e.target.value);
                       }}
-                      disabled={isSessionLocked && !isEditingSession}
-                      className={cn(
-                        "bg-gray-800 text-emerald-400 text-xs font-bold border border-gray-700 rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer text-center w-full",
-                        isSessionLocked && !isEditingSession && "opacity-60 cursor-not-allowed"
-                      )}
+                      className="bg-gray-800 text-emerald-400 text-xs font-bold border border-gray-700 rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer text-center w-full"
                     />
                   </div>
                   <span className="text-[9px] text-gray-400 italic font-sans">
