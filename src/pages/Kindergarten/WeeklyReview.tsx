@@ -21,7 +21,7 @@ import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { useAuth } from '../../context/AuthContext';
 import { useTeacherAssignedClasses } from '../../hooks/useTeacherAssignedClasses';
-import { logFirestoreRead, getKindergartenClasses, getKindergartenStudents } from '../../lib/kindergartenMetadataCache';
+import { logFirestoreRead, getKindergartenClasses, getKindergartenStudents, resolveCanonicalClassId } from '../../lib/kindergartenMetadataCache';
 import { toast } from 'sonner';
 import { html2canvasWithModernColors } from '../../lib/html2canvasPatch';
 import { jsPDF } from 'jspdf';
@@ -1994,58 +1994,45 @@ export default function WeeklyReview() {
             </div>
 
             {/* Area Tanda Tangan: Guru Kelas Centered */}
-            <div className="w-full flex justify-center mt-8 mb-4">
-              <div className="flex flex-col items-center text-center text-xs w-64">
-                <span className="font-bold text-gray-500 text-[10px]">{formattedSignDate}</span>
-                <span className="font-bold text-gray-600 text-[10.5px] mt-0.5">Guru Kelas</span>
-                
-                <div className="h-[68px] flex items-center justify-center my-2">
-                  {activeClassObj?.teacherSignatureUrl ? (
-                    <img
-                      src={activeClassObj.teacherSignatureUrl}
-                      alt="Tanda Tangan Guru"
-                      className="max-h-[64px] object-contain mix-blend-multiply"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <span className="text-[9px] text-red-500 italic font-bold select-none leading-tight">
-                      Belum ditandatangani
-                    </span>
-                  )}
-                </div>
+            {(() => {
+              const currentStudentObj = students.find(s => s.id === selectedStudentId);
+              const studentClassIdRaw = currentStudentObj?.classId || selectedClassId || "";
+              const studentCanonicalClassId = resolveCanonicalClassId(studentClassIdRaw, classes) || studentClassIdRaw;
+              const studentClassObj = classes.find(c => c.id === studentCanonicalClassId) || activeClassObj;
 
-                <div className="text-center font-sans flex flex-col items-center gap-0.5 w-full">
-                  <span className="text-center font-extrabold text-[11px] text-gray-900 border-b border-solid border-gray-900 w-44 pb-0.5 mx-auto uppercase">
-                    {activeClassObj?.homeroomTeacherName ? activeClassObj.homeroomTeacherName.replace(/^\s*\(UNDANGAN\)\s*/i, "") : (
-                      <span className="text-red-500 italic font-bold text-[10px]">Guru Kelas Belum Diatur</span>
-                    )}
-                  </span>
-                  
-                  {isPublishing ? (
-                    <span className="text-center text-[9px] text-gray-500 font-bold uppercase mt-1">
-                      {teacherNip ? `NIP. ${teacherNip}` : ''}
-                    </span>
-                  ) : (
-                    <>
-                      <span className="print:block hidden text-center text-[9px] text-gray-500 font-bold uppercase mt-1">
-                        {teacherNip ? `NIP. ${teacherNip}` : ''}
+              return (
+                <div className="w-full flex justify-center mt-8 mb-4">
+                  <div className="flex flex-col items-center text-center text-xs w-64">
+                    <span className="font-bold text-gray-500 text-[10px]">{formattedSignDate}</span>
+                    <span className="font-bold text-gray-600 text-[10.5px] mt-0.5">Guru Kelas</span>
+                    
+                    <div className="h-[68px] flex items-center justify-center my-2">
+                      {studentClassObj?.teacherSignatureUrl ? (
+                        <img
+                          src={studentClassObj.teacherSignatureUrl}
+                          alt="Tanda Tangan Guru"
+                          className="max-h-[64px] object-contain mix-blend-multiply"
+                          style={{ objectFit: 'contain' }}
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <span className="text-[9px] text-gray-400 italic select-none leading-tight">
+                          Tanda tangan belum diatur
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="text-center font-sans flex flex-col items-center gap-0.5 w-full">
+                      <span className="text-center font-extrabold text-[11px] text-gray-900 border-b border-solid border-gray-900 w-44 pb-0.5 mx-auto uppercase">
+                        {studentClassObj?.homeroomTeacherName ? studentClassObj.homeroomTeacherName.replace(/^\s*\(UNDANGAN\)\s*/i, "") : (
+                          <span className="text-gray-400 italic font-bold text-[10px]">Guru Kelas Belum Diatur</span>
+                        )}
                       </span>
-                      <input 
-                        type="text"
-                        value={teacherNip}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setTeacherNip(val);
-                          localStorage.setItem('kg_teacher_nip', val);
-                        }}
-                        placeholder="NIP / No Registrasi"
-                        className="print:hidden text-center text-[9px] text-gray-500 font-bold uppercase w-36 outline-none border-b border-dotted border-gray-200 focus:border-solid focus:border-emerald-500 mt-1"
-                      />
-                    </>
-                  )}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* FOOTER BLOCK: Exact matching of Griya Cinere school contacts */}
             <div className="bg-[#109E58] text-white text-center py-2 px-4 text-[8px] font-sans rounded-sm border-t border-emerald-300 mt-auto">
