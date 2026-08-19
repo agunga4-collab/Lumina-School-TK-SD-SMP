@@ -142,7 +142,7 @@ export default function Observation() {
   const [dailyContext, setDailyContext] = React.useState<any>(null);
   const [isDailyContextLoading, setIsDailyContextLoading] = React.useState<boolean>(false);
   const [isEditingDailyContext, setIsEditingDailyContext] = React.useState<boolean>(false);
-  const isLockedByContext = !!(dailyContext && !isEditingDailyContext);
+  const isLockedByContext = false;
 
   // View States
   const [activeTab, setActiveTab] = React.useState<'input' | 'recap'>('input');
@@ -1245,32 +1245,13 @@ export default function Observation() {
         return;
       }
 
-      if (!selectedActivity || (selectedActivity !== 'SPECIAL_ACTIVITY' && !selectedDomain)) {
-        setObservations({});
-        setGeneralPhoto(null);
-        setDocCreatedAt(null);
-        setDocCreatedBy(null);
-        setGeneralNote("");
-        setGeneralNoteUpdatedAt(null);
-        setGeneralNoteUpdatedBy(null);
-        setGeneralNoteUpdatedByName(null);
-        setSpecialActivityName("");
-        setSpecialActivityType("activity");
-        setIsSessionLocked(false);
-        setSessionStatus('new');
-        setCurrentDocId(null);
-        return;
-      }
-
       const activeClassObj = classes.find(c => c.id === selectedClassId);
-      const expectedDocId = selectedActivity === 'SPECIAL_ACTIVITY'
-        ? `${selectedClassId}_${selectedActivity}_none_${observationDate}`
-        : `${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`;
+      const activeSentra = selectedActivity || "general";
+      const activeDomain = selectedActivity === 'SPECIAL_ACTIVITY' ? 'none' : (selectedDomain || 'general');
+      const expectedDocId = `${selectedClassId}_${activeSentra}_${activeDomain}_${observationDate}`;
 
       // 1. Try to load from LocalStorage first (classId & date scoped!)
-      const comboDateKey = selectedActivity === 'SPECIAL_ACTIVITY'
-        ? `kg_obs_hist_${selectedClassId}_${selectedActivity}_none_${observationDate}`
-        : `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`;
+      const comboDateKey = `kg_obs_hist_${selectedClassId}_${activeSentra}_${activeDomain}_${observationDate}`;
       const savedComboData = localStorage.getItem(comboDateKey);
       
       if (savedComboData) {
@@ -1394,9 +1375,7 @@ export default function Observation() {
       }
 
       // 2. Fetch from Firestore for the specific doc ID (classId scoped)
-      const docId = selectedActivity === 'SPECIAL_ACTIVITY'
-        ? `${selectedClassId}_${selectedActivity}_none_${observationDate}`
-        : `${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`;
+      const docId = `${selectedClassId}_${activeSentra}_${activeDomain}_${observationDate}`;
       const docRef = doc(db, 'observations', docId);
       
       try {
@@ -1734,8 +1713,11 @@ export default function Observation() {
       const targetDate = observationDate;
       const todayStr = formatDateLocal(new Date());
 
+      const activeSentra = selectedActivity || "general";
+      const activeDomain = selectedActivity === 'SPECIAL_ACTIVITY' ? 'none' : (selectedDomain || 'general');
+
       // Fetch existing doc from Firestore to merge (using class-scoped prefix)
-      const docId = `${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const docId = `${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
       const docRef = doc(db, 'observations', docId);
 
       let existingObservations: Record<string, any> = {};
@@ -1750,7 +1732,7 @@ export default function Observation() {
         }
       } else {
         // Fallback checks for legacy unscoped document in Firestore
-        const legacyDocId = `${selectedActivity}_${selectedDomain}_${targetDate}`;
+        const legacyDocId = selectedActivity && selectedDomain ? `${selectedActivity}_${selectedDomain}_${targetDate}` : "none";
         const legacyDocRef = doc(db, 'observations', legacyDocId);
         const legacyDocSnap = await getDoc(legacyDocRef);
         if (legacyDocSnap.exists()) {
@@ -1809,11 +1791,11 @@ export default function Observation() {
       setDocCreatedBy(resolvedCreatedBy);
 
       // Save permanently with new format in LocalStorage
-      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
       localStorage.setItem(comboKeyDateSpecific, JSON.stringify(payload));
       
       if (targetDate === todayStr) {
-        const comboKeyLegacy = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}`;
+        const comboKeyLegacy = `kg_obs_hist_${selectedClassId}_${activeSentra}_${activeDomain}`;
         localStorage.setItem(comboKeyLegacy, JSON.stringify(payload));
       }
 
@@ -2193,8 +2175,11 @@ export default function Observation() {
         studentName: student.name
       };
 
+      const activeSentra = selectedActivity || "general";
+      const activeDomain = selectedActivity === 'SPECIAL_ACTIVITY' ? 'none' : (selectedDomain || 'general');
+
       // Fetch the existing document from Firestore first to merge (using class-scoped prefix)
-      const docId = `${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const docId = `${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
       const docRef = doc(db, 'observations', docId);
       
       let existingObservations: Record<string, any> = {};
@@ -2209,7 +2194,7 @@ export default function Observation() {
         }
       } else {
         // Fallback checks for legacy unscoped document in Firestore
-        const legacyDocId = `${selectedActivity}_${selectedDomain}_${targetDate}`;
+        const legacyDocId = selectedActivity && selectedDomain ? `${selectedActivity}_${selectedDomain}_${targetDate}` : "none";
         const legacyDocRef = doc(db, 'observations', legacyDocId);
         const legacyDocSnap = await getDoc(legacyDocRef);
         if (legacyDocSnap.exists()) {
@@ -2282,11 +2267,11 @@ export default function Observation() {
       setDocCreatedBy(resolvedCreatedBy);
 
       // Save permanently with new date-specific, class-scoped key format in LocalStorage
-      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
       localStorage.setItem(comboKeyDateSpecific, JSON.stringify(payload));
       
       if (targetDate === todayStr) {
-        const comboKeyLegacy = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}`;
+        const comboKeyLegacy = `kg_obs_hist_${selectedClassId}_${activeSentra}_${activeDomain}`;
         localStorage.setItem(comboKeyLegacy, JSON.stringify(payload));
       }
 
@@ -2346,9 +2331,11 @@ export default function Observation() {
     try {
       const targetDate = observationDate;
       const todayStr = formatDateLocal(new Date());
-      const docId = selectedActivity === 'SPECIAL_ACTIVITY'
-        ? `${selectedClassId}_${selectedActivity}_none_${targetDate}`
-        : `${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+
+      const activeSentra = selectedActivity || "general";
+      const activeDomain = selectedActivity === 'SPECIAL_ACTIVITY' ? 'none' : (selectedDomain || 'general');
+
+      const docId = `${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
       const docRef = doc(db, 'observations', docId);
 
       // Enrich with student's names (only if not a special activity)
@@ -2426,14 +2413,13 @@ export default function Observation() {
       setDocCreatedBy(resolvedCreatedBy);
 
       // Save permanently with old key format (legacy for today) but class-scoped!
-      const domainVal = selectedActivity === 'SPECIAL_ACTIVITY' ? 'none' : selectedDomain;
-      const comboKeyLegacy = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${domainVal}`;
+      const comboKeyLegacy = `kg_obs_hist_${selectedClassId}_${activeSentra}_${activeDomain}`;
       if (targetDate === todayStr) {
         localStorage.setItem(comboKeyLegacy, JSON.stringify(payload));
       }
 
       // Save permanently with new date-specific, class-scoped key format in LocalStorage
-      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${domainVal}_${targetDate}`;
+      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
       localStorage.setItem(comboKeyDateSpecific, JSON.stringify(payload));
 
       // Save permanently to Firestore 'observations' collection
@@ -2468,7 +2454,9 @@ export default function Observation() {
       if (!selectedClassId) return;
 
       const targetDate = observationDate;
-      const docId = `${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const activeSentra = selectedActivity || "general";
+      const activeDomain = selectedActivity === 'SPECIAL_ACTIVITY' ? 'none' : (selectedDomain || 'general');
+      const docId = `${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
       const docRef = doc(db, 'observations', docId);
 
       // ALWAYS set the class-scoped document's generalPhoto to null and generalPhotoDeleted: true
@@ -2482,7 +2470,7 @@ export default function Observation() {
       }, { merge: true });
 
       // ALSO check if there's a legacy unscoped document, and mark generalPhoto as deleted there too
-      const legacyDocId = `${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const legacyDocId = selectedActivity && selectedDomain ? `${selectedActivity}_${selectedDomain}_${targetDate}` : "none";
       const legacyDocRef = doc(db, 'observations', legacyDocId);
       const legacyDocSnap = await getDoc(legacyDocRef);
       if (legacyDocSnap.exists()) {
@@ -2497,7 +2485,7 @@ export default function Observation() {
       }
 
       // Also clean up local storage caches (both class-scoped and old unscoped)
-      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
       const saved = localStorage.getItem(comboKeyDateSpecific);
       if (saved) {
         try {
@@ -2511,9 +2499,9 @@ export default function Observation() {
         }
       }
 
-      const oldComboDateKey = `kg_obs_hist_${selectedActivity}_${selectedDomain}_${targetDate}`;
+      const oldComboDateKey = selectedActivity && selectedDomain ? `kg_obs_hist_${selectedActivity}_${selectedDomain}_${targetDate}` : "none";
       const savedOld = localStorage.getItem(oldComboDateKey);
-      if (savedOld) {
+      if (savedOld && oldComboDateKey !== "none") {
         try {
           const parsed = JSON.parse(savedOld);
           parsed.generalPhoto = null;
@@ -2527,7 +2515,7 @@ export default function Observation() {
 
       const todayStr = formatDateLocal(new Date());
       if (targetDate === todayStr) {
-        const comboKeyLegacy = `kg_obs_hist_${selectedClassId}_${selectedActivity}_${selectedDomain}`;
+        const comboKeyLegacy = `kg_obs_hist_${selectedClassId}_${activeSentra}_${activeDomain}`;
         const savedLegacy = localStorage.getItem(comboKeyLegacy);
         if (savedLegacy) {
           try {
@@ -2541,9 +2529,9 @@ export default function Observation() {
           }
         }
 
-        const oldComboLegacyKey = `kg_obs_hist_${selectedActivity}_${selectedDomain}`;
+        const oldComboLegacyKey = selectedActivity && selectedDomain ? `kg_obs_hist_${selectedActivity}_${selectedDomain}` : "none";
         const savedOldLegacy = localStorage.getItem(oldComboLegacyKey);
-        if (savedOldLegacy) {
+        if (savedOldLegacy && oldComboLegacyKey !== "none") {
           try {
             const parsed = JSON.parse(savedOldLegacy);
             parsed.generalPhoto = null;
@@ -2821,24 +2809,13 @@ export default function Observation() {
                   <button
                     key={act.id}
                     onClick={() => {
-                      if (isSessionLocked && !isEditingSession) {
-                        toast.error("Sesi ini sudah dikunci. Silakan klik tombol 'Edit Sentra & Domain' untuk mengubahnya.");
-                        return;
-                      }
-                      if (isLockedByContext) {
-                        toast.error("Konteks Kegiatan Harian terkunci. Klik 'Ubah Konteks' di atas untuk mengedit.");
-                        return;
-                      }
                       setSelectedActivity(act.id);
                     }}
-                    disabled={(isSessionLocked && !isEditingSession && !isSelected) || (isLockedByContext && !isSelected)}
                     className={cn(
                       "w-full flex items-center justify-between p-3 rounded-2xl text-left transition-all border border-transparent",
                       isSelected 
                         ? "bg-emerald-600 text-white shadow-md shadow-emerald-100 font-bold border-emerald-500 scale-[1.01]" 
-                        : (isSessionLocked && !isEditingSession) || isLockedByContext
-                          ? "opacity-40 bg-gray-50 text-gray-400 cursor-not-allowed"
-                          : "text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 bg-gray-50/50"
+                        : "text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 bg-gray-50/50"
                     )}
                   >
                     <div className="flex items-center gap-3">
@@ -2887,24 +2864,13 @@ export default function Observation() {
                     <button
                       key={dom.id}
                       onClick={() => {
-                        if (isSessionLocked && !isEditingSession) {
-                          toast.error("Sesi ini sudah dikunci. Silakan klik tombol 'Edit Sentra & Domain' untuk mengubahnya.");
-                          return;
-                        }
-                        if (isLockedByContext) {
-                          toast.error("Konteks Kegiatan Harian terkunci. Klik 'Ubah Konteks' di atas untuk mengedit.");
-                          return;
-                        }
                         setSelectedDomain(dom.id);
                       }}
-                      disabled={(isSessionLocked && !isEditingSession && !isSelected) || (isLockedByContext && !isSelected)}
                       className={cn(
                         "w-full flex flex-col p-3 rounded-2xl text-left transition-all border",
                         isSelected 
                           ? "bg-gray-900 text-white border-gray-900 shadow-lg scale-[1.01]" 
-                          : (isSessionLocked && !isEditingSession) || isLockedByContext
-                            ? "opacity-40 bg-gray-50 border-gray-150 text-gray-400 cursor-not-allowed"
-                            : "text-gray-700 hover:bg-gray-50 border-gray-100 bg-white"
+                          : "text-gray-700 hover:bg-gray-50 border-gray-100 bg-white"
                       )}
                     >
                       <div className="flex items-center justify-between w-full">
@@ -3165,42 +3131,56 @@ export default function Observation() {
         {/* RIGHT COLUMN: Active Evaluator Workspace (8 grid columns) */}
         <div className="lg:col-span-8 space-y-6">
           
-          {!selectedActivity || (selectedActivity !== 'SPECIAL_ACTIVITY' && !selectedDomain) ? (
-            <div className="bg-white rounded-[2rem] p-12 text-center border border-gray-100 shadow-sm flex flex-col items-center justify-center gap-4 py-20">
-              <div className="p-5 bg-emerald-50 text-emerald-600 rounded-full">
-                <Compass size={40} className="animate-spin text-emerald-500" style={{ animationDuration: '8s' }} />
+          {(!selectedActivity || (selectedActivity !== 'SPECIAL_ACTIVITY' && !selectedDomain)) && (
+            <div className="bg-emerald-50/55 border border-emerald-100 rounded-3xl p-5 flex items-center gap-4 shadow-sm">
+              <div className="p-3 bg-white text-emerald-600 rounded-2xl shadow-sm">
+                <Compass size={22} className="text-emerald-500" />
               </div>
-              <div className="space-y-2">
-                <p className="text-lg font-black text-gray-850 uppercase tracking-wider">Silakan Pilih Sentra & Domain</p>
-                <p className="text-xs text-gray-500 max-w-md mx-auto leading-relaxed font-medium">
-                  Pilih Sentra (Langkah 1) dan Domain Perkembangan (Langkah 2) pada kolom sebelah kiri terlebih dahulu untuk menampilkan lembar observasi dan penilaian siswa Lumina Kindergarten.
+              <div className="space-y-0.5">
+                <p className="text-xs font-black text-emerald-800 uppercase tracking-wider">Konteks Kegiatan (Opsional)</p>
+                <p className="text-[11px] text-emerald-700/80 leading-relaxed font-medium">
+                  Sentra dan Domain Perkembangan belum dipilih. Anda tetap dapat langsung melakukan observasi, penilaian mandiri, dan mengunggah foto siswa di bawah ini secara bebas.
                 </p>
               </div>
             </div>
-          ) : (
-            <>
-              {/* Sesi Header Context Card */}
-              <div className="bg-gray-900 rounded-[2rem] p-6 text-white flex flex-col md:flex-row justify-between items-start md:items-center shadow-lg gap-4 relative overflow-hidden">
-                <div className="absolute right-0 top-0 translate-x-12 -translate-y-12 w-48 h-48 bg-white/5 rounded-full pointer-events-none" />
-                
-                <div className="flex flex-col gap-3">
-                  <div className="space-y-1 bg-white/5 py-3.5 px-5 rounded-2xl border border-white/5">
-                    <span className="text-[9px] font-black text-emerald-400 tracking-widest uppercase">Target Evaluasi Sesi</span>
-                    <div className="flex flex-wrap items-center gap-2 md:gap-3 mt-1">
-                      <span className="text-sm font-black tracking-tight">{selectedActivity === 'SPECIAL_ACTIVITY' ? 'Kegiatan Khusus' : currentSentraObj?.label}</span>
-                      {selectedActivity !== 'SPECIAL_ACTIVITY' ? (
+          )}
+
+          <>
+            {/* Sesi Header Context Card */}
+            <div className="bg-gray-900 rounded-[2rem] p-6 text-white flex flex-col md:flex-row justify-between items-start md:items-center shadow-lg gap-4 relative overflow-hidden">
+              <div className="absolute right-0 top-0 translate-x-12 -translate-y-12 w-48 h-48 bg-white/5 rounded-full pointer-events-none" />
+              
+              <div className="flex flex-col gap-3">
+                <div className="space-y-1 bg-white/5 py-3.5 px-5 rounded-2xl border border-white/5">
+                  <span className="text-[9px] font-black text-emerald-400 tracking-widest uppercase">Target Evaluasi Sesi</span>
+                  <div className="flex flex-wrap items-center gap-2 md:gap-3 mt-1">
+                    <span className="text-sm font-black tracking-tight">
+                      {!selectedActivity 
+                        ? 'Belum Memilih Sentra' 
+                        : selectedActivity === 'SPECIAL_ACTIVITY' 
+                          ? 'Kegiatan Khusus' 
+                          : currentSentraObj?.label || 'Belum Memilih Sentra'}
+                    </span>
+                    {selectedActivity ? (
+                      selectedActivity !== 'SPECIAL_ACTIVITY' ? (
                         <>
                           <span className="text-gray-500 text-xs">&gt;</span>
-                          <span className="text-xs font-bold text-gray-300">{currentDomainObj?.label}</span>
+                          <span className="text-xs font-bold text-gray-300">{currentDomainObj?.label || 'Belum Memilih Domain'}</span>
                         </>
                       ) : (
                         <>
                           <span className="text-gray-500 text-xs">&gt;</span>
                           <span className="text-xs font-bold text-amber-300">{specialActivityName || '— Belum diberi nama —'}</span>
                         </>
-                      )}
-                    </div>
+                      )
+                    ) : (
+                      <>
+                        <span className="text-gray-500 text-xs">&gt;</span>
+                        <span className="text-xs font-bold text-gray-400 font-medium">Sentra & Domain Opsional</span>
+                      </>
+                    )}
                   </div>
+                </div>
 
                   {/* Session Status & Actions */}
                   <div className="flex items-center gap-2 px-1">
@@ -3648,7 +3628,6 @@ export default function Observation() {
             </button>
           </div>
           </>
-          )}
 
         </div>
 
