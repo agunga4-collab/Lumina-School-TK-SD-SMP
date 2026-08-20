@@ -135,6 +135,20 @@ function RoleGuard({ children, roles }: { children: React.ReactNode, roles: stri
   if (profile && !roles.includes(profile.role)) {
     return <Navigate to="/" replace />;
   }
+  
+  // Scoped unit access for HEAD_UNIT of KINDERGARTEN
+  if (profile?.role === 'HEAD_UNIT' && profile?.unitId === 'KINDERGARTEN') {
+    const path = window.location.pathname.toLowerCase();
+    if (
+      path.includes('/elementary') || 
+      path.includes('/junior-high') || 
+      path.includes('/admin') ||
+      path.includes('/head-elementary')
+    ) {
+      return <Navigate to="/" replace />;
+    }
+  }
+
   return <>{children}</>;
 }
 

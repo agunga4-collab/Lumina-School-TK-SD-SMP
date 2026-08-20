@@ -225,11 +225,22 @@ export function Layout() {
 
   // Use state for activeUnit so Super Admin and Parents can switch
   const [activeUnit, setActiveUnit] = React.useState<UnitType | null>(() => {
+    if (profile?.role === 'HEAD_UNIT' && profile?.unitId === 'KINDERGARTEN') {
+      return 'KINDERGARTEN';
+    }
     const saved = localStorage.getItem('lumina_active_unit');
     return (saved as UnitType) || null;
   });
 
   const [showChatView, setShowChatView] = React.useState(false);
+
+  React.useEffect(() => {
+    if (profile?.role === 'HEAD_UNIT' && profile?.unitId === 'KINDERGARTEN') {
+      if (activeUnit !== 'KINDERGARTEN') {
+        setActiveUnit('KINDERGARTEN');
+      }
+    }
+  }, [profile, activeUnit]);
 
   React.useEffect(() => {
     if (activeUnit) {
@@ -341,7 +352,7 @@ export function Layout() {
 
   if (!currentUser) return null;
 
-  const currentUnit = currentUser.role === 'kindergarten_subject_teacher'
+  const currentUnit = (currentUser.role === 'kindergarten_subject_teacher' || (currentUser.role === 'HEAD_UNIT' && currentUser.unitId === 'KINDERGARTEN'))
     ? 'KINDERGARTEN'
     : (activeUnit || (currentUser.unitId as UnitType) || 'JUNIOR_HIGH');
 
@@ -875,7 +886,7 @@ export function Layout() {
                 <p className="text-[10px] lg:text-[11px] font-medium text-gray-500">Beranda Portal Lumina</p>
              </div>
 
-             {currentUser.role !== 'STUDENT' && currentUser.role !== 'kindergarten_subject_teacher' && (
+             {currentUser.role !== 'STUDENT' && currentUser.role !== 'kindergarten_subject_teacher' && !(currentUser.role === 'HEAD_UNIT' && currentUser.unitId === 'KINDERGARTEN') && (
                 <div className="ml-4 pl-4 border-l border-gray-100">
                    <button 
                      onClick={() => setActiveUnit(null)}
