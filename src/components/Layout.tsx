@@ -812,7 +812,8 @@ export function Layout() {
             </div>
           )}
 
-          {(currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'HEAD_UNIT') && (
+          {((currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'HEAD_UNIT') && 
+            !(currentUser.role === 'HEAD_UNIT' && currentUser.unitId === 'KINDERGARTEN')) && (
             <div className="space-y-1">
               <NavSectionLabel label="Sistem" />
               <NavItem to="/settings/report-config" icon={<Settings size={18} />} label="Report Config" />

@@ -143,7 +143,9 @@ function RoleGuard({ children, roles }: { children: React.ReactNode, roles: stri
       path.includes('/elementary') || 
       path.includes('/junior-high') || 
       path.includes('/admin') ||
-      path.includes('/head-elementary')
+      path.includes('/head-elementary') ||
+      path.includes('/settings') ||
+      path.includes('/report-config')
     ) {
       return <Navigate to="/" replace />;
     }
