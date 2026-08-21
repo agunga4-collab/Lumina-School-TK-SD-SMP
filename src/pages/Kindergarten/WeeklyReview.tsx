@@ -1556,22 +1556,23 @@ export default function WeeklyReview() {
 
             return (
               <div 
-                className="px-2 py-1 flex flex-col items-center justify-start text-center w-full bg-gray-50/60 rounded-b-sm border-t border-gray-100 shrink-0 overflow-hidden"
-                style={{ minHeight: '48px', boxSizing: 'border-box' }}
+                className="px-2 pt-1.5 pb-1 flex flex-col items-center justify-start text-center w-full bg-gray-50/60 rounded-b-sm border-t border-gray-100 shrink-0 overflow-hidden"
+                style={{ minHeight: '52px', boxSizing: 'border-box' }}
               >
-                {/* 1. SENTRA LABEL (At the TOP, centered, single-line) */}
+                {/* 1. SENTRA LABEL (At the TOP with safe gap from photo edge, centered, single-line) */}
                 {hasSecondaryLabel && (
                   <span 
                     className="font-bold text-emerald-800 uppercase tracking-wide block w-full text-center truncate"
                     style={{
-                      fontSize: '8px',
-                      lineHeight: '11px',
-                      height: '11px',
-                      maxHeight: '11px',
+                      fontSize: '8.5px',
+                      lineHeight: '13px',
+                      height: '13px',
+                      maxHeight: '13px',
                       overflow: 'hidden',
                       whiteSpace: 'nowrap',
                       textOverflow: 'ellipsis',
-                      marginBottom: '2px',
+                      marginTop: '2px',
+                      marginBottom: '3px',
                       boxSizing: 'border-box'
                     }}
                   >
