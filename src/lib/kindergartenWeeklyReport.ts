@@ -265,8 +265,10 @@ export function aggregateKGWeeklyReport(
   firestoreAttendanceDocs?: any[],
   firestoreObservationDocs?: any[],
   activeStudents?: any[],
-  allClasses?: any[]
+  allClasses?: any[],
+  firestoreDailyContexts?: any[]
 ): KGWeeklyReportDraft {
+  const dailyContexts = firestoreDailyContexts || [];
   const student = (activeStudents || []).find(s => s.id === studentId) ||
                   DEFAULT_STUDENTS.find(s => s.id === studentId) || {
     id: studentId,
@@ -523,6 +525,22 @@ export function aggregateKGWeeklyReport(
     // Look at observations on this specific date key
     const dayObs = weeklyObservationItems.filter(item => item.dateKey === dk.dateKey);
     
+    // Find daily context matching canonical classId + dateKey
+    let foundContext: any = null;
+    if (dailyContexts && dailyContexts.length > 0) {
+      foundContext = dailyContexts.find(dc => {
+        if (!dc) return false;
+        const matchesDate = dc.observationDate === dk.dateKey || dc.date === dk.dateKey;
+        if (!matchesDate) return false;
+        const rawDcClassId = dc.classId || '';
+        if (rawDcClassId) {
+          const dcCanonicalClassId = resolveCanonicalClassId(rawDcClassId, allClasses || []) || rawDcClassId;
+          if (dcCanonicalClassId !== canonicalClassId) return false;
+        }
+        return true;
+      }) || null;
+    }
+
     // Priority: individual photoUrl -> generalPhotoUrl -> null
     let chosenPhoto: string | null = null;
     let personalPhotoResult: string | null = null;
@@ -600,32 +618,63 @@ export function aggregateKGWeeklyReport(
       }
     }
 
-    // DEV DIAGNOSTIC
-    if (!chosenPhoto) {
-      console.warn(
-        `[DEV DIAGNOSTIC] Fallback Failed:\n` +
-        `- studentId: ${studentId}\n` +
-        `- raw classId: ${rawStudentClassId}\n` +
-        `- resolved canonical classId: ${canonicalClassId}\n` +
-        `- snapshot date: ${dk.dateKey}\n` +
-        `- personal-photo result: ${personalPhotoResult || 'null'}\n` +
-        `- queried session document/key: ${queriedSessionDoc ? (queriedSessionDoc.id || 'found payload') : 'not found'}\n` +
-        `- availability of generalPhotoUrl: ${generalPhotoUrlAvailable || 'absent'}\n` +
-        `- availability of generalPhoto: ${generalPhotoAvailable || 'absent'}`
-      );
-    } else if (!personalPhotoResult) {
-      console.info(
-        `[DEV DIAGNOSTIC] Fallback Succeeded:\n` +
-        `- studentId: ${studentId}\n` +
-        `- raw classId: ${rawStudentClassId}\n` +
-        `- resolved canonical classId: ${canonicalClassId}\n` +
-        `- snapshot date: ${dk.dateKey}\n` +
-        `- personal-photo result: null\n` +
-        `- queried session document/key: ${queriedSessionDoc ? (queriedSessionDoc.id || 'found payload') : 'found in weekly items'}\n` +
-        `- availability of generalPhotoUrl: ${generalPhotoUrlAvailable || 'absent'}\n` +
-        `- availability of generalPhoto: ${generalPhotoAvailable || 'absent'}\n` +
-        `- resolved photo: ${chosenPhoto}`
-      );
+    // Extract Catatan Umum Hari Ini for this canonical classId and exact observation date
+    let generalNoteForDay: string | null = null;
+    if (foundContext && foundContext.generalNote && typeof foundContext.generalNote === 'string' && foundContext.generalNote.trim()) {
+      generalNoteForDay = foundContext.generalNote.trim();
+    }
+    if (!generalNoteForDay && typeof localStorage !== 'undefined') {
+      const localNoteKey = `kg_daily_note_${canonicalClassId}_${dk.dateKey}`;
+      const localNote = localStorage.getItem(localNoteKey);
+      if (localNote && localNote.trim()) {
+        generalNoteForDay = localNote.trim();
+      }
+    }
+    if (!generalNoteForDay && queriedSessionDoc && queriedSessionDoc.generalNote && typeof queriedSessionDoc.generalNote === 'string' && queriedSessionDoc.generalNote.trim()) {
+      generalNoteForDay = queriedSessionDoc.generalNote.trim();
+    }
+    if (!generalNoteForDay && firestoreObservationDocs && firestoreObservationDocs.length > 0) {
+      const sessionDoc = firestoreObservationDocs.find(doc => {
+        if (!doc) return false;
+        const obsTimestamp = doc.timestamp || Date.now();
+        const obsDateStr = doc.date || formatDateToKey(new Date(obsTimestamp));
+        if (obsDateStr !== dk.dateKey) return false;
+        const rawDocClassId = doc.classId || '';
+        if (!rawDocClassId) return true;
+        const docCanonicalClassId = resolveCanonicalClassId(rawDocClassId, allClasses || []) || rawDocClassId;
+        return docCanonicalClassId === canonicalClassId;
+      });
+      if (sessionDoc && sessionDoc.generalNote && typeof sessionDoc.generalNote === 'string' && sessionDoc.generalNote.trim()) {
+        generalNoteForDay = sessionDoc.generalNote.trim();
+      }
+    }
+    if (!generalNoteForDay && dayObs && dayObs.length > 0) {
+      const obsWithNote: any = dayObs.find((o: any) => o && o.generalNote && typeof o.generalNote === 'string' && o.generalNote.trim());
+      if (obsWithNote) {
+        generalNoteForDay = (obsWithNote.generalNote as string).trim();
+      }
+    }
+
+    // Extract Activity / Sentra label for this day
+    let activityLabelForDay: string | null = null;
+    if (foundContext) {
+      if (foundContext.sentraId === 'SPECIAL_ACTIVITY') {
+        activityLabelForDay = foundContext.sentraName || 'Kegiatan Khusus';
+      } else {
+        activityLabelForDay = foundContext.sentraName || (foundContext.sentraId ? (ACTIVITY_LABEL_MAP[foundContext.sentraId] || foundContext.sentraId) : null);
+      }
+    }
+    if (!activityLabelForDay && dayObs.length > 0) {
+      const acts = dayObs.map(o => ACTIVITY_LABEL_MAP[o.activity] || o.activity).filter(Boolean);
+      if (acts.length > 0) {
+        activityLabelForDay = Array.from(new Set(acts)).join(', ');
+      }
+    }
+    if (!activityLabelForDay && queriedSessionDoc) {
+      const act = queriedSessionDoc.selectedActivity || queriedSessionDoc.activity;
+      if (act) {
+        activityLabelForDay = ACTIVITY_LABEL_MAP[act] || act;
+      }
     }
 
     // Fallback notes or text
@@ -641,7 +690,10 @@ export function aggregateKGWeeklyReport(
       dayKey: dk.dayKey,
       label: `${dk.dayLabel}, ${dk.dateObj.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}`,
       photoUrl: chosenPhoto,
-      fallbackText
+      fallbackText,
+      generalNote: generalNoteForDay,
+      activityName: activityLabelForDay,
+      dateKey: dk.dateKey
     };
   });
 
@@ -973,7 +1025,19 @@ export function aggregateKGWeeklyReportForPeriod(
 
     if (dk) {
       dayObsForStudent = weeklyObservationItems.filter(item => item.dateKey === dk.dateKey);
-      foundContext = (dailyContexts || []).find(dc => dc && (dc.observationDate === dk.dateKey || dc.date === dk.dateKey)) || null;
+      
+      // Look for daily context matching canonical classId + exact date
+      foundContext = (dailyContexts || []).find(dc => {
+        if (!dc) return false;
+        const matchesDate = dc.observationDate === dk.dateKey || dc.date === dk.dateKey;
+        if (!matchesDate) return false;
+        const rawDcClassId = dc.classId || '';
+        if (rawDcClassId) {
+          const dcCanonicalClassId = resolveCanonicalClassId(rawDcClassId, allClasses || []) || rawDcClassId;
+          if (dcCanonicalClassId !== canonicalClassId) return false;
+        }
+        return true;
+      }) || null;
 
       // 1. Try to find if student has individual photo on this date
       let personalPhotoResult: string | null = null;
@@ -1145,10 +1209,47 @@ export function aggregateKGWeeklyReportForPeriod(
     if (!generalNoteForDay && queriedSessionDoc && queriedSessionDoc.generalNote && typeof queriedSessionDoc.generalNote === 'string' && queriedSessionDoc.generalNote.trim()) {
       generalNoteForDay = queriedSessionDoc.generalNote.trim();
     }
+    if (!generalNoteForDay && firestoreObservationDocs && firestoreObservationDocs.length > 0 && dk) {
+      const sessionDoc = firestoreObservationDocs.find(doc => {
+        if (!doc) return false;
+        const obsTimestamp = doc.timestamp || Date.now();
+        const obsDateStr = doc.date || formatDateToKey(new Date(obsTimestamp));
+        if (obsDateStr !== dk.dateKey) return false;
+        const rawDocClassId = doc.classId || '';
+        if (!rawDocClassId) return true;
+        const docCanonicalClassId = resolveCanonicalClassId(rawDocClassId, allClasses || []) || rawDocClassId;
+        return docCanonicalClassId === canonicalClassId;
+      });
+      if (sessionDoc && sessionDoc.generalNote && typeof sessionDoc.generalNote === 'string' && sessionDoc.generalNote.trim()) {
+        generalNoteForDay = sessionDoc.generalNote.trim();
+      }
+    }
     if (!generalNoteForDay && dayObsForStudent && dayObsForStudent.length > 0) {
       const obsWithNote = dayObsForStudent.find((o: any) => o && o.generalNote && typeof o.generalNote === 'string' && o.generalNote.trim());
       if (obsWithNote) {
         generalNoteForDay = obsWithNote.generalNote.trim();
+      }
+    }
+
+    // Extract Activity / Sentra label for this day
+    let activityLabelForDay: string | null = null;
+    if (foundContext) {
+      if (foundContext.sentraId === 'SPECIAL_ACTIVITY') {
+        activityLabelForDay = foundContext.sentraName || 'Kegiatan Khusus';
+      } else {
+        activityLabelForDay = foundContext.sentraName || (foundContext.sentraId ? (ACTIVITY_LABEL_MAP[foundContext.sentraId] || foundContext.sentraId) : null);
+      }
+    }
+    if (!activityLabelForDay && dayObsForStudent && dayObsForStudent.length > 0) {
+      const acts = dayObsForStudent.map(o => ACTIVITY_LABEL_MAP[o.activity] || o.activity).filter(Boolean);
+      if (acts.length > 0) {
+        activityLabelForDay = Array.from(new Set(acts)).join(', ');
+      }
+    }
+    if (!activityLabelForDay && queriedSessionDoc) {
+      const act = queriedSessionDoc.selectedActivity || queriedSessionDoc.activity;
+      if (act) {
+        activityLabelForDay = ACTIVITY_LABEL_MAP[act] || act;
       }
     }
 
@@ -1158,6 +1259,7 @@ export function aggregateKGWeeklyReportForPeriod(
       photoUrl: chosenPhoto,
       fallbackText,
       generalNote: generalNoteForDay,
+      activityName: activityLabelForDay,
       dateKey: dk ? dk.dateKey : null
     };
   });

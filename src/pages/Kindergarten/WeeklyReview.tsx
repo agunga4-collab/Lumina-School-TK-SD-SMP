@@ -1147,7 +1147,9 @@ export default function WeeklyReview() {
 
       const buildDayDocumentation = (dayKey: string, addDays: number, dayNameEn: string) => {
         const snap = finalSnapshots?.find((s: any) => s.dayKey?.toUpperCase() === dayKey.toUpperCase());
-        const captionVal = getCaptionForDay(dayKey);
+        const generalNote = (snap?.generalNote || '').trim();
+        const photoCaption = getCaptionForDay(dayKey);
+        const captionVal = generalNote || photoCaption;
         
         const items = (loadedDraft?.weeklyObservationItems || []).filter((item: any) => {
           const itemDay = item.dayLabel || '';
@@ -1540,29 +1542,36 @@ export default function WeeklyReview() {
           {/* Photo caption + Catatan Umum Hari Ini */}
           {(() => {
             const photoCaption = getCaptionForDay(dayKey);
-            const generalNote = snap?.generalNote || null;
-            const fullCaptionText = [
-              photoCaption ? photoCaption.trim() : null,
-              generalNote ? `Catatan Umum: ${generalNote.trim()}` : null
-            ].filter(Boolean).join('\n');
+            const generalNote = (snap?.generalNote || '').trim();
+            let secondaryLabel = (snap?.activityName || photoCaption || '').trim();
+
+            const hasGeneralNote = generalNote.length > 0;
+            const hasSecondaryLabel = secondaryLabel.length > 0;
 
             return (
-              <div className="min-h-[26px] px-2 py-[5px] flex items-center justify-center">
-                {fullCaptionText ? (
-                  <div 
-                    className="line-clamp-3 text-[10.5px] leading-[1.3] text-gray-600 font-medium text-center w-full"
-                    title={fullCaptionText}
-                  >
-                    {photoCaption && photoCaption.trim() !== '' && (
-                      <p className="italic">{photoCaption.trim()}</p>
+              <div className="min-h-[32px] px-2 py-1.5 flex flex-col items-center justify-center text-center w-full bg-gray-50/50 rounded-b-sm border-t border-gray-100">
+                {hasGeneralNote ? (
+                  <div className="w-full flex flex-col items-center text-center">
+                    {hasSecondaryLabel && (
+                      <span className="text-[10px] sm:text-[9.5px] font-bold text-emerald-800 uppercase tracking-wide block mb-0.5 line-clamp-1">
+                        {secondaryLabel}
+                      </span>
                     )}
-                    {generalNote && generalNote.trim() !== '' && (
-                      <p className={photoCaption && photoCaption.trim() !== '' ? "text-[10px] text-gray-500 font-normal mt-0.5" : "italic text-gray-600"}>
-                        <span className="font-bold text-gray-700 not-italic">Catatan Umum: </span>
-                        {generalNote.trim()}
-                      </p>
-                    )}
+                    <p 
+                      className="line-clamp-3 text-[11px] sm:text-[10.5px] leading-snug text-gray-700 font-medium text-center w-full break-words"
+                      title={generalNote}
+                    >
+                      {generalNote}
+                    </p>
                   </div>
+                ) : hasSecondaryLabel ? (
+                  <p className="line-clamp-2 text-[10.5px] leading-tight text-gray-600 font-medium italic text-center w-full">
+                    {secondaryLabel}
+                  </p>
+                ) : snap?.fallbackText ? (
+                  <p className="line-clamp-2 text-[10px] leading-tight text-gray-500 font-normal italic text-center w-full">
+                    {snap.fallbackText}
+                  </p>
                 ) : (
                   <span className="text-[9.5px] text-gray-300 italic">-</span>
                 )}
@@ -1992,16 +2001,16 @@ export default function WeeklyReview() {
             {/* Five snapshot cards */}
             <div className="flex-1 flex flex-col justify-start gap-4 pt-5 pb-2">
               {/* Row 1 & 2: Monday, Tuesday, Wednesday, Thursday */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {renderSnapshotCard('MONDAY', getSnapForDay('MONDAY'))}
                 {renderSnapshotCard('TUESDAY', getSnapForDay('TUESDAY'))}
                 {renderSnapshotCard('WEDNESDAY', getSnapForDay('WEDNESDAY'))}
                 {renderSnapshotCard('THURSDAY', getSnapForDay('THURSDAY'))}
               </div>
               
-              {/* Row 3: Friday centered with identical width */}
+              {/* Row 3: Friday centered on desktop, full width on mobile */}
               <div className="w-full flex justify-center">
-                <div style={{ width: 'calc((100% - 16px) / 2)' }}>
+                <div className="w-full sm:w-[calc((100%-16px)/2)]">
                   {renderSnapshotCard('FRIDAY', getSnapForDay('FRIDAY'))}
                 </div>
               </div>
