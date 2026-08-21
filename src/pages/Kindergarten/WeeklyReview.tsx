@@ -1478,11 +1478,14 @@ export default function WeeklyReview() {
     const caption = getCaptionForDay(dayKey);
 
     return (
-      <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col h-full shadow-sm">
-        <div className="bg-[#109E58] text-white text-center flex items-center justify-center h-[23px] font-bold text-[12px] leading-[1.2] tracking-wider uppercase">
+      <div 
+        className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col h-full shadow-sm [break-inside:avoid] print:break-inside-avoid"
+        style={{ breakInside: 'avoid', pageBreakInside: 'avoid' }}
+      >
+        <div className="bg-[#109E58] text-white text-center flex items-center justify-center h-[22px] font-bold text-[11px] sm:text-[11.5px] leading-tight tracking-wider uppercase shrink-0">
           SNAPSHOT – {dayKey}
         </div>
-        <div className="p-1.5 flex-1 flex flex-col justify-start bg-white gap-2">
+        <div className="p-1.5 flex-1 flex flex-col justify-between bg-white gap-1.5">
           {snap?.photoUrl && !hasError ? (
             <div 
               style={{
@@ -1490,14 +1493,15 @@ export default function WeeklyReview() {
                 alignItems: 'center',
                 justifyContent: 'center',
                 width: '100%',
-                height: '160px',
-                minHeight: '0',
+                height: '145px',
+                minHeight: '145px',
+                maxHeight: '145px',
                 backgroundColor: 'white',
-                overflow: 'visible',
-                padding: '12px',
+                overflow: 'hidden',
+                padding: '6px',
                 boxSizing: 'border-box'
               }}
-              className="mx-auto rounded-sm border border-gray-100"
+              className="mx-auto rounded-sm border border-gray-100 shrink-0"
             >
               <img 
                 src={snap.photoUrl} 
@@ -1525,11 +1529,13 @@ export default function WeeklyReview() {
                 alignItems: 'center',
                 justifyContent: 'center',
                 width: '100%',
-                height: '160px',
-                minHeight: '0',
+                height: '145px',
+                minHeight: '145px',
+                maxHeight: '145px',
                 backgroundColor: '#f9fafb',
+                boxSizing: 'border-box'
               }}
-              className="mx-auto border border-dashed border-gray-200 p-2 text-center rounded-sm"
+              className="mx-auto border border-dashed border-gray-200 p-2 text-center rounded-sm shrink-0"
             >
               <ImageIcon className="w-5 h-5 text-gray-400 mb-1" />
               <span className="text-[10px] text-gray-500 font-bold leading-tight">Dokumentasi belum tersedia</span>
@@ -1549,27 +1555,76 @@ export default function WeeklyReview() {
             const hasSecondaryLabel = secondaryLabel.length > 0;
 
             return (
-              <div className="min-h-[32px] px-2 py-1.5 flex flex-col items-center justify-center text-center w-full bg-gray-50/50 rounded-b-sm border-t border-gray-100">
+              <div 
+                className="px-2 py-1.5 flex flex-col items-center justify-center text-center w-full bg-gray-50/60 rounded-b-sm border-t border-gray-100 shrink-0 overflow-hidden"
+                style={{ minHeight: '58px', boxSizing: 'border-box' }}
+              >
                 {hasGeneralNote ? (
                   <div className="w-full flex flex-col items-center text-center">
                     {hasSecondaryLabel && (
-                      <span className="text-[10px] sm:text-[9.5px] font-bold text-emerald-800 uppercase tracking-wide block mb-0.5 line-clamp-1">
+                      <span 
+                        className="text-[9.5px] font-bold text-emerald-800 uppercase tracking-wide block mb-0.5 w-full text-center truncate"
+                        style={{
+                          fontSize: '9.5px',
+                          lineHeight: '12px',
+                          height: '12px',
+                          maxHeight: '12px',
+                          overflow: 'hidden',
+                          whiteSpace: 'nowrap',
+                          textOverflow: 'ellipsis'
+                        }}
+                      >
                         {secondaryLabel}
                       </span>
                     )}
                     <p 
-                      className="line-clamp-3 text-[11px] sm:text-[10.5px] leading-snug text-gray-700 font-medium text-center w-full break-words"
+                      className="text-[10px] text-gray-700 font-medium text-center w-full break-words"
                       title={generalNote}
+                      style={{
+                        fontSize: '10px',
+                        lineHeight: '13px',
+                        maxHeight: '39px',
+                        height: '39px',
+                        overflow: 'hidden',
+                        wordBreak: 'break-word',
+                        display: '-webkit-box',
+                        WebkitLineClamp: 3,
+                        WebkitBoxOrient: 'vertical',
+                      }}
                     >
                       {generalNote}
                     </p>
                   </div>
                 ) : hasSecondaryLabel ? (
-                  <p className="line-clamp-2 text-[10.5px] leading-tight text-gray-600 font-medium italic text-center w-full">
+                  <p 
+                    className="text-[10px] text-gray-600 font-medium italic text-center w-full"
+                    style={{
+                      fontSize: '10px',
+                      lineHeight: '13px',
+                      maxHeight: '26px',
+                      overflow: 'hidden',
+                      wordBreak: 'break-word',
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
+                    }}
+                  >
                     {secondaryLabel}
                   </p>
                 ) : snap?.fallbackText ? (
-                  <p className="line-clamp-2 text-[10px] leading-tight text-gray-500 font-normal italic text-center w-full">
+                  <p 
+                    className="text-[9.5px] text-gray-500 font-normal italic text-center w-full"
+                    style={{
+                      fontSize: '9.5px',
+                      lineHeight: '12px',
+                      maxHeight: '24px',
+                      overflow: 'hidden',
+                      wordBreak: 'break-word',
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
+                    }}
+                  >
                     {snap.fallbackText}
                   </p>
                 ) : (
@@ -1895,7 +1950,7 @@ export default function WeeklyReview() {
                 overflow: hidden !important;
                 display: flex !important;
                 flex-direction: column !important;
-                justify-content: space-between !important;
+                justify-content: flex-start !important;
               }
               .weekly-report-page.page-2 {
                 justify-content: flex-start !important;
@@ -1908,7 +1963,7 @@ export default function WeeklyReview() {
           `}} />
 
           {/* PAGE 1 — DOKUMENTASI KEGIATAN MINGGUAN */}
-          <div className="weekly-report-page page-1 bg-white px-8 py-4 md:px-12 md:py-6 shadow-sm border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-between gap-3.5 print:border-none print:shadow-none print:p-0 print:m-0" id="weekly-report-page-1">
+          <div className="weekly-report-page page-1 bg-white px-8 py-4 md:px-12 md:py-6 shadow-sm border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-start gap-3 print:border-none print:shadow-none print:p-0 print:m-0" id="weekly-report-page-1">
             
             {/* Lazuardi school design banner */}
             <div className="bg-[#109E58] py-3.5 px-4 text-white relative flex flex-col justify-between rounded-sm">
