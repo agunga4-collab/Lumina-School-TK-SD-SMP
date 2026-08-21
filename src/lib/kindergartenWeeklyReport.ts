@@ -965,13 +965,17 @@ export function aggregateKGWeeklyReportForPeriod(
     const dk = dateKeys.find(key => key.dayLabel === dayName);
     let chosenPhoto: string | null = null;
     let fallbackText = 'Belum ada dokumentasi foto kerja harian atau kegiatan observasi untuk hari ini.';
-    
+    let queriedSessionDoc: any = null;
+    let foundContext: any = null;
+    let dayObsForStudent: any[] = [];
+    const rawStudentClassId = student.classId || '';
+    const canonicalClassId = (dk ? resolveCanonicalClassId(rawStudentClassId, allClasses || []) : null) || rawStudentClassId;
+
     if (dk) {
-      const rawStudentClassId = student.classId || '';
-      const canonicalClassId = resolveCanonicalClassId(rawStudentClassId, allClasses || []) || rawStudentClassId;
+      dayObsForStudent = weeklyObservationItems.filter(item => item.dateKey === dk.dateKey);
+      foundContext = (dailyContexts || []).find(dc => dc && (dc.observationDate === dk.dateKey || dc.date === dk.dateKey)) || null;
 
       // 1. Try to find if student has individual photo on this date
-      const dayObsForStudent = weeklyObservationItems.filter(item => item.dateKey === dk.dateKey);
       let personalPhotoResult: string | null = null;
       const individualPhotoItem = dayObsForStudent.find(item => item.photoUrl && isValidPhotoUrl(item.photoUrl));
       
@@ -988,7 +992,6 @@ export function aggregateKGWeeklyReportForPeriod(
 
       // Fallback: If personal/general photo from current student observations are missing,
       // find class session for: `canonical classId + exact snapshot date`.
-      let queriedSessionDoc: any = null;
       let generalPhotoUrlAvailable: string | null = null;
       let generalPhotoAvailable: string | null = null;
 
@@ -1076,8 +1079,6 @@ export function aggregateKGWeeklyReportForPeriod(
         );
       }
 
-      const foundContext = (dailyContexts || []).find(dc => dc.observationDate === dk.dateKey || dc.date === dk.dateKey);
-      
       if (foundContext) {
         if (foundContext.sentraId === 'SPECIAL_ACTIVITY') {
           fallbackText = `Mengikuti kegiatan khusus "${foundContext.sentraName || 'Kegiatan Khusus'}" bersama-sama teman-sekelas.`;
@@ -1131,7 +1132,7 @@ export function aggregateKGWeeklyReportForPeriod(
 
     // Extract Catatan Umum Hari Ini for this class and date
     let generalNoteForDay: string | null = null;
-    if (foundContext && foundContext.generalNote && foundContext.generalNote.trim()) {
+    if (foundContext && foundContext.generalNote && typeof foundContext.generalNote === 'string' && foundContext.generalNote.trim()) {
       generalNoteForDay = foundContext.generalNote.trim();
     }
     if (!generalNoteForDay && typeof localStorage !== 'undefined' && dk) {
@@ -1141,11 +1142,11 @@ export function aggregateKGWeeklyReportForPeriod(
         generalNoteForDay = localNote.trim();
       }
     }
-    if (!generalNoteForDay && queriedSessionDoc && queriedSessionDoc.generalNote && queriedSessionDoc.generalNote.trim()) {
+    if (!generalNoteForDay && queriedSessionDoc && queriedSessionDoc.generalNote && typeof queriedSessionDoc.generalNote === 'string' && queriedSessionDoc.generalNote.trim()) {
       generalNoteForDay = queriedSessionDoc.generalNote.trim();
     }
     if (!generalNoteForDay && dayObsForStudent && dayObsForStudent.length > 0) {
-      const obsWithNote = dayObsForStudent.find((o: any) => o.generalNote && o.generalNote.trim());
+      const obsWithNote = dayObsForStudent.find((o: any) => o && o.generalNote && typeof o.generalNote === 'string' && o.generalNote.trim());
       if (obsWithNote) {
         generalNoteForDay = obsWithNote.generalNote.trim();
       }
