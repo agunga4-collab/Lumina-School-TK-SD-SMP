@@ -112,17 +112,45 @@ export const DEFAULT_STUDENTS: KGStudent[] = new Proxy([] as KGStudent[], {
   }
 });
 
+// Helper: Parse any date input to local midnight Date safely without UTC offset shift
+export function parseLocalDate(d: Date | string | number): Date {
+  if (!d) return new Date();
+  if (d instanceof Date) {
+    if (isNaN(d.getTime())) return new Date();
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+  }
+  if (typeof d === 'number') {
+    const dt = new Date(d);
+    return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 0, 0, 0, 0);
+  }
+  if (typeof d === 'string') {
+    const cleanStr = d.trim().split('T')[0];
+    const parts = cleanStr.split('-');
+    if (parts.length === 3) {
+      const yr = parseInt(parts[0], 10);
+      const mo = parseInt(parts[1], 10) - 1;
+      const da = parseInt(parts[2], 10);
+      if (!isNaN(yr) && !isNaN(mo) && !isNaN(da)) {
+        return new Date(yr, mo, da, 0, 0, 0, 0);
+      }
+    }
+  }
+  const dt = new Date(d);
+  return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 0, 0, 0, 0);
+}
+
 // Helper: Format Date to YYYY-MM-DD
-export function formatDateToKey(date: Date): string {
-  const yr = date.getFullYear();
-  const mo = String(date.getMonth() + 1).padStart(2, '0');
-  const da = String(date.getDate()).padStart(2, '0');
+export function formatDateToKey(date: Date | string | number): string {
+  const d = parseLocalDate(date);
+  const yr = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const da = String(d.getDate()).padStart(2, '0');
   return `${yr}-${mo}-${da}`;
 }
 
 // Helper: Get Monday of a given date's week
-export function getMonday(d: Date): Date {
-  const date = new Date(d);
+export function getMonday(d: Date | string | number): Date {
+  const date = parseLocalDate(d);
   const day = date.getDay();
   const diff = date.getDate() - day + (day === 0 ? -6 : 1); // Adjust when Day is Sunday
   const monday = new Date(date.setDate(diff));
@@ -325,6 +353,8 @@ export function aggregateKGWeeklyReport(
 
   if (firestoreAttendanceDocs && firestoreAttendanceDocs.length > 0) {
     const nameIndex = activeStudents ? buildStudentNameIndex(activeStudents) : {};
+    const processedStudentDates = new Set<string>();
+
     firestoreAttendanceDocs.forEach(docData => {
       const dStr = docData.date;
       const matchedDay = dateKeys.find(dk => dk.dateKey === dStr);
@@ -332,27 +362,40 @@ export function aggregateKGWeeklyReport(
         const studentsList = docData.students || [];
         studentsList.forEach((s: any) => {
           const resolved = activeStudents ? resolveAttendanceStudent({
-            originalStudentId: s.studentId || '',
+            originalStudentId: s.studentId || s.id || '',
             originalStudentName: s.studentName || s.name || '',
             activeStudents,
             nameIndex
-          }) : { resolvedStudentId: s.studentId };
+          }) : { resolvedStudentId: s.studentId || s.id };
 
-          const resolvedId = resolved.resolvedStudentId || s.studentId;
+          const resolvedId = resolved.resolvedStudentId || s.studentId || s.id;
           if (resolvedId === studentId) {
-            const statusVal = String(s.status || '').toLowerCase();
-            const emoVal = String(s.emotion || '').toUpperCase();
+            const processedKey = `${studentId}_${dStr}`;
+            if (processedStudentDates.has(processedKey)) return;
 
-            if (statusVal === 'hadir') {
+            const statusVal = String(s.status || s.attendance || '').toLowerCase().trim();
+            const emoVal = String(s.emotion || '').toUpperCase().trim();
+
+            const isPresent = statusVal === 'hadir' || statusVal === 'present' || statusVal === 'h' || statusVal === 'p' ||
+                              ['HAPPY', 'SAD', 'OK', 'ANGRY', 'EARLY_LEAVE', 'PRESENT'].includes(emoVal);
+            const isSick = statusVal === 'sakit' || statusVal === 'sick' || statusVal === 's' || emoVal === 'SICK';
+            const isIzin = statusVal === 'izin' || statusVal === 'permission' || statusVal === 'i' || statusVal === 'excused' || emoVal === 'IZIN' || emoVal === 'PERMISSION';
+            const isNoNews = statusVal === 'tanpa_kabar' || statusVal === 'nonews' || statusVal === 'no_news' || statusVal === 'a' || statusVal === 'absent' || emoVal === 'NO_NEWS' || emoVal === 'NONENS';
+
+            if (isPresent) {
+              processedStudentDates.add(processedKey);
               if (emoVal === 'HAPPY') attendanceSummary.happy++;
               else if (emoVal === 'SAD') attendanceSummary.sad++;
               else if (emoVal === 'ANGRY') attendanceSummary.angry++;
               else attendanceSummary.ok++;
-            } else if (statusVal === 'sakit') {
+            } else if (isSick) {
+              processedStudentDates.add(processedKey);
               attendanceSummary.sick++;
-            } else if (statusVal === 'izin') {
+            } else if (isIzin) {
+              processedStudentDates.add(processedKey);
               attendanceSummary.izin++;
-            } else if (statusVal === 'tanpa_kabar') {
+            } else if (isNoNews) {
+              processedStudentDates.add(processedKey);
               attendanceSummary.noNews++;
             }
           }
@@ -773,8 +816,8 @@ export function aggregateKGWeeklyReportForPeriod(
     ageGroup: 'TK_A' as const
   };
 
-  const start = new Date(startDateStr);
-  const end = new Date(endDateStr);
+  const start = parseLocalDate(startDateStr);
+  const end = parseLocalDate(endDateStr);
   const dates = getDatesInRange(start, end);
 
   // Generate dateKeys
@@ -806,6 +849,8 @@ export function aggregateKGWeeklyReportForPeriod(
 
   if (firestoreAttendanceDocs && firestoreAttendanceDocs.length > 0) {
     const nameIndex = activeStudents ? buildStudentNameIndex(activeStudents) : {};
+    const processedStudentDates = new Set<string>();
+
     firestoreAttendanceDocs.forEach(docData => {
       const dStr = docData.date;
       const matchedDay = dateKeys.find(dk => dk.dateKey === dStr);
@@ -813,27 +858,40 @@ export function aggregateKGWeeklyReportForPeriod(
         const studentsList = docData.students || [];
         studentsList.forEach((s: any) => {
           const resolved = activeStudents ? resolveAttendanceStudent({
-            originalStudentId: s.studentId || '',
+            originalStudentId: s.studentId || s.id || '',
             originalStudentName: s.studentName || s.name || '',
             activeStudents,
             nameIndex
-          }) : { resolvedStudentId: s.studentId };
+          }) : { resolvedStudentId: s.studentId || s.id };
 
-          const resolvedId = resolved.resolvedStudentId || s.studentId;
+          const resolvedId = resolved.resolvedStudentId || s.studentId || s.id;
           if (resolvedId === studentId) {
-            const statusVal = String(s.status || '').toLowerCase();
-            const emoVal = String(s.emotion || '').toUpperCase();
+            const processedKey = `${studentId}_${dStr}`;
+            if (processedStudentDates.has(processedKey)) return;
 
-            if (statusVal === 'hadir') {
+            const statusVal = String(s.status || s.attendance || '').toLowerCase().trim();
+            const emoVal = String(s.emotion || '').toUpperCase().trim();
+
+            const isPresent = statusVal === 'hadir' || statusVal === 'present' || statusVal === 'h' || statusVal === 'p' ||
+                              ['HAPPY', 'SAD', 'OK', 'ANGRY', 'EARLY_LEAVE', 'PRESENT'].includes(emoVal);
+            const isSick = statusVal === 'sakit' || statusVal === 'sick' || statusVal === 's' || emoVal === 'SICK';
+            const isIzin = statusVal === 'izin' || statusVal === 'permission' || statusVal === 'i' || statusVal === 'excused' || emoVal === 'IZIN' || emoVal === 'PERMISSION';
+            const isNoNews = statusVal === 'tanpa_kabar' || statusVal === 'nonews' || statusVal === 'no_news' || statusVal === 'a' || statusVal === 'absent' || emoVal === 'NO_NEWS' || emoVal === 'NONENS';
+
+            if (isPresent) {
+              processedStudentDates.add(processedKey);
               if (emoVal === 'HAPPY') attendanceSummary.happy++;
               else if (emoVal === 'SAD') attendanceSummary.sad++;
               else if (emoVal === 'ANGRY') attendanceSummary.angry++;
               else attendanceSummary.ok++;
-            } else if (statusVal === 'sakit') {
+            } else if (isSick) {
+              processedStudentDates.add(processedKey);
               attendanceSummary.sick++;
-            } else if (statusVal === 'izin') {
+            } else if (isIzin) {
+              processedStudentDates.add(processedKey);
               attendanceSummary.izin++;
-            } else if (statusVal === 'tanpa_kabar') {
+            } else if (isNoNews) {
+              processedStudentDates.add(processedKey);
               attendanceSummary.noNews++;
             }
           }
