@@ -1897,6 +1897,9 @@ export default function WeeklyReview() {
                 flex-direction: column !important;
                 justify-content: space-between !important;
               }
+              .weekly-report-page.page-2 {
+                justify-content: flex-start !important;
+              }
               @page {
                 size: A4 portrait;
                 margin: 0.6cm 1cm 0.6cm 1cm;
@@ -2073,7 +2076,10 @@ export default function WeeklyReview() {
             </div>
 
             {/* Area Tanda Tangan: Guru Kelas Centered */}
-            <div className="w-full flex justify-center mt-auto mb-6">
+            <div 
+              className="w-full flex justify-center mt-5 mb-4 print:break-inside-avoid [break-inside:avoid]"
+              style={{ breakInside: 'avoid', pageBreakInside: 'avoid' }}
+            >
               <div className="flex flex-col items-center text-center text-xs w-64">
                 <span className="font-bold text-gray-500 text-[10px]">{formattedSignDate}</span>
                 <span className="font-bold text-gray-600 text-[10.5px] mt-0.5">Guru Kelas</span>
