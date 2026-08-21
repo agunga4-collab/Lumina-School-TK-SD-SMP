@@ -2016,12 +2016,6 @@ export default function WeeklyReview() {
               </div>
             </div>
 
-            {/* FOOTER BLOCK: Exact matching of Griya Cinere school contacts */}
-            <div className="bg-[#109E58] text-white text-center py-2 px-4 text-[8px] font-sans rounded-sm border-t border-emerald-300">
-              <div className="font-bold tracking-wide uppercase">{`Griya Cinere I, Jl. Garuda Ujung No. 35, Cinere, Kec Limo, Kota Depok, Jawa Barat 16515`}</div>
-              <div className="text-[7.5px] mt-0.5 opacity-90 font-medium">{`Telp. (021) 753 4841   Email: information@lazuardi.sch.id   WhatsApp: +62 813 8925 7784`}</div>
-            </div>
-
           </div>
 
           {/* PAGE 2 — TEACHER COMMENTS & SOCIAL-EMOTIONAL LEARNING DEVELOPMENT */}
@@ -2079,7 +2073,7 @@ export default function WeeklyReview() {
             </div>
 
             {/* Area Tanda Tangan: Guru Kelas Centered */}
-            <div className="w-full flex justify-center mt-8 mb-4">
+            <div className="w-full flex justify-center mt-auto mb-6">
               <div className="flex flex-col items-center text-center text-xs w-64">
                 <span className="font-bold text-gray-500 text-[10px]">{formattedSignDate}</span>
                 <span className="font-bold text-gray-600 text-[10.5px] mt-0.5">Guru Kelas</span>
@@ -2113,12 +2107,6 @@ export default function WeeklyReview() {
                   </span>
                 </div>
               </div>
-            </div>
-
-            {/* FOOTER BLOCK: Exact matching of Griya Cinere school contacts */}
-            <div className="bg-[#109E58] text-white text-center py-2 px-4 text-[8px] font-sans rounded-sm border-t border-emerald-300 mt-auto">
-              <div className="font-bold tracking-wide uppercase">{`Griya Cinere I, Jl. Garuda Ujung No. 35, Cinere, Kec Limo, Kota Depok, Jawa Barat 16515`}</div>
-              <div className="text-[7.5px] mt-0.5 opacity-90 font-medium">{`Telp. (021) 753 4841   Email: information@lazuardi.sch.id   WhatsApp: +62 813 8925 7784`}</div>
             </div>
 
           </div>
