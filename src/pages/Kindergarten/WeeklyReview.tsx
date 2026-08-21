@@ -1475,17 +1475,38 @@ export default function WeeklyReview() {
   const renderSnapshotCard = (dayKey: string, snap: any) => {
     const isPortrait = imageRatios[dayKey] === 'portrait';
     const hasError = imageErrors[dayKey];
-    const caption = getCaptionForDay(dayKey);
+
+    const sanitizeString = (val: any): string => {
+      if (!val || typeof val !== 'string') return '';
+      const trimmed = val.trim();
+      if (!trimmed) return '';
+      if (/^(undefined|null|-|Sentra undefined|domain undefined)$/i.test(trimmed)) return '';
+      if (trimmed.toLowerCase().includes('undefined') || trimmed.toLowerCase().includes('null')) return '';
+      return trimmed;
+    };
+
+    const generalNote = sanitizeString(snap?.generalNote);
+    const hasGeneralNote = generalNote.length > 0;
+
+    let rawLabel = sanitizeString(snap?.activityName);
+    if (!rawLabel) {
+      const captionFallback = sanitizeString(getCaptionForDay(dayKey));
+      if (captionFallback && captionFallback.length < 50) {
+        rawLabel = captionFallback;
+      }
+    }
+    const secondaryLabel = sanitizeString(rawLabel);
+    const hasSecondaryLabel = secondaryLabel.length > 0;
 
     return (
       <div 
-        className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col h-full shadow-sm [break-inside:avoid] print:break-inside-avoid"
+        className="border-2 border-[#109E58] rounded-sm bg-white flex flex-col shadow-sm [break-inside:avoid] print:break-inside-avoid"
         style={{ breakInside: 'avoid', pageBreakInside: 'avoid' }}
       >
         <div className="bg-[#109E58] text-white text-center flex items-center justify-center h-[22px] font-bold text-[11px] sm:text-[11.5px] leading-tight tracking-wider uppercase shrink-0">
           SNAPSHOT – {dayKey}
         </div>
-        <div className="p-1.5 flex-1 flex flex-col justify-between bg-white gap-1.5">
+        <div className="p-1.5 bg-white flex flex-col justify-start gap-0">
           {snap?.photoUrl && !hasError ? (
             <div 
               style={{
@@ -1493,12 +1514,12 @@ export default function WeeklyReview() {
                 alignItems: 'center',
                 justifyContent: 'center',
                 width: '100%',
-                height: '145px',
-                minHeight: '145px',
-                maxHeight: '145px',
+                height: '140px',
+                minHeight: '140px',
+                maxHeight: '140px',
                 backgroundColor: 'white',
                 overflow: 'hidden',
-                padding: '6px',
+                padding: '4px',
                 boxSizing: 'border-box'
               }}
               className="mx-auto rounded-sm border border-gray-100 shrink-0"
@@ -1529,9 +1550,9 @@ export default function WeeklyReview() {
                 alignItems: 'center',
                 justifyContent: 'center',
                 width: '100%',
-                height: '145px',
-                minHeight: '145px',
-                maxHeight: '145px',
+                height: '140px',
+                minHeight: '140px',
+                maxHeight: '140px',
                 backgroundColor: '#f9fafb',
                 boxSizing: 'border-box'
               }}
@@ -1546,86 +1567,65 @@ export default function WeeklyReview() {
           )}
           
           {/* Photo caption + Catatan Umum Hari Ini */}
-          {(() => {
-            const photoCaption = getCaptionForDay(dayKey);
-            const generalNote = (snap?.generalNote || '').trim();
-            let secondaryLabel = (snap?.activityName || photoCaption || '').trim();
-
-            const hasGeneralNote = generalNote.length > 0;
-            const hasSecondaryLabel = secondaryLabel.length > 0;
-
-            return (
+          <div 
+            className="mt-2 px-2 py-1.5 flex flex-col items-center justify-start text-center w-full bg-gray-50/60 rounded-b-sm border-t border-gray-100 shrink-0"
+            style={{ 
+              boxSizing: 'border-box',
+              minHeight: hasGeneralNote ? '52px' : (hasSecondaryLabel ? '26px' : '10px')
+            }}
+          >
+            {/* 1. SENTRA LABEL (In its own row BELOW photo, 6-8px gap from photo bottom, centered, single-line, line-height 1.5) */}
+            {hasSecondaryLabel && (
               <div 
-                className="px-2 pt-1.5 pb-1 flex flex-col items-center justify-start text-center w-full bg-gray-50/60 rounded-b-sm border-t border-gray-100 shrink-0 overflow-hidden"
-                style={{ minHeight: '52px', boxSizing: 'border-box' }}
+                className="w-full text-center flex items-center justify-center shrink-0"
+                style={{
+                  minHeight: '18px',
+                  paddingTop: '2px',
+                  paddingBottom: '2px',
+                  boxSizing: 'border-box'
+                }}
               >
-                {/* 1. SENTRA LABEL (At the TOP with safe gap from photo edge, centered, single-line) */}
-                {hasSecondaryLabel && (
-                  <span 
-                    className="font-bold text-emerald-800 uppercase tracking-wide block w-full text-center truncate"
-                    style={{
-                      fontSize: '8.5px',
-                      lineHeight: '13px',
-                      height: '13px',
-                      maxHeight: '13px',
-                      overflow: 'hidden',
-                      whiteSpace: 'nowrap',
-                      textOverflow: 'ellipsis',
-                      marginTop: '2px',
-                      marginBottom: '3px',
-                      boxSizing: 'border-box'
-                    }}
-                  >
-                    {secondaryLabel}
-                  </span>
-                )}
-
-                {/* 2. CATATAN UMUM (BELOW Sentra label, max 3 lines, font size 7.5px, line-height 9.5px) */}
-                {hasGeneralNote ? (
-                  <p 
-                    className="text-gray-700 font-medium text-center w-full break-words"
-                    title={generalNote}
-                    style={{
-                      fontSize: '7.5px',
-                      lineHeight: '9.5px',
-                      maxHeight: '28.5px',
-                      height: '28.5px',
-                      overflow: 'hidden',
-                      wordBreak: 'break-word',
-                      display: '-webkit-box',
-                      WebkitLineClamp: 3,
-                      WebkitBoxOrient: 'vertical',
-                      margin: 0,
-                      padding: 0
-                    }}
-                  >
-                    {generalNote}
-                  </p>
-                ) : !hasSecondaryLabel && snap?.fallbackText ? (
-                  <p 
-                    className="text-gray-500 font-normal italic text-center w-full"
-                    style={{
-                      fontSize: '7.5px',
-                      lineHeight: '9.5px',
-                      maxHeight: '19px',
-                      height: '19px',
-                      overflow: 'hidden',
-                      wordBreak: 'break-word',
-                      display: '-webkit-box',
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: 'vertical',
-                      margin: 0,
-                      padding: 0
-                    }}
-                  >
-                    {snap.fallbackText}
-                  </p>
-                ) : (
-                  <span className="text-[9.5px] text-gray-300 italic">-</span>
-                )}
+                <span 
+                  className="font-bold text-emerald-800 uppercase tracking-wider text-center block w-full truncate"
+                  style={{
+                    fontSize: '9px',
+                    lineHeight: '1.4',
+                    margin: 0,
+                    padding: 0,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis'
+                  }}
+                >
+                  {secondaryLabel}
+                </span>
               </div>
-            );
-          })()}
+            )}
+
+            {/* 2. CATATAN UMUM (BELOW Sentra label, max 3 lines, ONLY if generalNote is non-empty) */}
+            {hasGeneralNote && (
+              <p 
+                className="text-gray-700 font-medium text-center w-full break-words shrink-0"
+                title={generalNote}
+                style={{
+                  fontSize: '7.5px',
+                  lineHeight: '10px',
+                  maxHeight: '30px',
+                  height: '30px',
+                  overflow: 'hidden',
+                  wordBreak: 'break-word',
+                  display: '-webkit-box',
+                  WebkitLineClamp: 3,
+                  WebkitBoxOrient: 'vertical',
+                  margin: 0,
+                  marginTop: hasSecondaryLabel ? '3px' : '0px',
+                  padding: 0
+                }}
+              >
+                {generalNote}
+              </p>
+            )}
+          </div>
         </div>
       </div>
     );
