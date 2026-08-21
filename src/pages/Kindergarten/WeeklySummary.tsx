@@ -14,9 +14,7 @@ import {
   formatDateToKey, 
   getMonday,
   getStoredStudents,
-  saveStoredStudents,
-  parseLocalDate,
-  getDatesInRange
+  saveStoredStudents
 } from '../../lib/kindergartenWeeklyReport';
 import { collection, query, where, getDocs, doc, setDoc, getDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
@@ -679,81 +677,51 @@ export default function WeeklySummary() {
         // 1. Fetch attendance reports
         let fetchedAtt: any[] = [];
         try {
-          const canonicalClassId = resolveCanonicalClassId(selectedClassId, allClasses || []) || selectedClassId;
-          const matchingClassKeys = new Set<string>([selectedClassId, canonicalClassId]);
-          if (allClasses && allClasses.length > 0) {
-            allClasses.forEach((c: any) => {
-              if (c.id && (c.id === selectedClassId || resolveCanonicalClassId(c.id, allClasses) === canonicalClassId)) {
-                matchingClassKeys.add(c.id);
-              }
-              if (c.name && (c.name === selectedClassId || resolveCanonicalClassId(c.name, allClasses) === canonicalClassId)) {
-                matchingClassKeys.add(c.name);
-              }
-            });
-          }
-          const classKeysList = Array.from(matchingClassKeys);
-
           const qAtt = query(
             collection(db, 'attendance'),
+            where('classId', '==', selectedClassId),
             where('date', '>=', startDateStr),
             where('date', '<=', endDateStr)
           );
           const snapAtt = await getDocs(qAtt);
           logFirestoreRead('attendanceReports', snapAtt.docs.length || 1);
-          const allAttDocs = snapAtt.docs.map(doc => ({
+          fetchedAtt = snapAtt.docs.map(doc => ({
             id: doc.id,
             ...doc.data()
           }));
-
-          fetchedAtt = allAttDocs.filter((docData: any) => {
-            const rawDocClassId = docData.classId || '';
-            if (rawDocClassId) {
-              if (classKeysList.includes(rawDocClassId)) return true;
-              const docCanonical = resolveCanonicalClassId(rawDocClassId, allClasses || []) || rawDocClassId;
-              if (docCanonical === canonicalClassId) return true;
-            }
-            if (Array.isArray(docData.students) && docData.students.length > 0) {
-              const hasMatchingStudent = docData.students.some((s: any) => {
-                const sId = s.studentId || s.id;
-                return (students || []).some((st: any) => st.id === sId);
-              });
-              if (hasMatchingStudent) return true;
-            }
-            return false;
-          });
         } catch (err: any) {
           if (process.env.NODE_ENV !== 'production') {
             console.warn("[WeeklySummary] Attendance query list permission denied or failed, trying getDoc fallback.", err);
           }
           const datesList: string[] = [];
           try {
-            const start = parseLocalDate(startDateStr);
-            const end = parseLocalDate(endDateStr);
-            const rangeDates = getDatesInRange(start, end);
-            datesList.push(...rangeDates.map(formatDateToKey));
+            let start = new Date(startDateStr + 'T00:00:00');
+            const end = new Date(endDateStr + 'T00:00:00');
+            while (start <= end) {
+              const yyyy = start.getFullYear();
+              const mm = String(start.getMonth() + 1).padStart(2, '0');
+              const dd = String(start.getDate()).padStart(2, '0');
+              datesList.push(`${yyyy}-${mm}-${dd}`);
+              start.setDate(start.getDate() + 1);
+            }
           } catch (e) {
             console.error("[WeeklySummary] Error calculating dates in range:", e);
           }
 
           if (datesList.length > 0) {
-            const canonicalClassId = resolveCanonicalClassId(selectedClassId, allClasses || []) || selectedClassId;
-            const classKeys = Array.from(new Set([selectedClassId, canonicalClassId]));
-
             const attDocs = await Promise.all(
-              datesList.flatMap((dStr) =>
-                classKeys.map(async (cKey) => {
-                  try {
-                    const docId = `${cKey}_${dStr}`;
-                    const docSnap = await getDoc(doc(db, 'attendance', docId));
-                    if (docSnap.exists()) {
-                      return { id: docSnap.id, ...docSnap.data() };
-                    }
-                  } catch (e) {
-                    // ignore individual read failures
+              datesList.map(async (dStr) => {
+                try {
+                  const docId = `${selectedClassId}_${dStr}`;
+                  const docSnap = await getDoc(doc(db, 'attendance', docId));
+                  if (docSnap.exists()) {
+                    return { id: docSnap.id, ...docSnap.data() };
                   }
-                  return null;
-                })
-              )
+                } catch (e) {
+                  // ignore individual read failures
+                }
+                return null;
+              })
             );
             fetchedAtt = attDocs.filter(Boolean) as any[];
           }
