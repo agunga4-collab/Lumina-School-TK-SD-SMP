@@ -1556,73 +1556,65 @@ export default function WeeklyReview() {
 
             return (
               <div 
-                className="px-2 py-1.5 flex flex-col items-center justify-center text-center w-full bg-gray-50/60 rounded-b-sm border-t border-gray-100 shrink-0 overflow-hidden"
-                style={{ minHeight: '58px', boxSizing: 'border-box' }}
+                className="px-2 py-1 flex flex-col items-center justify-start text-center w-full bg-gray-50/60 rounded-b-sm border-t border-gray-100 shrink-0 overflow-hidden"
+                style={{ minHeight: '48px', boxSizing: 'border-box' }}
               >
-                {hasGeneralNote ? (
-                  <div className="w-full flex flex-col items-center text-center">
-                    {hasSecondaryLabel && (
-                      <span 
-                        className="text-[9.5px] font-bold text-emerald-800 uppercase tracking-wide block mb-0.5 w-full text-center truncate"
-                        style={{
-                          fontSize: '9.5px',
-                          lineHeight: '12px',
-                          height: '12px',
-                          maxHeight: '12px',
-                          overflow: 'hidden',
-                          whiteSpace: 'nowrap',
-                          textOverflow: 'ellipsis'
-                        }}
-                      >
-                        {secondaryLabel}
-                      </span>
-                    )}
-                    <p 
-                      className="text-[10px] text-gray-700 font-medium text-center w-full break-words"
-                      title={generalNote}
-                      style={{
-                        fontSize: '10px',
-                        lineHeight: '13px',
-                        maxHeight: '39px',
-                        height: '39px',
-                        overflow: 'hidden',
-                        wordBreak: 'break-word',
-                        display: '-webkit-box',
-                        WebkitLineClamp: 3,
-                        WebkitBoxOrient: 'vertical',
-                      }}
-                    >
-                      {generalNote}
-                    </p>
-                  </div>
-                ) : hasSecondaryLabel ? (
-                  <p 
-                    className="text-[10px] text-gray-600 font-medium italic text-center w-full"
+                {/* 1. SENTRA LABEL (At the TOP, centered, single-line) */}
+                {hasSecondaryLabel && (
+                  <span 
+                    className="font-bold text-emerald-800 uppercase tracking-wide block w-full text-center truncate"
                     style={{
-                      fontSize: '10px',
-                      lineHeight: '13px',
-                      maxHeight: '26px',
+                      fontSize: '8px',
+                      lineHeight: '11px',
+                      height: '11px',
+                      maxHeight: '11px',
                       overflow: 'hidden',
-                      wordBreak: 'break-word',
-                      display: '-webkit-box',
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: 'vertical',
+                      whiteSpace: 'nowrap',
+                      textOverflow: 'ellipsis',
+                      marginBottom: '2px',
+                      boxSizing: 'border-box'
                     }}
                   >
                     {secondaryLabel}
-                  </p>
-                ) : snap?.fallbackText ? (
+                  </span>
+                )}
+
+                {/* 2. CATATAN UMUM (BELOW Sentra label, max 3 lines, font size 7.5px, line-height 9.5px) */}
+                {hasGeneralNote ? (
                   <p 
-                    className="text-[9.5px] text-gray-500 font-normal italic text-center w-full"
+                    className="text-gray-700 font-medium text-center w-full break-words"
+                    title={generalNote}
                     style={{
-                      fontSize: '9.5px',
-                      lineHeight: '12px',
-                      maxHeight: '24px',
+                      fontSize: '7.5px',
+                      lineHeight: '9.5px',
+                      maxHeight: '28.5px',
+                      height: '28.5px',
+                      overflow: 'hidden',
+                      wordBreak: 'break-word',
+                      display: '-webkit-box',
+                      WebkitLineClamp: 3,
+                      WebkitBoxOrient: 'vertical',
+                      margin: 0,
+                      padding: 0
+                    }}
+                  >
+                    {generalNote}
+                  </p>
+                ) : !hasSecondaryLabel && snap?.fallbackText ? (
+                  <p 
+                    className="text-gray-500 font-normal italic text-center w-full"
+                    style={{
+                      fontSize: '7.5px',
+                      lineHeight: '9.5px',
+                      maxHeight: '19px',
+                      height: '19px',
                       overflow: 'hidden',
                       wordBreak: 'break-word',
                       display: '-webkit-box',
                       WebkitLineClamp: 2,
                       WebkitBoxOrient: 'vertical',
+                      margin: 0,
+                      padding: 0
                     }}
                   >
                     {snap.fallbackText}
