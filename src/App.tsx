@@ -629,7 +629,7 @@ export default function App() {
              <Route 
                 path="weekly-report/:reportId" 
                 element={
-                  <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
+                  <RoleGuard roles={['STUDENT', 'PARENT', 'TEACHER', 'HEAD_UNIT', 'SUPER_ADMIN']}>
                     <MenuVisibilityGuard menuKey="reportCards">
                       <WeeklyReportDetail />
                     </MenuVisibilityGuard>

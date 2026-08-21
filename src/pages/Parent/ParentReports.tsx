@@ -198,8 +198,42 @@ export default function ParentReports() {
           });
 
         setReports(filteredReports);
-        setWeeklyReports([]);
-        setActiveTab('ACADEMIC');
+
+        if (studentData.unitId === 'KINDERGARTEN') {
+          try {
+            const kgList: WeeklyReport[] = [];
+            for (const sid of studentIdsToSearch) {
+              const qKg = query(
+                collection(db, 'published_kg_reports'),
+                where('studentId', '==', sid),
+                where('status', '==', 'sent')
+              );
+              const snapKg = await getDocs(qKg);
+              snapKg.docs.forEach(docSnap => {
+                kgList.push({
+                  id: docSnap.id,
+                  ...docSnap.data()
+                } as WeeklyReport);
+              });
+            }
+            const uniqueKgMap = new Map();
+            kgList.forEach(item => uniqueKgMap.set(item.id, item));
+            const sortedKg = Array.from(uniqueKgMap.values()).sort((a, b) => (b.publishedAt || 0) - (a.publishedAt || 0));
+            setWeeklyReports(sortedKg);
+            if (sortedKg.length > 0) {
+              setActiveTab('WEEKLY');
+            } else {
+              setActiveTab('ACADEMIC');
+            }
+          } catch (kgErr) {
+            console.warn("Failed to query Kindergarten weekly reports for parent:", kgErr);
+            setWeeklyReports([]);
+            setActiveTab('ACADEMIC');
+          }
+        } else {
+          setWeeklyReports([]);
+          setActiveTab('ACADEMIC');
+        }
       } catch (err) {
         console.error(err);
         setReports([]);
@@ -448,20 +482,26 @@ export default function ParentReports() {
                 </div>
 
                 <div className="space-y-2 pt-4">
-                  {report.driveFileUrl ? (
-                    <a
-                      href={report.driveFileUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-gray-900 text-white rounded-xl font-extrabold uppercase text-[9px] tracking-widest hover:bg-[#109E58] transition-all shadow-sm cursor-pointer text-center"
-                    >
-                      <Eye size={12} /> Buka di Drive
-                    </a>
-                  ) : (
-                    <div className="w-full py-2.5 bg-gray-50 text-gray-400 rounded-xl font-bold uppercase text-[9px] tracking-widest text-center italic border border-gray-100">
-                      PDF belum diunggah
-                    </div>
-                  )}
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    {report.reportSnapshot ? (
+                      <Link
+                        to={`/student/weekly-report/${report.id}`}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-emerald-600 text-white rounded-xl font-extrabold uppercase text-[9px] tracking-widest hover:bg-emerald-700 transition-all shadow-sm cursor-pointer text-center"
+                      >
+                        <Eye size={12} /> Lihat Mobile
+                      </Link>
+                    ) : null}
+                    {report.driveFileUrl && (
+                      <a
+                        href={report.driveFileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-gray-900 text-white rounded-xl font-extrabold uppercase text-[9px] tracking-widest hover:bg-[#109E58] transition-all shadow-sm cursor-pointer text-center"
+                      >
+                        <FileText size={12} /> Lihat PDF
+                      </a>
+                    )}
+                  </div>
                 </div>
               </motion.div>
             ))}

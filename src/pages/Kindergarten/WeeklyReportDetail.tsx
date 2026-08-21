@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { useParams, useNavigate, useOutletContext } from 'react-router-dom';
 import { 
-  collection, 
   doc, 
   getDoc,
   updateDoc,
@@ -9,32 +8,53 @@ import {
   increment
 } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import { 
-  User as AppUser,
-  Student
-} from '../../types';
+import { User as AppUser } from '../../types';
 import { 
   ChevronLeft, 
   FileText, 
-  Calendar, 
-  Award, 
-  CheckCircle2, 
-  Heart, 
-  Smile, 
-  Meh, 
-  Frown, 
-  Flame, 
   Loader2, 
   AlertCircle, 
   Image as ImageIcon,
   ChevronRight,
   ExternalLink,
   ShieldCheck,
-  MapPin,
-  Clock
+  UserCheck
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
+
+// Helper to sanitize strings and filter out placeholders
+const sanitizeString = (val: any): string => {
+  if (!val || typeof val !== 'string') return '';
+  const trimmed = val.trim();
+  if (!trimmed) return '';
+  if (/^(undefined|null|-|Sentra undefined|domain undefined|Tidak ada deskripsi aktivitas)$/i.test(trimmed)) return '';
+  if (trimmed.toLowerCase().includes('undefined') || trimmed.toLowerCase().includes('null')) return '';
+  return trimmed;
+};
+
+// Indonesian date formatter
+const formatDateIndonesia = (dateStr: string) => {
+  if (!dateStr) return '';
+  try {
+    const months = [
+      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+    ];
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+  } catch (e) {
+    return dateStr;
+  }
+};
+
+const DAYS_ORDER: Array<{ key: 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday'; labelId: string; labelEn: string }> = [
+  { key: 'monday', labelId: 'Senin', labelEn: 'Monday' },
+  { key: 'tuesday', labelId: 'Selasa', labelEn: 'Tuesday' },
+  { key: 'wednesday', labelId: 'Rabu', labelEn: 'Wednesday' },
+  { key: 'thursday', labelId: 'Kamis', labelEn: 'Thursday' },
+  { key: 'friday', labelId: 'Jumat', labelEn: 'Friday' },
+];
 
 export default function WeeklyReportDetail() {
   const { reportId } = useParams<{ reportId: string }>();
@@ -45,22 +65,9 @@ export default function WeeklyReportDetail() {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [report, setReport] = React.useState<any | null>(null);
-  const [activeDayKey, setActiveDayKey] = React.useState<'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday'>('monday');
-  const [innerPhotoIndexes, setInnerPhotoIndexes] = React.useState<Record<string, number>>({
-    monday: 0,
-    tuesday: 0,
-    wednesday: 0,
-    thursday: 0,
-    friday: 0
-  });
 
-  const daysList: Array<{ key: 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday'; label: string }> = [
-    { key: 'monday', label: 'Senin' },
-    { key: 'tuesday', label: 'Selasa' },
-    { key: 'wednesday', label: 'Rabu' },
-    { key: 'thursday', label: 'Kamis' },
-    { key: 'friday', label: 'Jumat' }
-  ];
+  // Photo carousel index tracker per day
+  const [photoIndexes, setPhotoIndexes] = React.useState<Record<string, number>>({});
 
   React.useEffect(() => {
     const loadAndVerifyReport = async () => {
@@ -74,7 +81,6 @@ export default function WeeklyReportDetail() {
       setError(null);
 
       try {
-        // 1. Fetch Report Document
         const reportRef = doc(db, 'published_kg_reports', reportId);
         const reportSnap = await getDoc(reportRef);
 
@@ -89,7 +95,6 @@ export default function WeeklyReportDetail() {
           ...reportSnap.data()
         } as any;
 
-        // 2. Security / Ownership check
         const reportStudentId = reportData.studentId || reportData.reportSnapshot?.student?.id;
 
         if (!reportStudentId) {
@@ -98,26 +103,27 @@ export default function WeeklyReportDetail() {
           return;
         }
 
-        // Access controls
-        const isStudent = currentUser?.role === 'STUDENT';
-        if (isStudent) {
-          const userStudentId = currentUser?.luminaId;
+        // Access controls: Check student ownership if role is STUDENT
+        if (currentUser?.role === 'STUDENT') {
+          const userStudentId = currentUser?.luminaId || (currentUser as any)?.id;
           if (!userStudentId || userStudentId.trim() !== reportStudentId.trim()) {
             setError("Anda tidak memiliki izin untuk melihat laporan ini.");
             setLoading(false);
             return;
           }
-          if (reportData.status !== 'sent') {
-            setError("Laporan ini belum dikirim atau tidak dapat diakses.");
-            setLoading(false);
-            return;
-          }
+        }
+
+        // Check report status
+        if (reportData.status !== 'sent' && !['TEACHER', 'HEAD_UNIT', 'SUPER_ADMIN', 'PARENT'].includes(currentUser?.role)) {
+          setError("Laporan ini belum dikirim atau tidak dapat diakses.");
+          setLoading(false);
+          return;
         }
 
         setReport(reportData);
 
-        // Tracking viewed status for authenticated students (not for admin/teachers/BK)
-        if (isStudent && trackedReportIdRef.current !== reportId) {
+        // Tracking viewed status for students
+        if (currentUser?.role === 'STUDENT' && trackedReportIdRef.current !== reportId) {
           trackedReportIdRef.current = reportId;
           const updatePayload: any = {
             lastStudentViewedAt: serverTimestamp(),
@@ -143,82 +149,39 @@ export default function WeeklyReportDetail() {
     loadAndVerifyReport();
   }, [reportId, currentUser]);
 
-  const handleNextDay = () => {
-    const currentIndex = daysList.findIndex(d => d.key === activeDayKey);
-    const nextIndex = (currentIndex + 1) % daysList.length;
-    setActiveDayKey(daysList[nextIndex].key);
-  };
-
-  const handlePrevDay = () => {
-    const currentIndex = daysList.findIndex(d => d.key === activeDayKey);
-    const prevIndex = (currentIndex - 1 + daysList.length) % daysList.length;
-    setActiveDayKey(daysList[prevIndex].key);
-  };
-
-  const handleNextPhoto = (dayKey: string, totalPhotos: number) => {
-    setInnerPhotoIndexes(prev => ({
-      ...prev,
-      [dayKey]: (prev[dayKey] + 1) % totalPhotos
-    }));
-  };
-
-  const handlePrevPhoto = (dayKey: string, totalPhotos: number) => {
-    setInnerPhotoIndexes(prev => ({
-      ...prev,
-      [dayKey]: (prev[dayKey] - 1 + totalPhotos) % totalPhotos
-    }));
-  };
-
   const handleBackToList = () => {
-    navigate('/student/reports');
+    if (window.history.length > 1) {
+      navigate(-1);
+    } else {
+      navigate('/student/reports');
+    }
   };
 
-  // 1. Loading state with elegant skeletons
+  const handleNextPhoto = (dayKey: string, max: number) => {
+    setPhotoIndexes(prev => ({
+      ...prev,
+      [dayKey]: ((prev[dayKey] || 0) + 1) % max
+    }));
+  };
+
+  const handlePrevPhoto = (dayKey: string, max: number) => {
+    setPhotoIndexes(prev => ({
+      ...prev,
+      [dayKey]: ((prev[dayKey] || 0) - 1 + max) % max
+    }));
+  };
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex flex-col justify-between pb-10">
-        <div className="w-full max-w-md mx-auto bg-white min-h-screen shadow-lg border border-gray-100 flex flex-col">
-          {/* Header Skeleton */}
-          <div className="h-14 bg-white border-b border-gray-100 flex items-center justify-between px-4 sticky top-0 z-10 shrink-0">
-            <div className="w-8 h-8 rounded-full bg-gray-100 animate-pulse" />
-            <div className="h-4 w-32 bg-gray-100 rounded animate-pulse" />
-            <div className="w-8 h-8 rounded-full bg-gray-100 animate-pulse" />
-          </div>
-
-          {/* Hero Identity Skeleton */}
-          <div className="p-5 border-b border-gray-100 space-y-3">
-            <div className="flex justify-between items-start">
-              <div className="space-y-1.5 flex-1">
-                <div className="h-6 w-3/4 bg-gray-100 rounded animate-pulse" />
-                <div className="h-4 w-1/2 bg-gray-100 rounded animate-pulse" />
-              </div>
-              <div className="w-20 h-6 bg-gray-100 rounded-full animate-pulse" />
-            </div>
-            <div className="h-4 w-2/3 bg-gray-100 rounded animate-pulse" />
-          </div>
-
-          {/* Body Skeleton */}
-          <div className="p-5 space-y-6 flex-1">
-            <div className="space-y-3">
-              <div className="h-5 w-40 bg-gray-100 rounded animate-pulse" />
-              <div className="p-4 bg-gray-50 rounded-2xl space-y-2">
-                <div className="h-4 w-full bg-gray-100 rounded animate-pulse" />
-                <div className="h-4 w-full bg-gray-100 rounded animate-pulse" />
-                <div className="h-4 w-5/6 bg-gray-100 rounded animate-pulse" />
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <div className="h-5 w-48 bg-gray-100 rounded animate-pulse" />
-              <div className="h-52 bg-gray-50 rounded-2xl animate-pulse" />
-            </div>
-          </div>
+      <div className="min-h-screen bg-gray-50 flex flex-col justify-center items-center p-4">
+        <div className="w-full max-w-md bg-white p-8 rounded-3xl border border-gray-100 shadow-md text-center space-y-4">
+          <Loader2 className="w-8 h-8 text-[#109E58] animate-spin mx-auto" />
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Memuat Laporan Mingguan...</p>
         </div>
       </div>
     );
   }
 
-  // 2. Error or Not Found State
   if (error || !report) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
@@ -234,7 +197,7 @@ export default function WeeklyReportDetail() {
             onClick={handleBackToList}
             className="w-full py-3 bg-[#002366] text-white rounded-xl font-bold hover:bg-opacity-95 transition-all text-xs uppercase tracking-widest cursor-pointer"
           >
-            Kembali ke Daftar Rapor
+            Kembali
           </button>
         </div>
       </div>
@@ -243,7 +206,6 @@ export default function WeeklyReportDetail() {
 
   const snapshot = report.reportSnapshot;
 
-  // 3. Document has no snapshot (Fallback for older reports)
   if (!snapshot) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
@@ -276,7 +238,7 @@ export default function WeeklyReportDetail() {
               onClick={handleBackToList}
               className="w-full py-3 bg-gray-100 text-gray-600 rounded-xl font-bold hover:bg-gray-200 transition-all text-xs uppercase tracking-widest cursor-pointer"
             >
-              Kembali ke Daftar Rapor
+              Kembali
             </button>
           </div>
         </div>
@@ -284,396 +246,254 @@ export default function WeeklyReportDetail() {
     );
   }
 
-  // Indonesian month formatting helper
-  const formatDateIndonesia = (dateStr: string) => {
-    if (!dateStr) return '';
-    try {
-      const months = [
-        'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-        'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
-      ];
-      const d = new Date(dateStr);
-      if (isNaN(d.getTime())) return dateStr;
-      return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
-    } catch (e) {
-      return dateStr;
-    }
-  };
-
   const periodRange = `${formatDateIndonesia(snapshot.period?.startDate)} - ${formatDateIndonesia(snapshot.period?.endDate)}`;
 
-  // Active documentation info
-  const activeDayDoc = snapshot.dailyDocumentation?.[activeDayKey] || {
-    dayLabel: activeDayKey,
-    activityName: '',
-    caption: '',
-    imageUrl: null,
-    imageUrls: [],
-    hasDocumentation: false
-  };
-
-  const currentPhotosList = activeDayDoc.imageUrls && activeDayDoc.imageUrls.length > 0 
-    ? activeDayDoc.imageUrls 
-    : (activeDayDoc.imageUrl ? [activeDayDoc.imageUrl] : []);
-
-  const activePhotoIndex = innerPhotoIndexes[activeDayKey] || 0;
-  const currentPhoto = currentPhotosList[activePhotoIndex] || null;
-
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center">
-      <div className="w-full max-w-md bg-white min-h-screen shadow-xl border-x border-gray-100 flex flex-col relative pb-20">
+    <div className="min-h-screen bg-slate-100 flex flex-col items-center py-0 sm:py-6">
+      <div className="w-full max-w-md bg-white min-h-screen sm:min-h-0 sm:rounded-3xl shadow-xl border-x border-gray-100 flex flex-col relative pb-12 overflow-x-hidden">
         
-        {/* 1. Header Sticky & Compact */}
+        {/* Top Navigation Bar */}
         <div className="h-14 bg-white/95 backdrop-blur-md border-b border-gray-100 flex items-center justify-between px-4 sticky top-0 z-20 shrink-0">
           <button 
             onClick={handleBackToList}
-            className="flex items-center gap-1 text-gray-600 hover:text-emerald-600 transition-colors font-bold text-sm cursor-pointer"
+            className="flex items-center gap-1 text-gray-600 hover:text-[#109E58] transition-colors font-bold text-xs uppercase tracking-wider cursor-pointer"
           >
-            <ChevronLeft size={20} />
-            <span>Rapor Saya</span>
+            <ChevronLeft size={18} />
+            <span>Kembali</span>
           </button>
           
-          <h2 className="text-sm font-black uppercase tracking-wider text-gray-800">Laporan Mingguan</h2>
+          <h2 className="text-xs font-black uppercase tracking-wider text-gray-800">Laporan Mingguan</h2>
           
           {report.driveFileUrl ? (
             <a 
               href={report.driveFileUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-full transition-all cursor-pointer"
+              className="p-1.5 text-[#109E58] hover:bg-emerald-50 rounded-lg transition-all cursor-pointer flex items-center gap-1 text-[10px] font-black uppercase"
               title="Lihat PDF"
             >
-              <FileText size={20} />
+              <FileText size={16} />
+              <span className="hidden sm:inline">PDF</span>
             </a>
           ) : (
-            <div className="w-9" />
+            <div className="w-8" />
           )}
         </div>
 
-        {/* 2. Hero Identitas Anak */}
-        <div className="p-5 bg-gradient-to-b from-emerald-50/70 to-white border-b border-gray-100 space-y-3 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-100/30 rounded-full blur-xl -mr-6 -mt-6 pointer-events-none" />
-          
+        {/* 1. Header & School Identity */}
+        <div className="bg-gradient-to-b from-[#109E58] to-emerald-800 text-white p-5 space-y-4 relative overflow-hidden">
           <div className="flex justify-between items-start gap-2 relative z-10">
-            <div className="space-y-1">
-              <h1 className="text-xl font-extrabold text-gray-900 tracking-tight leading-snug">
-                {snapshot.student?.name}
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-emerald-200">
+                TK ISLAM LAZUARDI
+              </p>
+              <h1 className="text-xl font-black tracking-tight uppercase leading-tight">
+                LAPORAN MINGGUAN
               </h1>
-              <p className="text-xs font-black uppercase tracking-wider text-emerald-700 bg-emerald-100/60 px-2 py-0.5 rounded-md inline-block">
-                Kelas: {snapshot.student?.className}
+              <p className="text-xs font-bold text-emerald-100 italic">
+                WEEKLY REPORT
               </p>
             </div>
-            
-            <div className="shrink-0 flex items-center gap-1 px-2.5 py-1 bg-emerald-600 text-white rounded-full text-[9px] font-black uppercase tracking-widest shadow shadow-emerald-600/20">
-              <ShieldCheck size={10} />
-              <span>Terbit</span>
-            </div>
+            <span className="shrink-0 px-2.5 py-1 bg-white/20 backdrop-blur-sm rounded-full text-[9px] font-black uppercase tracking-widest text-white border border-white/20 flex items-center gap-1">
+              <ShieldCheck size={11} />
+              <span>TERBIT</span>
+            </span>
           </div>
 
-          <div className="text-[11px] font-bold text-gray-500 space-y-1 relative z-10">
-            <div className="flex items-center gap-1.5">
-              <Calendar size={12} className="text-emerald-600" />
-              <span>Pekan {snapshot.period?.weekLabel} ({periodRange})</span>
+          {/* Student & Period Info */}
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-3.5 border border-white/15 text-xs space-y-2 font-medium text-white">
+            <div className="flex justify-between items-center border-b border-white/10 pb-1.5">
+              <span className="text-emerald-200 font-bold uppercase text-[10px]">Siswa:</span>
+              <span className="font-extrabold text-sm text-white">{snapshot.student?.name}</span>
+            </div>
+            <div className="flex justify-between items-center border-b border-white/10 pb-1.5">
+              <span className="text-emerald-200 font-bold uppercase text-[10px]">Kelas:</span>
+              <span className="font-bold text-white">{snapshot.student?.className}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-emerald-200 font-bold uppercase text-[10px]">Periode:</span>
+              <span className="font-bold text-white">Pekan {snapshot.period?.weekLabel} ({periodRange})</span>
             </div>
             {snapshot.period?.theme && (
-              <div className="flex items-center gap-1.5">
-                <Award size={12} className="text-emerald-600" />
-                <span className="uppercase">Tema: {snapshot.period.theme}</span>
+              <div className="flex justify-between items-center pt-0.5 border-t border-white/10 mt-1">
+                <span className="text-emerald-200 font-bold uppercase text-[10px]">Tema:</span>
+                <span className="font-bold text-emerald-100 uppercase">{snapshot.period.theme}</span>
               </div>
             )}
           </div>
         </div>
 
-        {/* 3. Ringkasan Mingguan */}
-        <div className="p-5 space-y-3 border-b border-gray-100">
-          <div className="flex items-center gap-2">
+        {/* 2. DOKUMENTASI KEGIATAN MINGGUAN */}
+        <div className="p-4 space-y-4">
+          <div className="flex items-center gap-2 border-b border-gray-100 pb-2">
             <div className="w-1.5 h-4 bg-[#109E58] rounded-full" />
-            <h3 className="text-sm font-black uppercase tracking-wider text-gray-800">Perkembangan Minggu Ini</h3>
-          </div>
-          
-          <div className="p-4 bg-white border border-emerald-100/60 rounded-2xl shadow-sm relative overflow-hidden">
-            <div className="absolute left-0 top-0 bottom-0 w-1 bg-[#109E58]" />
-            <p className="text-sm leading-relaxed text-gray-700 font-medium whitespace-pre-line pl-1.5">
-              {snapshot.weeklyComments?.trim() 
-                ? snapshot.weeklyComments 
-                : "Guru belum menambahkan komentar mingguan."}
-            </p>
-          </div>
-        </div>
-
-        {/* 4. Dokumentasi Kegiatan */}
-        <div className="p-5 space-y-4 border-b border-gray-100 bg-gray-50/40">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              <div className="w-1.5 h-4 bg-[#109E58] rounded-full" />
-              <h3 className="text-sm font-black uppercase tracking-wider text-gray-800">Dokumentasi Kegiatan</h3>
-            </div>
-            <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">
-              Senin - Jumat
-            </span>
+            <h2 className="text-xs font-black uppercase tracking-wider text-gray-800">
+              DOKUMENTASI KEGIATAN MINGGUAN
+            </h2>
           </div>
 
-          {/* Day Navigation Tabs */}
-          <div className="grid grid-cols-5 gap-1.5">
-            {daysList.map((day) => {
-              const isActive = activeDayKey === day.key;
-              const hasDoc = snapshot.dailyDocumentation?.[day.key]?.hasDocumentation;
+          <div className="space-y-5">
+            {DAYS_ORDER.map((day) => {
+              const dayDoc = snapshot.dailyDocumentation?.[day.key] || {};
+              const generalNote = sanitizeString(dayDoc.caption || dayDoc.generalNote);
+              const secondaryLabel = sanitizeString(dayDoc.activityName);
+
+              const photoUrls: string[] = Array.isArray(dayDoc.imageUrls) && dayDoc.imageUrls.length > 0
+                ? dayDoc.imageUrls.filter((u: string) => typeof u === 'string' && u.trim().length > 0)
+                : (dayDoc.imageUrl ? [dayDoc.imageUrl] : []);
+
+              const currentPhotoIdx = photoIndexes[day.key] || 0;
+              const activePhoto = photoUrls[currentPhotoIdx] || null;
+
               return (
-                <button
+                <div 
                   key={day.key}
-                  onClick={() => setActiveDayKey(day.key)}
-                  className={cn(
-                    "py-2 rounded-xl text-center text-xs font-black uppercase transition-all relative cursor-pointer border",
-                    isActive
-                      ? "bg-emerald-600 text-white border-emerald-600 shadow shadow-emerald-600/15"
-                      : "bg-white text-gray-400 border-gray-100 hover:text-gray-600 hover:border-gray-200"
-                  )}
+                  className="bg-white rounded-2xl border-2 border-[#109E58] shadow-sm overflow-hidden flex flex-col w-full"
                 >
-                  {day.label}
-                  {hasDoc && (
-                    <span className={cn(
-                      "absolute top-1 right-1 w-1.5 h-1.5 rounded-full",
-                      isActive ? "bg-white" : "bg-emerald-500"
-                    )} />
+                  {/* Day Header */}
+                  <div className="bg-[#109E58] text-white px-3.5 py-2 font-black text-xs uppercase tracking-wider flex justify-between items-center">
+                    <span>{day.labelId} / {day.labelEn}</span>
+                    <span className="text-[10px] text-emerald-100 font-bold">
+                      {dayDoc.date ? formatDateIndonesia(dayDoc.date) : ''}
+                    </span>
+                  </div>
+
+                  {/* Day Photo */}
+                  {activePhoto ? (
+                    <div className="relative w-full bg-gray-900 flex items-center justify-center overflow-hidden min-h-[180px] max-h-[300px]">
+                      <img 
+                        src={activePhoto}
+                        alt={`Dokumentasi ${day.labelId}`}
+                        referrerPolicy="no-referrer"
+                        className="w-full max-h-[300px] object-contain"
+                      />
+
+                      {/* Multi-photo controls */}
+                      {photoUrls.length > 1 && (
+                        <>
+                          <button
+                            onClick={() => handlePrevPhoto(day.key, photoUrls.length)}
+                            className="absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70 cursor-pointer"
+                          >
+                            <ChevronLeft size={16} />
+                          </button>
+                          <button
+                            onClick={() => handleNextPhoto(day.key, photoUrls.length)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70 cursor-pointer"
+                          >
+                            <ChevronRight size={16} />
+                          </button>
+                          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-black/50 rounded-full flex gap-1">
+                            {photoUrls.map((_, pIdx) => (
+                              <span 
+                                key={pIdx}
+                                className={cn(
+                                  "w-1.5 h-1.5 rounded-full transition-all",
+                                  pIdx === currentPhotoIdx ? "bg-white scale-125" : "bg-white/40"
+                                )}
+                              />
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="h-32 bg-gray-50 flex flex-col items-center justify-center text-gray-300 gap-1 border-b border-gray-100">
+                      <ImageIcon size={28} />
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Tanpa Foto</span>
+                    </div>
                   )}
-                </button>
+
+                  {/* Day Caption & Label */}
+                  <div className="p-3 bg-gray-50/80 border-t border-gray-100 flex flex-col items-center text-center gap-1.5 w-full">
+                    {secondaryLabel && (
+                      <span className="font-black text-[#109E58] text-xs uppercase tracking-wider block text-center w-full truncate">
+                        {secondaryLabel}
+                      </span>
+                    )}
+                    {generalNote && (
+                      <p 
+                        className="text-gray-700 font-semibold text-xs text-center leading-relaxed w-full break-words max-h-[58px] overflow-hidden"
+                        style={{
+                          display: '-webkit-box',
+                          WebkitLineClamp: 3,
+                          WebkitBoxOrient: 'vertical'
+                        }}
+                      >
+                        {generalNote}
+                      </p>
+                    )}
+                  </div>
+                </div>
               );
             })}
           </div>
-
-          {/* Swipeable / Actionable Day Card Container */}
-          <div className="relative">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={activeDayKey}
-                initial={{ opacity: 0, x: 12 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -12 }}
-                transition={{ duration: 0.2 }}
-                className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col min-h-[340px]"
-              >
-                {/* Header of card */}
-                <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
-                  <span className="text-xs font-black uppercase tracking-wider text-gray-800">
-                    {daysList.find(d => d.key === activeDayKey)?.label}
-                  </span>
-                  <span className="text-[11px] font-bold text-gray-400">
-                    {activeDayDoc.date ? formatDateIndonesia(activeDayDoc.date) : ''}
-                  </span>
-                </div>
-
-                {/* Day content */}
-                {activeDayDoc.hasDocumentation ? (
-                  <div className="flex-1 flex flex-col">
-                    {/* Media Gallery / Main Image Frame */}
-                    {currentPhoto ? (
-                      <div className="relative aspect-video bg-gray-900 flex items-center justify-center overflow-hidden shrink-0 group">
-                        <img 
-                          src={currentPhoto}
-                          alt={`Dokumentasi kegiatan ${daysList.find(d => d.key === activeDayKey)?.label}: ${activeDayDoc.activityName || ''}`}
-                          referrerPolicy="no-referrer"
-                          className="max-h-full max-w-full object-contain"
-                        />
-                        
-                        {/* Multiple Photos Navigation */}
-                        {currentPhotosList.length > 1 && (
-                          <>
-                            {/* Previous Photo Button */}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handlePrevPhoto(activeDayKey, currentPhotosList.length);
-                              }}
-                              className="absolute left-2 w-8 h-8 rounded-full bg-black/40 backdrop-blur-sm text-white flex items-center justify-center hover:bg-black/60 transition-all cursor-pointer"
-                            >
-                              <ChevronLeft size={16} />
-                            </button>
-
-                            {/* Next Photo Button */}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleNextPhoto(activeDayKey, currentPhotosList.length);
-                              }}
-                              className="absolute right-2 w-8 h-8 rounded-full bg-black/40 backdrop-blur-sm text-white flex items-center justify-center hover:bg-black/60 transition-all cursor-pointer"
-                            >
-                              <ChevronRight size={16} />
-                            </button>
-
-                            {/* Inner Pagination Counter Dots */}
-                            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-2.5 py-1 bg-black/40 backdrop-blur-sm rounded-full flex gap-1 items-center">
-                              {currentPhotosList.map((_, pIdx) => (
-                                <span 
-                                  key={pIdx} 
-                                  className={cn(
-                                    "w-1.5 h-1.5 rounded-full transition-all",
-                                    activePhotoIndex === pIdx ? "bg-white scale-110" : "bg-white/40"
-                                  )}
-                                />
-                              ))}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="h-44 bg-gray-50 flex flex-col items-center justify-center text-gray-300 gap-1 border-b border-gray-100 shrink-0">
-                        <ImageIcon size={32} />
-                        <span className="text-[11px] font-bold uppercase tracking-wider">Tanpa Foto Dokumentasi</span>
-                      </div>
-                    )}
-
-                    {/* Captions / Details */}
-                    <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
-                      <div className="space-y-1.5">
-                        {activeDayDoc.activityName && (
-                          <div className="flex items-start gap-1.5">
-                            <MapPin size={13} className="text-emerald-600 mt-0.5 shrink-0" />
-                            <h4 className="text-xs font-black uppercase text-gray-900 tracking-tight leading-snug">
-                              Aktivitas: {activeDayDoc.activityName}
-                            </h4>
-                          </div>
-                        )}
-                        <p className="text-sm leading-relaxed text-gray-600 font-semibold whitespace-pre-line pl-5">
-                          {activeDayDoc.caption || 'Tidak ada deskripsi aktivitas.'}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-gray-400 space-y-2">
-                    <div className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center border border-gray-100 text-gray-300">
-                      <ImageIcon size={20} />
-                    </div>
-                    <div className="space-y-0.5">
-                      <p className="text-xs font-bold text-gray-500 uppercase tracking-tight">Hari {daysList.find(d => d.key === activeDayKey)?.label}</p>
-                      <p className="text-xs font-medium text-gray-400">Belum ada dokumentasi kegiatan pada hari ini.</p>
-                    </div>
-                  </div>
-                )}
-              </motion.div>
-            </AnimatePresence>
-
-            {/* Prev/Next buttons below card to allow easy keyboard/tap navigation */}
-            <div className="flex justify-between items-center mt-2.5 px-1">
-              <button
-                onClick={handlePrevDay}
-                className="flex items-center gap-1 text-[11px] font-black uppercase text-gray-500 hover:text-[#109E58] transition-colors cursor-pointer"
-              >
-                <ChevronLeft size={16} /> Sebelumnya
-              </button>
-              
-              <button
-                onClick={handleNextDay}
-                className="flex items-center gap-1 text-[11px] font-black uppercase text-gray-500 hover:text-[#109E58] transition-colors cursor-pointer"
-              >
-                Selanjutnya <ChevronRight size={16} />
-              </button>
-            </div>
-          </div>
         </div>
 
-        {/* 5. Kehadiran & Mood */}
-        <div className="p-5 space-y-4 border-b border-gray-100">
-          <div className="flex items-center gap-2">
+        {/* 3. CATATAN MINGGUAN GURU */}
+        <div className="p-4 space-y-2">
+          <div className="flex items-center gap-2 border-b border-gray-100 pb-2">
             <div className="w-1.5 h-4 bg-[#109E58] rounded-full" />
-            <h3 className="text-sm font-black uppercase tracking-wider text-gray-800">Kehadiran & Suasana Hati</h3>
+            <h2 className="text-xs font-black uppercase tracking-wider text-gray-800">
+              CATATAN MINGGUAN GURU
+            </h2>
           </div>
-
-          <div className="grid grid-cols-2 gap-3.5">
-            {/* Attendance Sub-box */}
-            <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm space-y-2.5">
-              <div className="flex justify-between items-center border-b border-gray-50 pb-1.5">
-                <span className="text-[10px] font-black uppercase text-gray-400">Kehadiran</span>
-                <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded text-[9px] font-extrabold uppercase">
-                  {snapshot.attendanceSummary?.totalSchoolDays || 0} Hari
-                </span>
-              </div>
-              <div className="space-y-1.5 text-xs font-bold text-gray-600">
-                <div className="flex justify-between items-center">
-                  <span className="flex items-center gap-1">🟢 Hadir</span>
-                  <span className="text-gray-900">{snapshot.attendanceSummary?.present || 0}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="flex items-center gap-1">🟡 Sakit</span>
-                  <span className="text-gray-900">{snapshot.attendanceSummary?.sick || 0}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="flex items-center gap-1">🔵 Izin</span>
-                  <span className="text-gray-900">{snapshot.attendanceSummary?.permission || 0}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="flex items-center gap-1">🔴 Alpa</span>
-                  <span className="text-gray-900">{snapshot.attendanceSummary?.absentWithoutNotice || 0}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Mood Sub-box */}
-            <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm space-y-2.5">
-              <div className="flex justify-between items-center border-b border-gray-50 pb-1.5">
-                <span className="text-[10px] font-black uppercase text-gray-400">Suasana Hati</span>
-              </div>
-              <div className="space-y-1.5 text-xs font-bold text-gray-600">
-                <div className="flex justify-between items-center">
-                  <span className="flex items-center gap-1">😊 Happy</span>
-                  <span className="text-gray-900">{snapshot.moodSummary?.happy || 0}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="flex items-center gap-1">😐 Okay</span>
-                  <span className="text-gray-900">{snapshot.moodSummary?.okay || 0}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="flex items-center gap-1">😢 Sedih</span>
-                  <span className="text-gray-900">{snapshot.moodSummary?.sad || 0}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="flex items-center gap-1">😠 Marah</span>
-                  <span className="text-gray-900">{snapshot.moodSummary?.angry || 0}</span>
-                </div>
-              </div>
-            </div>
+          <div className="p-4 bg-emerald-50/60 border border-emerald-100 rounded-2xl text-xs font-semibold text-gray-800 leading-relaxed whitespace-pre-line shadow-sm">
+            {snapshot.weeklyComments?.trim() || "Guru belum menambahkan catatan mingguan."}
           </div>
         </div>
 
-        {/* 6. Perkembangan Sosial-Emosional */}
-        <div className="p-5 space-y-3 border-b border-gray-100">
-          <div className="flex items-center gap-2">
+        {/* 4. PERKEMBANGAN SOSIAL-EMOSIONAL */}
+        <div className="p-4 space-y-2">
+          <div className="flex items-center gap-2 border-b border-gray-100 pb-2">
             <div className="w-1.5 h-4 bg-[#109E58] rounded-full" />
-            <h3 className="text-sm font-black uppercase tracking-wider text-gray-800">Perkembangan Sosial-Emosional</h3>
+            <h2 className="text-xs font-black uppercase tracking-wider text-gray-800">
+              PERKEMBANGAN SOSIAL-EMOSIONAL
+            </h2>
           </div>
-          
-          <div className="p-4 bg-white border border-emerald-100/60 rounded-2xl shadow-sm relative overflow-hidden">
-            <div className="absolute left-0 top-0 bottom-0 w-1 bg-[#109E58]" />
-            <p className="text-sm leading-relaxed text-gray-700 font-medium whitespace-pre-line pl-1.5">
-              {snapshot.socialEmotionalComment?.trim() 
-                ? snapshot.socialEmotionalComment 
-                : "Guru belum menambahkan catatan sosial-emosional."}
-            </p>
+          <div className="p-4 bg-white border border-gray-200 rounded-2xl text-xs font-semibold text-gray-800 leading-relaxed whitespace-pre-line shadow-sm">
+            {snapshot.socialEmotionalComment?.trim() || "Guru belum menambahkan catatan sosial-emosional."}
           </div>
         </div>
 
-        {/* 7. Penutup & Tombol PDF */}
-        <div className="p-5 space-y-4">
+        {/* 5. TANDA TANGAN & UNDUH PDF */}
+        <div className="p-4 border-t border-gray-100 pt-5 space-y-4">
+          <div className="flex justify-between items-center bg-gray-50 p-3.5 rounded-2xl border border-gray-100">
+            <div className="space-y-0.5">
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Wali Kelas / Guru</p>
+              <p className="text-xs font-extrabold text-gray-900">
+                {snapshot.teacherName || report.publishedByEmail || 'Wali Kelas'}
+              </p>
+            </div>
+            {snapshot.teacherSignatureUrl ? (
+              <img 
+                src={snapshot.teacherSignatureUrl} 
+                alt="Tanda Tangan Guru" 
+                className="h-10 object-contain"
+              />
+            ) : (
+              <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg">
+                <UserCheck size={12} />
+                <span>Terverifikasi</span>
+              </div>
+            )}
+          </div>
+
           {report.driveFileUrl && (
             <a
               href={report.driveFileUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="w-full py-3 bg-[#002366] text-white rounded-xl font-extrabold flex items-center justify-center gap-2 hover:bg-opacity-95 transition-all text-xs uppercase tracking-widest shadow shadow-blue-900/10 cursor-pointer"
+              className="w-full py-3 bg-[#002366] text-white rounded-xl font-extrabold flex items-center justify-center gap-2 hover:bg-opacity-95 transition-all text-xs uppercase tracking-widest shadow-md cursor-pointer"
             >
-              <ExternalLink size={14} /> Lihat Versi PDF
+              <ExternalLink size={14} /> Lihat Versi PDF (Google Drive)
             </a>
           )}
-          
-          <div className="text-center space-y-0.5">
+
+          <div className="text-center pt-2">
             <p className="text-[9px] font-bold text-gray-400">
               Laporan diterbitkan pada {report.publishedAt ? new Date(report.publishedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : '-'}
             </p>
-            {report.publishedByEmail && (
-              <p className="text-[8px] font-extrabold text-gray-400 uppercase tracking-widest">
-                Oleh: {report.publishedByEmail}
-              </p>
-            )}
           </div>
         </div>
 
