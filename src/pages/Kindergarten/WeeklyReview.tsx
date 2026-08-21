@@ -1574,26 +1574,26 @@ export default function WeeklyReview() {
               minHeight: hasGeneralNote ? '52px' : (hasSecondaryLabel ? '26px' : '10px')
             }}
           >
-            {/* 1. SENTRA LABEL (In its own row BELOW photo, 6-8px gap from photo bottom, centered, single-line, line-height 1.5) */}
+            {/* 1. SENTRA LABEL (In its own row BELOW photo, 6-8px gap from photo bottom, centered, single-line, line-height 1.5, zero bottom clipping) */}
             {hasSecondaryLabel && (
               <div 
-                className="w-full text-center flex items-center justify-center shrink-0"
+                className="w-full text-center flex flex-col items-center justify-start shrink-0"
                 style={{
-                  minHeight: '18px',
-                  paddingTop: '2px',
-                  paddingBottom: '2px',
+                  minHeight: '20px',
+                  paddingTop: '1px',
+                  paddingBottom: '3px',
                   boxSizing: 'border-box'
                 }}
               >
                 <span 
-                  className="font-bold text-emerald-800 uppercase tracking-wider text-center block w-full truncate"
+                  className="font-bold text-emerald-800 uppercase tracking-wider text-center block w-full"
                   style={{
-                    fontSize: '9px',
-                    lineHeight: '1.4',
+                    fontSize: '9.5px',
+                    lineHeight: '1.5',
                     margin: 0,
                     padding: 0,
                     whiteSpace: 'nowrap',
-                    overflow: 'hidden',
+                    overflow: 'visible',
                     textOverflow: 'ellipsis'
                   }}
                 >
