@@ -1537,15 +1537,38 @@ export default function WeeklyReview() {
             </div>
           )}
           
-          <div className="min-h-[26px] px-2 py-[5px] flex items-center justify-center">
-            {caption && caption.trim() !== '' ? (
-              <p className="text-[10.5px] leading-[1.3] text-gray-600 italic font-medium text-center line-clamp-2" title={caption}>
-                {caption}
-              </p>
-            ) : (
-              <span className="text-[9.5px] text-gray-300 italic">-</span>
-            )}
-          </div>
+          {/* Photo caption + Catatan Umum Hari Ini */}
+          {(() => {
+            const photoCaption = getCaptionForDay(dayKey);
+            const generalNote = snap?.generalNote || null;
+            const fullCaptionText = [
+              photoCaption ? photoCaption.trim() : null,
+              generalNote ? `Catatan Umum: ${generalNote.trim()}` : null
+            ].filter(Boolean).join('\n');
+
+            return (
+              <div className="min-h-[26px] px-2 py-[5px] flex items-center justify-center">
+                {fullCaptionText ? (
+                  <div 
+                    className="line-clamp-3 text-[10.5px] leading-[1.3] text-gray-600 font-medium text-center w-full"
+                    title={fullCaptionText}
+                  >
+                    {photoCaption && photoCaption.trim() !== '' && (
+                      <p className="italic">{photoCaption.trim()}</p>
+                    )}
+                    {generalNote && generalNote.trim() !== '' && (
+                      <p className={photoCaption && photoCaption.trim() !== '' ? "text-[10px] text-gray-500 font-normal mt-0.5" : "italic text-gray-600"}>
+                        <span className="font-bold text-gray-700 not-italic">Catatan Umum: </span>
+                        {generalNote.trim()}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-[9.5px] text-gray-300 italic">-</span>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
     );

@@ -1129,11 +1129,35 @@ export function aggregateKGWeeklyReportForPeriod(
       }
     }
 
+    // Extract Catatan Umum Hari Ini for this class and date
+    let generalNoteForDay: string | null = null;
+    if (foundContext && foundContext.generalNote && foundContext.generalNote.trim()) {
+      generalNoteForDay = foundContext.generalNote.trim();
+    }
+    if (!generalNoteForDay && typeof localStorage !== 'undefined' && dk) {
+      const localNoteKey = `kg_daily_note_${canonicalClassId}_${dk.dateKey}`;
+      const localNote = localStorage.getItem(localNoteKey);
+      if (localNote && localNote.trim()) {
+        generalNoteForDay = localNote.trim();
+      }
+    }
+    if (!generalNoteForDay && queriedSessionDoc && queriedSessionDoc.generalNote && queriedSessionDoc.generalNote.trim()) {
+      generalNoteForDay = queriedSessionDoc.generalNote.trim();
+    }
+    if (!generalNoteForDay && dayObsForStudent && dayObsForStudent.length > 0) {
+      const obsWithNote = dayObsForStudent.find((o: any) => o.generalNote && o.generalNote.trim());
+      if (obsWithNote) {
+        generalNoteForDay = obsWithNote.generalNote.trim();
+      }
+    }
+
     return {
       dayKey: dayName.toUpperCase() as any,
       label: dk ? `${dayName}, ${dk.dateObj.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}` : dayName,
       photoUrl: chosenPhoto,
-      fallbackText
+      fallbackText,
+      generalNote: generalNoteForDay,
+      dateKey: dk ? dk.dateKey : null
     };
   });
 

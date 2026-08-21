@@ -471,10 +471,10 @@ export default function AttendanceSummaryReport() {
         'No': index + 1,
         'Nama Siswa': item.name,
         'Nama Panggilan': item.nickName,
-        'Hadir (H)': item.H,
-        'Sakit (S)': item.S,
-        'Izin (I)': item.I,
-        'Alpa (A)': item.A,
+        'Hadir': item.H,
+        'Sakit': item.S,
+        'Izin': item.I,
+        'Alpa': item.A,
         'Total Logged (Hari)': item.totalLogged,
         'Persentase Kehadiran (%)': `${item.attendancePercentage}%`
       }));
@@ -483,7 +483,7 @@ export default function AttendanceSummaryReport() {
       
       // Add custom header titles
       XLSX.utils.sheet_add_aoa(worksheet, [
-        ['LAPORAN REKAPITULASI ABSENSI SISWA (H/S/I/A)'],
+        ['LAPORAN REKAPITULASI ABSENSI SISWA (HADIR / SAKIT / IZIN / ALPA)'],
         [`Lumina Kindergarten - Tahun Ajaran ${activeYear}`],
         [`Kelas: ${activeClassName} | Periode Laporan: ${currentPeriodLabel}`],
         [], // spacing
@@ -1001,7 +1001,7 @@ export default function AttendanceSummaryReport() {
                   <div className="flex justify-between items-start">
                     <div>
                       <h2 className="text-2xl font-black text-[#002366] tracking-tight uppercase">Lumina Kindergarten</h2>
-                      <p className="text-xs text-gray-500 font-medium">Laporan Rekapitulasi Absensi Siswa (H/S/I/A)</p>
+                      <p className="text-xs text-gray-500 font-medium">Laporan Rekapitulasi Absensi Siswa (Hadir, Sakit, Izin, Alpa)</p>
                       <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-600 font-bold">
                         <p>Kelas: <span className="text-emerald-800">{activeClassName}</span></p>
                         <p>Periode: <span className="text-emerald-800">{currentPeriodLabel}</span></p>
@@ -1025,10 +1025,10 @@ export default function AttendanceSummaryReport() {
                         <th className="py-4 px-4 text-center w-12">No.</th>
                         <th className="py-4 px-4">Nama Lengkap Siswa</th>
                         <th className="py-4 px-4 w-28">Nama Panggilan</th>
-                        <th className="py-4 px-4 text-center w-24">Hadir (H)</th>
-                        <th className="py-4 px-4 text-center w-24">Sakit (S)</th>
-                        <th className="py-4 px-4 text-center w-24">Izin (I)</th>
-                        <th className="py-4 px-4 text-center w-24">Alpa (A)</th>
+                        <th className="py-4 px-4 text-center w-24">Hadir</th>
+                        <th className="py-4 px-4 text-center w-24">Sakit</th>
+                        <th className="py-4 px-4 text-center w-24">Izin</th>
+                        <th className="py-4 px-4 text-center w-24">Alpa</th>
                         <th className="py-4 px-4 text-center w-36">% Kehadiran</th>
                       </tr>
                     </thead>

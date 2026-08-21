@@ -88,7 +88,7 @@ export default function WeeklySummary() {
       });
 
       return (
-        <div className="space-y-1 text-[10.5px] leading-relaxed text-gray-700 font-sans">
+        <div className="space-y-1.5 text-xs text-gray-800 leading-relaxed font-sans">
           <div className="font-extrabold text-gray-800">
             {totalCount} observasi pada domain <span className="text-emerald-700">{dom}</span>{activityStr}:
           </div>
@@ -108,7 +108,7 @@ export default function WeeklySummary() {
 
     const totalCount = obsItems.length;
     return (
-      <div className="space-y-1 text-[10.5px] leading-relaxed text-gray-700 font-sans">
+      <div className="space-y-1.5 text-xs text-gray-800 leading-relaxed font-sans">
         <div className="font-extrabold text-gray-800">
           Total {totalCount} observasi:
         </div>
@@ -1888,18 +1888,18 @@ export default function WeeklySummary() {
 
                         {/* 2. Name / level */}
                         <td className="py-5 px-4 font-sans">
-                          <div className="font-extrabold text-gray-900 leading-tight uppercase font-sans">{student.name}</div>
-                          <div className="text-[10px] text-gray-500 font-bold mt-0.5 uppercase tracking-tight font-sans">
+                          <div className="font-extrabold text-gray-900 text-sm leading-snug uppercase font-sans">{student.name}</div>
+                          <div className="text-[11px] text-gray-500 font-bold mt-1 uppercase tracking-tight font-sans">
                             Id: {student.id} | Level: {student.ageGroup === 'TK_B' ? 'TK B1 (5-6 Th)' : student.ageGroup === 'TK_A' ? 'TK A1 (4-5 Th)' : 'Pra TK (2-4 Th)'}
                           </div>
-                          <div className="flex flex-wrap gap-1 mt-1">
+                          <div className="flex flex-wrap gap-1.5 mt-1.5">
                             {draft?.theme && (
-                              <div className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-gray-100 font-bold text-gray-600 line-clamp-1 italic max-w-[140px] font-sans">
+                              <div className="inline-block text-[10px] px-2 py-0.5 rounded bg-gray-100 font-bold text-gray-600 italic max-w-[160px] font-sans">
                                 Theme: "{draft.theme}"
                               </div>
                             )}
                             {draft?.week && (
-                              <div className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-gray-100 font-bold text-gray-600 line-clamp-1 italic max-w-[140px] font-sans">
+                              <div className="inline-block text-[10px] px-2 py-0.5 rounded bg-gray-100 font-bold text-gray-600 italic max-w-[160px] font-sans">
                                 Week: "{draft.week}"
                               </div>
                             )}
@@ -1908,30 +1908,30 @@ export default function WeeklySummary() {
 
                         {/* 3. Attendance raw indicators */}
                         <td className="py-5 px-4 bg-yellow-50/10 font-sans">
-                          <div className="flex flex-wrap gap-1 items-center">
-                            <span className="inline-flex items-center gap-0.5 bg-yellow-50 text-yellow-800 text-[10px] font-extrabold px-1.5 py-1 rounded border border-yellow-200/50 font-sans">
-                              <Smile size={10} className="text-yellow-600" />
-                              H:{att.happy || 0}
+                          <div className="flex flex-wrap gap-1.5 items-center">
+                            <span className="inline-flex items-center gap-1 bg-yellow-50 text-yellow-850 text-xs font-bold px-2 py-1 rounded-lg border border-yellow-200/60 font-sans">
+                              <Smile size={12} className="text-yellow-600 shrink-0" />
+                              Hadir: {att.happy || 0}
                             </span>
-                            <span className="inline-flex items-center gap-0.5 bg-emerald-50 text-emerald-800 text-[10px] font-extrabold px-1.5 py-1 rounded border border-emerald-200/50 font-sans">
-                              <Meh size={10} className="text-emerald-600" />
-                              OK:{att.ok || 0}
+                            <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-850 text-xs font-bold px-2 py-1 rounded-lg border border-emerald-200/60 font-sans">
+                              <Meh size={12} className="text-emerald-600 shrink-0" />
+                              OK: {att.ok || 0}
                             </span>
-                            <span className="inline-flex items-center gap-0.5 bg-blue-50 text-blue-800 text-[10px] font-extrabold px-1.5 py-1 rounded border border-blue-200/50 font-sans">
-                              <Frown size={10} className="text-blue-600" />
-                              S:{att.sad || 0}
+                            <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-850 text-xs font-bold px-2 py-1 rounded-lg border border-blue-200/60 font-sans">
+                              <Frown size={12} className="text-blue-600 shrink-0" />
+                              Sakit: {att.sad || 0}
                             </span>
-                            <span className="inline-flex items-center gap-0.5 bg-red-50 text-red-800 text-[10px] font-extrabold px-1.5 py-1 rounded border border-red-200/50 font-sans">
-                              <Angry size={10} className="text-red-600" />
-                              A:{att.angry || 0}
+                            <span className="inline-flex items-center gap-1 bg-red-50 text-red-850 text-xs font-bold px-2 py-1 rounded-lg border border-red-200/60 font-sans">
+                              <Angry size={12} className="text-red-600 shrink-0" />
+                              Alpa: {att.angry || 0}
                             </span>
                           </div>
-                          <div className="text-[9px] text-gray-400 mt-1.5 font-bold space-x-2 font-sans">
-                            <span>Sakit: {att.sick || 0}d</span>
+                          <div className="text-[10.5px] text-gray-500 mt-2 font-bold space-x-2 font-sans leading-normal">
+                            <span>Sakit: {att.sick || 0} hari</span>
                             <span>•</span>
-                            <span>Izin: {att.izin || 0}d</span>
+                            <span>Izin: {att.izin || 0} hari</span>
                             <span>•</span>
-                            <span>Tanpa Kabar: {att.noNews || 0}d</span>
+                            <span>Alpa / Tanpa Kabar: {att.noNews || 0} hari</span>
                           </div>
                         </td>
 
@@ -2116,8 +2116,8 @@ export default function WeeklySummary() {
                                     onChange={(e) => {
                                       handleLocalDraftChange(student.id, { attendanceCommentTeacherEdited: e.target.value });
                                     }}
-                                    rows={4}
-                                    className="w-full bg-gray-50/50 p-3 rounded-xl border border-gray-200 outline-none focus:bg-white text-xs text-gray-800 leading-relaxed font-serif resize-none"
+                                    rows={5}
+                                    className="w-full bg-gray-50/50 p-3.5 rounded-xl border border-gray-200 outline-none focus:bg-white text-xs sm:text-sm text-gray-900 leading-relaxed font-serif resize-y min-h-[110px]"
                                     placeholder="Ketikan masukan guru atau generate via tombol AI di atas..."
                                   />
                                   <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5 pt-1 border-t border-gray-100">
@@ -2215,8 +2215,8 @@ export default function WeeklySummary() {
                                     onChange={(e) => {
                                       handleLocalDraftChange(student.id, { observationCommentTeacherEdited: e.target.value });
                                     }}
-                                    rows={4}
-                                    className="w-full bg-gray-50/50 p-3 rounded-xl border border-gray-200 outline-none focus:bg-white text-xs text-gray-800 leading-relaxed font-serif resize-none"
+                                    rows={5}
+                                    className="w-full bg-gray-50/50 p-3.5 rounded-xl border border-gray-200 outline-none focus:bg-white text-xs sm:text-sm text-gray-900 leading-relaxed font-serif resize-y min-h-[110px]"
                                     placeholder="Tuliskan catatan akademik atau generate melalui tombol AI diatas..."
                                   />
                                   <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5 pt-1 border-t border-gray-100">

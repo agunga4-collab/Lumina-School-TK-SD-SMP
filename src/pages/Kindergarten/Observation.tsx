@@ -6,7 +6,7 @@ import {
   ChevronRight, LayoutGrid, Heart, BookOpen, 
   Languages, Brain, Activity, Palette, Compass,
   Music, Film, Star, CheckCircle2, Loader2, Image as ImageIcon,
-  UserCheck, RefreshCw, AlertTriangle, HelpCircle, Check, Info, Trash2, ClipboardList,
+  UserCheck, RefreshCw, AlertTriangle, AlertCircle, HelpCircle, Check, Info, Trash2, ClipboardList,
   Mic, MicOff, ArrowLeftRight, Lock, Unlock, Edit
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -573,6 +573,100 @@ export default function Observation() {
     } catch (err) {
       console.error("Error saving daily context:", err);
       toast.error("Gagal menyimpan Konteks Kegiatan.");
+    }
+  };
+
+  const [generalNoteSaveStatus, setGeneralNoteSaveStatus] = React.useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
+  // Independent save for "Catatan Umum Hari Ini" (scoped by canonical classId + observationDate)
+  const handleSaveGeneralNote = async () => {
+    if (!selectedClassId || !observationDate) {
+      toast.error("Pilih kelas dan tanggal observasi terlebih dahulu.");
+      return;
+    }
+
+    const canonicalClassId = resolveCanonicalClassId(selectedClassId, classes) || selectedClassId;
+    const noteText = (generalNote || "").trim();
+    const now = Date.now();
+    const updatedByUid = profile?.uid || profile?.email || 'system';
+    const updatedByName = profile?.displayName || profile?.email || 'Guru';
+
+    setGeneralNoteSaveStatus('saving');
+
+    try {
+      // 1. Save to LocalStorage immediately for instant local persistence & offline resilience
+      const localKey = `kg_daily_note_${canonicalClassId}_${observationDate}`;
+      localStorage.setItem(localKey, noteText);
+
+      // Also update any local session history keys for this class & date
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(`kg_obs_hist_${canonicalClassId}_`) && k.endsWith(`_${observationDate}`)) {
+          try {
+            const raw = localStorage.getItem(k);
+            if (raw) {
+              const data = JSON.parse(raw);
+              data.generalNote = noteText;
+              data.generalNoteUpdatedAt = now;
+              data.generalNoteUpdatedBy = updatedByUid;
+              data.generalNoteUpdatedByName = updatedByName;
+              localStorage.setItem(k, JSON.stringify(data));
+            }
+          } catch {}
+        }
+      }
+
+      // 2. Save / update to kindergarten_observation_daily_contexts collection
+      const contextId = `${canonicalClassId}_${observationDate}`;
+      const contextRef = doc(db, 'kindergarten_observation_daily_contexts', contextId);
+      const activeClassObj = classes.find((c: any) => c.id === canonicalClassId || c.id === selectedClassId);
+
+      await setDoc(contextRef, {
+        classId: canonicalClassId,
+        className: activeClassObj?.name || 'General',
+        observationDate: observationDate,
+        academicYear: activeYear || '2026/2027',
+        semester: activeSemester || '1',
+        generalNote: noteText,
+        generalNoteUpdatedAt: now,
+        generalNoteUpdatedBy: updatedByUid,
+        generalNoteUpdatedByName: updatedByName,
+        updatedAt: now,
+        updatedBy: updatedByUid
+      }, { merge: true });
+
+      // 3. If current session observation doc exists, update generalNote in it as well
+      const activeSentra = selectedActivity || "general";
+      const activeDomain = selectedActivity === 'SPECIAL_ACTIVITY' ? 'none' : (selectedDomain || 'general');
+      const sessionDocId = `${canonicalClassId}_${activeSentra}_${activeDomain}_${observationDate}`;
+      const sessionDocRef = doc(db, 'observations', sessionDocId);
+      try {
+        await setDoc(sessionDocRef, {
+          generalNote: noteText,
+          generalNoteUpdatedAt: now,
+          generalNoteUpdatedBy: updatedByUid,
+          generalNoteUpdatedByName: updatedByName,
+          updatedAt: now
+        }, { merge: true });
+      } catch (sessErr) {
+        console.log("Session doc update on note save (optional):", sessErr);
+      }
+
+      setGeneralNoteUpdatedAt(now);
+      setGeneralNoteUpdatedBy(updatedByUid);
+      setGeneralNoteUpdatedByName(updatedByName);
+      setGeneralNoteSaveStatus('saved');
+      toast.success("Catatan Umum Hari Ini berhasil disimpan! 💾");
+      setTimeout(() => {
+        setGeneralNoteSaveStatus('idle');
+      }, 3000);
+    } catch (err: any) {
+      console.error("Error saving general note:", err);
+      setGeneralNoteSaveStatus('error');
+      toast.error(`Gagal menyimpan Catatan Umum: ${err.message || 'Terjadi kesalahan'}`);
+      setTimeout(() => {
+        setGeneralNoteSaveStatus('idle');
+      }, 4000);
     }
   };
 
@@ -1672,7 +1766,15 @@ export default function Observation() {
           setGeneralPhoto(null);
           setDocCreatedAt(null);
           setDocCreatedBy(null);
-          setGeneralNote("");
+          const canonicalClassId = resolveCanonicalClassId(selectedClassId, classes) || selectedClassId;
+          let dailyNote = "";
+          if (dailyContext && dailyContext.generalNote) {
+            dailyNote = dailyContext.generalNote;
+          } else if (typeof localStorage !== 'undefined') {
+            const localVal = localStorage.getItem(`kg_daily_note_${canonicalClassId}_${observationDate}`);
+            if (localVal) dailyNote = localVal;
+          }
+          setGeneralNote(dailyNote);
           setGeneralNoteUpdatedAt(null);
           setGeneralNoteUpdatedBy(null);
           setGeneralNoteUpdatedByName(null);
@@ -1711,36 +1813,8 @@ export default function Observation() {
     }
 
     fetchComboDoc();
-    
-    if (isRestrictedToAssignedClasses && classes.length === 0 && !isLoadingClasses) {
-    return (
-      <div className="max-w-7xl mx-auto space-y-8 pb-16 px-4">
-        {/* Header Banner */}
-        <header className="flex flex-col md:flex-row md:items-center md:justify-between bg-white rounded-3xl p-8 border border-gray-100 shadow-sm space-y-4 md:space-y-0">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="px-3 py-1 bg-emerald-100 text-emerald-700 text-xs font-black uppercase rounded-full tracking-widest">Kindergarten Unit</span>
-            </div>
-            <h1 className="text-3xl font-black text-gray-900 tracking-tight">Observation Data</h1>
-          </div>
-        </header>
 
-        <div className="max-w-4xl mx-auto my-12 p-12 bg-white border border-gray-150 rounded-3xl shadow-sm text-center">
-          <div className="flex flex-col items-center justify-center space-y-4">
-            <div className="p-4 bg-amber-50 text-amber-600 rounded-full">
-              <AlertTriangle size={36} />
-            </div>
-            <h2 className="text-xl font-bold text-gray-900">Belum Ada Kelas Ditugaskan</h2>
-            <p className="text-gray-600 max-w-md">
-              Belum ada kelas aktif yang ditugaskan kepada Anda pada Tahun Ajaran {activeYear || '2026/2027'}. Hubungi Kepala Unit atau admin untuk memperbarui assignment kelas.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return () => {
+    return () => {
       active = false;
     };
   }, [selectedClassId, selectedActivity, selectedDomain, observationDate, isEditingSession]);
@@ -3477,9 +3551,49 @@ export default function Observation() {
                   placeholder="Tulis catatan umum kegiatan kelas pada hari ini (opsional)…"
                   className="w-full h-24 p-3.5 text-xs bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium text-gray-800 placeholder-gray-400"
                 />
-                <p className="text-[10px] text-gray-400 font-semibold italic">
-                  * Catatan ini bersifat internal kelas dan tidak dibagikan ke siswa atau laporan perkembangan berkala.
-                </p>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                  <p className="text-[10px] text-gray-400 font-semibold italic flex-1">
+                    * Catatan ini tersimpan secara mandiri berdasarkan kelas &amp; tanggal observasi.
+                  </p>
+                  <button
+                    type="button"
+                    id="btn-save-general-note"
+                    onClick={handleSaveGeneralNote}
+                    disabled={generalNoteSaveStatus === 'saving'}
+                    className={cn(
+                      "flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-black text-xs transition-all shadow-sm cursor-pointer shrink-0 border-0",
+                      generalNoteSaveStatus === 'saving'
+                        ? "bg-amber-500 text-white cursor-not-allowed"
+                        : generalNoteSaveStatus === 'saved'
+                        ? "bg-emerald-600 text-white"
+                        : generalNoteSaveStatus === 'error'
+                        ? "bg-rose-600 text-white"
+                        : "bg-indigo-600 hover:bg-indigo-700 text-white hover:shadow-md active:scale-95"
+                    )}
+                  >
+                    {generalNoteSaveStatus === 'saving' ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" />
+                        <span>Menyimpan Catatan...</span>
+                      </>
+                    ) : generalNoteSaveStatus === 'saved' ? (
+                      <>
+                        <CheckCircle2 size={14} />
+                        <span>Tersimpan! 💾</span>
+                      </>
+                    ) : generalNoteSaveStatus === 'error' ? (
+                      <>
+                        <AlertCircle size={14} />
+                        <span>Coba Lagi</span>
+                      </>
+                    ) : (
+                      <>
+                        <Save size={14} />
+                        <span>Simpan Catatan Umum</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
 
           {/* Student Observations Loop Container */}
