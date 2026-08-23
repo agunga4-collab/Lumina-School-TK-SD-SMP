@@ -2140,6 +2140,9 @@ export interface UnitActivityEnrollment {
   status: 'CONFIRMED' | 'CANCELLED' | 'MOVED';
   source: 'MANUAL' | 'IMPORT' | 'TICKETING';
   notes?: string;
+  unit?: string;
+  activityId?: string;
+  unitActivityId?: string;
   createdAt: number;
   createdBy: string;
   createdByName?: string;
@@ -2160,6 +2163,7 @@ export interface UnitActivityEnrollment {
 
 export interface JuniorHighUnitActivityImportBatch {
   id: string;
+  unit?: string;
   originalFileName: string;
   importedAt: number;
   importedBy: string;

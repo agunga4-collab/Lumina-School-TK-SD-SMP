@@ -1110,6 +1110,33 @@ service cloud.firestore {
       );
     }
 
+    match /junior_high_unit_activity_enrollments/{enrollmentId} {
+      allow read: if isActive() && (
+        isJuniorHighStaff() ||
+        isAdmin() ||
+        isOwnStudentData(resource.data.studentId) ||
+        isLinkedStudent(resource.data.studentId)
+      );
+
+      allow create: if (isJuniorHighStaff() || isAdmin()) &&
+        incoming().unit == 'JUNIOR_HIGH' &&
+        incoming().studentId != null && incoming().studentId != "" &&
+        incoming().classId != null && incoming().classId != "" &&
+        incoming().activityId != null && incoming().activityId != "" &&
+        incoming().academicYear != null && incoming().academicYear != "" &&
+        incoming().semester != null;
+
+      allow update: if (isJuniorHighStaff() || isAdmin()) &&
+        incoming().unit == 'JUNIOR_HIGH';
+    }
+
+    match /junior_high_unit_activity_import_batches/{batchId} {
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
+
+      allow create, update: if (isJuniorHighStaff() || isAdmin()) &&
+        incoming().unit == 'JUNIOR_HIGH';
+    }
+
     match /attendance_calendar/{eventId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();

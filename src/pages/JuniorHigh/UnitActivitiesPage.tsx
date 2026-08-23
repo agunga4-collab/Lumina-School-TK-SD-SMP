@@ -631,6 +631,7 @@ export default function UnitActivitiesPage() {
       const enrollmentsToWrite = validRows.map(row => {
         const studentClass = classesList.find(c => c.id === row.matchedStudent?.classId);
         const isLgp = row.normalizedUaName === 'LGP';
+        const actId = row.normalizedUaName.toLowerCase().replace(/[^a-z0-9]+/g, '_');
 
         return {
           studentId: row.studentId,
@@ -643,8 +644,11 @@ export default function UnitActivitiesPage() {
           category: row.normalizedCategory,
           sourceUaId: row.uaNameInFile.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
           sourceUaName: row.uaNameInFile,
-          normalizedUaId: row.normalizedUaName.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
+          normalizedUaId: actId,
           normalizedUaName: row.normalizedUaName,
+          activityId: actId,
+          unitActivityId: actId,
+          unit: 'JUNIOR_HIGH',
           isLgp,
           status: 'CONFIRMED' as const,
           source: 'IMPORT' as const,
@@ -664,6 +668,7 @@ export default function UnitActivitiesPage() {
       // Create batch audit document
       const batchDoc: JuniorHighUnitActivityImportBatch = {
         id: batchId,
+        unit: 'JUNIOR_HIGH',
         originalFileName,
         importedAt: Date.now(),
         importedBy: profile?.id || profile?.email || 'admin',
@@ -864,6 +869,9 @@ export default function UnitActivitiesPage() {
           sourceUaName: formUa,
           normalizedUaId: getUaId(formUa),
           normalizedUaName: formUa,
+          activityId: getUaId(formUa),
+          unitActivityId: getUaId(formUa),
+          unit: 'JUNIOR_HIGH',
           isLgp: isLgpVal,
           status: 'CONFIRMED',
           source: 'MANUAL',
