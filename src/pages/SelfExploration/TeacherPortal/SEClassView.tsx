@@ -21,6 +21,24 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../../lib/utils';
 import { collection, getDocs, query, where, doc, getDoc, setDoc, serverTimestamp, addDoc, Timestamp } from 'firebase/firestore';
 
+const normalizeGrade = (raw: any): number | null => {
+  if (raw === undefined || raw === null) return null;
+  const str = String(raw).trim();
+  if (!str) return null;
+  const lower = str.toLowerCase();
+  if (lower === 'vii' || lower === 'vii.' || lower.includes('kelas 7') || lower.includes('grade 7') || lower === '7' || lower === 'seven') return 7;
+  if (lower === 'viii' || lower === 'viii.' || lower.includes('kelas 8') || lower.includes('grade 8') || lower === '8' || lower === 'eight') return 8;
+  if (lower === 'ix' || lower === 'ix.' || lower.includes('kelas 9') || lower.includes('grade 9') || lower === '9' || lower === 'nine') return 9;
+  
+  if (/\b7\b/.test(lower) || /\bvii\b/.test(lower)) return 7;
+  if (/\b8\b/.test(lower) || /\bviii\b/.test(lower)) return 8;
+  if (/\b9\b/.test(lower) || /\bix\b/.test(lower)) return 9;
+
+  const num = parseInt(str, 10);
+  if (num === 7 || num === 8 || num === 9) return num;
+  return null;
+};
+
 const getChoiceStatusLabel = (status?: string, approvalStatus?: string) => {
   const s = status || (
     approvalStatus === 'APPROVED' ? 'APPROVED' :
@@ -100,7 +118,6 @@ export default function SEClassView() {
       if (active && currentClassId) {
         // 1. Get active students roster in the selected class for active academic year
         const rosterData = await getActiveStudents(currentClassId, activeYear);
-        setRoster(rosterData || []);
         
         // 2. Get existing seEnrollments for the active period from seEnrollments collection
         const seSnap = await getDocs(query(
@@ -109,14 +126,44 @@ export default function SEClassView() {
         ));
         const seEnrollments = seSnap.docs.map(d => ({ id: d.id, ...d.data() } as SEEnrollment));
 
-        // 3. Merge them
-        const mergedEnrollments = (rosterData || []).map(student => {
+        // Resolve and normalize grade for each roster student from existing authoritative data
+        const resolvedRoster = (rosterData || []).map(student => {
+          // Priority 1: Student profile grade/level/gradeLevel if valid
+          let normalized = normalizeGrade(student.grade) || normalizeGrade((student as any).gradeLevel) || normalizeGrade((student as any).level);
+          
+          // Priority 2: Selected/current class record grade/level
+          if (!normalized) {
+            const currentClass = filteredClasses.find(c => c.id === currentClassId);
+            if (currentClass) {
+              normalized = normalizeGrade((currentClass as any).grade) || normalizeGrade((currentClass as any).gradeLevel) || normalizeGrade((currentClass as any).level);
+            }
+          }
+          
+          // Priority 3: Existing enrollment/class assignment grade/level
+          if (!normalized) {
+            const foundEnroll = seEnrollments.find(se => se.studentId === student.id);
+            if (foundEnroll) {
+              normalized = normalizeGrade(foundEnroll.grade) || normalizeGrade((foundEnroll as any).gradeLevel) || normalizeGrade((foundEnroll as any).level);
+            }
+          }
+          
+          return {
+            ...student,
+            grade: normalized || 7 // Default to 7 if all fails, assuring it's normalized as a number
+          };
+        });
+
+        setRoster(resolvedRoster);
+
+        // 3. Merge them using normalized student grade
+        const mergedEnrollments = resolvedRoster.map(student => {
           const found = (seEnrollments || []).find(se => se.studentId === student.id);
           if (found) {
             return {
               ...found,
               studentName: student.name, // ensure latest name
-              classId: currentClassId // ensure mapped correctly to current class view
+              classId: currentClassId, // ensure mapped correctly to current class view
+              grade: student.grade as any
             };
           }
 
@@ -125,7 +172,7 @@ export default function SEClassView() {
             studentId: student.id,
             studentName: student.name,
             classId: currentClassId,
-            grade: Number(student.grade || 7) as any,
+            grade: student.grade as any,
             periodId: active.id,
             academicYear: activeYear,
             semester: active.semester || '1',
@@ -153,9 +200,9 @@ export default function SEClassView() {
     fetchInitial();
   }, [fetchInitial]);
 
-  // Phase 2: Fetch monthly reflections
+  // Phase 2: Fetch monthly reflections for current cycle unit-wide to support dynamic class mappings
   const fetchReflections = React.useCallback(async () => {
-    if (!currentClassId || !selectedCycleId) {
+    if (!selectedCycleId) {
       setReflections([]);
       return;
     }
@@ -164,7 +211,7 @@ export default function SEClassView() {
       const q = query(
         collection(db, 'seMonthlyReflections'),
         where('reflectionCycleId', '==', selectedCycleId),
-        where('classId', '==', currentClassId)
+        where('unit', '==', 'JUNIOR_HIGH')
       );
       const snap = await getDocs(q);
       const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SEMonthlyReflection));
@@ -175,11 +222,43 @@ export default function SEClassView() {
     } finally {
       setReflectionsLoading(false);
     }
-  }, [currentClassId, selectedCycleId]);
+  }, [selectedCycleId]);
 
   React.useEffect(() => {
     fetchReflections();
   }, [fetchReflections]);
+
+  const getStudentReflection = React.useCallback((studentId: string, cycleId: string, cycleObj: SEReflectionCycle | null) => {
+    const deterministicId = `${studentId}_${cycleId}`;
+    
+    // Priority 1: New deterministic reflection document ID
+    let found = reflections.find(r => r.id === deterministicId);
+    if (found) {
+      return found;
+    }
+
+    // Priority 2: Stored studentId and reflectionCycleId matching exactly
+    found = reflections.find(r => r.studentId === studentId && r.reflectionCycleId === cycleId);
+    if (found) {
+      return found;
+    }
+
+    // Priority 3: Legacy fallback by studentId and compatibility cycle fields, without mixing other cycles
+    if (cycleObj) {
+      found = reflections.find(r => 
+        r.studentId === studentId &&
+        r.academicYear === cycleObj.academicYear &&
+        r.semester === cycleObj.semester &&
+        r.periodKey === cycleObj.periodKey &&
+        (!r.reflectionCycleId || r.reflectionCycleId === cycleId)
+      );
+      if (found) {
+        return found;
+      }
+    }
+
+    return null;
+  }, [reflections]);
 
   // Helpers for Class Roster Tracking
   const sortedRoster = React.useMemo(() => {
@@ -286,8 +365,8 @@ export default function SEClassView() {
 
     sortedRoster.forEach(student => {
       const studentEnrollment = enrollments.find(e => e.studentId === student.id) || null;
-      const reflection = reflections.find(r => r.studentId === student.id) || null;
       const currentCycleObj = cycles.find(c => c.id === selectedCycleId) || null;
+      const reflection = getStudentReflection(student.id, selectedCycleId, currentCycleObj);
       const status = getStudentStatus(student, currentCycleObj, studentEnrollment, reflection);
 
       if (status === 'NOT_AVAILABLE') notAvailable++;
@@ -299,7 +378,7 @@ export default function SEClassView() {
     });
 
     return { total, unfinished, draft, submitted, revision, completed, notAvailable };
-  }, [sortedRoster, enrollments, reflections, cycles, selectedCycleId, getStudentStatus]);
+  }, [sortedRoster, enrollments, selectedCycleId, cycles, getStudentStatus, getStudentReflection]);
 
   const handleOpenApproval = (enroll: SEEnrollment) => {
     setSelectedEnrollment(enroll);
@@ -583,11 +662,22 @@ export default function SEClassView() {
                            <tbody className="divide-y divide-gray-50">
                               {sortedRoster.map(student => {
                                  const studentEnrollment = enrollments.find(e => e.studentId === student.id) || null;
-                                 const reflection = reflections.find(r => r.studentId === student.id) || null;
                                  const currentCycleObj = cycles.find(c => c.id === selectedCycleId) || null;
+                                 const reflection = getStudentReflection(student.id, selectedCycleId, currentCycleObj);
                                  const status = getStudentStatus(student, currentCycleObj, studentEnrollment, reflection);
                                  const style = getReflectionStatusStyle(status);
                                  const isGrade9 = student.grade === 9;
+
+                                 // DEV-only logging for Umar (studentId: '2521003')
+                                 if (student.id === '2521003') {
+                                    console.log(`[DEV-DIAGNOSTICS] Umar Qomaruzzaman Al-Andalusi Matching Details:`);
+                                    console.log(`- canonical studentId from roster: ${student.id}`);
+                                    console.log(`- selected reflectionCycleId: ${selectedCycleId}`);
+                                    console.log(`- expected deterministic reflection ID: ${student.id}_${selectedCycleId}`);
+                                    console.log(`- found reflection document ID: ${reflection ? reflection.id : 'NOT_FOUND'}`);
+                                    console.log(`- found studentId/cycleId/overallStatus: ${reflection ? `${reflection.studentId}/${reflection.reflectionCycleId || 'N/A'}/${reflection.overallStatus || 'N/A'}` : 'NONE'}`);
+                                    console.log(`- final tracker status: ${status}`);
+                                 }
 
                                  return (
                                     <tr key={student.id} className="hover:bg-gray-50/50 transition-colors">
@@ -2126,9 +2216,11 @@ function ReviewReflectionModal({ data, onClose }: {
   onClose: () => void 
 }) {
   const { student, reflection, cycle } = data;
+  const cycleAny = cycle as any;
+  const reflectionAny = reflection as any;
 
-  const questions = cycle.questions && cycle.questions.length > 0 
-    ? cycle.questions 
+  const questions = cycleAny.questions && cycleAny.questions.length > 0 
+    ? cycleAny.questions 
     : [
         { id: 'q1', text: 'Apa hal paling berharga yang kamu pelajari bulan ini melalui aktivitas SE-mu?' },
         { id: 'q2', text: 'Tantangan apa yang kamu hadapi, dan bagaimana kamu mengatasinya?' },
@@ -2176,7 +2268,7 @@ function ReviewReflectionModal({ data, onClose }: {
             <div>
               <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest block">Terakhir Disimpan</span>
               <span className="text-xs font-bold text-gray-700 mt-1 block">
-                {reflection.updatedAt ? new Date(reflection.updatedAt.seconds ? reflection.updatedAt.seconds * 1000 : reflection.updatedAt).toLocaleDateString('id-ID', {
+                {reflectionAny.updatedAt ? new Date(reflectionAny.updatedAt.seconds ? reflectionAny.updatedAt.seconds * 1000 : reflectionAny.updatedAt).toLocaleDateString('id-ID', {
                   day: 'numeric',
                   month: 'long',
                   year: 'numeric',
@@ -2190,8 +2282,8 @@ function ReviewReflectionModal({ data, onClose }: {
           {/* Answers list */}
           <div className="space-y-6">
             <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 pb-2">Isi Refleksi Siswa</h3>
-            {questions.map((q, idx) => {
-              const answer = reflection.answers?.[q.id] || '';
+            {questions.map((q: any, idx: number) => {
+              const answer = reflectionAny.answers?.[q.id] || '';
               return (
                 <div key={q.id} className="space-y-2 p-6 bg-gray-50 rounded-3xl border border-gray-100">
                   <div className="flex items-start gap-2.5">
