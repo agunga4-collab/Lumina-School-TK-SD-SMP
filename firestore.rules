@@ -459,14 +459,34 @@ service cloud.firestore {
     }
 
     match /selfExploration/{studentId} {
-      allow read: if isActive() &&
-        (isOwnStudentData(studentId) || (isStudent() && studentId == request.auth.uid) || isJuniorHighStaff() || isLinkedStudent(studentId));
-      allow write: if isAdmin() || isJuniorHighStaff() || (isStudent() && studentId == request.auth.uid) || (isActive() && isOwnStudentData(studentId));
+      allow read: if isActive() && (
+        isOwnStudentData(studentId) ||
+        (isStudent() && studentId == request.auth.uid) ||
+        isJuniorHighStaff() ||
+        isAdmin() ||
+        isLinkedStudent(studentId)
+      );
+      allow write: if isActive() && (
+        isAdmin() ||
+        isJuniorHighStaff() ||
+        (isStudent() && studentId == request.auth.uid) ||
+        isOwnStudentData(studentId)
+      );
 
       match /plans/{periodId} {
-        allow read: if isActive() &&
-          (isOwnStudentData(studentId) || (isStudent() && studentId == request.auth.uid) || isJuniorHighStaff() || isLinkedStudent(studentId));
-        allow write: if isAdmin() || isJuniorHighStaff() || (isStudent() && studentId == request.auth.uid) || (isActive() && isOwnStudentData(studentId));
+        allow read: if isActive() && (
+          isOwnStudentData(studentId) ||
+          (isStudent() && studentId == request.auth.uid) ||
+          isJuniorHighStaff() ||
+          isAdmin() ||
+          isLinkedStudent(studentId)
+        );
+        allow write: if isActive() && (
+          isAdmin() ||
+          isJuniorHighStaff() ||
+          (isStudent() && studentId == request.auth.uid) ||
+          isOwnStudentData(studentId)
+        );
       }
     }
 
@@ -475,15 +495,13 @@ service cloud.firestore {
         resource == null ||
         isOwnStudentData(resource.data.studentId) ||
         isAdmin() ||
-        userRole() in ['HEAD_JUNIOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'SUPER_ADMIN', 'HEAD_UNIT', 'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR', 'COUNSELOR'] ||
-        (isTeacher() && isTeacherAssignedToClass(resource.data.classId)) ||
+        (isJuniorHighStaff() && resource.data.unit == 'JUNIOR_HIGH') ||
         isLinkedStudent(resource.data.studentId)
       );
 
       allow list: if isActive() && (
         isAdmin() ||
-        userRole() in ['HEAD_JUNIOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'SUPER_ADMIN', 'HEAD_UNIT', 'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR', 'COUNSELOR'] ||
-        (isTeacher() && isTeacherAssignedToClass(resource.data.classId)) ||
+        (isJuniorHighStaff() && resource.data.unit == 'JUNIOR_HIGH') ||
         (isStudent() && resource.data.studentId == currentUser().luminaId) ||
         isLinkedStudent(resource.data.studentId)
       );
@@ -517,6 +535,7 @@ service cloud.firestore {
           (incoming().slots.size() < 2 || (incoming().slots[1].teacherFeedback == (existing().slots.size() > 1 ? existing().slots[1].teacherFeedback : '') && incoming().slots[1].reviewedBy == (existing().slots.size() > 1 ? existing().slots[1].reviewedBy : null) && incoming().slots[1].reviewedAt == (existing().slots.size() > 1 ? existing().slots[1].reviewedAt : null) && incoming().slots[1].status in ['DRAFT', 'SUBMITTED']))
         ) || (
           (isAdmin() || isJuniorHighStaff()) &&
+          existing().unit == 'JUNIOR_HIGH' &&
           incoming().studentId == existing().studentId &&
           incoming().unit == existing().unit &&
           incoming().classId == existing().classId &&
@@ -533,33 +552,90 @@ service cloud.firestore {
     }
 
     match /sePeriods/{periodId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin() || isJuniorHighStaff();
+      allow read: if isActive() && (
+        isJuniorHighStaff() ||
+        isAdmin() ||
+        isStudent() ||
+        isParent()
+      );
+      allow write: if isActive() && (
+        isAdmin() ||
+        (isJuniorHighStaff() && (resource == null || resource.data.unitId == 'JUNIOR_HIGH') && (request.resource == null || request.resource.data.unitId == 'JUNIOR_HIGH'))
+      );
     }
 
     match /seReflectionCycles/{cycleId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin() || isJuniorHighStaff();
+      allow read: if isActive() && (
+        isJuniorHighStaff() ||
+        isAdmin() ||
+        isStudent() ||
+        isParent()
+      );
+      allow write: if isActive() && (
+        isAdmin() ||
+        (isJuniorHighStaff() && (resource == null || resource.data.unit == 'JUNIOR_HIGH') && (request.resource == null || request.resource.data.unit == 'JUNIOR_HIGH'))
+      );
     }
 
     match /seActivities/{activityId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin() || isJuniorHighStaff();
+      allow read: if isActive() && (
+        isJuniorHighStaff() ||
+        isAdmin() ||
+        isStudent() ||
+        isParent()
+      );
+      allow write: if isActive() && (
+        isAdmin() ||
+        (isJuniorHighStaff() && (resource == null || resource.data.unitId == 'JUNIOR_HIGH') && (request.resource == null || request.resource.data.unitId == 'JUNIOR_HIGH'))
+      );
     }
 
     match /seEnrollments/{enrollmentId} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn();
+      allow read: if isActive() && (
+        isJuniorHighStaff() ||
+        isAdmin() ||
+        resource == null ||
+        isOwnStudentData(resource.data.studentId) ||
+        isLinkedStudent(resource.data.studentId)
+      );
+      allow write: if isActive() && (
+        isJuniorHighStaff() ||
+        isAdmin() ||
+        (resource == null && isOwnStudentData(incoming().studentId)) ||
+        (resource != null && isOwnStudentData(existing().studentId) && isOwnStudentData(incoming().studentId))
+      );
     }
 
     match /seSessionLogs/{logId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin() || isJuniorHighStaff();
+      allow read: if isActive() && (
+        isJuniorHighStaff() ||
+        isAdmin() ||
+        resource == null ||
+        isOwnStudentData(resource.data.studentId) ||
+        isLinkedStudent(resource.data.studentId)
+      );
+      allow write: if isActive() && (
+        isJuniorHighStaff() ||
+        isAdmin() ||
+        (resource == null && isOwnStudentData(incoming().studentId)) ||
+        (resource != null && isOwnStudentData(existing().studentId) && isOwnStudentData(incoming().studentId))
+      );
     }
 
     match /seSelfAssessments/{assessmentId} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn();
+      allow read: if isActive() && (
+        isJuniorHighStaff() ||
+        isAdmin() ||
+        resource == null ||
+        isOwnStudentData(resource.data.studentId) ||
+        isLinkedStudent(resource.data.studentId)
+      );
+      allow write: if isActive() && (
+        isJuniorHighStaff() ||
+        isAdmin() ||
+        (resource == null && isOwnStudentData(incoming().studentId)) ||
+        (resource != null && isOwnStudentData(existing().studentId) && isOwnStudentData(incoming().studentId))
+      );
     }
 
     match /attendance/{attendanceId} {

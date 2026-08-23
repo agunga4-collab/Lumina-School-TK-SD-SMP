@@ -14,7 +14,6 @@ import {
   db
 } from '../../../lib/firebase';
 import { SEPeriod, SEEnrollment, SEChoice, SESelfAssessment, SEReflectionCycle, SEMonthlyReflection } from '../../../types';
-import { isTeacherAssignedToClass } from '../../../services/classTeacherAssignmentService';
 import { useAuth } from '../../../context/AuthContext';
 import { useAcademicYear } from '../../../context/AcademicYearContext';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -70,16 +69,11 @@ export default function SEClassView() {
         .filter((c: any) => c.academicYear === activeYear && c.status === 'active')
         .sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''));
 
-      // Filter classes by teacher assignment
-      let allowedClasses = filteredClasses;
-      const isUnrestricted = profile?.role === 'SUPER_ADMIN' || profile?.role === 'HEAD_JUNIOR';
-      if (!isUnrestricted && profile?.uid) {
-        allowedClasses = filteredClasses.filter((c: any) => isTeacherAssignedToClass(c, profile.uid));
-      }
-      setClasses(allowedClasses);
+      // All Junior High classes are accessible to Junior High teaching/staff
+      setClasses(filteredClasses);
 
-      if (!currentClassId && allowedClasses.length > 0) {
-        setCurrentClassId(allowedClasses[0].id);
+      if (!currentClassId && filteredClasses.length > 0) {
+        setCurrentClassId(filteredClasses[0].id);
       }
 
       // Get Active Period for active academic year
