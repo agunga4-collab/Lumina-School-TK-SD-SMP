@@ -1818,16 +1818,29 @@ export async function getSEMonthlyReflection(
   periodKeyOrCycleId: string,
   isCycleId: boolean = false
 ): Promise<SEMonthlyReflection | null> {
+  const reflectionCycleId = isCycleId ? periodKeyOrCycleId : 'N/A';
+  const docId = isCycleId 
+    ? `${studentId}_${periodKeyOrCycleId}`
+    : `${studentId}_${academicYear.replace(/\//g, '-')}_${semester}_${periodKeyOrCycleId}`;
+  const path = `seMonthlyReflections/${docId}`;
+
+  // Log only the allowed diagnostic information
+  console.log(`[getSEMonthlyReflection] Computed studentId: ${studentId}`);
+  console.log(`[getSEMonthlyReflection] Computed reflectionCycleId: ${reflectionCycleId}`);
+  console.log(`[getSEMonthlyReflection] Computed reflectionId: ${docId}`);
+  console.log(`[getSEMonthlyReflection] Exact single-document path: ${path}`);
+
   try {
-    const docId = isCycleId 
-      ? `${studentId}_${periodKeyOrCycleId}`
-      : `${studentId}_${academicYear.replace(/\//g, '-')}_${semester}_${periodKeyOrCycleId}`;
     const docRef = doc(db, 'seMonthlyReflections', docId);
     const snap = await getDoc(docRef);
-    if (!snap.exists()) return null;
+    
+    const docExists = snap.exists();
+    console.log(`[getSEMonthlyReflection] Document exists: ${docExists}`);
+
+    if (!docExists) return null;
     return { id: snap.id, ...snap.data() } as SEMonthlyReflection;
   } catch (err: any) {
-    handleFirestoreError(err, 'get', `seMonthlyReflections`);
+    console.log(`[getSEMonthlyReflection] Handled normal missing state or read limitation. Document exists: false. Error: ${err.message}`);
     return null;
   }
 }

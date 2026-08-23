@@ -472,6 +472,7 @@ service cloud.firestore {
 
     match /seMonthlyReflections/{reflectionId} {
       allow get: if isActive() && (
+        resource == null ||
         isOwnStudentData(resource.data.studentId) ||
         isAdmin() ||
         userRole() in ['HEAD_JUNIOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'SUPER_ADMIN', 'HEAD_UNIT', 'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR', 'COUNSELOR'] ||
