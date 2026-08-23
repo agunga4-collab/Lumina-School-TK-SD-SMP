@@ -2,7 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { getAnalytics } from 'firebase/analytics';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
-import { initializeFirestore, doc, getDoc, setDoc, updateDoc, getDocFromServer, collection, query, where, getDocs, limit, writeBatch, deleteDoc, orderBy, documentId } from 'firebase/firestore';
+import { initializeFirestore, doc, getDoc, setDoc, updateDoc, getDocFromServer, collection, query, where, getDocs, limit, writeBatch, deleteDoc, orderBy, documentId, serverTimestamp } from 'firebase/firestore';
 export { doc, writeBatch };
 import { mtssSnapshotTriggerService } from '../services/mtssSnapshotTriggerService.ts';
 import { validateTeacherAssignments, buildTeacherAssignmentIndexes, getClassTeacherAssignments } from '../services/classTeacherAssignmentService.ts';
@@ -1854,7 +1854,61 @@ export async function saveSEMonthlyReflection(
       ? `${studentId}_${reflectionCycleId}`
       : `${studentId}_${academicYear.replace(/\//g, '-')}_${semester}_${periodKey}`;
     const docRef = doc(db, 'seMonthlyReflections', docId);
-    await setDoc(docRef, reflection, { merge: true });
+
+    const snap = await getDoc(docRef);
+    const isUpdate = snap.exists();
+
+    let payload: any;
+
+    if (isUpdate) {
+      const existingData = snap.data();
+      payload = {
+        ...existingData,
+        slots: reflection.slots,
+        overallStatus: reflection.overallStatus,
+        updatedAt: serverTimestamp(),
+      };
+      if (reflection.reflectionCycleId !== undefined) {
+        payload.reflectionCycleId = reflection.reflectionCycleId;
+      }
+      if (reflection.sePeriodId !== undefined) {
+        payload.sePeriodId = reflection.sePeriodId;
+      }
+    } else {
+      payload = {
+        studentId,
+        classId: reflection.classId || '',
+        unit: 'JUNIOR_HIGH',
+        academicYear,
+        semester,
+        studentNameSnapshot: reflection.studentNameSnapshot,
+        classNameSnapshot: reflection.classNameSnapshot,
+        gradeSnapshot: reflection.gradeSnapshot,
+        slots: reflection.slots,
+        overallStatus: reflection.overallStatus,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+      if (periodKey !== undefined) {
+        payload.periodKey = periodKey;
+      }
+      if (reflectionCycleId !== undefined) {
+        payload.reflectionCycleId = reflectionCycleId;
+      }
+      if (reflection.sePeriodId !== undefined) {
+        payload.sePeriodId = reflection.sePeriodId;
+      }
+    }
+
+    // Log DEV-only before write
+    console.log(`[saveSEMonthlyReflection] [DEV-DIAGNOSTICS] Writing reflection doc:`);
+    console.log(`- reflectionId: ${docId}`);
+    console.log(`- studentId: ${studentId}`);
+    console.log(`- reflectionCycleId: ${reflectionCycleId || 'N/A'}`);
+    console.log(`- operation: ${isUpdate ? 'UPDATE' : 'CREATE'}`);
+    console.log(`- payloadKeys: [${Object.keys(payload).join(', ')}]`);
+
+    await setDoc(docRef, payload);
   } catch (err: any) {
     handleFirestoreError(err, 'write', `seMonthlyReflections`);
   }
