@@ -20,7 +20,7 @@ const CATEGORIES = [
 ];
 
 const CHOSEN_OPTIONS: Record<string, string[]> = {
-  'Performing Arts': ['Orchestra', 'Choir', 'Traditional Music', 'Drumline', 'Theatre'],
+  'Performing Arts': ['Orkestra', 'Choir', 'Theatre', 'LGP', 'Traditional Music', 'Drumline'],
   'Arts & Makerspace': ['Papercraft', 'Makerspace', 'Seni Kreasi Bebas', 'Membatik', 'Painting'],
   'Physical Education': ['Bola Kecil', 'Bola Besar', 'Senam & Gerak Berirama', 'Atletik', 'Swimming & Physical Training'],
   'Digital Literacy': ['Animation', 'Videography', 'Graphic Design', '3D Structure Building', 'Coding']

@@ -16,23 +16,40 @@ const OFFICIAL_CATEGORIES = [
 
 export function normalizeEnrollmentForUI(e: UnitActivityEnrollment): UnitActivityEnrollment {
   const isLgp = e.isLgp || 
-    ['LGP', 'Choir', 'Theatre', 'Musical Theatre Band'].includes(e.normalizedUaName) || 
-    ['Choir', 'Theatre', 'Musical Theatre Band'].includes(e.sourceUaName || '');
+    ['LGP', 'Musical Theatre Band'].includes(e.normalizedUaName) || 
+    ['LGP', 'Musical Theatre Band'].includes(e.sourceUaName || '');
 
-  const normalizedUaName = isLgp ? 'LGP' : e.normalizedUaName;
+  const isChoirOrTheatre = ['Choir', 'Theatre'].includes(e.normalizedUaName) || ['Choir', 'Theatre'].includes(e.sourceUaName || '');
+  const finalIsLgp = isChoirOrTheatre ? false : isLgp;
+
+  let normalizedUaName = finalIsLgp ? 'LGP' : e.normalizedUaName;
+
+  if (normalizedUaName === 'Orchestra' || normalizedUaName === 'Orkestra') {
+    normalizedUaName = 'Orkestra';
+  }
 
   let category = e.category || 'Performing Arts';
-  if (isLgp || ['Performing Arts', 'Choir', 'Theatre', 'Musical Theatre Band'].includes(category)) {
+  if (['Choir', 'Theatre', 'Orkestra', 'Orchestra', 'LGP', 'Traditional Music', 'Drumline', 'Musical Theatre Band'].includes(normalizedUaName)) {
     category = 'Performing Arts';
-  } else if (['Sports', 'Physical Education'].includes(category)) {
-    category = 'Physical Education';
-  } else if (['Art', 'Arts & Makerspace'].includes(category)) {
+  } else if (['Papercraft', 'Makerspace', 'Seni Kreasi Bebas', 'Membatik', 'Painting'].includes(normalizedUaName)) {
     category = 'Arts & Makerspace';
-  } else if (category === 'Digital Literacy') {
+  } else if (['Bola Kecil', 'Bola Besar', 'Senam & Gerak Berirama', 'Atletik', 'Swimming & Physical Training'].includes(normalizedUaName)) {
+    category = 'Physical Education';
+  } else if (['Animation', 'Videography', 'Graphic Design', '3D Structure Building', 'Coding'].includes(normalizedUaName)) {
     category = 'Digital Literacy';
   } else {
-    if (!OFFICIAL_CATEGORIES.includes(category)) {
+    if (finalIsLgp || ['Performing Arts', 'Choir', 'Theatre', 'Musical Theatre Band'].includes(category)) {
       category = 'Performing Arts';
+    } else if (['Sports', 'Physical Education'].includes(category)) {
+      category = 'Physical Education';
+    } else if (['Art', 'Arts & Makerspace'].includes(category)) {
+      category = 'Arts & Makerspace';
+    } else if (category === 'Digital Literacy') {
+      category = 'Digital Literacy';
+    } else {
+      if (!OFFICIAL_CATEGORIES.includes(category)) {
+        category = 'Performing Arts';
+      }
     }
   }
 
@@ -98,8 +115,11 @@ export default function StudentUnitActivitiesPage() {
   });
 
   const formatUaName = (e: UnitActivityEnrollment) => {
-    const isLgp = e.isLgp || ['LGP', 'Choir', 'Theatre', 'Musical Theatre Band'].includes(e.normalizedUaName);
-    return isLgp ? 'LGP' : e.normalizedUaName;
+    const isLgp = e.isLgp || ['LGP', 'Musical Theatre Band'].includes(e.normalizedUaName);
+    const isChoirOrTheatre = ['Choir', 'Theatre'].includes(e.normalizedUaName);
+    const finalIsLgp = isChoirOrTheatre ? false : isLgp;
+    const name = finalIsLgp ? 'LGP' : e.normalizedUaName;
+    return name === 'Orchestra' || name === 'Orkestra' ? 'Orkestra' : name;
   };
 
   return (

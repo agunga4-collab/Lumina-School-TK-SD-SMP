@@ -21,7 +21,7 @@ const CATEGORIES = [
 ];
 
 const UA_BY_CATEGORY: Record<string, string[]> = {
-  'Performing Arts': ['Orchestra', 'LGP', 'Traditional Music', 'Drumline'],
+  'Performing Arts': ['Orkestra', 'Choir', 'Theatre', 'LGP', 'Traditional Music', 'Drumline'],
   'Arts & Makerspace': ['Papercraft', 'Makerspace', 'Seni Kreasi Bebas', 'Membatik', 'Painting'],
   'Physical Education': ['Bola Kecil', 'Bola Besar', 'Senam & Gerak Berirama', 'Atletik', 'Swimming & Physical Training'],
   'Digital Literacy': ['Animation', 'Videography', 'Graphic Design', '3D Structure Building', 'Coding']
@@ -29,23 +29,40 @@ const UA_BY_CATEGORY: Record<string, string[]> = {
 
 export function normalizeEnrollmentForUI(e: UnitActivityEnrollment): UnitActivityEnrollment {
   const isLgp = e.isLgp || 
-    ['LGP', 'Choir', 'Theatre', 'Musical Theatre Band'].includes(e.normalizedUaName) || 
-    ['Choir', 'Theatre', 'Musical Theatre Band'].includes(e.sourceUaName || '');
+    ['LGP', 'Musical Theatre Band'].includes(e.normalizedUaName) || 
+    ['LGP', 'Musical Theatre Band'].includes(e.sourceUaName || '');
 
-  const normalizedUaName = isLgp ? 'LGP' : e.normalizedUaName;
+  const isChoirOrTheatre = ['Choir', 'Theatre'].includes(e.normalizedUaName) || ['Choir', 'Theatre'].includes(e.sourceUaName || '');
+  const finalIsLgp = isChoirOrTheatre ? false : isLgp;
+
+  let normalizedUaName = finalIsLgp ? 'LGP' : e.normalizedUaName;
+
+  if (normalizedUaName === 'Orchestra' || normalizedUaName === 'Orkestra') {
+    normalizedUaName = 'Orkestra';
+  }
 
   let category = e.category || 'Performing Arts';
-  if (isLgp || ['Performing Arts', 'Choir', 'Theatre', 'Musical Theatre Band'].includes(category)) {
+  if (['Choir', 'Theatre', 'Orkestra', 'Orchestra', 'LGP', 'Traditional Music', 'Drumline', 'Musical Theatre Band'].includes(normalizedUaName)) {
     category = 'Performing Arts';
-  } else if (['Sports', 'Physical Education'].includes(category)) {
-    category = 'Physical Education';
-  } else if (['Art', 'Arts & Makerspace'].includes(category)) {
+  } else if (['Papercraft', 'Makerspace', 'Seni Kreasi Bebas', 'Membatik', 'Painting'].includes(normalizedUaName)) {
     category = 'Arts & Makerspace';
-  } else if (category === 'Digital Literacy') {
+  } else if (['Bola Kecil', 'Bola Besar', 'Senam & Gerak Berirama', 'Atletik', 'Swimming & Physical Training'].includes(normalizedUaName)) {
+    category = 'Physical Education';
+  } else if (['Animation', 'Videography', 'Graphic Design', '3D Structure Building', 'Coding'].includes(normalizedUaName)) {
     category = 'Digital Literacy';
   } else {
-    if (!CATEGORIES.includes(category)) {
+    if (finalIsLgp || ['Performing Arts', 'Choir', 'Theatre', 'Musical Theatre Band'].includes(category)) {
       category = 'Performing Arts';
+    } else if (['Sports', 'Physical Education'].includes(category)) {
+      category = 'Physical Education';
+    } else if (['Art', 'Arts & Makerspace'].includes(category)) {
+      category = 'Arts & Makerspace';
+    } else if (category === 'Digital Literacy') {
+      category = 'Digital Literacy';
+    } else {
+      if (!CATEGORIES.includes(category)) {
+        category = 'Performing Arts';
+      }
     }
   }
 
@@ -292,7 +309,7 @@ export default function UnitActivitiesPage() {
         semester: '1',
         category: 'Performing Arts',
         uaName: 'Choir',
-        notes: 'Ini contoh data historis Choir yang otomatis ternormalisasi ke LGP'
+        notes: 'Ini contoh data historis Choir'
       },
       {
         studentId: 'NIS002',
@@ -457,8 +474,17 @@ export default function UnitActivitiesPage() {
           
           if (uaNameInFile) {
             const fileUaUpper = uaNameInFile.toUpperCase();
-            if (['CHOIR', 'THEATRE', 'MUSICAL THEATRE BAND', 'LGP'].includes(fileUaUpper)) {
+            if (['MUSICAL THEATRE BAND', 'LGP'].includes(fileUaUpper)) {
               normalizedUaName = 'LGP';
+              normalizedCategory = 'Performing Arts';
+            } else if (fileUaUpper === 'CHOIR') {
+              normalizedUaName = 'Choir';
+              normalizedCategory = 'Performing Arts';
+            } else if (fileUaUpper === 'THEATRE' || fileUaUpper === 'TEATER') {
+              normalizedUaName = 'Theatre';
+              normalizedCategory = 'Performing Arts';
+            } else if (fileUaUpper === 'ORCHESTRA' || fileUaUpper === 'ORKESTRA') {
+              normalizedUaName = 'Orkestra';
               normalizedCategory = 'Performing Arts';
             } else {
               let found = false;
@@ -1435,8 +1461,10 @@ export default function UnitActivitiesPage() {
                             <div className="flex flex-wrap gap-1.5 max-w-2xl">
                               {hasRecords ? (
                                 studentHistory.map(e => {
-                                  const isLgp = e.isLgp || ['LGP', 'Choir', 'Theatre', 'Musical Theatre Band'].includes(e.normalizedUaName);
-                                  const displayName = isLgp ? 'LGP' : e.normalizedUaName;
+                                  const isLgp = e.isLgp || ['LGP', 'Musical Theatre Band'].includes(e.normalizedUaName);
+                                  const isChoirOrTheatre = ['Choir', 'Theatre'].includes(e.normalizedUaName);
+                                  const finalIsLgp = isChoirOrTheatre ? false : isLgp;
+                                  const displayName = finalIsLgp ? 'LGP' : e.normalizedUaName;
                                   return (
                                     <span
                                       key={e.id}
@@ -1855,8 +1883,10 @@ export default function UnitActivitiesPage() {
                           return a.semester.localeCompare(b.semester);
                         })
                         .map(e => {
-                          const isLgp = e.isLgp || ['LGP', 'Choir', 'Theatre', 'Musical Theatre Band'].includes(e.normalizedUaName);
-                          const displayName = isLgp ? 'LGP' : e.normalizedUaName;
+                          const isLgp = e.isLgp || ['LGP', 'Musical Theatre Band'].includes(e.normalizedUaName);
+                          const isChoirOrTheatre = ['Choir', 'Theatre'].includes(e.normalizedUaName);
+                          const finalIsLgp = isChoirOrTheatre ? false : isLgp;
+                          const displayName = finalIsLgp ? 'LGP' : e.normalizedUaName;
                           return (
                             <tr key={e.id} className="hover:bg-slate-50/50">
                               <td className="px-4 py-2.5 font-semibold text-gray-700">{e.academicYear}</td>
