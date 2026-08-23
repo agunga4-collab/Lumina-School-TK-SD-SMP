@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { 
   Search, Filter, CheckCircle2, AlertCircle, Eye, 
-  ChevronRight, MessageSquare, User, Calendar, Clock, Plus,
+  ChevronRight, MessageSquare, User, Calendar, Clock, Plus, X,
   FileText, ExternalLink, Maximize2, Sparkles, UploadCloud,
   Trash2, Save, Send, Loader2, Lock
 } from 'lucide-react';
@@ -13,7 +13,8 @@ import {
   saveSEEnrollment,
   db
 } from '../../../lib/firebase';
-import { SEPeriod, SEEnrollment, SEChoice, SESelfAssessment } from '../../../types';
+import { SEPeriod, SEEnrollment, SEChoice, SESelfAssessment, SEReflectionCycle, SEMonthlyReflection } from '../../../types';
+import { isTeacherAssignedToClass } from '../../../services/classTeacherAssignmentService';
 import { useAuth } from '../../../context/AuthContext';
 import { useAcademicYear } from '../../../context/AcademicYearContext';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -45,6 +46,19 @@ export default function SEClassView() {
   const [showCommentModal, setShowCommentModal] = React.useState(false);
   const [assessments, setAssessments] = React.useState<SESelfAssessment[]>([]);
 
+  // Phase 2: Teacher reflection tracking states
+  const [activeTab, setActiveTab] = React.useState<'plan' | 'reflection'>('plan');
+  const [roster, setRoster] = React.useState<any[]>([]);
+  const [cycles, setCycles] = React.useState<SEReflectionCycle[]>([]);
+  const [selectedCycleId, setSelectedCycleId] = React.useState<string>('');
+  const [reflections, setReflections] = React.useState<SEMonthlyReflection[]>([]);
+  const [reflectionsLoading, setReflectionsLoading] = React.useState<boolean>(false);
+  const [selectedReflectionForReview, setSelectedReflectionForReview] = React.useState<{
+    student: any;
+    reflection: SEMonthlyReflection;
+    cycle: SEReflectionCycle;
+  } | null>(null);
+
   const fetchInitial = React.useCallback(async () => {
     setLoading(true);
     try {
@@ -55,7 +69,18 @@ export default function SEClassView() {
         .map(d => ({ id: d.id, ...d.data() }))
         .filter((c: any) => c.academicYear === activeYear && c.status === 'active')
         .sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''));
-      setClasses(filteredClasses);
+
+      // Filter classes by teacher assignment
+      let allowedClasses = filteredClasses;
+      const isUnrestricted = profile?.role === 'SUPER_ADMIN' || profile?.role === 'HEAD_JUNIOR';
+      if (!isUnrestricted && profile?.uid) {
+        allowedClasses = filteredClasses.filter((c: any) => isTeacherAssignedToClass(c, profile.uid));
+      }
+      setClasses(allowedClasses);
+
+      if (!currentClassId && allowedClasses.length > 0) {
+        setCurrentClassId(allowedClasses[0].id);
+      }
 
       // Get Active Period for active academic year
       const periods = await getSEPeriods('JUNIOR_HIGH');
@@ -63,9 +88,25 @@ export default function SEClassView() {
                      periods?.find(p => p.academicYear === activeYear) || null;
       setActivePeriod(active);
 
+      // Fetch SE Reflection Cycles
+      const cycleSnap = await getDocs(query(collection(db, 'seReflectionCycles'), where('unit', '==', 'JUNIOR_HIGH')));
+      const allCycles = cycleSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SEReflectionCycle));
+      
+      const targetSemester = active?.semester || '1';
+      const filteredCycles = allCycles.filter(c => 
+        c.academicYear === activeYear && 
+        c.semester === targetSemester
+      );
+      setCycles(filteredCycles);
+
+      const activeCycle = filteredCycles.find(c => c.status === 'ACTIVE');
+      const defaultCycleId = activeCycle?.id || (filteredCycles.length > 0 ? filteredCycles[0].id : '');
+      setSelectedCycleId(prev => prev || defaultCycleId);
+
       if (active && currentClassId) {
         // 1. Get active students roster in the selected class for active academic year
-        const roster = await getActiveStudents(currentClassId, activeYear);
+        const rosterData = await getActiveStudents(currentClassId, activeYear);
+        setRoster(rosterData || []);
         
         // 2. Get existing seEnrollments for the active period from seEnrollments collection
         const seSnap = await getDocs(query(
@@ -75,7 +116,7 @@ export default function SEClassView() {
         const seEnrollments = seSnap.docs.map(d => ({ id: d.id, ...d.data() } as SEEnrollment));
 
         // 3. Merge them
-        const mergedEnrollments = (roster || []).map(student => {
+        const mergedEnrollments = (rosterData || []).map(student => {
           const found = (seEnrollments || []).find(se => se.studentId === student.id);
           if (found) {
             return {
@@ -104,6 +145,7 @@ export default function SEClassView() {
 
         setEnrollments(mergedEnrollments);
       } else {
+        setRoster([]);
         setEnrollments([]);
       }
     } catch (err) {
@@ -111,11 +153,159 @@ export default function SEClassView() {
     } finally {
       setLoading(false);
     }
-  }, [currentClassId, activeYear]);
+  }, [currentClassId, activeYear, profile]);
 
   React.useEffect(() => {
     fetchInitial();
   }, [fetchInitial]);
+
+  // Phase 2: Fetch monthly reflections
+  const fetchReflections = React.useCallback(async () => {
+    if (!currentClassId || !selectedCycleId) {
+      setReflections([]);
+      return;
+    }
+    setReflectionsLoading(true);
+    try {
+      const q = query(
+        collection(db, 'seMonthlyReflections'),
+        where('reflectionCycleId', '==', selectedCycleId),
+        where('classId', '==', currentClassId)
+      );
+      const snap = await getDocs(q);
+      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SEMonthlyReflection));
+      setReflections(list);
+    } catch (err) {
+      console.error("Error fetching SE monthly reflections:", err);
+      setReflections([]);
+    } finally {
+      setReflectionsLoading(false);
+    }
+  }, [currentClassId, selectedCycleId]);
+
+  React.useEffect(() => {
+    fetchReflections();
+  }, [fetchReflections]);
+
+  // Helpers for Class Roster Tracking
+  const sortedRoster = React.useMemo(() => {
+    return [...roster].sort((a: any, b: any) => {
+      const numA = Number(a.nomorAbsen || 999);
+      const numB = Number(b.nomorAbsen || 999);
+      if (numA !== numB) {
+        return numA - numB;
+      }
+      return (a.name || '').localeCompare(b.name || '');
+    });
+  }, [roster]);
+
+  const getStudentStatus = React.useCallback((student: any, cycle: SEReflectionCycle | null, enrollment: SEEnrollment | null, reflection: SEMonthlyReflection | null) => {
+    const isGrade9 = student.grade === 9;
+    const numSlots = cycle 
+      ? (cycle.requiredSlotsByGrade[student.grade as 7 | 8 | 9]?.length || (isGrade9 ? 1 : 2))
+      : (isGrade9 ? 1 : 2);
+
+    const isChoiceMissing = (slotNum: 1 | 2) => {
+      if (!enrollment || !enrollment.choices) return true;
+      const choice = enrollment.choices.find(c => c.slot === slotNum);
+      return !choice || !choice.strand || !choice.activityName;
+    };
+
+    const missing1 = isChoiceMissing(1);
+    const missing2 = numSlots === 2 ? isChoiceMissing(2) : false;
+    const isMissing = missing1 || missing2;
+
+    if (isMissing) {
+      return 'NOT_AVAILABLE'; // Belum Dapat Diisi
+    }
+
+    if (!reflection) {
+      return 'NOT_STARTED'; // Belum Diisi
+    }
+
+    return reflection.overallStatus; // DRAFT, SUBMITTED, REVISION_REQUESTED, APPROVED
+  }, []);
+
+  const getReflectionStatusStyle = React.useCallback((status: string) => {
+    const styles: Record<string, { label: string; bgColor: string; textColor: string; icon: React.ReactNode }> = {
+      'NOT_AVAILABLE': { label: 'Belum Dapat Diisi', bgColor: 'bg-red-50', textColor: 'text-red-600 border border-red-100', icon: <AlertCircle size={14} /> },
+      'NOT_STARTED': { label: 'Belum Diisi', bgColor: 'bg-amber-50', textColor: 'text-amber-600 border border-amber-100', icon: <Clock size={14} /> },
+      'DRAFT': { label: 'Draft', bgColor: 'bg-gray-100', textColor: 'text-gray-500 border border-gray-200', icon: <FileText size={14} /> },
+      'SUBMITTED': { label: 'Menunggu Review', bgColor: 'bg-blue-50', textColor: 'text-blue-600 border border-blue-100', icon: <Loader2 className="animate-spin" size={14} /> },
+      'REVISION_REQUESTED': { label: 'Perlu Revisi', bgColor: 'bg-rose-50', textColor: 'text-rose-600 border border-rose-100', icon: <AlertCircle size={14} /> },
+      'APPROVED': { label: 'Selesai', bgColor: 'bg-emerald-50', textColor: 'text-emerald-600 border border-emerald-100', icon: <CheckCircle2 size={14} /> }
+    };
+    return styles[status] || { label: status, bgColor: 'bg-gray-50', textColor: 'text-gray-500 border border-gray-200', icon: <FileText size={14} /> };
+  }, []);
+
+  const getSlotText = React.useCallback((slotNum: 1 | 2, isGrade9: boolean, enrollment: SEEnrollment | null) => {
+    if (slotNum === 2 && isGrade9) {
+      return <span className="text-gray-300">—</span>;
+    }
+    if (!enrollment || !enrollment.choices) {
+      return <span className="text-gray-400 font-bold italic text-xs">Belum memilih</span>;
+    }
+    const choice = enrollment.choices.find(c => c.slot === slotNum);
+    if (!choice || !choice.strand || !choice.activityName) {
+      return <span className="text-gray-400 font-bold italic text-xs">Belum memilih</span>;
+    }
+    return (
+      <div className="text-xs">
+        <div className="font-bold text-gray-400 text-[9px] uppercase tracking-wider">{choice.strand === 'Physical' ? 'Material/Physical' : choice.strand}</div>
+        <div className="font-black text-gray-900 uppercase italic truncate max-w-[200px]" title={choice.activityName || choice.customActivity}>
+          {choice.activityName || choice.customActivity}
+        </div>
+      </div>
+    );
+  }, []);
+
+  const formatTimestamp = React.useCallback((val: any) => {
+    if (!val) return '—';
+    let d: Date;
+    if (val.seconds) {
+      d = new Date(val.seconds * 1000);
+    } else if (val instanceof Date) {
+      d = val;
+    } else {
+      d = new Date(val);
+    }
+    
+    if (isNaN(d.getTime())) return '—';
+    
+    return d.toLocaleDateString('id-ID', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }, []);
+
+  const counts = React.useMemo(() => {
+    let total = sortedRoster.length;
+    let unfinished = 0; // Belum Diisi
+    let draft = 0;
+    let submitted = 0; // Menunggu Review
+    let revision = 0; // Perlu Revisi
+    let completed = 0; // Selesai
+    let notAvailable = 0; // Belum Dapat Diisi
+
+    sortedRoster.forEach(student => {
+      const studentEnrollment = enrollments.find(e => e.studentId === student.id) || null;
+      const reflection = reflections.find(r => r.studentId === student.id) || null;
+      const currentCycleObj = cycles.find(c => c.id === selectedCycleId) || null;
+      const status = getStudentStatus(student, currentCycleObj, studentEnrollment, reflection);
+
+      if (status === 'NOT_AVAILABLE') notAvailable++;
+      else if (status === 'NOT_STARTED') unfinished++;
+      else if (status === 'DRAFT') draft++;
+      else if (status === 'SUBMITTED') submitted++;
+      else if (status === 'REVISION_REQUESTED') revision++;
+      else if (status === 'APPROVED') completed++;
+    });
+
+    return { total, unfinished, draft, submitted, revision, completed, notAvailable };
+  }, [sortedRoster, enrollments, reflections, cycles, selectedCycleId, getStudentStatus]);
 
   const handleOpenApproval = (enroll: SEEnrollment) => {
     setSelectedEnrollment(enroll);
@@ -152,6 +342,33 @@ export default function SEClassView() {
         </div>
       </div>
 
+      {currentClassId && (
+        <div className="flex gap-4 border-b border-gray-100 pb-0">
+          <button
+            onClick={() => setActiveTab('plan')}
+            className={cn(
+              "pb-4 font-black uppercase text-[11px] tracking-widest border-b-2 transition-all px-4",
+              activeTab === 'plan' 
+                ? "border-blue-600 text-blue-600" 
+                : "border-transparent text-gray-400 hover:text-gray-900"
+            )}
+          >
+            Rencana & Bukti Aktivitas
+          </button>
+          <button
+            onClick={() => setActiveTab('reflection')}
+            className={cn(
+              "pb-4 font-black uppercase text-[11px] tracking-widest border-b-2 transition-all px-4",
+              activeTab === 'reflection' 
+                ? "border-blue-600 text-blue-600" 
+                : "border-transparent text-gray-400 hover:text-gray-900"
+            )}
+          >
+            Refleksi Siswa
+          </button>
+        </div>
+      )}
+
       {!currentClassId ? (
          <div className="p-20 bg-gray-50 rounded-[3rem] border-2 border-dashed border-gray-200 text-center">
             <p className="text-xs font-black text-gray-400 uppercase tracking-widest">Pilih kelas untuk melihat data.</p>
@@ -166,7 +383,7 @@ export default function SEClassView() {
               Belum ada data Self Exploration pada kelas ini untuk Tahun Ajaran {activeYear}.
             </p>
          </div>
-      ) : (
+      ) : activeTab === 'plan' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
            {enrollments.map(enroll => {
              const pendingApproval = enroll.choices.some(c => c.approvalStatus === 'PENDING');
@@ -274,6 +491,176 @@ export default function SEClassView() {
              );
            })}
         </div>
+      ) : (
+         /* Reflection tab view */
+         <div className="space-y-6">
+            {/* Cycle Selector */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm">
+               <div className="space-y-1">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Pilih Siklus Refleksi</label>
+                  {cycles.length === 0 ? (
+                     <span className="text-xs font-bold text-red-500">Belum ada Siklus Refleksi SE yang dikonfigurasi.</span>
+                  ) : (
+                     <select
+                        value={selectedCycleId}
+                        onChange={e => setSelectedCycleId(e.target.value)}
+                        className="h-12 px-4 bg-gray-50 rounded-xl border border-gray-200 font-bold text-sm text-gray-900 focus:ring-2 focus:ring-blue-600"
+                     >
+                        {cycles.map(cyc => (
+                           <option key={cyc.id} value={cyc.id}>{cyc.title}</option>
+                        ))}
+                     </select>
+                  )}
+               </div>
+               
+               {cycles.length > 0 && selectedCycleId && (() => {
+                  const selectedCycleObj = cycles.find(c => c.id === selectedCycleId);
+                  if (!selectedCycleObj) return null;
+                  return (
+                     <div className="text-xs font-medium text-gray-500 text-right space-y-1">
+                        <div>Status Siklus: <strong className={cn(
+                           "px-2.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest border ml-1",
+                           selectedCycleObj.status === 'ACTIVE' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                           selectedCycleObj.status === 'CLOSED' ? 'bg-gray-100 text-gray-500 border-gray-200' :
+                           'bg-gray-50 text-gray-400 border-gray-100'
+                        )}>{selectedCycleObj.status}</strong></div>
+                        <div>Batas Pengisian: <strong className="text-gray-800">{new Date(selectedCycleObj.dueDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</strong></div>
+                     </div>
+                  );
+               })()}
+            </div>
+
+            {cycles.length === 0 ? (
+               <div className="p-20 bg-gray-50 rounded-[3rem] border-2 border-dashed border-gray-200 text-center">
+                  <p className="text-xs font-black text-gray-400 uppercase tracking-widest leading-relaxed">
+                     Belum ada Siklus Refleksi SE yang dikonfigurasi.
+                  </p>
+               </div>
+            ) : reflectionsLoading ? (
+               <div className="py-20 text-center">
+                  <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin inline-block" />
+               </div>
+            ) : (
+               <>
+                  {/* Summary counts */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 p-6 bg-gray-50 rounded-[2rem] border border-gray-100">
+                     <div className="text-center">
+                        <div className="text-2xl font-black text-gray-900">{counts.total}</div>
+                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Total Siswa</div>
+                     </div>
+                     <div className="text-center">
+                        <div className="text-2xl font-black text-amber-600">{counts.unfinished}</div>
+                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Belum Diisi</div>
+                     </div>
+                     <div className="text-center">
+                        <div className="text-2xl font-black text-gray-500">{counts.draft}</div>
+                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Draft</div>
+                     </div>
+                     <div className="text-center">
+                        <div className="text-2xl font-black text-blue-600">{counts.submitted}</div>
+                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Menunggu Review</div>
+                     </div>
+                     <div className="text-center">
+                        <div className="text-2xl font-black text-red-600">{counts.revision}</div>
+                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Perlu Revisi</div>
+                     </div>
+                     <div className="text-center">
+                        <div className="text-2xl font-black text-emerald-600">{counts.completed}</div>
+                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Selesai</div>
+                     </div>
+                  </div>
+
+                  {/* Roster list */}
+                  <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden">
+                     <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                           <thead>
+                              <tr className="bg-gray-50 border-b border-gray-100">
+                                 <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center w-16">No</th>
+                                 <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Nama Siswa</th>
+                                 <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center w-24">Grade</th>
+                                 <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">SE Slot 1</th>
+                                 <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">SE Slot 2</th>
+                                 <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Status Refleksi</th>
+                                 <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Waktu Update</th>
+                                 <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Aksi</th>
+                              </tr>
+                           </thead>
+                           <tbody className="divide-y divide-gray-50">
+                              {sortedRoster.map(student => {
+                                 const studentEnrollment = enrollments.find(e => e.studentId === student.id) || null;
+                                 const reflection = reflections.find(r => r.studentId === student.id) || null;
+                                 const currentCycleObj = cycles.find(c => c.id === selectedCycleId) || null;
+                                 const status = getStudentStatus(student, currentCycleObj, studentEnrollment, reflection);
+                                 const style = getReflectionStatusStyle(status);
+                                 const isGrade9 = student.grade === 9;
+
+                                 return (
+                                    <tr key={student.id} className="hover:bg-gray-50/50 transition-colors">
+                                       <td className="px-6 py-5 text-xs font-black text-gray-400 text-center">
+                                          {student.nomorAbsen || '—'}
+                                       </td>
+                                       <td className="px-6 py-5">
+                                          <div className="font-black text-gray-900 uppercase italic text-sm">{student.name}</div>
+                                       </td>
+                                       <td className="px-6 py-5 text-xs font-black text-gray-500 text-center">
+                                          Grade {student.grade || '—'}
+                                       </td>
+                                       <td className="px-6 py-5">
+                                          {getSlotText(1, isGrade9, studentEnrollment)}
+                                       </td>
+                                       <td className="px-6 py-5">
+                                          {getSlotText(2, isGrade9, studentEnrollment)}
+                                       </td>
+                                       <td className="px-6 py-5">
+                                          <span className={cn(
+                                             "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest border",
+                                             style.bgColor,
+                                             style.textColor
+                                          )}>
+                                             {style.icon}
+                                             {style.label}
+                                          </span>
+                                       </td>
+                                       <td className="px-6 py-5 text-xs font-medium text-gray-500">
+                                          {reflection ? formatTimestamp(reflection.updatedAt) : '—'}
+                                       </td>
+                                       <td className="px-6 py-5 text-right">
+                                          {status === 'NOT_AVAILABLE' && (
+                                             <button
+                                                disabled
+                                                className="px-4 py-2 bg-gray-50 text-gray-400 font-black uppercase text-[8px] tracking-widest rounded-xl cursor-not-allowed border border-dashed border-gray-200"
+                                             >
+                                                Belum dapat direfleksikan
+                                             </button>
+                                          )}
+                                          {status === 'NOT_STARTED' && (
+                                             <button
+                                                onClick={() => alert(`Pengingat dikirim ke ${student.name} (UI-only untuk Phase 2)`)}
+                                                className="px-4 py-2 bg-amber-50 hover:bg-amber-100 text-amber-700 font-black uppercase text-[8px] tracking-widest rounded-xl transition-all border border-amber-100"
+                                             >
+                                                Ingatkan
+                                             </button>
+                                          )}
+                                          {(status === 'DRAFT' || status === 'SUBMITTED' || status === 'REVISION_REQUESTED' || status === 'APPROVED') && reflection && currentCycleObj && (
+                                             <button
+                                                onClick={() => setSelectedReflectionForReview({ student, reflection, cycle: currentCycleObj })}
+                                                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-black uppercase text-[8px] tracking-widest rounded-xl transition-all shadow-md hover:shadow-lg"
+                                             >
+                                                Lihat Refleksi
+                                             </button>
+                                          )}
+                                       </td>
+                                    </tr>
+                                 );
+                              })}
+                           </tbody>
+                        </table>
+                     </div>
+                  </div>
+               </>
+            )}
+         </div>
       )}
 
       {/* Approval Modal */}
@@ -291,6 +678,12 @@ export default function SEClassView() {
               assessments={assessments}
               onClose={() => setShowCommentModal(false)}
               onSuccess={() => { setShowCommentModal(false); fetchInitial(); }}
+            />
+         )}
+         {selectedReflectionForReview && (
+            <ReviewReflectionModal 
+               data={selectedReflectionForReview}
+               onClose={() => setSelectedReflectionForReview(null)}
             />
          )}
       </AnimatePresence>
@@ -1730,6 +2123,118 @@ function SAItem({ label, value }: { label: string, value: string }) {
     <div className="space-y-1">
        <p className="text-[9px] font-black uppercase tracking-widest text-gray-400">{label}</p>
        <p className="text-xs font-medium text-gray-700 italic">"{value}"</p>
+    </div>
+  );
+}
+
+function ReviewReflectionModal({ data, onClose }: { 
+  data: { student: any; reflection: SEMonthlyReflection; cycle: SEReflectionCycle }; 
+  onClose: () => void 
+}) {
+  const { student, reflection, cycle } = data;
+
+  const questions = cycle.questions && cycle.questions.length > 0 
+    ? cycle.questions 
+    : [
+        { id: 'q1', text: 'Apa hal paling berharga yang kamu pelajari bulan ini melalui aktivitas SE-mu?' },
+        { id: 'q2', text: 'Tantangan apa yang kamu hadapi, dan bagaimana kamu mengatasinya?' },
+        { id: 'q3', text: 'Bagaimana kontribusi aktivitas ini terhadap perkembangan karakter atau keterampilanmu?' },
+        { id: 'q4', text: 'Rencana perbaikan apa yang ingin kamu terapkan pada bulan berikutnya?' }
+      ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+        className="bg-white w-full max-w-3xl rounded-[3rem] border border-gray-100 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+      >
+        {/* Header */}
+        <div className="p-8 bg-gray-50 border-b border-gray-100 flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <span className="px-3 py-1 bg-blue-50 border border-blue-100 rounded-full text-[9px] font-black text-blue-700 uppercase tracking-widest">
+              Review Refleksi Bulanan
+            </span>
+            <h2 className="text-2xl font-black text-gray-900 uppercase italic tracking-tight">{student.name}</h2>
+            <p className="text-xs text-gray-400 font-black uppercase tracking-wider">
+              Grade {student.grade} • {cycle.title}
+            </p>
+          </div>
+          <button 
+            onClick={onClose}
+            className="p-3 bg-white hover:bg-gray-100 text-gray-400 hover:text-gray-900 rounded-full transition-all border border-gray-200"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-8 overflow-y-auto space-y-6 flex-1">
+          {/* Metadata Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-6 bg-gray-50/50 rounded-2xl border border-gray-100">
+            <div>
+              <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest block">Status Refleksi</span>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-gray-200 rounded-full text-[10px] font-black text-gray-700 uppercase tracking-wider mt-1">
+                {reflection.overallStatus}
+              </span>
+            </div>
+            <div>
+              <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest block">Terakhir Disimpan</span>
+              <span className="text-xs font-bold text-gray-700 mt-1 block">
+                {reflection.updatedAt ? new Date(reflection.updatedAt.seconds ? reflection.updatedAt.seconds * 1000 : reflection.updatedAt).toLocaleDateString('id-ID', {
+                  day: 'numeric',
+                  month: 'long',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                }) : '—'}
+              </span>
+            </div>
+          </div>
+
+          {/* Answers list */}
+          <div className="space-y-6">
+            <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 pb-2">Isi Refleksi Siswa</h3>
+            {questions.map((q, idx) => {
+              const answer = reflection.answers?.[q.id] || '';
+              return (
+                <div key={q.id} className="space-y-2 p-6 bg-gray-50 rounded-3xl border border-gray-100">
+                  <div className="flex items-start gap-2.5">
+                    <span className="w-6 h-6 bg-blue-100 rounded-lg flex items-center justify-center text-xs font-black text-blue-700 flex-shrink-0 mt-0.5">
+                      {idx + 1}
+                    </span>
+                    <p className="text-xs font-black text-gray-900 leading-relaxed uppercase tracking-wide">
+                      {q.text}
+                    </p>
+                  </div>
+                  <div className="pl-8 pt-2">
+                    {answer ? (
+                      <p className="text-sm font-medium text-gray-700 whitespace-pre-wrap leading-relaxed">
+                        {answer}
+                      </p>
+                    ) : (
+                      <p className="text-xs font-bold text-gray-400 italic">
+                        — (Siswa belum mengisi pertanyaan ini)
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="p-8 bg-gray-50 border-t border-gray-100 flex justify-end">
+          <button 
+            onClick={onClose}
+            className="px-8 py-3 bg-white hover:bg-gray-100 text-gray-900 border border-gray-200 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all"
+          >
+            Tutup
+          </button>
+        </div>
+      </motion.div>
     </div>
   );
 }
