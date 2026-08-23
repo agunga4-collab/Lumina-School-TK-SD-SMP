@@ -28,6 +28,8 @@ import type {
   SEEnrollment, 
   SESessionLog, 
   SESelfAssessment, 
+  SEMonthlyReflection,
+  SEMonthlyReflectionSlot,
   MTSSCase, 
   MTSSConcern, 
   CICOGoalConfig, 
@@ -1523,6 +1525,36 @@ export async function submitSESelfAssessment(assessment: Omit<SESelfAssessment, 
     // Or check at enrollment level.
   } catch (err: any) {
     handleFirestoreError(err, 'create', 'seSelfAssessments');
+  }
+}
+
+export async function getSEMonthlyReflection(
+  studentId: string, 
+  academicYear: string, 
+  semester: string, 
+  periodKey: string
+): Promise<SEMonthlyReflection | null> {
+  try {
+    const docId = `${studentId}_${academicYear.replace(/\//g, '-')}_${semester}_${periodKey}`;
+    const docRef = doc(db, 'seMonthlyReflections', docId);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) return null;
+    return { id: snap.id, ...snap.data() } as SEMonthlyReflection;
+  } catch (err: any) {
+    handleFirestoreError(err, 'get', `seMonthlyReflections`);
+  }
+}
+
+export async function saveSEMonthlyReflection(
+  reflection: SEMonthlyReflection
+): Promise<void> {
+  try {
+    const { studentId, academicYear, semester, periodKey } = reflection;
+    const docId = `${studentId}_${academicYear.replace(/\//g, '-')}_${semester}_${periodKey}`;
+    const docRef = doc(db, 'seMonthlyReflections', docId);
+    await setDoc(docRef, reflection, { merge: true });
+  } catch (err: any) {
+    handleFirestoreError(err, 'write', `seMonthlyReflections`);
   }
 }
 

@@ -1183,6 +1183,37 @@ export interface SESelfAssessment {
   submittedAt: number;
 }
 
+export interface SEMonthlyReflectionSlot {
+  slot: 1 | 2;
+  strandId: string;
+  strandNameSnapshot: string;
+  activityId: string;
+  activityNameSnapshot: string;
+  reflectionText: string;
+  status: 'DRAFT' | 'SUBMITTED' | 'REVISION_REQUESTED' | 'APPROVED';
+  teacherFeedback: string;
+  submittedAt: number | null;
+  reviewedAt: number | null;
+  reviewedBy: string | null;
+}
+
+export interface SEMonthlyReflection {
+  id?: string;
+  studentId: string;
+  classId: string;
+  unit: 'JUNIOR_HIGH';
+  academicYear: string;
+  semester: string;
+  periodKey: string; // YYYY-MM
+  studentNameSnapshot: string;
+  classNameSnapshot: string;
+  gradeSnapshot: number;
+  slots: SEMonthlyReflectionSlot[];
+  overallStatus: 'NOT_AVAILABLE' | 'NOT_STARTED' | 'DRAFT' | 'SUBMITTED' | 'REVISION_REQUESTED' | 'APPROVED';
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface ParentStudentLink {
   parentId: string; // email
   studentIds: string[]; // NIS array

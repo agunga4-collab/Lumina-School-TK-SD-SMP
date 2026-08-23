@@ -7,14 +7,32 @@ import {
 } from 'lucide-react';
 import { 
   getSEPeriods, getSEEnrollment, getSEActivities, 
-  saveSEEnrollment, db
+  saveSEEnrollment, db, getSEMonthlyReflection, saveSEMonthlyReflection
 } from '../../../lib/firebase';
-import { SEPeriod, SEEnrollment, SEChoice, Student, SEStrand } from '../../../types';
+import { SEPeriod, SEEnrollment, SEChoice, Student, SEStrand, SEMonthlyReflection, SEMonthlyReflectionSlot } from '../../../types';
 import { useAuth } from '../../../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
+import MonthlyReflectionModal from '../../../components/MonthlyReflectionModal';
 import { cn } from '../../../lib/utils';
 import { collection, query, where, getDocs, limit } from 'firebase/firestore';
+
+export function getCurrentPeriodKey() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+}
+
+export function getPeriodLabel(key: string) {
+  const [year, month] = key.split('-');
+  const monthNames = [
+    "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+    "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+  ];
+  const idx = parseInt(month, 10) - 1;
+  return `${monthNames[idx]} ${year}`;
+}
 
 const STRANDS_CONFIG: { id: SEStrand; label: string; color: string; icon: React.ReactNode; desc: string }[] = [
   { id: 'Imaginal', label: 'Imaginal', color: 'bg-pink-100 text-pink-600 border-pink-200', icon: <Sparkles size={24} />, desc: 'Imagination & Creativity' },
@@ -56,6 +74,10 @@ export default function SEMy() {
   // Modal Editor state
   const [selectedSlot, setSelectedSlot] = React.useState<number | null>(null);
 
+  // Reflection state
+  const [showReflectionModal, setShowReflectionModal] = React.useState(false);
+  const [monthlyReflection, setMonthlyReflection] = React.useState<SEMonthlyReflection | null>(null);
+
   const fetchData = React.useCallback(async () => {
     if (!profile?.email) return;
 
@@ -74,6 +96,11 @@ export default function SEMy() {
         if (active) {
           const enroll = await getSEEnrollment(active.id, s.id);
           setEnrollment(enroll);
+
+          // Fetch Monthly Reflection
+          const periodKey = getCurrentPeriodKey();
+          const refl = await getSEMonthlyReflection(s.id, active.academicYear, active.semester, periodKey);
+          setMonthlyReflection(refl);
         }
       }
 
@@ -114,6 +141,47 @@ export default function SEMy() {
 
   const isGrade9 = studentData?.grade === 9;
   const numSlots = isGrade9 ? 1 : 2;
+
+  // Helper to determine if a choice is missing for a slot
+  const isChoiceMissing = (slotNum: 1 | 2) => {
+    if (!enrollment || !enrollment.choices) return true;
+    const choice = enrollment.choices.find(c => c.slot === slotNum);
+    return !choice || !choice.strand || !choice.activityName;
+  };
+
+  const getReflectionStatusInfo = () => {
+    const missing1 = isChoiceMissing(1);
+    const missing2 = numSlots === 2 ? isChoiceMissing(2) : false;
+    const isMissing = missing1 || missing2;
+
+    if (isMissing) {
+      return {
+        status: 'NOT_AVAILABLE' as const,
+        label: 'Belum Dapat Diisi',
+        bgColor: 'bg-red-50 text-red-600 border-red-200',
+        icon: <AlertCircle size={14} />
+      };
+    }
+
+    if (!monthlyReflection) {
+      return {
+        status: 'NOT_STARTED' as const,
+        label: 'Belum Diisi',
+        bgColor: 'bg-amber-50 text-amber-600 border-amber-200',
+        icon: <Clock size={14} />
+      };
+    }
+
+    const status = monthlyReflection.overallStatus;
+    const styles: Record<string, { label: string; bgColor: string; icon: React.ReactNode }> = {
+      'DRAFT': { label: 'Draft', bgColor: 'bg-gray-50 text-gray-500 border-gray-200', icon: <FileText size={14} /> },
+      'SUBMITTED': { label: 'Menunggu Review', bgColor: 'bg-blue-50 text-blue-600 border-blue-200', icon: <Loader2 className="animate-spin" size={14} /> },
+      'REVISION_REQUESTED': { label: 'Perlu Revisi', bgColor: 'bg-red-50 text-red-600 border-red-200', icon: <AlertCircle size={14} /> },
+      'APPROVED': { label: 'Selesai', bgColor: 'bg-emerald-50 text-emerald-600 border-emerald-200', icon: <CheckCircle2 size={14} /> }
+    };
+
+    return styles[status] || { label: status, bgColor: 'bg-gray-50 text-gray-500 border-gray-200', icon: <FileText size={14} /> };
+  };
 
   // Initialize or mock choices list
   const displayChoices: SEChoice[] = Array.from({ length: numSlots }, (_, i) => {
@@ -177,6 +245,33 @@ export default function SEMy() {
             className="w-full md:w-auto px-8 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-black uppercase text-[10px] tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-100 hover:shadow-indigo-200 shrink-0"
          >
             Kelola My Plan <ChevronRight size={14} />
+         </button>
+      </div>
+
+      {/* Refleksi Self-Exploration Card */}
+      <div className="bg-white rounded-[2.5rem] p-8 border border-gray-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6">
+         <div className="flex items-center gap-4">
+            <div className="w-14 h-14 bg-gradient-to-br from-indigo-500 to-purple-600 text-white rounded-2xl flex items-center justify-center shrink-0 shadow-lg shadow-indigo-100">
+               <FileText size={24} />
+            </div>
+            <div>
+               <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-black text-gray-900 uppercase italic">Refleksi Self-Exploration</h3>
+                  <span className={cn("px-2.5 py-1 text-[8px] font-black uppercase tracking-widest rounded-full border flex items-center gap-1", getReflectionStatusInfo().bgColor)}>
+                     {getReflectionStatusInfo().icon}
+                     {getReflectionStatusInfo().label}
+                  </span>
+               </div>
+               <p className="text-xs text-gray-500 font-medium mt-0.5">
+                  Refleksi bulanan pembelajaran Self-Exploration Anda untuk periode <strong className="text-gray-800">{getPeriodLabel(getCurrentPeriodKey())}</strong>.
+               </p>
+            </div>
+         </div>
+         <button 
+            onClick={() => setShowReflectionModal(true)}
+            className="w-full md:w-auto px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase text-[10px] tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-100 hover:shadow-indigo-200 shrink-0"
+         >
+            Isi Refleksi <ChevronRight size={14} />
          </button>
       </div>
 
@@ -326,6 +421,22 @@ export default function SEMy() {
             activities={activities}
             onClose={() => {
               setSelectedSlot(null);
+              fetchData();
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Slide-over or Dialog Modal for Monthly Reflection */}
+      <AnimatePresence>
+        {showReflectionModal && studentData && activePeriod && (
+          <MonthlyReflectionModal
+            studentData={studentData}
+            activePeriod={activePeriod}
+            enrollment={enrollment}
+            monthlyReflection={monthlyReflection}
+            onClose={() => {
+              setShowReflectionModal(false);
               fetchData();
             }}
           />
