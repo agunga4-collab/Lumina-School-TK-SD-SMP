@@ -99,6 +99,9 @@ export default function SEMy() {
           if (res.finalNormalizedGrade !== null) {
             s.grade = res.finalNormalizedGrade as 7 | 8 | 9;
           }
+          if (res.resolvedClassId) {
+            s.classId = res.resolvedClassId;
+          }
         }
         
         setStudentData(s);

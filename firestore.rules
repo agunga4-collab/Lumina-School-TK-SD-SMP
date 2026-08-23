@@ -153,6 +153,20 @@ service cloud.firestore {
       return resource.data;
     }
 
+    function isValidSESubmission(data) {
+      return data.overallStatus != 'SUBMITTED' || (
+        data.slots != null &&
+        data.slots.size() > 0 &&
+        data.slots[0].reflectionText is string &&
+        data.slots[0].reflectionText.size() >= 80 &&
+        (data.gradeSnapshot == 9 || (
+          data.slots.size() > 1 &&
+          data.slots[1].reflectionText is string &&
+          data.slots[1].reflectionText.size() >= 80
+        ))
+      );
+    }
+
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'email', 'role', 'status'])
         && data.uid == request.auth.uid
@@ -510,7 +524,8 @@ service cloud.firestore {
         incoming().overallStatus in ['DRAFT', 'SUBMITTED'] &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
-        reflectionId.split('_')[0] == incoming().studentId
+        reflectionId.split('_')[0] == incoming().studentId &&
+        isValidSESubmission(incoming())
       );
 
       allow update: if isActive() && (
@@ -530,7 +545,8 @@ service cloud.firestore {
           existing().overallStatus in ['DRAFT', 'REVISION_REQUESTED'] &&
           incoming().overallStatus in ['DRAFT', 'SUBMITTED'] &&
           (incoming().slots.size() > 0 && incoming().slots[0].teacherFeedback == (existing().slots.size() > 0 ? existing().slots[0].teacherFeedback : '') && incoming().slots[0].reviewedBy == (existing().slots.size() > 0 ? existing().slots[0].reviewedBy : null) && incoming().slots[0].reviewedAt == (existing().slots.size() > 0 ? existing().slots[0].reviewedAt : null) && incoming().slots[0].status in ['DRAFT', 'SUBMITTED']) &&
-          (incoming().slots.size() < 2 || (incoming().slots[1].teacherFeedback == (existing().slots.size() > 1 ? existing().slots[1].teacherFeedback : '') && incoming().slots[1].reviewedBy == (existing().slots.size() > 1 ? existing().slots[1].reviewedBy : null) && incoming().slots[1].reviewedAt == (existing().slots.size() > 1 ? existing().slots[1].reviewedAt : null) && incoming().slots[1].status in ['DRAFT', 'SUBMITTED']))
+          (incoming().slots.size() < 2 || (incoming().slots[1].teacherFeedback == (existing().slots.size() > 1 ? existing().slots[1].teacherFeedback : '') && incoming().slots[1].reviewedBy == (existing().slots.size() > 1 ? existing().slots[1].reviewedBy : null) && incoming().slots[1].reviewedAt == (existing().slots.size() > 1 ? existing().slots[1].reviewedAt : null) && incoming().slots[1].status in ['DRAFT', 'SUBMITTED'])) &&
+          isValidSESubmission(incoming())
         ) || (
           (isAdmin() || isJuniorHighStaff()) &&
           existing().unit == 'JUNIOR_HIGH' &&

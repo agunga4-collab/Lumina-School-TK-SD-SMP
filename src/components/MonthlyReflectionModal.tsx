@@ -95,6 +95,18 @@ export default function MonthlyReflectionModal({
   // Handle Draft or Submit saving
   const handleSave = async (isSubmit: boolean) => {
     if (!studentData || !activePeriod) return;
+    
+    if (isSubmit) {
+      if (isChoiceMissing(1) || reflectionText1.trim().length < 80) {
+        alert("Slot 1 wajib diisi minimal 80 karakter sebelum dikirim untuk review.");
+        return;
+      }
+      if (numSlots === 2 && (isChoiceMissing(2) || reflectionText2.trim().length < 80)) {
+        alert("Slot 2 wajib diisi minimal 80 karakter sebelum dikirim untuk review.");
+        return;
+      }
+    }
+
     setSaving(true);
 
     try {
@@ -350,6 +362,12 @@ export default function MonthlyReflectionModal({
                     placeholder="Tuliskan refleksi komprehensif Anda mengenai aktivitas ini..."
                     className="w-full min-h-[120px] p-5 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-indigo-600 font-medium text-sm leading-relaxed disabled:opacity-60"
                   />
+                  {reflectionText1.trim().length < 80 && (
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-red-500 mt-1" id="slot-1-warning">
+                      <AlertCircle size={14} />
+                      <span>Slot 1 wajib diisi minimal 80 karakter sebelum dikirim untuk review.</span>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -460,6 +478,12 @@ export default function MonthlyReflectionModal({
                       placeholder="Tuliskan refleksi komprehensif Anda mengenai aktivitas ini..."
                       className="w-full min-h-[120px] p-5 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-indigo-600 font-medium text-sm leading-relaxed disabled:opacity-60"
                     />
+                    {reflectionText2.trim().length < 80 && (
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-red-500 mt-1" id="slot-2-warning">
+                        <AlertCircle size={14} />
+                        <span>Slot 2 wajib diisi minimal 80 karakter sebelum dikirim untuk review.</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
