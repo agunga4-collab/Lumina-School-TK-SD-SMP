@@ -669,16 +669,7 @@ export default function SEClassView() {
                                  const style = getReflectionStatusStyle(status);
                                  const isGrade9 = student.grade === 9;
 
-                                 // DEV-only logging for Umar (studentId: '2521003')
-                                 if (student.id === '2521003') {
-                                    console.log(`[DEV-DIAGNOSTICS] Umar Qomaruzzaman Al-Andalusi Matching Details:`);
-                                    console.log(`- canonical studentId from roster: ${student.id}`);
-                                    console.log(`- selected reflectionCycleId: ${selectedCycleId}`);
-                                    console.log(`- expected deterministic reflection ID: ${student.id}_${selectedCycleId}`);
-                                    console.log(`- found reflection document ID: ${reflection ? reflection.id : 'NOT_FOUND'}`);
-                                    console.log(`- found studentId/cycleId/overallStatus: ${reflection ? `${reflection.studentId}/${reflection.reflectionCycleId || 'N/A'}/${reflection.overallStatus || 'N/A'}` : 'NONE'}`);
-                                    console.log(`- final tracker status: ${status}`);
-                                 }
+
 
                                  return (
                                     <tr key={student.id} className="hover:bg-gray-50/50 transition-colors">
@@ -2217,17 +2208,23 @@ function ReviewReflectionModal({ data, onClose }: {
   onClose: () => void 
 }) {
   const { student, reflection, cycle } = data;
-  const cycleAny = cycle as any;
   const reflectionAny = reflection as any;
 
-  const questions = cycleAny.questions && cycleAny.questions.length > 0 
-    ? cycleAny.questions 
-    : [
-        { id: 'q1', text: 'Apa hal paling berharga yang kamu pelajari bulan ini melalui aktivitas SE-mu?' },
-        { id: 'q2', text: 'Tantangan apa yang kamu hadapi, dan bagaimana kamu mengatasinya?' },
-        { id: 'q3', text: 'Bagaimana kontribusi aktivitas ini terhadap perkembangan karakter atau keterampilanmu?' },
-        { id: 'q4', text: 'Rencana perbaikan apa yang ingin kamu terapkan pada bulan berikutnya?' }
-      ];
+  // Determine number of slots based on student grade (Grade 7/8 shows Slot 1 & 2; Grade 9 shows Slot 1 only)
+  const gradeNum = Number(student.grade || reflection.gradeSnapshot || 7);
+  const numSlots = gradeNum === 9 ? 1 : 2;
+
+  const formatTime = (ts: any) => {
+    if (!ts) return null;
+    const date = new Date(ts.seconds ? ts.seconds * 1000 : ts);
+    return date.toLocaleDateString('id-ID', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm">
@@ -2269,43 +2266,86 @@ function ReviewReflectionModal({ data, onClose }: {
             <div>
               <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest block">Terakhir Disimpan</span>
               <span className="text-xs font-bold text-gray-700 mt-1 block">
-                {reflectionAny.updatedAt ? new Date(reflectionAny.updatedAt.seconds ? reflectionAny.updatedAt.seconds * 1000 : reflectionAny.updatedAt).toLocaleDateString('id-ID', {
-                  day: 'numeric',
-                  month: 'long',
-                  year: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                }) : '—'}
+                {reflectionAny.updatedAt ? formatTime(reflectionAny.updatedAt) : '—'}
               </span>
             </div>
           </div>
 
-          {/* Answers list */}
+          {/* Slots details list */}
           <div className="space-y-6">
             <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 pb-2">Isi Refleksi Siswa</h3>
-            {questions.map((q: any, idx: number) => {
-              const answer = reflectionAny.answers?.[q.id] || '';
+            
+            {[1, 2].slice(0, numSlots).map((slotNum) => {
+              const slot = reflection.slots?.find(s => s.slot === slotNum);
+              const hasContent = slot && slot.reflectionText && slot.reflectionText.trim().length > 0;
+
               return (
-                <div key={q.id} className="space-y-2 p-6 bg-gray-50 rounded-3xl border border-gray-100">
-                  <div className="flex items-start gap-2.5">
-                    <span className="w-6 h-6 bg-blue-100 rounded-lg flex items-center justify-center text-xs font-black text-blue-700 flex-shrink-0 mt-0.5">
-                      {idx + 1}
-                    </span>
-                    <p className="text-xs font-black text-gray-900 leading-relaxed uppercase tracking-wide">
-                      {q.text}
-                    </p>
-                  </div>
-                  <div className="pl-8 pt-2">
-                    {answer ? (
-                      <p className="text-sm font-medium text-gray-700 whitespace-pre-wrap leading-relaxed">
-                        {answer}
-                      </p>
-                    ) : (
-                      <p className="text-xs font-bold text-gray-400 italic">
-                        — (Siswa belum mengisi pertanyaan ini)
-                      </p>
+                <div key={slotNum} className="space-y-4 p-6 bg-gray-50 rounded-3xl border border-gray-100 text-left">
+                  <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-6 h-6 bg-blue-100 rounded-lg flex items-center justify-center text-xs font-black text-blue-700">
+                        {slotNum}
+                      </span>
+                      <h4 className="text-sm font-black text-gray-900 uppercase italic tracking-wide">
+                        Slot {slotNum}
+                      </h4>
+                    </div>
+                    {slot && (
+                      <span className="px-3 py-1 bg-white border border-gray-200 rounded-full text-[9px] font-black text-gray-700 uppercase tracking-wider">
+                        {slot.status || 'DRAFT'}
+                      </span>
                     )}
                   </div>
+
+                  {slot ? (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="p-3 bg-white border border-gray-100 rounded-xl">
+                          <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">Strand</span>
+                          <p className="text-xs font-bold text-gray-800 mt-1">{slot.strandNameSnapshot || '—'}</p>
+                        </div>
+                        <div className="p-3 bg-white border border-gray-100 rounded-xl">
+                          <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">Aktivitas</span>
+                          <p className="text-xs font-bold text-gray-800 mt-1">{slot.activityNameSnapshot || '—'}</p>
+                        </div>
+                      </div>
+
+                      <div className="p-4 bg-white border border-gray-100 rounded-2xl">
+                        <span className="text-[9px] font-black uppercase tracking-widest text-gray-400 block mb-1">Tulisan Refleksi</span>
+                        {hasContent ? (
+                          <p className="text-sm font-medium text-gray-700 whitespace-pre-wrap leading-relaxed">
+                            {slot.reflectionText}
+                          </p>
+                        ) : (
+                          <p className="text-xs font-bold text-red-500 italic">
+                            Belum diisi siswa
+                          </p>
+                        )}
+                      </div>
+
+                      {slot.teacherFeedback && (
+                        <div className="p-4 bg-amber-50/60 border border-amber-100 rounded-2xl">
+                          <span className="text-[9px] font-black uppercase tracking-widest text-amber-700 block mb-1">Umpan Balik Guru</span>
+                          <p className="text-xs font-bold text-amber-800 italic">
+                            "{slot.teacherFeedback}"
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="flex justify-between items-center text-[9px] font-black text-gray-400 uppercase tracking-widest px-1 pt-1">
+                        <span>Panjang Karakter: {slot.reflectionText?.length || 0}</span>
+                        {slot.submittedAt && (
+                          <span>Dikirim: {formatTime(slot.submittedAt)}</span>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-6 bg-white border border-gray-100 rounded-2xl text-center">
+                      <p className="text-xs font-bold text-red-500 italic">
+                        Belum diisi siswa
+                      </p>
+                    </div>
+                  )}
                 </div>
               );
             })}
