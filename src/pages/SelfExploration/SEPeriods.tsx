@@ -56,7 +56,8 @@ export default function SEPeriods() {
     requiredSlotsGrade9: 1,
     sentenceStemsIndo: '',
     sentenceStemsEng: '',
-    introductoryMessage: ''
+    introductoryMessage: '',
+    status: 'DRAFT' as 'DRAFT' | 'ACTIVE' | 'CLOSED'
   });
 
   const formatDateToInput = (timestamp: number) => {
@@ -237,16 +238,13 @@ export default function SEPeriods() {
       requiredSlotsGrade9: 1,
       sentenceStemsIndo: '',
       sentenceStemsEng: '',
-      introductoryMessage: ''
+      introductoryMessage: '',
+      status: 'DRAFT'
     });
     setShowCycleModal(true);
   };
 
   const handleEditCycleClick = (cycle: SEReflectionCycle) => {
-    if (cycle.status !== 'DRAFT') {
-      alert("Siklus hanya dapat dikonfigurasi saat status masih DRAFT.");
-      return;
-    }
     setEditingCycle(cycle);
     setCycleFormData({
       sePeriodId: cycle.sePeriodId,
@@ -260,7 +258,8 @@ export default function SEPeriods() {
       requiredSlotsGrade9: cycle.requiredSlotsByGrade[9]?.length || 1,
       sentenceStemsIndo: cycle.sentenceStemsIndo || '',
       sentenceStemsEng: cycle.sentenceStemsEng || '',
-      introductoryMessage: cycle.introductoryMessage || ''
+      introductoryMessage: cycle.introductoryMessage || '',
+      status: (cycle.status || 'DRAFT') as 'DRAFT' | 'ACTIVE' | 'CLOSED'
     });
     setShowCycleModal(true);
   };
@@ -284,6 +283,54 @@ export default function SEPeriods() {
         return [1, 2];
       };
 
+      // Safety checks: Warning if reflections exist and rules are changed
+      if (editingCycle) {
+        const count = (completionCounts[editingCycle.id || ''] || { total: 0 }).total;
+        if (count > 0) {
+          const oldSlots7 = editingCycle.requiredSlotsByGrade[7]?.length || 2;
+          const oldSlots8 = editingCycle.requiredSlotsByGrade[8]?.length || 2;
+          const oldSlots9 = editingCycle.requiredSlotsByGrade[9]?.length || 1;
+          const oldEligible = editingCycle.eligibleGrades || [];
+          
+          const slotsChanged = 
+            oldSlots7 !== cycleFormData.requiredSlotsGrade7 ||
+            oldSlots8 !== cycleFormData.requiredSlotsGrade8 ||
+            oldSlots9 !== cycleFormData.requiredSlotsGrade9;
+          
+          const gradesChanged = JSON.stringify([...oldEligible].sort()) !== JSON.stringify([...cycleFormData.eligibleGrades].sort());
+          
+          if (slotsChanged || gradesChanged) {
+            if (!confirm("Peringatan: Siswa sudah mulai mengirimkan/menyimpan refleksi pada siklus ini. Mengubah aturan slot atau target tingkatan dapat memengaruhi tampilan pengisian siswa. Apakah Anda yakin ingin memperbaruinya?")) {
+              setCycleSubmitting(false);
+              return;
+            }
+          }
+        }
+      }
+
+      // Overlap checks: if transitioning to ACTIVE, close other active cycles
+      if (cycleFormData.status === 'ACTIVE') {
+        const allCycles = await getSEReflectionCycles(cycleFormData.sePeriodId);
+        const batchRef = writeBatch(db);
+        let hasBatchUpdate = false;
+        
+        for (const item of allCycles) {
+          if (item.id !== editingCycle?.id && item.status === 'ACTIVE') {
+            const hasOverlap = item.eligibleGrades.some(g => cycleFormData.eligibleGrades.includes(g));
+            if (hasOverlap) {
+              batchRef.update(doc(db, 'seReflectionCycles', item.id), {
+                status: 'CLOSED',
+                updatedAt: Date.now()
+              });
+              hasBatchUpdate = true;
+            }
+          }
+        }
+        if (hasBatchUpdate) {
+          await batchRef.commit();
+        }
+      }
+
       const newCycle: SEReflectionCycle = {
         id: editingCycle?.id,
         sePeriodId: cycleFormData.sePeriodId,
@@ -294,7 +341,7 @@ export default function SEPeriods() {
         periodKey: cycleFormData.periodKey,
         startDate: cycleFormData.startDate,
         dueDate: cycleFormData.dueDate,
-        status: editingCycle ? editingCycle.status : 'DRAFT',
+        status: cycleFormData.status,
         eligibleGrades: cycleFormData.eligibleGrades,
         requiredSlotsByGrade: {
           7: getSlotsArray(cycleFormData.requiredSlotsGrade7),
@@ -304,7 +351,7 @@ export default function SEPeriods() {
         sentenceStemsIndo: cycleFormData.sentenceStemsIndo,
         sentenceStemsEng: cycleFormData.sentenceStemsEng,
         introductoryMessage: cycleFormData.introductoryMessage,
-        createdBy: profile?.email || '',
+        createdBy: editingCycle ? (editingCycle.createdBy || profile?.email || '') : (profile?.email || ''),
         createdAt: editingCycle ? editingCycle.createdAt : Date.now(),
         updatedAt: Date.now()
       };
@@ -377,6 +424,11 @@ export default function SEPeriods() {
   };
 
   const handleDeleteCycle = async (cycleId: string) => {
+    const cycleToDelete = cycles.find(c => c.id === cycleId);
+    if (cycleToDelete && cycleToDelete.status === 'ACTIVE') {
+      alert("Tidak dapat menghapus siklus yang sedang AKTIF. Silakan ubah status menjadi DRAFT atau DITUTUP terlebih dahulu.");
+      return;
+    }
     if (!confirm("Hapus siklus ini secara permanen?")) return;
     try {
       const snap = await getDocs(query(collection(db, 'seMonthlyReflections'), where('reflectionCycleId', '==', cycleId)));
@@ -609,14 +661,12 @@ export default function SEPeriods() {
                         </button>
                       )}
 
-                      {cycle.status === 'DRAFT' && (
-                        <button 
-                          onClick={() => handleEditCycleClick(cycle)}
-                          className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-amber-50 text-amber-600 hover:bg-amber-100 transition-all border border-amber-200 font-black uppercase text-[9px] tracking-widest"
-                        >
-                          <Edit size={12} /> Edit Config
-                        </button>
-                      )}
+                      <button 
+                        onClick={() => handleEditCycleClick(cycle)}
+                        className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-amber-50 text-amber-600 hover:bg-amber-100 transition-all border border-amber-200 font-black uppercase text-[9px] tracking-widest"
+                      >
+                        <Edit size={12} /> Edit Config
+                      </button>
 
                       <button 
                         onClick={() => handleDeleteCycle(cycle.id || '')}
@@ -795,14 +845,14 @@ export default function SEPeriods() {
                     </select>
                   </FormField>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <FormField label="Judul Siklus Refleksi">
                       <input 
                         type="text" 
                         placeholder="Contoh: Refleksi Self-Exploration Agustus 2026"
                         value={cycleFormData.title}
                         onChange={e => setCycleFormData({...cycleFormData, title: e.target.value})}
-                        className="w-full h-14 px-6 bg-gray-50 rounded-2xl border-none font-bold focus:ring-2 focus:ring-amber-600 transition-all"
+                        className="w-full h-14 px-6 bg-gray-50 rounded-2xl border-none font-bold focus:ring-2 focus:ring-amber-600 transition-all text-sm"
                         required
                       />
                     </FormField>
@@ -813,9 +863,22 @@ export default function SEPeriods() {
                         placeholder="Contoh: 2026-08"
                         value={cycleFormData.periodKey}
                         onChange={e => setCycleFormData({...cycleFormData, periodKey: e.target.value})}
-                        className="w-full h-14 px-6 bg-gray-50 rounded-2xl border-none font-bold focus:ring-2 focus:ring-amber-600 transition-all"
+                        className="w-full h-14 px-6 bg-gray-50 rounded-2xl border-none font-bold focus:ring-2 focus:ring-amber-600 transition-all text-sm"
                         required
                       />
+                    </FormField>
+
+                    <FormField label="Status Siklus">
+                      <select 
+                        value={cycleFormData.status}
+                        onChange={e => setCycleFormData({...cycleFormData, status: e.target.value as 'DRAFT' | 'ACTIVE' | 'CLOSED'})}
+                        className="w-full h-14 px-6 bg-gray-50 rounded-2xl border-none font-bold focus:ring-2 focus:ring-amber-600 transition-all text-sm"
+                        required
+                      >
+                        <option value="DRAFT">DRAFT</option>
+                        <option value="ACTIVE">ACTIVE / AKTIF</option>
+                        <option value="CLOSED">CLOSED / TUTUP</option>
+                      </select>
                     </FormField>
                   </div>
 

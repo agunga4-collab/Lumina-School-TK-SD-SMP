@@ -1563,6 +1563,22 @@ export async function saveSEReflectionCycle(cycle: SEReflectionCycle): Promise<s
   }
 }
 
+export function getJakartaDateString() {
+  const d = new Date();
+  const options = { timeZone: 'Asia/Jakarta', year: 'numeric', month: 'numeric', day: 'numeric' } as const;
+  const formatter = new Intl.DateTimeFormat('en-US', options);
+  const parts = formatter.formatToParts(d);
+  let year = '';
+  let month = '';
+  let day = '';
+  for (const part of parts) {
+    if (part.type === 'year') year = part.value;
+    else if (part.type === 'month') month = part.value.padStart(2, '0');
+    else if (part.type === 'day') day = part.value.padStart(2, '0');
+  }
+  return `${year}-${month}-${day}`;
+}
+
 export async function getActiveSEReflectionCycle(
   sePeriodId: string,
   academicYear: string,
@@ -1570,17 +1586,76 @@ export async function getActiveSEReflectionCycle(
   grade: number
 ): Promise<SEReflectionCycle | null> {
   try {
-    const q = query(
-      collection(db, 'seReflectionCycles'),
-      where('sePeriodId', '==', sePeriodId),
-      where('academicYear', '==', academicYear),
-      where('semester', '==', semester),
-      where('status', '==', 'ACTIVE')
-    );
-    const snap = await getDocs(q);
-    const cycles = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SEReflectionCycle));
-    const eligibleCycle = cycles.find(c => c.eligibleGrades.includes(grade));
-    return eligibleCycle || null;
+    const snap = await getDocs(collection(db, 'seReflectionCycles'));
+    const cycles = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+    
+    const currentDateStr = getJakartaDateString();
+    const diagnostics: string[] = [];
+    diagnostics.push(`[DEV-DIAGNOSTICS] Active Student - Grade: ${grade}, Academic Year: ${academicYear}, Semester: ${semester}, Local Date (Asia/Jakarta): ${currentDateStr}`);
+    
+    let selectedCycle: any = null;
+    
+    for (const c of cycles) {
+      const cycleId = c.id;
+      const title = c.title || 'Untitled';
+      
+      // 1. Status check: ACTIVE / AKTIF
+      const statusNormalized = (c.status || '').toUpperCase().trim();
+      if (statusNormalized !== 'ACTIVE' && statusNormalized !== 'AKTIF') {
+        diagnostics.push(`Cycle [${cycleId}] '${title}' rejected: Status is '${c.status}', expected ACTIVE`);
+        continue;
+      }
+      
+      // 2. Unit check: JUNIOR_HIGH
+      const unit = c.unit || 'JUNIOR_HIGH';
+      if (unit !== 'JUNIOR_HIGH') {
+        diagnostics.push(`Cycle [${cycleId}] '${title}' rejected: Unit is '${unit}', expected JUNIOR_HIGH`);
+        continue;
+      }
+      
+      // 3. Academic Year & Semester check
+      if (c.academicYear !== academicYear || c.semester !== semester) {
+        diagnostics.push(`Cycle [${cycleId}] '${title}' rejected: AcademicYear/Semester mismatch (${c.academicYear}/${c.semester} vs ${academicYear}/${semester})`);
+        continue;
+      }
+      
+      // 4. Eligible Grades check
+      const eligibleGrades = c.eligibleGrades || [];
+      const isGradeEligible = eligibleGrades.includes(grade) || eligibleGrades.includes(String(grade)) || eligibleGrades.includes(Number(grade));
+      if (!isGradeEligible) {
+        diagnostics.push(`Cycle [${cycleId}] '${title}' rejected: Grade ${grade} not in eligible grades [${eligibleGrades.join(', ')}]`);
+        continue;
+      }
+      
+      // 5. Date range check
+      const start = c.startDate || '';
+      const due = c.dueDate || '';
+      if (currentDateStr < start) {
+        diagnostics.push(`Cycle [${cycleId}] '${title}' rejected: Current date ${currentDateStr} is before startDate ${start}`);
+        continue;
+      }
+      if (currentDateStr > due) {
+        diagnostics.push(`Cycle [${cycleId}] '${title}' rejected: Current date ${currentDateStr} is after dueDate ${due}`);
+        continue;
+      }
+      
+      // 6. Parent SE Period ID check
+      if (sePeriodId && c.sePeriodId) {
+        if (c.sePeriodId !== sePeriodId) {
+          diagnostics.push(`Cycle [${cycleId}] '${title}' rejected: Parent sePeriodId mismatch (${c.sePeriodId} vs ${sePeriodId})`);
+          continue;
+        }
+      }
+      
+      selectedCycle = c;
+      diagnostics.push(`Cycle [${cycleId}] '${title}' SELECTED!`);
+      break;
+    }
+    
+    diagnostics.push(`[DEV-DIAGNOSTICS] Selected Cycle ID: ${selectedCycle ? selectedCycle.id : 'NONE'}`);
+    console.log(diagnostics.join('\n'));
+    
+    return selectedCycle || null;
   } catch (err: any) {
     handleFirestoreError(err, 'get', 'seReflectionCycles');
     return null;
