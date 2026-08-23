@@ -1183,6 +1183,31 @@ export interface SESelfAssessment {
   submittedAt: number;
 }
 
+export interface SEReflectionCycle {
+  id?: string;
+  sePeriodId: string; // parent sePeriodId
+  unit: 'JUNIOR_HIGH';
+  academicYear: string;
+  semester: string;
+  title: string; // e.g. "Refleksi Self-Exploration Agustus 2026"
+  periodKey: string; // e.g. "2026-08"
+  startDate: string; // YYYY-MM-DD
+  dueDate: string; // YYYY-MM-DD
+  status: 'DRAFT' | 'ACTIVE' | 'CLOSED';
+  eligibleGrades: number[]; // [7, 8, 9]
+  requiredSlotsByGrade: {
+    7: number[]; // [1, 2]
+    8: number[]; // [1, 2]
+    9: number[]; // [1]
+  };
+  sentenceStemsIndo?: string;
+  sentenceStemsEng?: string;
+  introductoryMessage?: string;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface SEMonthlyReflectionSlot {
   slot: 1 | 2;
   strandId: string;
@@ -1204,7 +1229,9 @@ export interface SEMonthlyReflection {
   unit: 'JUNIOR_HIGH';
   academicYear: string;
   semester: string;
-  periodKey: string; // YYYY-MM
+  periodKey?: string; // YYYY-MM (for backward compatibility)
+  reflectionCycleId?: string; // primary reference key
+  sePeriodId?: string;
   studentNameSnapshot: string;
   classNameSnapshot: string;
   gradeSnapshot: number;

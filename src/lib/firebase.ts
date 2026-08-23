@@ -30,6 +30,7 @@ import type {
   SESelfAssessment, 
   SEMonthlyReflection,
   SEMonthlyReflectionSlot,
+  SEReflectionCycle,
   MTSSCase, 
   MTSSConcern, 
   CICOGoalConfig, 
@@ -1528,20 +1529,82 @@ export async function submitSESelfAssessment(assessment: Omit<SESelfAssessment, 
   }
 }
 
+export async function getSEReflectionCycles(sePeriodId?: string): Promise<SEReflectionCycle[]> {
+  try {
+    const colRef = collection(db, 'seReflectionCycles');
+    let q = query(colRef);
+    if (sePeriodId) {
+      q = query(colRef, where('sePeriodId', '==', sePeriodId));
+    }
+    const snap = await getDocs(q);
+    return snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SEReflectionCycle));
+  } catch (err: any) {
+    handleFirestoreError(err, 'list', 'seReflectionCycles');
+    return [];
+  }
+}
+
+export async function saveSEReflectionCycle(cycle: SEReflectionCycle): Promise<string> {
+  try {
+    const colRef = collection(db, 'seReflectionCycles');
+    if (cycle.id) {
+      const docRef = doc(colRef, cycle.id);
+      await setDoc(docRef, cycle, { merge: true });
+      return cycle.id;
+    } else {
+      const docRef = doc(colRef);
+      const newId = docRef.id;
+      await setDoc(docRef, { ...cycle, id: newId });
+      return newId;
+    }
+  } catch (err: any) {
+    handleFirestoreError(err, 'write', 'seReflectionCycles');
+    throw err;
+  }
+}
+
+export async function getActiveSEReflectionCycle(
+  sePeriodId: string,
+  academicYear: string,
+  semester: string,
+  grade: number
+): Promise<SEReflectionCycle | null> {
+  try {
+    const q = query(
+      collection(db, 'seReflectionCycles'),
+      where('sePeriodId', '==', sePeriodId),
+      where('academicYear', '==', academicYear),
+      where('semester', '==', semester),
+      where('status', '==', 'ACTIVE')
+    );
+    const snap = await getDocs(q);
+    const cycles = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SEReflectionCycle));
+    const eligibleCycle = cycles.find(c => c.eligibleGrades.includes(grade));
+    return eligibleCycle || null;
+  } catch (err: any) {
+    handleFirestoreError(err, 'get', 'seReflectionCycles');
+    return null;
+  }
+}
+
 export async function getSEMonthlyReflection(
   studentId: string, 
   academicYear: string, 
   semester: string, 
-  periodKey: string
+  periodKeyOrCycleId: string,
+  isCycleId: boolean = false
 ): Promise<SEMonthlyReflection | null> {
   try {
-    const docId = `${studentId}_${academicYear.replace(/\//g, '-')}_${semester}_${periodKey}`;
+    const docId = isCycleId 
+      ? `${studentId}_${periodKeyOrCycleId}`
+      : `${studentId}_${academicYear.replace(/\//g, '-')}_${semester}_${periodKeyOrCycleId}`;
     const docRef = doc(db, 'seMonthlyReflections', docId);
     const snap = await getDoc(docRef);
     if (!snap.exists()) return null;
     return { id: snap.id, ...snap.data() } as SEMonthlyReflection;
   } catch (err: any) {
     handleFirestoreError(err, 'get', `seMonthlyReflections`);
+    return null;
   }
 }
 
@@ -1549,8 +1612,10 @@ export async function saveSEMonthlyReflection(
   reflection: SEMonthlyReflection
 ): Promise<void> {
   try {
-    const { studentId, academicYear, semester, periodKey } = reflection;
-    const docId = `${studentId}_${academicYear.replace(/\//g, '-')}_${semester}_${periodKey}`;
+    const { studentId, academicYear, semester, periodKey, reflectionCycleId } = reflection;
+    const docId = reflectionCycleId
+      ? `${studentId}_${reflectionCycleId}`
+      : `${studentId}_${academicYear.replace(/\//g, '-')}_${semester}_${periodKey}`;
     const docRef = doc(db, 'seMonthlyReflections', docId);
     await setDoc(docRef, reflection, { merge: true });
   } catch (err: any) {

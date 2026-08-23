@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '../lib/utils';
-import { Student, SEEnrollment, SEMonthlyReflection, SEMonthlyReflectionSlot, SEChoice } from '../types';
+import { Student, SEEnrollment, SEMonthlyReflection, SEMonthlyReflectionSlot, SEChoice, SEReflectionCycle } from '../types';
 import { saveSEMonthlyReflection } from '../lib/firebase';
 
 function getCurrentPeriodKey() {
@@ -31,6 +31,7 @@ interface MonthlyReflectionModalProps {
   enrollment: SEEnrollment | null;
   monthlyReflection: SEMonthlyReflection | null;
   onClose: () => void;
+  activeCycle?: SEReflectionCycle | null;
 }
 
 export default function MonthlyReflectionModal({ 
@@ -38,10 +39,13 @@ export default function MonthlyReflectionModal({
   activePeriod, 
   enrollment, 
   monthlyReflection, 
-  onClose 
+  onClose,
+  activeCycle
 }: MonthlyReflectionModalProps) {
   const isGrade9 = studentData.grade === 9;
-  const numSlots = isGrade9 ? 1 : 2;
+  const numSlots = activeCycle 
+    ? (activeCycle.requiredSlotsByGrade[studentData.grade as 7 | 8 | 9]?.length || (isGrade9 ? 1 : 2))
+    : (isGrade9 ? 1 : 2);
 
   const [reflectionText1, setReflectionText1] = React.useState('');
   const [reflectionText2, setReflectionText2] = React.useState('');
@@ -94,7 +98,7 @@ export default function MonthlyReflectionModal({
     setSaving(true);
 
     try {
-      const periodKey = getCurrentPeriodKey();
+      const periodKey = activeCycle ? activeCycle.periodKey : getCurrentPeriodKey();
       
       const slotsArray: SEMonthlyReflectionSlot[] = [];
 
@@ -142,6 +146,8 @@ export default function MonthlyReflectionModal({
         academicYear: activePeriod.academicYear,
         semester: activePeriod.semester,
         periodKey,
+        reflectionCycleId: activeCycle?.id || undefined,
+        sePeriodId: activeCycle?.sePeriodId || undefined,
         studentNameSnapshot: studentData.name,
         classNameSnapshot: studentData.classId || '',
         gradeSnapshot: studentData.grade,
@@ -163,7 +169,7 @@ export default function MonthlyReflectionModal({
     }
   };
 
-  const currentPeriodLabel = getPeriodLabel(getCurrentPeriodKey());
+  const currentPeriodLabel = activeCycle ? activeCycle.title : getPeriodLabel(getCurrentPeriodKey());
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" id="monthly-reflection-modal">
@@ -202,6 +208,14 @@ export default function MonthlyReflectionModal({
         {/* Scrollable Workspace */}
         <div className="p-8 space-y-8 overflow-y-auto flex-1 text-left">
           
+          {/* Introductory Message */}
+          {activeCycle?.introductoryMessage && (
+            <div className="p-5 bg-indigo-50 border border-indigo-100 rounded-2xl text-xs font-semibold text-indigo-900 leading-relaxed text-left">
+              <span className="font-black uppercase tracking-wider block text-[10px] text-indigo-700 mb-1">Arahan Sekolah (Introductory Message)</span>
+              {activeCycle.introductoryMessage}
+            </div>
+          )}
+
           {/* Status Alert Banner */}
           {monthlyReflection?.overallStatus && (
             <div className={cn(
@@ -275,19 +289,27 @@ export default function MonthlyReflectionModal({
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-medium text-blue-800 leading-relaxed pt-1">
                       <div>
                         <p className="font-bold underline mb-1">Bahasa Indonesia:</p>
-                        <ul className="list-disc pl-4 space-y-1">
-                          <li>Di bulan ini, saya ...</li>
-                          <li>Salah satu tantangan terbesar yang saya hadapi adalah ...</li>
-                          <li>Untuk ke depannya, saya akan ...</li>
-                        </ul>
+                        {activeCycle?.sentenceStemsIndo ? (
+                          <div className="whitespace-pre-line pl-1">{activeCycle.sentenceStemsIndo}</div>
+                        ) : (
+                          <ul className="list-disc pl-4 space-y-1">
+                            <li>Di bulan ini, saya ...</li>
+                            <li>Salah satu tantangan terbesar yang saya hadapi adalah ...</li>
+                            <li>Untuk ke depannya, saya akan ...</li>
+                          </ul>
+                        )}
                       </div>
                       <div>
                         <p className="font-bold underline mb-1">English:</p>
-                        <ul className="list-disc pl-4 space-y-1">
-                          <li>This month, I ...</li>
-                          <li>One of the biggest challenges I faced was ...</li>
-                          <li>Moving forward, I would like to ...</li>
-                        </ul>
+                        {activeCycle?.sentenceStemsEng ? (
+                          <div className="whitespace-pre-line pl-1">{activeCycle.sentenceStemsEng}</div>
+                        ) : (
+                          <ul className="list-disc pl-4 space-y-1">
+                            <li>This month, I ...</li>
+                            <li>One of the biggest challenges I faced was ...</li>
+                            <li>Moving forward, I would like to ...</li>
+                          </ul>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -377,19 +399,27 @@ export default function MonthlyReflectionModal({
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-medium text-blue-800 leading-relaxed pt-1">
                         <div>
                           <p className="font-bold underline mb-1">Bahasa Indonesia:</p>
-                          <ul className="list-disc pl-4 space-y-1">
-                            <li>Di bulan ini, saya ...</li>
-                            <li>Salah satu tantangan terbesar yang saya hadapi adalah ...</li>
-                            <li>Untuk ke depannya, saya akan ...</li>
-                          </ul>
+                          {activeCycle?.sentenceStemsIndo ? (
+                            <div className="whitespace-pre-line pl-1">{activeCycle.sentenceStemsIndo}</div>
+                          ) : (
+                            <ul className="list-disc pl-4 space-y-1">
+                              <li>Di bulan ini, saya ...</li>
+                              <li>Salah satu tantangan terbesar yang saya hadapi adalah ...</li>
+                              <li>Untuk ke depannya, saya akan ...</li>
+                            </ul>
+                          )}
                         </div>
                         <div>
                           <p className="font-bold underline mb-1">English:</p>
-                          <ul className="list-disc pl-4 space-y-1">
-                            <li>This month, I ...</li>
-                            <li>One of the biggest challenges I faced was ...</li>
-                            <li>Moving forward, I would like to ...</li>
-                          </ul>
+                          {activeCycle?.sentenceStemsEng ? (
+                            <div className="whitespace-pre-line pl-1">{activeCycle.sentenceStemsEng}</div>
+                          ) : (
+                            <ul className="list-disc pl-4 space-y-1">
+                              <li>This month, I ...</li>
+                              <li>One of the biggest challenges I faced was ...</li>
+                              <li>Moving forward, I would like to ...</li>
+                            </ul>
+                          )}
                         </div>
                       </div>
                     </div>

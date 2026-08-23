@@ -7,9 +7,10 @@ import {
 } from 'lucide-react';
 import { 
   getSEPeriods, getSEEnrollment, getSEActivities, 
-  saveSEEnrollment, db, getSEMonthlyReflection, saveSEMonthlyReflection
+  saveSEEnrollment, db, getSEMonthlyReflection, saveSEMonthlyReflection,
+  getActiveSEReflectionCycle
 } from '../../../lib/firebase';
-import { SEPeriod, SEEnrollment, SEChoice, Student, SEStrand, SEMonthlyReflection, SEMonthlyReflectionSlot } from '../../../types';
+import { SEPeriod, SEEnrollment, SEChoice, Student, SEStrand, SEMonthlyReflection, SEMonthlyReflectionSlot, SEReflectionCycle } from '../../../types';
 import { useAuth } from '../../../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -77,6 +78,7 @@ export default function SEMy() {
   // Reflection state
   const [showReflectionModal, setShowReflectionModal] = React.useState(false);
   const [monthlyReflection, setMonthlyReflection] = React.useState<SEMonthlyReflection | null>(null);
+  const [activeCycle, setActiveCycle] = React.useState<SEReflectionCycle | null>(null);
 
   const fetchData = React.useCallback(async () => {
     if (!profile?.email) return;
@@ -97,10 +99,17 @@ export default function SEMy() {
           const enroll = await getSEEnrollment(active.id, s.id);
           setEnrollment(enroll);
 
-          // Fetch Monthly Reflection
-          const periodKey = getCurrentPeriodKey();
-          const refl = await getSEMonthlyReflection(s.id, active.academicYear, active.semester, periodKey);
-          setMonthlyReflection(refl);
+          // Fetch Active Configured Cycle
+          const cycle = await getActiveSEReflectionCycle(active.id, active.academicYear, active.semester, s.grade);
+          setActiveCycle(cycle);
+
+          if (cycle) {
+            // Fetch Monthly Reflection using activeCycle's ID
+            const refl = await getSEMonthlyReflection(s.id, active.academicYear, active.semester, cycle.id!, true);
+            setMonthlyReflection(refl);
+          } else {
+            setMonthlyReflection(null);
+          }
         }
       }
 
@@ -140,7 +149,9 @@ export default function SEMy() {
   }
 
   const isGrade9 = studentData?.grade === 9;
-  const numSlots = isGrade9 ? 1 : 2;
+  const numSlots = activeCycle 
+    ? (activeCycle.requiredSlotsByGrade[studentData?.grade as 7 | 8 | 9]?.length || (isGrade9 ? 1 : 2))
+    : (isGrade9 ? 1 : 2);
 
   // Helper to determine if a choice is missing for a slot
   const isChoiceMissing = (slotNum: 1 | 2) => {
@@ -249,30 +260,56 @@ export default function SEMy() {
       </div>
 
       {/* Refleksi Self-Exploration Card */}
-      <div className="bg-white rounded-[2.5rem] p-8 border border-gray-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6">
+      <div className={cn(
+        "bg-white rounded-[2.5rem] p-8 border border-gray-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6",
+        !activeCycle && "opacity-75 bg-gray-50/50"
+      )}>
          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 bg-gradient-to-br from-indigo-500 to-purple-600 text-white rounded-2xl flex items-center justify-center shrink-0 shadow-lg shadow-indigo-100">
+            <div className={cn(
+              "w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 shadow-lg",
+              activeCycle 
+                ? "bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-indigo-100" 
+                : "bg-gray-200 text-gray-400 shadow-none"
+            )}>
                <FileText size={24} />
             </div>
             <div>
                <div className="flex items-center gap-2">
                   <h3 className="text-lg font-black text-gray-900 uppercase italic">Refleksi Self-Exploration</h3>
-                  <span className={cn("px-2.5 py-1 text-[8px] font-black uppercase tracking-widest rounded-full border flex items-center gap-1", getReflectionStatusInfo().bgColor)}>
-                     {getReflectionStatusInfo().icon}
-                     {getReflectionStatusInfo().label}
+                  <span className={cn(
+                    "px-2.5 py-1 text-[8px] font-black uppercase tracking-widest rounded-full border flex items-center gap-1", 
+                    activeCycle ? getReflectionStatusInfo().bgColor : "bg-gray-100 text-gray-500 border-gray-200"
+                  )}>
+                     {activeCycle ? getReflectionStatusInfo().icon : <Clock size={10} />}
+                     {activeCycle ? getReflectionStatusInfo().label : "Belum Dapat Diisi"}
                   </span>
                </div>
                <p className="text-xs text-gray-500 font-medium mt-0.5">
-                  Refleksi bulanan pembelajaran Self-Exploration Anda untuk periode <strong className="text-gray-800">{getPeriodLabel(getCurrentPeriodKey())}</strong>.
+                  {activeCycle ? (
+                    <>
+                      {activeCycle.title} • Batas Pengisian: <strong className="text-gray-800">{new Date(activeCycle.dueDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
+                    </>
+                  ) : (
+                    <span className="text-red-500 font-bold">Refleksi belum dibuka oleh sekolah.</span>
+                  )}
                </p>
             </div>
          </div>
-         <button 
-            onClick={() => setShowReflectionModal(true)}
-            className="w-full md:w-auto px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase text-[10px] tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-100 hover:shadow-indigo-200 shrink-0"
-         >
-            Isi Refleksi <ChevronRight size={14} />
-         </button>
+         {activeCycle ? (
+           <button 
+              onClick={() => setShowReflectionModal(true)}
+              className="w-full md:w-auto px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase text-[10px] tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-100 hover:shadow-indigo-200 shrink-0"
+           >
+              Isi Refleksi <ChevronRight size={14} />
+           </button>
+         ) : (
+           <button 
+              disabled
+              className="w-full md:w-auto px-8 py-3.5 bg-gray-100 text-gray-400 font-black uppercase text-[10px] tracking-widest rounded-xl shrink-0 cursor-not-allowed flex items-center justify-center gap-2"
+           >
+              Isi Refleksi <ChevronRight size={14} />
+           </button>
+         )}
       </div>
 
       {/* Main Content Area */}
@@ -435,6 +472,7 @@ export default function SEMy() {
             activePeriod={activePeriod}
             enrollment={enrollment}
             monthlyReflection={monthlyReflection}
+            activeCycle={activeCycle}
             onClose={() => {
               setShowReflectionModal(false);
               fetchData();

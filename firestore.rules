@@ -507,7 +507,9 @@ service cloud.firestore {
           incoming().academicYear == existing().academicYear &&
           incoming().semester == existing().semester &&
           incoming().periodKey == existing().periodKey &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['slots', 'overallStatus', 'updatedAt']) &&
+          (!('reflectionCycleId' in existing()) || (incoming().reflectionCycleId == existing().reflectionCycleId)) &&
+          (!('sePeriodId' in existing()) || (incoming().sePeriodId == existing().sePeriodId)) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['slots', 'overallStatus', 'updatedAt', 'reflectionCycleId', 'sePeriodId']) &&
           existing().overallStatus in ['DRAFT', 'REVISION_REQUESTED'] &&
           incoming().overallStatus in ['DRAFT', 'SUBMITTED'] &&
           (incoming().slots.size() > 0 && incoming().slots[0].teacherFeedback == (existing().slots.size() > 0 ? existing().slots[0].teacherFeedback : '') && incoming().slots[0].reviewedBy == (existing().slots.size() > 0 ? existing().slots[0].reviewedBy : null) && incoming().slots[0].reviewedAt == (existing().slots.size() > 0 ? existing().slots[0].reviewedAt : null) && incoming().slots[0].status in ['DRAFT', 'SUBMITTED']) &&
@@ -530,6 +532,11 @@ service cloud.firestore {
     }
 
     match /sePeriods/{periodId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isJuniorHighStaff();
+    }
+
+    match /seReflectionCycles/{cycleId} {
       allow read: if isSignedIn();
       allow write: if isAdmin() || isJuniorHighStaff();
     }
