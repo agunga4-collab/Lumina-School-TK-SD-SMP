@@ -8,7 +8,7 @@ import {
 import { 
   getSEPeriods, getSEEnrollment, getSEActivities, 
   saveSEEnrollment, db, getSEMonthlyReflection, saveSEMonthlyReflection,
-  getActiveSEReflectionCycle
+  getActiveSEReflectionCycle, resolveStudentGrade
 } from '../../../lib/firebase';
 import { SEPeriod, SEEnrollment, SEChoice, Student, SEStrand, SEMonthlyReflection, SEMonthlyReflectionSlot, SEReflectionCycle } from '../../../types';
 import { useAuth } from '../../../context/AuthContext';
@@ -93,6 +93,14 @@ export default function SEMy() {
       const sSnap = await getDocs(query(collection(db, 'students'), where('email', '==', profile.email), limit(1)));
       if (!sSnap.empty) {
         const s = { id: sSnap.docs[0].id, ...sSnap.docs[0].data() } as Student;
+        
+        if (active) {
+          const res = await resolveStudentGrade(s.id, s, active.academicYear, active.id);
+          if (res.finalNormalizedGrade !== null) {
+            s.grade = res.finalNormalizedGrade as 7 | 8 | 9;
+          }
+        }
+        
         setStudentData(s);
         
         if (active) {
@@ -100,7 +108,7 @@ export default function SEMy() {
           setEnrollment(enroll);
 
           // Fetch Active Configured Cycle
-          const cycle = await getActiveSEReflectionCycle(active.id, active.academicYear, active.semester, s.grade);
+          const cycle = await getActiveSEReflectionCycle(active.id, active.academicYear, active.semester, s.id, s);
           setActiveCycle(cycle);
 
           if (cycle) {

@@ -1579,19 +1579,168 @@ export function getJakartaDateString() {
   return `${year}-${month}-${day}`;
 }
 
+export function normalizeGrade(gradeVal: any): number | null {
+  if (gradeVal === undefined || gradeVal === null) return null;
+  const s = String(gradeVal).trim().toUpperCase();
+  if (s === '7' || s === 'VII' || s.includes('KAMPUS 7') || s.includes('KELAS 7') || s.includes('GRADE 7') || s.includes('7 ')) return 7;
+  if (s === '8' || s === 'VIII' || s.includes('KAMPUS 8') || s.includes('KELAS 8') || s.includes('GRADE 8') || s.includes('8 ')) return 8;
+  if (s === '9' || s === 'IX' || s.includes('KAMPUS 9') || s.includes('KELAS 9') || s.includes('GRADE 9') || s.includes('9 ')) return 9;
+  
+  // Try standard parsing of any sequence of digits in the string
+  const match = s.match(/\b(7|8|9)\b/);
+  if (match) {
+    return parseInt(match[1], 10);
+  }
+  const parsed = parseInt(s, 10);
+  if (parsed === 7 || parsed === 8 || parsed === 9) return parsed;
+  
+  return null;
+}
+
+export async function resolveStudentGrade(
+  studentId: string,
+  studentProfile: any,
+  academicYear: string,
+  sePeriodId?: string
+): Promise<{
+  profileGradeRaw: any;
+  resolvedClassId: string | null;
+  classGradeRaw: any;
+  finalNormalizedGrade: number | null;
+  diagnostics: string[];
+}> {
+  const diagnostics: string[] = [];
+  let profileGradeRaw: any = null;
+  let resolvedClassId: string | null = null;
+  let classGradeRaw: any = null;
+  let finalNormalizedGrade: number | null = null;
+
+  diagnostics.push(`[GRADE-RESOLUTION] Starting grade resolution for student: ${studentId}, academicYear: ${academicYear}`);
+
+  // 1. Student profile grade field, if valid
+  if (studentProfile) {
+    profileGradeRaw = studentProfile.grade;
+    diagnostics.push(`[GRADE-RESOLUTION] 1. Student profile grade raw: ${profileGradeRaw}`);
+    const norm = normalizeGrade(profileGradeRaw);
+    if (norm !== null) {
+      finalNormalizedGrade = norm;
+      diagnostics.push(`[GRADE-RESOLUTION] Result: Resolved from student profile grade (${norm})`);
+      return { profileGradeRaw, resolvedClassId, classGradeRaw, finalNormalizedGrade, diagnostics };
+    }
+  }
+
+  // 2. Active class assignment/class roster for the active academicYear
+  diagnostics.push(`[GRADE-RESOLUTION] 2. Querying active class assignment/class roster...`);
+  try {
+    const qEnroll = query(
+      collection(db, 'enrollments'),
+      where('studentId', '==', studentId),
+      where('academicYear', '==', academicYear)
+    );
+    const qEnrollSnap = await getDocs(qEnroll);
+    if (!qEnrollSnap.empty) {
+      const enrollment = qEnrollSnap.docs[0].data();
+      resolvedClassId = enrollment.classId || null;
+      diagnostics.push(`[GRADE-RESOLUTION] Found enrollment with classId: ${resolvedClassId}`);
+    } else if (studentProfile && studentProfile.classId) {
+      resolvedClassId = studentProfile.classId;
+      diagnostics.push(`[GRADE-RESOLUTION] Enrollment not found. Falling back to student profile classId: ${resolvedClassId}`);
+    }
+
+    if (resolvedClassId) {
+      const classDocRef = doc(db, 'classes', resolvedClassId);
+      const classDocSnap = await getDoc(classDocRef);
+      if (classDocSnap.exists()) {
+        const classData = classDocSnap.data();
+        classGradeRaw = classData.grade;
+        diagnostics.push(`[GRADE-RESOLUTION] Class document grade raw: ${classGradeRaw}`);
+        const norm = normalizeGrade(classGradeRaw);
+        if (norm !== null) {
+          finalNormalizedGrade = norm;
+          diagnostics.push(`[GRADE-RESOLUTION] Result: Resolved from class grade/level field (${norm})`);
+          return { profileGradeRaw, resolvedClassId, classGradeRaw, finalNormalizedGrade, diagnostics };
+        }
+      } else {
+        diagnostics.push(`[GRADE-RESOLUTION] Class document '${resolvedClassId}' not found in Firestore.`);
+      }
+    } else {
+      diagnostics.push(`[GRADE-RESOLUTION] No classId resolved for student.`);
+    }
+  } catch (err: any) {
+    diagnostics.push(`[GRADE-RESOLUTION] Error during active class query: ${err.message}`);
+  }
+
+  // 3. Existing Self-Exploration plan/class context if it already contains an authoritative grade
+  if (sePeriodId) {
+    diagnostics.push(`[GRADE-RESOLUTION] 3. Querying existing Self-Exploration plan/enrollment...`);
+    try {
+      const qSEEnroll = query(
+        collection(db, 'seEnrollments'),
+        where('studentId', '==', studentId),
+        where('periodId', '==', sePeriodId)
+      );
+      const qSEEnrollSnap = await getDocs(qSEEnroll);
+      if (!qSEEnrollSnap.empty) {
+        const seEnroll = qSEEnrollSnap.docs[0].data();
+        const seGradeRaw = seEnroll.grade;
+        diagnostics.push(`[GRADE-RESOLUTION] SE Enrollment grade raw: ${seGradeRaw}`);
+        const norm = normalizeGrade(seGradeRaw);
+        if (norm !== null) {
+          finalNormalizedGrade = norm;
+          diagnostics.push(`[GRADE-RESOLUTION] Result: Resolved from SE enrollment grade field (${norm})`);
+          return { profileGradeRaw, resolvedClassId, classGradeRaw, finalNormalizedGrade, diagnostics };
+        }
+      } else {
+        diagnostics.push(`[GRADE-RESOLUTION] SE Enrollment not found for period '${sePeriodId}'.`);
+      }
+    } catch (err: any) {
+      diagnostics.push(`[GRADE-RESOLUTION] Error during SE Enrollment query: ${err.message}`);
+    }
+  }
+
+  // 4. No canonical grade resolved
+  diagnostics.push(`[GRADE-RESOLUTION] 4. Failed to resolve canonical grade.`);
+  return { profileGradeRaw, resolvedClassId, classGradeRaw, finalNormalizedGrade: null, diagnostics };
+}
+
 export async function getActiveSEReflectionCycle(
   sePeriodId: string,
   academicYear: string,
   semester: string,
-  grade: number
+  gradeOrStudentId: number | string,
+  studentProfile?: any
 ): Promise<SEReflectionCycle | null> {
   try {
     const snap = await getDocs(collection(db, 'seReflectionCycles'));
     const cycles = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
     
     const currentDateStr = getJakartaDateString();
+    let gradeToUse: number | null = null;
+    let resolutionDiagnostics: string[] = [];
+    let profileGradeRaw: any = null;
+    let resolvedClassId: string | null = null;
+    let classGradeRaw: any = null;
+
+    if (typeof gradeOrStudentId === 'string' && studentProfile) {
+      const res = await resolveStudentGrade(gradeOrStudentId, studentProfile, academicYear, sePeriodId);
+      gradeToUse = res.finalNormalizedGrade;
+      resolutionDiagnostics = res.diagnostics;
+      profileGradeRaw = res.profileGradeRaw;
+      resolvedClassId = res.resolvedClassId;
+      classGradeRaw = res.classGradeRaw;
+    } else {
+      gradeToUse = typeof gradeOrStudentId === 'number' ? gradeOrStudentId : normalizeGrade(gradeOrStudentId);
+      profileGradeRaw = gradeOrStudentId;
+      resolutionDiagnostics.push(`[DEV-DIAGNOSTICS] Standard numeric/direct grade passed: ${gradeOrStudentId}`);
+    }
+
     const diagnostics: string[] = [];
-    diagnostics.push(`[DEV-DIAGNOSTICS] Active Student - Grade: ${grade}, Academic Year: ${academicYear}, Semester: ${semester}, Local Date (Asia/Jakarta): ${currentDateStr}`);
+    diagnostics.push(...resolutionDiagnostics);
+    diagnostics.push(`[DEV-DIAGNOSTICS] Active Student - Raw Profile Grade: ${profileGradeRaw}`);
+    diagnostics.push(`[DEV-DIAGNOSTICS] Active Student - Resolved ClassId: ${resolvedClassId}`);
+    diagnostics.push(`[DEV-DIAGNOSTICS] Active Student - Class Grade Raw: ${classGradeRaw}`);
+    diagnostics.push(`[DEV-DIAGNOSTICS] Active Student - Final Normalized Grade: ${gradeToUse}`);
+    diagnostics.push(`[DEV-DIAGNOSTICS] Local Date (Asia/Jakarta): ${currentDateStr}`);
     
     let selectedCycle: any = null;
     
@@ -1620,10 +1769,10 @@ export async function getActiveSEReflectionCycle(
       }
       
       // 4. Eligible Grades check
-      const eligibleGrades = c.eligibleGrades || [];
-      const isGradeEligible = eligibleGrades.includes(grade) || eligibleGrades.includes(String(grade)) || eligibleGrades.includes(Number(grade));
+      const eligibleGrades = (c.eligibleGrades || []).map((g: any) => normalizeGrade(g)).filter((g: any) => g !== null);
+      const isGradeEligible = gradeToUse !== null && eligibleGrades.includes(gradeToUse);
       if (!isGradeEligible) {
-        diagnostics.push(`Cycle [${cycleId}] '${title}' rejected: Grade ${grade} not in eligible grades [${eligibleGrades.join(', ')}]`);
+        diagnostics.push(`Cycle [${cycleId}] '${title}' rejected: Grade ${gradeToUse} not in eligible grades [${eligibleGrades.join(', ')}]`);
         continue;
       }
       
