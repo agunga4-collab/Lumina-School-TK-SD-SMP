@@ -8286,7 +8286,7 @@ app.post("/api/sync-knowledge", async (req, res) => {
 // API: Scan 17-week plan table using AI Vision
 app.post("/api/self-exploration/scan-plan", async (req, res) => {
   try {
-    const { base64Image, studentId, periodId, planIndex } = req.body;
+    const { base64Image, studentId, periodId, planIndex, existingDriveFileId, scanSource } = req.body;
     if (!base64Image) {
       return res.status(400).json({ error: "Missing base64Image in request body" });
     }
@@ -8394,57 +8394,63 @@ Each object in the array must have this exact schema:
       };
     });
 
-    // 6. Decode Base64 and upload to Google Drive
-    let driveFileId = null;
+    // 6. Decode Base64 and upload to Google Drive if not reusing an existing file
+    let driveFileId = existingDriveFileId || null;
     let driveError = null;
 
-    try {
-      const matches = base64Image.match(/^data:(image\/[a-zA-Z0-9.-]+);base64,(.+)$/);
-      let mimeType = "image/jpeg";
-      let base64Data = base64Image;
-      if (matches && matches.length === 3) {
-        mimeType = matches[1];
-        base64Data = matches[2];
-      }
-      const buffer = Buffer.from(base64Data, 'base64');
-      const ext = mimeType.split('/')[1] || 'jpg';
-      const timestamp = Date.now();
-      const fileName = `${studentId || "unknown"}_${periodId || "unknown"}_plan${planIndex || "1"}_${timestamp}.${ext}`;
-
-      console.log(`[ScanPlan] Uploading parsed image buffer to Google Drive. Name: ${fileName}, Type: ${mimeType}`);
-      driveFileId = await uploadPlanPhoto(buffer, fileName, mimeType);
-      console.log(`[ScanPlan] Successfully uploaded to Google Drive. File ID: ${driveFileId}`);
-
-      // 7. Save fileId directly to Firestore if document information is present
-      if (studentId && periodId && planIndex) {
-        try {
-          const docRef = adminDb.collection("selfExploration").doc(studentId).collection("plans").doc(periodId);
-          const docSnap = await docRef.get();
-          if (docSnap.exists) {
-            const data = docSnap.data();
-            if (data && Array.isArray(data.plans)) {
-              const updatedPlans = data.plans.map((p: any) => {
-                if (Number(p.planIndex) === Number(planIndex)) {
-                  return {
-                    ...p,
-                    driveFileId,
-                    photoUrl: null, // Ganti dari field photoUrl yang lama
-                    updatedAt: Date.now()
-                  };
-                }
-                return p;
-              });
-              await docRef.set({ plans: updatedPlans }, { merge: true });
-              console.log(`[ScanPlan] Firestore updated successfully with driveFileId ${driveFileId}`);
-            }
-          }
-        } catch (dbErr: any) {
-          console.error("[ScanPlan] Failed to update Firestore document with driveFileId:", dbErr.message);
+    if (!existingDriveFileId) {
+      try {
+        const matches = base64Image.match(/^data:(image\/[a-zA-Z0-9.-]+);base64,(.+)$/);
+        let mimeType = "image/jpeg";
+        let base64Data = base64Image;
+        if (matches && matches.length === 3) {
+          mimeType = matches[1];
+          base64Data = matches[2];
         }
+        const buffer = Buffer.from(base64Data, 'base64');
+        const ext = mimeType.split('/')[1] || 'jpg';
+        const timestamp = Date.now();
+        const fileName = `${studentId || "unknown"}_${periodId || "unknown"}_plan${planIndex || "1"}_${timestamp}.${ext}`;
+
+        console.log(`[ScanPlan] Uploading parsed image buffer to Google Drive. Name: ${fileName}, Type: ${mimeType}`);
+        driveFileId = await uploadPlanPhoto(buffer, fileName, mimeType);
+        console.log(`[ScanPlan] Successfully uploaded to Google Drive. File ID: ${driveFileId}`);
+      } catch (gErr: any) {
+        console.error("[ScanPlan] Google Drive upload failed post-scan:", gErr);
+        driveError = `Arsip foto gagal disimpan, tapi data plan tetap bisa dilanjutkan. Detail: ${gErr.message}`;
       }
-    } catch (gErr: any) {
-      console.error("[ScanPlan] Google Drive upload failed post-scan:", gErr);
-      driveError = `Arsip foto gagal disimpan, tapi data plan tetap bisa dilanjutkan. Detail: ${gErr.message}`;
+    }
+
+    // 7. Save fileId directly to Firestore if document information is present
+    if (studentId && periodId && planIndex) {
+      try {
+        const docRef = adminDb.collection("selfExploration").doc(studentId).collection("plans").doc(periodId);
+        const docSnap = await docRef.get();
+        if (docSnap.exists) {
+          const data = docSnap.data();
+          if (data && Array.isArray(data.plans)) {
+            const updatedPlans = data.plans.map((p: any) => {
+              if (Number(p.planIndex) === Number(planIndex)) {
+                const updatedPlanItem = {
+                  ...p,
+                  driveFileId,
+                  photoUrl: null, // Ganti dari field photoUrl yang lama
+                  updatedAt: Date.now()
+                };
+                if (scanSource) {
+                  updatedPlanItem.scanSource = scanSource;
+                }
+                return updatedPlanItem;
+              }
+              return p;
+            });
+            await docRef.set({ plans: updatedPlans }, { merge: true });
+            console.log(`[ScanPlan] Firestore updated successfully with driveFileId ${driveFileId}`);
+          }
+        }
+      } catch (dbErr: any) {
+        console.error("[ScanPlan] Failed to update Firestore document with driveFileId:", dbErr.message);
+      }
     }
 
     return res.json({

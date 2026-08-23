@@ -300,7 +300,7 @@ export default function SEClassView() {
 
 function ApprovalModal({ enrollment, onClose, onSuccess }: { enrollment: SEEnrollment, onClose: () => void, onSuccess: () => void }) {
   const { profile } = useAuth();
-  const [activeTab, setActiveTab] = React.useState<'choices' | 'weekly'>('choices');
+  const [activeTab, setActiveTab] = React.useState<'choices' | 'weekly'>('weekly');
   const [submitting, setSubmitting] = React.useState(false);
   const [revisionNotes, setRevisionNotes] = React.useState<Record<number, string>>({});
   const [lightboxUrl, setLightboxUrl] = React.useState<string | null>(null);
@@ -317,6 +317,119 @@ function ApprovalModal({ enrollment, onClose, onSuccess }: { enrollment: SEEnrol
   const [scanConfidence, setScanConfidence] = React.useState<'high' | 'medium' | 'low' | null>(null);
   const [resetModalPlanIndex, setResetModalPlanIndex] = React.useState<number | null>(null);
   const [confirmText, setConfirmText] = React.useState("");
+  const [selectedEvidenceId, setSelectedEvidenceId] = React.useState<string | null>(null);
+
+  const existingImages = React.useMemo(() => {
+    const images: Array<{
+      id: string;
+      fileName: string;
+      mimeType: string;
+      downloadUrl: string;
+      driveFileId?: string;
+      slot: number;
+      strand?: string;
+      activityName?: string;
+    }> = [];
+    
+    localChoices.forEach(choice => {
+      if (choice.formAttachments) {
+        choice.formAttachments.forEach((file: any) => {
+          if (file.mimeType?.startsWith('image/')) {
+            images.push({
+              id: file.id,
+              fileName: file.fileName,
+              mimeType: file.mimeType,
+              downloadUrl: file.downloadUrl,
+              driveFileId: file.driveFileId,
+              slot: choice.slot,
+              strand: choice.strand,
+              activityName: choice.activityName || choice.customActivity
+            });
+          }
+        });
+      }
+    });
+    return images;
+  }, [localChoices]);
+
+  const handleScanExistingEvidence = async () => {
+    if (!isStaff) {
+      alert("Mode Read-Only: Anda tidak memiliki akses scan.");
+      return;
+    }
+    if (!selectedEvidenceId || !plansDoc) return;
+    
+    const selectedEvidence = existingImages.find(img => img.id === selectedEvidenceId);
+    if (!selectedEvidence) return;
+
+    setScanningPlan(true);
+    try {
+      const response = await fetch(selectedEvidence.downloadUrl);
+      if (!response.ok) throw new Error("Gagal mengunduh file bukti.");
+      const blob = await response.blob();
+      const base64 = await fileToBase64(new File([blob], selectedEvidence.fileName, { type: selectedEvidence.mimeType }));
+
+      const res = await fetch("/api/self-exploration/scan-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base64Image: base64,
+          studentId: enrollment.studentId,
+          periodId: enrollment.periodId,
+          planIndex: selectedPlanSlot,
+          existingDriveFileId: selectedEvidence.driveFileId,
+          scanSource: {
+            type: 'existing_evidence',
+            evidenceId: selectedEvidence.id,
+            fileUrl: selectedEvidence.downloadUrl
+          }
+        })
+      });
+
+      if (!res.ok) throw new Error("Gagal melakukan scan AI.");
+      const scanData = await res.json();
+      if (!scanData.success || !scanData.weeks) {
+        throw new Error(scanData.error || "Gagal menginterpretasikan tabel.");
+      }
+
+      setScanConfidence(scanData.confidence || 'high');
+
+      const cleanWeeks = Array.from({ length: 17 }, (_, idx) => {
+        const wNum = idx + 1;
+        const scanItem = scanData.weeks.find((sw: any) => sw.weekNumber === wNum);
+        return {
+          weekNumber: wNum,
+          studentTarget: MANDATED_WEEKS[wNum] || (scanItem ? scanItem.studentTarget || "" : ""),
+          supervisorNotes: ""
+        };
+      });
+
+      const updatedPlans = plansDoc.plans.map((p: any) => {
+        if (p.planIndex === selectedPlanSlot) {
+          return {
+            ...p,
+            driveFileId: scanData.driveFileId,
+            scanConfidence: scanData.confidence || 'high',
+            weeks: cleanWeeks,
+            scanSource: {
+              type: 'existing_evidence',
+              evidenceId: selectedEvidence.id,
+              fileUrl: selectedEvidence.downloadUrl
+            }
+          };
+        }
+        return p;
+      });
+
+      setPlansDoc({ ...plansDoc, plans: updatedPlans });
+      alert("Scan AI berhasil diselesaikan! Harap review hasil transkripsi.");
+    } catch (err: any) {
+      console.error(err);
+      alert("Scan Gagal: " + err.message);
+    } finally {
+      setScanningPlan(false);
+    }
+  };
 
   const MANDATED_WEEKS: Record<number, string> = {
     1: "Goal Setting & Plan Alignment",
@@ -833,15 +946,6 @@ function ApprovalModal({ enrollment, onClose, onSuccess }: { enrollment: SEEnrol
           {/* Navigation Tabs */}
           <div className="flex border-b border-gray-100 px-8 bg-white gap-4">
              <button 
-                onClick={() => setActiveTab('choices')}
-                className={cn(
-                  "py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all",
-                  activeTab === 'choices' ? "border-blue-600 text-blue-600" : "border-transparent text-gray-400 hover:text-gray-600"
-                )}
-             >
-                Pilihan & Bukti Aktivitas
-             </button>
-             <button 
                 onClick={() => setActiveTab('weekly')}
                 className={cn(
                   "py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all",
@@ -849,6 +953,15 @@ function ApprovalModal({ enrollment, onClose, onSuccess }: { enrollment: SEEnrol
                 )}
              >
                 Rencana 17 Minggu & Scan AI
+             </button>
+             <button 
+                onClick={() => setActiveTab('choices')}
+                className={cn(
+                  "py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all",
+                  activeTab === 'choices' ? "border-blue-600 text-blue-600" : "border-transparent text-gray-400 hover:text-gray-600"
+                )}
+             >
+                Pilihan & Bukti Aktivitas
              </button>
           </div>
 
@@ -1142,6 +1255,86 @@ function ApprovalModal({ enrollment, onClose, onSuccess }: { enrollment: SEEnrol
                                   Bantu siswa mengunggah foto tabel rencana mingguan mereka. Sistem AI Vision akan membaca tulisan tangan siswa dan mentranskripsinya otomatis ke baris tabel di bawah.
                                </p>
                             </div>
+                         </div>
+
+                         {/* Gunakan Bukti yang Sudah Diunggah Section */}
+                         <div className="space-y-4 border-b border-blue-100 pb-5 mb-4">
+                            <h5 className="text-[10px] font-black uppercase tracking-widest text-blue-800">
+                               Gunakan Bukti yang Sudah Diunggah
+                            </h5>
+                            
+                            {existingImages.length > 0 ? (
+                               <div className="space-y-4">
+                                  <p className="text-[9.5px] font-semibold text-blue-700 leading-relaxed">
+                                     Pilih foto rencana/tabel yang jelas. Foto aktivitas biasa mungkin tidak dapat dibaca sebagai rencana 17 minggu.
+                                  </p>
+                                  
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                     {existingImages.map((img) => {
+                                        const isSelected = selectedEvidenceId === img.id;
+                                        return (
+                                           <div 
+                                              key={img.id} 
+                                              onClick={() => setSelectedEvidenceId(isSelected ? null : img.id)}
+                                              className={cn(
+                                                 "bg-white border p-3 rounded-2xl flex items-center gap-3 shadow-sm hover:shadow-md transition-all cursor-pointer relative",
+                                                 isSelected ? "border-blue-500 ring-2 ring-blue-100" : "border-gray-200"
+                                              )}
+                                           >
+                                              <div className="w-12 h-12 rounded-xl bg-gray-100 overflow-hidden shrink-0">
+                                                 <img 
+                                                    src={img.downloadUrl} 
+                                                    alt={img.fileName} 
+                                                    className="w-full h-full object-cover"
+                                                    referrerPolicy="no-referrer"
+                                                 />
+                                              </div>
+                                              
+                                              <div className="flex-1 min-w-0 space-y-0.5">
+                                                 <p className="text-[10px] font-bold text-gray-850 truncate" title={img.fileName}>
+                                                    {img.fileName}
+                                                 </p>
+                                                 {img.strand && (
+                                                    <p className="text-[8px] font-black uppercase tracking-wider text-gray-450 truncate">
+                                                       {img.strand} • Slot {img.slot}
+                                                    </p>
+                                                 )}
+                                                 {img.activityName && (
+                                                    <p className="text-[8.5px] font-semibold text-gray-550 truncate italic">
+                                                       {img.activityName}
+                                                    </p>
+                                                 )}
+                                              </div>
+                                              
+                                              <div className="shrink-0 pl-1">
+                                                 <input 
+                                                    type="checkbox" 
+                                                    checked={isSelected}
+                                                    onChange={() => {}} // handled by div onClick
+                                                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4.5 w-4.5"
+                                                 />
+                                              </div>
+                                           </div>
+                                        );
+                                     })}
+                                  </div>
+                                  
+                                  {selectedEvidenceId && (
+                                     <button
+                                        type="button"
+                                        onClick={handleScanExistingEvidence}
+                                        disabled={scanningPlan}
+                                        className="w-full py-2.5 bg-blue-600 text-white rounded-xl font-bold uppercase text-[9px] tracking-wider hover:bg-blue-700 shadow-md shadow-blue-100 transition-all flex items-center justify-center gap-2"
+                                     >
+                                        <Sparkles size={12} /> Scan dengan AI
+                                     </button>
+                                  )}
+                               </div>
+                            ) : (
+                               <p className="text-[10px] font-medium text-blue-700/75 italic bg-white/50 p-3 rounded-xl border border-blue-50">
+                                  Belum ada bukti aktivitas yang dapat digunakan. Unggah atau ambil foto rencana di bawah ini.
+                               </p>
+                            )}
                          </div>
 
                          <div className="flex flex-col sm:flex-row gap-3 pt-2 items-center">
