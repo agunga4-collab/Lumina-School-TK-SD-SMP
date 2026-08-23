@@ -470,6 +470,65 @@ service cloud.firestore {
       }
     }
 
+    match /seMonthlyReflections/{reflectionId} {
+      allow get: if isActive() && (
+        isOwnStudentData(resource.data.studentId) ||
+        isAdmin() ||
+        userRole() in ['HEAD_JUNIOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'SUPER_ADMIN', 'HEAD_UNIT', 'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR', 'COUNSELOR'] ||
+        (isTeacher() && isTeacherAssignedToClass(resource.data.classId)) ||
+        isLinkedStudent(resource.data.studentId)
+      );
+
+      allow list: if isActive() && (
+        isAdmin() ||
+        userRole() in ['HEAD_JUNIOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'SUPER_ADMIN', 'HEAD_UNIT', 'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR', 'COUNSELOR'] ||
+        (isTeacher() && isTeacherAssignedToClass(resource.data.classId)) ||
+        (isStudent() && resource.data.studentId == currentUser().luminaId) ||
+        isLinkedStudent(resource.data.studentId)
+      );
+
+      allow create: if isActive() && (
+        isOwnStudentData(incoming().studentId) &&
+        incoming().unit == 'JUNIOR_HIGH' &&
+        incoming().overallStatus in ['DRAFT', 'SUBMITTED'] &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        reflectionId.split('_')[0] == incoming().studentId
+      );
+
+      allow update: if isActive() && (
+        (
+          isOwnStudentData(existing().studentId) &&
+          incoming().studentId == existing().studentId &&
+          incoming().unit == 'JUNIOR_HIGH' &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().classId == existing().classId &&
+          incoming().academicYear == existing().academicYear &&
+          incoming().semester == existing().semester &&
+          incoming().periodKey == existing().periodKey &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['slots', 'overallStatus', 'updatedAt']) &&
+          existing().overallStatus in ['DRAFT', 'REVISION_REQUESTED'] &&
+          incoming().overallStatus in ['DRAFT', 'SUBMITTED'] &&
+          (incoming().slots.size() > 0 && incoming().slots[0].teacherFeedback == (existing().slots.size() > 0 ? existing().slots[0].teacherFeedback : '') && incoming().slots[0].reviewedBy == (existing().slots.size() > 0 ? existing().slots[0].reviewedBy : null) && incoming().slots[0].reviewedAt == (existing().slots.size() > 0 ? existing().slots[0].reviewedAt : null) && incoming().slots[0].status in ['DRAFT', 'SUBMITTED']) &&
+          (incoming().slots.size() < 2 || (incoming().slots[1].teacherFeedback == (existing().slots.size() > 1 ? existing().slots[1].teacherFeedback : '') && incoming().slots[1].reviewedBy == (existing().slots.size() > 1 ? existing().slots[1].reviewedBy : null) && incoming().slots[1].reviewedAt == (existing().slots.size() > 1 ? existing().slots[1].reviewedAt : null) && incoming().slots[1].status in ['DRAFT', 'SUBMITTED']))
+        ) || (
+          (isAdmin() || isJuniorHighStaff()) &&
+          incoming().studentId == existing().studentId &&
+          incoming().unit == existing().unit &&
+          incoming().classId == existing().classId &&
+          incoming().academicYear == existing().academicYear &&
+          incoming().semester == existing().semester &&
+          incoming().periodKey == existing().periodKey &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasAny(['slots', 'overallStatus', 'updatedAt'])
+        )
+      );
+
+      allow delete: if false;
+    }
+
     match /sePeriods/{periodId} {
       allow read: if isSignedIn();
       allow write: if isAdmin() || isJuniorHighStaff();
