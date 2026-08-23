@@ -501,9 +501,7 @@ service cloud.firestore {
 
       allow list: if isActive() && (
         isAdmin() ||
-        (isJuniorHighStaff() && resource.data.unit == 'JUNIOR_HIGH') ||
-        (isStudent() && resource.data.studentId == currentUser().luminaId) ||
-        isLinkedStudent(resource.data.studentId)
+        (isJuniorHighStaff() && resource.data.unit == 'JUNIOR_HIGH')
       );
 
       allow create: if isActive() && (

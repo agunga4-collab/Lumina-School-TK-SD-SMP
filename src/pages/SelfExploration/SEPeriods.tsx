@@ -86,7 +86,11 @@ export default function SEPeriods() {
         const counts: Record<string, { total: number, completed: number }> = {};
         for (const item of data) {
           if (item.id) {
-            const snap = await getDocs(query(collection(db, 'seMonthlyReflections'), where('reflectionCycleId', '==', item.id)));
+            const snap = await getDocs(query(
+              collection(db, 'seMonthlyReflections'),
+              where('unit', '==', 'JUNIOR_HIGH'),
+              where('reflectionCycleId', '==', item.id)
+            ));
             let tot = 0;
             let comp = 0;
             snap.docs.forEach(docSnap => {
@@ -431,7 +435,11 @@ export default function SEPeriods() {
     }
     if (!confirm("Hapus siklus ini secara permanen?")) return;
     try {
-      const snap = await getDocs(query(collection(db, 'seMonthlyReflections'), where('reflectionCycleId', '==', cycleId)));
+      const snap = await getDocs(query(
+        collection(db, 'seMonthlyReflections'),
+        where('unit', '==', 'JUNIOR_HIGH'),
+        where('reflectionCycleId', '==', cycleId)
+      ));
       if (!snap.empty) {
         alert("Tidak dapat menghapus siklus karena siswa sudah mulai mengisi/menyimpan refleksi di dalamnya. Harap gunakan status TUTUP (CLOSED) untuk menonaktifkan.");
         return;

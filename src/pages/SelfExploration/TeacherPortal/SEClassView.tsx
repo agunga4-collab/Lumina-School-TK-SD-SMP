@@ -200,9 +200,9 @@ export default function SEClassView() {
     fetchInitial();
   }, [fetchInitial]);
 
-  // Phase 2: Fetch monthly reflections for current cycle unit-wide to support dynamic class mappings
+  // Phase 2: Fetch monthly reflections for current cycle and class
   const fetchReflections = React.useCallback(async () => {
-    if (!selectedCycleId) {
+    if (!selectedCycleId || !currentClassId) {
       setReflections([]);
       return;
     }
@@ -210,8 +210,9 @@ export default function SEClassView() {
     try {
       const q = query(
         collection(db, 'seMonthlyReflections'),
+        where('unit', '==', 'JUNIOR_HIGH'),
         where('reflectionCycleId', '==', selectedCycleId),
-        where('unit', '==', 'JUNIOR_HIGH')
+        where('classId', '==', currentClassId)
       );
       const snap = await getDocs(q);
       const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SEMonthlyReflection));
@@ -222,7 +223,7 @@ export default function SEClassView() {
     } finally {
       setReflectionsLoading(false);
     }
-  }, [selectedCycleId]);
+  }, [selectedCycleId, currentClassId]);
 
   React.useEffect(() => {
     fetchReflections();
