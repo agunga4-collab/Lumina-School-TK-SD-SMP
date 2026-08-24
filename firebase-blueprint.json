@@ -883,6 +883,51 @@
         "updatedBy": { "type": "string" }
       },
       "required": ["id", "date", "unit", "type", "isSchoolDay"]
+    },
+    "ClassReportSummary": {
+      "title": "ClassReportSummary",
+      "description": "Monthly report class summary content (learning journey & weekly items).",
+      "type": "object",
+      "properties": {
+        "unit": { "type": "string", "enum": ["JUNIOR_HIGH", "KINDERGARTEN", "ELEMENTARY"] },
+        "reportType": { "type": "string", "enum": ["MONTHLY_PROGRESS"] },
+        "classId": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "semester": { "type": "string" },
+        "periodKey": { "type": "string" },
+        "periodLabel": { "type": "string" },
+        "sections": { "type": "object" },
+        "status": { "type": "string", "enum": ["DRAFT", "READY"] },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["unit", "reportType", "classId", "academicYear", "semester", "periodKey", "status"]
+    },
+    "JuniorHighMonthlyReportComment": {
+      "title": "JuniorHighMonthlyReportComment",
+      "description": "General comments and status for student's monthly report.",
+      "type": "object",
+      "properties": {
+        "unit": { "type": "string", "enum": ["JUNIOR_HIGH"] },
+        "reportType": { "type": "string", "enum": ["MONTHLY_PROGRESS"] },
+        "studentId": { "type": "string" },
+        "studentNameSnapshot": { "type": "string" },
+        "classId": { "type": "string" },
+        "classNameSnapshot": { "type": "string" },
+        "gradeSnapshot": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "semester": { "type": "string" },
+        "periodKey": { "type": "string" },
+        "periodLabel": { "type": "string" },
+        "generalComment": { "type": "string" },
+        "status": { "type": "string", "enum": ["DRAFT", "FINAL"] },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedBy": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["unit", "reportType", "studentId", "classId", "academicYear", "semester", "periodKey", "status", "generalComment"]
     }
   },
   "firestore": {
@@ -1104,6 +1149,14 @@
     },
     "kindergarten_observation_daily_contexts/{contextId}": {
       "description": "Daily context (Sentra and Domain selection) for Kindergarten Observations."
+    },
+    "class_report_summaries/{summaryId}": {
+      "schema": "ClassReportSummary",
+      "description": "Monthly progress report class-level learning summary."
+    },
+    "junior_high_monthly_report_comments/{commentId}": {
+      "schema": "JuniorHighMonthlyReportComment",
+      "description": "Student per-period general comments and attendance snapshot for junior high."
     }
   }
 }

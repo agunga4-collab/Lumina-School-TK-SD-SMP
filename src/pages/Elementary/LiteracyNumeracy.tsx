@@ -37,9 +37,66 @@ import {
 const AREAS: { id: ElementaryArea; label: string; icon: React.ReactNode; colorClass: string; activeColor: string }[] = [
   { id: 'BAHASA_INDONESIA', label: 'Bahasa Indonesia', icon: <BookOpen className="w-4 h-4" />, colorClass: 'text-blue-600 bg-blue-50 border-blue-100', activeColor: 'bg-blue-600 text-white' },
   { id: 'ENGLISH_READING', label: 'English Reading', icon: <Languages className="w-4 h-4" />, colorClass: 'text-indigo-600 bg-indigo-50 border-indigo-100', activeColor: 'bg-indigo-600 text-white' },
-  { id: 'MENGAJI', label: 'Mengaji', icon: <Heart className="w-4 h-4" />, colorClass: 'text-emerald-600 bg-emerald-50 border-emerald-100', activeColor: 'bg-emerald-600 text-white' },
-  { id: 'NUMERACY', label: 'Numerasi (Math)', icon: <Calculator className="w-4 h-4" />, colorClass: 'text-purple-600 bg-purple-50 border-purple-100', activeColor: 'bg-purple-600 text-white' },
+  { id: 'MENGAJI', label: 'Mengaji', icon: <Heart className="w-4 h-4" />, colorClass: 'text-teal-600 bg-teal-50 border-teal-100', activeColor: 'bg-teal-600 text-white' },
+  { id: 'NUMERACY', label: 'Numerasi (Math)', icon: <Calculator className="w-4 h-4" />, colorClass: 'text-amber-600 bg-amber-50 border-amber-100', activeColor: 'bg-amber-600 text-white' },
 ];
+
+const areaColors: Record<ElementaryArea, {
+  primary: string;
+  text: string;
+  bg: string;
+  border: string;
+  badge: string;
+  button: string;
+  accent: string;
+  ring: string;
+  activeRow: string;
+}> = {
+  BAHASA_INDONESIA: {
+    primary: 'blue',
+    text: 'text-blue-600',
+    bg: 'bg-blue-50/50',
+    border: 'border-blue-100',
+    badge: 'bg-blue-50 text-blue-700 border-blue-200',
+    button: 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-600/15 focus:ring-blue-500',
+    accent: 'bg-blue-500/10 text-blue-700',
+    ring: 'focus:ring-blue-500 focus:border-blue-500',
+    activeRow: 'bg-blue-50/30 border-l-4 border-l-blue-500'
+  },
+  ENGLISH_READING: {
+    primary: 'indigo',
+    text: 'text-indigo-600',
+    bg: 'bg-indigo-50/50',
+    border: 'border-indigo-100',
+    badge: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+    button: 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/15 focus:ring-indigo-500',
+    accent: 'bg-indigo-500/10 text-indigo-700',
+    ring: 'focus:ring-indigo-500 focus:border-indigo-500',
+    activeRow: 'bg-indigo-50/30 border-l-4 border-l-indigo-500'
+  },
+  MENGAJI: {
+    primary: 'teal',
+    text: 'text-teal-600',
+    bg: 'bg-teal-50/50',
+    border: 'border-teal-100',
+    badge: 'bg-teal-50 text-teal-700 border-teal-200',
+    button: 'bg-teal-600 hover:bg-teal-700 text-white shadow-teal-600/15 focus:ring-teal-500',
+    accent: 'bg-teal-500/10 text-teal-700',
+    ring: 'focus:ring-teal-500 focus:border-teal-500',
+    activeRow: 'bg-teal-50/30 border-l-4 border-l-teal-500'
+  },
+  NUMERACY: {
+    primary: 'amber',
+    text: 'text-amber-600',
+    bg: 'bg-amber-50/50',
+    border: 'border-amber-100',
+    badge: 'bg-amber-50 text-amber-700 border-amber-200',
+    button: 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-600/15 focus:ring-amber-500',
+    accent: 'bg-amber-500/10 text-amber-700',
+    ring: 'focus:ring-amber-500 focus:border-amber-500',
+    activeRow: 'bg-amber-50/30 border-l-4 border-l-amber-500'
+  }
+};
 
 const PERIODS: { value: ElementaryPeriod; label: string }[] = [
   { value: 'JUL_OCT', label: 'Juli - Oktober' },
@@ -930,6 +987,7 @@ export default function ElementaryLiteracyNumeracy() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             {AREAS.map((ar) => {
               const isActive = selectedArea === ar.id;
+              const colorInfo = areaColors[ar.id];
               return (
                 <button
                   key={ar.id}
@@ -938,22 +996,56 @@ export default function ElementaryLiteracyNumeracy() {
                   className={cn(
                     "flex items-center justify-between p-4 rounded-2xl border transition-all text-left relative overflow-hidden cursor-pointer",
                     isActive 
-                      ? "bg-slate-900 border-slate-900 text-white shadow-lg shadow-slate-950/5 font-extrabold" 
+                      ? `${colorInfo.button} border-transparent font-extrabold shadow-lg` 
                       : "bg-white border-gray-100 text-slate-700 hover:bg-slate-50/50"
                   )}
                 >
                   <div className="space-y-1 z-10">
-                    <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">
+                    <span className={cn("text-[10px] font-bold block uppercase tracking-wider", isActive ? "text-white/80" : "text-slate-400")}>
                       Area Pembelajaran
                     </span>
                     <span className="text-xs sm:text-sm block font-black">{ar.label}</span>
                   </div>
-                  <div className={cn("p-2 rounded-xl z-10", isActive ? "bg-white/10" : "bg-slate-50/80")}>
+                  <div className={cn("p-2 rounded-xl z-10", isActive ? "bg-white/20" : "bg-slate-50/80")}>
                     {ar.icon}
                   </div>
                 </button>
               );
             })}
+          </div>
+
+          {/* VISUALLY PROMINENT CONTEXT PANEL */}
+          <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2 text-xs font-black text-slate-500 uppercase tracking-widest">
+                <span>Lumina Literasi & Numerasi</span>
+                <span>•</span>
+                <span className={cn("font-bold px-2.5 py-0.5 rounded-lg text-[10px] border uppercase", areaColors[selectedArea].badge)}>
+                  {getAreaLabel(selectedArea)}
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Kelas Aktif:</span>
+                <h2 className={cn("text-3xl font-black tracking-tight uppercase italic", areaColors[selectedArea].text)}>
+                  {classes.find(c => c.id === selectedClassId)?.name || 'Belum Pilih Kelas'}
+                </h2>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-xs font-bold text-slate-600">
+              <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100/80">
+                <span className="block text-[10px] text-slate-400 uppercase font-black tracking-wider mb-0.5">Tahun Ajaran</span>
+                <span className="text-sm font-extrabold text-slate-800">{selectedYear}</span>
+              </div>
+              <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100/80">
+                <span className="block text-[10px] text-slate-400 uppercase font-black tracking-wider mb-0.5">Periode Laporan</span>
+                <span className="text-sm font-extrabold text-slate-800">{getPeriodLabel(selectedPeriod)}</span>
+              </div>
+              <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100/80 col-span-2 sm:col-span-1">
+                <span className="block text-[10px] text-slate-400 uppercase font-black tracking-wider mb-0.5">Jumlah Siswa</span>
+                <span className="text-sm font-extrabold text-slate-800">{students.length} Siswa SD</span>
+              </div>
+            </div>
           </div>
 
           {/* MINI OVERVIEW METRICS ROWS */}
@@ -1032,11 +1124,11 @@ export default function ElementaryLiteracyNumeracy() {
           </div>
 
           {/* DYNAMIC STUDENTS ASSESSMENT SPREADSHEET TABLE */}
-          <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+          <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden">
             {/* Table Search & Header */}
-            <div className="p-5 border-b border-gray-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="p-5 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50/40">
               <div className="flex items-center gap-2">
-                <div className="p-1 px-2.5 bg-slate-50 text-slate-700 rounded-lg text-xs font-black">
+                <div className={cn("px-3 py-1 bg-slate-100 rounded-lg text-xs font-black border", areaColors[selectedArea].badge)}>
                   {filteredStudents.length} Siswa SD
                 </div>
                 <h2 className="text-xs font-black text-slate-800 uppercase tracking-widest">
@@ -1044,14 +1136,14 @@ export default function ElementaryLiteracyNumeracy() {
                 </h2>
               </div>
 
-              <div className="relative w-full sm:w-64">
-                <Search className="absolute left-3.5 top-2.5 text-slate-400 w-4 h-4" />
+              <div className="relative w-full sm:w-80">
+                <Search className="absolute left-4 top-[14px] text-slate-500 w-4 h-4" />
                 <input
                   type="text"
-                  placeholder="Cari siswa SD..."
+                  placeholder="Cari nama atau NIS siswa SD..."
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-100 text-xs px-9 py-2 rounded-xl outline-none focus:ring-1 focus:ring-slate-900"
+                  className="w-full bg-slate-100/50 hover:bg-slate-100 border border-slate-200 text-sm pl-11 pr-4 h-11 rounded-xl outline-none focus:ring-2 focus:ring-slate-900 focus:bg-white text-slate-800 font-medium transition-all"
                 />
               </div>
             </div>
@@ -1069,71 +1161,124 @@ export default function ElementaryLiteracyNumeracy() {
                 <p className="text-[11px]">Silakan pilih kombinasi filter atau periksa daftar siswa di tingkatan kelas SD ini.</p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse min-w-[900px]">
+              <div className="overflow-auto max-h-[720px] scroll-smooth">
+                {/* STICKY CONTEXT STRIP DURING VERTICAL SCROLL */}
+                <div className="sticky top-0 z-40 bg-slate-950 text-white px-6 py-3.5 text-xs font-bold tracking-wide flex items-center justify-between border-b border-slate-800 shadow-md">
+                  <div className="flex items-center gap-2 sm:gap-3">
+                    <span className={cn("px-2.5 py-0.5 rounded text-[10px] font-black uppercase border", areaColors[selectedArea].badge)}>
+                      {getAreaLabel(selectedArea)}
+                    </span>
+                    <span className="text-slate-600">•</span>
+                    <span className="font-extrabold text-white">Kelas {classes.find(c => c.id === selectedClassId)?.name || 'SD'}</span>
+                    <span className="text-slate-600">•</span>
+                    <span className="text-slate-300">{getPeriodLabel(selectedPeriod)}</span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 font-mono hidden sm:block">
+                    {filteredStudents.length} Siswa SD · Lumina Literasi & Numerasi
+                  </div>
+                </div>
+
+                <table className="w-full text-left border-collapse min-w-[1000px] relative">
                   <thead>
-                    <tr className="bg-slate-50 border-b border-slate-100 text-[9px] font-black text-slate-400 uppercase tracking-wider">
-                      <th className="py-3 px-4 w-40 sticky left-0 bg-slate-50 z-10 border-r border-slate-100 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">Nama Siswa SD</th>
+                    {/* Row 1: Group Headers */}
+                    <tr className="bg-slate-100 border-b border-slate-200 text-[10px] font-black text-slate-700 uppercase tracking-widest text-center select-none sticky top-0 z-30">
+                      <th className="py-2.5 px-4 sticky left-0 bg-slate-100 z-30 border-r border-slate-200 w-[260px] max-w-[280px] min-w-[240px] text-left">Identity</th>
                       
-                      {/* DYNAMIC AREA COLS */}
                       {selectedArea === 'BAHASA_INDONESIA' && (
                         <>
-                          <th className="py-3 px-2 w-20 text-center">Words Read</th>
-                          <th className="py-3 px-2 w-20 text-center">Errors</th>
-                          <th className="py-3 px-2 w-16 text-center">WPM</th>
-                          <th className="py-3 px-2 w-28 text-center">Reading Level</th>
-                          <th className="py-3 px-2 w-28 text-center">Comprehension</th>
+                          <th colSpan={3} className="py-2.5 px-2 bg-blue-50/80 border-r border-slate-200 text-blue-800">Reading Fluency</th>
+                          <th colSpan={2} className="py-2.5 px-2 bg-indigo-50/80 border-r border-slate-200 text-indigo-850">Reading Comprehension</th>
                         </>
                       )}
 
                       {selectedArea === 'ENGLISH_READING' && (
                         <>
-                          <th className="py-3 px-2 w-20 text-center">Words Read</th>
-                          <th className="py-3 px-2 w-20 text-center">Errors</th>
-                          <th className="py-3 px-2 w-16 text-center">WPM</th>
-                          <th className="py-3 px-2 w-32 text-center">Reading Level</th>
-                          <th className="py-3 px-2 w-28 text-center">Comprehension</th>
+                          <th colSpan={3} className="py-2.5 px-2 bg-indigo-50/80 border-r border-slate-200 text-indigo-800">Reading Fluency</th>
+                          <th colSpan={2} className="py-2.5 px-2 bg-blue-50/80 border-r border-slate-200 text-blue-850">Comprehension</th>
                         </>
                       )}
 
                       {selectedArea === 'MENGAJI' && (
                         <>
-                          <th className="py-3 px-2 w-24 text-center">Level</th>
-                          <th className="py-3 px-2 w-28 text-center">Current Checkpoint</th>
-                          <th className="py-3 px-2 w-24 text-center">Target Level</th>
-                          <th className="py-3 px-2 w-32 text-center">Status Kelulusan</th>
-                          <th className="py-3 px-2 w-36 text-center">Catatan Huruf</th>
-                          <th className="py-3 px-2 w-36 text-center">Catatan Tajwid</th>
+                          <th colSpan={2} className="py-2.5 px-2 bg-teal-50/80 border-r border-slate-200 text-teal-800">Current Progress</th>
+                          <th colSpan={2} className="py-2.5 px-2 bg-indigo-50/80 border-r border-slate-200 text-indigo-850">Target / Outcome</th>
+                          <th colSpan={2} className="py-2.5 px-2 bg-emerald-50/80 border-r border-slate-200 text-emerald-850">Teacher Notes</th>
                         </>
                       )}
 
                       {selectedArea === 'NUMERACY' && (
                         <>
-                          <th className="py-3 px-2 w-28 text-center">Math Level</th>
-                          <th className="py-3 px-2 w-44 text-center">Topik</th>
-                          <th className="py-3 px-2 w-24 text-center">Accuracy (%)</th>
+                          <th colSpan={1} className="py-2.5 px-2 bg-amber-50/80 border-r border-slate-200 text-amber-800">Numeracy Assessment</th>
+                          <th colSpan={2} className="py-2.5 px-2 bg-indigo-50/80 border-r border-slate-200 text-indigo-850">Diagnostic / Outcome</th>
                         </>
                       )}
 
-                      <th className="py-3 px-4 w-32 text-center">
+                      <th colSpan={2} className="py-2.5 px-4 bg-orange-50/85 border-r border-slate-200 text-orange-800">Intervention & Notes</th>
+                      <th className="py-2.5 px-4 sticky right-0 bg-slate-100 z-30 text-slate-800 border-l border-slate-200 shadow-[-2px_0_5px_rgba(0,0,0,0.02)]">Save</th>
+                    </tr>
+
+                    {/* Row 2: Sub-headers */}
+                    <tr className="bg-slate-50 border-b border-slate-100 text-[11px] font-bold text-slate-600 uppercase tracking-wider sticky top-[37px] z-30">
+                      <th className="py-3 px-4 w-[260px] max-w-[280px] min-w-[240px] sticky left-0 bg-slate-50 z-30 border-r border-slate-100 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">Nama Siswa SD</th>
+                      
+                      {selectedArea === 'BAHASA_INDONESIA' && (
+                        <>
+                          <th className="py-3 px-2 w-24 text-center border-r border-slate-100 bg-slate-50">Words Read</th>
+                          <th className="py-3 px-2 w-24 text-center border-r border-slate-100 bg-slate-50">Errors</th>
+                          <th className="py-3 px-2 w-20 text-center border-r border-slate-100 bg-slate-50">WPM</th>
+                          <th className="py-3 px-2 w-32 text-center border-r border-slate-100 bg-slate-50">Reading Level</th>
+                          <th className="py-3 px-2 w-36 text-center border-r border-slate-100 bg-slate-50">Comprehension</th>
+                        </>
+                      )}
+
+                      {selectedArea === 'ENGLISH_READING' && (
+                        <>
+                          <th className="py-3 px-2 w-24 text-center border-r border-slate-100 bg-slate-50">Words Read</th>
+                          <th className="py-3 px-2 w-24 text-center border-r border-slate-100 bg-slate-50">Errors</th>
+                          <th className="py-3 px-2 w-20 text-center border-r border-slate-100 bg-slate-50">WPM</th>
+                          <th className="py-3 px-2 w-36 text-center border-r border-slate-100 bg-slate-50">Reading Level</th>
+                          <th className="py-3 px-2 w-36 text-center border-r border-slate-100 bg-slate-50">Comprehension</th>
+                        </>
+                      )}
+
+                      {selectedArea === 'MENGAJI' && (
+                        <>
+                          <th className="py-3 px-2 w-28 text-center border-r border-slate-100 bg-slate-50">Level</th>
+                          <th className="py-3 px-2 w-36 text-center border-r border-slate-100 bg-slate-50">Current Checkpoint</th>
+                          <th className="py-3 px-2 w-28 text-center border-r border-slate-100 bg-slate-50">Target Level</th>
+                          <th className="py-3 px-2 w-36 text-center border-r border-slate-100 bg-slate-50">Status Kelulusan</th>
+                          <th className="py-3 px-2 w-40 text-center border-r border-slate-100 bg-slate-50">Catatan Huruf</th>
+                          <th className="py-3 px-2 w-40 text-center border-r border-slate-100 bg-slate-50">Catatan Tajwid</th>
+                        </>
+                      )}
+
+                      {selectedArea === 'NUMERACY' && (
+                        <>
+                          <th className="py-3 px-2 w-32 text-center border-r border-slate-100 bg-slate-50">Math Level</th>
+                          <th className="py-3 px-2 w-52 text-center border-r border-slate-100 bg-slate-50">Topik</th>
+                          <th className="py-3 px-2 w-28 text-center border-r border-slate-100 bg-slate-50">Accuracy (%)</th>
+                        </>
+                      )}
+
+                      <th className="py-3 px-4 w-44 text-center border-r border-slate-100 bg-slate-50">
                         <div className="flex flex-col items-center gap-1.5">
                           <span>Intervensi</span>
                           <button
                             type="button"
                             onClick={applyBulkTier1}
-                            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200/60 px-1.5 py-0.5 rounded-lg text-[8px] font-black tracking-wider uppercase transition-colors cursor-pointer whitespace-nowrap block"
+                            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200/60 px-2 py-0.5 rounded-lg text-[9px] font-black tracking-wider uppercase transition-colors cursor-pointer whitespace-nowrap block"
                             title="Set seluruh siswa menjadi Tier 1"
                           >
                             Set Tier 1 Semua
                           </button>
                         </div>
                       </th>
-                      <th className="py-3 px-4 w-44 text-center">Catatan Tambahan</th>
-                      <th className="py-3 px-4 w-24 text-center">Aksi Save Baris</th>
+                      <th className="py-3 px-4 w-48 text-center border-r border-slate-100 bg-slate-50">Catatan Tambahan</th>
+                      <th className="py-3 px-4 w-28 text-center sticky right-0 bg-slate-50 z-30 shadow-[-2px_0_5px_rgba(0,0,0,0.02)] border-l border-slate-100">Aksi Save Baris</th>
                     </tr>
                   </thead>
                   
-                  <tbody className="divide-y divide-slate-100 text-xs">
+                  <tbody className="divide-y divide-slate-150 text-sm bg-white">
                     {filteredStudents.map((st) => {
                       const record = studentRecords[st.id] || {};
                       const isModified = modifiedIds.has(st.id);
@@ -1142,54 +1287,61 @@ export default function ElementaryLiteracyNumeracy() {
                         <tr
                           key={st.id}
                           className={cn(
-                            "hover:bg-slate-50/50 transition-colors",
-                            isModified ? "bg-amber-50/20" : ""
+                            "group/row transition-colors border-b border-slate-100",
+                            isModified 
+                              ? "bg-amber-50/20 hover:bg-amber-50/30" 
+                              : "hover:bg-slate-50/60"
                           )}
                         >
-                          {/* Name Code Column Fixed left */}
-                          <td className="py-3 px-4 font-black text-slate-800 sticky left-0 bg-white z-10 border-r border-slate-100 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
-                            <div className="flex flex-col">
-                              <span className="truncate max-w-[140px] block">{st.name}</span>
-                              <span className="text-[9px] text-slate-400 font-mono uppercase font-semibold">NIS: {st.id}</span>
+                          {/* Student Identity Column: Sticky Left */}
+                          <td className={cn(
+                            "py-4 px-4 font-black text-slate-800 sticky left-0 z-10 border-r border-slate-100 shadow-[2px_0_5px_rgba(0,0,0,0.02)] transition-colors w-[260px] max-w-[280px] min-w-[240px]",
+                            isModified 
+                              ? "bg-amber-50/30 group-hover/row:bg-amber-50/40" 
+                              : "bg-white group-hover/row:bg-slate-50/80"
+                          )}>
+                            <div className="flex flex-col select-none" title={st.name}>
+                              <span className="text-base font-bold text-slate-900 leading-snug line-clamp-2 break-words whitespace-normal">{st.name}</span>
+                              <span className="text-xs text-slate-500 font-mono uppercase mt-0.5">NIS: {st.id}</span>
                             </div>
                           </td>
 
                           {/* --- BAHASA INDONESIA --- */}
                           {selectedArea === 'BAHASA_INDONESIA' && (
                             <>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-4 px-2 text-center border-r border-slate-100">
                                 <input
                                   type="number"
                                   min="0"
                                   value={record.wordsRead ?? ''}
                                   onChange={e => handleCellChange(st.id, 'wordsRead', e.target.value === '' ? '' : Number(e.target.value))}
-                                  className="w-16 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
+                                  className="w-20 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-2 h-11 text-center font-bold text-base focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all"
                                 />
                               </td>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-4 px-2 text-center border-r border-slate-100">
                                 <input
                                   type="number"
                                   min="0"
                                   value={record.errors ?? ''}
                                   onChange={e => handleCellChange(st.id, 'errors', e.target.value === '' ? '' : Number(e.target.value))}
-                                  className="w-16 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
+                                  className="w-20 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-2 h-11 text-center font-bold text-base focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all"
                                 />
                               </td>
-                              <td className="py-3 px-2 font-black text-slate-700 text-center">
+                              <td className="py-4 px-2 font-black text-slate-700 text-center text-base border-r border-slate-100">
                                 {(record.wpm !== undefined && record.wpm !== null && record.wpm !== '') ? record.wpm : '-'}
                               </td>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-4 px-2 text-center border-r border-slate-100">
                                 <select
                                   value={record.readingLevel || 'IR'}
                                   onChange={e => handleCellChange(st.id, 'readingLevel', e.target.value)}
-                                  className="w-24 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold cursor-pointer"
+                                  className="w-28 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-2 h-11 font-bold text-base cursor-pointer focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all"
                                 >
                                   {READING_LEVEL_OPTIONS.map(lvl => (
                                     <option key={lvl} value={lvl}>{lvl}</option>
                                   ))}
                                 </select>
                               </td>
-                              <td className="py-3 px-2">
+                              <td className="py-4 px-2 border-r border-slate-100">
                                 <div className="flex items-center gap-1.5 justify-center">
                                   <select
                                     value={record.comprehensionScore === 'N/A' || record.comprehensionScore === null ? 'NA' : 'DATA'}
@@ -1200,12 +1352,12 @@ export default function ElementaryLiteracyNumeracy() {
                                         handleCellChange(st.id, 'comprehensionScore', '');
                                       }
                                     }}
-                                    className="bg-slate-50 border border-slate-200 rounded-lg px-1 py-1 text-[10px] font-bold cursor-pointer outline-none"
+                                    className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-2 h-11 text-sm font-bold cursor-pointer outline-none focus:ring-2 focus:ring-slate-900"
                                   >
                                     <option value="DATA">Data</option>
                                     <option value="NA">N/A</option>
                                   </select>
-                                  <div className="flex items-center gap-0.5">
+                                  <div className="flex items-center gap-1">
                                     <input
                                       type="number"
                                       min="0"
@@ -1214,14 +1366,14 @@ export default function ElementaryLiteracyNumeracy() {
                                       value={(record.comprehensionScore === 'N/A' || record.comprehensionScore === null || record.comprehensionScore === undefined) ? '' : record.comprehensionScore}
                                       onChange={e => handleCellChange(st.id, 'comprehensionScore', e.target.value === '' ? '' : Number(e.target.value))}
                                       className={cn(
-                                        "w-11 border rounded-lg px-1 py-1 text-center font-bold text-[11px]",
+                                        "w-16 border rounded-lg px-1 py-2 h-11 text-center font-bold text-base transition-all outline-none",
                                         (record.comprehensionScore === 'N/A' || record.comprehensionScore === null) 
                                           ? "bg-slate-100 border-slate-200 text-slate-300 cursor-not-allowed" 
-                                          : "bg-slate-50/60 border-slate-200 text-slate-800"
+                                          : "bg-slate-50/60 border-slate-200 text-slate-800 focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white"
                                       )}
                                       placeholder={record.comprehensionScore === 'N/A' || record.comprehensionScore === null ? 'N/A' : ''}
                                     />
-                                    <span className="text-[9px] text-slate-400 font-bold">%</span>
+                                    <span className="text-xs text-slate-400 font-bold">%</span>
                                   </div>
                                 </div>
                               </td>
@@ -1231,39 +1383,39 @@ export default function ElementaryLiteracyNumeracy() {
                           {/* --- ENGLISH READING --- */}
                           {selectedArea === 'ENGLISH_READING' && (
                             <>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-4 px-2 text-center border-r border-slate-100">
                                 <input
                                   type="number"
                                   min="0"
                                   value={record.wordsRead ?? ''}
                                   onChange={e => handleCellChange(st.id, 'wordsRead', e.target.value === '' ? '' : Number(e.target.value))}
-                                  className="w-16 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
+                                  className="w-20 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-2 h-11 text-center font-bold text-base focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all"
                                 />
                               </td>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-4 px-2 text-center border-r border-slate-100">
                                 <input
                                   type="number"
                                   min="0"
                                   value={record.errors ?? ''}
                                   onChange={e => handleCellChange(st.id, 'errors', e.target.value === '' ? '' : Number(e.target.value))}
-                                  className="w-16 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
+                                  className="w-20 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-2 h-11 text-center font-bold text-base focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all"
                                 />
                               </td>
-                              <td className="py-3 px-2 font-black text-slate-700 text-center">
+                              <td className="py-4 px-2 font-black text-slate-700 text-center text-base border-r border-slate-100">
                                 {(record.wpm !== undefined && record.wpm !== null && record.wpm !== '') ? record.wpm : '-'}
                               </td>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-4 px-2 text-center border-r border-slate-100">
                                 <select
                                   value={record.readingLevel || 'IR'}
                                   onChange={e => handleCellChange(st.id, 'readingLevel', e.target.value)}
-                                  className="w-28 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold cursor-pointer"
+                                  className="w-32 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-2 h-11 font-bold text-base cursor-pointer focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all"
                                 >
                                   {READING_LEVEL_OPTIONS.map(lvl => (
                                     <option key={lvl} value={lvl}>{lvl}</option>
                                   ))}
                                 </select>
                               </td>
-                              <td className="py-3 px-2">
+                              <td className="py-4 px-2 border-r border-slate-100">
                                 <div className="flex items-center gap-1.5 justify-center">
                                   <select
                                     value={record.comprehensionScore === 'N/A' || record.comprehensionScore === null ? 'NA' : 'DATA'}
@@ -1274,12 +1426,12 @@ export default function ElementaryLiteracyNumeracy() {
                                         handleCellChange(st.id, 'comprehensionScore', '');
                                       }
                                     }}
-                                    className="bg-slate-50 border border-slate-200 rounded-lg px-1 py-1 text-[10px] font-bold cursor-pointer outline-none"
+                                    className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-2 h-11 text-sm font-bold cursor-pointer outline-none focus:ring-2 focus:ring-slate-900"
                                   >
                                     <option value="DATA">Data</option>
                                     <option value="NA">N/A</option>
                                   </select>
-                                  <div className="flex items-center gap-0.5">
+                                  <div className="flex items-center gap-1">
                                     <input
                                       type="number"
                                       min="0"
@@ -1288,53 +1440,55 @@ export default function ElementaryLiteracyNumeracy() {
                                       value={(record.comprehensionScore === 'N/A' || record.comprehensionScore === null || record.comprehensionScore === undefined) ? '' : record.comprehensionScore}
                                       onChange={e => handleCellChange(st.id, 'comprehensionScore', e.target.value === '' ? '' : Number(e.target.value))}
                                       className={cn(
-                                        "w-11 border rounded-lg px-1 py-1 text-center font-bold text-[11px]",
+                                        "w-16 border rounded-lg px-1 py-2 h-11 text-center font-bold text-base transition-all outline-none",
                                         (record.comprehensionScore === 'N/A' || record.comprehensionScore === null) 
                                           ? "bg-slate-100 border-slate-200 text-slate-300 cursor-not-allowed" 
-                                          : "bg-slate-50/60 border-slate-200 text-slate-800"
+                                          : "bg-slate-50/60 border-slate-200 text-slate-800 focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white"
                                       )}
                                       placeholder={record.comprehensionScore === 'N/A' || record.comprehensionScore === null ? 'N/A' : ''}
                                     />
-                                    <span className="text-[9px] text-slate-400 font-bold">%</span>
+                                    <span className="text-xs text-slate-400 font-bold">%</span>
                                   </div>
                                 </div>
                               </td>
                             </>
-                          )}                          {/* --- MENGAJI --- */}
+                          )}
+
+                          {/* --- MENGAJI --- */}
                           {selectedArea === 'MENGAJI' && (
                             <>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-4 px-2 text-center border-r border-slate-100">
                                 <input
                                   type="text"
                                   placeholder=""
                                   value={record.iqroCurrentLevel ?? ''}
                                   onChange={e => handleCellChange(st.id, 'iqroCurrentLevel', e.target.value)}
-                                  className="w-16 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
+                                  className="w-20 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-2 h-11 text-center font-bold text-base focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all"
                                 />
                               </td>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-4 px-2 text-center border-r border-slate-100">
                                 <textarea
                                   rows={getRows(record.iqroCurrentCheckpoint || '')}
                                   placeholder=""
                                   value={record.iqroCurrentCheckpoint || ''}
                                   onChange={e => handleCellChange(st.id, 'iqroCurrentCheckpoint', e.target.value)}
-                                  className="w-24 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold text-center resize-y text-[11px] focus:ring-1 focus:ring-slate-900 focus:bg-white"
+                                  className="w-28 bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-2 font-semibold text-center text-sm focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all resize-y min-h-[44px]"
                                 />
                               </td>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-4 px-2 text-center border-r border-slate-100">
                                 <input
                                   type="text"
                                   placeholder=""
                                   value={record.targetIqroLevel ?? ''}
                                   onChange={e => handleCellChange(st.id, 'targetIqroLevel', e.target.value)}
-                                  className="w-16 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
+                                  className="w-20 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-2 h-11 text-center font-bold text-base focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all"
                                 />
                               </td>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-4 px-2 text-center border-r border-slate-100">
                                 <select
                                   value={record.completionStatus || ''}
                                   onChange={e => handleCellChange(st.id, 'completionStatus', e.target.value)}
-                                  className="w-28 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold cursor-pointer text-[10px]"
+                                  className="w-32 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-2 h-11 font-bold cursor-pointer text-sm focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all"
                                 >
                                   <option value="">-- Pilih --</option>
                                   <option value="BELUM_DINILAI">Belum Dinilai</option>
@@ -1343,22 +1497,22 @@ export default function ElementaryLiteracyNumeracy() {
                                   <option value="TIDAK_LULUS">Belum Lulus</option>
                                 </select>
                               </td>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-4 px-2 text-center border-r border-slate-100">
                                 <textarea
                                   rows={getRows(record.letterRecognitionNote || '')}
                                   placeholder=""
                                   value={record.letterRecognitionNote || ''}
                                   onChange={e => handleCellChange(st.id, 'letterRecognitionNote', e.target.value)}
-                                  className="w-32 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-medium text-[11px] resize-y focus:ring-1 focus:ring-slate-900 focus:bg-white"
+                                  className="w-36 bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-2 font-medium text-sm focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all resize-y min-h-[44px]"
                                 />
                               </td>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-4 px-2 text-center border-r border-slate-100">
                                 <textarea
                                   rows={getRows(record.tajwidNote || '')}
                                   placeholder=""
                                   value={record.tajwidNote || ''}
                                   onChange={e => handleCellChange(st.id, 'tajwidNote', e.target.value)}
-                                  className="w-32 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-medium text-[11px] resize-y focus:ring-1 focus:ring-slate-900 focus:bg-white"
+                                  className="w-36 bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-2 font-medium text-sm focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all resize-y min-h-[44px]"
                                 />
                               </td>
                             </>
@@ -1367,52 +1521,52 @@ export default function ElementaryLiteracyNumeracy() {
                           {/* --- NUMERACY (MATH) --- */}
                           {selectedArea === 'NUMERACY' && (
                             <>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-4 px-2 text-center border-r border-slate-100">
                                 <input
                                   type="text"
                                   placeholder="Level"
                                   value={record.mathLevel || ''}
                                   onChange={e => handleCellChange(st.id, 'mathLevel', e.target.value)}
-                                  className="w-24 bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-1 font-bold text-center"
+                                  className="w-28 bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-2 h-11 font-bold text-center text-base focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all"
                                 />
                               </td>
-                              <td className="py-3 px-2 text-center">
+                              <td className="py-4 px-2 text-center border-r border-slate-100">
                                 <textarea
                                   rows={getRows(record.topic || '')}
                                   placeholder=""
                                   value={record.topic || ''}
                                   onChange={e => handleCellChange(st.id, 'topic', e.target.value)}
-                                  className="w-40 bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-1 font-medium text-[11px] resize-y focus:ring-1 focus:ring-slate-900 focus:bg-white"
+                                  className="w-48 bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-2 font-medium text-sm focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all resize-y min-h-[44px]"
                                 />
                               </td>
-                              <td className="py-3 px-2 text-center">
-                                <div className="flex items-center gap-0.5 justify-center">
+                              <td className="py-4 px-2 text-center border-r border-slate-100">
+                                <div className="flex items-center gap-1 justify-center">
                                   <input
                                     type="number"
                                     min="0"
                                     max="100"
                                     value={record.accuracy ?? ''}
                                     onChange={e => handleCellChange(st.id, 'accuracy', e.target.value === '' ? '' : Number(e.target.value))}
-                                    className="w-14 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 text-center font-bold"
+                                    className="w-16 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-2 h-11 text-center font-bold text-base focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all"
                                   />
-                                  <span className="text-[10px] text-slate-400 font-bold">%</span>
+                                  <span className="text-xs text-slate-400 font-bold">%</span>
                                 </div>
                               </td>
                             </>
                           )}
 
                           {/* INTERVENSI SELECT dropdown */}
-                          <td className="py-3 px-4 text-center font-bold">
+                          <td className="py-4 px-4 text-center border-r border-slate-100 font-bold">
                             <select
                               value={record.supportStatus || 'INCOMPLETE_DATA'}
                               onChange={e => handleCellChange(st.id, 'supportStatus', e.target.value)}
                               className={cn(
-                                "text-[11px] font-black tracking-wider uppercase rounded-xl px-2.5 py-1 text-center outline-none cursor-pointer border w-36 transition-colors",
-                                record.supportStatus === 'ON_TRACK' && "bg-emerald-50 text-emerald-700 border-emerald-200 focus:ring-1 focus:ring-emerald-500",
-                                record.supportStatus === 'MONITOR' && "bg-yellow-50 text-yellow-700 border-yellow-200 focus:ring-1 focus:ring-yellow-500",
-                                record.supportStatus === 'NEEDS_SUPPORT' && "bg-orange-50 text-orange-700 border-orange-200 focus:ring-1 focus:ring-orange-500",
-                                record.supportStatus === 'INTERVENTION_RECOMMENDED' && "bg-purple-50 text-purple-700 border-purple-200 focus:ring-1 focus:ring-purple-500",
-                                (record.supportStatus === 'INCOMPLETE_DATA' || !record.supportStatus) && "bg-slate-50 text-slate-500 border-slate-200 focus:ring-1 focus:ring-slate-400"
+                                "text-xs font-black tracking-wider uppercase rounded-xl px-2.5 py-2 h-11 text-center outline-none cursor-pointer border w-40 transition-colors focus:ring-2",
+                                record.supportStatus === 'ON_TRACK' && "bg-emerald-50 text-emerald-700 border-emerald-200 focus:ring-emerald-500 focus:border-emerald-500",
+                                record.supportStatus === 'MONITOR' && "bg-yellow-50 text-yellow-700 border-yellow-200 focus:ring-yellow-500 focus:border-yellow-500",
+                                record.supportStatus === 'NEEDS_SUPPORT' && "bg-orange-50 text-orange-700 border-orange-200 focus:ring-orange-500 focus:border-orange-500",
+                                record.supportStatus === 'INTERVENTION_RECOMMENDED' && "bg-purple-50 text-purple-700 border-purple-200 focus:ring-purple-500 focus:border-purple-500",
+                                (record.supportStatus === 'INCOMPLETE_DATA' || !record.supportStatus) && "bg-slate-50 text-slate-500 border-slate-200 focus:ring-slate-400 focus:border-slate-400"
                               )}
                             >
                               <option value="INCOMPLETE_DATA">Belum diisi</option>
@@ -1424,29 +1578,34 @@ export default function ElementaryLiteracyNumeracy() {
                           </td>
 
                           {/* LOCAL NOTES */}
-                          <td className="py-3 px-4">
+                          <td className="py-4 px-4 border-r border-slate-100">
                             <textarea
                               rows={getRows(record.notes || '')}
                               placeholder="Ketik catatan di sini..."
                               value={record.notes || ''}
                               onChange={e => handleCellChange(st.id, 'notes', e.target.value)}
-                              className="w-44 bg-slate-50/60 hover:bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-[11px] outline-none font-medium resize-y focus:ring-1 focus:ring-slate-900 focus:bg-white"
+                              className="w-48 bg-slate-50/60 hover:bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-sm outline-none font-medium resize-y focus:ring-2 focus:ring-slate-900 focus:bg-white transition-all min-h-[44px]"
                             />
                           </td>
 
-                          {/* ACTION BUTTON COLUMN */}
-                          <td className="py-3 px-4 text-center">
+                          {/* ACTION BUTTON COLUMN: Sticky Right */}
+                          <td className={cn(
+                            "py-4 px-4 text-center sticky right-0 z-10 border-l border-slate-100 shadow-[-2px_0_5px_rgba(0,0,0,0.02)] transition-colors",
+                            isModified 
+                              ? "bg-amber-50/30 group-hover/row:bg-amber-50/40" 
+                              : "bg-white group-hover/row:bg-slate-50/80"
+                          )}>
                             <button
                               type="button"
                               onClick={() => handleSaveRow(st.id)}
                               className={cn(
-                                "flex items-center gap-1.5 justify-center mx-auto px-3 py-1.5 rounded-xl text-[10px] uppercase font-black tracking-wider transition-all cursor-pointer",
+                                "flex items-center gap-1.5 justify-center mx-auto px-4 py-2.5 h-11 rounded-xl text-xs uppercase font-black tracking-wider transition-all cursor-pointer min-w-[100px]",
                                 isModified 
                                   ? "bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-500/10" 
                                   : "bg-slate-100 hover:bg-slate-200 text-slate-700"
                               )}
                             >
-                              <Save size={11} />
+                              <Save size={13} />
                               {isModified ? 'SIMPAN DRAF' : 'SIMPAN'}
                             </button>
                           </td>

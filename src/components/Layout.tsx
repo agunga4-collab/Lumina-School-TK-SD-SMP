@@ -788,6 +788,13 @@ export function Layout() {
                   {['SUPER_ADMIN', 'HEAD_JUNIOR', 'TEACHER'].includes(currentUser.role) && (
                     <NavItem to="/junior-high/unit-activities" icon={<Compass size={18} />} label="Unit Aktivitas" />
                   )}
+                  {['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL'].includes(currentUser.role) && (
+                    <>
+                      <NavItem to="/junior-high/monthly-report" icon={<FileText size={18} />} label="Monthly Report Summary" />
+                      <NavItem to="/junior-high/monthly-comments" icon={<MessageSquare size={18} />} label="Monthly Report Comments" />
+                      <NavItem to="/junior-high/monthly-report-preview" icon={<Eye size={18} />} label="Monthly Report Preview" />
+                    </>
+                  )}
                   <NavItem to="/junior-high/behavior/mtss/overview" icon={<ShieldAlert size={18} />} label="MTSS Behavior" />
                   <NavItem to="/junior-high/academic/mtss/overview" icon={<GraduationCap size={18} />} label="MTSS Academic" />
                   {['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR'].includes(currentUser.role) && (

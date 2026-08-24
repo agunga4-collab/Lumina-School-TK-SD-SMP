@@ -749,6 +749,10 @@ export interface Student {
   academicYear?: string;
   email?: string;
   birthDate?: string;
+  attendanceNumber?: number;
+  noAbsen?: number;
+  rollNumber?: number;
+  rosterNumber?: number;
 }
 
 export interface Enrollment {
@@ -2202,3 +2206,64 @@ export interface AttendanceCalendarEvent {
   updatedAt: any;
   updatedBy: string;
 }
+
+/**
+ * ATTENDANCE CONTRACT FOR FUTURE PHASES
+ * Junior High Monthly Report attendance labels MUST remain exactly:
+ * - 'Sick Leave'
+ * - 'Excused Leave'
+ * - 'Absent'
+ * No Hadir, percentages, AI commentary, alternative labels, or extra attendance fields in the report template.
+ */
+export type JuniorHighMonthlyAttendanceLabel = 'Sick Leave' | 'Excused Leave' | 'Absent';
+
+export interface ClassReportSummary {
+  id?: string; // Format: `${unit}_${reportType}_${classId}_${academicYearNormalized}_${semester}_${periodKey}`
+  unit: 'JUNIOR_HIGH' | 'KINDERGARTEN' | 'ELEMENTARY';
+  reportType: 'MONTHLY_PROGRESS';
+  classId: string;
+  academicYear: string;
+  semester: string;
+  periodKey: string; // YYYY-MM
+  periodLabel: string; // Admin/Teacher-visible label e.g. "September 2026"
+  sections: {
+    learningJourney: {
+      title: string;
+      summary: string;
+    };
+    weeklyLessonsAndUnitActivities: Array<{
+      id: string; // Stable local ID
+      order: number;
+      category: 'WEEKLY_LESSON' | 'UNIT_ACTIVITY';
+      title: string;
+      summary: string;
+    }>;
+  };
+  status: 'DRAFT' | 'READY';
+  createdBy: string;
+  createdAt: string; // ISO format
+  updatedAt: string; // ISO format
+}
+
+export interface JuniorHighMonthlyReportComment {
+  id?: string; // Format: `JUNIOR_HIGH_MONTHLY_COMMENT_${studentId}_${classId}_${academicYearNormalized}_${semester}_${periodKey}`
+  unit: 'JUNIOR_HIGH';
+  reportType: 'MONTHLY_PROGRESS';
+  studentId: string;
+  studentNameSnapshot: string;
+  classId: string;
+  classNameSnapshot: string;
+  gradeSnapshot: string;
+  academicYear: string;
+  semester: string;
+  periodKey: string; // "YYYY-MM"
+  periodLabel: string;
+  generalComment: string;
+  status: 'DRAFT' | 'FINAL';
+  createdBy: string;
+  createdAt: string; // ISO format
+  updatedBy: string;
+  updatedAt: string; // ISO format
+}
+
+

@@ -115,6 +115,9 @@ import LearningPowerUpStudentPage from './pages/Student/LearningPowerUpStudentPa
 import LearningPowerUpTeacherPage from './pages/JuniorHigh/LearningPowerUpTeacherPage';
 import UnitActivitiesPage from './pages/JuniorHigh/UnitActivitiesPage';
 import StudentUnitActivitiesPage from './pages/Student/StudentUnitActivitiesPage';
+import MonthlyReportSummaryPage from './pages/JuniorHigh/MonthlyReportSummaryPage';
+import MonthlyReportCommentsPage from './pages/JuniorHigh/MonthlyReportCommentsPage';
+import MonthlyReportPreviewPage from './pages/JuniorHigh/MonthlyReportPreviewPage';
 import WeeklyReportDetail from './pages/Kindergarten/WeeklyReportDetail';
 
 // High-level wrapper for Admin-only access
@@ -472,6 +475,21 @@ export default function App() {
             <Route path="unit-activities" element={
               <RoleGuard roles={['SUPER_ADMIN', 'HEAD_JUNIOR', 'TEACHER']}>
                 <UnitActivitiesPage />
+              </RoleGuard>
+            } />
+            <Route path="monthly-report" element={
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL']}>
+                <MonthlyReportSummaryPage />
+              </RoleGuard>
+            } />
+            <Route path="monthly-comments" element={
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL']}>
+                <MonthlyReportCommentsPage />
+              </RoleGuard>
+            } />
+            <Route path="monthly-report-preview" element={
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL']}>
+                <MonthlyReportPreviewPage />
               </RoleGuard>
             } />
             <Route path="conference/admin" element={

@@ -1141,5 +1141,19 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow write: if isAdmin();
     }
+
+    match /class_report_summaries/{summaryId} {
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow write: if isActive() && (isJuniorHighStaff() || isAdmin()) &&
+        incoming().unit == 'JUNIOR_HIGH' &&
+        incoming().reportType == 'MONTHLY_PROGRESS';
+    }
+
+    match /junior_high_monthly_report_comments/{commentId} {
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow write: if isActive() && (isJuniorHighStaff() || isAdmin()) &&
+        incoming().unit == 'JUNIOR_HIGH' &&
+        incoming().reportType == 'MONTHLY_PROGRESS';
+    }
   }
 }
