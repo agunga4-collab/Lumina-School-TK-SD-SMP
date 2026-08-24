@@ -184,6 +184,352 @@ export default function ElementaryLiteracyNumeracy() {
   const [loadingSheetConfig, setLoadingSheetConfig] = React.useState<boolean>(false);
   const [sheetConfigError, setSheetConfigError] = React.useState<string | null>(null);
 
+  // --- AUTOSAVE & MENGAJI NOTES DRAWER STATE & REFS ---
+  const [rowStatuses, setRowStatuses] = React.useState<Record<string, { status: RowSaveStatus; time?: string }>>({});
+  const [activeNotesStudentId, setActiveNotesStudentId] = React.useState<string | null>(null);
+  const [activeNotesForm, setActiveNotesForm] = React.useState({
+    letterRecognitionNote: '',
+    tajwidNote: '',
+    notes: ''
+  });
+
+  const debounceTimersRef = React.useRef<Record<string, NodeJS.Timeout>>({});
+  const inFlightSavesRef = React.useRef<Record<string, boolean>>({});
+  const followUpSaveRef = React.useRef<Record<string, boolean>>({});
+  const studentRecordsRef = React.useRef<Record<string, Partial<ElementaryProgressRecord>>>({});
+  
+  const activeFiltersRef = React.useRef({
+    classId: selectedClassId,
+    year: selectedYear,
+    period: selectedPeriod,
+    area: selectedArea
+  });
+
+  React.useEffect(() => {
+    activeFiltersRef.current = {
+      classId: selectedClassId,
+      year: selectedYear,
+      period: selectedPeriod,
+      area: selectedArea
+    };
+  }, [selectedClassId, selectedYear, selectedPeriod, selectedArea]);
+
+  React.useEffect(() => {
+    studentRecordsRef.current = studentRecords;
+  }, [studentRecords]);
+
+  React.useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      const hasDirty = Object.values(rowStatuses).some(r => r.status === 'dirty');
+      if (hasDirty) {
+        e.preventDefault();
+        e.returnValue = 'Anda memiliki perubahan yang belum disimpan. Apakah Anda yakin ingin meninggalkan halaman?';
+        return e.returnValue;
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [rowStatuses]);
+
+  React.useEffect(() => {
+    return () => {
+      cancelAllTimers();
+    };
+  }, []);
+
+  const cancelAllTimers = () => {
+    Object.keys(debounceTimersRef.current).forEach(id => {
+      clearTimeout(debounceTimersRef.current[id]);
+      delete debounceTimersRef.current[id];
+    });
+  };
+
+  const triggerAutosave = (studentId: string) => {
+    if (inFlightSavesRef.current[studentId]) {
+      followUpSaveRef.current[studentId] = true;
+      setRowStatuses(prev => ({
+        ...prev,
+        [studentId]: { status: 'dirty' }
+      }));
+      return;
+    }
+
+    if (debounceTimersRef.current[studentId]) {
+      clearTimeout(debounceTimersRef.current[studentId]);
+    }
+
+    setRowStatuses(prev => ({
+      ...prev,
+      [studentId]: { status: 'dirty' }
+    }));
+
+    debounceTimersRef.current[studentId] = setTimeout(async () => {
+      delete debounceTimersRef.current[studentId];
+      await saveRowInternal(studentId, false);
+
+      if (followUpSaveRef.current[studentId]) {
+        followUpSaveRef.current[studentId] = false;
+        triggerAutosave(studentId);
+      }
+    }, 1200);
+  };
+
+  const saveRowInternal = async (studentId: string, isManual: boolean): Promise<boolean> => {
+    if (inFlightSavesRef.current[studentId]) {
+      return false;
+    }
+
+    if (debounceTimersRef.current[studentId]) {
+      clearTimeout(debounceTimersRef.current[studentId]);
+      delete debounceTimersRef.current[studentId];
+    }
+
+    const raw = studentRecordsRef.current[studentId];
+    if (!raw) {
+      return false;
+    }
+
+    const currentFilters = {
+      classId: selectedClassId,
+      year: selectedYear,
+      period: selectedPeriod,
+      area: selectedArea
+    };
+
+    setRowStatuses(prev => ({
+      ...prev,
+      [studentId]: { status: 'saving' }
+    }));
+    inFlightSavesRef.current[studentId] = true;
+
+    try {
+      if (
+        currentFilters.classId !== activeFiltersRef.current.classId ||
+        currentFilters.year !== activeFiltersRef.current.year ||
+        currentFilters.period !== activeFiltersRef.current.period ||
+        currentFilters.area !== activeFiltersRef.current.area
+      ) {
+        inFlightSavesRef.current[studentId] = false;
+        return false;
+      }
+
+      const validated = validateAndEnrichRecord(raw);
+      await elementaryLiteracyService.saveProgressRecord(validated);
+      await elementaryMTSSService.syncProgressRecordToMTSS(validated as any);
+
+      if (
+        currentFilters.classId !== activeFiltersRef.current.classId ||
+        currentFilters.year !== activeFiltersRef.current.year ||
+        currentFilters.period !== activeFiltersRef.current.period ||
+        currentFilters.area !== activeFiltersRef.current.area
+      ) {
+        inFlightSavesRef.current[studentId] = false;
+        return false;
+      }
+
+      const isOffline = !navigator.onLine;
+      const finalStatus = isOffline ? 'offline' : (isManual ? 'success_manual' : 'success_auto');
+      const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+
+      setRowStatuses(prev => ({
+        ...prev,
+        [studentId]: { status: finalStatus, time: timeStr }
+      }));
+
+      setModifiedIds(prev => {
+        const copy = new Set(prev);
+        copy.delete(studentId);
+        return copy;
+      });
+
+      inFlightSavesRef.current[studentId] = false;
+      return true;
+    } catch (err) {
+      console.error('Error in saveRowInternal:', err);
+      
+      if (
+        currentFilters.classId === activeFiltersRef.current.classId &&
+        currentFilters.year === activeFiltersRef.current.year &&
+        currentFilters.period === activeFiltersRef.current.period &&
+        currentFilters.area === activeFiltersRef.current.area
+      ) {
+        setRowStatuses(prev => ({
+          ...prev,
+          [studentId]: { status: 'error' }
+        }));
+      }
+
+      inFlightSavesRef.current[studentId] = false;
+      return false;
+    }
+  };
+
+  const handleManualSave = async (studentId: string) => {
+    if (inFlightSavesRef.current[studentId]) return;
+    followUpSaveRef.current[studentId] = false;
+
+    const success = await saveRowInternal(studentId, true);
+    if (success) {
+      const raw = studentRecordsRef.current[studentId];
+      toast.success(`Berhasil menyimpan penilaian untuk ${raw?.studentName || 'Siswa'}`);
+    } else {
+      toast.error('Gagal menyimpan nilai untuk baris ini');
+    }
+  };
+
+  const flushPendingChanges = async (): Promise<boolean> => {
+    const dirtyStudentIds = Object.keys(rowStatuses).filter(
+      id => rowStatuses[id]?.status === 'dirty'
+    );
+
+    if (dirtyStudentIds.length === 0) {
+      return true;
+    }
+
+    let allSuccessful = true;
+    const promises = dirtyStudentIds.map(async (studentId) => {
+      const success = await saveRowInternal(studentId, false);
+      if (!success) {
+        allSuccessful = false;
+      }
+    });
+
+    await Promise.all(promises);
+    return allSuccessful;
+  };
+
+  const handleClassChange = async (newClassId: string) => {
+    const success = await flushPendingChanges();
+    if (!success) {
+      toast.warning('Beberapa perubahan draf tidak dapat disimpan secara otomatis sebelum pindah kelas.');
+    }
+    cancelAllTimers();
+    setSelectedClassId(newClassId);
+  };
+
+  const handleYearChange = async (newYear: string) => {
+    const success = await flushPendingChanges();
+    if (!success) {
+      toast.warning('Beberapa perubahan draf tidak dapat disimpan secara otomatis sebelum ganti tahun ajaran.');
+    }
+    cancelAllTimers();
+    setSelectedYear(newYear);
+  };
+
+  const handlePeriodChange = async (newPeriod: ElementaryPeriod) => {
+    const success = await flushPendingChanges();
+    if (!success) {
+      toast.warning('Beberapa perubahan draf tidak dapat disimpan secara otomatis sebelum ganti periode.');
+    }
+    cancelAllTimers();
+    setSelectedPeriod(newPeriod);
+  };
+
+  const handleAreaChange = async (newArea: ElementaryArea) => {
+    const success = await flushPendingChanges();
+    if (!success) {
+      toast.warning('Beberapa perubahan draf tidak dapat disimpan secara otomatis sebelum ganti area pembelajaran.');
+    }
+    cancelAllTimers();
+    setSelectedArea(newArea);
+  };
+
+  const handleOpenNotes = (studentId: string) => {
+    const record = studentRecords[studentId] || {};
+    setActiveNotesStudentId(studentId);
+    setActiveNotesForm({
+      letterRecognitionNote: record.letterRecognitionNote || '',
+      tajwidNote: record.tajwidNote || '',
+      notes: record.notes || ''
+    });
+  };
+
+  const applyMengajiNotes = (studentId: string, letterNote: string, tajwidNote: string, additionalNote: string) => {
+    setStudentRecords(prev => {
+      const current = prev[studentId] || {};
+      const updated = {
+        ...current,
+        letterRecognitionNote: letterNote,
+        tajwidNote: tajwidNote,
+        notes: additionalNote
+      };
+      studentRecordsRef.current[studentId] = updated;
+      triggerAutosave(studentId);
+      return {
+        ...prev,
+        [studentId]: updated
+      };
+    });
+
+    setModifiedIds(prev => {
+      const copy = new Set(prev);
+      copy.add(studentId);
+      return copy;
+    });
+  };
+
+  const getRowStatusElement = (studentId: string, supportStatus: any) => {
+    const rowState = rowStatuses[studentId];
+    if (!rowState) {
+      if (!supportStatus || supportStatus === 'INCOMPLETE_DATA') {
+        return <span className="text-slate-400 font-medium text-xs">Belum diisi</span>;
+      }
+      return <span className="text-slate-500 font-medium text-xs">Tersimpan</span>;
+    }
+
+    switch (rowState.status) {
+      case 'dirty':
+        return <span className="text-amber-600 font-bold text-xs animate-pulse">Perubahan belum tersimpan</span>;
+      case 'saving':
+        return (
+          <span className="text-indigo-600 font-bold text-xs flex items-center gap-1.5 justify-center">
+            <RefreshCw size={12} className="animate-spin" /> Menyimpan...
+          </span>
+        );
+      case 'success_auto':
+        return <span className="text-emerald-600 font-bold text-xs">✓ Tersimpan otomatis · {rowState.time}</span>;
+      case 'success_manual':
+        return <span className="text-emerald-600 font-bold text-xs">✓ Tersimpan manual · {rowState.time}</span>;
+      case 'offline':
+        return <span className="text-slate-500 font-medium text-xs">Menunggu koneksi</span>;
+      case 'error':
+        return <span className="text-red-600 font-black text-xs">Gagal menyimpan</span>;
+      default:
+        if (!supportStatus || supportStatus === 'INCOMPLETE_DATA') {
+          return <span className="text-slate-400 font-medium text-xs">Belum diisi</span>;
+        }
+        return <span className="text-slate-500 font-medium text-xs">Tersimpan</span>;
+    }
+  };
+
+  const getButtonProps = (studentId: string) => {
+    const rowState = rowStatuses[studentId];
+    const isSaving = rowState?.status === 'saving';
+    const isDirty = rowState?.status === 'dirty';
+    const isError = rowState?.status === 'error';
+
+    let label = 'Simpan';
+    let buttonClass = 'bg-slate-100 hover:bg-slate-200 text-slate-700';
+
+    if (isSaving) {
+      label = 'Menyimpan...';
+      buttonClass = 'bg-slate-200 text-slate-400 cursor-not-allowed';
+    } else if (isDirty) {
+      label = 'Simpan Sekarang';
+      buttonClass = 'bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-500/15';
+    } else if (isError) {
+      label = 'Simpan Ulang';
+      buttonClass = 'bg-red-500 hover:bg-red-600 text-white shadow-md shadow-red-500/15';
+    } else if (rowState?.status === 'success_auto' || rowState?.status === 'success_manual') {
+      label = 'Tersimpan';
+      buttonClass = 'bg-emerald-50 text-emerald-700 border border-emerald-100';
+    }
+
+    return { label, buttonClass, disabled: isSaving };
+  };
+
   React.useEffect(() => {
     if (!showSheetsSync || !selectedClassId || !selectedYear) return;
 
@@ -610,6 +956,11 @@ export default function ElementaryLiteracyNumeracy() {
         });
 
         setStudentRecords(initialStates);
+        setRowStatuses({});
+        cancelAllTimers();
+        inFlightSavesRef.current = {};
+        followUpSaveRef.current = {};
+        studentRecordsRef.current = { ...initialStates };
       } catch (err) {
         console.error('Error loading class lists or data:', err);
         toast.error('Gagal mensinkronisasikan daftar peserta didik');
@@ -625,6 +976,17 @@ export default function ElementaryLiteracyNumeracy() {
 
   // Handle cell changes with live status evaluation
   const handleCellChange = (studentId: string, field: string, value: any) => {
+    let shouldTrigger = false;
+    if (selectedArea === 'BAHASA_INDONESIA' || selectedArea === 'ENGLISH_READING') {
+      shouldTrigger = true;
+    } else if (selectedArea === 'NUMERACY') {
+      shouldTrigger = true;
+    } else if (selectedArea === 'MENGAJI') {
+      if (field === 'iqroCurrentLevel' || field === 'targetIqroLevel') {
+        shouldTrigger = true;
+      }
+    }
+
     setStudentRecords(prev => {
       const current = prev[studentId] || {};
       const updated = { ...current, [field]: value } as any;
@@ -654,6 +1016,12 @@ export default function ElementaryLiteracyNumeracy() {
         updated.wordsRead = wordsRaw;
         updated.errors = errsRaw;
         updated.comprehensionScore = currentComp;
+      }
+
+      studentRecordsRef.current[studentId] = updated;
+
+      if (shouldTrigger) {
+        triggerAutosave(studentId);
       }
 
       return {
@@ -881,7 +1249,7 @@ export default function ElementaryLiteracyNumeracy() {
             <Sliders size={14} className="text-gray-400 ml-1" />
             <select 
               value={selectedClassId} 
-              onChange={(e) => setSelectedClassId(e.target.value)}
+              onChange={(e) => handleClassChange(e.target.value)}
               className="bg-transparent font-black text-gray-800 outline-none pr-2 cursor-pointer"
             >
               <option value="" disabled>-- Pilih Kelas SD --</option>
@@ -895,7 +1263,7 @@ export default function ElementaryLiteracyNumeracy() {
           <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-100 p-1.5 rounded-2xl text-xs font-bold text-gray-600">
             <select 
               value={selectedYear} 
-              onChange={(e) => setSelectedYear(e.target.value)}
+              onChange={(e) => handleYearChange(e.target.value)}
               className="bg-transparent font-black text-gray-800 outline-none pr-1 cursor-pointer"
             >
               {ACADEMIC_YEARS.map(y => (
@@ -908,7 +1276,7 @@ export default function ElementaryLiteracyNumeracy() {
           <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-100 p-1.5 rounded-2xl text-xs font-bold text-gray-600">
             <select 
               value={selectedPeriod} 
-              onChange={(e) => setSelectedPeriod(e.target.value as ElementaryPeriod)}
+              onChange={(e) => handlePeriodChange(e.target.value as ElementaryPeriod)}
               className="bg-transparent font-black text-gray-800 outline-none pr-1.5 cursor-pointer"
             >
               {PERIODS.map(p => (
@@ -992,7 +1360,7 @@ export default function ElementaryLiteracyNumeracy() {
                 <button
                   key={ar.id}
                   type="button"
-                  onClick={() => setSelectedArea(ar.id)}
+                  onClick={() => handleAreaChange(ar.id)}
                   className={cn(
                     "flex items-center justify-between p-4 rounded-2xl border transition-all text-left relative overflow-hidden cursor-pointer",
                     isActive 
@@ -1125,6 +1493,12 @@ export default function ElementaryLiteracyNumeracy() {
 
           {/* DYNAMIC STUDENTS ASSESSMENT SPREADSHEET TABLE */}
           <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden">
+            {/* Informational Autosave Strip */}
+            <div className="bg-amber-50/50 border-b border-amber-100/60 px-5 py-3 flex items-center gap-2.5 text-amber-850 text-xs font-bold">
+              <Sparkles size={14} className="text-amber-500 shrink-0" />
+              <span>Perubahan disimpan otomatis per baris. Hindari mengedit siswa yang sama pada waktu yang sama dengan guru lain.</span>
+            </div>
+
             {/* Table Search & Header */}
             <div className="p-5 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50/40">
               <div className="flex items-center gap-2">
