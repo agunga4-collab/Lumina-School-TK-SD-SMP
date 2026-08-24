@@ -112,6 +112,14 @@ const getRows = (val: string) => {
   return Math.min(5, lines);
 };
 
+export type RowSaveStatus =
+  | 'dirty'
+  | 'saving'
+  | 'success_auto'
+  | 'success_manual'
+  | 'offline'
+  | 'error';
+
 export interface ElementaryStudent {
   id: string; // NIS
   name: string;
@@ -220,7 +228,7 @@ export default function ElementaryLiteracyNumeracy() {
 
   React.useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      const hasDirty = Object.values(rowStatuses).some(r => r.status === 'dirty');
+      const hasDirty = Object.values(rowStatuses).some((r: any) => r?.status === 'dirty');
       if (hasDirty) {
         e.preventDefault();
         e.returnValue = 'Anda memiliki perubahan yang belum disimpan. Apakah Anda yakin ingin meninggalkan halaman?';
@@ -976,16 +984,7 @@ export default function ElementaryLiteracyNumeracy() {
 
   // Handle cell changes with live status evaluation
   const handleCellChange = (studentId: string, field: string, value: any) => {
-    let shouldTrigger = false;
-    if (selectedArea === 'BAHASA_INDONESIA' || selectedArea === 'ENGLISH_READING') {
-      shouldTrigger = true;
-    } else if (selectedArea === 'NUMERACY') {
-      shouldTrigger = true;
-    } else if (selectedArea === 'MENGAJI') {
-      if (field === 'iqroCurrentLevel' || field === 'targetIqroLevel') {
-        shouldTrigger = true;
-      }
-    }
+    const shouldTrigger = true;
 
     setStudentRecords(prev => {
       const current = prev[studentId] || {};
@@ -1556,7 +1555,8 @@ export default function ElementaryLiteracyNumeracy() {
                   <thead>
                     {/* Row 1: Group Headers */}
                     <tr className="bg-slate-100 border-b border-slate-200 text-[10px] font-black text-slate-700 uppercase tracking-widest text-center select-none sticky top-0 z-30">
-                      <th className="py-2.5 px-4 sticky left-0 bg-slate-100 z-30 border-r border-slate-200 w-[260px] max-w-[280px] min-w-[240px] text-left">Identity</th>
+                      <th rowSpan={2} className="py-2.5 px-2 bg-slate-100 border-r border-slate-200 w-12 text-center text-slate-800">No.</th>
+                      <th rowSpan={2} className="py-2.5 px-4 sticky left-0 bg-slate-100 z-30 border-r border-slate-200 w-[260px] max-w-[280px] min-w-[240px] text-left text-slate-800">Nama Siswa SD</th>
                       
                       {selectedArea === 'BAHASA_INDONESIA' && (
                         <>
@@ -1574,9 +1574,9 @@ export default function ElementaryLiteracyNumeracy() {
 
                       {selectedArea === 'MENGAJI' && (
                         <>
-                          <th colSpan={2} className="py-2.5 px-2 bg-teal-50/80 border-r border-slate-200 text-teal-800">Current Progress</th>
-                          <th colSpan={2} className="py-2.5 px-2 bg-indigo-50/80 border-r border-slate-200 text-indigo-850">Target / Outcome</th>
-                          <th colSpan={2} className="py-2.5 px-2 bg-emerald-50/80 border-r border-slate-200 text-emerald-850">Teacher Notes</th>
+                          <th colSpan={1} className="py-2.5 px-2 bg-teal-50/80 border-r border-slate-200 text-teal-800">Current Progress</th>
+                          <th colSpan={1} className="py-2.5 px-2 bg-indigo-50/80 border-r border-slate-200 text-indigo-850">Target / Outcome</th>
+                          <th colSpan={1} className="py-2.5 px-2 bg-emerald-50/80 border-r border-slate-200 text-emerald-850">Teacher Notes</th>
                         </>
                       )}
 
@@ -1587,14 +1587,14 @@ export default function ElementaryLiteracyNumeracy() {
                         </>
                       )}
 
-                      <th colSpan={2} className="py-2.5 px-4 bg-orange-50/85 border-r border-slate-200 text-orange-800">Intervention & Notes</th>
-                      <th className="py-2.5 px-4 sticky right-0 bg-slate-100 z-30 text-slate-800 border-l border-slate-200 shadow-[-2px_0_5px_rgba(0,0,0,0.02)]">Save</th>
+                      {selectedArea !== 'MENGAJI' && (
+                        <th colSpan={2} className="py-2.5 px-4 bg-orange-50/85 border-r border-slate-200 text-orange-800">Intervention & Notes</th>
+                      )}
+                      <th rowSpan={2} className="py-2.5 px-4 sticky right-0 bg-slate-100 z-30 text-slate-800 border-l border-slate-200 shadow-[-2px_0_5px_rgba(0,0,0,0.02)]">Status / Simpan</th>
                     </tr>
 
                     {/* Row 2: Sub-headers */}
                     <tr className="bg-slate-50 border-b border-slate-100 text-[11px] font-bold text-slate-600 uppercase tracking-wider sticky top-[37px] z-30">
-                      <th className="py-3 px-4 w-[260px] max-w-[280px] min-w-[240px] sticky left-0 bg-slate-50 z-30 border-r border-slate-100 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">Nama Siswa SD</th>
-                      
                       {selectedArea === 'BAHASA_INDONESIA' && (
                         <>
                           <th className="py-3 px-2 w-24 text-center border-r border-slate-100 bg-slate-50">Words Read</th>
@@ -1617,12 +1617,9 @@ export default function ElementaryLiteracyNumeracy() {
 
                       {selectedArea === 'MENGAJI' && (
                         <>
-                          <th className="py-3 px-2 w-28 text-center border-r border-slate-100 bg-slate-50">Level</th>
-                          <th className="py-3 px-2 w-36 text-center border-r border-slate-100 bg-slate-50">Current Checkpoint</th>
-                          <th className="py-3 px-2 w-28 text-center border-r border-slate-100 bg-slate-50">Target Level</th>
-                          <th className="py-3 px-2 w-36 text-center border-r border-slate-100 bg-slate-50">Status Kelulusan</th>
-                          <th className="py-3 px-2 w-40 text-center border-r border-slate-100 bg-slate-50">Catatan Huruf</th>
-                          <th className="py-3 px-2 w-40 text-center border-r border-slate-100 bg-slate-50">Catatan Tajwid</th>
+                          <th className="py-3 px-2 w-32 text-center border-r border-slate-100 bg-slate-50">Level Saat Ini</th>
+                          <th className="py-3 px-2 w-32 text-center border-r border-slate-100 bg-slate-50">Level Target</th>
+                          <th className="py-3 px-2 w-48 text-center border-r border-slate-100 bg-slate-50 font-bold">Catatan Guru</th>
                         </>
                       )}
 
@@ -1634,26 +1631,29 @@ export default function ElementaryLiteracyNumeracy() {
                         </>
                       )}
 
-                      <th className="py-3 px-4 w-44 text-center border-r border-slate-100 bg-slate-50">
-                        <div className="flex flex-col items-center gap-1.5">
-                          <span>Intervensi</span>
-                          <button
-                            type="button"
-                            onClick={applyBulkTier1}
-                            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200/60 px-2 py-0.5 rounded-lg text-[9px] font-black tracking-wider uppercase transition-colors cursor-pointer whitespace-nowrap block"
-                            title="Set seluruh siswa menjadi Tier 1"
-                          >
-                            Set Tier 1 Semua
-                          </button>
-                        </div>
-                      </th>
-                      <th className="py-3 px-4 w-48 text-center border-r border-slate-100 bg-slate-50">Catatan Tambahan</th>
-                      <th className="py-3 px-4 w-28 text-center sticky right-0 bg-slate-50 z-30 shadow-[-2px_0_5px_rgba(0,0,0,0.02)] border-l border-slate-100">Aksi Save Baris</th>
+                      {selectedArea !== 'MENGAJI' && (
+                        <>
+                          <th className="py-3 px-4 w-44 text-center border-r border-slate-100 bg-slate-50">
+                            <div className="flex flex-col items-center gap-1.5">
+                              <span>Intervensi</span>
+                              <button
+                                type="button"
+                                onClick={applyBulkTier1}
+                                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200/60 px-2 py-0.5 rounded-lg text-[9px] font-black tracking-wider uppercase transition-colors cursor-pointer whitespace-nowrap block"
+                                title="Set seluruh siswa menjadi Tier 1"
+                              >
+                                Set Tier 1 Semua
+                              </button>
+                            </div>
+                          </th>
+                          <th className="py-3 px-4 w-48 text-center border-r border-slate-100 bg-slate-50">Catatan Tambahan</th>
+                        </>
+                      )}
                     </tr>
                   </thead>
                   
                   <tbody className="divide-y divide-slate-150 text-sm bg-white">
-                    {filteredStudents.map((st) => {
+                    {filteredStudents.map((st, index) => {
                       const record = studentRecords[st.id] || {};
                       const isModified = modifiedIds.has(st.id);
 
@@ -1667,6 +1667,11 @@ export default function ElementaryLiteracyNumeracy() {
                               : "hover:bg-slate-50/60"
                           )}
                         >
+                          {/* No. Column */}
+                          <td className="py-4 px-2 text-center text-slate-500 font-bold border-r border-slate-100 bg-slate-50/10">
+                            {index + 1}
+                          </td>
+
                           {/* Student Identity Column: Sticky Left */}
                           <td className={cn(
                             "py-4 px-4 font-black text-slate-800 sticky left-0 z-10 border-r border-slate-100 shadow-[2px_0_5px_rgba(0,0,0,0.02)] transition-colors w-[260px] max-w-[280px] min-w-[240px]",
@@ -1837,16 +1842,7 @@ export default function ElementaryLiteracyNumeracy() {
                                   placeholder=""
                                   value={record.iqroCurrentLevel ?? ''}
                                   onChange={e => handleCellChange(st.id, 'iqroCurrentLevel', e.target.value)}
-                                  className="w-20 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-2 h-11 text-center font-bold text-base focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all"
-                                />
-                              </td>
-                              <td className="py-4 px-2 text-center border-r border-slate-100">
-                                <textarea
-                                  rows={getRows(record.iqroCurrentCheckpoint || '')}
-                                  placeholder=""
-                                  value={record.iqroCurrentCheckpoint || ''}
-                                  onChange={e => handleCellChange(st.id, 'iqroCurrentCheckpoint', e.target.value)}
-                                  className="w-28 bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-2 font-semibold text-center text-sm focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all resize-y min-h-[44px]"
+                                  className="w-24 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-2 h-11 text-center font-bold text-base focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all"
                                 />
                               </td>
                               <td className="py-4 px-2 text-center border-r border-slate-100">
@@ -1855,39 +1851,35 @@ export default function ElementaryLiteracyNumeracy() {
                                   placeholder=""
                                   value={record.targetIqroLevel ?? ''}
                                   onChange={e => handleCellChange(st.id, 'targetIqroLevel', e.target.value)}
-                                  className="w-20 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-2 h-11 text-center font-bold text-base focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all"
+                                  className="w-24 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-2 h-11 text-center font-bold text-base focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all"
                                 />
                               </td>
                               <td className="py-4 px-2 text-center border-r border-slate-100">
-                                <select
-                                  value={record.completionStatus || ''}
-                                  onChange={e => handleCellChange(st.id, 'completionStatus', e.target.value)}
-                                  className="w-32 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-2 h-11 font-bold cursor-pointer text-sm focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all"
-                                >
-                                  <option value="">-- Pilih --</option>
-                                  <option value="BELUM_DINILAI">Belum Dinilai</option>
-                                  <option value="ON_PROGRESS">On Progress</option>
-                                  <option value="LULUS">Lulus</option>
-                                  <option value="TIDAK_LULUS">Belum Lulus</option>
-                                </select>
-                              </td>
-                              <td className="py-4 px-2 text-center border-r border-slate-100">
-                                <textarea
-                                  rows={getRows(record.letterRecognitionNote || '')}
-                                  placeholder=""
-                                  value={record.letterRecognitionNote || ''}
-                                  onChange={e => handleCellChange(st.id, 'letterRecognitionNote', e.target.value)}
-                                  className="w-36 bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-2 font-medium text-sm focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all resize-y min-h-[44px]"
-                                />
-                              </td>
-                              <td className="py-4 px-2 text-center border-r border-slate-100">
-                                <textarea
-                                  rows={getRows(record.tajwidNote || '')}
-                                  placeholder=""
-                                  value={record.tajwidNote || ''}
-                                  onChange={e => handleCellChange(st.id, 'tajwidNote', e.target.value)}
-                                  className="w-36 bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-2 font-medium text-sm focus:ring-2 focus:ring-slate-900 focus:border-slate-900 focus:bg-white outline-none transition-all resize-y min-h-[44px]"
-                                />
+                                <div className="flex flex-col items-center justify-center gap-1">
+                                  {(!record.letterRecognitionNote && !record.tajwidNote && !record.notes) ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenNotes(st.id)}
+                                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-teal-600 bg-teal-50 hover:bg-teal-100 border border-teal-200/50 rounded-xl transition-all"
+                                    >
+                                      <Plus size={12} />
+                                      Tambah catatan
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenNotes(st.id)}
+                                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/50 rounded-xl transition-all"
+                                    >
+                                      <FileText size={12} />
+                                      Lihat/Edit catatan
+                                    </button>
+                                  )}
+                                  {/* Small snippet preview of notes if exists */}
+                                  <div className="text-[10px] text-slate-400 max-w-[150px] truncate">
+                                    {[record.letterRecognitionNote, record.tajwidNote, record.notes].filter(Boolean).join(' · ')}
+                                  </div>
+                                </div>
                               </td>
                             </>
                           )}
@@ -1930,58 +1922,74 @@ export default function ElementaryLiteracyNumeracy() {
                           )}
 
                           {/* INTERVENSI SELECT dropdown */}
-                          <td className="py-4 px-4 text-center border-r border-slate-100 font-bold">
-                            <select
-                              value={record.supportStatus || 'INCOMPLETE_DATA'}
-                              onChange={e => handleCellChange(st.id, 'supportStatus', e.target.value)}
-                              className={cn(
-                                "text-xs font-black tracking-wider uppercase rounded-xl px-2.5 py-2 h-11 text-center outline-none cursor-pointer border w-40 transition-colors focus:ring-2",
-                                record.supportStatus === 'ON_TRACK' && "bg-emerald-50 text-emerald-700 border-emerald-200 focus:ring-emerald-500 focus:border-emerald-500",
-                                record.supportStatus === 'MONITOR' && "bg-yellow-50 text-yellow-700 border-yellow-200 focus:ring-yellow-500 focus:border-yellow-500",
-                                record.supportStatus === 'NEEDS_SUPPORT' && "bg-orange-50 text-orange-700 border-orange-200 focus:ring-orange-500 focus:border-orange-500",
-                                record.supportStatus === 'INTERVENTION_RECOMMENDED' && "bg-purple-50 text-purple-700 border-purple-200 focus:ring-purple-500 focus:border-purple-500",
-                                (record.supportStatus === 'INCOMPLETE_DATA' || !record.supportStatus) && "bg-slate-50 text-slate-500 border-slate-200 focus:ring-slate-400 focus:border-slate-400"
-                              )}
-                            >
-                              <option value="INCOMPLETE_DATA">Belum diisi</option>
-                              <option value="ON_TRACK">Tier 1</option>
-                              <option value="MONITOR">Tier 2</option>
-                              <option value="NEEDS_SUPPORT">Tier 3</option>
-                              <option value="INTERVENTION_RECOMMENDED">SN (Special Needs)</option>
-                            </select>
-                          </td>
+                          {selectedArea !== 'MENGAJI' && (
+                            <>
+                              <td className="py-4 px-4 text-center border-r border-slate-100 font-bold">
+                                <select
+                                  value={record.supportStatus || 'INCOMPLETE_DATA'}
+                                  onChange={e => handleCellChange(st.id, 'supportStatus', e.target.value)}
+                                  className={cn(
+                                    "text-xs font-black tracking-wider uppercase rounded-xl px-2.5 py-2 h-11 text-center outline-none cursor-pointer border w-40 transition-colors focus:ring-2",
+                                    record.supportStatus === 'ON_TRACK' && "bg-emerald-50 text-emerald-700 border-emerald-200 focus:ring-emerald-500 focus:border-emerald-500",
+                                    record.supportStatus === 'MONITOR' && "bg-yellow-50 text-yellow-700 border-yellow-200 focus:ring-yellow-500 focus:border-yellow-500",
+                                    record.supportStatus === 'NEEDS_SUPPORT' && "bg-orange-50 text-orange-700 border-orange-200 focus:ring-orange-500 focus:border-orange-500",
+                                    record.supportStatus === 'INTERVENTION_RECOMMENDED' && "bg-purple-50 text-purple-700 border-purple-200 focus:ring-purple-500 focus:border-purple-500",
+                                    (record.supportStatus === 'INCOMPLETE_DATA' || !record.supportStatus) && "bg-slate-50 text-slate-500 border-slate-200 focus:ring-slate-400 focus:border-slate-400"
+                                  )}
+                                >
+                                  <option value="INCOMPLETE_DATA">Belum diisi</option>
+                                  <option value="ON_TRACK">Tier 1</option>
+                                  <option value="MONITOR">Tier 2</option>
+                                  <option value="NEEDS_SUPPORT">Tier 3</option>
+                                  <option value="INTERVENTION_RECOMMENDED">SN (Special Needs)</option>
+                                </select>
+                              </td>
 
-                          {/* LOCAL NOTES */}
-                          <td className="py-4 px-4 border-r border-slate-100">
-                            <textarea
-                              rows={getRows(record.notes || '')}
-                              placeholder="Ketik catatan di sini..."
-                              value={record.notes || ''}
-                              onChange={e => handleCellChange(st.id, 'notes', e.target.value)}
-                              className="w-48 bg-slate-50/60 hover:bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-sm outline-none font-medium resize-y focus:ring-2 focus:ring-slate-900 focus:bg-white transition-all min-h-[44px]"
-                            />
-                          </td>
+                              {/* LOCAL NOTES */}
+                              <td className="py-4 px-4 border-r border-slate-100">
+                                <textarea
+                                  rows={getRows(record.notes || '')}
+                                  placeholder="Ketik catatan di sini..."
+                                  value={record.notes || ''}
+                                  onChange={e => handleCellChange(st.id, 'notes', e.target.value)}
+                                  className="w-48 bg-slate-50/60 hover:bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-sm outline-none font-medium resize-y focus:ring-2 focus:ring-slate-900 focus:bg-white transition-all min-h-[44px]"
+                                />
+                              </td>
+                            </>
+                          )}
 
                           {/* ACTION BUTTON COLUMN: Sticky Right */}
                           <td className={cn(
-                            "py-4 px-4 text-center sticky right-0 z-10 border-l border-slate-100 shadow-[-2px_0_5px_rgba(0,0,0,0.02)] transition-colors",
+                            "py-4 px-4 text-center sticky right-0 z-10 border-l border-slate-100 shadow-[-2px_0_5px_rgba(0,0,0,0.02)] transition-colors w-32 min-w-[128px]",
                             isModified 
                               ? "bg-amber-50/30 group-hover/row:bg-amber-50/40" 
                               : "bg-white group-hover/row:bg-slate-50/80"
                           )}>
-                            <button
-                              type="button"
-                              onClick={() => handleSaveRow(st.id)}
-                              className={cn(
-                                "flex items-center gap-1.5 justify-center mx-auto px-4 py-2.5 h-11 rounded-xl text-xs uppercase font-black tracking-wider transition-all cursor-pointer min-w-[100px]",
-                                isModified 
-                                  ? "bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-500/10" 
-                                  : "bg-slate-100 hover:bg-slate-200 text-slate-700"
-                              )}
-                            >
-                              <Save size={13} />
-                              {isModified ? 'SIMPAN DRAF' : 'SIMPAN'}
-                            </button>
+                            <div className="flex flex-col items-center justify-center gap-1.5">
+                              {/* Status Element */}
+                              <div className="h-5 flex items-center justify-center">
+                                {getRowStatusElement(st.id, record.supportStatus)}
+                              </div>
+                              
+                              {/* Manual Save Button */}
+                              {(() => {
+                                const btnProps = getButtonProps(st.id);
+                                return (
+                                  <button
+                                    type="button"
+                                    disabled={btnProps.disabled}
+                                    onClick={() => handleManualSave(st.id)}
+                                    className={cn(
+                                      "flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer",
+                                      btnProps.buttonClass
+                                    )}
+                                  >
+                                    <Save size={11} />
+                                    {btnProps.label}
+                                  </button>
+                                );
+                              })()}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -2723,6 +2731,128 @@ export default function ElementaryLiteracyNumeracy() {
                 )}
               </div>
             </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* CATATAN GURU DRAWER FOR MENGAJI */}
+      <AnimatePresence>
+        {activeNotesStudentId && (
+          <div className="fixed inset-0 z-50 overflow-hidden">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setActiveNotesStudentId(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+
+            <div className="absolute inset-y-0 right-0 max-w-full flex pl-10">
+              <motion.div
+                initial={{ x: '100%' }}
+                animate={{ x: 0 }}
+                exit={{ x: '100%' }}
+                transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                className="w-screen max-w-md bg-white shadow-2xl flex flex-col h-full border-l border-slate-100"
+              >
+                {/* Drawer Header */}
+                <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-2 text-[10px] font-black text-teal-600 uppercase tracking-widest mb-1">
+                      <Heart size={10} className="text-teal-500 fill-teal-500/20" />
+                      <span>Catatan Mengaji</span>
+                      <span>•</span>
+                      <span className="text-slate-900">
+                        {students.find(s => s.id === activeNotesStudentId)?.name || 'Siswa'}
+                      </span>
+                    </div>
+                    <h3 className="text-base font-black text-slate-950 uppercase tracking-wider italic">
+                      Detail Catatan Guru
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveNotesStudentId(null)}
+                    className="p-2 hover:bg-slate-100 rounded-xl transition-all cursor-pointer text-slate-400 hover:text-slate-600"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+
+                {/* Drawer Body - Form */}
+                <div className="flex-1 overflow-y-auto p-6 space-y-5">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-black uppercase tracking-wider text-slate-500 block">
+                      Catatan Pengenalan Huruf
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={activeNotesForm.letterRecognitionNote}
+                      onChange={e => setActiveNotesForm(prev => ({ ...prev, letterRecognitionNote: e.target.value }))}
+                      placeholder="Contoh: Belum konsisten membedakan huruf dzal dan za..."
+                      className="w-full bg-slate-50 border border-slate-200 focus:border-slate-400 rounded-xl px-3.5 py-3 text-sm outline-none font-medium focus:ring-2 focus:ring-slate-900 transition-all resize-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-black uppercase tracking-wider text-slate-500 block">
+                      Catatan Tajwid
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={activeNotesForm.tajwidNote}
+                      onChange={e => setActiveNotesForm(prev => ({ ...prev, tajwidNote: e.target.value }))}
+                      placeholder="Contoh: Mad thobi'i dibaca terlalu panjang..."
+                      className="w-full bg-slate-50 border border-slate-200 focus:border-slate-400 rounded-xl px-3.5 py-3 text-sm outline-none font-medium focus:ring-2 focus:ring-slate-900 transition-all resize-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-black uppercase tracking-wider text-slate-500 block">
+                      Catatan Tambahan
+                    </label>
+                    <textarea
+                      rows={4}
+                      value={activeNotesForm.notes}
+                      onChange={e => setActiveNotesForm(prev => ({ ...prev, notes: e.target.value }))}
+                      placeholder="Contoh: Sangat kooperatif dan bersemangat hari ini..."
+                      className="w-full bg-slate-50 border border-slate-200 focus:border-slate-400 rounded-xl px-3.5 py-3 text-sm outline-none font-medium focus:ring-2 focus:ring-slate-900 transition-all resize-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Drawer Footer */}
+                <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex items-center justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setActiveNotesStudentId(null)}
+                    className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs uppercase font-black tracking-wider text-slate-500 hover:bg-slate-100 transition-all cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (activeNotesStudentId) {
+                        applyMengajiNotes(
+                          activeNotesStudentId,
+                          activeNotesForm.letterRecognitionNote,
+                          activeNotesForm.tajwidNote,
+                          activeNotesForm.notes
+                        );
+                        setActiveNotesStudentId(null);
+                        toast.success('Catatan berhasil diperbarui ke draf');
+                      }
+                    }}
+                    className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs uppercase font-black tracking-wider shadow-md shadow-teal-600/10 transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Save size={13} />
+                    Simpan Catatan
+                  </button>
+                </div>
+              </motion.div>
+            </div>
           </div>
         )}
       </AnimatePresence>
