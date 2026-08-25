@@ -109,6 +109,89 @@ export default function Attendance() {
   const [recapData, setRecapData] = React.useState<Record<string, { hadir: number, sakit: number, izin: number, alpa: number, late: number }>>({});
   const [recapMatrix, setRecapMatrix] = React.useState<Record<string, Record<string, string>>>({});
   const [recapViewMode, setRecapViewMode] = React.useState<'SUMMARY' | 'MATRIX'>('SUMMARY');
+  const [recapPeriodMode, setRecapPeriodMode] = React.useState<'MONTHLY' | 'RANGE'>('MONTHLY');
+  const [recapStartDate, setRecapStartDate] = React.useState<string>(() => {
+    return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-01`;
+  });
+  const [recapEndDate, setRecapEndDate] = React.useState<string>(() => {
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${lastDay.toString().padStart(2, '0')}`;
+  });
+  const [tempStartDate, setTempStartDate] = React.useState<string>(() => {
+    return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-01`;
+  });
+  const [tempEndDate, setTempEndDate] = React.useState<string>(() => {
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${lastDay.toString().padStart(2, '0')}`;
+  });
+  const [recapRangeError, setRecapRangeError] = React.useState<string>('');
+  const [recapError, setRecapError] = React.useState<'permission' | 'generic' | null>(null);
+
+  // Helper to generate dates in range (max 62 days to avoid heavy rendering)
+  const getDatesInRange = React.useCallback((startStr: string, endStr: string) => {
+    const dates: string[] = [];
+    if (!startStr || !endStr) return dates;
+    const start = new Date(startStr);
+    const end = new Date(endStr);
+    const temp = new Date(start);
+    let count = 0;
+    while (temp <= end && count < 62) {
+      dates.push(temp.toISOString().split('T')[0]);
+      temp.setDate(temp.getDate() + 1);
+      count++;
+    }
+    return dates;
+  }, []);
+
+  const datesToRender = React.useMemo(() => {
+    if (recapPeriodMode === 'MONTHLY') {
+      const daysInMonth = new Date(parseInt(recapYear), parseInt(recapMonth), 0).getDate();
+      return Array.from({ length: daysInMonth }, (_, i) => {
+        const dayStr = (i + 1).toString().padStart(2, '0');
+        return {
+          dateStr: `${recapYear}-${recapMonth}-${dayStr}`,
+          label: (i + 1).toString()
+        };
+      });
+    } else {
+      const dates = getDatesInRange(recapStartDate, recapEndDate);
+      return dates.map(d => {
+        const parts = d.split('-');
+        return {
+          dateStr: d,
+          label: `${parts[2]}/${parts[1]}` // e.g., "12/08"
+        };
+      });
+    }
+  }, [recapPeriodMode, recapMonth, recapYear, recapStartDate, recapEndDate, getDatesInRange]);
+
+  const handleSwitchPeriodMode = (mode: 'MONTHLY' | 'RANGE') => {
+    setRecapPeriodMode(mode);
+    if (mode === 'RANGE') {
+      const lastDay = new Date(parseInt(recapYear), parseInt(recapMonth), 0).getDate();
+      const start = `${recapYear}-${recapMonth}-01`;
+      const end = `${recapYear}-${recapMonth}-${lastDay.toString().padStart(2, '0')}`;
+      setTempStartDate(start);
+      setTempEndDate(end);
+      setRecapStartDate(start);
+      setRecapEndDate(end);
+      setRecapRangeError('');
+    }
+  };
+
+  const handleApplyRange = () => {
+    if (!tempStartDate || !tempEndDate) {
+      setRecapRangeError('Tanggal Mulai dan Tanggal Selesai harus diisi.');
+      return;
+    }
+    if (tempStartDate > tempEndDate) {
+      setRecapRangeError('Tanggal Mulai tidak boleh lebih lambat dari Tanggal Selesai.');
+      return;
+    }
+    setRecapRangeError('');
+    setRecapStartDate(tempStartDate);
+    setRecapEndDate(tempEndDate);
+  };
   const [loadingRecap, setLoadingRecap] = React.useState(false);
   const [fileMap, setFileMap] = React.useState<any | null>(null);
   const [elementaryBackupJob, setElementaryBackupJob] = React.useState<any | null>(null);
@@ -477,26 +560,54 @@ export default function Attendance() {
     }
   };
 
-  // Load Monthly Recap Data
+  // Load Monthly/Range Recap Data
   React.useEffect(() => {
     if (view !== 'RECAP' || !selectedClass) return;
 
     const loadMonthlyRecap = async () => {
+      // Clear stale data immediately on load
+      setRecapData({});
+      setRecapMatrix({});
+      setRecapStats({ hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0, attendanceRate: '—' });
+      setRecapError(null);
+
+      // Validate range if in RANGE mode
+      if (recapPeriodMode === 'RANGE') {
+        if (!recapStartDate || !recapEndDate) {
+          setRecapRangeError('Tanggal Mulai dan Tanggal Selesai harus diisi.');
+          return;
+        }
+        if (recapStartDate > recapEndDate) {
+          setRecapRangeError('Tanggal Mulai tidak boleh lebih lambat dari Tanggal Selesai.');
+          return;
+        }
+      }
+
       setLoadingRecap(true);
       try {
         const currentClassEntity = classes.find(c => c.id === selectedClass || c.name === selectedClass);
         const className = currentClassEntity?.name || selectedClass;
         const classId = currentClassEntity?.id || selectedClass;
 
-        const monthPrefix = `${recapYear}-${recapMonth}`;
-        
-        // Query all records for this month
+        // Query all records for this period
         const recordsCollection = attendanceType === 'DHUHUR' ? 'dhuhur_attendance_records' : 'attendance_records';
+        
+        let startLimit = '';
+        let endLimit = '';
+        if (recapPeriodMode === 'MONTHLY') {
+          const lastDay = new Date(parseInt(recapYear), parseInt(recapMonth), 0).getDate();
+          startLimit = `${recapYear}-${recapMonth}-01`;
+          endLimit = `${recapYear}-${recapMonth}-${lastDay.toString().padStart(2, '0')}`;
+        } else {
+          startLimit = recapStartDate;
+          endLimit = recapEndDate;
+        }
+
         const q = query(
           collection(db, recordsCollection),
           where('classId', 'in', [classId, className]),
-          where('date', '>=', `${monthPrefix}-01`),
-          where('date', '<=', `${monthPrefix}-31`)
+          where('date', '>=', startLimit),
+          where('date', '<=', endLimit)
         );
 
         const snap = await getDocs(q);
@@ -509,11 +620,24 @@ export default function Attendance() {
         let totalAlpa = 0;
         let totalLate = 0;
 
+        const hasRecords = snap.docs.length > 0;
+        if (hasRecords) {
+          // Initialize active roster students with zeroes so if they have no records, they show 0 instead of -
+          students.forEach(s => {
+            agg[s.id] = { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
+            matrix[s.id] = {};
+          });
+        }
+
         snap.docs.forEach(doc => {
           const data = doc.data();
           const sId = data.studentId;
           const status = data.status;
           const date = data.date; // YYYY-MM-DD
+
+          // Filter strictly in-memory for active students in the selected-class roster
+          const isInRoster = students.some(st => st.id === sId);
+          if (!isInRoster) return;
 
           if (!agg[sId]) agg[sId] = { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
           if (!matrix[sId]) matrix[sId] = {};
@@ -533,29 +657,52 @@ export default function Attendance() {
           }
         });
 
-        setRecapData(agg);
-        setRecapMatrix(matrix);
-        
-        const totalRecords = snap.docs.length;
-        
-        setRecapStats({
-          hadir: totalHadir,
-          sakit: totalSakit,
-          izin: totalIzin,
-          alpa: totalAlpa,
-          late: totalLate,
-          attendanceRate: totalRecords > 0 ? Math.round(((totalHadir + (attendanceType === 'DHUHUR' ? totalLate : 0)) / totalRecords) * 100) : 0
-        });
+        if (hasRecords) {
+          setRecapData(agg);
+          setRecapMatrix(matrix);
+          
+          let rateVal: number | null = null;
+          if (attendanceType === 'DHUHUR') {
+            const denom = totalHadir + totalLate + totalAlpa;
+            rateVal = denom > 0 ? Math.round(((totalHadir + totalLate) / denom) * 100) : null;
+          } else {
+            const denom = totalHadir + totalLate + totalSakit + totalIzin + totalAlpa;
+            rateVal = denom > 0 ? Math.round(((totalHadir + totalLate) / denom) * 100) : null;
+          }
 
-      } catch (err) {
+          setRecapStats({
+            hadir: totalHadir,
+            sakit: totalSakit,
+            izin: totalIzin,
+            alpa: totalAlpa,
+            late: totalLate,
+            attendanceRate: rateVal !== null ? rateVal : '—'
+          });
+        } else {
+          // No records found
+          setRecapData({});
+          setRecapMatrix({});
+          setRecapStats({
+            hadir: 0,
+            sakit: 0,
+            izin: 0,
+            alpa: 0,
+            late: 0,
+            attendanceRate: '—'
+          });
+        }
+
+      } catch (err: any) {
         console.error('Error loading monthly recap:', err);
+        const isPerm = err?.code === 'permission-denied' || err?.message?.toLowerCase().includes('permission') || err?.message?.toLowerCase().includes('denied');
+        setRecapError(isPerm ? 'permission' : 'generic');
       } finally {
         setLoadingRecap(false);
       }
     };
 
     loadMonthlyRecap();
-  }, [view, selectedClass, recapMonth, recapYear, students.length, attendanceType]);
+  }, [view, selectedClass, recapMonth, recapYear, recapPeriodMode, recapStartDate, recapEndDate, students.length, attendanceType]);
 
   const handlePrevDate = () => {
     const d = new Date(selectedDate);
@@ -1133,7 +1280,7 @@ export default function Attendance() {
         </div>
         <div className="flex bg-gray-100 p-1 rounded-xl">
           <ViewButton active={view === 'INPUT'} onClick={() => setView('INPUT')} label="Input Harian" />
-          <ViewButton active={view === 'RECAP'} onClick={() => setView('RECAP')} label="Rekap Bulanan" />
+          <ViewButton active={view === 'RECAP'} onClick={() => setView('RECAP')} label="Rekap Kehadiran" />
           <ViewButton active={view === 'ALERTS'} onClick={() => setView('ALERTS')} label="Alert Risiko" />
         </div>
       </header>
@@ -1829,30 +1976,91 @@ export default function Attendance() {
                 ))}
               </select>
             </div>
+
+            {/* Mode Period Selector */}
             <div className="flex flex-col">
-              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Bulan</span>
-              <select 
-                value={recapMonth}
-                onChange={(e) => setRecapMonth(e.target.value)}
-                className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-bold outline-none cursor-pointer hover:border-blue-300 transition-colors"
-              >
-                {['01','02','03','04','05','06','07','08','09','10','11','12'].map(m => (
-                  <option key={m} value={m}>{new Date(2000, parseInt(m)-1).toLocaleString('id-ID', { month: 'long' })}</option>
-                ))}
-              </select>
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Periode</span>
+              <div className="flex bg-gray-100 p-1 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => handleSwitchPeriodMode('MONTHLY')}
+                  className={cn(
+                    "px-3 py-1.5 text-xs font-bold rounded-lg transition-all",
+                    recapPeriodMode === 'MONTHLY' ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                  )}
+                >
+                  Bulanan
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSwitchPeriodMode('RANGE')}
+                  className={cn(
+                    "px-3 py-1.5 text-xs font-bold rounded-lg transition-all",
+                    recapPeriodMode === 'RANGE' ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                  )}
+                >
+                  Rentang Tanggal
+                </button>
+              </div>
             </div>
-            <div className="flex flex-col">
-              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Tahun</span>
-              <select 
-                value={recapYear}
-                onChange={(e) => setRecapYear(e.target.value)}
-                className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-bold outline-none cursor-pointer hover:border-blue-300 transition-colors"
-              >
-                {[2024, 2025, 2026].map(y => (
-                  <option key={y} value={y.toString()}>{y}</option>
-                ))}
-              </select>
-            </div>
+
+            {recapPeriodMode === 'MONTHLY' ? (
+              <>
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Bulan</span>
+                  <select 
+                    value={recapMonth}
+                    onChange={(e) => setRecapMonth(e.target.value)}
+                    className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-bold outline-none cursor-pointer hover:border-blue-300 transition-colors"
+                  >
+                    {['01','02','03','04','05','06','07','08','09','10','11','12'].map(m => (
+                      <option key={m} value={m}>{new Date(2000, parseInt(m)-1).toLocaleString('id-ID', { month: 'long' })}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Tahun</span>
+                  <select 
+                    value={recapYear}
+                    onChange={(e) => setRecapYear(e.target.value)}
+                    className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-bold outline-none cursor-pointer hover:border-blue-300 transition-colors"
+                  >
+                    {[2024, 2025, 2026].map(y => (
+                      <option key={y} value={y.toString()}>{y}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Tanggal Mulai</span>
+                  <input
+                    type="date"
+                    value={tempStartDate}
+                    onChange={(e) => setTempStartDate(e.target.value)}
+                    className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-bold outline-none hover:border-blue-300 transition-colors"
+                  />
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Tanggal Selesai</span>
+                  <input
+                    type="date"
+                    value={tempEndDate}
+                    onChange={(e) => setTempEndDate(e.target.value)}
+                    className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-bold outline-none hover:border-blue-300 transition-colors"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleApplyRange}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-sm transition-all active:scale-95 cursor-pointer self-end h-[34px] flex items-center"
+                >
+                  Terapkan
+                </button>
+              </>
+            )}
+
             {(activeUnit === 'JUNIOR_HIGH' || activeUnit === 'ELEMENTARY') && (fileMap?.spreadsheetId || fileMap?.spreadsheetUrl) && (
               <div className="ml-auto flex items-center">
                 <a
@@ -1868,18 +2076,28 @@ export default function Attendance() {
             )}
           </div>
 
+          {recapRangeError && (
+            <div className="bg-red-50 text-red-600 px-4 py-2.5 rounded-xl text-xs font-semibold border border-red-100 flex items-center gap-2">
+              <AlertCircle size={14} />
+              {recapRangeError}
+            </div>
+          )}
+
           {attendanceType === 'DHUHUR' ? (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <RecapCard title="Tingkat Tepat Waktu" value={`${recapStats.attendanceRate}%`} icon={<CheckCircle2 className="text-green-600" />} />
-              <RecapCard title="Total Terlambat" value={recapStats.late.toString()} icon={<Clock className="text-orange-600" />} />
-              <RecapCard title="Total Absen" value={recapStats.alpa.toString()} icon={<UserX className="text-red-600" />} />
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+              <RecapCard title="Tingkat Tepat Waktu" value={loadingRecap || recapError || Object.keys(recapData).length === 0 || recapStats.attendanceRate === '—' ? '—' : `${recapStats.attendanceRate}%`} icon={<CheckCircle2 className="text-green-600" />} />
+              <RecapCard title="Total Hadir" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.hadir.toString()} icon={<CheckCircle2 className="text-emerald-500" />} />
+              <RecapCard title="Total Terlambat" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.late.toString()} icon={<Clock className="text-orange-600" />} />
+              <RecapCard title="Total Absen" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.alpa.toString()} icon={<UserX className="text-red-600" />} />
             </div>
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-              <RecapCard title="Tingkat Hadir" value={`${recapStats.attendanceRate}%`} icon={<CheckCircle2 className="text-green-600" />} />
-              <RecapCard title="Total Sakit" value={recapStats.sakit.toString()} icon={<Clock className="text-blue-600" />} />
-              <RecapCard title="Total Izin" value={recapStats.izin.toString()} icon={<AlertCircle className="text-yellow-600" />} />
-              <RecapCard title="Total Alpa" value={recapStats.alpa.toString()} icon={<UserX className="text-red-600" />} />
+            <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+              <RecapCard title="Tingkat Hadir" value={loadingRecap || recapError || Object.keys(recapData).length === 0 || recapStats.attendanceRate === '—' ? '—' : `${recapStats.attendanceRate}%`} icon={<CheckCircle2 className="text-green-600" />} />
+              <RecapCard title="Total Hadir" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.hadir.toString()} icon={<CheckCircle2 className="text-emerald-500" />} />
+              <RecapCard title="Total Sakit" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.sakit.toString()} icon={<Clock className="text-blue-600" />} />
+              <RecapCard title="Total Izin" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.izin.toString()} icon={<AlertCircle className="text-yellow-600" />} />
+              <RecapCard title="Total Alpa" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.alpa.toString()} icon={<UserX className="text-red-600" />} />
+              <RecapCard title="Total Terlambat" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.late.toString()} icon={<Clock className="text-orange-500" />} />
             </div>
           )}
 
@@ -1887,7 +2105,11 @@ export default function Attendance() {
             <div className="p-6 border-b border-gray-100 flex flex-wrap justify-between items-center gap-4">
               <h3 className="font-bold text-gray-900 flex items-center gap-2">
                 <BarChart3 size={18} className="text-blue-500" />
-                Rekap {new Date(parseInt(recapYear), parseInt(recapMonth)-1).toLocaleString('id-ID', { month: 'long', year: 'numeric' })}
+                {recapPeriodMode === 'MONTHLY' ? (
+                  `Rekap ${new Date(parseInt(recapYear), parseInt(recapMonth)-1).toLocaleString('id-ID', { month: 'long', year: 'numeric' })} · ${classes.find(c => c.id === selectedClass)?.name || '-'}`
+                ) : (
+                  `Rekap ${recapStartDate ? new Date(recapStartDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : '-'} – ${recapEndDate ? new Date(recapEndDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : '-'} · ${classes.find(c => c.id === selectedClass)?.name || '-'}`
+                )}
               </h3>
               <div className="flex bg-gray-100 p-1 rounded-xl">
                 <button 
@@ -1897,7 +2119,7 @@ export default function Attendance() {
                     recapViewMode === 'SUMMARY' ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-700"
                   )}
                 >
-                  Ringkasan
+                  Ringkasan Siswa
                 </button>
                 <button 
                   onClick={() => setRecapViewMode('MATRIX')}
@@ -1922,44 +2144,78 @@ export default function Attendance() {
             </div>
             
             <div className="overflow-x-auto">
-              {recapViewMode === 'SUMMARY' ? (
+              {recapError ? (
+                <div className="p-12 text-center max-w-md mx-auto">
+                  <div className="inline-flex p-3 bg-red-50 text-red-600 rounded-2xl mb-3">
+                    <AlertCircle size={24} />
+                  </div>
+                  <h4 className="font-bold text-gray-900 text-sm mb-1">
+                    {recapError === 'permission' ? 'Akses Ditolak' : 'Gagal Memuat Data'}
+                  </h4>
+                  <p className="text-xs text-gray-500 leading-relaxed">
+                    {recapError === 'permission' 
+                      ? 'Anda tidak memiliki hak akses yang diperlukan untuk melihat rekap kehadiran kelas ini.'
+                      : 'Terjadi kesalahan saat memproses data kehadiran. Silakan muat ulang halaman atau coba lagi nanti.'}
+                  </p>
+                </div>
+              ) : loadingRecap ? (
+                <div className="px-6 py-12 text-center text-gray-400 font-medium">
+                  <RefreshCw size={24} className="animate-spin mx-auto mb-2 text-blue-500" />
+                  Memuat data rekap...
+                </div>
+              ) : !selectedClass ? (
+                <div className="px-6 py-12 text-center text-gray-400 font-medium">
+                  Silakan pilih kelas terlebih dahulu untuk melihat rekap kehadiran.
+                </div>
+              ) : Object.keys(recapData).length === 0 ? (
+                <div className="p-12 text-center max-w-sm mx-auto">
+                  <div className="inline-flex p-3 bg-gray-50 text-gray-400 rounded-2xl mb-3">
+                    <UserX size={24} />
+                  </div>
+                  <h4 className="font-bold text-gray-900 text-sm mb-1">Tidak Ada Data</h4>
+                  <p className="text-xs text-gray-500 leading-relaxed">
+                    Tidak ditemukan catatan kehadiran untuk kelas dan periode yang Anda pilih.
+                  </p>
+                </div>
+              ) : recapViewMode === 'SUMMARY' ? (
                 <table className="w-full text-left">
                   <thead className="bg-gray-50/50 border-b border-gray-100">
                     {attendanceType === 'DHUHUR' ? (
                       <tr>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center w-16">No</th>
                         <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Nama Siswa</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Tepat Waktu</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Hadir</th>
                         <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Terlambat</th>
                         <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Absen</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Kehadiran</th>
                       </tr>
                     ) : (
                       <tr>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center w-16">No</th>
                         <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Nama Siswa</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Hadir</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Sakit</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Izin</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Alpa</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center font-bold text-emerald-600">Hadir</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center font-bold text-blue-600">Sakit</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center font-bold text-yellow-600">Izin</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center font-bold text-red-600">Alpa</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center font-bold text-orange-600">Terlambat</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Kehadiran</th>
                       </tr>
                     )}
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {loadingRecap ? (
-                      <tr>
-                        <td colSpan={5} className="px-6 py-12 text-center text-gray-400 font-medium">
-                          <RefreshCw size={24} className="animate-spin mx-auto mb-2" />
-                          Memuat data rekap...
-                        </td>
-                      </tr>
-                    ) : students.length === 0 ? (
-                      <tr>
-                        <td colSpan={attendanceType === 'DHUHUR' ? 4 : 5} className="px-6 py-12 text-center text-gray-400 font-medium">
-                          Tidak ada data siswa.
-                        </td>
-                      </tr>
-                    ) : students.map((s) => {
+                    {students.map((s, idx) => {
                       const stats = recapData[s.id] || { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
+                      const studentTotal = attendanceType === 'DHUHUR' 
+                        ? (stats.hadir + stats.late + stats.alpa)
+                        : (stats.hadir + stats.sakit + stats.izin + stats.alpa + stats.late);
+                      let studentRate = '—';
+                      if (studentTotal > 0) {
+                        studentRate = `${Math.round(((stats.hadir + stats.late) / studentTotal) * 100)}%`;
+                      }
+
                       return (
                         <tr key={s.id} className="hover:bg-gray-50/50 transition-colors">
+                          <td className="px-6 py-4 text-center font-bold text-xs text-gray-400">{idx + 1}</td>
                           <td className="px-6 py-4">
                             <p className="font-bold text-gray-900 text-sm">{s.name}</p>
                             <p className="text-[10px] text-gray-400 font-medium">#{s.id}</p>
@@ -1990,8 +2246,14 @@ export default function Attendance() {
                               <td className="px-6 py-4 text-center">
                                 <StatsBadge value={stats.alpa} color="red" />
                               </td>
+                              <td className="px-6 py-4 text-center">
+                                <StatsBadge value={stats.late} color="orange" />
+                              </td>
                             </>
                           )}
+                          <td className="px-6 py-4 text-center font-black text-sm text-blue-600">
+                            {studentRate}
+                          </td>
                         </tr>
                       );
                     })}
@@ -2005,23 +2267,15 @@ export default function Attendance() {
                         <th className="sticky left-0 z-10 bg-gray-50 px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest border-r border-gray-100 min-w-[200px]">
                           Nama Siswa
                         </th>
-                        {Array.from({ length: new Date(parseInt(recapYear), parseInt(recapMonth), 0).getDate() }, (_, i) => i + 1).map(day => (
-                          <th key={day} className="px-3 py-4 text-[10px] font-bold text-gray-400 text-center border-r border-gray-50 min-w-[40px]">
-                            {day}
+                        {datesToRender.map(item => (
+                          <th key={item.dateStr} className="px-3 py-4 text-[10px] font-bold text-gray-400 text-center border-r border-gray-50 min-w-[40px]" title={item.dateStr}>
+                            {item.label}
                           </th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
-                      {loadingRecap ? (
-                        <tr>
-                          <td colSpan={32} className="px-6 py-12 text-center text-gray-400 font-medium">
-                            <RefreshCw size={24} className="animate-spin mx-auto mb-2" />
-                            Memuat tabel harian...
-                          </td>
-                        </tr>
-                      ) : students.map((s) => {
-                        const daysInMonth = new Date(parseInt(recapYear), parseInt(recapMonth), 0).getDate();
+                      {students.map((s) => {
                         const studentMatrix = recapMatrix[s.id] || {};
                         
                         return (
@@ -2029,10 +2283,8 @@ export default function Attendance() {
                             <td className="sticky left-0 z-10 bg-white px-6 py-3 border-r border-gray-100 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
                               <p className="font-bold text-gray-900 text-xs truncate max-w-[150px]">{s.name}</p>
                             </td>
-                            {Array.from({ length: daysInMonth }, (_, i) => {
-                              const day = i + 1;
-                              const dateStr = `${recapYear}-${recapMonth}-${day.toString().padStart(2, '0')}`;
-                              const status = studentMatrix[dateStr];
+                            {datesToRender.map(item => {
+                              const status = studentMatrix[item.dateStr];
                               
                               let symbol = '-';
                               let colorClass = 'text-gray-200';
@@ -2046,10 +2298,11 @@ export default function Attendance() {
                                 else if (status === 'SAKIT') { symbol = 'S'; colorClass = 'text-blue-600 font-black'; }
                                 else if (status === 'IZIN') { symbol = 'I'; colorClass = 'text-yellow-600 font-black'; }
                                 else if (status === 'ALPA') { symbol = 'A'; colorClass = 'text-red-600 font-black'; }
+                                else if (status === 'LATE') { symbol = 'T'; colorClass = 'text-orange-500 font-black'; }
                               }
 
                               return (
-                                <td key={day} className={cn("px-3 py-3 text-center text-xs border-r border-gray-50", colorClass)}>
+                                <td key={item.dateStr} className={cn("px-3 py-3 text-center text-xs border-r border-gray-50", colorClass)}>
                                   {symbol}
                                 </td>
                               );

@@ -793,6 +793,7 @@ export function Layout() {
                       <NavItem to="/junior-high/monthly-report" icon={<FileText size={18} />} label="Monthly Report Summary" />
                       <NavItem to="/junior-high/monthly-comments" icon={<MessageSquare size={18} />} label="Monthly Report Comments" />
                       <NavItem to="/junior-high/monthly-report-preview" icon={<Eye size={18} />} label="Monthly Report Preview" />
+                      <NavItem to="/junior-high/monthly-report-template" icon={<FileText size={18} />} label="Monthly Report Template" />
                     </>
                   )}
                   <NavItem to="/junior-high/behavior/mtss/overview" icon={<ShieldAlert size={18} />} label="MTSS Behavior" />

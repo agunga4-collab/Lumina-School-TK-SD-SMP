@@ -10,6 +10,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
+import { useJHReportAttendance } from '../../hooks/useJHReportAttendance';
 import type { Class, Student, ClassReportSummary, JuniorHighMonthlyReportComment } from '../../types';
 
 const indonesianMonths = [
@@ -49,6 +50,32 @@ export default function MonthlyReportPreviewPage() {
   const [loadingSummary, setLoadingSummary] = React.useState<boolean>(false);
   const [commentsMap, setCommentsMap] = React.useState<Record<string, JuniorHighMonthlyReportComment>>({});
   const [loadingComments, setLoadingComments] = React.useState<boolean>(false);
+
+  // Selected class display name for legacy fallback matching
+  const selectedClassObj = React.useMemo(() => {
+    return classesList.find(c => c.id === selectedClassId);
+  }, [classesList, selectedClassId]);
+
+  // Derive student IDs for the query input
+  const activeStudentIds = React.useMemo(() => {
+    return students.map(s => s.id);
+  }, [students]);
+
+  // Hook call for read-only monthly attendance resolution
+  const {
+    loading: loadingAttendance,
+    error: attendanceError,
+    errorType: attendanceErrorType,
+    attendanceAvailableForPeriod,
+    studentAttendanceMap,
+  } = useJHReportAttendance({
+    selectedClassId,
+    selectedClassName: selectedClassObj?.name,
+    selectedYear,
+    selectedSemester,
+    selectedMonth,
+    studentIds: activeStudentIds,
+  });
 
   // Initial filter state
   React.useEffect(() => {
@@ -169,8 +196,6 @@ export default function MonthlyReportPreviewPage() {
 
   const isRosterReady = totalStudents > 0 && finalCommentsCount === totalStudents;
   const isReportReady = hasSummary && isSummaryReady && isRosterReady;
-
-  const selectedClassObj = classesList.find(c => c.id === selectedClassId);
 
   return (
     <div id="monthly-report-preview-page" className="min-h-screen bg-slate-50/50 p-6">
@@ -481,6 +506,41 @@ export default function MonthlyReportPreviewPage() {
             </div>
 
             <div className="divide-y divide-slate-100">
+              {/* Attendance status banner notice */}
+              {selectedClassId && selectedYear && selectedSemester && selectedMonth && (
+                <div className="px-5 py-3 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs font-semibold text-slate-500 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <Calendar size={14} className="text-[#002366]" />
+                    <span>Presensi Kehadiran Bulanan</span>
+                  </div>
+                  <div>
+                    {loadingAttendance ? (
+                      <span className="inline-flex items-center gap-1.5 text-blue-650">
+                        <RefreshCw size={12} className="animate-spin" /> Memuat data presensi...
+                      </span>
+                    ) : attendanceError ? (
+                      attendanceErrorType === 'permission-denied' ? (
+                        <span className="text-rose-600 font-bold bg-rose-50 px-2.5 py-0.5 rounded border border-rose-100">
+                          Attendance data could not be accessed for this report period.
+                        </span>
+                      ) : (
+                        <span className="text-rose-600 font-bold bg-rose-50 px-2.5 py-0.5 rounded border border-rose-100">
+                          Attendance data could not be loaded for this report period.
+                        </span>
+                      )
+                    ) : !attendanceAvailableForPeriod ? (
+                      <span className="text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded border border-amber-100">
+                        Attendance has not been recorded for this report period.
+                      </span>
+                    ) : (
+                      <span className="text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded border border-emerald-100">
+                        Attendance is recorded for this period
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {loadingStudents || loadingComments ? (
                 <div className="py-12 text-center">
                   <RefreshCw size={24} className="animate-spin text-slate-400 mx-auto mb-2" />
@@ -541,15 +601,39 @@ export default function MonthlyReportPreviewPage() {
                       <div className="grid grid-cols-3 gap-2 border border-slate-100 rounded-lg p-2.5 bg-slate-50/30 text-xs text-center">
                         <div>
                           <span className="block text-[10px] font-medium text-slate-400">Sick Leave</span>
-                          <strong className="text-slate-700">-</strong>
+                          <strong className="text-slate-700">
+                            {loadingAttendance ? (
+                              <span className="text-slate-300">...</span>
+                            ) : attendanceAvailableForPeriod && studentAttendanceMap[student.id] ? (
+                              studentAttendanceMap[student.id].sickLeave ?? '-'
+                            ) : (
+                              '-'
+                            )}
+                          </strong>
                         </div>
                         <div className="border-x border-slate-100">
                           <span className="block text-[10px] font-medium text-slate-400">Excused Leave</span>
-                          <strong className="text-slate-700">-</strong>
+                          <strong className="text-slate-700">
+                            {loadingAttendance ? (
+                              <span className="text-slate-300">...</span>
+                            ) : attendanceAvailableForPeriod && studentAttendanceMap[student.id] ? (
+                              studentAttendanceMap[student.id].excusedLeave ?? '-'
+                            ) : (
+                              '-'
+                            )}
+                          </strong>
                         </div>
                         <div>
                           <span className="block text-[10px] font-medium text-slate-400">Absent</span>
-                          <strong className="text-slate-700">-</strong>
+                          <strong className="text-slate-700">
+                            {loadingAttendance ? (
+                              <span className="text-slate-300">...</span>
+                            ) : attendanceAvailableForPeriod && studentAttendanceMap[student.id] ? (
+                              studentAttendanceMap[student.id].absent ?? '-'
+                            ) : (
+                              '-'
+                            )}
+                          </strong>
                         </div>
                       </div>
 
