@@ -298,8 +298,114 @@ export default function Observation() {
   const [showSaveEditConfirm, setShowSaveEditConfirm] = React.useState<boolean>(false);
   const [gradingSaveStatus, setGradingSaveStatus] = React.useState<Record<string, 'idle' | 'saving' | 'success' | 'error'>>({});
   
+  const [contextSaveStatus, setContextSaveStatus] = React.useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [generalPhotoUploadStatus, setGeneralPhotoUploadStatus] = React.useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
+
+  const studentAutosaveTimersRef = React.useRef<Record<string, any>>({});
+  const autoSaveTimerRef = React.useRef<any>(null);
+  const observationsRef = React.useRef<Record<string, StudentObservation>>({});
+  const lastSavedGeneralNoteRef = React.useRef<string>("");
+
+  // Cancel pending timers on context changes
+  React.useEffect(() => {
+    return () => {
+      Object.values(studentAutosaveTimersRef.current).forEach(timer => clearTimeout(timer as any));
+      studentAutosaveTimersRef.current = {};
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current as any);
+      }
+    };
+  }, [selectedClassId, observationDate, selectedActivity, selectedDomain]);
+
+  const saveGeneralNoteAutosave = async (noteToSave: string) => {
+    if (!selectedClassId || !observationDate) return;
+    setGeneralNoteSaveStatus('saving');
+    try {
+      const canonicalClassId = resolveCanonicalClassId(selectedClassId, classes) || selectedClassId;
+      const noteText = (noteToSave || "").trim();
+      const now = Date.now();
+      const updatedByUid = profile?.uid || profile?.email || 'system';
+      const updatedByName = profile?.displayName || profile?.email || 'Anda';
+
+      // Save locally
+      const localKey = `kg_daily_note_${canonicalClassId}_${observationDate}`;
+      localStorage.setItem(localKey, noteText);
+
+      // Save to daily context
+      const contextId = `${canonicalClassId}_${observationDate}`;
+      const contextRef = doc(db, 'kindergarten_observation_daily_contexts', contextId);
+      const activeClassObj = classes.find((c: any) => c.id === canonicalClassId || c.id === selectedClassId);
+
+      await setDoc(contextRef, {
+        classId: canonicalClassId,
+        className: activeClassObj?.name || 'General',
+        observationDate: observationDate,
+        academicYear: activeYear || '2026/2027',
+        semester: activeSemester || '1',
+        generalNote: noteText,
+        generalNoteUpdatedAt: now,
+        generalNoteUpdatedBy: updatedByUid,
+        generalNoteUpdatedByName: updatedByName,
+        updatedAt: now,
+        updatedBy: updatedByUid
+      }, { merge: true });
+
+      // Save to observation session doc if selected
+      const activeSentra = selectedActivity || "general";
+      const activeDomain = selectedActivity === 'SPECIAL_ACTIVITY' ? 'none' : (selectedDomain || 'general');
+      const sessionDocId = `${canonicalClassId}_${activeSentra}_${activeDomain}_${observationDate}`;
+      const sessionDocRef = doc(db, 'observations', sessionDocId);
+      try {
+        await setDoc(sessionDocRef, {
+          generalNote: noteText,
+          generalNoteUpdatedAt: now,
+          generalNoteUpdatedBy: updatedByUid,
+          generalNoteUpdatedByName: updatedByName,
+          updatedAt: now
+        }, { merge: true });
+      } catch (e) {
+        console.warn(e);
+      }
+
+      lastSavedGeneralNoteRef.current = noteToSave;
+      setGeneralNoteUpdatedAt(now);
+      setGeneralNoteUpdatedBy(updatedByUid);
+      setGeneralNoteUpdatedByName(updatedByName);
+      setGeneralNoteSaveStatus('saved');
+    } catch (err) {
+      console.error(err);
+      setGeneralNoteSaveStatus('error');
+    }
+  };
+
+  React.useEffect(() => {
+    if (generalNote === lastSavedGeneralNoteRef.current) {
+      return;
+    }
+
+    setGeneralNoteSaveStatus('saving');
+
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+
+    autoSaveTimerRef.current = setTimeout(() => {
+      saveGeneralNoteAutosave(generalNote);
+    }, 1000);
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [generalNote]);
+
   // Observations for students, keyed by studentId
   const [observations, setObservations] = React.useState<Record<string, StudentObservation>>({});
+
+  React.useEffect(() => {
+    observationsRef.current = observations;
+  }, [observations]);
 
   // Enrollment Audit States
   const [auditLoading, setAuditLoading] = React.useState<boolean>(false);
@@ -537,6 +643,7 @@ export default function Observation() {
       return;
     }
 
+    setContextSaveStatus('saving');
     const contextId = `${selectedClassId}_${observationDate}`;
     const contextRef = doc(db, 'kindergarten_observation_daily_contexts', contextId);
     
@@ -570,9 +677,12 @@ export default function Observation() {
       setIsEditingDailyContext(false);
       setSelectedActivity(targetActivity);
       setSelectedDomain(targetDomain);
+      setContextSaveStatus('saved');
+      setTimeout(() => setContextSaveStatus('idle'), 3000);
     } catch (err) {
       console.error("Error saving daily context:", err);
       toast.error("Gagal menyimpan Konteks Kegiatan.");
+      setContextSaveStatus('error');
     }
   };
 
@@ -1514,6 +1624,7 @@ export default function Observation() {
         setDocCreatedAt(null);
         setDocCreatedBy(null);
         setGeneralNote("");
+        lastSavedGeneralNoteRef.current = "";
         setGeneralNoteUpdatedAt(null);
         setGeneralNoteUpdatedBy(null);
         setGeneralNoteUpdatedByName(null);
@@ -1543,6 +1654,7 @@ export default function Observation() {
           setDocCreatedAt(parsed.createdAt || parsed.timestamp || null);
           setDocCreatedBy(parsed.createdBy || null);
           setGeneralNote(parsed.generalNote || "");
+          lastSavedGeneralNoteRef.current = parsed.generalNote || "";
           setGeneralNoteUpdatedAt(parsed.generalNoteUpdatedAt || null);
           setGeneralNoteUpdatedBy(parsed.generalNoteUpdatedBy || null);
           setGeneralNoteUpdatedByName(parsed.generalNoteUpdatedByName || null);
@@ -1589,6 +1701,7 @@ export default function Observation() {
               setDocCreatedAt(parsed.createdAt || parsed.timestamp || null);
               setDocCreatedBy(parsed.createdBy || null);
               setGeneralNote(parsed.generalNote || "");
+              lastSavedGeneralNoteRef.current = parsed.generalNote || "";
               setGeneralNoteUpdatedAt(parsed.generalNoteUpdatedAt || null);
               setGeneralNoteUpdatedBy(parsed.generalNoteUpdatedBy || null);
               setGeneralNoteUpdatedByName(parsed.generalNoteUpdatedByName || null);
@@ -1627,6 +1740,7 @@ export default function Observation() {
               setDocCreatedAt(parsed.createdAt || parsed.timestamp || null);
               setDocCreatedBy(parsed.createdBy || null);
               setGeneralNote(parsed.generalNote || "");
+              lastSavedGeneralNoteRef.current = parsed.generalNote || "";
               setGeneralNoteUpdatedAt(parsed.generalNoteUpdatedAt || null);
               setGeneralNoteUpdatedBy(parsed.generalNoteUpdatedBy || null);
               setGeneralNoteUpdatedByName(parsed.generalNoteUpdatedByName || null);
@@ -1670,6 +1784,7 @@ export default function Observation() {
           setDocCreatedAt(d.createdAt || d.timestamp || null);
           setDocCreatedBy(d.createdBy || null);
           setGeneralNote(d.generalNote || "");
+          lastSavedGeneralNoteRef.current = d.generalNote || "";
           setGeneralNoteUpdatedAt(d.generalNoteUpdatedAt || null);
           setGeneralNoteUpdatedBy(d.generalNoteUpdatedBy || null);
           setGeneralNoteUpdatedByName(d.generalNoteUpdatedByName || null);
@@ -1709,6 +1824,7 @@ export default function Observation() {
                 setDocCreatedAt(d.createdAt || d.timestamp || null);
                 setDocCreatedBy(d.createdBy || null);
                 setGeneralNote(d.generalNote || "");
+                lastSavedGeneralNoteRef.current = d.generalNote || "";
                 setGeneralNoteUpdatedAt(d.generalNoteUpdatedAt || null);
                 setGeneralNoteUpdatedBy(d.generalNoteUpdatedBy || null);
                 setGeneralNoteUpdatedByName(d.generalNoteUpdatedByName || null);
@@ -1775,6 +1891,7 @@ export default function Observation() {
             if (localVal) dailyNote = localVal;
           }
           setGeneralNote(dailyNote);
+          lastSavedGeneralNoteRef.current = dailyNote;
           setGeneralNoteUpdatedAt(null);
           setGeneralNoteUpdatedBy(null);
           setGeneralNoteUpdatedByName(null);
@@ -1800,6 +1917,7 @@ export default function Observation() {
         setDocCreatedAt(null);
         setDocCreatedBy(null);
         setGeneralNote("");
+        lastSavedGeneralNoteRef.current = "";
         setGeneralNoteUpdatedAt(null);
         setGeneralNoteUpdatedBy(null);
         setGeneralNoteUpdatedByName(null);
@@ -1953,6 +2071,146 @@ export default function Observation() {
     });
   };
 
+  const updateStudentFields = (studentId: string, fields: Partial<StudentObservation>) => {
+    setObservations(prev => {
+      const updated = {
+        ...prev,
+        [studentId]: {
+          ...prev[studentId],
+          ...fields
+        }
+      };
+      localStorage.setItem('kg_observation_data', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const handleStudentNoteChange = (studentId: string, value: string) => {
+    updateStudentField(studentId, 'notes', value);
+    setGradingSaveStatus(prev => ({ ...prev, [studentId]: 'saving' }));
+
+    if (studentAutosaveTimersRef.current[studentId]) {
+      clearTimeout(studentAutosaveTimersRef.current[studentId]);
+    }
+
+    studentAutosaveTimersRef.current[studentId] = setTimeout(() => {
+      executeSaveStudent(studentId);
+    }, 1000);
+  };
+
+  const executeSaveStudent = async (studentId: string) => {
+    try {
+      if (!selectedClassId) {
+        throw new Error('Kelas belum dipilih.');
+      }
+      const student = students.find(s => s.id === studentId);
+      if (!student) {
+        throw new Error('Siswa tidak ditemukan.');
+      }
+
+      const currentStudentObs = getStudentObs(observationsRef.current, student);
+      const enrichedStudentObs = {
+        ...currentStudentObs,
+        studentName: student.name,
+        updatedAt: Date.now(),
+        updatedBy: profile?.displayName || profile?.email || 'Anda'
+      };
+
+      const targetDate = observationDate;
+      const todayStr = formatDateLocal(new Date());
+      const activeSentra = selectedActivity || "general";
+      const activeDomain = selectedActivity === 'SPECIAL_ACTIVITY' ? 'none' : (selectedDomain || 'general');
+
+      const docId = `${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
+      const docRef = doc(db, 'observations', docId);
+
+      let existingObservations: Record<string, any> = {};
+      let existingGeneralPhoto = generalPhoto;
+
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const d = docSnap.data();
+        existingObservations = d.observations || {};
+        if (d.generalPhotoUrl) {
+          existingGeneralPhoto = d.generalPhotoUrl;
+        }
+      }
+
+      const updatedObservations = {
+        ...observationsRef.current,
+        ...existingObservations,
+        [studentId]: enrichedStudentObs
+      };
+
+      if (student.oldLuminaId) {
+        updatedObservations[student.oldLuminaId] = enrichedStudentObs;
+      }
+      if (student.nis) {
+        updatedObservations[student.nis] = enrichedStudentObs;
+      }
+
+      const resolvedCreatedAt = docCreatedAt || Date.now();
+      const resolvedCreatedBy = docCreatedBy || profile?.email || profile?.displayName || profile?.uid || 'System';
+
+      const resolvedNoteUpdatedAt = generalNote ? (generalNoteUpdatedAt || Date.now()) : null;
+      const resolvedNoteUpdatedBy = generalNote ? (generalNoteUpdatedBy || profile?.email || profile?.uid || 'System') : null;
+      const resolvedNoteUpdatedByName = generalNote ? (generalNoteUpdatedByName || profile?.displayName || profile?.email || 'System') : null;
+
+      const payload = {
+        id: docId,
+        academicYearId: activeYear || '2026/2027',
+        academicYear: activeYear || '2026/2027',
+        unit: 'KINDERGARTEN',
+        unitId: 'KINDERGARTEN',
+        classId: selectedClassId,
+        observationDate: targetDate,
+        centerId: selectedActivity,
+        domainId: selectedDomain,
+        activity: selectedActivity,
+        domain: selectedDomain,
+        date: targetDate,
+        photoUrl: existingGeneralPhoto,
+        generalPhotoUrl: existingGeneralPhoto,
+        generalPhoto: existingGeneralPhoto,
+        generalPhotoDeleted: false,
+        title: activities.find(a => a.id === selectedActivity)?.label || selectedActivity,
+        caption: domains.find(d => d.id === selectedDomain)?.label || selectedDomain,
+        createdAt: resolvedCreatedAt,
+        createdBy: resolvedCreatedBy,
+        
+        generalNote: generalNote || "",
+        generalNoteUpdatedAt: resolvedNoteUpdatedAt,
+        generalNoteUpdatedBy: resolvedNoteUpdatedBy,
+        generalNoteUpdatedByName: resolvedNoteUpdatedByName,
+
+        status: 'active',
+        observations: updatedObservations,
+        timestamp: Date.now(),
+        updatedAt: Date.now()
+      };
+
+      const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
+      localStorage.setItem(comboKeyDateSpecific, JSON.stringify(payload));
+
+      if (targetDate === todayStr) {
+        const comboKeyLegacy = `kg_obs_hist_${selectedClassId}_${activeSentra}_${activeDomain}`;
+        localStorage.setItem(comboKeyLegacy, JSON.stringify(payload));
+      }
+
+      await setDoc(docRef, cleanFirestoreData(payload), { merge: true });
+      
+      setObservations(updatedObservations);
+      setIsSessionLocked(true);
+      setSessionStatus('locked');
+      setCurrentDocId(docId);
+
+      setGradingSaveStatus(prev => ({ ...prev, [studentId]: 'success' }));
+    } catch (err: any) {
+      console.error("Gagal menyimpan otomatis siswa:", err);
+      setGradingSaveStatus(prev => ({ ...prev, [studentId]: 'error' }));
+    }
+  };
+
   const handleGradingChange = async (studentId: string, value: KGGrading | null) => {
     // 1. Update state immediately
     updateStudentField(studentId, 'grading', value);
@@ -1969,11 +2227,13 @@ export default function Observation() {
         throw new Error('Siswa tidak ditemukan.');
       }
 
-      const currentStudentObs = getStudentObs(observations, student);
+      const currentStudentObs = getStudentObs(observationsRef.current, student);
       const enrichedStudentObs = {
         ...currentStudentObs,
         studentName: student.name,
-        grading: value
+        grading: value,
+        updatedAt: Date.now(),
+        updatedBy: profile?.displayName || profile?.email || 'Anda'
       };
 
       const targetDate = observationDate;
@@ -2012,8 +2272,8 @@ export default function Observation() {
 
       // Merge only this student's observation
       const updatedObservations = {
-        ...observations, // merge with current state
-        ...existingObservations, // and with firestore
+        ...observationsRef.current,
+        ...existingObservations,
         [studentId]: enrichedStudentObs
       };
 
@@ -2961,222 +3221,135 @@ export default function Observation() {
       </div>
 
       {activeTab === 'input' ? (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        
-        {/* LEFT COLUMN: Configuration Block (4 grid columns) */}
-        <div className="lg:col-span-4 space-y-6">
-
-          {/* Daily Context Locking Widget */}
-          <div className={cn(
-            "bg-white rounded-3xl p-6 shadow-sm border transition-all duration-300",
-            isContextActiveAndLocked 
-              ? "border-emerald-100 bg-emerald-50/20" 
-              : "border-amber-100 bg-amber-50/10"
-          )}>
-            <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-4">
-              <div className="flex items-center gap-2">
-                {isContextActiveAndLocked ? (
-                  <Lock size={18} className="text-emerald-600" />
-                ) : (
-                  <Unlock size={18} className="text-amber-500" />
-                )}
-                <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">
-                  Konteks Kegiatan Harian
-                </h3>
+        <div className="space-y-6">
+          {/* Sticky/Top Compact Context Bar */}
+          <div className="sticky top-[56px] md:top-[64px] z-40 bg-white/95 backdrop-blur-md border border-gray-100 p-4 rounded-3xl shadow-md mb-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Date Input */}
+              <div className="flex flex-col min-w-[130px]">
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Tanggal</label>
+                <input 
+                  type="date"
+                  value={observationDate}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setObservationDate(val);
+                    const params = new URLSearchParams(window.location.search);
+                    params.set('date', val);
+                    window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+                  }}
+                  className="border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-white text-gray-700"
+                />
               </div>
-              <span className={cn(
-                "px-2.5 py-0.5 text-[9px] font-black uppercase rounded-full",
-                isContextActiveAndLocked 
-                  ? "bg-emerald-100 text-emerald-800" 
-                  : "bg-amber-100 text-amber-800"
-              )}>
-                {isContextActiveAndLocked ? "Locked" : "Belum Dikunci"}
-              </span>
+
+              {/* Class Selector */}
+              <div className="flex flex-col min-w-[140px]">
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Kelas</label>
+                <select
+                  value={selectedClassId}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setSelectedClassId(val);
+                    const params = new URLSearchParams(window.location.search);
+                    params.set('classId', val);
+                    window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+                  }}
+                  className="border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-white text-gray-700"
+                >
+                  <option value="">-- Pilih Kelas --</option>
+                  {classes.map((cls) => (
+                    <option key={cls.id} value={cls.id}>{cls.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Sentra Dropdown */}
+              <div className="flex flex-col min-w-[160px]">
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Sentra / Sesi</label>
+                <select
+                  value={selectedActivity || ""}
+                  onChange={(e) => {
+                    const val = e.target.value as KGActivity;
+                    setSelectedActivity(val);
+                    setSelectedDomain(null);
+                    if (selectedClassId && val) {
+                      handleSaveDailyContext(val, "");
+                    }
+                  }}
+                  className="border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-white text-gray-700"
+                >
+                  <option value="">-- Pilih Sentra --</option>
+                  {activities.map((act) => (
+                    <option key={act.id} value={act.id}>{act.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Domain Dropdown */}
+              <div className="flex flex-col min-w-[200px]">
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Domain Perkembangan</label>
+                <select
+                  value={selectedDomain || ""}
+                  disabled={!selectedActivity || selectedActivity === 'SPECIAL_ACTIVITY'}
+                  onChange={(e) => {
+                    const val = e.target.value as KGDomain;
+                    setSelectedDomain(val);
+                    if (selectedClassId && selectedActivity && val) {
+                      handleSaveDailyContext(selectedActivity, val);
+                    }
+                  }}
+                  className="border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-white text-gray-700 disabled:bg-gray-100 disabled:text-gray-400"
+                >
+                  <option value="">-- Pilih Domain --</option>
+                  {domains.map((dom) => (
+                    <option key={dom.id} value={dom.id}>{dom.label}</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
-            {isDailyContextLoading ? (
-              <div className="flex items-center gap-2 py-2 text-xs text-gray-500">
-                <Loader2 className="animate-spin" size={14} />
-                <span>Memuat konteks harian...</span>
-              </div>
-            ) : resolvedContext ? (
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <div className="flex items-start gap-2">
-                    <span className="text-[10px] uppercase font-black text-gray-400 mt-0.5">Sentra:</span>
-                    <span className="text-xs font-bold text-gray-900">{resolvedContext.sentraName}</span>
-                  </div>
-                  {resolvedContext.domainName && (
-                    <div className="flex items-start gap-2">
-                      <span className="text-[10px] uppercase font-black text-gray-400 mt-0.5">Domain:</span>
-                      <span className="text-xs font-bold text-gray-900">{resolvedContext.domainName}</span>
-                    </div>
+            {/* Context status/indicator with Last Saved info */}
+            <div className="flex items-center gap-3 bg-gray-50 border border-gray-150 px-4 py-2 rounded-2xl shrink-0">
+              <div className="flex flex-col text-right">
+                <div className="flex items-center gap-1.5 justify-end">
+                  {isDailyContextLoading ? (
+                    <>
+                      <Loader2 className="animate-spin text-emerald-500" size={12} />
+                      <span className="text-[10px] font-bold text-gray-500">Memuat...</span>
+                    </>
+                  ) : contextSaveStatus === 'saving' || isSaving ? (
+                    <>
+                      <Loader2 className="animate-spin text-amber-500" size={12} />
+                      <span className="text-[10px] font-bold text-amber-600">Menyimpan...</span>
+                    </>
+                  ) : contextSaveStatus === 'error' ? (
+                    <>
+                      <AlertTriangle className="text-rose-500" size={12} />
+                      <span className="text-[10px] font-bold text-rose-600">Gagal Menyimpan</span>
+                    </>
+                  ) : isSessionLocked ? (
+                    <>
+                      <CheckCircle2 className="text-emerald-500" size={12} />
+                      <span className="text-[10px] font-bold text-emerald-600">Konteks Tersimpan</span>
+                    </>
+                  ) : (
+                    <>
+                      <Unlock className="text-amber-500" size={12} />
+                      <span className="text-[10px] font-bold text-amber-600">Belum Dikunci</span>
+                    </>
                   )}
                 </div>
-
-                {!isEditingDailyContext ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsEditingDailyContext(true);
-                      setSelectedActivity(resolvedContext.sentraId);
-                      setSelectedDomain(resolvedContext.domainId || "");
-                    }}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-white hover:bg-gray-50 text-gray-700 hover:text-gray-950 font-bold border border-gray-200 rounded-xl text-[11px] transition-all cursor-pointer"
-                  >
-                    <Edit size={12} />
-                    Ubah Konteks Kegiatan Harian
-                  </button>
-                ) : (
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsEditingDailyContext(false);
-                        setSelectedActivity(resolvedContext.sentraId);
-                        setSelectedDomain(resolvedContext.domainId || "");
-                      }}
-                      className="flex-1 py-2 px-3 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold rounded-xl text-[10px] transition-all cursor-pointer"
-                    >
-                      Batal
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleSaveDailyContext(selectedActivity, selectedDomain)}
-                      className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-[10px] transition-all cursor-pointer"
-                    >
-                      Simpan Perubahan
-                    </button>
-                  </div>
-                )}
+                <span className="text-[9px] text-gray-400 mt-0.5">
+                  {docCreatedAt ? `Disimpan: ${new Date(docCreatedAt).toLocaleTimeString('id-ID')} oleh ${docCreatedBy || 'Guru'}` : 'Belum disimpan'}
+                </span>
               </div>
-            ) : (
-              <div className="space-y-4">
-                <p className="text-[11px] text-gray-600 leading-relaxed font-medium">
-                  Belum ada Sentra & Domain yang dikunci untuk kelas ini pada tanggal <span className="font-bold">{observationDate}</span>.
-                </p>
-                
-                {selectedActivity ? (
-                  <button
-                    type="button"
-                    onClick={() => handleSaveDailyContext(selectedActivity, selectedDomain)}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-[11px] transition-all shadow-md shadow-emerald-50 cursor-pointer"
-                  >
-                    <Lock size={12} />
-                    Kunci Sentra & Domain Hari Ini
-                  </button>
-                ) : (
-                  <div className="text-[10px] text-amber-700 bg-amber-50/50 p-2.5 rounded-xl border border-amber-100/50 font-bold leading-normal">
-                    Silakan pilih Sentra & Domain di bawah untuk mulai mengunci konteks hari ini.
-                  </div>
-                )}
-              </div>
-            )}
+            </div>
           </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           
-          {/* 1. Sentra Selection */}
-          <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4">
-            <div className="flex items-center justify-between border-b border-gray-50 pb-3">
-              <div className="flex items-center gap-2">
-                <Compass size={18} className="text-emerald-500" />
-                <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">1. Pilih Sentra / Sesi</h3>
-              </div>
-              <span className="px-2.5 py-0.5 bg-gray-100 text-gray-600 text-[9px] font-black uppercase rounded-full">Pilih 1</span>
-            </div>
-            
-            <div className="grid grid-cols-1 gap-1.5 max-h-[300px] overflow-y-auto pr-1">
-              {activities.map(act => {
-                const isSelected = selectedActivity === act.id;
-                return (
-                  <button
-                    key={act.id}
-                    onClick={() => {
-                      setSelectedActivity(act.id);
-                    }}
-                    className={cn(
-                      "w-full flex items-center justify-between p-3 rounded-2xl text-left transition-all border border-transparent",
-                      isSelected 
-                        ? "bg-emerald-600 text-white shadow-md shadow-emerald-100 font-bold border-emerald-500 scale-[1.01]" 
-                        : "text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 bg-gray-50/50"
-                    )}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={cn(
-                        "p-2 rounded-xl",
-                        isSelected ? "bg-white/20 text-white" : "bg-white text-gray-500 shadow-sm"
-                      )}>
-                        {React.cloneElement(act.icon as React.ReactElement, { size: 14 })}
-                      </div>
-                      <span className="text-[11px] font-bold tracking-tight">{act.label}</span>
-                    </div>
-                    {isSelected && (
-                      <div className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-emerald-600">
-                        <Check size={12} strokeWidth={3} />
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* 2. Domain Selection */}
-          <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4">
-            <div className="flex items-center justify-between border-b border-gray-50 pb-3">
-              <div className="flex items-center gap-2">
-                <Brain size={18} className="text-emerald-500" />
-                <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">2. Pilih Domain Perkembangan</h3>
-              </div>
-              <span className="px-2.5 py-0.5 bg-gray-100 text-gray-600 text-[9px] font-black uppercase rounded-full">
-                {selectedActivity === 'SPECIAL_ACTIVITY' ? "Disabled" : "Pilih 1"}
-              </span>
-            </div>
-            
-            {selectedActivity === 'SPECIAL_ACTIVITY' ? (
-              <div className="p-4 bg-gray-50 rounded-2xl border border-gray-150 text-center">
-                <p className="text-xs text-gray-500 font-bold">
-                  Tidak ada domain perkembangan untuk kegiatan khusus.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
-                {domains.map(dom => {
-                  const isSelected = selectedDomain === dom.id;
-                  return (
-                    <button
-                      key={dom.id}
-                      onClick={() => {
-                        setSelectedDomain(dom.id);
-                      }}
-                      className={cn(
-                        "w-full flex flex-col p-3 rounded-2xl text-left transition-all border",
-                        isSelected 
-                          ? "bg-gray-900 text-white border-gray-900 shadow-lg scale-[1.01]" 
-                          : "text-gray-700 hover:bg-gray-50 border-gray-100 bg-white"
-                      )}
-                    >
-                      <div className="flex items-center justify-between w-full">
-                        <span className="text-[11px] font-black tracking-wide">{dom.label}</span>
-                        {isSelected ? (
-                          <div className="w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center text-white scale-90">
-                            <Check size={10} strokeWidth={3} />
-                          </div>
-                        ) : (
-                          <div className="w-4 h-4 rounded-full bg-gray-100 border border-gray-200" />
-                        )}
-                      </div>
-                      <span className={cn(
-                        "text-[9px] mt-1 line-clamp-1 leading-snug",
-                        isSelected ? "text-gray-300" : "text-gray-400"
-                      )}>
-                        {dom.desc}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          {/* LEFT COLUMN: Configuration Block (4 grid columns) */}
+          <div className="lg:col-span-4 space-y-6">
 
           {/* 2b. Form Kegiatan Khusus */}
           {selectedActivity === 'SPECIAL_ACTIVITY' && (
@@ -3945,6 +4118,7 @@ export default function Observation() {
 
         </div>
 
+      </div>
       </div>
       ) : (
         <div className="space-y-6">
