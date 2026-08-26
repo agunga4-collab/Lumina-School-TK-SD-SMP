@@ -98,14 +98,47 @@ export default function MonthlyReportPreviewPage() {
     const fetchJHClasses = async () => {
       setLoadingClasses(true);
       try {
-        const all = await getClasses();
-        const jhClasses = (all || []).filter(c => 
-          c.unitId === 'JUNIOR_HIGH' && 
-          c.status !== 'archived'
-        );
+        const [all, enrollmentsSnap] = await Promise.all([
+          getClasses(),
+          getDocs(query(
+            collection(db, 'enrollments'),
+            where('academicYear', '==', selectedYear),
+            where('status', '==', 'active')
+          ))
+        ]);
+
+        const activeClassKeys = new Set<string>();
+        enrollmentsSnap.docs.forEach(d => {
+          const e = d.data();
+          if (e.classId) {
+            activeClassKeys.add(e.classId);
+          }
+        });
+
+        const jhClasses = (all || []).filter(c => {
+          const isJH = c.unitId === 'JUNIOR_HIGH';
+          const isActiveYear = c.academicYear === selectedYear;
+          const isNotArchived = c.status !== 'archived';
+          
+          if (!isJH || !isActiveYear || !isNotArchived) return false;
+
+          const hasEnrolledStudent = activeClassKeys.has(c.id) || 
+                                     activeClassKeys.has(c.name) || 
+                                     ((c as any).classId && activeClassKeys.has((c as any).classId));
+          return hasEnrolledStudent;
+        });
+
         setClassesList(jhClasses);
-        if (jhClasses.length > 0 && !selectedClassId) {
-          setSelectedClassId(jhClasses[0].id);
+
+        // Selection Behavior:
+        // Clear if not valid in the new context, otherwise keep it
+        if (selectedClassId) {
+          const isStillEligible = jhClasses.some(c => c.id === selectedClassId);
+          if (!isStillEligible) {
+            setSelectedClassId('');
+          }
+        } else {
+          setSelectedClassId('');
         }
       } catch (err) {
         console.error('Error loading Junior High classes:', err);
@@ -115,7 +148,7 @@ export default function MonthlyReportPreviewPage() {
       }
     };
     fetchJHClasses();
-  }, [selectedClassId]);
+  }, [selectedYear]);
 
   // Immediate stale data cleanup on context filter change to guarantee checking state during loading (Requirement 8)
   React.useEffect(() => {
@@ -272,7 +305,7 @@ export default function MonthlyReportPreviewPage() {
                 JUNIOR HIGH ONLY
               </span>
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                Internal Preview — Not Published
+                Pratinjau & Validasi Rapor Bulanan
               </span>
             </div>
             <h1 className="text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
@@ -363,7 +396,11 @@ export default function MonthlyReportPreviewPage() {
                 onChange={(e) => setSelectedClassId(e.target.value)}
                 className="w-full text-sm rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-2 bg-slate-50/50 font-medium"
               >
-                <option value="" disabled>-- Pilih Kelas --</option>
+                <option value="" disabled>
+                  {classesList.length === 0 
+                    ? "Tidak ada kelas aktif" 
+                    : "-- Pilih Kelas --"}
+                </option>
                 {classesList.map(c => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
@@ -371,6 +408,13 @@ export default function MonthlyReportPreviewPage() {
             )}
           </div>
         </div>
+
+        {!loadingClasses && classesList.length === 0 && (
+          <div className="mt-4 p-3.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-center gap-2">
+            <AlertCircle size={15} className="shrink-0" />
+            <span>Tidak ada kelas aktif dengan siswa terdaftar pada konteks ini.</span>
+          </div>
+        )}
       </div>
 
       {/* Main Assembly Grid */}

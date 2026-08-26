@@ -98,14 +98,47 @@ export default function MonthlyReportTemplatePage() {
     const fetchJHClasses = async () => {
       setLoadingClasses(true);
       try {
-        const all = await getClasses();
-        const jhClasses = (all || []).filter(c => 
-          c.unitId === 'JUNIOR_HIGH' && 
-          c.status !== 'archived'
-        );
+        const [all, enrollmentsSnap] = await Promise.all([
+          getClasses(),
+          getDocs(query(
+            collection(db, 'enrollments'),
+            where('academicYear', '==', selectedYear),
+            where('status', '==', 'active')
+          ))
+        ]);
+
+        const activeClassKeys = new Set<string>();
+        enrollmentsSnap.docs.forEach(d => {
+          const e = d.data();
+          if (e.classId) {
+            activeClassKeys.add(e.classId);
+          }
+        });
+
+        const jhClasses = (all || []).filter(c => {
+          const isJH = c.unitId === 'JUNIOR_HIGH';
+          const isActiveYear = c.academicYear === selectedYear;
+          const isNotArchived = c.status !== 'archived';
+          
+          if (!isJH || !isActiveYear || !isNotArchived) return false;
+
+          const hasEnrolledStudent = activeClassKeys.has(c.id) || 
+                                     activeClassKeys.has(c.name) || 
+                                     ((c as any).classId && activeClassKeys.has((c as any).classId));
+          return hasEnrolledStudent;
+        });
+
         setClassesList(jhClasses);
-        if (jhClasses.length > 0 && !selectedClassId) {
-          setSelectedClassId(jhClasses[0].id);
+
+        // Selection Behavior:
+        // Clear if not valid in the new context, otherwise keep it
+        if (selectedClassId) {
+          const isStillEligible = jhClasses.some(c => c.id === selectedClassId);
+          if (!isStillEligible) {
+            setSelectedClassId('');
+          }
+        } else {
+          setSelectedClassId('');
         }
       } catch (err) {
         console.error('Error loading Junior High classes:', err);
@@ -115,7 +148,7 @@ export default function MonthlyReportTemplatePage() {
       }
     };
     fetchJHClasses();
-  }, [selectedClassId]);
+  }, [selectedYear]);
 
   // Immediate stale data cleanup on context filter change to guarantee checking state during loading (Requirement 8)
   React.useEffect(() => {
@@ -270,15 +303,15 @@ export default function MonthlyReportTemplatePage() {
             <CheckCircle className="text-white shrink-0" size={24} />
             <div>
               <h4 className="font-black text-sm uppercase tracking-wide">
-                Preview Ready for Future Publish — Not Published
+                Belum Dipublikasikan (Siap dibuat PDF)
               </h4>
               <p className="text-xs text-emerald-100 mt-0.5 font-medium">
-                All required report data is complete. This report has not been published.
+                Semua data rapor yang diperlukan telah lengkap. Rapor siap untuk dicetak atau diunduh.
               </p>
             </div>
           </div>
           <span className="px-3 py-1 bg-emerald-700/60 rounded-lg text-[10px] font-black uppercase tracking-widest border border-emerald-500/30">
-            PREVIEW READY
+            SIAP
           </span>
         </div>
       );
@@ -289,17 +322,17 @@ export default function MonthlyReportTemplatePage() {
             <ShieldAlert className="text-white shrink-0" size={24} />
             <div>
               <h4 className="font-black text-sm uppercase tracking-wide">
-                Internal Draft — Not Published
+                Draft — Belum Dipublikasikan
               </h4>
               <p className="text-xs text-amber-50 mt-0.5 font-medium">
                 {overallState === 'CHECKING' 
                   ? 'Memuat data kesiapan rapor...' 
-                  : 'Rapor belum siap dipublikasikan karena kelengkapan data tidak terpenuhi.'}
+                  : 'Rapor belum siap karena beberapa data belum lengkap.'}
               </p>
             </div>
           </div>
           <span className="px-3 py-1 bg-amber-600/60 rounded-lg text-[10px] font-black uppercase tracking-widest border border-amber-400/30">
-            INTERNAL DRAFT
+            DRAFT
           </span>
         </div>
       );
@@ -317,7 +350,7 @@ export default function MonthlyReportTemplatePage() {
                 JUNIOR HIGH ONLY
               </span>
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200">
-                Internal Workspace
+                Template Rapor Bulanan
               </span>
             </div>
             <h1 className="text-2xl font-black text-slate-950 uppercase tracking-tight italic flex items-center gap-2">
@@ -451,7 +484,11 @@ export default function MonthlyReportTemplatePage() {
                 onChange={(e) => setSelectedClassId(e.target.value)}
                 className="w-full text-sm rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-2 bg-slate-50/50 font-black"
               >
-                <option value="" disabled>-- Pilih Kelas --</option>
+                <option value="" disabled>
+                  {classesList.length === 0 
+                    ? "Tidak ada kelas aktif" 
+                    : "-- Pilih Kelas --"}
+                </option>
                 {classesList.map(c => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
@@ -459,6 +496,13 @@ export default function MonthlyReportTemplatePage() {
             )}
           </div>
         </div>
+
+        {!loadingClasses && classesList.length === 0 && (
+          <div className="mt-4 p-3.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-center gap-2">
+            <AlertCircle size={15} className="shrink-0" />
+            <span>Tidak ada kelas aktif dengan siswa terdaftar pada konteks ini.</span>
+          </div>
+        )}
       </div>
 
       {/* Main Assembly Grid */}
@@ -825,7 +869,7 @@ export default function MonthlyReportTemplatePage() {
 
             {/* Page Footer Notice inside report card wrapper */}
             <div className="bg-slate-50/50 border-t border-slate-100 px-6 py-4 flex items-center justify-between text-[11px] text-slate-400 font-medium">
-              <span>This is an internal visual template. No report has been published or shared.</span>
+              <span>Halaman ini merupakan pratinjau. Rapor belum dipublikasikan secara resmi.</span>
               <span className="font-mono">LAZUARDI LUMINARY</span>
             </div>
 
@@ -835,9 +879,9 @@ export default function MonthlyReportTemplatePage() {
           <div className="bg-slate-100 border border-slate-200 rounded-xl p-4 flex items-start gap-2.5 text-xs text-slate-500">
             <Info className="text-slate-400 mt-0.5 shrink-0" size={16} />
             <div className="space-y-1 leading-relaxed">
-              <strong className="text-slate-700 font-bold block">Internal Visual Template Only</strong>
+              <strong className="text-slate-700 font-bold block">Pratinjau Format Rapor Bulanan</strong>
               <p>
-                Pratinjau di atas tidak dapat dicetak secara resmi atau diekspor sebagai PDF. Seluruh visual dirancang khusus sebagai alat peninjauan desain dan tata letak data internal Guru dan Staf Junior High.
+                Pratinjau di atas digunakan khusus sebagai alat peninjauan format, tata letak, dan kelengkapan data oleh Guru dan Staf Junior High. Untuk mengunduh rapor resmi siswa, silakan gunakan menu Rapor Bulanan PDF.
               </p>
             </div>
           </div>
