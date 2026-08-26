@@ -544,8 +544,22 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly(['slots', 'overallStatus', 'updatedAt', 'reflectionCycleId', 'sePeriodId']) &&
           existing().overallStatus in ['DRAFT', 'REVISION_REQUESTED'] &&
           incoming().overallStatus in ['DRAFT', 'SUBMITTED'] &&
-          (incoming().slots.size() > 0 && incoming().slots[0].teacherFeedback == (existing().slots.size() > 0 ? existing().slots[0].teacherFeedback : '') && incoming().slots[0].reviewedBy == (existing().slots.size() > 0 ? existing().slots[0].reviewedBy : null) && incoming().slots[0].reviewedAt == (existing().slots.size() > 0 ? existing().slots[0].reviewedAt : null) && incoming().slots[0].status in ['DRAFT', 'SUBMITTED']) &&
-          (incoming().slots.size() < 2 || (incoming().slots[1].teacherFeedback == (existing().slots.size() > 1 ? existing().slots[1].teacherFeedback : '') && incoming().slots[1].reviewedBy == (existing().slots.size() > 1 ? existing().slots[1].reviewedBy : null) && incoming().slots[1].reviewedAt == (existing().slots.size() > 1 ? existing().slots[1].reviewedAt : null) && incoming().slots[1].status in ['DRAFT', 'SUBMITTED'])) &&
+          (incoming().slots.size() > 0 && (
+            existing().slots.size() > 0 && existing().slots[0].status == 'APPROVED' ?
+              incoming().slots[0] == existing().slots[0] :
+              incoming().slots[0].teacherFeedback == (existing().slots.size() > 0 ? existing().slots[0].teacherFeedback : '') &&
+              incoming().slots[0].reviewedBy == (existing().slots.size() > 0 ? existing().slots[0].reviewedBy : null) &&
+              incoming().slots[0].reviewedAt == (existing().slots.size() > 0 ? existing().slots[0].reviewedAt : null) &&
+              incoming().slots[0].status in ['DRAFT', 'SUBMITTED', 'REVISION_REQUESTED']
+          )) &&
+          (incoming().slots.size() < 2 || (
+            existing().slots.size() > 1 && existing().slots[1].status == 'APPROVED' ?
+              incoming().slots[1] == existing().slots[1] :
+              incoming().slots[1].teacherFeedback == (existing().slots.size() > 1 ? existing().slots[1].teacherFeedback : '') &&
+              incoming().slots[1].reviewedBy == (existing().slots.size() > 1 ? existing().slots[1].reviewedBy : null) &&
+              incoming().slots[1].reviewedAt == (existing().slots.size() > 1 ? existing().slots[1].reviewedAt : null) &&
+              incoming().slots[1].status in ['DRAFT', 'SUBMITTED', 'REVISION_REQUESTED']
+          )) &&
           isValidSESubmission(incoming())
         ) || (
           (isAdmin() || isJuniorHighStaff()) &&
@@ -955,6 +969,16 @@ service cloud.firestore {
         (isActive() && isOwnStudentData(existing().studentId) &&
          incoming().diff(existing()).affectedKeys().hasOnly(['studentViewedAt', 'lastStudentViewedAt', 'pdfOpenedAt', 'viewCount']));
       allow delete: if isJuniorHighStaff() || isAdmin() || isTeacher();
+    }
+
+    match /published_junior_high_monthly_reports/{reportId} {
+      allow read: if isJuniorHighStaff() || isAdmin();
+      allow create: if (isJuniorHighStaff() || isAdmin()) &&
+        request.resource.data.unit == "JUNIOR_HIGH" &&
+        request.resource.data.reportType == "MONTHLY_REPORT" &&
+        request.resource.data.generatedBy == request.auth.uid &&
+        request.resource.data.driveFolderId == "1mjxXJKaKSCfn0RNpJWQTsI65DwnhiyqK";
+      allow update, delete: if false;
     }
 
     match /archived_kg_reports/{reportId} {

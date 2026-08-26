@@ -12,6 +12,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useJHReportAttendance } from '../../hooks/useJHReportAttendance';
 import type { Class, Student, ClassReportSummary, JuniorHighMonthlyReportComment } from '../../types';
+import { validateReportReadiness } from './MonthlyReportReadinessHelper';
 
 const indonesianMonths = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -50,6 +51,11 @@ export default function MonthlyReportPreviewPage() {
   const [loadingSummary, setLoadingSummary] = React.useState<boolean>(false);
   const [commentsMap, setCommentsMap] = React.useState<Record<string, JuniorHighMonthlyReportComment>>({});
   const [loadingComments, setLoadingComments] = React.useState<boolean>(false);
+
+  // Error states for source health
+  const [studentsError, setStudentsError] = React.useState<boolean>(false);
+  const [summaryError, setSummaryError] = React.useState<boolean>(false);
+  const [commentsError, setCommentsError] = React.useState<boolean>(false);
 
   // Selected class display name for legacy fallback matching
   const selectedClassObj = React.useMemo(() => {
@@ -111,6 +117,16 @@ export default function MonthlyReportPreviewPage() {
     fetchJHClasses();
   }, [selectedClassId]);
 
+  // Immediate stale data cleanup on context filter change to guarantee checking state during loading (Requirement 8)
+  React.useEffect(() => {
+    setStudents([]);
+    setClassSummary(null);
+    setCommentsMap({});
+    setStudentsError(false);
+    setSummaryError(false);
+    setCommentsError(false);
+  }, [selectedClassId, selectedYear, selectedSemester, selectedMonth]);
+
   // Read-only data assembly trigger
   const loadReportData = async () => {
     if (!selectedClassId || !selectedYear || !selectedSemester || !selectedMonth) return;
@@ -118,9 +134,12 @@ export default function MonthlyReportPreviewPage() {
     setLoadingStudents(true);
     setLoadingSummary(true);
     setLoadingComments(true);
+    setStudentsError(false);
+    setSummaryError(false);
+    setCommentsError(false);
 
+    // 1. Fetch active students in class & sort
     try {
-      // 1. Fetch active students in class & sort
       const list = await getActiveStudents(selectedClassId, selectedYear);
       const sorted = (list || []).sort((a, b) => {
         const numA = a.attendanceNumber ?? a.noAbsen ?? a.rollNumber ?? a.rosterNumber ?? 999;
@@ -131,8 +150,15 @@ export default function MonthlyReportPreviewPage() {
         return a.name.localeCompare(b.name);
       });
       setStudents(sorted);
+    } catch (err) {
+      console.error('Error fetching students:', err);
+      setStudentsError(true);
+    } finally {
+      setLoadingStudents(false);
+    }
 
-      // 2. Fetch class-level summary
+    // 2. Fetch class-level summary
+    try {
       const academicYearNormalized = selectedYear.replace(/\//g, '-');
       const summaryId = `JUNIOR_HIGH_MONTHLY_PROGRESS_${selectedClassId}_${academicYearNormalized}_${selectedSemester}_${selectedMonth}`;
       const summaryRef = doc(db, 'class_report_summaries', summaryId);
@@ -142,8 +168,15 @@ export default function MonthlyReportPreviewPage() {
       } else {
         setClassSummary(null);
       }
+    } catch (err) {
+      console.error('Error fetching class summary:', err);
+      setSummaryError(true);
+    } finally {
+      setLoadingSummary(false);
+    }
 
-      // 3. Fetch student general comments
+    // 3. Fetch student general comments
+    try {
       const q = query(
         collection(db, 'junior_high_monthly_report_comments'),
         where('classId', '==', selectedClassId),
@@ -153,19 +186,17 @@ export default function MonthlyReportPreviewPage() {
       );
       const snap = await getDocs(q);
       const map: Record<string, JuniorHighMonthlyReportComment> = {};
-      snap.docs.forEach(doc => {
-        const data = doc.data() as JuniorHighMonthlyReportComment;
+      snap.docs.forEach(docSnap => {
+        const data = docSnap.data() as JuniorHighMonthlyReportComment;
         if (data.studentId) {
-          map[data.studentId] = { ...data, id: doc.id };
+          map[data.studentId] = { ...data, id: docSnap.id };
         }
       });
       setCommentsMap(map);
     } catch (err) {
-      console.error('Error assembling report preview data:', err);
-      toast.error('Gagal memuat atau merakit data preview laporan');
+      console.error('Error fetching comments:', err);
+      setCommentsError(true);
     } finally {
-      setLoadingStudents(false);
-      setLoadingSummary(false);
       setLoadingComments(false);
     }
   };
@@ -176,26 +207,59 @@ export default function MonthlyReportPreviewPage() {
     }
   }, [selectedClassId, selectedYear, selectedSemester, selectedMonth]);
 
-  // Compute readiness stats
-  const totalStudents = students.length;
-  const hasSummary = !!classSummary;
-  const isSummaryReady = classSummary?.status === 'READY';
-  
-  const commentsList = Object.keys(commentsMap).map(key => commentsMap[key]);
-  const finalComments = commentsList.filter(c => c.status === 'FINAL');
-  const finalCommentsCount = finalComments.length;
-  const draftCommentsCount = commentsList.filter(c => c.status === 'DRAFT').length;
-  
-  // Calculate missing comments based on roster
-  let missingCommentsCount = 0;
-  students.forEach(s => {
-    if (!commentsMap[s.id]) {
-      missingCommentsCount++;
-    }
-  });
+  // Compute readiness stats using the pure shared helper (Requirement 1, 2, 3, 4, 5, 6)
+  const readinessResult = React.useMemo(() => {
+    return validateReportReadiness(
+      {
+        classId: selectedClassId,
+        academicYear: selectedYear,
+        semester: selectedSemester,
+        periodKey: selectedMonth,
+        unit: 'JUNIOR_HIGH',
+        reportType: 'MONTHLY_PROGRESS',
+      },
+      {
+        loadingClasses,
+        loadingStudents,
+        loadingSummary,
+        loadingComments,
+        loadingAttendance,
+      },
+      {
+        studentsError,
+        summaryError,
+        commentsError,
+        attendanceError: !!attendanceError,
+      },
+      {
+        students,
+        classSummary,
+        commentsMap,
+        attendanceAvailableForPeriod,
+      }
+    );
+  }, [
+    selectedClassId,
+    selectedYear,
+    selectedSemester,
+    selectedMonth,
+    loadingClasses,
+    loadingStudents,
+    loadingSummary,
+    loadingComments,
+    loadingAttendance,
+    studentsError,
+    summaryError,
+    commentsError,
+    attendanceError,
+    students,
+    classSummary,
+    commentsMap,
+    attendanceAvailableForPeriod,
+  ]);
 
-  const isRosterReady = totalStudents > 0 && finalCommentsCount === totalStudents;
-  const isReportReady = hasSummary && isSummaryReady && isRosterReady;
+  const { overallState, checklist, counts } = readinessResult;
+  const isReportReady = overallState === 'READY FOR FUTURE PUBLISH';
 
   return (
     <div id="monthly-report-preview-page" className="min-h-screen bg-slate-50/50 p-6">
@@ -318,78 +382,112 @@ export default function MonthlyReportPreviewPage() {
             <div className="border-b border-slate-150 bg-slate-50/50 px-4 py-3">
               <h2 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
                 <CheckCircle2 size={16} className="text-[#002366]" />
-                Validasi Kesiapan Rapor
+                Pre-Publish Validation
               </h2>
             </div>
 
             <div className="p-4 space-y-4">
               {/* Readiness status card */}
               <div className={`p-4 rounded-xl border text-center ${
-                isReportReady 
+                overallState === 'READY FOR FUTURE PUBLISH'
                   ? 'bg-emerald-50/60 border-emerald-200 text-emerald-800'
+                  : overallState === 'CHECKING'
+                  ? 'bg-sky-50/50 border-sky-200 text-sky-800'
                   : 'bg-amber-50/50 border-amber-200 text-amber-800'
               }`}>
                 <span className="text-[10px] font-bold uppercase tracking-widest block mb-1">Status Kesiapan</span>
-                <strong className="text-base font-bold">
-                  {isReportReady ? 'SIAP UNTUK TAHAP PUBLISH' : 'BELUM SIAP'}
+                <strong className="text-base font-black tracking-tight">
+                  {overallState === 'READY FOR FUTURE PUBLISH' 
+                    ? 'READY FOR FUTURE PUBLISH' 
+                    : overallState === 'CHECKING'
+                    ? 'CHECKING'
+                    : 'NOT READY'}
                 </strong>
-                <p className="text-xs mt-1.5 opacity-85">
-                  {isReportReady 
-                    ? 'Ringkasan kelas terisi & semua komentar siswa berstatus FINAL.' 
-                    : 'Lengkapi semua draft atau komentar yang belum diisi untuk melanjutkan.'
-                  }
+                <p className="text-xs mt-1.5 leading-relaxed font-medium">
+                  {overallState === 'READY FOR FUTURE PUBLISH' 
+                    ? 'All required report data is complete. This report has not been published.'
+                    : overallState === 'CHECKING'
+                    ? 'Memeriksa kelengkapan data rapor...'
+                    : 'Complete the items below before this report can enter a future publish workflow.'}
                 </p>
               </div>
 
               {/* Step checklist */}
-              <div className="space-y-3 pt-2 text-xs">
-                {/* 1. Class summary checklist */}
-                <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
-                  <div className="flex items-center gap-2">
-                    {isSummaryReady ? (
-                      <CheckCircle className="text-emerald-500 shrink-0" size={15} />
-                    ) : hasSummary ? (
-                      <HelpCircle className="text-amber-500 shrink-0" size={15} />
-                    ) : (
-                      <AlertCircle className="text-rose-500 shrink-0" size={15} />
-                    )}
-                    <span className="font-medium text-slate-700">Ringkasan Kelas</span>
+              <div className="space-y-2.5 pt-2">
+                {checklist.map(item => {
+                  const stateColorClass = (() => {
+                    switch (item.state) {
+                      case 'Ready': return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+                      case 'Missing': return 'bg-rose-100 text-rose-800 border-rose-200';
+                      case 'Incomplete': return 'bg-amber-100 text-amber-800 border-amber-200';
+                      case 'Unavailable': return 'bg-slate-100 text-slate-600 border-slate-200';
+                      case 'Loading': return 'bg-blue-100 text-blue-800 border-blue-200';
+                      case 'Error': return 'bg-red-100 text-red-900 border-red-200';
+                      default: return 'bg-slate-150 text-slate-700 border-slate-200';
+                    }
+                  })();
+
+                  const stateIcon = (() => {
+                    switch (item.state) {
+                      case 'Ready': return <CheckCircle className="text-emerald-500 shrink-0" size={14} />;
+                      case 'Missing': return <AlertCircle className="text-rose-500 shrink-0" size={14} />;
+                      case 'Incomplete': return <HelpCircle className="text-amber-500 shrink-0" size={14} />;
+                      case 'Unavailable': return <HelpCircle className="text-slate-400 shrink-0" size={14} />;
+                      case 'Loading': return <RefreshCw className="text-blue-500 animate-spin shrink-0" size={14} />;
+                      case 'Error': return <ShieldAlert className="text-red-600 shrink-0" size={14} />;
+                      default: return <HelpCircle className="text-slate-400 shrink-0" size={14} />;
+                    }
+                  })();
+
+                  return (
+                    <div key={item.key} className="p-2.5 rounded-lg border border-slate-100 bg-slate-50/50 flex flex-col gap-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2">
+                          {stateIcon}
+                          <span className="font-bold text-slate-700">{item.label}</span>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider border ${stateColorClass}`}>
+                          {item.state}
+                        </span>
+                      </div>
+                      {item.reason && (
+                        <p className="text-[10px] text-slate-500 leading-normal pl-5 font-medium italic">
+                          {item.reason}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {/* Counts Panel */}
+                <div className="border-t border-slate-100 pt-3 mt-4 space-y-1.5 text-[11px] text-slate-500">
+                  <div className="font-bold text-[#002366] uppercase tracking-wider text-[9px] mb-2">
+                    Statistik Data
                   </div>
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                    isSummaryReady 
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : hasSummary
-                      ? 'bg-amber-100 text-amber-800'
-                      : 'bg-rose-100 text-rose-800'
-                  }`}>
-                    {isSummaryReady ? 'READY' : hasSummary ? 'DRAFT' : 'MISSING'}
-                  </span>
+                  <div className="flex justify-between items-center">
+                    <span>Siswa Aktif:</span>
+                    <strong className="text-slate-700 font-bold">{counts.totalStudents} siswa</strong>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span>Komentar FINAL:</span>
+                    <strong className="text-emerald-700 font-bold">{counts.finalCommentsCount}</strong>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span>Komentar DRAFT:</span>
+                    <strong className="text-amber-700 font-bold">{counts.draftCommentsCount}</strong>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span>Belum Komentar / Draft:</span>
+                    <strong className="text-rose-700 font-bold">{counts.missingFinalCommentsCount}</strong>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span>Status Kehadiran Periode:</span>
+                    <strong className={`font-bold ${counts.attendanceAvailable ? 'text-emerald-700' : 'text-slate-500'}`}>
+                      {counts.attendanceAvailable ? 'Tercatat (Tersedia)' : 'Tidak Tersedia'}
+                    </strong>
+                  </div>
                 </div>
 
-                {/* 2. comments progress checklist */}
-                <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
-                  <div className="flex items-center gap-2">
-                    {isRosterReady ? (
-                      <CheckCircle className="text-emerald-500 shrink-0" size={15} />
-                    ) : (
-                      <AlertCircle className="text-amber-500 shrink-0" size={15} />
-                    )}
-                    <span className="font-medium text-slate-700">Komentar Roster</span>
-                  </div>
-                  <span className="font-bold text-slate-800 text-[11px]">
-                    {finalCommentsCount} dari {totalStudents} Final
-                  </span>
-                </div>
-
-                {/* Info status counts */}
-                <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-500 px-1 pt-1">
-                  <div>Draft Comments: <strong>{draftCommentsCount}</strong></div>
-                  <div>Missing Comments: <strong>{missingCommentsCount}</strong></div>
-                  <div className="col-span-2 mt-1 border-t border-slate-100 pt-2 flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                    Attendance: <strong className="text-slate-600">Not Connected</strong>
-                  </div>
-                </div>
               </div>
             </div>
           </div>
@@ -670,16 +768,16 @@ export default function MonthlyReportPreviewPage() {
                   <span>Missing class summary for the selected period.</span>
                 </div>
               )}
-              {draftCommentsCount > 0 && (
+              {counts.draftCommentsCount > 0 && (
                 <div className="flex items-center gap-2 text-amber-600 font-medium">
                   <ShieldAlert size={14} />
                   <span>Draft comments found. Drafts are excluded from the official final reports.</span>
                 </div>
               )}
-              {missingCommentsCount > 0 && (
+              {counts.missingFinalCommentsCount > 0 && (
                 <div className="flex items-center gap-2 text-amber-600 font-medium">
                   <ShieldAlert size={14} />
-                  <span>{missingCommentsCount} student(s) do not have a finalized general comment.</span>
+                  <span>{counts.missingFinalCommentsCount} student(s) do not have a finalized general comment.</span>
                 </div>
               )}
               <div className="flex items-center gap-2 text-slate-400">

@@ -119,6 +119,7 @@ import MonthlyReportSummaryPage from './pages/JuniorHigh/MonthlyReportSummaryPag
 import MonthlyReportCommentsPage from './pages/JuniorHigh/MonthlyReportCommentsPage';
 import MonthlyReportPreviewPage from './pages/JuniorHigh/MonthlyReportPreviewPage';
 import MonthlyReportTemplatePage from './pages/JuniorHigh/MonthlyReportTemplatePage';
+import MonthlyReportPdfPage from './pages/JuniorHigh/MonthlyReportPdfPage';
 import WeeklyReportDetail from './pages/Kindergarten/WeeklyReportDetail';
 
 // High-level wrapper for Admin-only access
@@ -496,6 +497,11 @@ export default function App() {
             <Route path="monthly-report-template" element={
               <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL']}>
                 <MonthlyReportTemplatePage />
+              </RoleGuard>
+            } />
+            <Route path="monthly-report-pdf" element={
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL']}>
+                <MonthlyReportPdfPage />
               </RoleGuard>
             } />
             <Route path="conference/admin" element={

@@ -760,6 +760,9 @@ export default function SEClassView() {
             <ReviewReflectionModal 
                data={selectedReflectionForReview}
                onClose={() => setSelectedReflectionForReview(null)}
+               onSuccess={() => {
+                  fetchReflections();
+               }}
             />
          )}
       </AnimatePresence>
@@ -2203,12 +2206,18 @@ function SAItem({ label, value }: { label: string, value: string }) {
   );
 }
 
-function ReviewReflectionModal({ data, onClose }: { 
+function ReviewReflectionModal({ data, onClose, onSuccess }: { 
   data: { student: any; reflection: SEMonthlyReflection; cycle: SEReflectionCycle }; 
-  onClose: () => void 
+  onClose: () => void;
+  onSuccess?: () => void;
 }) {
   const { student, reflection, cycle } = data;
   const reflectionAny = reflection as any;
+
+  const [loadingSlot, setLoadingSlot] = React.useState<Record<number, boolean>>({});
+  const [feedbackText, setFeedbackText] = React.useState<Record<number, string>>({});
+  const [showFeedbackInput, setShowFeedbackInput] = React.useState<Record<number, boolean>>({});
+  const { profile } = useAuth();
 
   // Determine number of slots based on student grade (Grade 7/8 shows Slot 1 & 2; Grade 9 shows Slot 1 only)
   const gradeNum = Number(student.grade || reflection.gradeSnapshot || 7);
@@ -2224,6 +2233,136 @@ function ReviewReflectionModal({ data, onClose }: {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  const handleApproveSlot = async (slotNum: number) => {
+    if (!profile?.uid) {
+      alert("Error: Anda harus masuk sebagai guru.");
+      return;
+    }
+    setLoadingSlot(prev => ({ ...prev, [slotNum]: true }));
+    try {
+      // 1. Copy slots
+      const updatedSlots = (reflection.slots || []).map(s => {
+        if (s.slot === slotNum) {
+          return {
+            ...s,
+            status: 'APPROVED' as const,
+            reviewedAt: Date.now(),
+            reviewedBy: profile.uid,
+          };
+        }
+        return s;
+      });
+
+      // 2. Recalculate overall status
+      const activeStatuses = updatedSlots.map(s => s.status);
+      let overallStatus: 'DRAFT' | 'SUBMITTED' | 'REVISION_REQUESTED' | 'APPROVED' = 'DRAFT';
+      if (activeStatuses.every(s => s === 'APPROVED')) {
+        overallStatus = 'APPROVED';
+      } else if (activeStatuses.some(s => s === 'REVISION_REQUESTED')) {
+        overallStatus = 'REVISION_REQUESTED';
+      } else if (activeStatuses.some(s => s === 'SUBMITTED')) {
+        overallStatus = 'SUBMITTED';
+      } else {
+        overallStatus = 'DRAFT';
+      }
+
+      // 3. Write to Firestore
+      const docId = `${reflection.studentId}_${reflection.reflectionCycleId}`;
+      const docRef = doc(db, 'seMonthlyReflections', docId);
+      
+      const payload = {
+        ...reflection,
+        slots: updatedSlots,
+        overallStatus,
+        updatedAt: Date.now()
+      };
+      
+      await setDoc(docRef, payload);
+      
+      alert(`Slot ${slotNum} berhasil disetujui!`);
+      // Update local state in the modal
+      reflection.slots = updatedSlots;
+      reflection.overallStatus = overallStatus;
+      
+      if (onSuccess) onSuccess();
+    } catch (err: any) {
+      console.error("Error approving slot:", err);
+      alert("Gagal menyetujui refleksi: " + err.message);
+    } finally {
+      setLoadingSlot(prev => ({ ...prev, [slotNum]: false }));
+    }
+  };
+
+  const handleRequestRevisionSlot = async (slotNum: number) => {
+    const feedback = feedbackText[slotNum]?.trim();
+    if (!feedback) {
+      alert("Masukkan umpan balik revisi terlebih dahulu.");
+      return;
+    }
+    if (!profile?.uid) {
+      alert("Error: Anda harus masuk sebagai guru.");
+      return;
+    }
+    setLoadingSlot(prev => ({ ...prev, [slotNum]: true }));
+    try {
+      // 1. Copy slots
+      const updatedSlots = (reflection.slots || []).map(s => {
+        if (s.slot === slotNum) {
+          return {
+            ...s,
+            status: 'REVISION_REQUESTED' as const,
+            teacherFeedback: feedback,
+            reviewedAt: Date.now(),
+            reviewedBy: profile.uid,
+          };
+        }
+        return s;
+      });
+
+      // 2. Recalculate overall status
+      const activeStatuses = updatedSlots.map(s => s.status);
+      let overallStatus: 'DRAFT' | 'SUBMITTED' | 'REVISION_REQUESTED' | 'APPROVED' = 'DRAFT';
+      if (activeStatuses.every(s => s === 'APPROVED')) {
+        overallStatus = 'APPROVED';
+      } else if (activeStatuses.some(s => s === 'REVISION_REQUESTED')) {
+        overallStatus = 'REVISION_REQUESTED';
+      } else if (activeStatuses.some(s => s === 'SUBMITTED')) {
+        overallStatus = 'SUBMITTED';
+      } else {
+        overallStatus = 'DRAFT';
+      }
+
+      // 3. Write to Firestore
+      const docId = `${reflection.studentId}_${reflection.reflectionCycleId}`;
+      const docRef = doc(db, 'seMonthlyReflections', docId);
+      
+      const payload = {
+        ...reflection,
+        slots: updatedSlots,
+        overallStatus,
+        updatedAt: Date.now()
+      };
+      
+      await setDoc(docRef, payload);
+      
+      alert(`Permintaan revisi slot ${slotNum} berhasil dikirim!`);
+      // Update local state in the modal
+      reflection.slots = updatedSlots;
+      reflection.overallStatus = overallStatus;
+      
+      // Clear inline panel state
+      setShowFeedbackInput(prev => ({ ...prev, [slotNum]: false }));
+      setFeedbackText(prev => ({ ...prev, [slotNum]: '' }));
+      
+      if (onSuccess) onSuccess();
+    } catch (err: any) {
+      console.error("Error requesting revision for slot:", err);
+      alert("Gagal mengirim permintaan revisi: " + err.message);
+    } finally {
+      setLoadingSlot(prev => ({ ...prev, [slotNum]: false }));
+    }
   };
 
   return (
@@ -2259,8 +2398,18 @@ function ReviewReflectionModal({ data, onClose }: {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-6 bg-gray-50/50 rounded-2xl border border-gray-100">
             <div>
               <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest block">Status Refleksi</span>
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-gray-200 rounded-full text-[10px] font-black text-gray-700 uppercase tracking-wider mt-1">
-                {reflection.overallStatus}
+              <span className={cn(
+                "inline-flex items-center gap-1.5 px-3 py-1 border rounded-full text-[10px] font-black uppercase tracking-wider mt-1",
+                reflection.overallStatus === 'APPROVED' && "bg-emerald-50 text-emerald-700 border-emerald-100",
+                reflection.overallStatus === 'REVISION_REQUESTED' && "bg-amber-50 text-amber-700 border-amber-100",
+                reflection.overallStatus === 'SUBMITTED' && "bg-blue-50 text-blue-700 border-blue-100",
+                (!reflection.overallStatus || reflection.overallStatus === 'DRAFT') && "bg-gray-100 text-gray-600 border-gray-200"
+              )}>
+                {
+                  reflection.overallStatus === 'APPROVED' ? 'DISETUJUI' :
+                  reflection.overallStatus === 'REVISION_REQUESTED' ? 'PERLU REVISI' :
+                  reflection.overallStatus === 'SUBMITTED' ? 'MENUNGGU REVIEW' : 'DRAFT'
+                }
               </span>
             </div>
             <div>
@@ -2291,8 +2440,18 @@ function ReviewReflectionModal({ data, onClose }: {
                       </h4>
                     </div>
                     {slot && (
-                      <span className="px-3 py-1 bg-white border border-gray-200 rounded-full text-[9px] font-black text-gray-700 uppercase tracking-wider">
-                        {slot.status || 'DRAFT'}
+                      <span className={cn(
+                        "px-3 py-1 border rounded-full text-[9px] font-black uppercase tracking-wider",
+                        slot.status === 'APPROVED' && "bg-emerald-50 text-emerald-700 border-emerald-100",
+                        slot.status === 'REVISION_REQUESTED' && "bg-amber-50 text-amber-700 border-amber-100",
+                        slot.status === 'SUBMITTED' && "bg-blue-50 text-blue-700 border-blue-100",
+                        (!slot.status || slot.status === 'DRAFT') && "bg-gray-100 text-gray-600 border-gray-200"
+                      )}>
+                        {
+                          slot.status === 'APPROVED' ? 'DISETUJUI' :
+                          slot.status === 'REVISION_REQUESTED' ? 'PERLU REVISI' :
+                          slot.status === 'SUBMITTED' ? 'MENUNGGU REVIEW' : 'DRAFT'
+                        }
                       </span>
                     )}
                   </div>
@@ -2338,6 +2497,67 @@ function ReviewReflectionModal({ data, onClose }: {
                           <span>Dikirim: {formatTime(slot.submittedAt)}</span>
                         )}
                       </div>
+
+                      {/* Teacher Review Action Controls */}
+                      {slot.status === 'SUBMITTED' && (
+                        <div className="pt-4 border-t border-gray-100">
+                          {showFeedbackInput[slotNum] ? (
+                            <div className="space-y-3 bg-amber-50/50 p-4 rounded-2xl border border-amber-100">
+                              <span className="text-[9px] font-black uppercase tracking-widest text-amber-700 block">Umpan Balik untuk Siswa (Wajib diisi)</span>
+                              <textarea
+                                value={feedbackText[slotNum] || ''}
+                                onChange={(e) => setFeedbackText(prev => ({ ...prev, [slotNum]: e.target.value }))}
+                                placeholder="Tuliskan catatan detail mengenai perbaikan refleksi yang diperlukan..."
+                                className="w-full min-h-[80px] p-3 text-xs font-semibold bg-white rounded-xl border border-amber-200 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                              />
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  disabled={loadingSlot[slotNum]}
+                                  onClick={() => setShowFeedbackInput(prev => ({ ...prev, [slotNum]: false }))}
+                                  className="px-4 py-2 bg-white hover:bg-gray-100 text-gray-600 border border-gray-200 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all"
+                                >
+                                  Batal
+                                </button>
+                                <button
+                                  disabled={loadingSlot[slotNum] || !feedbackText[slotNum]?.trim()}
+                                  onClick={() => handleRequestRevisionSlot(slotNum)}
+                                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[10px] font-black uppercase tracking-wider transition-all shadow-md disabled:opacity-50"
+                                >
+                                  {loadingSlot[slotNum] ? 'Mengirim...' : 'Kirim Permintaan Revisi'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex justify-end gap-3 pt-2">
+                              <button
+                                disabled={loadingSlot[slotNum]}
+                                onClick={() => setShowFeedbackInput(prev => ({ ...prev, [slotNum]: true }))}
+                                className="px-5 py-2.5 bg-white hover:bg-gray-100 text-amber-700 border border-amber-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                              >
+                                Minta Revisi
+                              </button>
+                              <button
+                                disabled={loadingSlot[slotNum]}
+                                onClick={() => handleApproveSlot(slotNum)}
+                                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md shadow-emerald-50"
+                              >
+                                {loadingSlot[slotNum] ? 'Memproses...' : 'Setujui Refleksi'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {slot.status === 'APPROVED' && (
+                        <div className="p-3 bg-emerald-50/50 border border-emerald-100 rounded-xl flex items-center justify-between text-[10px] text-emerald-800">
+                          <span className="font-bold">✓ Refleksi Disetujui</span>
+                          {slot.reviewedAt && (
+                            <span className="font-medium">
+                              Selesai pada {formatTime(slot.reviewedAt)}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="p-6 bg-white border border-gray-100 rounded-2xl text-center">

@@ -79,6 +79,9 @@ export default function MonthlyReflectionModal({
   // Overall read-only check
   const isReadOnly = monthlyReflection?.overallStatus === 'SUBMITTED' || monthlyReflection?.overallStatus === 'APPROVED';
 
+  const isSlot1ReadOnly = isReadOnly || monthlyReflection?.slots?.find(s => s.slot === 1)?.status === 'APPROVED';
+  const isSlot2ReadOnly = isReadOnly || monthlyReflection?.slots?.find(s => s.slot === 2)?.status === 'APPROVED';
+
   // Determine if inputs are valid for submission (minimum 80 chars per active/available slot)
   const isInputValid = React.useMemo(() => {
     if (isChoiceMissing(1)) return false;
@@ -114,6 +117,26 @@ export default function MonthlyReflectionModal({
       
       const slotsArray: SEMonthlyReflectionSlot[] = [];
 
+      const prevSlot1 = monthlyReflection?.slots?.find(s => s.slot === 1);
+      let slot1Status: 'DRAFT' | 'SUBMITTED' | 'REVISION_REQUESTED' | 'APPROVED' = 'DRAFT';
+      if (prevSlot1?.status === 'APPROVED') {
+        slot1Status = 'APPROVED';
+      } else if (isSubmit) {
+        slot1Status = 'SUBMITTED';
+      } else {
+        slot1Status = prevSlot1?.status === 'REVISION_REQUESTED' ? 'REVISION_REQUESTED' : 'DRAFT';
+      }
+
+      const prevSlot2 = monthlyReflection?.slots?.find(s => s.slot === 2);
+      let slot2Status: 'DRAFT' | 'SUBMITTED' | 'REVISION_REQUESTED' | 'APPROVED' = 'DRAFT';
+      if (prevSlot2?.status === 'APPROVED') {
+        slot2Status = 'APPROVED';
+      } else if (isSubmit) {
+        slot2Status = 'SUBMITTED';
+      } else {
+        slot2Status = prevSlot2?.status === 'REVISION_REQUESTED' ? 'REVISION_REQUESTED' : 'DRAFT';
+      }
+
       // Slot 1
       if (!isChoiceMissing(1) && choice1) {
         slotsArray.push({
@@ -123,11 +146,11 @@ export default function MonthlyReflectionModal({
           activityId: choice1.activityId,
           activityNameSnapshot: choice1.activityName,
           reflectionText: reflectionText1,
-          status: isSubmit ? 'SUBMITTED' : 'DRAFT',
-          teacherFeedback: monthlyReflection?.slots?.find(s => s.slot === 1)?.teacherFeedback || '',
-          submittedAt: isSubmit ? Date.now() : (monthlyReflection?.slots?.find(s => s.slot === 1)?.submittedAt || null),
-          reviewedAt: monthlyReflection?.slots?.find(s => s.slot === 1)?.reviewedAt || null,
-          reviewedBy: monthlyReflection?.slots?.find(s => s.slot === 1)?.reviewedBy || null
+          status: slot1Status,
+          teacherFeedback: prevSlot1?.teacherFeedback || '',
+          submittedAt: isSubmit ? Date.now() : (prevSlot1?.submittedAt || null),
+          reviewedAt: prevSlot1?.reviewedAt || null,
+          reviewedBy: prevSlot1?.reviewedBy || null
         });
       }
 
@@ -140,16 +163,29 @@ export default function MonthlyReflectionModal({
           activityId: choice2.activityId,
           activityNameSnapshot: choice2.activityName,
           reflectionText: reflectionText2,
-          status: isSubmit ? 'SUBMITTED' : 'DRAFT',
-          teacherFeedback: monthlyReflection?.slots?.find(s => s.slot === 2)?.teacherFeedback || '',
-          submittedAt: isSubmit ? Date.now() : (monthlyReflection?.slots?.find(s => s.slot === 2)?.submittedAt || null),
-          reviewedAt: monthlyReflection?.slots?.find(s => s.slot === 2)?.reviewedAt || null,
-          reviewedBy: monthlyReflection?.slots?.find(s => s.slot === 2)?.reviewedBy || null
+          status: slot2Status,
+          teacherFeedback: prevSlot2?.teacherFeedback || '',
+          submittedAt: isSubmit ? Date.now() : (prevSlot2?.submittedAt || null),
+          reviewedAt: prevSlot2?.reviewedAt || null,
+          reviewedBy: prevSlot2?.reviewedBy || null
         });
       }
 
-      // Determine overallStatus based on submission action
-      const overallStatus = isSubmit ? 'SUBMITTED' : 'DRAFT';
+      // Determine overallStatus based on slots
+      const activeStatuses = [slot1Status];
+      if (numSlots === 2) {
+        activeStatuses.push(slot2Status);
+      }
+      let overallStatus: 'DRAFT' | 'SUBMITTED' | 'REVISION_REQUESTED' | 'APPROVED' = 'DRAFT';
+      if (activeStatuses.every(s => s === 'APPROVED')) {
+        overallStatus = 'APPROVED';
+      } else if (activeStatuses.some(s => s === 'REVISION_REQUESTED')) {
+        overallStatus = 'REVISION_REQUESTED';
+      } else if (activeStatuses.some(s => s === 'SUBMITTED')) {
+        overallStatus = 'SUBMITTED';
+      } else {
+        overallStatus = 'DRAFT';
+      }
 
       const reflectionDoc: SEMonthlyReflection = {
         studentId: studentData.id,
@@ -286,11 +322,19 @@ export default function MonthlyReflectionModal({
 
                 {/* Teacher Feedback Slot 1 */}
                 {monthlyReflection?.slots?.find(s => s.slot === 1)?.teacherFeedback && (
-                  <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl">
-                    <span className="text-[9px] font-black uppercase tracking-widest text-amber-700">Masukan Guru Pembimbing</span>
-                    <p className="text-xs font-bold text-amber-800 italic mt-1">
+                  <div className="p-5 bg-amber-50 border border-amber-200 rounded-2xl space-y-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 block">Catatan dari Guru</span>
+                    <p className="text-xs font-semibold text-amber-900 leading-relaxed italic">
                       "{monthlyReflection.slots.find(s => s.slot === 1)?.teacherFeedback}"
                     </p>
+                  </div>
+                )}
+
+                {/* Approved Badge Slot 1 */}
+                {monthlyReflection?.slots?.find(s => s.slot === 1)?.status === 'APPROVED' && (
+                  <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center gap-2">
+                    <CheckCircle2 className="text-emerald-600 shrink-0" size={16} />
+                    <span className="text-xs font-bold text-emerald-800">Refleksi telah disetujui</span>
                   </div>
                 )}
 
@@ -356,7 +400,7 @@ export default function MonthlyReflectionModal({
                     </span>
                   </div>
                   <textarea
-                    disabled={isReadOnly}
+                    disabled={isSlot1ReadOnly}
                     value={reflectionText1}
                     onChange={(e) => setReflectionText1(e.target.value)}
                     placeholder="Tuliskan refleksi komprehensif Anda mengenai aktivitas ini..."
@@ -402,11 +446,19 @@ export default function MonthlyReflectionModal({
 
                   {/* Teacher Feedback Slot 2 */}
                   {monthlyReflection?.slots?.find(s => s.slot === 2)?.teacherFeedback && (
-                    <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl">
-                      <span className="text-[9px] font-black uppercase tracking-widest text-amber-700">Masukan Guru Pembimbing</span>
-                      <p className="text-xs font-bold text-amber-800 italic mt-1">
+                    <div className="p-5 bg-amber-50 border border-amber-200 rounded-2xl space-y-1">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 block">Catatan dari Guru</span>
+                      <p className="text-xs font-semibold text-amber-900 leading-relaxed italic">
                         "{monthlyReflection.slots.find(s => s.slot === 2)?.teacherFeedback}"
                       </p>
+                    </div>
+                  )}
+
+                  {/* Approved Badge Slot 2 */}
+                  {monthlyReflection?.slots?.find(s => s.slot === 2)?.status === 'APPROVED' && (
+                    <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center gap-2">
+                      <CheckCircle2 className="text-emerald-600 shrink-0" size={16} />
+                      <span className="text-xs font-bold text-emerald-800">Refleksi telah disetujui</span>
                     </div>
                   )}
 
@@ -472,7 +524,7 @@ export default function MonthlyReflectionModal({
                       </span>
                     </div>
                     <textarea
-                      disabled={isReadOnly}
+                      disabled={isSlot2ReadOnly}
                       value={reflectionText2}
                       onChange={(e) => setReflectionText2(e.target.value)}
                       placeholder="Tuliskan refleksi komprehensif Anda mengenai aktivitas ini..."
@@ -516,7 +568,7 @@ export default function MonthlyReflectionModal({
                 onClick={() => handleSave(true)}
                 className="py-3.5 px-6 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-lg shadow-indigo-100 disabled:opacity-45 disabled:cursor-not-allowed"
               >
-                {saving ? 'Mengirim...' : monthlyReflection?.overallStatus === 'REVISION_REQUESTED' ? 'Perbaiki & Kirim Ulang' : 'Kirim untuk Review'}
+                {saving ? 'Mengirim...' : monthlyReflection?.overallStatus === 'REVISION_REQUESTED' ? 'Kirim Ulang untuk Review' : 'Kirim untuk Review'}
               </button>
             </div>
           )}
