@@ -19,7 +19,7 @@ import { useAcademicYear } from '../../../context/AcademicYearContext';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../../lib/utils';
-import { collection, getDocs, query, where, doc, getDoc, setDoc, serverTimestamp, addDoc, Timestamp } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, getDoc, setDoc, serverTimestamp, addDoc, Timestamp, updateDoc } from 'firebase/firestore';
 
 const normalizeGrade = (raw: any): number | null => {
   if (raw === undefined || raw === null) return null;
@@ -2272,14 +2272,11 @@ function ReviewReflectionModal({ data, onClose, onSuccess }: {
       const docId = `${reflection.studentId}_${reflection.reflectionCycleId}`;
       const docRef = doc(db, 'seMonthlyReflections', docId);
       
-      const payload = {
-        ...reflection,
+      await updateDoc(docRef, {
         slots: updatedSlots,
         overallStatus,
-        updatedAt: Date.now()
-      };
-      
-      await setDoc(docRef, payload);
+        updatedAt: serverTimestamp()
+      });
       
       alert(`Slot ${slotNum} berhasil disetujui!`);
       // Update local state in the modal
@@ -2338,14 +2335,11 @@ function ReviewReflectionModal({ data, onClose, onSuccess }: {
       const docId = `${reflection.studentId}_${reflection.reflectionCycleId}`;
       const docRef = doc(db, 'seMonthlyReflections', docId);
       
-      const payload = {
-        ...reflection,
+      await updateDoc(docRef, {
         slots: updatedSlots,
         overallStatus,
-        updatedAt: Date.now()
-      };
-      
-      await setDoc(docRef, payload);
+        updatedAt: serverTimestamp()
+      });
       
       alert(`Permintaan revisi slot ${slotNum} berhasil dikirim!`);
       // Update local state in the modal
