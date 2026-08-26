@@ -871,14 +871,17 @@ export default function UnitActivitiesPage() {
         if (!student) return;
 
         // Double check confirmation to avoid duplicates on fast double-clicks or multiple runs
-        const isAlreadyAssigned = enrollments.some(e => 
+        const studentEnrollments = enrollments.filter(e => 
           e.studentId === studentId && 
           e.status === 'CONFIRMED' && 
           e.academicYear === selectedYear && 
           e.semester === selectedSemester
         );
 
-        if (isAlreadyAssigned) return;
+        const isSameCategoryAssigned = studentEnrollments.some(e => e.category === formCategory);
+        const reachedMaxLimit = studentEnrollments.length >= 4;
+
+        if (isSameCategoryAssigned || reachedMaxLimit) return;
 
         const isLgpVal = formUa === 'LGP';
 
@@ -2016,9 +2019,14 @@ export default function UnitActivitiesPage() {
                       <button
                         type="button"
                         onClick={() => {
-                          // Select all non-allocated students
+                          // Select all eligible students
                           const availableIds = students
-                            .filter(s => !enrollments.some(e => e.studentId === s.id && e.status === 'CONFIRMED'))
+                            .filter(s => {
+                              const studentEnrollments = enrollments.filter(e => e.studentId === s.id && e.status === 'CONFIRMED');
+                              const isSameCategoryAssigned = formCategory ? studentEnrollments.some(e => e.category === formCategory) : false;
+                              const reachedMaxLimit = studentEnrollments.length >= 4;
+                              return !isSameCategoryAssigned && !reachedMaxLimit;
+                            })
                             .map(s => s.id);
                           if (selectedStudentIds.length === availableIds.length) {
                             setSelectedStudentIds([]);
@@ -2028,7 +2036,12 @@ export default function UnitActivitiesPage() {
                         }}
                         className="text-[10px] font-bold text-blue-600 hover:text-blue-800 transition-colors"
                       >
-                        {selectedStudentIds.length === students.filter(s => !enrollments.some(e => e.studentId === s.id && e.status === 'CONFIRMED')).length
+                        {selectedStudentIds.length === students.filter(s => {
+                          const studentEnrollments = enrollments.filter(e => e.studentId === s.id && e.status === 'CONFIRMED');
+                          const isSameCategoryAssigned = formCategory ? studentEnrollments.some(e => e.category === formCategory) : false;
+                          const reachedMaxLimit = studentEnrollments.length >= 4;
+                          return !isSameCategoryAssigned && !reachedMaxLimit;
+                        }).length
                           ? 'Deselect All'
                           : 'Select All Available'}
                       </button>
@@ -2042,21 +2055,23 @@ export default function UnitActivitiesPage() {
                   ) : (
                     <div className="border border-slate-100 rounded-xl overflow-hidden max-h-60 overflow-y-auto divide-y divide-slate-50">
                       {students.map(s => {
-                        const existingConfirmed = enrollments.find(e => e.studentId === s.id && e.status === 'CONFIRMED');
-                        const isAssigned = !!existingConfirmed;
+                        const studentEnrollments = enrollments.filter(e => e.studentId === s.id && e.status === 'CONFIRMED');
+                        const reachedMaxLimit = studentEnrollments.length >= 4;
+                        const sameCategoryEnrollment = formCategory ? studentEnrollments.find(e => e.category === formCategory) : undefined;
+                        const isBlocked = !!sameCategoryEnrollment || reachedMaxLimit;
 
                         return (
                           <div 
                             key={s.id} 
                             className={`flex items-center justify-between p-2.5 transition-colors text-xs ${
-                              isAssigned ? 'bg-slate-50 text-gray-400' : 'hover:bg-slate-50/50'
+                              isBlocked ? 'bg-slate-50 text-gray-400' : 'hover:bg-slate-50/50'
                             }`}
                           >
                             <label className="flex items-center gap-2.5 flex-1 cursor-pointer select-none">
                               <input
                                 type="checkbox"
                                 checked={selectedStudentIds.includes(s.id)}
-                                disabled={isAssigned}
+                                disabled={isBlocked}
                                 onChange={(e) => {
                                   if (e.target.checked) {
                                     setSelectedStudentIds(prev => [...prev, s.id]);
@@ -2072,10 +2087,16 @@ export default function UnitActivitiesPage() {
                               </div>
                             </label>
 
-                            {isAssigned && (
+                            {sameCategoryEnrollment && (
                               <span className="inline-flex items-center gap-0.5 bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border border-amber-100">
                                 <AlertTriangle size={8} />
-                                Terdaftar: {existingConfirmed.normalizedUaName}
+                                Terdaftar pada kategori ini: {sameCategoryEnrollment.normalizedUaName}
+                              </span>
+                            )}
+                            {!sameCategoryEnrollment && reachedMaxLimit && (
+                              <span className="inline-flex items-center gap-0.5 bg-red-50 text-red-700 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border border-red-100">
+                                <AlertTriangle size={8} />
+                                Batas maksimal 4 Unit Aktivitas telah tercapai
                               </span>
                             )}
                           </div>
