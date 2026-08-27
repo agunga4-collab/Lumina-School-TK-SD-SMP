@@ -1826,8 +1826,7 @@ export async function getActiveSEReflectionCycle(
         continue;
       }
       if (currentDateStr > due) {
-        diagnostics.push(`Cycle [${cycleId}] '${title}' rejected: Current date ${currentDateStr} is after dueDate ${due}`);
-        continue;
+        diagnostics.push(`Cycle [${cycleId}] '${title}' warning: Current date ${currentDateStr} is after dueDate ${due}, but allowing access because cycle is explicitly ACTIVE.`);
       }
       
       // 6. Parent SE Period ID check

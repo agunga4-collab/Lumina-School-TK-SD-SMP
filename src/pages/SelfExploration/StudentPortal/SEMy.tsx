@@ -90,7 +90,12 @@ export default function SEMy() {
       setActivePeriod(active || null);
 
       // Get Student Profile
-      const sSnap = await getDocs(query(collection(db, 'students'), where('email', '==', profile.email), limit(1)));
+      const targetEmail = profile.email.toLowerCase().trim();
+      const sSnap = await getDocs(query(
+        collection(db, 'students'), 
+        where('email', 'in', [targetEmail, profile.email, profile.email.toLowerCase(), profile.email.trim()]), 
+        limit(1)
+      ));
       if (!sSnap.empty) {
         const s = { id: sSnap.docs[0].id, ...sSnap.docs[0].data() } as Student;
         

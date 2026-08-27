@@ -4,7 +4,7 @@ import {
   UploadCloud, Trash2, CheckCircle2, Save, Send, Loader2, Info, Lock
 } from 'lucide-react';
 import { 
-  getSEPeriods, getSEEnrollment, db
+  getSEPeriods, getSEEnrollment, db, resolveStudentGrade
 } from '../../../lib/firebase';
 import { SEPeriod, SEEnrollment, Student, SEStrand } from '../../../types';
 import { useAuth } from '../../../context/AuthContext';
@@ -127,9 +127,25 @@ export default function SEPlan() {
       }
 
       // Get Student Profile
-      const sSnap = await getDocs(query(collection(db, 'students'), where('email', '==', profile.email), limit(1)));
+      const targetEmail = profile.email.toLowerCase().trim();
+      const sSnap = await getDocs(query(
+        collection(db, 'students'), 
+        where('email', 'in', [targetEmail, profile.email, profile.email.toLowerCase(), profile.email.trim()]), 
+        limit(1)
+      ));
       if (!sSnap.empty) {
         const student = { id: sSnap.docs[0].id, ...sSnap.docs[0].data() } as Student;
+        
+        if (currentPeriod) {
+          const res = await resolveStudentGrade(student.id, student, currentPeriod.academicYear, currentPeriod.id);
+          if (res.finalNormalizedGrade !== null) {
+            student.grade = res.finalNormalizedGrade as 7 | 8 | 9;
+          }
+          if (res.resolvedClassId) {
+            student.classId = res.resolvedClassId;
+          }
+        }
+        
         setStudentData(student);
 
         // Get Enrollment (to get pre-fill choices if any)
