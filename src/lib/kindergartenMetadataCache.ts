@@ -212,6 +212,9 @@ export async function getUnitStudents(unitId: string, academicYear: string, forc
         console.log(`[Cache Fix] Fetched ${missingDocs.length} missing enrolled students whose unitId was not '${unitId}'`);
       }
 
+      const activeClasses = await getUnitClasses(unitId, academicYear);
+      const activeClassIds = new Set(activeClasses.map(c => c.id.toLowerCase()));
+
       const enrollmentClassMap = new Map<string, string>();
       enrollmentsSnap.docs.forEach(docSnap => {
         const data = docSnap.data();
@@ -229,6 +232,12 @@ export async function getUnitStudents(unitId: string, academicYear: string, forc
         if (!studentId) return;
 
         const classId = data.classId || enrollmentClassMap.get(studentId) || '';
+        
+        // Skip if not associated with any active class for the requested year
+        if (classId && !activeClassIds.has(classId.toLowerCase())) {
+          return;
+        }
+
         let ageGroup = 'ELEMENTARY';
         if (unitId === 'KINDERGARTEN') {
           const cid = String(classId || '').toUpperCase();
@@ -259,6 +268,15 @@ export async function getUnitStudents(unitId: string, academicYear: string, forc
         const data = docSnap.data();
         const studentId = docSnap.id;
         const classId = enrollmentClassMap.get(studentId) || data.classId || '';
+        
+        // Skip if student is NOT actively enrolled in this academic year and has no active class
+        const hasActiveEnrollment = enrollmentClassMap.has(studentId);
+        const hasActiveClass = classId && activeClassIds.has(classId.toLowerCase());
+        
+        if (!hasActiveEnrollment && !hasActiveClass) {
+          return;
+        }
+
         let ageGroup = 'ELEMENTARY';
         if (unitId === 'KINDERGARTEN') {
           const g = String(data.grade || '').toUpperCase();
@@ -400,18 +418,28 @@ export function resolveCanonicalClassId(
     return normalizedMatches[0].id;
   }
 
+  const warnedClassesKey = `${inputClassId}_${classesList.map(c => c.id).join('_')}`;
+
   if (normalizedMatches.length > 1) {
-    console.warn(
-      `[Developer Warning] Ambiguous class reference: "${inputClassId}" matches multiple classes: ${normalizedMatches
-        .map(c => c.id)
-        .join(', ')}`
-    );
+    if (!warnedClasses.has(warnedClassesKey + '_ambiguous')) {
+      warnedClasses.add(warnedClassesKey + '_ambiguous');
+      console.log(
+        `[Developer Diagnostic] Ambiguous class reference: "${inputClassId}" matches multiple classes: ${normalizedMatches
+          .map(c => c.id)
+          .join(', ')}`
+      );
+    }
     return null;
   }
 
-  console.warn(
-    `[Developer Warning] Unresolved class reference: "${inputClassId}" could not be matched to any canonical class.`
-  );
+  if (!warnedClasses.has(warnedClassesKey + '_unresolved')) {
+    warnedClasses.add(warnedClassesKey + '_unresolved');
+    console.log(
+      `[Developer Diagnostic] Unresolved/Obsolete class reference: "${inputClassId}" could not be matched to any canonical class for current year.`
+    );
+  }
   return null;
 }
+
+const warnedClasses = new Set<string>();
 

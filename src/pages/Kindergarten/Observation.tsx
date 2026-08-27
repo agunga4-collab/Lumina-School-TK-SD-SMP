@@ -1768,143 +1768,164 @@ export default function Observation() {
         }
       }
 
-      // 2. Fetch from Firestore for the specific doc ID (classId scoped)
+      // 2. Fetch from Firestore using multiple strategy-backed lookups
       const docId = `${selectedClassId}_${activeSentra}_${activeDomain}_${observationDate}`;
       const docRef = doc(db, 'observations', docId);
-      
+
+      let foundDoc: any = null;
+      let matchedId: string = docId;
+
+      // Strategy A: Direct fetch of expectedDocId
       try {
         const docSnap = await getDoc(docRef);
         logFirestoreRead('observations', 1);
         if (!active) return;
-        
         if (docSnap.exists()) {
-          const d = docSnap.data();
-          if (d.observations) setObservations(d.observations);
-          
-          setDocCreatedAt(d.createdAt || d.timestamp || null);
-          setDocCreatedBy(d.createdBy || null);
-          setGeneralNote(d.generalNote || "");
-          lastSavedGeneralNoteRef.current = d.generalNote || "";
-          setGeneralNoteUpdatedAt(d.generalNoteUpdatedAt || null);
-          setGeneralNoteUpdatedBy(d.generalNoteUpdatedBy || null);
-          setGeneralNoteUpdatedByName(d.generalNoteUpdatedByName || null);
-          
-          if (selectedActivity === 'SPECIAL_ACTIVITY') {
-            setSpecialActivityName(d.specialActivityName || "");
-            setSpecialActivityType(d.specialActivityType || "activity");
-          } else {
-            setSpecialActivityName("");
-            setSpecialActivityType("activity");
+          foundDoc = docSnap.data();
+          matchedId = docId;
+        }
+      } catch (e) {
+        console.warn("Strategy A direct fetch failed:", e);
+      }
+
+      // Strategy B: Direct fetch of canonical class-scoped ID if different
+      const canonicalClassId = resolveCanonicalClassId(selectedClassId, classes) || selectedClassId;
+      const canonicalDocId = `${canonicalClassId}_${activeSentra}_${activeDomain}_${observationDate}`;
+      if (!foundDoc && canonicalDocId !== docId) {
+        try {
+          const canonicalRef = doc(db, 'observations', canonicalDocId);
+          const docSnap = await getDoc(canonicalRef);
+          logFirestoreRead('observations', 1);
+          if (!active) return;
+          if (docSnap.exists()) {
+            foundDoc = docSnap.data();
+            matchedId = canonicalDocId;
           }
+        } catch (e) {
+          console.warn("Strategy B canonical fetch failed:", e);
+        }
+      }
 
-          if (d.generalPhotoDeleted === true) {
-            setGeneralPhoto(null);
-          } else if (d.generalPhotoUrl || d.generalPhoto) {
-            setGeneralPhoto(d.generalPhotoUrl || d.generalPhoto);
-          } else {
-            setGeneralPhoto(null);
+      // Strategy C: Date Query and Client-side filter (Matches Rekap Bulanan logic)
+      if (!foundDoc) {
+        try {
+          const q = query(
+            collection(db, 'observations'),
+            where('date', '==', observationDate)
+          );
+          const qSnap = await getDocs(q);
+          logFirestoreRead('observations', qSnap.docs.length || 1);
+          if (!active) return;
+
+          const docsList = qSnap.docs.map(snap => ({ id: snap.id, ...snap.data() })) as any[];
+          const match = docsList.find(d => {
+            // Check class using the exact helper as Rekap Bulanan
+            const isClassMatch = isDocForClass(d, selectedClassId, activeClassObj, students);
+            if (!isClassMatch) return false;
+
+            // Check activity
+            const docActivity = d.activity || d.centerId || d.sentraId || 'general';
+            if (docActivity !== activeSentra) return false;
+
+            // Check domain
+            const docDomain = d.activity === 'SPECIAL_ACTIVITY' ? 'none' : (d.domain || d.domainId || 'general');
+            if (docDomain !== activeDomain) return false;
+
+            // Check academic year & semester
+            if (activeYear && d.academicYearId && d.academicYearId !== activeYear) return false;
+            if (activeSemester && d.semester && d.semester !== activeSemester) return false;
+
+            return true;
+          });
+
+          if (match) {
+            foundDoc = match;
+            matchedId = match.id;
           }
+        } catch (e) {
+          console.warn("Strategy C query failed:", e);
+        }
+      }
 
-          setIsSessionLocked(true);
-          setSessionStatus('locked');
-          setCurrentDocId(docId);
-        } else {
-          if (selectedActivity !== 'SPECIAL_ACTIVITY') {
-            // Fallback to unscoped query (backward compatibility for old saved records without classId prefix)
-            const unscopedDocId = `${selectedActivity}_${selectedDomain}_${observationDate}`;
-            const unscopedRef = doc(db, 'observations', unscopedDocId);
-            const unscopedSnap = await getDoc(unscopedRef);
-            
-            if (unscopedSnap.exists()) {
-              const d = unscopedSnap.data();
-              // Only accept if classId matches or is resolved
-              if (isDocForClass(d, selectedClassId, activeClassObj, students)) {
-                if (d.observations) setObservations(d.observations);
-                
-                setDocCreatedAt(d.createdAt || d.timestamp || null);
-                setDocCreatedBy(d.createdBy || null);
-                setGeneralNote(d.generalNote || "");
-                lastSavedGeneralNoteRef.current = d.generalNote || "";
-                setGeneralNoteUpdatedAt(d.generalNoteUpdatedAt || null);
-                setGeneralNoteUpdatedBy(d.generalNoteUpdatedBy || null);
-                setGeneralNoteUpdatedByName(d.generalNoteUpdatedByName || null);
-                setSpecialActivityName("");
-                setSpecialActivityType("activity");
+      // Strategy D: Unscoped legacy lookup
+      if (!foundDoc && selectedActivity !== 'SPECIAL_ACTIVITY') {
+        try {
+          const unscopedDocId = `${selectedActivity}_${selectedDomain}_${observationDate}`;
+          const unscopedRef = doc(db, 'observations', unscopedDocId);
+          const unscopedSnap = await getDoc(unscopedRef);
+          logFirestoreRead('observations', 1);
+          if (!active) return;
 
-                if (d.generalPhotoDeleted === true) {
-                  setGeneralPhoto(null);
-                } else if (d.generalPhotoUrl || d.generalPhoto) {
-                  setGeneralPhoto(d.generalPhotoUrl || d.generalPhoto);
-                } else {
-                  setGeneralPhoto(null);
-                }
+          if (unscopedSnap.exists()) {
+            const d = unscopedSnap.data();
+            if (isDocForClass(d, selectedClassId, activeClassObj, students)) {
+              foundDoc = d;
+              matchedId = unscopedDocId;
 
-                // AUTO-MIGRATION: Save it properly under the class-scoped ID!
-                try {
-                  const targetDate = observationDate;
-                  const migrationPayload = {
-                    ...d,
-                    id: docId,
-                    unitId: 'KINDERGARTEN',
-                    classId: selectedClassId,
-                    date: targetDate,
-                    observationDate: targetDate,
-                    photoUrl: d.generalPhotoUrl || d.generalPhoto || null,
-                    title: d.title || activities.find(a => a.id === selectedActivity)?.label || selectedActivity,
-                    caption: d.caption || domains.find(d => d.id === selectedDomain)?.label || selectedDomain,
-                    createdAt: d.createdAt || d.timestamp || Date.now(),
-                    createdBy: d.createdBy || profile?.email || profile?.displayName || profile?.uid || 'System',
-                    updatedAt: Date.now()
-                  };
-                  await setDoc(docRef, cleanFirestoreData(migrationPayload), { merge: true });
-                  console.log(`[Auto-Migration] Successfully migrated unscoped observation ${docId} to class-scoped document.`);
-                } catch (migrationErr) {
-                  console.warn("[Auto-Migration] Failed to save class-scoped migration:", migrationErr);
-                }
-
-                setIsSessionLocked(true);
-                setSessionStatus('locked');
-                setCurrentDocId(docId);
-                return;
+              // AUTO-MIGRATION: Save it properly under standard class-scoped ID!
+              try {
+                const targetDate = observationDate;
+                const migrationPayload = {
+                  ...d,
+                  id: docId,
+                  unitId: 'KINDERGARTEN',
+                  classId: selectedClassId,
+                  date: targetDate,
+                  observationDate: targetDate,
+                  photoUrl: d.generalPhotoUrl || d.generalPhoto || null,
+                  title: d.title || activities.find(a => a.id === selectedActivity)?.label || selectedActivity,
+                  caption: d.caption || domains.find(d => d.id === selectedDomain)?.label || selectedDomain,
+                  createdAt: d.createdAt || d.timestamp || Date.now(),
+                  createdBy: d.createdBy || profile?.email || profile?.displayName || profile?.uid || 'System',
+                  updatedAt: Date.now()
+                };
+                await setDoc(docRef, cleanFirestoreData(migrationPayload), { merge: true });
+                console.log(`[Auto-Migration] Successfully migrated unscoped observation ${docId} to class-scoped document.`);
+                matchedId = docId; // Use standard scoped ID going forward
+              } catch (migrationErr) {
+                console.warn("[Auto-Migration] Failed to save class-scoped migration:", migrationErr);
               }
             }
           }
+        } catch (e) {
+          console.warn("Strategy D unscoped fallback failed:", e);
+        }
+      }
 
-          // No entry, initialize empty
-          const classStudents = activeClassObj
-            ? students.filter(student => isStudentInClass(student.classId, activeClassObj))
-            : [];
-          const cleared = classStudents.reduce((acc, kid) => {
-            acc[kid.id] = { grading: null, notes: '', photo: null };
-            return acc;
-          }, {} as Record<string, StudentObservation>);
-          setObservations(cleared);
-          setGeneralPhoto(null);
-          setDocCreatedAt(null);
-          setDocCreatedBy(null);
-          const canonicalClassId = resolveCanonicalClassId(selectedClassId, classes) || selectedClassId;
-          let dailyNote = "";
-          if (dailyContext && dailyContext.generalNote) {
-            dailyNote = dailyContext.generalNote;
-          } else if (typeof localStorage !== 'undefined') {
-            const localVal = localStorage.getItem(`kg_daily_note_${canonicalClassId}_${observationDate}`);
-            if (localVal) dailyNote = localVal;
-          }
-          setGeneralNote(dailyNote);
-          lastSavedGeneralNoteRef.current = dailyNote;
-          setGeneralNoteUpdatedAt(null);
-          setGeneralNoteUpdatedBy(null);
-          setGeneralNoteUpdatedByName(null);
+      // Apply findings or initialize empty state
+      if (!active) return;
+      if (foundDoc) {
+        if (foundDoc.observations) setObservations(foundDoc.observations);
+        
+        setDocCreatedAt(foundDoc.createdAt || foundDoc.timestamp || null);
+        setDocCreatedBy(foundDoc.createdBy || null);
+        setGeneralNote(foundDoc.generalNote || "");
+        lastSavedGeneralNoteRef.current = foundDoc.generalNote || "";
+        setGeneralNoteUpdatedAt(foundDoc.generalNoteUpdatedAt || null);
+        setGeneralNoteUpdatedBy(foundDoc.generalNoteUpdatedBy || null);
+        setGeneralNoteUpdatedByName(foundDoc.generalNoteUpdatedByName || null);
+        
+        if (selectedActivity === 'SPECIAL_ACTIVITY') {
+          setSpecialActivityName(foundDoc.specialActivityName || "");
+          setSpecialActivityType(foundDoc.specialActivityType || "activity");
+        } else {
           setSpecialActivityName("");
           setSpecialActivityType("activity");
-
-          setIsSessionLocked(false);
-          setSessionStatus('new');
-          setCurrentDocId(null);
         }
-      } catch (err) {
-        console.error("Error fetching single observation doc:", err);
-        if (!active) return;
+
+        if (foundDoc.generalPhotoDeleted === true) {
+          setGeneralPhoto(null);
+        } else if (foundDoc.generalPhotoUrl || foundDoc.generalPhoto) {
+          setGeneralPhoto(foundDoc.generalPhotoUrl || foundDoc.generalPhoto);
+        } else {
+          setGeneralPhoto(null);
+        }
+
+        setIsSessionLocked(true);
+        setSessionStatus('locked');
+        setCurrentDocId(matchedId);
+      } else {
+        // No entry found, initialize empty
         const classStudents = activeClassObj
           ? students.filter(student => isStudentInClass(student.classId, activeClassObj))
           : [];
@@ -1916,8 +1937,16 @@ export default function Observation() {
         setGeneralPhoto(null);
         setDocCreatedAt(null);
         setDocCreatedBy(null);
-        setGeneralNote("");
-        lastSavedGeneralNoteRef.current = "";
+
+        let dailyNote = "";
+        if (dailyContext && dailyContext.generalNote) {
+          dailyNote = dailyContext.generalNote;
+        } else if (typeof localStorage !== 'undefined') {
+          const localVal = localStorage.getItem(`kg_daily_note_${canonicalClassId}_${observationDate}`);
+          if (localVal) dailyNote = localVal;
+        }
+        setGeneralNote(dailyNote);
+        lastSavedGeneralNoteRef.current = dailyNote;
         setGeneralNoteUpdatedAt(null);
         setGeneralNoteUpdatedBy(null);
         setGeneralNoteUpdatedByName(null);
@@ -2121,7 +2150,7 @@ export default function Observation() {
       const activeSentra = selectedActivity || "general";
       const activeDomain = selectedActivity === 'SPECIAL_ACTIVITY' ? 'none' : (selectedDomain || 'general');
 
-      const docId = `${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
+      const docId = currentDocId || `${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
       const docRef = doc(db, 'observations', docId);
 
       let existingObservations: Record<string, any> = {};
@@ -2243,7 +2272,7 @@ export default function Observation() {
       const activeDomain = selectedActivity === 'SPECIAL_ACTIVITY' ? 'none' : (selectedDomain || 'general');
 
       // Fetch existing doc from Firestore to merge (using class-scoped prefix)
-      const docId = `${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
+      const docId = currentDocId || `${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
       const docRef = doc(db, 'observations', docId);
 
       let existingObservations: Record<string, any> = {};
@@ -2705,7 +2734,7 @@ export default function Observation() {
       const activeDomain = selectedActivity === 'SPECIAL_ACTIVITY' ? 'none' : (selectedDomain || 'general');
 
       // Fetch the existing document from Firestore first to merge (using class-scoped prefix)
-      const docId = `${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
+      const docId = currentDocId || `${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
       const docRef = doc(db, 'observations', docId);
       
       let existingObservations: Record<string, any> = {};
@@ -2861,7 +2890,7 @@ export default function Observation() {
       const activeSentra = selectedActivity || "general";
       const activeDomain = selectedActivity === 'SPECIAL_ACTIVITY' ? 'none' : (selectedDomain || 'general');
 
-      const docId = `${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
+      const docId = currentDocId || `${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
       const docRef = doc(db, 'observations', docId);
 
       // Enrich with student's names (only if not a special activity)
@@ -2982,7 +3011,7 @@ export default function Observation() {
       const targetDate = observationDate;
       const activeSentra = selectedActivity || "general";
       const activeDomain = selectedActivity === 'SPECIAL_ACTIVITY' ? 'none' : (selectedDomain || 'general');
-      const docId = `${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
+      const docId = currentDocId || `${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
       const docRef = doc(db, 'observations', docId);
 
       // ALWAYS set the class-scoped document's generalPhoto to null and generalPhotoDeleted: true
