@@ -103,6 +103,7 @@ import { MenuVisibilityGuard } from './components/MenuVisibilityGuard';
 
 import StudentDashboard from './pages/Student/StudentDashboard';
 import StudentReports from './pages/Student/StudentReports';
+import StudentMonthlyReports from './pages/Student/StudentMonthlyReports';
 import StudentGoalSettingPage from './pages/Student/StudentGoalSettingPage';
 import StudentMyPresentationPage from './pages/Student/StudentMyPresentationPage';
 import StudentSmartGoalTrackerPage from './pages/Student/StudentSmartGoalTrackerPage';
@@ -659,6 +660,14 @@ export default function App() {
                     <MenuVisibilityGuard menuKey="reportCards">
                       <StudentReports />
                     </MenuVisibilityGuard>
+                  </RoleGuard>
+                } 
+             />
+             <Route 
+                path="monthly-reports" 
+                element={
+                  <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
+                    <StudentMonthlyReports />
                   </RoleGuard>
                 } 
              />

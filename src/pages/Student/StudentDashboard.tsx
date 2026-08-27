@@ -256,7 +256,7 @@ export default function StudentDashboard() {
          </Link>
 
          <Link 
-            to="/student/reports"
+            to={unit === 'JUNIOR_HIGH' ? "/student/monthly-reports" : "/student/reports"}
             className="group p-10 bg-white border border-gray-100 rounded-[3rem] shadow-sm hover:border-blue-200 hover:shadow-xl hover:shadow-blue-50 hover:scale-[1.02] active:scale-[0.98] transition-all flex flex-col justify-between aspect-square md:aspect-auto md:h-80"
          >
             <div className="space-y-6 relative">
@@ -270,7 +270,7 @@ export default function StudentDashboard() {
             </div>
 
             <div className="relative flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-gray-300 group-hover:text-blue-600 transition-colors">
-               Lihat Rapor <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
+               {unit === 'JUNIOR_HIGH' ? "BUKA RAPOR BULANAN" : "Lihat Rapor"} <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
             </div>
          </Link>
       </div>
