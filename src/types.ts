@@ -1224,6 +1224,8 @@ export interface SEMonthlyReflectionSlot {
   submittedAt: number | null;
   reviewedAt: number | null;
   reviewedBy: string | null;
+  lastEditedBy?: string | null;
+  lastEditedAt?: number | null;
 }
 
 export interface SEMonthlyReflection {

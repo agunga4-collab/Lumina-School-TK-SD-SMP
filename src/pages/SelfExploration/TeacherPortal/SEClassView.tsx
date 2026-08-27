@@ -2219,6 +2219,22 @@ function ReviewReflectionModal({ data, onClose, onSuccess }: {
   const [showFeedbackInput, setShowFeedbackInput] = React.useState<Record<number, boolean>>({});
   const { profile } = useAuth();
 
+  const [editingSlotNum, setEditingSlotNum] = React.useState<number | null>(null);
+  const [editingText, setEditingText] = React.useState<string>("");
+  const [isSavingEdit, setIsSavingEdit] = React.useState<boolean>(false);
+
+  const isJuniorHighStaff = React.useMemo(() => {
+    if (!profile) return false;
+    return (profile.role === 'TEACHER' && profile.unitId === 'JUNIOR_HIGH') || profile.role === 'HEAD_JUNIOR';
+  }, [profile]);
+
+  const isAdmin = React.useMemo(() => {
+    if (!profile) return false;
+    return profile.role === 'SUPER_ADMIN' || profile.role === 'ADMIN';
+  }, [profile]);
+
+  const canEdit = isJuniorHighStaff || isAdmin;
+
   // Determine number of slots based on student grade (Grade 7/8 shows Slot 1 & 2; Grade 9 shows Slot 1 only)
   const gradeNum = Number(student.grade || reflection.gradeSnapshot || 7);
   const numSlots = gradeNum === 9 ? 1 : 2;
@@ -2359,6 +2375,57 @@ function ReviewReflectionModal({ data, onClose, onSuccess }: {
     }
   };
 
+  const handleSaveEditedReflection = async (slotNum: number) => {
+    if (!profile?.uid) {
+      alert("Error: Anda harus masuk sebagai guru.");
+      return;
+    }
+
+    if (!window.confirm("Simpan perubahan refleksi siswa?")) {
+      return;
+    }
+
+    setIsSavingEdit(true);
+    try {
+      // 1. Copy slots and update the edited slot text & metadata, preserving all other slots & metadata
+      const updatedSlots = (reflection.slots || []).map(s => {
+        if (s.slot === slotNum) {
+          return {
+            ...s,
+            reflectionText: editingText,
+            lastEditedBy: profile.name || profile.displayName || profile.email || 'Guru',
+            lastEditedAt: Date.now()
+          };
+        }
+        return s;
+      });
+
+      // 2. Build exact doc ref and write to Firestore
+      const docId = `${reflection.studentId}_${reflection.reflectionCycleId}`;
+      const docRef = doc(db, 'seMonthlyReflections', docId);
+      
+      // Update the document on Firestore
+      await updateDoc(docRef, {
+        slots: updatedSlots,
+        updatedAt: serverTimestamp()
+      });
+
+      // Update the local object reference so modal UI displays it immediately
+      reflection.slots = updatedSlots;
+
+      alert(`Perubahan refleksi berhasil disimpan!`);
+      setEditingSlotNum(null);
+      setEditingText("");
+
+      if (onSuccess) onSuccess();
+    } catch (err: any) {
+      console.error("Error saving edited reflection:", err);
+      alert("Gagal menyimpan perubahan: " + err.message);
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm">
       <motion.div 
@@ -2463,18 +2530,65 @@ function ReviewReflectionModal({ data, onClose, onSuccess }: {
                         </div>
                       </div>
 
-                      <div className="p-4 bg-white border border-gray-100 rounded-2xl">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-gray-400 block mb-1">Tulisan Refleksi</span>
-                        {hasContent ? (
-                          <p className="text-sm font-medium text-gray-700 whitespace-pre-wrap leading-relaxed">
-                            {slot.reflectionText}
-                          </p>
-                        ) : (
-                          <p className="text-xs font-bold text-red-500 italic">
-                            Belum diisi siswa
-                          </p>
-                        )}
-                      </div>
+                      {editingSlotNum === slotNum ? (
+                        <div className="p-4 bg-white border border-blue-200 rounded-2xl ring-2 ring-blue-500/10">
+                          <span className="text-[9px] font-black uppercase tracking-widest text-blue-600 block mb-2">Edit Tulisan Refleksi Siswa</span>
+                          <textarea
+                            value={editingText}
+                            onChange={(e) => setEditingText(e.target.value)}
+                            className="w-full min-h-[140px] p-3 text-sm font-medium bg-white rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="Tulis refleksi..."
+                          />
+                          <div className="flex justify-end gap-2 mt-3">
+                            <button
+                              type="button"
+                              disabled={isSavingEdit}
+                              onClick={() => {
+                                setEditingSlotNum(null);
+                                setEditingText("");
+                              }}
+                              className="px-3 py-1.5 bg-gray-50 hover:bg-gray-100 text-gray-600 border border-gray-200 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all"
+                            >
+                              Batal
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isSavingEdit}
+                              onClick={() => handleSaveEditedReflection(slotNum)}
+                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-black uppercase tracking-wider transition-all shadow-md"
+                            >
+                              {isSavingEdit ? 'Menyimpan...' : 'Simpan'}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-4 bg-white border border-gray-100 rounded-2xl">
+                          <div className="flex justify-between items-start mb-1">
+                            <span className="text-[9px] font-black uppercase tracking-widest text-gray-400 block">Tulisan Refleksi</span>
+                            {canEdit && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingSlotNum(slotNum);
+                                  setEditingText(slot.reflectionText || "");
+                                }}
+                                className="text-[9.5px] font-bold text-blue-600 hover:text-blue-700 hover:underline transition-all uppercase tracking-wider"
+                              >
+                                Edit Refleksi
+                              </button>
+                            )}
+                          </div>
+                          {hasContent ? (
+                            <p className="text-sm font-medium text-gray-700 whitespace-pre-wrap leading-relaxed">
+                              {slot.reflectionText}
+                            </p>
+                          ) : (
+                            <p className="text-xs font-bold text-red-500 italic">
+                              Belum diisi siswa
+                            </p>
+                          )}
+                        </div>
+                      )}
 
                       {slot.teacherFeedback && (
                         <div className="p-4 bg-amber-50/60 border border-amber-100 rounded-2xl">
@@ -2485,10 +2599,17 @@ function ReviewReflectionModal({ data, onClose, onSuccess }: {
                         </div>
                       )}
 
-                      <div className="flex justify-between items-center text-[9px] font-black text-gray-400 uppercase tracking-widest px-1 pt-1">
-                        <span>Panjang Karakter: {slot.reflectionText?.length || 0}</span>
-                        {slot.submittedAt && (
-                          <span>Dikirim: {formatTime(slot.submittedAt)}</span>
+                      <div className="flex flex-col gap-2 pt-1">
+                        <div className="flex justify-between items-center text-[9px] font-black text-gray-400 uppercase tracking-widest px-1">
+                          <span>Panjang Karakter: {slot.reflectionText?.length || 0}</span>
+                          {slot.submittedAt && (
+                            <span>Dikirim: {formatTime(slot.submittedAt)}</span>
+                          )}
+                        </div>
+                        {(slot.lastEditedBy || slot.lastEditedAt) && (
+                          <div className="text-[9px] font-bold text-blue-600 bg-blue-50/50 border border-blue-100 px-3 py-1.5 rounded-xl block self-start">
+                            Terakhir diedit oleh {slot.lastEditedBy || 'Guru'} • {slot.lastEditedAt ? formatTime(slot.lastEditedAt) : '—'}
+                          </div>
                         )}
                       </div>
 
