@@ -17,7 +17,8 @@ import KaryaIlmiahSection from '../../components/Student/GoalSetting/KaryaIlmiah
 // Icons
 import { 
   CheckCircle2, AlertTriangle, ArrowRight, ArrowLeft, 
-  Save, Send, ChevronRight, Target, Sparkles, ClipboardCheck
+  Save, Send, ChevronRight, Target, Sparkles, ClipboardCheck,
+  Loader2
 } from 'lucide-react';
 
 const STEPS_STATIC = [
@@ -263,6 +264,70 @@ export default function StudentGoalSettingPage() {
     fetchData();
   }, [fetchData]);
 
+  // Autosave State & Refs for student reflection text fields
+  const [autosaveStatus, setAutosaveStatus] = React.useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const autosaveTimerRef = React.useRef<any>(null);
+  const formDataRef = React.useRef(formData);
+
+  React.useEffect(() => {
+    formDataRef.current = formData;
+  }, [formData]);
+
+  // Clean up autosave timer on unmount
+  React.useEffect(() => {
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+      }
+    };
+  }, []);
+
+  const triggerAutosave = React.useCallback(() => {
+    if (!period || !studentId || !periodState.isEditable) return;
+
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+    }
+
+    autosaveTimerRef.current = setTimeout(async () => {
+      try {
+        setAutosaveStatus('saving');
+        const currentData = formDataRef.current;
+        const payload: Partial<StudentConferenceResponse> = {
+          aboutMe: currentData.aboutMe,
+          strengths: currentData.strengths,
+          areasForGrowth: currentData.areasForGrowth,
+          goals: currentData.goals,
+          unitActivity: currentData.unitActivity,
+          unitActivities: currentData.unitActivities,
+          selfExplorationReferenceId: selfExplorationRef?.enrollment?.id || null,
+          selfExplorationSnapshot: selfExplorationRef?.enrollment || null,
+          karyaIlmiahReferenceId: currentData.karyaIlmiahReferenceId || null,
+        };
+
+        await threeWayConferenceService.saveStudentConferenceDraft(period.id, studentId, payload);
+        setIsDirty(false);
+        setAutosaveStatus('saved');
+
+        // Quietly refresh local response state to avoid losing edit status
+        const updatedResponse = await threeWayConferenceService.getCurrentStudentConferenceResponse(period.id, studentId);
+        if (updatedResponse) {
+          const { status: calculatedStatus } = threeWayConferenceService.calculateConferenceStatus(updatedResponse);
+          updatedResponse.status = calculatedStatus;
+          setResponse(updatedResponse);
+        }
+
+        // Return to idle after a brief visual display period
+        setTimeout(() => {
+          setAutosaveStatus(prev => prev === 'saved' ? 'idle' : prev);
+        }, 3000);
+      } catch (err: any) {
+        console.error('Autosave failed:', err);
+        setAutosaveStatus('error');
+      }
+    }, 1000);
+  }, [period, studentId, periodState.isEditable, selfExplorationRef]);
+
   // Form field change callback
   const handleFieldChange = (field: string, value: any) => {
     setFormData(prev => ({
@@ -270,6 +335,10 @@ export default function StudentGoalSettingPage() {
       [field]: value
     }));
     setIsDirty(true);
+
+    if (field === 'aboutMe' || field === 'strengths' || field === 'areasForGrowth') {
+      triggerAutosave();
+    }
   };
 
   // 2. Draft Save
@@ -426,6 +495,18 @@ export default function StudentGoalSettingPage() {
           {response?.status === 'SUBMITTED' ? (
             <div className="flex items-center gap-2 px-5 py-2.5 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-2xl text-[10px] font-black uppercase tracking-widest">
               <CheckCircle2 size={14} /> Submitted Response
+            </div>
+          ) : autosaveStatus === 'saving' ? (
+            <div className="flex items-center gap-2 px-5 py-2.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-2xl text-[10px] font-black uppercase tracking-widest animate-pulse">
+              <Loader2 size={14} className="animate-spin" /> Menyimpan…
+            </div>
+          ) : autosaveStatus === 'saved' ? (
+            <div className="flex items-center gap-2 px-5 py-2.5 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-2xl text-[10px] font-black uppercase tracking-widest">
+              <CheckCircle2 size={14} /> Tersimpan
+            </div>
+          ) : autosaveStatus === 'error' ? (
+            <div className="flex items-center gap-2 px-5 py-2.5 bg-rose-50 text-rose-600 border border-rose-100 rounded-2xl text-[10px] font-black uppercase tracking-widest">
+              <AlertTriangle size={14} /> Gagal menyimpan
             </div>
           ) : isDirty ? (
             <div className="flex items-center gap-2 px-5 py-2.5 bg-amber-50 text-amber-600 border border-amber-100 rounded-2xl text-[10px] font-black uppercase tracking-widest">

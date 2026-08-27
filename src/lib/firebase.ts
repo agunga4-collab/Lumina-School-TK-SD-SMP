@@ -1582,15 +1582,26 @@ export function getJakartaDateString() {
 export function normalizeGrade(gradeVal: any): number | null {
   if (gradeVal === undefined || gradeVal === null) return null;
   const s = String(gradeVal).trim().toUpperCase();
-  if (s === '7' || s === 'VII' || s.includes('KAMPUS 7') || s.includes('KELAS 7') || s.includes('GRADE 7') || s.includes('7 ')) return 7;
-  if (s === '8' || s === 'VIII' || s.includes('KAMPUS 8') || s.includes('KELAS 8') || s.includes('GRADE 8') || s.includes('8 ')) return 8;
-  if (s === '9' || s === 'IX' || s.includes('KAMPUS 9') || s.includes('KELAS 9') || s.includes('GRADE 9') || s.includes('9 ')) return 9;
   
-  // Try standard parsing of any sequence of digits in the string
-  const match = s.match(/\b(7|8|9)\b/);
-  if (match) {
-    return parseInt(match[1], 10);
+  if (s === '7' || s === 'VII' || s.includes('KAMPUS 7') || s.includes('KELAS 7') || s.includes('GRADE 7') || s.includes('7 ') || s.startsWith('7') || s.includes('VII ')) return 7;
+  if (s === '8' || s === 'VIII' || s.includes('KAMPUS 8') || s.includes('KELAS 8') || s.includes('GRADE 8') || s.includes('8 ') || s.startsWith('8') || s.includes('VIII ')) return 8;
+  if (s === '9' || s === 'IX' || s.includes('KAMPUS 9') || s.includes('KELAS 9') || s.includes('GRADE 9') || s.includes('9 ') || s.startsWith('9') || s.includes('IX ')) return 9;
+  
+  if (/\b(7|8|9)\b/.test(s)) {
+    const m = s.match(/\b(7|8|9)\b/);
+    if (m) return parseInt(m[1], 10);
   }
+  
+  const leadingMatch = s.match(/^(7|8|9)/);
+  if (leadingMatch) {
+    return parseInt(leadingMatch[1], 10);
+  }
+  
+  const anyMatch = s.match(/(?<!\d)(7|8|9)(?!\d)/);
+  if (anyMatch) {
+    return parseInt(anyMatch[1], 10);
+  }
+
   const parsed = parseInt(s, 10);
   if (parsed === 7 || parsed === 8 || parsed === 9) return parsed;
   
@@ -1650,8 +1661,30 @@ export async function resolveStudentGrade(
     if (resolvedClassId) {
       const classDocRef = doc(db, 'classes', resolvedClassId);
       const classDocSnap = await getDoc(classDocRef);
+      let classData: any = null;
       if (classDocSnap.exists()) {
-        const classData = classDocSnap.data();
+        classData = classDocSnap.data();
+        diagnostics.push(`[GRADE-RESOLUTION] Class document found by exact ID: ${resolvedClassId}`);
+      } else {
+        diagnostics.push(`[GRADE-RESOLUTION] Class document '${resolvedClassId}' not found by exact ID. Searching for class document with matching fields...`);
+        // Find class by name
+        const qClassesByName = query(collection(db, 'classes'), where('name', '==', resolvedClassId));
+        const qClassesByNameSnap = await getDocs(qClassesByName);
+        if (!qClassesByNameSnap.empty) {
+          classData = qClassesByNameSnap.docs[0].data();
+          diagnostics.push(`[GRADE-RESOLUTION] Found matching class by name: ${classData.name}`);
+        } else {
+          // Find class by code
+          const qClassesByCode = query(collection(db, 'classes'), where('code', '==', resolvedClassId));
+          const qClassesByCodeSnap = await getDocs(qClassesByCode);
+          if (!qClassesByCodeSnap.empty) {
+            classData = qClassesByCodeSnap.docs[0].data();
+            diagnostics.push(`[GRADE-RESOLUTION] Found matching class by code: ${classData.code}`);
+          }
+        }
+      }
+
+      if (classData) {
         classGradeRaw = classData.grade;
         diagnostics.push(`[GRADE-RESOLUTION] Class document grade raw: ${classGradeRaw}`);
         const norm = normalizeGrade(classGradeRaw);
@@ -1660,8 +1693,6 @@ export async function resolveStudentGrade(
           diagnostics.push(`[GRADE-RESOLUTION] Result: Resolved from class grade/level field (${norm})`);
           return { profileGradeRaw, resolvedClassId, classGradeRaw, finalNormalizedGrade, diagnostics };
         }
-      } else {
-        diagnostics.push(`[GRADE-RESOLUTION] Class document '${resolvedClassId}' not found in Firestore.`);
       }
     } else {
       diagnostics.push(`[GRADE-RESOLUTION] No classId resolved for student.`);
@@ -1695,6 +1726,17 @@ export async function resolveStudentGrade(
       }
     } catch (err: any) {
       diagnostics.push(`[GRADE-RESOLUTION] Error during SE Enrollment query: ${err.message}`);
+    }
+  }
+
+  // 3.5 Fallback: try to normalize resolvedClassId string itself as grade (e.g. "7 Great Himalayan" or "7")
+  if (resolvedClassId) {
+    diagnostics.push(`[GRADE-RESOLUTION] 3.5 Attempting to normalize class ID/name '${resolvedClassId}' as grade directly...`);
+    const fallbackNorm = normalizeGrade(resolvedClassId);
+    if (fallbackNorm !== null) {
+      finalNormalizedGrade = fallbackNorm;
+      diagnostics.push(`[GRADE-RESOLUTION] Result: Resolved as fallback from class name/id directly (${fallbackNorm})`);
+      return { profileGradeRaw, resolvedClassId, classGradeRaw: resolvedClassId, finalNormalizedGrade, diagnostics };
     }
   }
 
@@ -1802,7 +1844,9 @@ export async function getActiveSEReflectionCycle(
     }
     
     diagnostics.push(`[DEV-DIAGNOSTICS] Selected Cycle ID: ${selectedCycle ? selectedCycle.id : 'NONE'}`);
-    console.log(diagnostics.join('\n'));
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(diagnostics.join('\n'));
+    }
     
     return selectedCycle || null;
   } catch (err: any) {
