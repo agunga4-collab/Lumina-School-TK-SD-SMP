@@ -208,11 +208,11 @@ export default function SEClassView() {
     }
     setReflectionsLoading(true);
     try {
+      // Query all reflections for this JUNIOR_HIGH cycle to prevent classId identifier format mismatch
       const q = query(
         collection(db, 'seMonthlyReflections'),
         where('unit', '==', 'JUNIOR_HIGH'),
-        where('reflectionCycleId', '==', selectedCycleId),
-        where('classId', '==', currentClassId)
+        where('reflectionCycleId', '==', selectedCycleId)
       );
       const snap = await getDocs(q);
       const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SEMonthlyReflection));
@@ -297,7 +297,30 @@ export default function SEClassView() {
       return 'NOT_STARTED'; // Belum Diisi
     }
 
-    return reflection.overallStatus; // DRAFT, SUBMITTED, REVISION_REQUESTED, APPROVED
+    // Inspect status of required slots
+    const requiredSlotNums: (1 | 2)[] = numSlots === 1 ? [1] : [1, 2];
+    const slots = reflection.slots || [];
+    const relevantSlots = slots.filter(s => requiredSlotNums.includes(s.slot as 1 | 2));
+
+    if (relevantSlots.length > 0) {
+      const statuses = relevantSlots.map(s => s.status);
+      
+      // If any required slot is SUBMITTED, the overall actionable status is MENUNGGU REVIEW
+      if (statuses.some(s => s === 'SUBMITTED')) {
+        return 'SUBMITTED';
+      }
+      // If any required slot has a revision request, the status is PERLU REVISI
+      if (statuses.some(s => s === 'REVISION_REQUESTED')) {
+        return 'REVISION_REQUESTED';
+      }
+      // If all required slots are approved, the status is APPROVED
+      if (statuses.every(s => s === 'APPROVED')) {
+        return 'APPROVED';
+      }
+      return 'DRAFT';
+    }
+
+    return reflection.overallStatus || 'DRAFT'; // DRAFT fallback
   }, []);
 
   const getReflectionStatusStyle = React.useCallback((status: string) => {
