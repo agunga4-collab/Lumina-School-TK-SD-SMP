@@ -123,6 +123,25 @@ export default function Observation() {
   const paramDomain = searchParams.get('domain');
   const { profile } = useAuth();
 
+  const canManageKindergartenObservation = React.useMemo(() => {
+    if (!profile) return false;
+    const role = profile.role;
+    const unitId = profile.unitId;
+
+    // Check if role is kindergarten_subject_teacher and unitId is KINDERGARTEN
+    if (role === 'kindergarten_subject_teacher' && unitId === 'KINDERGARTEN') {
+      return true;
+    }
+
+    // Include existing authorized Kindergarten roles if their unit allows Kindergarten Observation Data
+    if (['SUPER_ADMIN', 'HEAD_UNIT', 'TEACHER', 'HOMEROOM_TEACHER'].includes(role)) {
+      if (role === 'SUPER_ADMIN') return true;
+      if (unitId === 'KINDERGARTEN') return true;
+    }
+
+    return false;
+  }, [profile]);
+
   const [students, setStudents] = React.useState<any[]>(() => getStoredStudents());
   const {
     assignedClasses: classes,
@@ -2378,6 +2397,11 @@ export default function Observation() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (!canManageKindergartenObservation) {
+      toast.error('Anda tidak memiliki izin untuk mengunggah foto observasi unit TK.');
+      return;
+    }
+
     if (!selectedClassId) {
       toast.error('Silakan pilih Kelas terlebih dahulu sebelum mengunggah foto.');
       return;
@@ -2435,6 +2459,11 @@ export default function Observation() {
   const handleStudentPhotoUpload = async (studentId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (!canManageKindergartenObservation) {
+      toast.error('Anda tidak memiliki izin untuk mengunggah foto observasi unit TK.');
+      return;
+    }
 
     if (!selectedClassId) {
       toast.error('Silakan pilih Kelas terlebih dahulu sebelum mengunggah foto.');
@@ -2543,6 +2572,11 @@ export default function Observation() {
 
   const capturePhoto = async () => {
     if (!videoRef.current || !activeCameraTarget) return;
+
+    if (!canManageKindergartenObservation) {
+      toast.error('Anda tidak memiliki izin untuk mengambil foto observasi unit TK.');
+      return;
+    }
 
     try {
       const video = videoRef.current;
@@ -3002,6 +3036,11 @@ export default function Observation() {
   };
 
   const clearGeneralPhoto = async () => {
+    if (!canManageKindergartenObservation) {
+      toast.error('Anda tidak memiliki izin untuk menghapus foto observasi unit TK.');
+      return;
+    }
+
     setGeneralPhoto(null);
     toast.info('Foto General dikosongkan. Menghapus referensi foto dari Firestore...');
 
@@ -3470,13 +3509,19 @@ export default function Observation() {
                   <div className="relative aspect-video rounded-2xl overflow-hidden group bg-gray-100 border border-gray-100 shadow-inner">
                     <img src={generalPhoto} alt="General Activity" className="w-full h-full object-cover transition-transform group-hover:scale-105" referrerPolicy="no-referrer" />
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 p-2">
-                      <label className="p-2 bg-white/90 hover:bg-white text-gray-800 rounded-xl font-bold text-[10px] transition-transform hover:scale-105 flex items-center gap-1 shadow-md cursor-pointer">
+                      <label 
+                        className={cn(
+                          "p-2 bg-white/90 hover:bg-white text-gray-800 rounded-xl font-bold text-[10px] transition-transform hover:scale-105 flex items-center gap-1 shadow-md cursor-pointer",
+                          !canManageKindergartenObservation && "opacity-50 cursor-not-allowed pointer-events-none"
+                        )}
+                      >
                         <RefreshCw size={12} className="text-emerald-600" /> File
                         <input 
                           type="file" 
                           accept="image/*" 
                           onChange={handleGeneralPhotoUpload} 
                           className="hidden" 
+                          disabled={!canManageKindergartenObservation}
                         />
                       </label>
                       <button
@@ -3485,7 +3530,11 @@ export default function Observation() {
                           setActiveCameraTarget({ type: 'general' });
                           startCamera();
                         }}
-                        className="p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-[10px] transition-transform hover:scale-105 flex items-center gap-1 shadow-md cursor-pointer"
+                        disabled={!canManageKindergartenObservation}
+                        className={cn(
+                          "p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-[10px] transition-transform hover:scale-105 flex items-center gap-1 shadow-md cursor-pointer border-0",
+                          !canManageKindergartenObservation && "opacity-50 cursor-not-allowed pointer-events-none"
+                        )}
                       >
                         <Camera size={12} /> Kamera
                       </button>
@@ -3522,7 +3571,12 @@ export default function Observation() {
                     </p>
                   </div>
                   <div className="flex flex-col sm:flex-row gap-2.5 w-full justify-center">
-                    <label className="flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase tracking-widest px-5 py-2.5 rounded-xl shadow-lg shadow-rose-100 transition-all hover:scale-103 cursor-pointer flex-1">
+                    <label 
+                      className={cn(
+                        "flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase tracking-widest px-5 py-2.5 rounded-xl shadow-lg shadow-rose-100 transition-all hover:scale-103 cursor-pointer flex-1",
+                        !canManageKindergartenObservation && "opacity-50 cursor-not-allowed pointer-events-none"
+                      )}
+                    >
                       {isUploadingGeneral ? (
                         <>
                           <Loader2 className="animate-spin" size={14} /> Membaca...
@@ -3537,6 +3591,7 @@ export default function Observation() {
                         accept="image/*" 
                         onChange={handleGeneralPhotoUpload} 
                         className="hidden" 
+                        disabled={!canManageKindergartenObservation}
                       />
                     </label>
 
@@ -3546,7 +3601,11 @@ export default function Observation() {
                         setActiveCameraTarget({ type: 'general' });
                         startCamera();
                       }}
-                      className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-widest px-5 py-2.5 rounded-xl shadow-lg shadow-emerald-100 transition-all hover:scale-103 cursor-pointer flex-1"
+                      disabled={!canManageKindergartenObservation}
+                      className={cn(
+                        "flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-widest px-5 py-2.5 rounded-xl shadow-lg shadow-emerald-100 transition-all hover:scale-103 cursor-pointer flex-1 border-0",
+                        !canManageKindergartenObservation && "opacity-50 cursor-not-allowed pointer-events-none"
+                      )}
                     >
                       <Camera size={14} /> Ambil dari Kamera
                     </button>
@@ -3562,8 +3621,8 @@ export default function Observation() {
                     <button
                       type="button"
                       onClick={handleSaveAll}
-                      disabled={isSaving}
-                      className="flex-1 py-2.5 bg-[#109E58] hover:bg-[#0E854A] disabled:opacity-50 text-white text-[10px] font-extrabold uppercase tracking-widest rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      disabled={isSaving || !canManageKindergartenObservation}
+                      className="flex-1 py-2.5 bg-[#109E58] hover:bg-[#0E854A] disabled:opacity-50 text-white text-[10px] font-extrabold uppercase tracking-widest rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer border-0"
                       id="btn-save-general-photo"
                     >
                       {isSaving ? <Loader2 className="animate-spin" size={12} /> : <Save size={12} />}
@@ -3572,7 +3631,8 @@ export default function Observation() {
                     <button
                       type="button"
                       onClick={() => setShowDeleteConfirm(true)}
-                      className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-extrabold uppercase tracking-widest rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      disabled={!canManageKindergartenObservation}
+                      className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-extrabold uppercase tracking-widest rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer border-0 disabled:opacity-50"
                       id="btn-delete-general-photo"
                     >
                       <Trash2 size={12} />
@@ -4041,8 +4101,19 @@ export default function Observation() {
                             <img src={resolvedPhoto} alt={student.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                             {hasSpecificPhoto ? (
                               <button
-                                onClick={() => updateStudentField(student.id, 'photo', null)}
-                                className="absolute top-1 right-1 p-1.5 bg-red-600 text-white rounded-lg hover:scale-110 opacity-0 group-hover:opacity-100 transition-all shadow-md"
+                                type="button"
+                                onClick={() => {
+                                  if (!canManageKindergartenObservation) {
+                                    toast.error('Anda tidak memiliki izin untuk mereset foto observasi.');
+                                    return;
+                                  }
+                                  updateStudentField(student.id, 'photo', null);
+                                }}
+                                disabled={!canManageKindergartenObservation}
+                                className={cn(
+                                  "absolute top-1 right-1 p-1.5 bg-red-600 text-white rounded-lg hover:scale-110 opacity-0 group-hover:opacity-100 transition-all shadow-md border-0 cursor-pointer",
+                                  !canManageKindergartenObservation && "opacity-50 cursor-not-allowed pointer-events-none"
+                                )}
                                 title="Reset gunakan Foto Harian"
                               >
                                 <X size={10} strokeWidth={4} />
@@ -4077,7 +4148,8 @@ export default function Observation() {
                           "flex-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all flex items-center justify-center gap-1 cursor-pointer",
                           hasSpecificPhoto 
                             ? "bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700" 
-                            : "bg-white hover:bg-gray-50 border-gray-200 text-gray-600"
+                            : "bg-white hover:bg-gray-50 border-gray-200 text-gray-600",
+                          !canManageKindergartenObservation && "opacity-50 cursor-not-allowed pointer-events-none"
                         )}
                         title="Unggah file foto dari perangkat"
                       >
@@ -4092,6 +4164,7 @@ export default function Observation() {
                           accept="image/*" 
                           onChange={(e) => handleStudentPhotoUpload(student.id, e)} 
                           className="hidden" 
+                          disabled={!canManageKindergartenObservation}
                         />
                       </label>
 
@@ -4101,7 +4174,11 @@ export default function Observation() {
                           setActiveCameraTarget({ type: 'student', studentId: student.id });
                           startCamera();
                         }}
-                        className="flex-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border bg-emerald-600 hover:bg-emerald-700 text-white transition-all flex items-center justify-center gap-1 cursor-pointer"
+                        disabled={!canManageKindergartenObservation}
+                        className={cn(
+                          "flex-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border bg-emerald-600 hover:bg-emerald-700 text-white transition-all flex items-center justify-center gap-1 cursor-pointer",
+                          !canManageKindergartenObservation && "opacity-50 cursor-not-allowed pointer-events-none"
+                        )}
                         title="Ambil foto langsung menggunakan kamera"
                       >
                         <Camera size={10} />
