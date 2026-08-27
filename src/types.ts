@@ -2268,4 +2268,27 @@ export interface JuniorHighMonthlyReportComment {
   updatedAt: string; // ISO format
 }
 
+export interface JuniorHighAAPResult {
+  id?: string; // Stable ID: `{studentId}_{academicYear}`
+  studentId: string;
+  studentNameSnapshot: string;
+  nisSnapshot?: string | null;
+  classId: string;
+  classNameSnapshot: string;
+  academicYear: string;
+  mathLevel: 'Building Foundations' | 'Growing with Guidance' | 'Progressing Independently' | 'Demonstrating Mastery' | '';
+  readingFluencyLevel: 'IR+' | 'IR' | 'ER' | 'ER EN' | '';
+  mengajiMaterial: 'IQRO 1' | 'IQRO 2' | 'IQRO 3' | 'IQRO 4' | 'IQRO 5' | 'IQRO 6' | 'JUZ AMMA' | 'ALQURAN' | '';
+  mengajiCategory: 'ISYROF' | 'MUBTADI' | 'MAQBUL' | 'JAYYID' | '';
+  bahasaIndonesiaLevel: number | null; // 1, 2, 3, 4
+  bahasaIndonesiaLabel: 'Perlu Pendampingan Intensif' | 'Perlu Penguatan Terarah' | 'Siap Berkembang' | 'Siap Lanjut' | '';
+  status: 'DRAFT' | 'PUBLISHED';
+  createdAt: any; // Firestore timestamp or number or any
+  createdBy: string;
+  updatedAt: any;
+  updatedBy: string;
+  publishedAt?: any;
+  publishedBy?: string | null;
+}
+
 

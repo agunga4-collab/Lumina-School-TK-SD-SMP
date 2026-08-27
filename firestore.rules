@@ -1185,5 +1185,14 @@ service cloud.firestore {
       allow write: if isActive() && (isJuniorHighStaff() || isAdmin());
       allow get, list: if isActive() && isOwnStudentData(resource.data.studentId) && resource.data.status == 'PUBLISHED';
     }
+
+    match /junior_high_aap_results/{resultId} {
+      allow list: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow get: if isActive() && (
+        (isJuniorHighStaff() || isAdmin()) ||
+        (isOwnStudentData(resource.data.studentId) && resource.data.status == 'PUBLISHED')
+      );
+      allow write: if isActive() && (isJuniorHighStaff() || isAdmin());
+    }
   }
 }

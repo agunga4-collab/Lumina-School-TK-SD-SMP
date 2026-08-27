@@ -5,7 +5,7 @@ import {
   Map, Calendar, Users, GraduationCap,
   Heart, Star, Camera, MessageCircleHeart, 
   CheckCircle2, Smile, Meh, Frown, Angry, 
-  Activity, BookOpen, Coffee, Home, Loader2, ChevronLeft, ShieldAlert
+  Activity, BookOpen, Coffee, Home, Loader2, ChevronLeft, ShieldAlert, FileSpreadsheet
 } from 'lucide-react';
 import { useOutletContext, Link, useNavigate, Navigate } from 'react-router-dom';
 import { User as AppUser, Student } from '../../types';
@@ -233,7 +233,7 @@ export default function StudentDashboard() {
       </div>
 
       {/* Navigation Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+      <div className={cn("grid grid-cols-1 gap-8", unit === 'JUNIOR_HIGH' ? "lg:grid-cols-3 md:grid-cols-2" : "md:grid-cols-2")}>
          <Link 
             to="/self-exploration/my"
             className="group p-10 bg-gray-900 text-white rounded-[3rem] shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all relative overflow-hidden flex flex-col justify-between aspect-square md:aspect-auto md:h-80"
@@ -273,6 +273,27 @@ export default function StudentDashboard() {
                {unit === 'JUNIOR_HIGH' ? "BUKA RAPOR BULANAN" : "Lihat Rapor"} <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
             </div>
          </Link>
+
+         {unit === 'JUNIOR_HIGH' && (
+            <Link 
+               to="/student/aap"
+               className="group p-10 bg-white border border-gray-100 rounded-[3rem] shadow-sm hover:border-emerald-200 hover:shadow-xl hover:shadow-emerald-50 hover:scale-[1.02] active:scale-[0.98] transition-all flex flex-col justify-between aspect-square md:aspect-auto md:h-80"
+            >
+               <div className="space-y-6 relative">
+                  <div className="w-14 h-14 bg-emerald-50 rounded-[1.5rem] flex items-center justify-center group-hover:bg-emerald-600 group-hover:rotate-6 transition-all duration-500">
+                     <FileSpreadsheet className="text-emerald-600 group-hover:text-white" size={28} />
+                  </div>
+                  <div className="space-y-2">
+                     <h2 className="text-3xl font-black uppercase italic tracking-tighter text-gray-900 group-hover:text-emerald-600 transition-colors">Asesmen Awal</h2>
+                     <p className="text-sm text-gray-400 font-bold leading-relaxed max-w-[200px]">Lihat hasil asesmen awal diagnostik belajarmu.</p>
+                  </div>
+               </div>
+
+               <div className="relative flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-gray-300 group-hover:text-emerald-600 transition-colors">
+                  Buka Asesmen <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
+               </div>
+            </Link>
+         )}
       </div>
 
       {/* Info Section */}

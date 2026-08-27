@@ -40,6 +40,8 @@ const SEPlan = React.lazy(() => import('./pages/SelfExploration/StudentPortal/SE
 const SEDetails = React.lazy(() => import('./pages/SelfExploration/StudentPortal/SEDetails'));
 const SEClassView = React.lazy(() => import('./pages/SelfExploration/TeacherPortal/SEClassView'));
 const SECompilation = React.lazy(() => import('./pages/SelfExploration/SECompilation'));
+const AAPStaffPage = React.lazy(() => import('./pages/JuniorHigh/AAPStaffPage'));
+const AAPStudentPage = React.lazy(() => import('./pages/Student/AAPStudentPage'));
 
 import HeadDashboard from './pages/Dashboard/HeadDashboard';
 import Observations from './pages/Teacher/Observations';
@@ -512,6 +514,11 @@ export default function App() {
                 <MonthlyReportPdfLinkPage />
               </RoleGuard>
             } />
+            <Route path="aap" element={
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL']}>
+                <AAPStaffPage />
+              </RoleGuard>
+            } />
             <Route path="conference/admin" element={
               <RoleGuard roles={['SUPER_ADMIN']}>
                 <ConferencePeriodManagement />
@@ -670,6 +677,14 @@ export default function App() {
                 element={
                   <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
                     <StudentMonthlyReports />
+                  </RoleGuard>
+                } 
+             />
+             <Route 
+                path="aap" 
+                element={
+                  <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
+                    <AAPStudentPage />
                   </RoleGuard>
                 } 
              />

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { 
   Home, Bell, Grid, LogOut, ChevronRight, LayoutDashboard, 
   Map as MapIcon, Smile, Camera, History, Heart, CheckSquare, BookOpen, 
-  Eye, Clock, ShieldAlert, ShieldCheck, ClipboardList, ClipboardCheck, Target, Mail, RefreshCw,
+  Eye, Clock, ShieldAlert, ShieldCheck, ClipboardList, ClipboardCheck, Target, Mail, RefreshCw, FileSpreadsheet,
   Baby, TrendingUp, Folder, BarChart3, FileText, Sparkles, Settings, GraduationCap, User, Users,
   Menu, X, Presentation, MessageSquare, Compass, Calendar, Link
 } from 'lucide-react';
@@ -659,6 +659,7 @@ export function Layout() {
                       <NavItem to="/student/learning-power-up" icon={<CheckSquare size={18} />} label="Learning Power-Up" />
                       <NavItem to="/student/unit-activities" icon={<Compass size={18} />} label="Unit Aktivitas" />
                       <NavItem to="/student/monthly-reports" icon={<FileText size={18} />} label="Rapor Bulanan" />
+                       <NavItem to="/student/aap" icon={<FileSpreadsheet size={18} />} label="Asesmen Awal Pembelajaran" />
                     </>
                   )}
                   {currentUnit !== 'KINDERGARTEN' && (
@@ -800,6 +801,7 @@ export function Layout() {
                       <NavItem to="/junior-high/monthly-report-template" icon={<FileText size={18} />} label="Monthly Report Template" />
                       <NavItem to="/junior-high/monthly-report-pdf" icon={<FileText size={18} />} label="Monthly Report PDF" />
                       <NavItem to="/junior-high/monthly-report-pdf-link" icon={<Link size={18} />} label="Monthly Report PDF Link" />
+                      <NavItem to="/junior-high/aap" icon={<FileSpreadsheet size={18} />} label="Asesmen Awal Pembelajaran" />
                     </>
                   )}
                   <NavItem to="/junior-high/behavior/mtss/overview" icon={<ShieldAlert size={18} />} label="MTSS Behavior" />
