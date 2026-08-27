@@ -20,12 +20,28 @@ import { useAcademicYear } from '../../context/AcademicYearContext';
 import { collection, query, where, getDocs, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 
+const indonesianMonths = [
+  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+];
+
+function getIndonesianMonthLabel(periodKey: string): string {
+  if (!periodKey || !periodKey.includes('-')) return '';
+  const [year, month] = periodKey.split('-');
+  const monthIdx = parseInt(month, 10) - 1;
+  if (monthIdx >= 0 && monthIdx < 12) {
+    return `${indonesianMonths[monthIdx]} ${year}`;
+  }
+  return periodKey;
+}
+
 export default function StudentReports() {
   const { currentUser } = useOutletContext<{ currentUser: AppUser }>();
   const { activeYear, activeSemester } = useAcademicYear();
   const [studentData, setStudentData] = React.useState<Student | null>(null);
   const [reports, setReports] = React.useState<ReportCard[]>([]);
   const [kgReports, setKgReports] = React.useState<any[]>([]);
+  const [jhManualLinks, setJhManualLinks] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
@@ -63,6 +79,21 @@ export default function StudentReports() {
             );
             
             setReports(studentReports.sort((a, b) => b.createdAt - a.createdAt));
+
+            // Fetch manual junior high PDF links if unit is JUNIOR_HIGH
+            if (student.unitId === 'JUNIOR_HIGH') {
+              const qJh = query(
+                collection(db, 'manual_junior_high_report_links'),
+                where('studentId', '==', student.id),
+                where('status', '==', 'PUBLISHED')
+              );
+              const jhSnap = await getDocs(qJh);
+              const jhLinks = jhSnap.docs.map(docSnap => ({
+                id: docSnap.id,
+                ...docSnap.data()
+              } as any));
+              setJhManualLinks(jhLinks);
+            }
           }
         }
       } catch (err) {
@@ -207,7 +238,7 @@ export default function StudentReports() {
         </p>
       </div>
 
-      {reports.length === 0 ? (
+      {reports.length === 0 && jhManualLinks.length === 0 ? (
         <div className="bg-gray-50 border-2 border-dashed border-gray-200 p-20 rounded-[3rem] text-center space-y-4">
           <div className="w-20 h-20 bg-gray-100 rounded-[2rem] flex items-center justify-center mx-auto">
             <FileText className="text-gray-300" size={40} />
@@ -218,58 +249,122 @@ export default function StudentReports() {
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {reports.map((report, idx) => (
-            <motion.div
-              key={report.id}
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: idx * 0.1 }}
-              className="group bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm hover:shadow-2xl hover:shadow-blue-100 hover:border-blue-100 transition-all flex flex-col justify-between aspect-square"
-            >
-              <div className="space-y-6">
-                <div className="flex justify-between items-start">
-                  <div className="w-14 h-14 bg-blue-50 rounded-[1.5rem] flex items-center justify-center group-hover:bg-blue-600 group-hover:-rotate-6 transition-all duration-500">
-                    <FileText className="text-blue-600 group-hover:text-white" size={28} />
-                  </div>
-                  <div className="px-4 py-2 bg-gray-950 text-white rounded-2xl text-[9px] font-black uppercase tracking-widest">
-                    {report.type.replace('_', ' ')}
-                  </div>
-                </div>
+        <div className="space-y-12">
+          {reports.length > 0 && (
+            <div className="space-y-6">
+              <h2 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900">
+                Laporan Hasil Belajar <span className="text-blue-600">Akademik</span>
+              </h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                {reports.map((report, idx) => (
+                  <motion.div
+                    key={report.id}
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: idx * 0.1 }}
+                    className="group bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm hover:shadow-2xl hover:shadow-blue-100 hover:border-blue-100 transition-all flex flex-col justify-between aspect-square"
+                  >
+                    <div className="space-y-6">
+                      <div className="flex justify-between items-start">
+                        <div className="w-14 h-14 bg-blue-50 rounded-[1.5rem] flex items-center justify-center group-hover:bg-blue-600 group-hover:-rotate-6 transition-all duration-500">
+                          <FileText className="text-blue-600 group-hover:text-white" size={28} />
+                        </div>
+                        <div className="px-4 py-2 bg-gray-950 text-white rounded-2xl text-[9px] font-black uppercase tracking-widest">
+                          {report.type.replace('_', ' ')}
+                        </div>
+                      </div>
 
-                <div className="space-y-2">
-                  <h3 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900 group-hover:text-blue-600 transition-colors leading-tight">
-                    {report.period}
-                  </h3>
-                  <div className="flex items-center gap-3 text-xs font-bold text-gray-400">
-                    <span className="flex items-center gap-1"><Calendar size={12} /> Sem {report.semester}</span>
-                    <span className="w-1 h-1 bg-gray-300 rounded-full" />
-                    <span>{report.academicYear}</span>
-                  </div>
-                </div>
-              </div>
+                      <div className="space-y-2">
+                        <h3 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900 group-hover:text-blue-600 transition-colors leading-tight">
+                          {report.period}
+                        </h3>
+                        <div className="flex items-center gap-3 text-xs font-bold text-gray-400">
+                          <span className="flex items-center gap-1"><Calendar size={12} /> Sem {report.semester}</span>
+                          <span className="w-1 h-1 bg-gray-300 rounded-full" />
+                          <span>{report.academicYear}</span>
+                        </div>
+                      </div>
+                    </div>
 
-              <div className="space-y-3">
-                <Link 
-                  to={`/academic/rapor/${report.id}?view=student`} 
-                  className="w-full flex items-center justify-center gap-2 py-4 bg-gray-100 text-gray-900 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-blue-600 hover:text-white transition-all transform active:scale-95"
-                >
-                  <Eye size={14} /> Lihat Detail
-                </Link>
-                
-                <div className="flex gap-2">
-                   <button className="flex-1 flex items-center justify-center gap-2 py-4 border-2 border-gray-100 text-gray-400 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:border-blue-600 hover:text-blue-600 transition-all">
-                      <Download size={14} /> PDF
-                   </button>
-                   {report.isEndTerm && (
-                     <button className="flex-1 flex items-center justify-center gap-2 py-4 border-2 border-gray-100 text-gray-400 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:border-emerald-600 hover:text-emerald-600 transition-all">
-                        <Award size={14} /> Profile
-                     </button>
-                   )}
-                </div>
+                    <div className="space-y-3">
+                      <Link 
+                        to={`/academic/rapor/${report.id}?view=student`} 
+                        className="w-full flex items-center justify-center gap-2 py-4 bg-gray-100 text-gray-900 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-blue-600 hover:text-white transition-all transform active:scale-95"
+                      >
+                        <Eye size={14} /> Lihat Detail
+                      </Link>
+                      
+                      <div className="flex gap-2">
+                         <button className="flex-1 flex items-center justify-center gap-2 py-4 border-2 border-gray-100 text-gray-400 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:border-blue-600 hover:text-blue-600 transition-all">
+                            <Download size={14} /> PDF
+                         </button>
+                         {report.isEndTerm && (
+                           <button className="flex-1 flex items-center justify-center gap-2 py-4 border-2 border-gray-100 text-gray-400 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:border-emerald-600 hover:text-emerald-600 transition-all">
+                              <Award size={14} /> Profile
+                           </button>
+                         )}
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
               </div>
-            </motion.div>
-          ))}
+            </div>
+          )}
+
+          {jhManualLinks.length > 0 && (
+            <div className="space-y-6">
+              <h2 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900">
+                Rapor Bulanan <span className="text-blue-600">PDF (Drive Link)</span>
+              </h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                {jhManualLinks.map((link, idx) => {
+                  const monthLabel = getIndonesianMonthLabel(link.periodKey);
+                  return (
+                    <motion.div
+                      key={link.id}
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: idx * 0.1 }}
+                      className="group bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm hover:shadow-2xl hover:shadow-indigo-100 hover:border-indigo-100 transition-all flex flex-col justify-between aspect-square"
+                    >
+                      <div className="space-y-6">
+                        <div className="flex justify-between items-start">
+                          <div className="w-14 h-14 bg-indigo-50 rounded-[1.5rem] flex items-center justify-center group-hover:bg-indigo-600 group-hover:-rotate-6 transition-all duration-500">
+                            <FileText className="text-indigo-600 group-hover:text-white" size={28} />
+                          </div>
+                          <div className="px-4 py-2 bg-indigo-950 text-white rounded-2xl text-[9px] font-black uppercase tracking-widest">
+                            MONTHLY PDF
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <h3 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900 group-hover:text-indigo-600 transition-colors leading-tight">
+                            {monthLabel || 'Rapor Bulanan'}
+                          </h3>
+                          <div className="flex items-center gap-3 text-xs font-bold text-gray-400">
+                            <span className="flex items-center gap-1"><Calendar size={12} /> Sem {link.semester}</span>
+                            <span className="w-1 h-1 bg-gray-300 rounded-full" />
+                            <span>{link.academicYear}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <a 
+                          href={link.driveUrl} 
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="w-full flex items-center justify-center gap-2 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all transform active:scale-95 shadow-sm shadow-indigo-100 text-center"
+                        >
+                          <ExternalLink size={14} className="inline mr-1" /> Lihat Rapor (Drive)
+                        </a>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

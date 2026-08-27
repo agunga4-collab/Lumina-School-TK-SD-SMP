@@ -1179,5 +1179,11 @@ service cloud.firestore {
         incoming().unit == 'JUNIOR_HIGH' &&
         incoming().reportType == 'MONTHLY_PROGRESS';
     }
+
+    match /manual_junior_high_report_links/{linkId} {
+      allow get, list: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow write: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow get: if isActive() && isOwnStudentData(resource.data.studentId) && resource.data.status == 'PUBLISHED';
+    }
   }
 }

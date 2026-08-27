@@ -4,7 +4,7 @@ import {
   Map as MapIcon, Smile, Camera, History, Heart, CheckSquare, BookOpen, 
   Eye, Clock, ShieldAlert, ShieldCheck, ClipboardList, ClipboardCheck, Target, Mail, RefreshCw,
   Baby, TrendingUp, Folder, BarChart3, FileText, Sparkles, Settings, GraduationCap, User, Users,
-  Menu, X, Presentation, MessageSquare, Compass, Calendar
+  Menu, X, Presentation, MessageSquare, Compass, Calendar, Link
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, Navigate, useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -795,6 +795,7 @@ export function Layout() {
                       <NavItem to="/junior-high/monthly-report-preview" icon={<Eye size={18} />} label="Monthly Report Preview" />
                       <NavItem to="/junior-high/monthly-report-template" icon={<FileText size={18} />} label="Monthly Report Template" />
                       <NavItem to="/junior-high/monthly-report-pdf" icon={<FileText size={18} />} label="Monthly Report PDF" />
+                      <NavItem to="/junior-high/monthly-report-pdf-link" icon={<Link size={18} />} label="Monthly Report PDF Link" />
                     </>
                   )}
                   <NavItem to="/junior-high/behavior/mtss/overview" icon={<ShieldAlert size={18} />} label="MTSS Behavior" />
