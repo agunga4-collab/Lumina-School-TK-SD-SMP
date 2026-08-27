@@ -50,6 +50,7 @@ const getChoiceStatusLabel = (status?: string, approvalStatus?: string) => {
 };
 
 export default function SEClassView() {
+  const navigate = useNavigate();
   const { classId } = useParams();
   const { profile } = useAuth();
   const { activeYear } = useAcademicYear();
@@ -462,6 +463,14 @@ export default function SEClassView() {
             )}
           >
             Refleksi Siswa
+          </button>
+          <button
+            onClick={() => navigate('/self-exploration/compilation')}
+            className={cn(
+              "pb-4 font-black uppercase text-[11px] tracking-widest border-b-2 transition-all px-4 border-transparent text-gray-400 hover:text-gray-900"
+            )}
+          >
+            Kompilasi Refleksi SE
           </button>
         </div>
       )}

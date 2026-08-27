@@ -39,6 +39,7 @@ const SEMy = React.lazy(() => import('./pages/SelfExploration/StudentPortal/SEMy
 const SEPlan = React.lazy(() => import('./pages/SelfExploration/StudentPortal/SEPlan'));
 const SEDetails = React.lazy(() => import('./pages/SelfExploration/StudentPortal/SEDetails'));
 const SEClassView = React.lazy(() => import('./pages/SelfExploration/TeacherPortal/SEClassView'));
+const SECompilation = React.lazy(() => import('./pages/SelfExploration/SECompilation'));
 
 import HeadDashboard from './pages/Dashboard/HeadDashboard';
 import Observations from './pages/Teacher/Observations';
@@ -600,6 +601,7 @@ export default function App() {
             <Route path="my/:enrollmentId/details/:slotId" element={<SEDetails />} />
             <Route path="class" element={<SEClassView />} />
             <Route path="class/:classId" element={<SEClassView />} />
+            <Route path="compilation" element={<SECompilation />} />
           </Route>
 
           {/* Student Portal */}
