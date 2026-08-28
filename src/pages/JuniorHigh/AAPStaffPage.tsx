@@ -10,7 +10,7 @@ import { JuniorHighAAPResult, Student } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn } from '../../lib/utils';
+import { cn, makeAAPResultId } from '../../lib/utils';
 import { collection, doc, writeBatch, deleteDoc, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
 import { toast } from 'sonner';
 
@@ -20,21 +20,20 @@ const normalizeName = (name: string): string => {
   return name.toLowerCase().replace(/[^a-z0-9]/g, "").trim();
 };
 
-const parseMathLevel = (raw: string): 'Building Foundations' | 'Growing with Guidance' | 'Progressing Independently' | 'Demonstrating Mastery' | '' => {
+const parseMathLevel = (raw: string): 'Beginning Understanding' | 'Supported Understanding' | 'Independent Understanding' | 'Demonstrating Mastery' | '' => {
   if (!raw) return '';
-  const val = raw.trim().toLowerCase();
-  if (val.includes('foundations') || val.includes('building')) return 'Building Foundations';
-  if (val.includes('guidance') || val.includes('growing')) return 'Growing with Guidance';
-  if (val.includes('independently') || val.includes('progressing')) return 'Progressing Independently';
+  const val = raw.trim().replace(/\s+/g, ' ').toLowerCase();
+  if (val.includes('beginning') || val.includes('foundations') || val.includes('building')) return 'Beginning Understanding';
+  if (val.includes('supported') || val.includes('guidance') || val.includes('growing')) return 'Supported Understanding';
+  if (val.includes('independent') || val.includes('independently') || val.includes('progressing')) return 'Independent Understanding';
   if (val.includes('mastery') || val.includes('demonstrating')) return 'Demonstrating Mastery';
   return '';
 };
 
-const parseReadingFluency = (raw: string): 'IR+' | 'IR' | 'ER' | 'ER EN' | '' => {
+const parseReadingFluency = (raw: string): 'IR+' | 'ER' | 'ER EN' | '' => {
   if (!raw) return '';
-  const val = raw.trim().toUpperCase();
-  if (val === 'IR+') return 'IR+';
-  if (val === 'IR') return 'IR';
+  const val = raw.trim().replace(/\s+/g, ' ').toUpperCase();
+  if (val === 'IR+' || val === 'IR +') return 'IR+';
   if (val === 'ER') return 'ER';
   if (val === 'ER EN' || val === 'EREN' || val.includes('ER EN') || val.includes('ER-EN')) return 'ER EN';
   return '';
@@ -92,8 +91,8 @@ interface PreviewRow {
   rawBahasa: string;
   
   // Parsed fields
-  mathLevel: 'Building Foundations' | 'Growing with Guidance' | 'Progressing Independently' | 'Demonstrating Mastery' | '';
-  readingFluencyLevel: 'IR+' | 'IR' | 'ER' | 'ER EN' | '';
+  mathLevel: 'Beginning Understanding' | 'Supported Understanding' | 'Independent Understanding' | 'Demonstrating Mastery' | '';
+  readingFluencyLevel: 'IR+' | 'ER' | 'ER EN' | '';
   mengajiMaterial: 'IQRO 1' | 'IQRO 2' | 'IQRO 3' | 'IQRO 4' | 'IQRO 5' | 'IQRO 6' | 'JUZ AMMA' | 'ALQURAN' | '';
   mengajiCategory: 'ISYROF' | 'MUBTADI' | 'MAQBUL' | 'JAYYID' | '';
   bahasaIndonesiaLevel: number | null;
@@ -425,7 +424,7 @@ export default function AAPStaffPage() {
 
       validRows.forEach(row => {
         const student = roster.find(s => s.id === row.studentId);
-        const docId = `${row.studentId}_${selectedYear}`;
+        const docId = makeAAPResultId(row.studentId, selectedYear);
         const ref = doc(db, 'junior_high_aap_results', docId);
 
         const payload: any = {
@@ -488,7 +487,7 @@ export default function AAPStaffPage() {
     if (!confirmDelete) return;
 
     try {
-      const docId = `${studentId}_${selectedYear}`;
+      const docId = makeAAPResultId(studentId, selectedYear);
       await deleteDoc(doc(db, 'junior_high_aap_results', docId));
       toast.success("Hasil Asesmen berhasil dihapus. Data akan hilang dari portal siswa seketika.");
       fetchRosterAndResults();
@@ -825,9 +824,9 @@ export default function AAPStaffPage() {
                               className="h-10 px-4 bg-gray-50 rounded-xl border-none text-[11px] font-bold focus:ring-2 focus:ring-indigo-600"
                             >
                               <option value="">— Kosong —</option>
-                              <option value="Building Foundations">Building Foundations</option>
-                              <option value="Growing with Guidance">Growing with Guidance</option>
-                              <option value="Progressing Independently">Progressing Independently</option>
+                              <option value="Beginning Understanding">Beginning Understanding</option>
+                              <option value="Supported Understanding">Supported Understanding</option>
+                              <option value="Independent Understanding">Independent Understanding</option>
                               <option value="Demonstrating Mastery">Demonstrating Mastery</option>
                             </select>
                           </td>
@@ -839,7 +838,6 @@ export default function AAPStaffPage() {
                             >
                               <option value="">— Kosong —</option>
                               <option value="IR+">IR+</option>
-                              <option value="IR">IR</option>
                               <option value="ER">ER</option>
                               <option value="ER EN">ER EN</option>
                             </select>

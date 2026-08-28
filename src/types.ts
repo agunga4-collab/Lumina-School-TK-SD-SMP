@@ -2276,8 +2276,8 @@ export interface JuniorHighAAPResult {
   classId: string;
   classNameSnapshot: string;
   academicYear: string;
-  mathLevel: 'Building Foundations' | 'Growing with Guidance' | 'Progressing Independently' | 'Demonstrating Mastery' | '';
-  readingFluencyLevel: 'IR+' | 'IR' | 'ER' | 'ER EN' | '';
+  mathLevel: 'Beginning Understanding' | 'Supported Understanding' | 'Independent Understanding' | 'Demonstrating Mastery' | '';
+  readingFluencyLevel: 'IR+' | 'ER' | 'ER EN' | '';
   mengajiMaterial: 'IQRO 1' | 'IQRO 2' | 'IQRO 3' | 'IQRO 4' | 'IQRO 5' | 'IQRO 6' | 'JUZ AMMA' | 'ALQURAN' | '';
   mengajiCategory: 'ISYROF' | 'MUBTADI' | 'MAQBUL' | 'JAYYID' | '';
   bahasaIndonesiaLevel: number | null; // 1, 2, 3, 4

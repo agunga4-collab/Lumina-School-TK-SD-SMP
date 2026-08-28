@@ -7,7 +7,28 @@ import { JuniorHighAAPResult, Student } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { collection, doc, getDoc, getDocs, query, where, limit } from 'firebase/firestore';
-import { cn } from '../../lib/utils';
+import { cn, makeAAPResultId } from '../../lib/utils';
+
+const normalizeMathLevelForRender = (val: string | null | undefined): string => {
+  if (!val) return 'Belum ada hasil asesmen';
+  const trimmed = val.trim().replace(/\s+/g, ' ').toLowerCase();
+  if (trimmed === '-' || trimmed === 'unknown' || trimmed === '') return 'Belum ada hasil asesmen';
+  if (trimmed.includes('beginning') || trimmed.includes('foundations') || trimmed.includes('building')) return 'Beginning Understanding';
+  if (trimmed.includes('supported') || trimmed.includes('guidance') || trimmed.includes('growing')) return 'Supported Understanding';
+  if (trimmed.includes('independent') || trimmed.includes('independently') || trimmed.includes('progressing')) return 'Independent Understanding';
+  if (trimmed.includes('mastery') || trimmed.includes('demonstrating')) return 'Demonstrating Mastery';
+  return val; // fallback
+};
+
+const normalizeEnglishLevelForRender = (val: string | null | undefined): string => {
+  if (!val) return 'Belum ada hasil asesmen';
+  const trimmed = val.trim().replace(/\s+/g, ' ').toUpperCase();
+  if (trimmed === '-' || trimmed === 'UNKNOWN' || trimmed === '') return 'Belum ada hasil asesmen';
+  if (trimmed === 'IR+' || trimmed === 'IR +') return 'IR+';
+  if (trimmed === 'ER') return 'ER';
+  if (trimmed === 'ER EN' || trimmed === 'EREN' || trimmed.includes('ER EN') || trimmed.includes('ER-EN')) return 'ER EN';
+  return val; // fallback
+};
 
 // Helper component to render progress pathways
 interface PathwayProps {
@@ -125,7 +146,7 @@ export default function AAPStudentPage() {
         setStudentId(resolvedStudentId);
 
         // Fetch published AAP record
-        const docId = `${resolvedStudentId}_${activeYear}`;
+        const docId = makeAAPResultId(resolvedStudentId, activeYear);
         const docRef = doc(db, 'junior_high_aap_results', docId);
         const snap = await getDoc(docRef);
 
@@ -205,60 +226,72 @@ export default function AAPStudentPage() {
       <div className="space-y-6">
         
         {/* 1. Matematika */}
-        {aapResult.mathLevel && (
-          <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600">
-                <Calculator size={20} />
+        {(() => {
+          const displayMath = normalizeMathLevelForRender(aapResult.mathLevel);
+          const hasMathPathway = displayMath !== 'Belum ada hasil asesmen';
+          return (
+            <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600">
+                  <Calculator size={20} />
+                </div>
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Dimensi Literasi</h3>
+                  <h2 className="text-lg font-black uppercase italic tracking-tight text-indigo-900">Matematika</h2>
+                </div>
               </div>
-              <div>
-                <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Dimensi Literasi</h3>
-                <h2 className="text-lg font-black uppercase italic tracking-tight text-indigo-900">Matematika</h2>
+
+              <div className="p-5 bg-indigo-50/30 rounded-2xl border border-indigo-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <span className="text-xs font-black text-indigo-800 uppercase tracking-wider">Capaian Saat Ini:</span>
+                <span className="text-sm font-black text-indigo-700 uppercase italic tracking-wide">
+                  {displayMath}
+                </span>
               </div>
-            </div>
 
-            <div className="p-5 bg-indigo-50/30 rounded-2xl border border-indigo-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <span className="text-xs font-black text-indigo-800 uppercase tracking-wider">Capaian Saat Ini:</span>
-              <span className="text-sm font-black text-indigo-700 uppercase italic tracking-wide">
-                {aapResult.mathLevel}
-              </span>
+              {hasMathPathway && (
+                <ProgressPathway 
+                  steps={['Beginning Understanding', 'Supported Understanding', 'Independent Understanding', 'Demonstrating Mastery']}
+                  currentValue={displayMath}
+                  activeColor="#4f46e5" // Indigo-600
+                />
+              )}
             </div>
-
-            <ProgressPathway 
-              steps={['Building Foundations', 'Growing with Guidance', 'Progressing Independently', 'Demonstrating Mastery']}
-              currentValue={aapResult.mathLevel}
-              activeColor="#4f46e5" // Indigo-600
-            />
-          </div>
-        )}
+          );
+        })()}
 
         {/* 2. Reading Fluency */}
-        {aapResult.readingFluencyLevel && (
-          <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-600">
-                <BookOpen size={20} />
+        {(() => {
+          const displayEnglish = normalizeEnglishLevelForRender(aapResult.readingFluencyLevel);
+          const hasEnglishPathway = displayEnglish !== 'Belum ada hasil asesmen';
+          return (
+            <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-6">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-600">
+                  <BookOpen size={20} />
+                </div>
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Dimensi Literasi Bahasa</h3>
+                  <h2 className="text-lg font-black uppercase italic tracking-tight text-amber-900">Reading Fluency</h2>
+                </div>
               </div>
-              <div>
-                <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Dimensi Literasi Bahasa</h3>
-                <h2 className="text-lg font-black uppercase italic tracking-tight text-amber-900">Reading Fluency</h2>
+
+              <div className="p-5 bg-amber-50/30 rounded-2xl border border-amber-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <span className="text-xs font-black text-amber-800 uppercase tracking-wider">Tingkat Kemampuan:</span>
+                <span className="text-sm font-black text-amber-700 uppercase italic tracking-wide">
+                  {displayEnglish}
+                </span>
               </div>
-            </div>
 
-            <div className="p-5 bg-amber-50/30 rounded-2xl border border-amber-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <span className="text-xs font-black text-amber-800 uppercase tracking-wider">Tingkat Kemampuan:</span>
-              <span className="text-sm font-black text-amber-700 uppercase italic tracking-wide">
-                {aapResult.readingFluencyLevel}
-              </span>
+              {hasEnglishPathway && (
+                <ProgressPathway 
+                  steps={['IR+', 'ER', 'ER EN']}
+                  currentValue={displayEnglish}
+                  activeColor="#d97706" // Amber-600
+                />
+              )}
             </div>
-
-            <ProgressPathway 
-              steps={['IR+', 'IR', 'ER', 'ER EN']}
-              currentValue={aapResult.readingFluencyLevel}
-              activeColor="#d97706" // Amber-600
-            />
-          </div>
-        )}
+          );
+        })()}
 
         {/* 3. Mengaji */}
         {(aapResult.mengajiMaterial || aapResult.mengajiCategory) && (

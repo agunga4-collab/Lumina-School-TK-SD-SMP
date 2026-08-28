@@ -12,3 +12,6 @@ export function formatDate(date: string | number) {
     year: 'numeric',
   });
 }
+
+export const makeAAPResultId = (studentId: string, academicYear: string) =>
+  `${studentId}_${academicYear.replace(/\//g, '-')}`;
