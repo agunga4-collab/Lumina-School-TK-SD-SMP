@@ -2,7 +2,7 @@ import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   FileText, Calendar, Users, Save, CheckCircle2, RefreshCw, 
-  AlertCircle, Info, Check, Search, X, Edit3, Eye, Trash2, ArrowRight
+  AlertCircle, Info, Check, Search, X, Edit3, Eye, Trash2, ArrowRight, ExternalLink
 } from 'lucide-react';
 import { db, getClasses, getActiveStudents, handleFirestoreError } from '../../lib/firebase';
 import { 
@@ -77,6 +77,10 @@ export default function MonthlyReportPdfLinkPage() {
   const [mappings, setMappings] = React.useState<ReportMapping[]>([]);
   const [loadingSaved, setLoadingSaved] = React.useState<boolean>(false);
   const [searchQuery, setSearchQuery] = React.useState<string>('');
+
+  // View tracking stats
+  const [reportViews, setReportViews] = React.useState<any[]>([]);
+  const [activeTab, setActiveTab] = React.useState<'mapping' | 'tracking'>('mapping');
 
   // Action states
   const [isSaving, setIsSaving] = React.useState<boolean>(false);
@@ -172,6 +176,22 @@ export default function MonthlyReportPdfLinkPage() {
       savedDocs.forEach(doc => {
         savedMap.set(doc.studentId, doc);
       });
+
+      // 2.5. Fetch view events for this period
+      try {
+        const qViews = query(
+          collection(db, 'monthlyReportViews'),
+          where('period', '==', selectedMonth)
+        );
+        const viewsSnap = await getDocs(qViews);
+        const viewsList = viewsSnap.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setReportViews(viewsList);
+      } catch (viewsErr) {
+        console.error('Error loading report views:', viewsErr);
+      }
 
       const selectedClassObj = classesList.find(c => c.id === selectedClassId);
 
@@ -755,24 +775,50 @@ export default function MonthlyReportPdfLinkPage() {
       {/* Review & Edit Table */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
         {/* Table Header Controls */}
-        <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Users size={16} className="text-slate-600" />
-            <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
-              Pratinjau Hasil Pemetaan Rapor ({filteredMappings.length} Baris)
-            </h3>
+        <div className="p-5 border-b border-slate-100 flex flex-col gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <Users size={16} className="text-slate-600" />
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                Pratinjau Hasil Pemetaan Rapor ({filteredMappings.length} Baris)
+              </h3>
+            </div>
+            <div className="w-full sm:w-72 relative">
+              <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
+                <Search size={14} />
+              </span>
+              <input
+                type="text"
+                placeholder="Cari nama siswa, file, status..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full text-xs pl-9 pr-4 py-1.5 rounded-lg border-slate-200 focus:border-blue-500 focus:ring-blue-500 bg-slate-50/50"
+              />
+            </div>
           </div>
-          <div className="w-full sm:w-72 relative">
-            <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
-              <Search size={14} />
-            </span>
-            <input
-              type="text"
-              placeholder="Cari nama siswa, file, status..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full text-xs pl-9 pr-4 py-1.5 rounded-lg border-slate-200 focus:border-blue-500 focus:ring-blue-500 bg-slate-50/50"
-            />
+
+          {/* Sub-tabs */}
+          <div className="flex border-b border-slate-100 gap-2">
+            <button
+              onClick={() => setActiveTab('mapping')}
+              className={`py-2 px-4 font-black uppercase text-[10px] tracking-widest border-b-2 transition-all ${
+                activeTab === 'mapping'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              Kelola Pemetaan File
+            </button>
+            <button
+              onClick={() => setActiveTab('tracking')}
+              className={`py-2 px-4 font-black uppercase text-[10px] tracking-widest border-b-2 transition-all ${
+                activeTab === 'tracking'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              Pantau Riwayat Rapor Dilihat (Tracking)
+            </button>
           </div>
         </div>
 
@@ -787,7 +833,7 @@ export default function MonthlyReportPdfLinkPage() {
             <div className="p-12 text-center text-slate-400 text-xs font-bold uppercase tracking-widest">
               Belum ada data roster siswa atau pemetaan untuk kelas yang dipilih.
             </div>
-          ) : (
+          ) : activeTab === 'mapping' ? (
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-400 border-b border-slate-100">
@@ -910,6 +956,124 @@ export default function MonthlyReportPdfLinkPage() {
                             <Trash2 size={14} />
                           </button>
                         )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                  <th className="py-3 px-4 w-12 text-center">No.</th>
+                  <th className="py-3 px-4 w-60">Siswa (Student)</th>
+                  <th className="py-3 px-4 w-32">Periode (Period)</th>
+                  <th className="py-3 px-4 w-36">Tautan PDF (PDF Link)</th>
+                  <th className="py-3 px-4">Student View</th>
+                  <th className="py-3 px-4">Parent/Wali View</th>
+                  <th className="py-3 px-4 w-32 text-center">Total Views</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50 text-xs">
+                {filteredMappings.map((m, idx) => {
+                  const studentViews = reportViews.filter(v => v.studentId === m.studentId && v.viewerRole === 'student');
+                  const parentViews = reportViews.filter(v => v.studentId === m.studentId && v.viewerRole === 'parent');
+                  
+                  const getStats = (vList: any[]) => {
+                    if (vList.length === 0) return { count: 0, first: null, latest: null };
+                    
+                    const sorted = [...vList].sort((a, b) => {
+                      const aTime = a.viewedAt?.toMillis ? a.viewedAt.toMillis() : (a.viewedAt?.seconds ? a.viewedAt.seconds * 1000 : 0);
+                      const bTime = b.viewedAt?.toMillis ? b.viewedAt.toMillis() : (b.viewedAt?.seconds ? b.viewedAt.seconds * 1000 : 0);
+                      return aTime - bTime;
+                    });
+                    
+                    return {
+                      count: sorted.length,
+                      first: sorted[0].viewedAt,
+                      latest: sorted[sorted.length - 1].viewedAt
+                    };
+                  };
+
+                  const sStats = getStats(studentViews);
+                  const pStats = getStats(parentViews);
+                  const totalCount = sStats.count + pStats.count;
+
+                  const formatTime = (ts: any) => {
+                    if (!ts) return '';
+                    const date = ts.toDate ? ts.toDate() : new Date(ts);
+                    const d = date.getDate();
+                    const mName = indonesianMonths[date.getMonth()];
+                    const y = date.getFullYear();
+                    const h = String(date.getHours()).padStart(2, '0');
+                    const min = String(date.getMinutes()).padStart(2, '0');
+                    return `${d} ${mName} ${y} ${h}.${min}`;
+                  };
+
+                  return (
+                    <tr key={m.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="py-3.5 px-4 text-center font-semibold text-slate-400">{idx + 1}</td>
+                      <td className="py-3.5 px-4 font-bold text-slate-800">
+                        {m.studentNameSnapshot}
+                      </td>
+                      <td className="py-3.5 px-4 font-semibold text-slate-500">
+                        {getIndonesianMonthLabel(m.periodKey) || '-'}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        {m.driveUrl ? (
+                          <a
+                            href={m.driveUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 font-bold hover:underline"
+                          >
+                            <ExternalLink size={12} /> Buka PDF
+                          </a>
+                        ) : (
+                          <span className="text-slate-400 italic">Belum diset</span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 space-y-1">
+                        {sStats.count > 0 ? (
+                          <div className="space-y-0.5">
+                            <span className="inline-flex items-center gap-1 font-bold text-[10px] uppercase tracking-wider px-2 py-0.5 bg-blue-50 text-blue-700 rounded">
+                              Sudah dilihat ({sStats.count}x)
+                            </span>
+                            <div className="text-[10px] text-slate-400 font-medium">
+                              Pertama: {formatTime(sStats.first)}
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-medium">
+                              Terakhir: {formatTime(sStats.latest)}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 font-bold text-[10px] uppercase tracking-wider px-2 py-0.5 bg-slate-50 text-slate-400 rounded">
+                            Belum dilihat
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 space-y-1">
+                        {pStats.count > 0 ? (
+                          <div className="space-y-0.5">
+                            <span className="inline-flex items-center gap-1 font-bold text-[10px] uppercase tracking-wider px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded">
+                              Sudah dilihat ({pStats.count}x)
+                            </span>
+                            <div className="text-[10px] text-slate-400 font-medium">
+                              Pertama: {formatTime(pStats.first)}
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-medium">
+                              Terakhir: {formatTime(pStats.latest)}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 font-bold text-[10px] uppercase tracking-wider px-2 py-0.5 bg-slate-50 text-slate-400 rounded">
+                            Belum dilihat
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 text-center font-black text-slate-700 text-sm">
+                        {totalCount}
                       </td>
                     </tr>
                   );

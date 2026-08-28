@@ -1186,6 +1186,19 @@ service cloud.firestore {
       allow get, list: if isActive() && isOwnStudentData(resource.data.studentId) && resource.data.status == 'PUBLISHED';
     }
 
+    match /monthlyReportViews/{viewId} {
+      allow get, list: if isActive() && (isJuniorHighStaff() || isAdmin() || isOwnStudentData(resource.data.studentId));
+      allow create: if isActive() && (
+        isOwnStudentData(incoming().studentId) &&
+        incoming().viewedAt == request.time &&
+        incoming().viewerRole in ['student', 'parent'] &&
+        incoming().reportId is string && incoming().reportId.size() <= 128 &&
+        incoming().period is string && incoming().period.size() <= 32 &&
+        get(/databases/$(database)/documents/manual_junior_high_report_links/$(incoming().reportId)).data.studentId == incoming().studentId
+      );
+      allow update, delete: if false;
+    }
+
     match /junior_high_aap_results/{resultId} {
       allow list: if isActive() && (isJuniorHighStaff() || isAdmin());
       allow get: if isActive() && (

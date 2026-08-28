@@ -465,6 +465,20 @@
         "viewedAt": { "type": "number" }
       }
     },
+    "MonthlyReportView": {
+      "title": "MonthlyReportView",
+      "description": "Log of student or parent/wali views for specific student monthly progress reports.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "reportId": { "type": "string" },
+        "period": { "type": "string" },
+        "viewerRole": { "type": "string", "enum": ["student", "parent"] },
+        "viewedAt": { "type": "object" }
+      },
+      "required": ["id", "studentId", "reportId", "period", "viewerRole", "viewedAt"]
+    },
     "AppNotification": {
       "title": "AppNotification",
       "description": "Standard app notification model.",
@@ -1046,6 +1060,10 @@
     "parentReportViews/{viewId}": {
       "schema": "ParentReportView",
       "description": "Log of parent views for specific student reports."
+    },
+    "monthlyReportViews/{viewId}": {
+      "schema": "MonthlyReportView",
+      "description": "Log of individual student and parent/wali views on monthly reports."
     },
     "juniorhigh_mtss_academic_cases/{caseId}": {
       "schema": "MTSSAcademicCase",
