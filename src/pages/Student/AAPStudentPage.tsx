@@ -30,6 +30,23 @@ const normalizeEnglishLevelForRender = (val: string | null | undefined): string 
   return val; // fallback
 };
 
+const getEnglishFullMeaning = (val: string): string => {
+  if (val === 'IR+') return 'IR+ — Intensive Reading Plus (Needs Support)';
+  if (val === 'ER') return 'ER — Extensive Reading (On Level)';
+  if (val === 'ER EN') return 'ER EN — Extensive Reading Enrichment (Above Level)';
+  return val;
+};
+
+const getMengajiFullMeaning = (val: string | null | undefined): string => {
+  if (!val) return '—';
+  const upper = val.toUpperCase().trim();
+  if (upper === 'ISYROF') return 'Isyrof — Perlu pendampingan intensif';
+  if (upper === 'MUBTADI') return 'Mubtadi — Pemula';
+  if (upper === 'MAQBUL') return 'Maqbul — Cukup';
+  if (upper === 'JAYYID') return 'Jayyid — Baik';
+  return val;
+};
+
 // Helper component to render progress pathways
 interface PathwayProps {
   steps: string[];
@@ -277,8 +294,8 @@ export default function AAPStudentPage() {
 
               <div className="p-5 bg-amber-50/30 rounded-2xl border border-amber-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <span className="text-xs font-black text-amber-800 uppercase tracking-wider">Tingkat Kemampuan:</span>
-                <span className="text-sm font-black text-amber-700 uppercase italic tracking-wide">
-                  {displayEnglish}
+                <span className="text-sm font-black text-amber-700 block">
+                  {getEnglishFullMeaning(displayEnglish)}
                 </span>
               </div>
 
@@ -288,6 +305,17 @@ export default function AAPStudentPage() {
                   currentValue={displayEnglish}
                   activeColor="#d97706" // Amber-600
                 />
+              )}
+
+              {hasEnglishPathway && (
+                <div className="pt-4 border-t border-gray-100">
+                  <h4 className="text-xs font-black text-gray-500 uppercase tracking-wider mb-2">Keterangan Reading Fluency</h4>
+                  <div className="grid grid-cols-1 gap-2 text-xs text-gray-600">
+                    <div><span className="font-bold text-gray-700">IR+</span> — Intensive Reading Plus (Needs Support)</div>
+                    <div><span className="font-bold text-gray-700">ER</span> — Extensive Reading (On Level)</div>
+                    <div><span className="font-bold text-gray-700">ER EN</span> — Extensive Reading Enrichment (Above Level)</div>
+                  </div>
+                </div>
               )}
             </div>
           );
@@ -310,19 +338,33 @@ export default function AAPStudentPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="p-5 bg-emerald-50/20 rounded-2xl border border-emerald-50/50 space-y-1">
                 <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest block">Materi Saat Ini</span>
-                <span className="text-base font-black text-emerald-800 uppercase italic">{aapResult.mengajiMaterial || '—'}</span>
+                <span className="text-sm sm:text-base font-black text-emerald-800 block">
+                  Materi saat ini: {aapResult.mengajiMaterial || '—'}
+                </span>
               </div>
               <div className="p-5 bg-emerald-50/20 rounded-2xl border border-emerald-50/50 space-y-1">
                 <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest block">Kategori Capaian</span>
-                <span className="text-base font-black text-emerald-800 uppercase italic">{aapResult.mengajiCategory || '—'}</span>
+                <span className="text-sm sm:text-base font-black text-emerald-800 block">
+                  Kategori capaian: {getMengajiFullMeaning(aapResult.mengajiCategory)}
+                </span>
               </div>
             </div>
 
             <ProgressPathway 
-              steps={['ISYROF', 'MUBTADI', 'MAQBUL', 'JAYYID']}
+              steps={['Isyrof', 'Mubtadi', 'Maqbul', 'Jayyid']}
               currentValue={aapResult.mengajiCategory}
               activeColor="#059669" // Emerald-600
             />
+
+            <div className="pt-4 border-t border-gray-100">
+              <h4 className="text-xs font-black text-gray-500 uppercase tracking-wider mb-2">Keterangan Mengaji</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-gray-600">
+                <div><span className="font-bold text-gray-700">Isyrof</span> — Perlu pendampingan intensif</div>
+                <div><span className="font-bold text-gray-700">Mubtadi</span> — Pemula</div>
+                <div><span className="font-bold text-gray-700">Maqbul</span> — Cukup</div>
+                <div><span className="font-bold text-gray-700">Jayyid</span> — Baik</div>
+              </div>
+            </div>
           </div>
         )}
 
