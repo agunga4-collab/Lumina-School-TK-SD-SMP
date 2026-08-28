@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   CheckCircle2, AlertCircle, Clock, UserX, Search, Filter, 
   Save, Calendar, ChevronRight, ChevronLeft, AlertTriangle, MessageSquare, 
-  Settings2, BarChart3, Bell, RefreshCw, Layers, Trash2, ExternalLink, X
+  Settings2, BarChart3, Bell, RefreshCw, Layers, Trash2, ExternalLink, X, Copy
 } from 'lucide-react';
 import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 
@@ -1250,6 +1250,35 @@ export default function Attendance() {
     }
   };
 
+  const handleCopySIA = async (withHeader: boolean) => {
+    if (!students || students.length === 0 || Object.keys(recapData).length === 0) {
+      toast.error('Tidak ada data kehadiran yang dapat disalin.');
+      return;
+    }
+
+    const rows: string[] = [];
+    if (withHeader) {
+      rows.push('Sakit\tIzin\tAlfa');
+    }
+
+    students.forEach(s => {
+      const stats = recapData[s.id] || { sakit: 0, izin: 0, alpa: 0 };
+      const sakit = stats.sakit ?? 0;
+      const izin = stats.izin ?? 0;
+      const alpa = stats.alpa ?? 0;
+      rows.push(`${sakit}\t${izin}\t${alpa}`);
+    });
+
+    const clipboardText = rows.join('\n');
+    try {
+      await navigator.clipboard.writeText(clipboardText);
+      toast.success(`Data S/I/A untuk ${students.length} siswa berhasil disalin.`);
+    } catch (err) {
+      console.error('Failed to copy text to clipboard:', err);
+      toast.error('Gagal menyalin data ke clipboard.');
+    }
+  };
+
   const getStatusIcon = (status: AttendanceStatus) => {
     switch (status) {
       case 'HADIR': return <CheckCircle2 size={18} />;
@@ -2132,12 +2161,30 @@ export default function Attendance() {
                 </button>
               </div>
               {attendanceType !== 'DHUHUR' && (
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                    <button 
                     onClick={() => attendanceSyncService.downloadPdfRecap(selectedClass, activeAcademicYear, activeSemester)}
                     className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 active:scale-95 transition-all"
                    >
                     Cetak (PDF)
+                   </button>
+                   <button 
+                    onClick={() => handleCopySIA(false)}
+                    disabled={!students || students.length === 0 || Object.keys(recapData).length === 0}
+                    className="px-4 py-2 bg-blue-50 border border-blue-200 rounded-xl text-sm font-bold text-blue-600 hover:bg-blue-100 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                    title={(!students || students.length === 0 || Object.keys(recapData).length === 0) ? "Tidak ada data S/I/A yang dapat disalin" : "Salin data S/I/A tanpa baris header untuk langsung dipaste ke Google Sheets"}
+                   >
+                    <Copy size={16} />
+                    Salin S / I / A untuk Google Sheets
+                   </button>
+                   <button 
+                    onClick={() => handleCopySIA(true)}
+                    disabled={!students || students.length === 0 || Object.keys(recapData).length === 0}
+                    className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                    title={(!students || students.length === 0 || Object.keys(recapData).length === 0) ? "Tidak ada data S/I/A yang dapat disalin" : "Salin dengan baris header 'Sakit Izin Alfa'"}
+                   >
+                    <Copy size={16} />
+                    Salin dengan Header
                    </button>
                 </div>
               )}
