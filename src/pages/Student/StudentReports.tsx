@@ -17,7 +17,7 @@ import {
 } from '../../lib/firebase';
 import { cn } from '../../lib/utils';
 import { useAcademicYear } from '../../context/AcademicYearContext';
-import { collection, query, where, getDocs, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 
 const indonesianMonths = [
@@ -45,6 +45,8 @@ export default function StudentReports() {
   const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
+    let unsubscribeJh: (() => void) | undefined;
+
     const fetchReports = async () => {
       setLoading(true);
       try {
@@ -87,12 +89,15 @@ export default function StudentReports() {
                 where('studentId', '==', student.id),
                 where('status', '==', 'PUBLISHED')
               );
-              const jhSnap = await getDocs(qJh);
-              const jhLinks = jhSnap.docs.map(docSnap => ({
-                id: docSnap.id,
-                ...docSnap.data()
-              } as any));
-              setJhManualLinks(jhLinks);
+              unsubscribeJh = onSnapshot(qJh, (snapshot) => {
+                const jhLinks = snapshot.docs.map(docSnap => ({
+                  id: docSnap.id,
+                  ...docSnap.data()
+                } as any));
+                setJhManualLinks(jhLinks);
+              }, (err) => {
+                console.error("onSnapshot error in StudentReports:", err);
+              });
             }
           }
         }
@@ -103,6 +108,12 @@ export default function StudentReports() {
       }
     };
     fetchReports();
+
+    return () => {
+      if (unsubscribeJh) {
+        unsubscribeJh();
+      }
+    };
   }, [currentUser, activeYear]);
 
   const handlePdfClick = async (reportId: string) => {

@@ -8,7 +8,7 @@ import { useOutletContext, Link } from 'react-router-dom';
 import { User as AppUser, Student } from '../../types';
 import { getStudentById } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 
 const indonesianMonths = [
@@ -35,6 +35,8 @@ export default function StudentMonthlyReports() {
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+
     const fetchReports = async () => {
       if (!currentUser?.luminaId) {
         setLoading(false);
@@ -60,27 +62,41 @@ export default function StudentMonthlyReports() {
             where('studentId', '==', student.id),
             where('status', '==', 'PUBLISHED')
           );
-          const jhSnap = await getDocs(qJh);
-          const jhLinks = jhSnap.docs.map(docSnap => ({
-            id: docSnap.id,
-            ...docSnap.data()
-          } as any));
 
-          // Sort by periodKey descending (newest period first)
-          jhLinks.sort((a, b) => (b.periodKey || '').localeCompare(a.periodKey || ''));
-          setJhManualLinks(jhLinks);
+          unsubscribe = onSnapshot(qJh, (snapshot) => {
+            const jhLinks = snapshot.docs.map(docSnap => ({
+              id: docSnap.id,
+              ...docSnap.data()
+            } as any));
+
+            // Sort by periodKey descending (newest period first)
+            jhLinks.sort((a, b) => (b.periodKey || '').localeCompare(a.periodKey || ''));
+            setJhManualLinks(jhLinks);
+            setLoading(false);
+          }, (err) => {
+            console.error("onSnapshot error in StudentMonthlyReports:", err);
+            setError("Gagal memuat rapor bulanan dalam mode real-time.");
+            setLoading(false);
+          });
+
         } else {
           setError("Profil siswa tidak ditemukan. Silakan hubungi admin.");
+          setLoading(false);
         }
       } catch (err: any) {
         console.error("Error fetching manual report links:", err);
         setError("Gagal memuat rapor bulanan. Silakan coba lagi.");
-      } finally {
         setLoading(false);
       }
     };
 
     fetchReports();
+
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
   }, [currentUser, activeYear]);
 
   if (loading) {

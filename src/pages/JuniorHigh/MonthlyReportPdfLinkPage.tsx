@@ -4,7 +4,7 @@ import {
   FileText, Calendar, Users, Save, CheckCircle2, RefreshCw, 
   AlertCircle, Info, Check, Search, X, Edit3, Eye, Trash2, ArrowRight
 } from 'lucide-react';
-import { db, getClasses, getActiveStudents } from '../../lib/firebase';
+import { db, getClasses, getActiveStudents, handleFirestoreError } from '../../lib/firebase';
 import { 
   doc, getDocs, setDoc, deleteDoc, query, collection, where, writeBatch, serverTimestamp 
 } from 'firebase/firestore';
@@ -380,20 +380,53 @@ export default function MonthlyReportPdfLinkPage() {
   };
 
   // Remove individual mapping
-  const handleRemoveMapping = (mappingId: string) => {
-    setMappings(prev => prev.map(m => {
-      if (m.id === mappingId) {
-        return {
-          ...m,
-          fileId: '',
-          fileName: '',
-          driveUrl: '',
-          status: m.studentId ? 'Belum ada PDF' : 'Tidak ditemukan',
-          matchedBy: 'NONE'
-        };
+  const handleRemoveMapping = async (mappingId: string) => {
+    const target = mappings.find(m => m.id === mappingId);
+    if (!target) return;
+
+    const studentName = target.studentNameSnapshot || 'Siswa';
+    const confirmDelete = window.confirm(
+      `Apakah Anda yakin ingin menghapus link rapor untuk "${studentName}"? Tindakan ini akan menghapus link rapor dari database sehingga siswa tidak dapat lagi melihatnya di menu Rapor Bulanan.`
+    );
+    if (!confirmDelete) return;
+
+    try {
+      if (target.studentId && target.dbStatus) {
+        const academicYearNormalized = target.academicYear.replace(/\//g, '-');
+        const docId = `${target.studentId}_${academicYearNormalized}_${target.semester}_${target.periodKey}`;
+        const ref = doc(db, 'manual_junior_high_report_links', docId);
+
+        await deleteDoc(ref);
+        toast.success(`Berhasil menghapus link rapor "${studentName}" dari database.`);
+      } else {
+        toast.success(`Berhasil melepaskan pemetaan file.`);
       }
-      return m;
-    }));
+
+      setMappings(prev => prev.map(m => {
+        if (m.id === mappingId) {
+          return {
+            ...m,
+            fileId: '',
+            fileName: '',
+            driveUrl: '',
+            status: m.studentId ? 'Belum ada PDF' : ('Tidak ditemukan' as const),
+            matchedBy: 'NONE' as const,
+            dbStatus: undefined
+          };
+        }
+        return m;
+      }));
+    } catch (err: any) {
+      console.error('Error deleting report link:', err);
+      toast.error('Gagal menghapus link rapor dari database.');
+      try {
+        const academicYearNormalized = target.academicYear.replace(/\//g, '-');
+        const docId = `${target.studentId}_${academicYearNormalized}_${target.semester}_${target.periodKey}`;
+        handleFirestoreError(err, 'delete', `manual_junior_high_report_links/${docId}`);
+      } catch (innerErr) {
+        // Silently catch handleFirestoreError's throw if needed, or propagate
+      }
+    }
   };
 
   // Save as Draft
