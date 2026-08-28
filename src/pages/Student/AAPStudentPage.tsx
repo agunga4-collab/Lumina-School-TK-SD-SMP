@@ -253,8 +253,7 @@ export default function AAPStudentPage() {
                   <Calculator size={20} />
                 </div>
                 <div>
-                  <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Dimensi Literasi</h3>
-                  <h2 className="text-lg font-black uppercase italic tracking-tight text-indigo-900">Matematika</h2>
+                  <h2 className="text-lg font-black uppercase italic tracking-tight text-indigo-900">Numerasi</h2>
                 </div>
               </div>
 
@@ -287,7 +286,6 @@ export default function AAPStudentPage() {
                   <BookOpen size={20} />
                 </div>
                 <div>
-                  <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Dimensi Literasi Bahasa</h3>
                   <h2 className="text-lg font-black uppercase italic tracking-tight text-amber-900">Reading Fluency</h2>
                 </div>
               </div>
@@ -329,7 +327,6 @@ export default function AAPStudentPage() {
                 <Sparkles size={20} />
               </div>
               <div>
-                <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Dimensi Keagamaan</h3>
                 <h2 className="text-lg font-black uppercase italic tracking-tight text-emerald-900">Mengaji</h2>
               </div>
             </div>
@@ -376,7 +373,6 @@ export default function AAPStudentPage() {
                 <MessageCircleCode size={20} />
               </div>
               <div>
-                <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Dimensi Kebahasaan</h3>
                 <h2 className="text-lg font-black uppercase italic tracking-tight text-blue-900">Bahasa Indonesia</h2>
               </div>
             </div>
