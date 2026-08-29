@@ -9,7 +9,7 @@ import {
 import { SEReflectionCycle, SEMonthlyReflection, Student } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useAcademicYear } from '../../context/AcademicYearContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
 import { collection, getDocs, query, where } from 'firebase/firestore';
@@ -33,10 +33,14 @@ const normalizeGrade = (raw: any): number | null => {
   return null;
 };
 
-export default function SECompilation() {
+export default function SECompilation({ embedded = false }: { embedded?: boolean }) {
   const { profile } = useAuth();
   const { activeYear } = useAcademicYear();
   const navigate = useNavigate();
+
+  if (!embedded) {
+    return <Navigate to="/self-exploration/class?tab=compilation" replace />;
+  }
 
   // Filters state
   const [selectedYear, setSelectedYear] = React.useState<string>(activeYear || '');
@@ -326,26 +330,28 @@ export default function SECompilation() {
   return (
     <div className="space-y-8 pb-20">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-           <div className="flex items-center gap-2 text-blue-600">
-             <ClipboardList size={20} />
-             <span className="text-xs font-black uppercase tracking-widest">Junior High</span>
-           </div>
-           <h1 className="text-3xl font-black text-gray-900 tracking-tight italic uppercase mt-1">Kompilasi Refleksi SE</h1>
-           <p className="text-sm text-gray-500 font-medium mt-1">Salin data refleksi mandiri siswa untuk disematkan langsung ke Google Sheets.</p>
+      {!embedded && (
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+             <div className="flex items-center gap-2 text-blue-600">
+               <ClipboardList size={20} />
+               <span className="text-xs font-black uppercase tracking-widest">Junior High</span>
+             </div>
+             <h1 className="text-3xl font-black text-gray-900 tracking-tight italic uppercase mt-1">Kompilasi Refleksi SE</h1>
+             <p className="text-sm text-gray-500 font-medium mt-1">Salin data refleksi mandiri siswa untuk disematkan langsung ke Google Sheets.</p>
+          </div>
+          
+          {/* Navigation Tabs bar inside page */}
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => navigate('/self-exploration/class')}
+              className="flex items-center gap-2 px-6 py-3.5 bg-white border border-gray-100 hover:border-gray-200 text-gray-600 rounded-[2rem] font-black uppercase text-[10px] tracking-widest shadow-sm transition-all active:scale-95"
+            >
+              Pantau Kelas SE <ChevronRight size={14} />
+            </button>
+          </div>
         </div>
-        
-        {/* Navigation Tabs bar inside page */}
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={() => navigate('/self-exploration/class')}
-            className="flex items-center gap-2 px-6 py-3.5 bg-white border border-gray-100 hover:border-gray-200 text-gray-600 rounded-[2rem] font-black uppercase text-[10px] tracking-widest shadow-sm transition-all active:scale-95"
-          >
-            Pantau Kelas SE <ChevronRight size={14} />
-          </button>
-        </div>
-      </div>
+      )}
 
       {/* Filters Card */}
       <div className="bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm space-y-6">

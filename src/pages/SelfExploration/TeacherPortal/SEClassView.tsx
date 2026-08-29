@@ -16,10 +16,11 @@ import {
 import { SEPeriod, SEEnrollment, SEChoice, SESelfAssessment, SEReflectionCycle, SEMonthlyReflection } from '../../../types';
 import { useAuth } from '../../../context/AuthContext';
 import { useAcademicYear } from '../../../context/AcademicYearContext';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../../lib/utils';
 import { collection, getDocs, query, where, doc, getDoc, setDoc, serverTimestamp, addDoc, Timestamp, updateDoc } from 'firebase/firestore';
+import SECompilation from '../SECompilation';
 
 const normalizeGrade = (raw: any): number | null => {
   if (raw === undefined || raw === null) return null;
@@ -64,8 +65,28 @@ export default function SEClassView() {
   const [showCommentModal, setShowCommentModal] = React.useState(false);
   const [assessments, setAssessments] = React.useState<SESelfAssessment[]>([]);
 
+  const location = useLocation();
+  const searchParams = React.useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const initialTab = (searchParams.get('tab') as 'plan' | 'reflection' | 'compilation') || 'plan';
+
   // Phase 2: Teacher reflection tracking states
-  const [activeTab, setActiveTab] = React.useState<'plan' | 'reflection'>('plan');
+  const [activeTab, setActiveTab] = React.useState<'plan' | 'reflection' | 'compilation'>(initialTab);
+
+  React.useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (tabParam === 'compilation' || tabParam === 'reflection' || tabParam === 'plan') {
+      setActiveTab(tabParam);
+    }
+  }, [searchParams]);
+
+  const handleTabChange = (newTab: 'plan' | 'reflection' | 'compilation') => {
+    setActiveTab(newTab);
+    const path = currentClassId 
+      ? `/self-exploration/class/${currentClassId}?tab=${newTab}`
+      : `/self-exploration/class?tab=${newTab}`;
+    navigate(path);
+  };
+
   const [roster, setRoster] = React.useState<any[]>([]);
   const [cycles, setCycles] = React.useState<SEReflectionCycle[]>([]);
   const [selectedCycleId, setSelectedCycleId] = React.useState<string>('');
@@ -428,54 +449,66 @@ export default function SEClassView() {
              Tahun Ajaran Aktif: {activeYear}
            </div>
         </div>
-        <div className="flex items-center gap-3">
-           <select 
-             value={currentClassId}
-             onChange={e => setCurrentClassId(e.target.value)}
-             className="h-14 px-8 bg-white rounded-[2rem] border-none font-black uppercase text-[10px] tracking-widest shadow-sm focus:ring-2 focus:ring-blue-600"
-           >
-              <option value="">Pilih Kelas</option>
-              {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-           </select>
-        </div>
+        {activeTab !== 'compilation' && (
+          <div className="flex items-center gap-3">
+             <select 
+               value={currentClassId}
+               onChange={e => {
+                 const newClassId = e.target.value;
+                 setCurrentClassId(newClassId);
+                 const path = newClassId 
+                   ? `/self-exploration/class/${newClassId}?tab=${activeTab}`
+                   : `/self-exploration/class?tab=${activeTab}`;
+                 navigate(path);
+               }}
+               className="h-14 px-8 bg-white rounded-[2rem] border-none font-black uppercase text-[10px] tracking-widest shadow-sm focus:ring-2 focus:ring-blue-600"
+             >
+                <option value="">Pilih Kelas</option>
+                {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+             </select>
+          </div>
+        )}
       </div>
 
-      {currentClassId && (
-        <div className="flex gap-4 border-b border-gray-100 pb-0">
-          <button
-            onClick={() => setActiveTab('plan')}
-            className={cn(
-              "pb-4 font-black uppercase text-[11px] tracking-widest border-b-2 transition-all px-4",
-              activeTab === 'plan' 
-                ? "border-blue-600 text-blue-600" 
-                : "border-transparent text-gray-400 hover:text-gray-900"
-            )}
-          >
-            Rencana & Bukti Aktivitas
-          </button>
-          <button
-            onClick={() => setActiveTab('reflection')}
-            className={cn(
-              "pb-4 font-black uppercase text-[11px] tracking-widest border-b-2 transition-all px-4",
-              activeTab === 'reflection' 
-                ? "border-blue-600 text-blue-600" 
-                : "border-transparent text-gray-400 hover:text-gray-900"
-            )}
-          >
-            Refleksi Siswa
-          </button>
-          <button
-            onClick={() => navigate('/self-exploration/compilation')}
-            className={cn(
-              "pb-4 font-black uppercase text-[11px] tracking-widest border-b-2 transition-all px-4 border-transparent text-gray-400 hover:text-gray-900"
-            )}
-          >
-            Kompilasi Refleksi SE
-          </button>
-        </div>
-      )}
+      <div className="flex gap-4 border-b border-gray-100 pb-0">
+        <button
+          onClick={() => handleTabChange('plan')}
+          className={cn(
+            "pb-4 font-black uppercase text-[11px] tracking-widest border-b-2 transition-all px-4",
+            activeTab === 'plan' 
+              ? "border-blue-600 text-blue-600" 
+              : "border-transparent text-gray-400 hover:text-gray-900"
+          )}
+        >
+          Rencana & Bukti Aktivitas
+        </button>
+        <button
+          onClick={() => handleTabChange('reflection')}
+          className={cn(
+            "pb-4 font-black uppercase text-[11px] tracking-widest border-b-2 transition-all px-4",
+            activeTab === 'reflection' 
+              ? "border-blue-600 text-blue-600" 
+              : "border-transparent text-gray-400 hover:text-gray-900"
+          )}
+        >
+          Refleksi Siswa
+        </button>
+        <button
+          onClick={() => handleTabChange('compilation')}
+          className={cn(
+            "pb-4 font-black uppercase text-[11px] tracking-widest border-b-2 transition-all px-4",
+            activeTab === 'compilation' 
+              ? "border-blue-600 text-blue-600" 
+              : "border-transparent text-gray-400 hover:text-gray-900"
+          )}
+        >
+          Kompilasi Refleksi SE
+        </button>
+      </div>
 
-      {!currentClassId ? (
+      {activeTab === 'compilation' ? (
+        <SECompilation embedded={true} />
+      ) : !currentClassId ? (
          <div className="p-20 bg-gray-50 rounded-[3rem] border-2 border-dashed border-gray-200 text-center">
             <p className="text-xs font-black text-gray-400 uppercase tracking-widest">Pilih kelas untuk melihat data.</p>
          </div>

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { 
-  Home, Bell, Grid, LogOut, ChevronRight, LayoutDashboard, 
+  Home, Bell, Grid, LogOut, ChevronRight, ChevronDown, LayoutDashboard, 
   Map as MapIcon, Smile, Camera, History, Heart, CheckSquare, BookOpen, 
   Eye, Clock, ShieldAlert, ShieldCheck, ClipboardList, ClipboardCheck, Target, Mail, RefreshCw, FileSpreadsheet,
   Baby, TrendingUp, Folder, BarChart3, FileText, Sparkles, Settings, GraduationCap, User, Users,
@@ -28,6 +28,15 @@ export function Layout() {
   const { isMenuVisible } = useMenuVisibility();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
+  const isMonthlyReportRoute = location.pathname.startsWith('/junior-high/monthly-');
+  const [monthlyReportOpen, setMonthlyReportOpen] = React.useState(isMonthlyReportRoute);
+
+  React.useEffect(() => {
+    if (isMonthlyReportRoute) {
+      setMonthlyReportOpen(true);
+    }
+  }, [isMonthlyReportRoute]);
+
   const [pendingLXDCount, setPendingLXDCount] = React.useState(0);
   const [resolvedStudentName, setResolvedStudentName] = React.useState<string>("");
   const [resolvedStudentClass, setResolvedStudentClass] = React.useState<string>("");
@@ -788,20 +797,40 @@ export function Layout() {
                   <NavItem to="/junior-high/literasi-numerasi" icon={<BookOpen size={18} />} label="Literasi & Numerasi" />
                   <NavItem to="/junior-high/learning-power-up" icon={<CheckSquare size={18} />} label="Learning Power-Up" />
                   <NavItem to="/self-exploration" icon={<Sparkles size={18} />} label="Self-Exploration" />
-                  {['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL'].includes(currentUser.role) && (
-                    <NavItem to="/self-exploration/compilation" icon={<ClipboardList size={18} />} label="Kompilasi Refleksi SE" />
-                  )}
                   {['SUPER_ADMIN', 'HEAD_JUNIOR', 'TEACHER'].includes(currentUser.role) && (
                     <NavItem to="/junior-high/unit-activities" icon={<Compass size={18} />} label="Unit Aktivitas" />
                   )}
                   {['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL'].includes(currentUser.role) && (
                     <>
-                      <NavItem to="/junior-high/monthly-report" icon={<FileText size={18} />} label="Monthly Report Summary" />
-                      <NavItem to="/junior-high/monthly-comments" icon={<MessageSquare size={18} />} label="Monthly Report Comments" />
-                      <NavItem to="/junior-high/monthly-report-preview" icon={<Eye size={18} />} label="Monthly Report Preview" />
-                      <NavItem to="/junior-high/monthly-report-template" icon={<FileText size={18} />} label="Monthly Report Template" />
-                      <NavItem to="/junior-high/monthly-report-pdf" icon={<FileText size={18} />} label="Monthly Report PDF" />
-                      <NavItem to="/junior-high/monthly-report-pdf-link" icon={<Link size={18} />} label="Monthly Report PDF Link" />
+                      <button
+                        onClick={() => setMonthlyReportOpen(!monthlyReportOpen)}
+                        className={cn(
+                          "w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 group text-gray-500 hover:bg-gray-50 hover:text-gray-900",
+                          isMonthlyReportRoute && "text-blue-600 bg-blue-50/50"
+                        )}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="transition-transform group-hover:scale-110 duration-200">
+                            <FileText size={18} />
+                          </span>
+                          <span>Monthly Report</span>
+                        </div>
+                        <span className="text-gray-400 font-bold">
+                          {monthlyReportOpen ? "˅" : "›"}
+                        </span>
+                      </button>
+
+                      {monthlyReportOpen && (
+                        <div className="pl-4 space-y-1">
+                          <NavItem to="/junior-high/monthly-report" icon={<FileText size={16} />} label="Ringkasan" />
+                          <NavItem to="/junior-high/monthly-comments" icon={<MessageSquare size={16} />} label="Komentar" />
+                          <NavItem to="/junior-high/monthly-report-preview" icon={<Eye size={16} />} label="Preview" />
+                          <NavItem to="/junior-high/monthly-report-template" icon={<FileText size={16} />} label="Template" />
+                          <NavItem to="/junior-high/monthly-report-pdf" icon={<FileText size={16} />} label="PDF" />
+                          <NavItem to="/junior-high/monthly-report-pdf-link" icon={<Link size={16} />} label="Link PDF" />
+                        </div>
+                      )}
+                      
                       <NavItem to="/junior-high/aap" icon={<FileSpreadsheet size={18} />} label="Asesmen Awal Pembelajaran" />
                     </>
                   )}
