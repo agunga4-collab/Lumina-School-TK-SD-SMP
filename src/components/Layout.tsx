@@ -651,27 +651,28 @@ export function Layout() {
              
              {currentUser.role === 'STUDENT' ? (
                 <>
-                  {currentUnit !== 'KINDERGARTEN' && (
-                    <NavItem to="/student/dashboard" icon={<Home size={18} />} label="Dashboard Siswa" />
-                  )}
-                  {currentUser.role === 'STUDENT' && currentUnit === 'JUNIOR_HIGH' && (
+                  {currentUnit === 'KINDERGARTEN' ? (
                     <>
-                      <NavItem to="/student/learning-power-up" icon={<CheckSquare size={18} />} label="Learning Power-Up" />
-                      <NavItem to="/student/unit-activities" icon={<Compass size={18} />} label="Unit Aktivitas" />
-                      <NavItem to="/student/monthly-reports" icon={<FileText size={18} />} label="Rapor Bulanan" />
-                       <NavItem to="/student/aap" icon={<FileSpreadsheet size={18} />} label="Asesmen Awal Pembelajaran" />
+                      <NavItem to="/student/reports" icon={<FileText size={18} />} label="Rapor Saya" />
                     </>
-                  )}
-                  {currentUnit !== 'KINDERGARTEN' && (
+                  ) : (
                     <>
+                      <NavItem to="/student/dashboard" icon={<Home size={18} />} label="Dashboard Siswa" />
+                      {currentUser.role === 'STUDENT' && currentUnit === 'JUNIOR_HIGH' && (
+                        <>
+                          <NavItem to="/student/learning-power-up" icon={<CheckSquare size={18} />} label="Learning Power-Up" />
+                          <NavItem to="/student/unit-activities" icon={<Compass size={18} />} label="Unit Aktivitas" />
+                          <NavItem to="/student/monthly-reports" icon={<FileText size={18} />} label="Rapor Bulanan" />
+                          <NavItem to="/student/aap" icon={<FileSpreadsheet size={18} />} label="Asesmen Awal Pembelajaran" />
+                        </>
+                      )}
                       <NavItem to="/self-exploration/my" icon={<Sparkles size={18} />} label="Self Exploration" />
                       <NavItem to="/student/goal-setting" icon={<Target size={18} />} label="Goal Setting" />
                       <NavItem to="/student/my-presentation" icon={<Presentation size={18} />} label="My Presentation" />
+                      {isMenuVisible(currentUnit, 'reportCards') && (
+                        <NavItem to="/student/reports" icon={<FileText size={18} />} label="Rapor Saya" />
+                      )}
                     </>
-                  )}
-                  {/* <NavItem to="/student/smart-goal-tracker" icon={<TrendingUp size={18} />} label="SMART Goal Tracker" /> */}
-                  {(currentUnit === 'KINDERGARTEN' || isMenuVisible(currentUnit, 'reportCards')) && (
-                    <NavItem to="/student/reports" icon={<FileText size={18} />} label="Rapor Saya" />
                   )}
                 </>
              ) : currentUser.role === 'PARENT' ? (
