@@ -2,11 +2,13 @@ import * as React from 'react';
 import { motion } from 'motion/react';
 import { useAuth } from '../../context/AuthContext';
 import { Sparkles, LogIn, ShieldCheck } from 'lucide-react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { LuminaLogo } from '../../components/LuminaLogo';
+import { getDashboardRoute } from '../../utils/routeResolver';
 
 export default function LoginPage() {
   const { signInWithGoogle, loading, user, profile } = useAuth();
+  const location = useLocation();
   
   // Early logging for debugging redirection/race conditions
   console.log("[LoginPage] Early Render Log:", { 
@@ -26,7 +28,13 @@ export default function LoginPage() {
 
   // Guard: If authenticated and active, go to dashboard
   if (user && profile?.status === 'active') {
-    return <Navigate to="/" replace />;
+    const from = (location.state?.from?.pathname && location.state.from.pathname !== '/login' && location.state.from.pathname !== '/pending')
+      ? location.state.from.pathname + (location.state.from.search || '')
+      : null;
+    
+    const activeUnit = (profile.unitId as any) || localStorage.getItem('lumina_active_unit') || 'JUNIOR_HIGH';
+    const targetRoute = from || getDashboardRoute(profile, activeUnit);
+    return <Navigate to={targetRoute} replace />;
   }
 
   // Guard: If authenticated but pending, go to pending page

@@ -6,9 +6,10 @@ import {
   Baby, History, BarChart3, TrendingUp, Clock, Camera, Smile, Sparkles,
   ChevronRight, Bell, Calendar, Zap, AlertCircle, ArrowRight, Map, AlertTriangle, X
 } from 'lucide-react';
-import { useNavigate, useOutletContext } from 'react-router-dom';
+import { useNavigate, useOutletContext, Navigate } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import type { UserRole, UnitType, User } from '../../types';
+import { getDashboardRoute } from '../../utils/routeResolver';
 import KindergartenHeadDashboard from '../Kindergarten/HeadDashboard';
 import HeadDashboard from '../Dashboard/HeadDashboard';
 import TeacherDashboard from '../JuniorHigh/TeacherDashboard';
@@ -32,6 +33,12 @@ export default function LuminaHome() {
   const navigate = useNavigate();
   const userName = currentUser.displayName;
   const userRole = currentUser.role;
+
+  // Immediate centralized redirect check to prevent flash of legacy content
+  const resolvedRoute = getDashboardRoute(currentUser, activeUnit);
+  if (resolvedRoute !== '/') {
+    return <Navigate to={resolvedRoute} replace />;
+  }
 
   const { missingDays, loading: reminderLoading } = useAttendanceReminder(activeUnit);
   const [showReminder, setShowReminder] = React.useState(false);

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom';
 
 const LegacyCaseRedirect = () => {
   const { id } = useParams();
@@ -166,6 +166,7 @@ function RoleGuard({ children, roles }: { children: React.ReactNode, roles: stri
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, profile, loading, error, signOut } = useAuth();
+  const location = useLocation();
   
   if (loading) {
     return (
@@ -224,7 +225,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   }
 
   if (!user) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
   if (!profile && !loading && !error) {
