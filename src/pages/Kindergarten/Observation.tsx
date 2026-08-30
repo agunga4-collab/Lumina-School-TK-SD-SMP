@@ -528,7 +528,7 @@ export default function Observation() {
   }, [recapMonth, activeYear]);
   const [recapData, setRecapData] = React.useState<any[]>([]);
   const [isBgFetching, setIsBgFetching] = React.useState<boolean>(false);
-  const [recapSubView, setRecapSubView] = React.useState<'matrix' | 'sessions' | 'monthly_table'>('matrix');
+  const [recapSubView, setRecapSubView] = React.useState<'matrix' | 'sessions' | 'monthly_table'>('monthly_table');
 
   // Popup/Modal detail states
   const [selectedDetailCell, setSelectedDetailCell] = React.useState<{ student: any; domain: any; entries: any[] } | null>(null);
@@ -3564,7 +3564,10 @@ export default function Observation() {
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab('recap')}
+          onClick={() => {
+            setActiveTab('recap');
+            setRecapSubView('monthly_table');
+          }}
           className={cn(
             "px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-300 border-0 cursor-pointer text-center flex items-center justify-center gap-1.5 whitespace-nowrap",
             activeTab === 'recap'
@@ -4981,6 +4984,18 @@ export default function Observation() {
               <div className="flex bg-gray-100 p-1 rounded-2xl border border-gray-200/50">
                 <button
                   type="button"
+                  onClick={() => setRecapSubView('monthly_table')}
+                  className={cn(
+                    "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition cursor-pointer border-0",
+                    recapSubView === 'monthly_table'
+                      ? "bg-emerald-600 text-white shadow-sm"
+                      : "text-gray-500 hover:text-gray-755 bg-transparent"
+                  )}
+                >
+                  Tabel Bulanan
+                </button>
+                <button
+                  type="button"
                   onClick={() => setRecapSubView('matrix')}
                   className={cn(
                     "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition cursor-pointer border-0",
@@ -5019,18 +5034,6 @@ export default function Observation() {
                       return obs && obs.grading;
                     });
                   }).length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRecapSubView('monthly_table')}
-                  className={cn(
-                    "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition cursor-pointer border-0",
-                    recapSubView === 'monthly_table'
-                      ? "bg-emerald-600 text-white shadow-sm"
-                      : "text-gray-500 hover:text-gray-755 bg-transparent"
-                  )}
-                >
-                  Tabel Bulanan
                 </button>
               </div>
             </div>
