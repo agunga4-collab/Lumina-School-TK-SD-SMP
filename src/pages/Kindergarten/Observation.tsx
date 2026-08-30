@@ -164,8 +164,190 @@ export default function Observation() {
   const isLockedByContext = false;
 
   // View States
-  const [activeTab, setActiveTab] = React.useState<'input' | 'recap'>('input');
+  const [activeTab, setActiveTab] = React.useState<'input' | 'weekly' | 'recap'>('input');
+
+  // Weekly Observation states
+  const [weeklyStartDate, setWeeklyStartDate] = React.useState<Date>(() => {
+    const today = new Date();
+    const day = today.getDay();
+    const diff = today.getDate() - day + (day === 0 ? -6 : 1);
+    const mon = new Date(today.setDate(diff));
+    mon.setHours(0, 0, 0, 0);
+    return mon;
+  });
+  const [weeklyObservations, setWeeklyObservations] = React.useState<any[]>([]);
+  const [isWeeklyLoading, setIsWeeklyLoading] = React.useState<boolean>(false);
+  const [multipleSessionsModalData, setMultipleSessionsModalData] = React.useState<{
+    student: any;
+    date: Date;
+    dateStr: string;
+    sessions: any[];
+  } | null>(null);
+  const [previewImageUrl, setPreviewImageUrl] = React.useState<string | null>(null);
+  const [highlightedStudentId, setHighlightedStudentId] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (highlightedStudentId) {
+      const element = document.getElementById(`student-row-${highlightedStudentId}`);
+      if (element) {
+        setTimeout(() => {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 150);
+      }
+    }
+  }, [highlightedStudentId]);
+
+  const loadWeeklyObservations = async () => {
+    if (!selectedClassId) return;
+    setIsWeeklyLoading(true);
+    try {
+      const activeClassObj = classes.find(c => c.id === selectedClassId);
+      
+      const mon = new Date(weeklyStartDate);
+      const fri = new Date(weeklyStartDate);
+      fri.setDate(fri.getDate() + 4);
+      
+      const monStr = formatDateLocal(mon);
+      const friStr = formatDateLocal(fri);
+      
+      console.log(`[Weekly] Fetching observations for ${selectedClassId} from ${monStr} to ${friStr}`);
+      
+      const qObs = query(
+        collection(db, 'observations'),
+        where('date', '>=', monStr),
+        where('date', '<=', friStr)
+      );
+      
+      const qSnap = await getDocs(qObs);
+      logFirestoreRead('observations', qSnap.docs.length || 1);
+      
+      const docsList: any[] = [];
+      qSnap.docs.forEach(docSnap => {
+        const d = docSnap.data();
+        if (isDocForClass(d, selectedClassId, activeClassObj, students)) {
+          docsList.push({ ...d, id: docSnap.id });
+        }
+      });
+      
+      setWeeklyObservations(docsList);
+    } catch (err) {
+      console.error("[Weekly] Error loading observations:", err);
+      toast.error("Gagal memuat rekap mingguan.");
+    } finally {
+      setIsWeeklyLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (activeTab === 'weekly' && selectedClassId && classes.length > 0 && students.length > 0) {
+      loadWeeklyObservations();
+    }
+  }, [activeTab, selectedClassId, weeklyStartDate, classes, students]);
   
+  const getWeekDates = (mon: Date): Date[] => {
+    const dates = [];
+    for (let i = 0; i < 5; i++) {
+      const d = new Date(mon);
+      d.setDate(mon.getDate() + i);
+      dates.push(d);
+    }
+    return dates;
+  };
+
+  const formatWeekRange = (monday: Date): string => {
+    const getMonthNameIndo = (m: number) => {
+      const names = [
+        'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+        'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+      ];
+      return names[m];
+    };
+    
+    const friday = new Date(monday);
+    friday.setDate(monday.getDate() + 4);
+    
+    const mDay = monday.getDate();
+    const mMonth = getMonthNameIndo(monday.getMonth());
+    const mYear = monday.getFullYear();
+    
+    const fDay = friday.getDate();
+    const fMonth = getMonthNameIndo(friday.getMonth());
+    const fYear = friday.getFullYear();
+    
+    if (mYear !== fYear) {
+      return `${mDay} ${mMonth} ${mYear} – ${fDay} ${fMonth} ${fYear}`;
+    } else if (monday.getMonth() !== friday.getMonth()) {
+      return `${mDay} ${mMonth} – ${fDay} ${fMonth} ${mYear}`;
+    } else {
+      return `${mDay} – ${fDay} ${mMonth} ${mYear}`;
+    }
+  };
+
+  const formatWeekdayHeader = (date: Date): { dayName: string; dateStr: string } => {
+    const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+    const monthsAbbr = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    return {
+      dayName: days[date.getDay()],
+      dateStr: `${date.getDate()} ${monthsAbbr[date.getMonth()]}`
+    };
+  };
+
+  const isFutureDate = (d: Date): boolean => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const target = new Date(d);
+    target.setHours(0, 0, 0, 0);
+    return target > today;
+  };
+
+  const getFullGradingLabel = (code: string): string => {
+    const g = grades.find(item => item.id === code);
+    return g ? `${g.id} — ${g.label}` : code;
+  };
+
+  const getValidPhotoForStudentInSession = (session: any, obs: any): string | null => {
+    if (obs && obs.photo && obs.photo.trim() !== '') return obs.photo;
+    if (session) {
+      const p = session.generalPhotoUrl || session.photoUrl || session.generalPhoto;
+      if (p && p.trim() !== '') return p;
+    }
+    return null;
+  };
+
+  const handleEmptyCellClick = (studentId: string, dateStr: string) => {
+    setSelectedClassId(selectedClassId);
+    setObservationDate(dateStr);
+    
+    const params = new URLSearchParams(window.location.search);
+    params.set('classId', selectedClassId);
+    params.set('date', dateStr);
+    window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+    
+    setHighlightedStudentId(studentId);
+    setActiveTab('input');
+    toast.info(`Beralih ke lembar input untuk ${dateStr}. Silakan pilih Sentra & Domain.`);
+  };
+
+  const handleFilledCellClick = (item: any, studentId: string) => {
+    const { session } = item;
+    setSelectedClassId(session.classId);
+    setObservationDate(session.date || session.observationDate);
+    setSelectedActivity(session.activity || session.centerId || "");
+    setSelectedDomain(session.activity === 'SPECIAL_ACTIVITY' ? 'none' : (session.domain || session.domainId || ""));
+    setCurrentDocId(session.id);
+    
+    const params = new URLSearchParams(window.location.search);
+    params.set('classId', session.classId);
+    params.set('date', session.date || session.observationDate);
+    if (session.activity) params.set('activity', session.activity);
+    if (session.domain) params.set('domain', session.domain);
+    window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+    
+    setHighlightedStudentId(studentId);
+    setActiveTab('input');
+    toast.success(`Membuka sesi "${session.title || 'Observasi'}" untuk diedit/ditinjau.`);
+  };
+
   // Helper to get local date in YYYY-MM-DD format
   const formatDateLocal = (date: Date): string => {
     const yr = date.getFullYear();
@@ -3260,24 +3442,36 @@ export default function Observation() {
       </header>
 
       {/* Sub Mode Tab Switcher */}
-      <div className="flex bg-white/80 backdrop-blur p-1.5 rounded-2xl border border-gray-100 shadow-sm self-start gap-1 max-w-sm">
+      <div className="flex bg-white/80 backdrop-blur p-1.5 rounded-2xl border border-gray-100 shadow-sm self-start gap-1 max-w-lg">
         <button
           type="button"
           onClick={() => setActiveTab('input')}
           className={cn(
-            "flex-1 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-300 border-0 cursor-pointer text-center",
+            "px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-300 border-0 cursor-pointer text-center whitespace-nowrap",
             activeTab === 'input'
               ? "bg-emerald-600 text-white shadow-sm"
-              : "text-gray-500 hover:text-gray-950 hover:bg-gray-50/50"
+              : "text-gray-500 hover:text-gray-955 hover:bg-gray-50/50"
           )}
         >
           📝 Input Observasi
         </button>
         <button
           type="button"
+          onClick={() => setActiveTab('weekly')}
+          className={cn(
+            "px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-300 border-0 cursor-pointer text-center whitespace-nowrap",
+            activeTab === 'weekly'
+              ? "bg-emerald-600 text-white shadow-sm"
+              : "text-gray-500 hover:text-gray-955 hover:bg-gray-50/50"
+          )}
+        >
+          📅 Input Mingguan
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab('recap')}
           className={cn(
-            "flex-1 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-300 border-0 cursor-pointer text-center flex items-center justify-center gap-1.5",
+            "px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-300 border-0 cursor-pointer text-center flex items-center justify-center gap-1.5 whitespace-nowrap",
             activeTab === 'recap'
               ? "bg-emerald-600 text-white shadow-sm"
               : "text-gray-500 hover:text-gray-955 hover:bg-gray-50/50"
@@ -4226,6 +4420,378 @@ export default function Observation() {
 
       </div>
       </div>
+      ) : activeTab === 'weekly' ? (
+        <div className="space-y-6">
+          {/* Controls Bar */}
+          <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex flex-col lg:flex-row gap-5 items-stretch lg:items-center justify-between">
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Select Class (synced with top selection!) */}
+              <div className="flex items-center gap-2 bg-gray-50 border border-gray-150 rounded-2xl px-3.5 py-2">
+                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Kelas:</span>
+                <select
+                  value={selectedClassId}
+                  onChange={(e) => {
+                    setSelectedClassId(e.target.value);
+                    setLastSelectedClassId(e.target.value);
+                  }}
+                  disabled={isRestrictedToAssignedClasses && classes.length <= 1}
+                  className="bg-transparent text-xs font-bold text-gray-800 outline-none cursor-pointer border-0 p-0 focus:ring-0 disabled:opacity-75 disabled:cursor-not-allowed"
+                >
+                  {classes.map((cls) => {
+                    const classStudentsCount = students.filter(s => isStudentInClass(s.classId, cls)).length;
+                    return (
+                      <option key={cls.id} value={cls.id}>
+                        {cls.name} ({classStudentsCount} Siswa)
+                      </option>
+                    );
+                  })}
+                  {classes.length === 0 && (
+                    <option value="">Tidak ada kelas aktif</option>
+                  )}
+                </select>
+              </div>
+
+              {/* Week selector/navigation */}
+              <div className="flex items-center gap-2 bg-gray-50 border border-gray-150 rounded-2xl p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const prev = new Date(weeklyStartDate);
+                    prev.setDate(prev.getDate() - 7);
+                    setWeeklyStartDate(prev);
+                  }}
+                  className="px-3 py-1.5 bg-white border border-gray-150 hover:bg-gray-100 text-gray-600 hover:text-gray-900 text-[10px] font-bold rounded-xl transition cursor-pointer"
+                >
+                  ← Minggu Sebelumnya
+                </button>
+                <span className="text-xs font-black text-gray-800 px-2 font-mono whitespace-nowrap">
+                  {formatWeekRange(weeklyStartDate)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = new Date(weeklyStartDate);
+                    next.setDate(next.getDate() + 7);
+                    setWeeklyStartDate(next);
+                  }}
+                  className="px-3 py-1.5 bg-white border border-gray-150 hover:bg-gray-100 text-gray-600 hover:text-gray-900 text-[10px] font-bold rounded-xl transition cursor-pointer"
+                >
+                  Minggu Berikutnya →
+                </button>
+              </div>
+            </div>
+
+            {/* Compact Summary */}
+            <div className="flex items-center gap-3 bg-emerald-50/40 border border-emerald-100 rounded-2xl px-4 py-2.5">
+              <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-xs font-black text-emerald-950 leading-none">
+                  {(() => {
+                    const activeClassObj = classes.find(c => c.id === selectedClassId);
+                    const classStudents = students.filter(student => {
+                      if (!selectedClassId) return false;
+                      if (!activeClassObj) return false;
+                      return isStudentInClass(student.classId, activeClassObj);
+                    });
+                    const weekDates = getWeekDates(weeklyStartDate);
+                    
+                    const gradedStudentsCount = classStudents.filter(student => {
+                      return weekDates.some(d => {
+                        const dStr = formatDateLocal(d);
+                        const sessionsOnDate = weeklyObservations.filter(s => (s.date === dStr || s.observationDate === dStr));
+                        return sessionsOnDate.some(session => {
+                          const obs = getStudentObs(session.observations, student);
+                          return obs && obs.grading;
+                        });
+                      });
+                    }).length;
+
+                    return `${gradedStudentsCount} dari ${classStudents.length} grading siswa sudah masuk`;
+                  })()}
+                </p>
+                <p className="text-[9px] font-semibold text-emerald-700 leading-none mt-1">
+                  {(() => {
+                    const activeClassObj = classes.find(c => c.id === selectedClassId);
+                    const classStudents = students.filter(student => {
+                      if (!selectedClassId) return false;
+                      if (!activeClassObj) return false;
+                      return isStudentInClass(student.classId, activeClassObj);
+                    });
+                    const weekDates = getWeekDates(weeklyStartDate);
+                    const totalSlots = classStudents.length * 5;
+                    const filledSlots = classStudents.reduce((acc, student) => {
+                      let studentCount = 0;
+                      weekDates.forEach(d => {
+                        const dStr = formatDateLocal(d);
+                        const sessionsOnDate = weeklyObservations.filter(s => (s.date === dStr || s.observationDate === dStr));
+                        const hasGrading = sessionsOnDate.some(session => {
+                          const obs = getStudentObs(session.observations, student);
+                          return obs && obs.grading;
+                        });
+                        if (hasGrading) studentCount++;
+                      });
+                      return acc + studentCount;
+                    }, 0);
+                    return `Total slot: ${filledSlots} dari ${totalSlots} terisi`;
+                  })()}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Weekly Table View */}
+          {isWeeklyLoading ? (
+            <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-12 text-center flex flex-col items-center justify-center gap-3">
+              <Loader2 className="animate-spin text-emerald-500" size={32} />
+              <p className="text-xs font-extrabold text-gray-500 uppercase tracking-widest">Memuat Data Mingguan...</p>
+            </div>
+          ) : (() => {
+            const activeClassObj = classes.find(c => c.id === selectedClassId);
+            const classStudents = students.filter(student => {
+              if (!selectedClassId) return false;
+              if (!activeClassObj) return false;
+              return isStudentInClass(student.classId, activeClassObj);
+            });
+            const weekDates = getWeekDates(weeklyStartDate);
+
+            if (classStudents.length === 0) {
+              return (
+                <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm p-12 text-center flex flex-col items-center justify-center gap-3">
+                  <AlertCircle className="text-gray-300 animate-pulse" size={36} />
+                  <div>
+                    <p className="text-xs font-black text-gray-700 uppercase tracking-wider">Tidak Ada Siswa Aktif</p>
+                    <p className="text-[10px] text-gray-400 font-semibold mt-1">
+                      Belum ada siswa yang terdaftar di kelas terpilih untuk periode ini.
+                    </p>
+                  </div>
+                </div>
+              );
+            }
+
+            return (
+              <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden animate-fade-in">
+                <div className="overflow-x-auto max-w-full relative">
+                  <table className="w-full border-collapse text-left">
+                    <thead>
+                      <tr className="bg-gray-50/50 border-b border-gray-100">
+                        <th className="p-4 text-[10px] font-black uppercase tracking-wider text-gray-400 text-center w-12 sticky left-0 bg-gray-50 z-20">
+                          No
+                        </th>
+                        <th className="p-4 text-[10px] font-black uppercase tracking-wider text-gray-400 sticky left-12 bg-gray-50 z-20 min-w-[200px] shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
+                          Nama Siswa
+                        </th>
+                        {weekDates.map((d, index) => {
+                          const { dayName, dateStr } = formatWeekdayHeader(d);
+                          return (
+                            <th key={index} className="p-4 text-center min-w-[150px] border-r border-gray-100/40">
+                              <div className="flex flex-col items-center">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-gray-600">{dayName}</span>
+                                <span className="text-[10px] font-bold text-gray-400 mt-0.5">{dateStr}</span>
+                              </div>
+                            </th>
+                          );
+                        })}
+                        <th className="p-4 text-[10px] font-black uppercase tracking-wider text-gray-400 text-center w-24">
+                          Total
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {classStudents.map((student, studentIndex) => {
+                        const countGradings = weekDates.reduce((acc, d) => {
+                          const dStr = formatDateLocal(d);
+                          const sessionsOnDate = weeklyObservations.filter(s => (s.date === dStr || s.observationDate === dStr));
+                          const hasGrading = sessionsOnDate.some(session => {
+                            const obs = getStudentObs(session.observations, student);
+                            return obs && obs.grading;
+                          });
+                          return acc + (hasGrading ? 1 : 0);
+                        }, 0);
+
+                        const isHighlighted = highlightedStudentId === student.id;
+
+                        return (
+                          <tr 
+                            key={student.id} 
+                            id={`student-row-${student.id}`}
+                            className={cn(
+                              "group transition-colors",
+                              isHighlighted 
+                                ? "bg-emerald-50/30 hover:bg-emerald-50/40 border-y-2 border-emerald-400/50" 
+                                : "hover:bg-gray-50/50"
+                            )}
+                          >
+                            <td className={cn(
+                              "p-4 text-center text-xs font-mono font-bold text-gray-400 sticky left-0 z-10 border-r border-gray-100/50 transition-colors",
+                              isHighlighted ? "bg-emerald-50/50" : "bg-white group-hover:bg-gray-50/50"
+                            )}>
+                              {studentIndex + 1}
+                            </td>
+                            <td className={cn(
+                              "p-4 sticky left-12 z-10 border-r border-gray-100/50 shadow-[2px_0_5px_rgba(0,0,0,0.02)] transition-colors",
+                              isHighlighted ? "bg-emerald-50/50" : "bg-white group-hover:bg-gray-50/50"
+                            )}>
+                              <div className="min-w-[180px] max-w-[240px]">
+                                <p className="text-xs font-black text-gray-850 uppercase truncate" title={student.name}>
+                                  {student.name}
+                                </p>
+                                <p className="text-[10px] font-semibold text-gray-400 mt-0.5 font-mono">
+                                  NIS: {student.id}
+                                </p>
+                              </div>
+                            </td>
+                            {weekDates.map((d, dIndex) => {
+                              const dStr = formatDateLocal(d);
+                              const isFuture = isFutureDate(d);
+                              const sessionsOnDate = weeklyObservations.filter(s => (s.date === dStr || s.observationDate === dStr));
+                              const studentObsList = sessionsOnDate.map(session => {
+                                const obs = getStudentObs(session.observations, student);
+                                return { session, obs };
+                              }).filter(item => item.obs && item.obs.grading);
+
+                              const dayHeader = formatWeekdayHeader(d);
+                              const formattedDateIndo = `${d.getDate()} ${['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'][d.getMonth()]} ${d.getFullYear()}`;
+                              const photoTooltip = `Foto kegiatan — ${dayHeader.dayName}, ${formattedDateIndo}`;
+
+                              const handleCellClick = () => {
+                                if (studentObsList.length === 0) {
+                                  handleEmptyCellClick(student.id, dStr);
+                                } else if (studentObsList.length === 1) {
+                                  handleFilledCellClick(studentObsList[0], student.id);
+                                } else {
+                                  setMultipleSessionsModalData({
+                                    student,
+                                    date: d,
+                                    dateStr: dStr,
+                                    sessions: studentObsList
+                                  });
+                                }
+                              };
+
+                              return (
+                                <td 
+                                  key={dIndex} 
+                                  onClick={handleCellClick}
+                                  className="p-4 text-center border-r border-gray-100/40 cursor-pointer hover:bg-emerald-50/20 transition-all select-none"
+                                >
+                                  {studentObsList.length === 0 ? (
+                                    isFuture ? (
+                                      <span className="text-[10px] text-gray-350 font-bold italic block">Belum berlangsung</span>
+                                    ) : (
+                                      <span className="text-[10px] text-gray-450 font-bold italic block">Belum dinilai</span>
+                                    )
+                                  ) : studentObsList.length === 1 ? (
+                                    <div className="flex flex-col items-center">
+                                      <div 
+                                        className={cn(
+                                          "inline-flex items-center justify-center px-2 py-0.5 rounded-lg text-[9px] font-black border uppercase tracking-wider shadow-sm",
+                                          grades.find(g => g.id === studentObsList[0].obs.grading)?.color || "bg-gray-100 text-gray-750 border-gray-200"
+                                        )}
+                                        title={getFullGradingLabel(studentObsList[0].obs.grading || '')}
+                                      >
+                                        {studentObsList[0].obs.grading}
+                                      </div>
+                                      {(() => {
+                                        const photo = getValidPhotoForStudentInSession(studentObsList[0].session, studentObsList[0].obs);
+                                        if (photo) {
+                                          return (
+                                            <div className="mt-1.5 flex justify-center">
+                                              <img 
+                                                src={photo} 
+                                                alt={student.name} 
+                                                className="w-9 h-9 object-cover rounded-lg border border-gray-150 hover:scale-105 shadow-sm transition"
+                                                referrerPolicy="no-referrer"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  setPreviewImageUrl(photo);
+                                                }}
+                                                title={photoTooltip}
+                                              />
+                                            </div>
+                                          );
+                                        }
+                                        return <span className="text-[9px] text-gray-400 font-bold block mt-1.5 font-mono uppercase tracking-wider">Foto belum ada</span>;
+                                      })()}
+                                    </div>
+                                  ) : (
+                                    <div className="flex flex-col items-center">
+                                      <div className="flex items-center gap-1">
+                                        <div 
+                                          className={cn(
+                                            "inline-flex items-center justify-center px-1.5 py-0.5 rounded-lg text-[9px] font-black border uppercase tracking-wider shadow-sm",
+                                            grades.find(g => g.id === studentObsList[0].obs.grading)?.color || "bg-gray-100 text-gray-750 border-gray-200"
+                                          )}
+                                          title={getFullGradingLabel(studentObsList[0].obs.grading || '')}
+                                        >
+                                          {studentObsList[0].obs.grading}
+                                        </div>
+                                        <span className="text-[8px] bg-indigo-50 text-indigo-755 border border-indigo-150 font-black px-1 py-0.5 rounded-md leading-none uppercase tracking-wider shrink-0 font-mono">
+                                          {studentObsList.length} Sesi
+                                        </span>
+                                      </div>
+                                      {(() => {
+                                        const validPhotos = studentObsList
+                                          .map(item => getValidPhotoForStudentInSession(item.session, item.obs))
+                                          .filter((p): p is string => p !== null);
+                                        if (validPhotos.length > 0) {
+                                          return (
+                                            <div className="mt-1.5 flex justify-center">
+                                              <div className="relative">
+                                                <img 
+                                                  src={validPhotos[0]} 
+                                                  alt={student.name} 
+                                                  className="w-9 h-9 object-cover rounded-lg border border-gray-150 hover:scale-105 shadow-sm transition"
+                                                  referrerPolicy="no-referrer"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setPreviewImageUrl(validPhotos[0]);
+                                                  }}
+                                                  title={photoTooltip}
+                                                />
+                                                {validPhotos.length > 1 && (
+                                                  <div 
+                                                    className="absolute -bottom-1 -right-1 bg-gray-900/85 backdrop-blur text-[8px] font-black text-white px-1 py-0.5 rounded-md leading-none select-none"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      setPreviewImageUrl(validPhotos[0]);
+                                                    }}
+                                                  >
+                                                    +{validPhotos.length - 1}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            </div>
+                                          );
+                                        }
+                                        return <span className="text-[9px] text-gray-400 font-bold block mt-1.5 font-mono uppercase tracking-wider">Foto belum ada</span>;
+                                      })()}
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            })}
+                            <td className="p-4 text-center">
+                              <span className={cn(
+                                "inline-flex items-center justify-center px-2.5 py-1 rounded-full text-xs font-black font-mono shadow-sm border",
+                                countGradings === 5
+                                  ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                                  : countGradings > 0
+                                  ? "bg-indigo-50 text-indigo-755 border-indigo-150"
+                                  : "bg-gray-50 text-gray-400 border-gray-150"
+                              )}>
+                                {countGradings}/5
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
       ) : (
         <div className="space-y-6">
           
@@ -5579,6 +6145,99 @@ export default function Observation() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Multiple Sessions Selection Modal */}
+      {multipleSessionsModalData && (
+        <div className="fixed inset-0 bg-gray-950/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2rem] shadow-2xl border border-gray-100 max-w-md w-full overflow-hidden animate-fade-in">
+            <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-black text-gray-900 uppercase tracking-wider">Pilih Sesi Observasi</h3>
+                <p className="text-[10px] text-gray-400 font-semibold mt-0.5 uppercase">
+                  {multipleSessionsModalData.student.name} — {formatWeekdayHeader(multipleSessionsModalData.date).dayName}, {multipleSessionsModalData.dateStr}
+                </p>
+              </div>
+              <button 
+                onClick={() => setMultipleSessionsModalData(null)}
+                className="p-1.5 hover:bg-gray-100 rounded-xl text-gray-400 hover:text-gray-650 transition"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-6 space-y-3 max-h-[300px] overflow-y-auto">
+              {multipleSessionsModalData.sessions.map((item, index) => {
+                const gradingCode = item.obs.grading;
+                const photo = getValidPhotoForStudentInSession(item.session, item.obs);
+                const activityLabel = activities.find(a => a.id === item.session.activity)?.label || item.session.title || item.session.activity;
+                const domainLabel = domains.find(dom => dom.id === item.session.domain)?.label || item.session.caption || item.session.domain;
+                
+                return (
+                  <button
+                    key={index}
+                    onClick={() => {
+                      handleFilledCellClick(item, multipleSessionsModalData.student.id);
+                      setMultipleSessionsModalData(null);
+                    }}
+                    className="w-full flex items-center gap-3.5 p-3.5 bg-gray-50/70 hover:bg-emerald-50/30 border border-gray-100 hover:border-emerald-200 rounded-2xl text-left transition cursor-pointer"
+                  >
+                    {photo ? (
+                      <img 
+                        src={photo} 
+                        alt={activityLabel} 
+                        className="w-10 h-10 object-cover rounded-xl border border-gray-150"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="w-10 h-10 bg-gray-100 text-gray-450 rounded-xl flex items-center justify-center border border-gray-150">
+                        <ImageIcon size={18} />
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-black text-gray-850 truncate uppercase">{activityLabel}</p>
+                      <p className="text-[10px] text-gray-400 font-semibold truncate uppercase mt-0.5">{domainLabel}</p>
+                    </div>
+                    <div 
+                      className={cn(
+                        "px-2 py-1 rounded-lg text-[10px] font-black border uppercase tracking-wider shrink-0",
+                        grades.find(g => g.id === gradingCode)?.color || "bg-gray-100 text-gray-705 border-gray-205"
+                      )}
+                    >
+                      {gradingCode}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox Image Preview Modal */}
+      {previewImageUrl && (
+        <div 
+          className="fixed inset-0 bg-gray-950/80 backdrop-blur-sm z-[10000] flex items-center justify-center p-4 cursor-zoom-out"
+          onClick={() => setPreviewImageUrl(null)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh] overflow-hidden rounded-[2rem] border border-white/10 shadow-2xl bg-black">
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                setPreviewImageUrl(null);
+              }}
+              className="absolute top-4 right-4 p-2 bg-gray-900/60 hover:bg-gray-900/85 rounded-full text-white/80 hover:text-white transition z-10"
+            >
+              <X size={18} />
+            </button>
+            <img 
+              src={previewImageUrl} 
+              alt="Pratinjau Foto Kegiatan" 
+              className="max-w-full max-h-[85vh] object-contain rounded-[2rem]"
+              referrerPolicy="no-referrer"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
         </div>
       )}
 
