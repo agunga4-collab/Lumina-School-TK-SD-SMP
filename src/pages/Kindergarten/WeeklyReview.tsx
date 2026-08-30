@@ -759,10 +759,16 @@ export default function WeeklyReview() {
 
   const [imageRatios, setImageRatios] = React.useState<Record<string, 'landscape' | 'portrait'>>({});
   const [imageErrors, setImageErrors] = React.useState<Record<string, boolean>>({});
+  const [logoError, setLogoError] = React.useState<boolean>(false);
+  const [signatureError, setSignatureError] = React.useState<boolean>(false);
+  const [publishStatus, setPublishStatus] = React.useState<string>("");
 
   React.useEffect(() => {
     setImageErrors({});
     setImageRatios({});
+    setLogoError(false);
+    setSignatureError(false);
+    setPublishStatus("");
   }, [selectedStudentId, startDateStr]);
 
   const getPeriodLabel = React.useCallback((report: any) => {
@@ -1005,29 +1011,178 @@ export default function WeeklyReview() {
     }
     
     setIsPublishing(true);
+    const startTime = Date.now();
     try {
-      // 1. Authorize list (opens Google Drive permissions popup if not loaded yet)
-      toast.loading("Menghubungkan ke Google Drive...", { id: "publish-kg" });
+      // 1. Set progress and connect to Google Drive
+      setPublishStatus("Menyiapkan laporan…");
+      toast.loading("Menyiapkan laporan…", { id: "publish-kg" });
+      
       const token = await getGoogleDriveToken();
       if (!token) {
         toast.dismiss("publish-kg");
         toast.error("Gagal mendapatkan akses Google Drive.");
         setIsPublishing(false);
+        setPublishStatus("");
         return;
       }
 
-      // 2. Locate report container pages
-      toast.loading("Membuat file PDF dari laporan...", { id: "publish-kg" });
+      // 2. Preload all distinct image URLs
+      setPublishStatus("Memuat foto…");
+      toast.loading("Memuat foto…", { id: "publish-kg" });
+
+      const distinctUrls: string[] = [];
+      const urlToDayMap: Record<string, string> = {};
+      const urlToSpecial: Record<string, 'logo' | 'signature'> = {};
+
+      if (tkLogoUrl) {
+        const u = tkLogoUrl.trim();
+        if (u) {
+          distinctUrls.push(u);
+          urlToSpecial[u] = 'logo';
+        }
+      }
+      if (resolvedSignatureUrl) {
+        const u = resolvedSignatureUrl.trim();
+        if (u && !distinctUrls.includes(u)) {
+          distinctUrls.push(u);
+          urlToSpecial[u] = 'signature';
+        }
+      }
+      ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'].forEach(dayKey => {
+        const url = getSnapForDay(dayKey)?.photoUrl;
+        if (url && typeof url === 'string' && url.trim()) {
+          const u = url.trim();
+          if (!distinctUrls.includes(u)) {
+            distinctUrls.push(u);
+            urlToDayMap[u] = dayKey;
+          }
+        }
+      });
+
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[PDF Diagnostics] Starting export at ${new Date(startTime).toISOString()}`);
+        console.log(`[PDF Diagnostics] Preloading ${distinctUrls.length} assets...`, distinctUrls);
+      }
+
+      // Concurrency limited batch preloading of size 2
+      const batchSize = 2;
+      for (let i = 0; i < distinctUrls.length; i += batchSize) {
+        const batch = distinctUrls.slice(i, i + batchSize);
+        await Promise.allSettled(batch.map(url => {
+          return new Promise<void>((resolve) => {
+            const img = new Image();
+            img.crossOrigin = "anonymous";
+            img.referrerPolicy = "no-referrer";
+            
+            const timer = setTimeout(() => {
+              if (process.env.NODE_ENV !== 'production') {
+                console.warn(`[PDF Diagnostics] Preload timeout (8s) for: ${url}`);
+              }
+              const dayKey = urlToDayMap[url];
+              if (dayKey) {
+                setImageErrors(prev => ({ ...prev, [dayKey]: true }));
+              }
+              const special = urlToSpecial[url];
+              if (special === 'logo') {
+                setLogoError(true);
+              } else if (special === 'signature') {
+                setSignatureError(true);
+              }
+              resolve();
+            }, 8000);
+
+            img.onload = () => {
+              clearTimeout(timer);
+              if (process.env.NODE_ENV !== 'production') {
+                console.log(`[PDF Diagnostics] Preloaded successfully: ${url}`);
+              }
+              resolve();
+            };
+
+            img.onerror = () => {
+              clearTimeout(timer);
+              if (process.env.NODE_ENV !== 'production') {
+                console.error(`[PDF Diagnostics] Preload failed for: ${url}`);
+              }
+              const dayKey = urlToDayMap[url];
+              if (dayKey) {
+                setImageErrors(prev => ({ ...prev, [dayKey]: true }));
+              }
+              const special = urlToSpecial[url];
+              if (special === 'logo') {
+                setLogoError(true);
+              } else if (special === 'signature') {
+                setSignatureError(true);
+              }
+              resolve();
+            };
+
+            img.src = url;
+          });
+        }));
+      }
+
+      // 3. Locate report container pages
       const page1Element = document.getElementById("weekly-report-page-1");
       const page2Element = document.getElementById("weekly-report-page-2");
       if (!page1Element || !page2Element) {
         toast.dismiss("publish-kg");
         toast.error("Elemen halaman laporan tidak lengkap.");
         setIsPublishing(false);
+        setPublishStatus("");
         return;
       }
 
-      // 3. Render pages to Canvas & PDF
+      // Log dimensions in dev mode
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[PDF Diagnostics] Page 1 original bounds:`, page1Element.getBoundingClientRect());
+        console.log(`[PDF Diagnostics] Page 2 original bounds:`, page2Element.getBoundingClientRect());
+      }
+
+      // 4. Resolve font loading where supported
+      if (typeof document !== 'undefined' && (document as any).fonts && (document as any).fonts.ready) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.log("[PDF Diagnostics] Waiting for document.fonts.ready...");
+        }
+        await (document as any).fonts.ready;
+      }
+
+      // 5. Wait for at least two animation frames for layout stabilization
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("[PDF Diagnostics] Waiting for layout to stabilize...");
+      }
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      });
+
+      setPublishStatus("Membuat PDF…");
+      toast.loading("Membuat PDF…", { id: "publish-kg" });
+
+      // 6. Temporarily style with rigid A4 dimensions to ensure absolute stability and prevent any viewport/responsive alteration
+      const originalStyle1 = page1Element.getAttribute('style') || '';
+      const originalStyle2 = page2Element.getAttribute('style') || '';
+
+      page1Element.style.width = '794px';
+      page1Element.style.height = '1123px';
+      page1Element.style.minWidth = '794px';
+      page1Element.style.minHeight = '1123px';
+      page1Element.style.maxWidth = '794px';
+      page1Element.style.maxHeight = '1123px';
+      page1Element.style.boxSizing = 'border-box';
+
+      page2Element.style.width = '794px';
+      page2Element.style.height = '1123px';
+      page2Element.style.minWidth = '794px';
+      page2Element.style.minHeight = '1123px';
+      page2Element.style.maxWidth = '794px';
+      page2Element.style.maxHeight = '1123px';
+      page2Element.style.boxSizing = 'border-box';
+
+      // 7. Render pages to Canvas & PDF
       const canvas1 = await html2canvasWithModernColors(page1Element, {
         scale: 2,
         useCORS: true,
@@ -1067,6 +1222,10 @@ export default function WeeklyReview() {
           }
         }
       });
+
+      // Restore original container style immediately
+      page1Element.setAttribute('style', originalStyle1);
+      page2Element.setAttribute('style', originalStyle2);
 
       const imgData1 = canvas1.toDataURL('image/jpeg', 0.8);
       const imgData2 = canvas2.toDataURL('image/jpeg', 0.8);
@@ -1315,6 +1474,7 @@ export default function WeeklyReview() {
       toast.error(`Gagal mempublikasikan laporan: ${err.message}`);
     } finally {
       setIsPublishing(false);
+      setPublishStatus("");
     }
   };
 
@@ -2210,12 +2370,13 @@ export default function WeeklyReview() {
                 
                 {/* Left Column: Logo & Name */}
                 <div className="flex items-center gap-2.5">
-                  {tkLogoUrl ? (
+                  {tkLogoUrl && !logoError ? (
                     <img 
                       src={tkLogoUrl} 
                       alt="Logo Rapor" 
                       className="h-12 w-auto object-contain"
                       referrerPolicy="no-referrer"
+                      crossOrigin="anonymous"
                     />
                   ) : (
                     <>
@@ -2320,8 +2481,8 @@ export default function WeeklyReview() {
             {/* Header ringkas */}
             <div className="border-b-2 border-emerald-600 pb-2 flex justify-between items-center text-xs">
               <div className="flex items-center gap-2">
-                {tkLogoUrl ? (
-                  <img src={tkLogoUrl} alt="Logo" className="h-8 w-auto object-contain" referrerPolicy="no-referrer" />
+                {tkLogoUrl && !logoError ? (
+                  <img src={tkLogoUrl} alt="Logo" className="h-8 w-auto object-contain" referrerPolicy="no-referrer" crossOrigin="anonymous" />
                 ) : (
                   <div className="flex items-center gap-1.5">
                     <div className="bg-[#109E58] p-1 rounded">
@@ -2383,13 +2544,14 @@ export default function WeeklyReview() {
                       <Loader2 className="animate-spin" size={10} />
                       <span>Memuat...</span>
                     </div>
-                  ) : resolvedSignatureUrl ? (
+                  ) : resolvedSignatureUrl && !signatureError ? (
                     <img
                       src={resolvedSignatureUrl}
                       alt="Tanda Tangan Guru"
                       className="max-h-[64px] object-contain mix-blend-multiply"
                       style={{ objectFit: 'contain' }}
                       referrerPolicy="no-referrer"
+                      crossOrigin="anonymous"
                     />
                   ) : (
                     <span className="text-[9px] text-gray-400 italic select-none leading-tight">
