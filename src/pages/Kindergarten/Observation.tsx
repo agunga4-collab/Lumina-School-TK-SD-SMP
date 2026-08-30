@@ -306,11 +306,42 @@ export default function Observation() {
   };
 
   const getValidPhotoForStudentInSession = (session: any, obs: any): string | null => {
-    if (obs && obs.photo && obs.photo.trim() !== '') return obs.photo;
-    if (session) {
-      const p = session.generalPhotoUrl || session.photoUrl || session.generalPhoto;
-      if (p && p.trim() !== '') return p;
+    if (!session || !obs) return null;
+
+    // 1. Check if the session is a holiday
+    const isHoliday = 
+      session.specialActivityType === 'holiday' || 
+      (session.activity === 'SPECIAL_ACTIVITY' && session.specialActivityType === 'holiday') ||
+      String(session.title || '').toLowerCase().includes('libur') ||
+      String(session.specialActivityName || '').toLowerCase().includes('libur');
+    if (isHoliday) {
+      return null;
     }
+
+    // 2. Check if the session is weekly-report documentation or documentation-only
+    const isWeeklyReportDoc = 
+      session.isWeeklyReport === true || 
+      session.type === 'weekly-report' || 
+      session.category === 'weekly-report' ||
+      String(session.title || '').toLowerCase().includes('weekly report') ||
+      String(session.caption || '').toLowerCase().includes('weekly report') ||
+      String(session.title || '').toLowerCase().includes('dokumentasi mingguan');
+    if (isWeeklyReportDoc) {
+      return null;
+    }
+
+    // 3. Resolve the photo using the required lookup chain:
+    // student grading record -> photo attached to student record
+    if (obs.photo && typeof obs.photo === 'string' && obs.photo.trim() !== '') {
+      return obs.photo.trim();
+    }
+
+    // If the student-specific record doesn't have a photo, check the exact observation session's general photo.
+    const generalPhoto = session.generalPhotoUrl || session.photoUrl || session.generalPhoto;
+    if (generalPhoto && typeof generalPhoto === 'string' && generalPhoto.trim() !== '') {
+      return generalPhoto.trim();
+    }
+
     return null;
   };
 
@@ -4714,57 +4745,30 @@ export default function Observation() {
                                       })()}
                                     </div>
                                   ) : (
-                                    <div className="flex flex-col items-center">
-                                      <div className="flex items-center gap-1">
-                                        <div 
-                                          className={cn(
-                                            "inline-flex items-center justify-center px-1.5 py-0.5 rounded-lg text-[9px] font-black border uppercase tracking-wider shadow-sm",
-                                            grades.find(g => g.id === studentObsList[0].obs.grading)?.color || "bg-gray-100 text-gray-750 border-gray-200"
-                                          )}
-                                          title={getFullGradingLabel(studentObsList[0].obs.grading || '')}
-                                        >
-                                          {studentObsList[0].obs.grading}
-                                        </div>
-                                        <span className="text-[8px] bg-indigo-50 text-indigo-755 border border-indigo-150 font-black px-1 py-0.5 rounded-md leading-none uppercase tracking-wider shrink-0 font-mono">
-                                          {studentObsList.length} Sesi
-                                        </span>
+                                    <div className="flex flex-col items-center gap-1.5">
+                                      <span className="text-[9px] bg-indigo-50 text-indigo-750 border border-indigo-150 font-black px-1.5 py-0.5 rounded-md leading-none uppercase tracking-wider shrink-0 font-mono">
+                                        {studentObsList.length} Sesi
+                                      </span>
+                                      <div className="flex flex-wrap gap-1 justify-center max-w-[100px]">
+                                        {studentObsList.map((item, idx) => (
+                                          <span 
+                                            key={idx}
+                                            className={cn(
+                                              "inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[8px] font-black border uppercase tracking-wider shadow-sm",
+                                              grades.find(g => g.id === item.obs.grading)?.color || "bg-gray-100 text-gray-750 border-gray-200"
+                                            )}
+                                            title={getFullGradingLabel(item.obs.grading || '')}
+                                          >
+                                            {item.obs.grading}
+                                          </span>
+                                        ))}
                                       </div>
-                                      {(() => {
-                                        const validPhotos = studentObsList
-                                          .map(item => getValidPhotoForStudentInSession(item.session, item.obs))
-                                          .filter((p): p is string => p !== null);
-                                        if (validPhotos.length > 0) {
-                                          return (
-                                            <div className="mt-1.5 flex justify-center">
-                                              <div className="relative">
-                                                <img 
-                                                  src={validPhotos[0]} 
-                                                  alt={student.name} 
-                                                  className="w-9 h-9 object-cover rounded-lg border border-gray-150 hover:scale-105 shadow-sm transition"
-                                                  referrerPolicy="no-referrer"
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    setPreviewImageUrl(validPhotos[0]);
-                                                  }}
-                                                  title={photoTooltip}
-                                                />
-                                                {validPhotos.length > 1 && (
-                                                  <div 
-                                                    className="absolute -bottom-1 -right-1 bg-gray-900/85 backdrop-blur text-[8px] font-black text-white px-1 py-0.5 rounded-md leading-none select-none"
-                                                    onClick={(e) => {
-                                                      e.stopPropagation();
-                                                      setPreviewImageUrl(validPhotos[0]);
-                                                    }}
-                                                  >
-                                                    +{validPhotos.length - 1}
-                                                  </div>
-                                                )}
-                                              </div>
-                                            </div>
-                                          );
-                                        }
-                                        return <span className="text-[9px] text-gray-400 font-bold block mt-1.5 font-mono uppercase tracking-wider">Foto belum ada</span>;
-                                      })()}
+                                      <span className="text-[9px] text-gray-400 font-bold block font-mono uppercase tracking-wider">
+                                        {(() => {
+                                          const photosCount = studentObsList.filter(item => getValidPhotoForStudentInSession(item.session, item.obs) !== null).length;
+                                          return photosCount > 0 ? `📷 ${photosCount} Foto` : 'Foto belum ada';
+                                        })()}
+                                      </span>
                                     </div>
                                   )}
                                 </td>
@@ -6197,6 +6201,12 @@ export default function Observation() {
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-black text-gray-850 truncate uppercase">{activityLabel}</p>
                       <p className="text-[10px] text-gray-400 font-semibold truncate uppercase mt-0.5">{domainLabel}</p>
+                      <p className={cn(
+                        "text-[9px] font-bold mt-0.5 uppercase",
+                        photo ? "text-emerald-600" : "text-gray-400 font-mono"
+                      )}>
+                        {photo ? "✓ Foto Tersedia" : "✗ Foto belum ada"}
+                      </p>
                     </div>
                     <div 
                       className={cn(
