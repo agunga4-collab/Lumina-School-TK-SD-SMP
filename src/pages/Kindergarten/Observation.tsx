@@ -37,6 +37,45 @@ const getStudentObs = (obsSource: Record<string, StudentObservation> | undefined
   return { grading: null, notes: '', photo: null };
 };
 
+const getStudentObsStrict = (obsSource: Record<string, StudentObservation> | undefined, student: any): StudentObservation => {
+  if (!obsSource || !student) return { grading: null, notes: '', photo: null };
+  if (student.id && obsSource[student.id]) return obsSource[student.id];
+  if (student.oldLuminaId && obsSource[student.oldLuminaId]) return obsSource[student.oldLuminaId];
+  if (student.nis && obsSource[student.nis]) return obsSource[student.nis];
+  return { grading: null, notes: '', photo: null };
+};
+
+const isValidObservationSession = (session: any): boolean => {
+  if (!session) return false;
+  
+  // Exclude holiday sessions
+  const isHoliday = 
+    session.specialActivityType === 'holiday' || 
+    (session.activity === 'SPECIAL_ACTIVITY' && session.specialActivityType === 'holiday') ||
+    String(session.title || '').toLowerCase().includes('libur') ||
+    String(session.specialActivityName || '').toLowerCase().includes('libur');
+  if (isHoliday) return false;
+
+  // Exclude weekly reports or report summaries or report documentations
+  const isWeeklyReport = 
+    session.isWeeklyReport === true || 
+    session.type === 'weekly-report' || 
+    session.category === 'weekly-report' ||
+    String(session.title || '').toLowerCase().includes('weekly report') ||
+    String(session.caption || '').toLowerCase().includes('weekly report') ||
+    String(session.title || '').toLowerCase().includes('dokumentasi mingguan') ||
+    String(session.activity || '').toLowerCase().includes('weekly-report') ||
+    String(session.activity || '').toLowerCase().includes('weekly_report');
+  if (isWeeklyReport) return false;
+
+  // Must have a valid observations map
+  if (!session.observations || typeof session.observations !== 'object') {
+    return false;
+  }
+
+  return true;
+};
+
 const cleanFirestoreData = (obj: any): any => {
   if (obj === null || obj === undefined) return null;
   if (Array.isArray(obj)) {
@@ -114,6 +153,27 @@ const months = [
   { value: 12, label: 'Desember' }
 ];
 
+const getJakartaDate = (d?: Date): Date => {
+  const date = d || new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+    hour12: false
+  });
+  
+  const parts = formatter.formatToParts(date);
+  const year = parseInt(parts.find(p => p.type === 'year')?.value || '2026', 10);
+  const month = parseInt(parts.find(p => p.type === 'month')?.value || '1', 10) - 1;
+  const day = parseInt(parts.find(p => p.type === 'day')?.value || '1', 10);
+  
+  return new Date(year, month, day, 0, 0, 0, 0);
+};
+
 export default function Observation() {
   const { activeYear, activeSemester } = useAcademicYear();
   const [searchParams] = useSearchParams();
@@ -168,10 +228,11 @@ export default function Observation() {
 
   // Weekly Observation states
   const [weeklyStartDate, setWeeklyStartDate] = React.useState<Date>(() => {
-    const today = new Date();
-    const day = today.getDay();
-    const diff = today.getDate() - day + (day === 0 ? -6 : 1);
-    const mon = new Date(today.setDate(diff));
+    const jakartaToday = getJakartaDate();
+    const day = jakartaToday.getDay();
+    const diff = jakartaToday.getDate() - day + (day === 0 ? -6 : 1);
+    const mon = new Date(jakartaToday);
+    mon.setDate(diff);
     mon.setHours(0, 0, 0, 0);
     return mon;
   });
@@ -201,7 +262,8 @@ export default function Observation() {
     if (!selectedClassId) return;
     setIsWeeklyLoading(true);
     try {
-      const activeClassObj = classes.find(c => c.id === selectedClassId);
+      const canonicalClassId = resolveCanonicalClassId(selectedClassId, classes) || selectedClassId;
+      const activeClassObj = classes.find(c => c.id === canonicalClassId || c.id === selectedClassId);
       
       const mon = new Date(weeklyStartDate);
       const fri = new Date(weeklyStartDate);
@@ -209,8 +271,6 @@ export default function Observation() {
       
       const monStr = formatDateLocal(mon);
       const friStr = formatDateLocal(fri);
-      
-      console.log(`[Weekly] Fetching observations for ${selectedClassId} from ${monStr} to ${friStr}`);
       
       const qObs = query(
         collection(db, 'observations'),
@@ -224,7 +284,7 @@ export default function Observation() {
       const docsList: any[] = [];
       qSnap.docs.forEach(docSnap => {
         const d = docSnap.data();
-        if (isDocForClass(d, selectedClassId, activeClassObj, students)) {
+        if (isDocForClass(d, canonicalClassId, activeClassObj, students)) {
           docsList.push({ ...d, id: docSnap.id });
         }
       });
@@ -285,10 +345,10 @@ export default function Observation() {
 
   const formatWeekdayHeader = (date: Date): { dayName: string; dateStr: string } => {
     const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-    const monthsAbbr = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    const monthsAbbr = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Des'];
     return {
       dayName: days[date.getDay()],
-      dateStr: `${date.getDate()} ${monthsAbbr[date.getMonth()]}`
+      dateStr: `${date.getDate()} ${monthsAbbr[date.getMonth()]} ${date.getFullYear()}`
     };
   };
 
@@ -409,9 +469,12 @@ export default function Observation() {
   ): boolean => {
     if (!targetClassId) return false;
 
+    const canonicalTargetClassId = resolveCanonicalClassId(targetClassId, classes) || targetClassId;
+
     // Strict match if classId exists on document
     if (d.classId && d.classId !== 'unassigned') {
-      return d.classId === targetClassId;
+      const docCanonicalId = resolveCanonicalClassId(d.classId, classes) || d.classId;
+      return docCanonicalId === canonicalTargetClassId;
     }
 
     // Specific override for "Pra TK Test Kelas" on 11 August
@@ -428,7 +491,8 @@ export default function Observation() {
     if (d.observations && Object.keys(d.observations).length > 0) {
       const resolvedClassId = getLegacyDocClassId(d.observations, globalStudents);
       if (resolvedClassId) {
-        return resolvedClassId === targetClassId;
+        const docCanonicalId = resolveCanonicalClassId(resolvedClassId, classes) || resolvedClassId;
+        return docCanonicalId === canonicalTargetClassId;
       }
     }
 
@@ -4518,7 +4582,8 @@ export default function Observation() {
               <div className="min-w-0">
                 <p className="text-xs font-black text-emerald-950 leading-none">
                   {(() => {
-                    const activeClassObj = classes.find(c => c.id === selectedClassId);
+                    const canonicalClassId = resolveCanonicalClassId(selectedClassId, classes) || selectedClassId;
+                    const activeClassObj = classes.find(c => c.id === canonicalClassId || c.id === selectedClassId);
                     const classStudents = students.filter(student => {
                       if (!selectedClassId) return false;
                       if (!activeClassObj) return false;
@@ -4529,20 +4594,23 @@ export default function Observation() {
                     const gradedStudentsCount = classStudents.filter(student => {
                       return weekDates.some(d => {
                         const dStr = formatDateLocal(d);
-                        const sessionsOnDate = weeklyObservations.filter(s => (s.date === dStr || s.observationDate === dStr));
+                        const sessionsOnDate = weeklyObservations.filter(s => 
+                          isValidObservationSession(s) && (s.date === dStr || s.observationDate === dStr)
+                        );
                         return sessionsOnDate.some(session => {
-                          const obs = getStudentObs(session.observations, student);
+                          const obs = getStudentObsStrict(session.observations, student);
                           return obs && obs.grading;
                         });
                       });
                     }).length;
 
-                    return `${gradedStudentsCount} dari ${classStudents.length} grading siswa sudah masuk`;
+                    return `${gradedStudentsCount} dari ${classStudents.length} siswa sudah terdinilai`;
                   })()}
                 </p>
                 <p className="text-[9px] font-semibold text-emerald-700 leading-none mt-1">
                   {(() => {
-                    const activeClassObj = classes.find(c => c.id === selectedClassId);
+                    const canonicalClassId = resolveCanonicalClassId(selectedClassId, classes) || selectedClassId;
+                    const activeClassObj = classes.find(c => c.id === canonicalClassId || c.id === selectedClassId);
                     const classStudents = students.filter(student => {
                       if (!selectedClassId) return false;
                       if (!activeClassObj) return false;
@@ -4554,16 +4622,18 @@ export default function Observation() {
                       let studentCount = 0;
                       weekDates.forEach(d => {
                         const dStr = formatDateLocal(d);
-                        const sessionsOnDate = weeklyObservations.filter(s => (s.date === dStr || s.observationDate === dStr));
+                        const sessionsOnDate = weeklyObservations.filter(s => 
+                          isValidObservationSession(s) && (s.date === dStr || s.observationDate === dStr)
+                        );
                         const hasGrading = sessionsOnDate.some(session => {
-                          const obs = getStudentObs(session.observations, student);
+                          const obs = getStudentObsStrict(session.observations, student);
                           return obs && obs.grading;
                         });
                         if (hasGrading) studentCount++;
                       });
                       return acc + studentCount;
                     }, 0);
-                    return `Total slot: ${filledSlots} dari ${totalSlots} terisi`;
+                    return `Total slot terisi: ${filledSlots} dari ${totalSlots}`;
                   })()}
                 </p>
               </div>
@@ -4631,9 +4701,11 @@ export default function Observation() {
                       {classStudents.map((student, studentIndex) => {
                         const countGradings = weekDates.reduce((acc, d) => {
                           const dStr = formatDateLocal(d);
-                          const sessionsOnDate = weeklyObservations.filter(s => (s.date === dStr || s.observationDate === dStr));
+                          const sessionsOnDate = weeklyObservations.filter(s => 
+                            isValidObservationSession(s) && (s.date === dStr || s.observationDate === dStr)
+                          );
                           const hasGrading = sessionsOnDate.some(session => {
-                            const obs = getStudentObs(session.observations, student);
+                            const obs = getStudentObsStrict(session.observations, student);
                             return obs && obs.grading;
                           });
                           return acc + (hasGrading ? 1 : 0);
@@ -4674,27 +4746,30 @@ export default function Observation() {
                             {weekDates.map((d, dIndex) => {
                               const dStr = formatDateLocal(d);
                               const isFuture = isFutureDate(d);
-                              const sessionsOnDate = weeklyObservations.filter(s => (s.date === dStr || s.observationDate === dStr));
-                              const studentObsList = sessionsOnDate.map(session => {
-                                const obs = getStudentObs(session.observations, student);
+                              const sessionsOnDate = weeklyObservations.filter(s => 
+                                isValidObservationSession(s) && (s.date === dStr || s.observationDate === dStr)
+                              );
+                              
+                              const allSessionsWithObs = sessionsOnDate.map(session => {
+                                const obs = getStudentObsStrict(session.observations, student);
                                 return { session, obs };
-                              }).filter(item => item.obs && item.obs.grading);
+                              });
 
                               const dayHeader = formatWeekdayHeader(d);
                               const formattedDateIndo = `${d.getDate()} ${['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'][d.getMonth()]} ${d.getFullYear()}`;
                               const photoTooltip = `Foto kegiatan — ${dayHeader.dayName}, ${formattedDateIndo}`;
 
                               const handleCellClick = () => {
-                                if (studentObsList.length === 0) {
+                                if (allSessionsWithObs.length === 0) {
                                   handleEmptyCellClick(student.id, dStr);
-                                } else if (studentObsList.length === 1) {
-                                  handleFilledCellClick(studentObsList[0], student.id);
+                                } else if (allSessionsWithObs.length === 1) {
+                                  handleFilledCellClick(allSessionsWithObs[0], student.id);
                                 } else {
                                   setMultipleSessionsModalData({
                                     student,
                                     date: d,
                                     dateStr: dStr,
-                                    sessions: studentObsList
+                                    sessions: allSessionsWithObs
                                   });
                                 }
                               };
@@ -4705,25 +4780,29 @@ export default function Observation() {
                                   onClick={handleCellClick}
                                   className="p-4 text-center border-r border-gray-100/40 cursor-pointer hover:bg-emerald-50/20 transition-all select-none"
                                 >
-                                  {studentObsList.length === 0 ? (
+                                  {allSessionsWithObs.length === 0 ? (
                                     isFuture ? (
                                       <span className="text-[10px] text-gray-350 font-bold italic block">Belum berlangsung</span>
                                     ) : (
                                       <span className="text-[10px] text-gray-450 font-bold italic block">Belum dinilai</span>
                                     )
-                                  ) : studentObsList.length === 1 ? (
+                                  ) : allSessionsWithObs.length === 1 ? (
                                     <div className="flex flex-col items-center">
-                                      <div 
-                                        className={cn(
-                                          "inline-flex items-center justify-center px-2 py-0.5 rounded-lg text-[9px] font-black border uppercase tracking-wider shadow-sm",
-                                          grades.find(g => g.id === studentObsList[0].obs.grading)?.color || "bg-gray-100 text-gray-750 border-gray-200"
-                                        )}
-                                        title={getFullGradingLabel(studentObsList[0].obs.grading || '')}
-                                      >
-                                        {studentObsList[0].obs.grading}
-                                      </div>
+                                      {allSessionsWithObs[0].obs && allSessionsWithObs[0].obs.grading ? (
+                                        <div 
+                                          className={cn(
+                                            "inline-flex items-center justify-center px-2 py-0.5 rounded-lg text-[9px] font-black border uppercase tracking-wider shadow-sm",
+                                            grades.find(g => g.id === allSessionsWithObs[0].obs.grading)?.color || "bg-gray-100 text-gray-750 border-gray-200"
+                                          )}
+                                          title={getFullGradingLabel(allSessionsWithObs[0].obs.grading || '')}
+                                        >
+                                          {allSessionsWithObs[0].obs.grading}
+                                        </div>
+                                      ) : (
+                                        <span className="text-[10px] text-gray-450 font-bold italic block">Belum dinilai</span>
+                                      )}
                                       {(() => {
-                                        const photo = getValidPhotoForStudentInSession(studentObsList[0].session, studentObsList[0].obs);
+                                        const photo = getValidPhotoForStudentInSession(allSessionsWithObs[0].session, allSessionsWithObs[0].obs);
                                         if (photo) {
                                           return (
                                             <div className="mt-1.5 flex justify-center">
@@ -4747,25 +4826,30 @@ export default function Observation() {
                                   ) : (
                                     <div className="flex flex-col items-center gap-1.5">
                                       <span className="text-[9px] bg-indigo-50 text-indigo-750 border border-indigo-150 font-black px-1.5 py-0.5 rounded-md leading-none uppercase tracking-wider shrink-0 font-mono">
-                                        {studentObsList.length} Sesi
+                                        {allSessionsWithObs.length} Sesi
                                       </span>
                                       <div className="flex flex-wrap gap-1 justify-center max-w-[100px]">
-                                        {studentObsList.map((item, idx) => (
-                                          <span 
-                                            key={idx}
-                                            className={cn(
-                                              "inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[8px] font-black border uppercase tracking-wider shadow-sm",
-                                              grades.find(g => g.id === item.obs.grading)?.color || "bg-gray-100 text-gray-750 border-gray-200"
-                                            )}
-                                            title={getFullGradingLabel(item.obs.grading || '')}
-                                          >
-                                            {item.obs.grading}
-                                          </span>
-                                        ))}
+                                        {allSessionsWithObs.map((item, idx) => {
+                                          const gradingVal = item.obs && item.obs.grading;
+                                          return (
+                                            <span 
+                                              key={idx}
+                                              className={cn(
+                                                "inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[8px] font-black border uppercase tracking-wider shadow-sm",
+                                                gradingVal 
+                                                  ? (grades.find(g => g.id === gradingVal)?.color || "bg-gray-100 text-gray-750 border-gray-200")
+                                                  : "bg-gray-50 text-gray-400 border-gray-150"
+                                              )}
+                                              title={gradingVal ? getFullGradingLabel(gradingVal || '') : "Belum dinilai"}
+                                            >
+                                              {gradingVal || "-"}
+                                            </span>
+                                          );
+                                        })}
                                       </div>
                                       <span className="text-[9px] text-gray-400 font-bold block font-mono uppercase tracking-wider">
                                         {(() => {
-                                          const photosCount = studentObsList.filter(item => getValidPhotoForStudentInSession(item.session, item.obs) !== null).length;
+                                          const photosCount = allSessionsWithObs.filter(item => getValidPhotoForStudentInSession(item.session, item.obs) !== null).length;
                                           return photosCount > 0 ? `📷 ${photosCount} Foto` : 'Foto belum ada';
                                         })()}
                                       </span>
@@ -6172,7 +6256,7 @@ export default function Observation() {
             </div>
             <div className="p-6 space-y-3 max-h-[300px] overflow-y-auto">
               {multipleSessionsModalData.sessions.map((item, index) => {
-                const gradingCode = item.obs.grading;
+                const gradingCode = item.obs ? item.obs.grading : null;
                 const photo = getValidPhotoForStudentInSession(item.session, item.obs);
                 const activityLabel = activities.find(a => a.id === item.session.activity)?.label || item.session.title || item.session.activity;
                 const domainLabel = domains.find(dom => dom.id === item.session.domain)?.label || item.session.caption || item.session.domain;
@@ -6211,10 +6295,10 @@ export default function Observation() {
                     <div 
                       className={cn(
                         "px-2 py-1 rounded-lg text-[10px] font-black border uppercase tracking-wider shrink-0",
-                        grades.find(g => g.id === gradingCode)?.color || "bg-gray-100 text-gray-705 border-gray-205"
+                        gradingCode ? (grades.find(g => g.id === gradingCode)?.color || "bg-gray-100 text-gray-750 border-gray-200") : "bg-gray-50 text-gray-400 border-gray-150 font-medium italic normal-case"
                       )}
                     >
-                      {gradingCode}
+                      {gradingCode || "Belum dinilai"}
                     </div>
                   </button>
                 );
