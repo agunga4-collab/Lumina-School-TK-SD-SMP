@@ -119,6 +119,13 @@ service cloud.firestore {
       );
     }
 
+    function isActiveJuniorHighClassInActiveYear(classId) {
+      return exists(/databases/$(database)/documents/classes/$(classId)) &&
+        get(/databases/$(database)/documents/classes/$(classId)).data.unitId == 'JUNIOR_HIGH' &&
+        get(/databases/$(database)/documents/classes/$(classId)).data.status != 'archived' &&
+        get(/databases/$(database)/documents/classes/$(classId)).data.academicYear == get(/databases/$(database)/documents/systemConfig/academicYear).data.activeAcademicYear;
+    }
+
     function isValidAAPAssessment(data) {
       return data.studentId != null && data.studentId != "" &&
              data.classId != null && data.classId != "" &&
@@ -852,13 +859,17 @@ service cloud.firestore {
     }
 
     match /learning_power_up_tasks/{taskId} {
-      allow read: if isActive();
-      allow write: if isAdmin() || isJuniorHighStaff();
+      allow read: if isActive() && (isAdmin() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(resource.data.classId)) || isStudent() || isParent());
+      allow create: if isAdmin() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(request.resource.data.classId));
+      allow update: if isAdmin() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(request.resource.data.classId) && isActiveJuniorHighClassInActiveYear(resource.data.classId));
+      allow delete: if isAdmin() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(resource.data.classId));
     }
 
     match /learning_power_up_progress/{progressId} {
-      allow read: if isActive();
-      allow write: if isActive() && (isJuniorHighStaff() || isAdmin() || isStudent());
+      allow read: if isActive() && (isAdmin() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(resource.data.classId)) || isStudent() || isParent());
+      allow create: if isAdmin() || isStudent() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(request.resource.data.classId));
+      allow update: if isAdmin() || isStudent() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(request.resource.data.classId) && isActiveJuniorHighClassInActiveYear(resource.data.classId));
+      allow delete: if isAdmin() || isStudent() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(resource.data.classId));
     }
 
     match /lxd/{lxdId} {

@@ -183,6 +183,17 @@ const canTeacherVerifySubject = (
   if (!user || !classData) return false;
   
   const role = user.role;
+  // If the user is authenticated and has a Junior High staff/teacher role, they can verify any subject for this JH class
+  const allowedRoles = [
+    'TEACHER', 'HOMEROOM_TEACHER', 'BK_MENTOR', 'HEAD_JUNIOR', 
+    'SUPER_ADMIN', 'HEAD_UNIT', 'PRINCIPAL', 'VICE_PRINCIPAL', 
+    'COORDINATOR', 'COUNSELOR'
+  ];
+  
+  if (allowedRoles.includes(role) && classData.unitId === 'JUNIOR_HIGH') {
+    return true;
+  }
+
   // 1. Super Admin, Head Unit, Principal, Coordinator have full access
   if (['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR'].includes(role)) {
     return true;
@@ -315,18 +326,26 @@ export default function LearningPowerUpTeacherPage() {
           c => c.unitId === 'JUNIOR_HIGH' && c.status !== 'archived' && c.academicYear === activeYear
         );
 
-        // Filter based on roles
-        const isHeadOrAdmin = ['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'COORDINATOR'].includes((currentUser?.role as string) || '');
-        let filteredClasses = jhClasses;
+        // Deduplicate classes by ID to avoid duplicates
+        const seenIds = new Set<string>();
+        const uniqueJhClasses = jhClasses.filter(c => {
+          if (!c.id || seenIds.has(c.id)) return false;
+          seenIds.add(c.id);
+          return true;
+        });
+
+        // Junior High teachers can select any active Junior High class in the active academic year
+        setClasses(uniqueJhClasses);
+
+        // Find teacher's assigned/default class as the initial selected class if available
+        const assignedClass = uniqueJhClasses.find(c => isTeacherAssignedToClass(c, currentUser?.uid));
         
-        if (!isHeadOrAdmin) {
-          filteredClasses = jhClasses.filter(c => isTeacherAssignedToClass(c, currentUser?.uid));
-        }
-
-        setClasses(filteredClasses);
-
-        if (filteredClasses.length > 0) {
-          setSelectedClassId(filteredClasses[0].id);
+        if (assignedClass) {
+          setSelectedClassId(assignedClass.id);
+        } else if (uniqueJhClasses.length > 0) {
+          setSelectedClassId(uniqueJhClasses[0].id);
+        } else {
+          setSelectedClassId('');
         }
       } catch (err) {
         console.error("Error loading teacher classes:", err);
@@ -344,6 +363,11 @@ export default function LearningPowerUpTeacherPage() {
   // Load packages, progress, and student roster for the selected class
   const loadClassData = async () => {
     if (!selectedClassId || !activeYear) return;
+    // Clear the previous class's students/data while the new class is loading
+    setStudents([]);
+    setPackages([]);
+    setProgresses([]);
+    
     setLoadingData(true);
     try {
       // 1. Load active student roster
@@ -1017,15 +1041,24 @@ export default function LearningPowerUpTeacherPage() {
           <div className="space-y-1">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Pilih Kelas</label>
             {classes.length > 0 ? (
-              <select
-                value={selectedClassId}
-                onChange={(e) => setSelectedClassId(e.target.value)}
-                className="bg-white border border-slate-200 text-gray-700 font-bold text-sm px-4 py-2.5 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-[#109E58]/20 focus:border-[#109E58] min-w-[200px]"
-              >
-                {classes.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
+              <div className="flex flex-col gap-1">
+                <select
+                  value={selectedClassId}
+                  onChange={(e) => setSelectedClassId(e.target.value)}
+                  className="bg-white border border-slate-200 text-gray-700 font-bold text-sm px-4 py-2.5 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-[#109E58]/20 focus:border-[#109E58] min-w-[200px]"
+                >
+                  {classes.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                {classes.find(c => c.id === selectedClassId) && (
+                  <span className="text-xs text-gray-500 font-bold" id="selected-class-student-count-display">
+                    Terpilih: {classes.find(c => c.id === selectedClassId)?.name} ({students.length} siswa)
+                  </span>
+                )}
+              </div>
             ) : (
               <div className="text-xs font-bold text-red-500 bg-red-50 border border-red-100 p-2.5 rounded-xl">
                 Tidak ada kelas terhubung SMP
