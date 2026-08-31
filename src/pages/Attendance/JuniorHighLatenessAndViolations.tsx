@@ -28,6 +28,111 @@ const JUNIOR_HIGH_REASONS = [
   'Hujan'
 ];
 
+export interface ViolationChoice {
+  code: string;
+  label: string;
+  helperText?: string;
+}
+
+export interface ViolationCategory {
+  id: string;
+  label: string;
+  violations: ViolationChoice[];
+}
+
+export const JUNIOR_HIGH_VIOLATIONS_MASTER: ViolationCategory[] = [
+  {
+    id: 'berpakaian',
+    label: 'Tata Tertib Berpakaian',
+    violations: [
+      { code: 'A01', label: 'Baju tidak sesuai aturan', helperText: 'Termasuk baju tidak dimasukkan, lengan baju digulung, tidak mengancingkan lengan baju, membuka lebih dari satu kancing, kaos dalam tidak sesuai ketentuan, tidak memakai kaos kaki putih, atau tidak memakai ikat pinggang hitam.' },
+      { code: 'A02', label: 'Pakaian dicorat-coret/ditempel selain logo sekolah' },
+      { code: 'A03', label: 'Aksesori atau penampilan tidak pantas', helperText: 'Contoh: anting, cincin, gelang, pin, make up berlebihan, soft lens berwarna, atau topi selain topi sekolah.' },
+      { code: 'A04', label: 'Sepatu bagian tumit dilipat/dinjak' },
+      { code: 'A05', label: 'Celana diinjak-injak' },
+      { code: 'A06', label: 'Rambut belakang menjuntai melewati jilbab' },
+      { code: 'A07', label: 'Tidak memakai celana lapis/boxer' },
+      { code: 'A08', label: 'Rambut siswa laki-laki melewati kerah atau telinga' },
+      { code: 'A09', label: 'Tidak memakai seragam' },
+      { code: 'A10', label: 'Memakai celana atau rok ketat' },
+      { code: 'A11', label: 'Celana melorot hingga pakaian dalam terlihat' },
+      { code: 'A12', label: 'Memakai sandal keluar kelas tanpa keperluan yang diizinkan', helperText: 'Termasuk memakai sandal ke kantin atau gedung lain, kecuali waktu salat.' },
+      { code: 'A13', label: 'Tidak memakai kaos kaki' },
+      { code: 'A14', label: 'Tidak memakai sepatu hitam' },
+      { code: 'A15', label: 'Memakai sandal atau sepatu sandal' },
+      { code: 'A16', label: 'Pakaian hari Rabu tidak sesuai ketentuan', helperText: 'Hari Rabu wajib baju muslim bebas rapi atau kemeja. T-shirt dan polo shirt tidak diperkenankan.' },
+      { code: 'A17', label: 'Mengecat rambut' }
+    ]
+  },
+  {
+    id: 'belajar',
+    label: 'Tata Tertib Belajar',
+    violations: [
+      { code: 'B01', label: 'Makan/minum di kelas saat belajar tanpa izin' },
+      { code: 'B02', label: 'Menaruh perlengkapan pribadi sembarangan' },
+      { code: 'B03', label: 'Melakukan kegiatan yang tidak berhubungan dengan pelajaran' },
+      { code: 'B04', label: 'Berjualan di dalam kelas selain program JA' },
+      { code: 'B05', label: 'Membawa mainan ke sekolah tanpa izin' },
+      { code: 'B06', label: 'Terlambat mengikuti kegiatan atau belajar tanpa izin', helperText: 'Termasuk terlambat mengikuti kegiatan lain/belajar setelah toleransi atau jeda pergantian 3 menit.' },
+      { code: 'B07', label: 'Izin keluar kelas lebih dari 3 kali' },
+      { code: 'B08', label: 'Tidak menyelesaikan tugas tepat waktu' },
+      { code: 'B09', label: 'Tidak merapikan meja saat pergantian pelajaran' },
+      { code: 'B10', label: 'Mengerjakan PR di sekolah' },
+      { code: 'B11', label: 'Meninggalkan kelas atau pelajaran tanpa izin' },
+      { code: 'B12', label: 'Tidur saat belajar' },
+      { code: 'B13', label: 'Mengganggu proses belajar mengajar', helperText: 'Contoh: mengobrol atau bercanda berlebihan hingga mengganggu pembelajaran.' },
+      { code: 'B14', label: 'Mengerjakan pelajaran lain pada waktu belajar tanpa izin' },
+      { code: 'B15', label: 'Memakai barang orang lain tanpa izin' },
+      { code: 'B16', label: 'Merusak barang orang lain' },
+      { code: 'B17', label: 'Tidak membawa buku agenda, penghubung, atau pelajaran' },
+      { code: 'B18', label: 'Menyembunyikan barang milik orang lain' },
+      { code: 'B19', label: 'Tidak mengerjakan tugas, PR, atau projek' },
+      { code: 'B20', label: 'Menyontek atau memberikan kunci jawaban saat ujian' },
+      { code: 'B21', label: 'Membawa HP selama mengikuti kegiatan sekolah', helperText: 'HP tidak diperkenankan di luar maupun di dalam area sekolah selama siswa mengikuti kegiatan sekolah.' }
+    ]
+  },
+  {
+    id: 'kebersihan',
+    label: 'Tata Tertib Kebersihan',
+    violations: [
+      { code: 'C01', label: 'Kuku panjang atau kotor' },
+      { code: 'C02', label: 'Tidak meletakkan shower toilet pada tempatnya' },
+      { code: 'C03', label: 'Tidak memakai sandal ke toilet saat wudhu' },
+      { code: 'C04', label: 'Membiarkan sisa makanan berceceran' },
+      { code: 'C05', label: 'Meletakkan tempat makan catering sembarangan', helperText: 'Tempat makan catering harus diletakkan di box depan kelas.' },
+      { code: 'C06', label: 'Membuang sampah tidak pada tempatnya' },
+      { code: 'C07', label: 'Tidak merapikan loker dan laci' },
+      { code: 'C08', label: 'Tidak menyiram toilet setelah digunakan' },
+      { code: 'C09', label: 'Corat-coret fasilitas atau lingkungan sekolah' }
+    ]
+  },
+  {
+    id: 'kehadiran',
+    label: 'Kehadiran & Izin',
+    violations: [
+      { code: 'D01', label: 'Tidak hadir tanpa pemberitahuan' },
+      { code: 'D02', label: 'Pulang tanpa izin saat ada kegiatan sekolah' }
+    ]
+  },
+  {
+    id: 'kantin',
+    label: 'Tata Tertib Kantin',
+    violations: [
+      { code: 'E01', label: 'Makan atau minum sambil berjalan' },
+      { code: 'E02', label: 'Mengambil/mengganggu teman yang sedang makan/minum' },
+      { code: 'E03', label: 'Meminta atau mengambil makanan dengan paksa' },
+      { code: 'E04', label: 'Menyerobot antrean' },
+      { code: 'E05', label: 'Tidak membersihkan bekas makan/minum pribadi di kantin' },
+      { code: 'E06', label: 'Memakan catering orang lain tanpa izin' }
+    ]
+  },
+  {
+    id: 'other',
+    label: 'Lainnya / Tulis Manual',
+    violations: []
+  }
+];
+
 // Helper to get JKT current time
 const getCurrentTimeStr = () => {
   const formatter = new Intl.DateTimeFormat('sv-SE', {
@@ -132,6 +237,9 @@ export default function JuniorHighLatenessAndViolations() {
   const [violationDate, setViolationDate] = React.useState<string>(getCurrentDateStr());
   const [selectedViolationStudentId, setSelectedViolationStudentId] = React.useState('');
   const [violationType, setViolationType] = React.useState('');
+  const [selectedViolationCategory, setSelectedViolationCategory] = React.useState('');
+  const [selectedViolationCode, setSelectedViolationCode] = React.useState('');
+  const [customViolationText, setCustomViolationText] = React.useState('');
   const [violationNotes, setViolationNotes] = React.useState('');
   const [savingViolation, setSavingViolation] = React.useState(false);
   const [loadingTodayViolations, setLoadingTodayViolations] = React.useState(false);
@@ -611,9 +719,55 @@ export default function JuniorHighLatenessAndViolations() {
       toast.error('Pilih siswa terlebih dahulu.');
       return;
     }
-    if (!violationType.trim()) {
-      toast.error('Isi jenis pelanggaran terlebih dahulu.');
+    if (!violationDate) {
+      toast.error('Pilih tanggal terlebih dahulu.');
       return;
+    }
+    if (!selectedClassId) {
+      toast.error('Pilih kelas terlebih dahulu.');
+      return;
+    }
+    if (!selectedViolationCategory) {
+      toast.error('Pilih kategori pelanggaran terlebih dahulu.');
+      return;
+    }
+
+    let categoryId = '';
+    let categoryLabel = '';
+    let violationCode: string | null = null;
+    let violationLabel = '';
+    let isCustom = false;
+
+    if (selectedViolationCategory === 'other') {
+      if (!customViolationText.trim()) {
+        toast.error('Isi jenis pelanggaran terlebih dahulu.');
+        return;
+      }
+      categoryId = 'other';
+      categoryLabel = 'Lainnya';
+      violationCode = null;
+      violationLabel = customViolationText.trim();
+      isCustom = true;
+    } else {
+      if (!selectedViolationCode) {
+        toast.error('Pilih jenis pelanggaran terlebih dahulu.');
+        return;
+      }
+      const categoryObj = JUNIOR_HIGH_VIOLATIONS_MASTER.find(c => c.id === selectedViolationCategory);
+      if (!categoryObj) {
+        toast.error('Kategori tidak valid.');
+        return;
+      }
+      const violationObj = categoryObj.violations.find(v => v.code === selectedViolationCode);
+      if (!violationObj) {
+        toast.error('Jenis pelanggaran tidak valid.');
+        return;
+      }
+      categoryId = categoryObj.id;
+      categoryLabel = categoryObj.label;
+      violationCode = violationObj.code;
+      violationLabel = violationObj.label;
+      isCustom = false;
     }
 
     setSavingViolation(true);
@@ -634,8 +788,14 @@ export default function JuniorHighLatenessAndViolations() {
         classId: selectedClassId,
         className: classObj?.name || 'Kelas Lain',
         date: violationDate,
-        violationType: violationType.trim(),
-        notes: violationNotes.trim(),
+        violationType: violationLabel, // backward compatibility
+        incidentType: 'minor_violation',
+        categoryId,
+        categoryLabel,
+        violationCode,
+        violationLabel,
+        isCustom,
+        notes: violationNotes.trim() || null,
         recordedByUid: profile?.uid || 'system',
         recordedByName: profile?.displayName || 'Guru / Staff',
         createdAt: new Date(), // Local fallback for instant sync
@@ -656,7 +816,9 @@ export default function JuniorHighLatenessAndViolations() {
       // Reset student selection and inputs, KEEP date and class
       setSelectedViolationStudentId('');
       setStudentSearchInput('');
-      setViolationType('');
+      setSelectedViolationCategory('');
+      setSelectedViolationCode('');
+      setCustomViolationText('');
       setViolationNotes('');
     } catch (err) {
       console.error('Error saving minor violation:', err);
@@ -1095,11 +1257,16 @@ export default function JuniorHighLatenessAndViolations() {
       }
     });
 
+    const needLatenessSupportCount = list.filter(s => s.latenessCount >= 3).length;
+    const needViolationSupportCount = list.filter(s => s.violationCount >= 3).length;
+
     return {
       totalLateness,
       totalViolations,
       topStudent: maxStudentCount > 0 ? `${maxStudentName} (${maxStudentCount}x)` : '-',
-      topClass: maxClassCount > 0 ? `${maxClassName} (${maxClassCount}x)` : '-'
+      topClass: maxClassCount > 0 ? `${maxClassName} (${maxClassCount}x)` : '-',
+      needLatenessSupportCount,
+      needViolationSupportCount
     };
   }, [leaderboardList, filteredLateness, filteredViolations, rekapDataType]);
 
@@ -1917,19 +2084,78 @@ export default function JuniorHighLatenessAndViolations() {
                       )}
                     </div>
 
-                    {/* Violation Type Selector */}
+                    {/* Category Selector */}
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Jenis Pelanggaran *</label>
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Kategori Pelanggaran *</label>
+                      <select
+                        value={selectedViolationCategory}
+                        onChange={(e) => {
+                          const catId = e.target.value;
+                          setSelectedViolationCategory(catId);
+                          setSelectedViolationCode('');
+                          setCustomViolationText('');
+                        }}
+                        className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 font-bold cursor-pointer"
+                        required
+                      >
+                        <option value="">-- Pilih Kategori --</option>
+                        {JUNIOR_HIGH_VIOLATIONS_MASTER.map(c => (
+                          <option key={c.id} value={c.id}>{c.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Violation Selector or Manual Input */}
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Jenis Pelanggaran *</label>
+                    {selectedViolationCategory === 'other' ? (
                       <input
                         type="text"
-                        placeholder="Contoh: Seragam tidak lengkap"
-                        value={violationType}
-                        onChange={(e) => setViolationType(e.target.value.slice(0, 100))}
+                        placeholder="Tulis pelanggaran secara singkat..."
+                        value={customViolationText}
+                        onChange={(e) => setCustomViolationText(e.target.value.slice(0, 100))}
                         className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 font-bold"
                         maxLength={100}
                         required
                       />
-                    </div>
+                    ) : (
+                      <select
+                        value={selectedViolationCode}
+                        onChange={(e) => setSelectedViolationCode(e.target.value)}
+                        className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={!selectedViolationCategory}
+                        required
+                      >
+                        <option value="">
+                          {!selectedViolationCategory 
+                            ? 'Pilih kategori terlebih dahulu' 
+                            : '-- Pilih Jenis Pelanggaran --'
+                          }
+                        </option>
+                        {selectedViolationCategory && 
+                          JUNIOR_HIGH_VIOLATIONS_MASTER.find(c => c.id === selectedViolationCategory)?.violations.map(v => (
+                            <option key={v.code} value={v.code}>
+                              {v.code} - {v.label}
+                            </option>
+                          ))
+                        }
+                      </select>
+                    )}
+
+                    {/* Helper text tooltip for selected prepared violation */}
+                    {(() => {
+                      if (!selectedViolationCategory || selectedViolationCategory === 'other' || !selectedViolationCode) return null;
+                      const catObj = JUNIOR_HIGH_VIOLATIONS_MASTER.find(c => c.id === selectedViolationCategory);
+                      const violObj = catObj?.violations.find(v => v.code === selectedViolationCode);
+                      if (!violObj?.helperText) return null;
+                      return (
+                        <div className="mt-2 p-3 bg-amber-50/70 border border-amber-100 rounded-xl text-[11px] text-amber-800 leading-relaxed flex items-start gap-2.5">
+                          <Info size={14} className="text-amber-500 shrink-0 mt-0.5" />
+                          <span>{violObj.helperText}</span>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Notes */}
@@ -2055,9 +2281,21 @@ export default function JuniorHighLatenessAndViolations() {
                                   maxLength={100}
                                 />
                               ) : (
-                                <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-100">
-                                  {record.violationType}
-                                </span>
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-[10px] font-black text-gray-400 tracking-wider uppercase">
+                                    {record.categoryLabel || 'Catatan lama'}
+                                  </span>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    {record.violationCode && (
+                                      <span className="text-[9px] font-black text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded uppercase tracking-wider shrink-0">
+                                        {record.violationCode}
+                                      </span>
+                                    )}
+                                    <span className="text-xs font-bold text-gray-800">
+                                      {record.violationLabel || record.violationType}
+                                    </span>
+                                  </div>
+                                </div>
                               )}
                             </td>
                             <td className="px-5 py-4 max-w-xs">
@@ -2363,6 +2601,43 @@ export default function JuniorHighLatenessAndViolations() {
             </div>
           </div>
 
+          {/* Support Eligibility Metrics Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+            
+            {/* Card 1: Siswa Perlu Dukungan Keterlambatan */}
+            <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa Perlu Dukungan Keterlambatan</p>
+                {loadingRekap ? (
+                  <div className="h-6 w-16 bg-gray-100 animate-pulse rounded mt-2" />
+                ) : (
+                  <p className="text-xl font-black text-red-600 mt-1">{rekapMetrics.needLatenessSupportCount} Siswa</p>
+                )}
+                <p className="text-[10px] text-gray-400 mt-1 font-medium">Siswa dengan &ge; 3 keterlambatan aktif</p>
+              </div>
+              <div className="p-3 bg-red-50 text-red-500 rounded-2xl">
+                <ShieldAlert size={20} />
+              </div>
+            </div>
+
+            {/* Card 2: Siswa Perlu Dukungan Pelanggaran Ringan */}
+            <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa Perlu Dukungan Pelanggaran Ringan</p>
+                {loadingRekap ? (
+                  <div className="h-6 w-16 bg-gray-100 animate-pulse rounded mt-2" />
+                ) : (
+                  <p className="text-xl font-black text-amber-600 mt-1">{rekapMetrics.needViolationSupportCount} Siswa</p>
+                )}
+                <p className="text-[10px] text-gray-400 mt-1 font-medium">Siswa dengan &ge; 3 pelanggaran ringan aktif</p>
+              </div>
+              <div className="p-3 bg-amber-50 text-amber-500 rounded-2xl">
+                <AlertCircle size={20} />
+              </div>
+            </div>
+
+          </div>
+
           {/* Visual Chart Section */}
           <div className="w-full bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6 animate-fade-in">
             <div>
@@ -2433,15 +2708,9 @@ export default function JuniorHighLatenessAndViolations() {
                       <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Urutan</th>
                       <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa</th>
                       <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Kelas</th>
-                      {(rekapDataType === 'all' || rekapDataType === 'lateness') && (
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Jumlah Keterlambatan</th>
-                      )}
-                      {(rekapDataType === 'all' || rekapDataType === 'violations') && (
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Jumlah Pelanggaran Ringan</th>
-                      )}
-                      {rekapDataType === 'all' && (
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Total Akumulasi</th>
-                      )}
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Keterlambatan</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Pelanggaran Ringan</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Dukungan Guru</th>
                       <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Terakhir Tercatat</th>
                       <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Aksi</th>
                     </tr>
@@ -2450,7 +2719,7 @@ export default function JuniorHighLatenessAndViolations() {
                     {leaderboardList.map((item, index) => (
                       <tr key={item.studentId} className="hover:bg-gray-50/30 transition-all duration-200">
                         <td className="px-6 py-4">
-                          <span className="text-xs font-bold text-gray-400">Rekap #{index + 1}</span>
+                          <span className="text-xs font-bold text-gray-400"># {index + 1}</span>
                         </td>
                         <td className="px-6 py-4">
                           <p className="font-bold text-gray-900 text-sm">{item.studentName}</p>
@@ -2460,33 +2729,64 @@ export default function JuniorHighLatenessAndViolations() {
                             {item.className}
                           </span>
                         </td>
-                        {(rekapDataType === 'all' || rekapDataType === 'lateness') && (
-                          <td className="px-6 py-4 text-center">
+                        
+                        {/* Keterlambatan Column */}
+                        <td className="px-6 py-4 text-center">
+                          <div className="flex flex-col gap-1 items-center justify-center">
                             <span className={cn(
-                              "text-xs font-bold px-2 py-0.5 rounded-md",
-                              item.latenessCount > 0 ? "text-blue-600 bg-blue-50" : "text-gray-300"
+                              "text-xs font-black px-2.5 py-1 rounded-full",
+                              item.latenessCount > 0 ? "text-blue-700 bg-blue-50/80 border border-blue-100" : "text-gray-400 bg-gray-50/50"
                             )}>
-                              {item.latenessCount}x
+                              {item.latenessCount} Total
                             </span>
-                          </td>
-                        )}
-                        {(rekapDataType === 'all' || rekapDataType === 'violations') && (
-                          <td className="px-6 py-4 text-center">
+                            <span className="text-[9px] font-medium text-gray-400 whitespace-nowrap">
+                              0 selesai · {item.latenessCount} aktif
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* Pelanggaran Ringan Column */}
+                        <td className="px-6 py-4 text-center">
+                          <div className="flex flex-col gap-1 items-center justify-center">
                             <span className={cn(
-                              "text-xs font-bold px-2 py-0.5 rounded-md",
-                              item.violationCount > 0 ? "text-amber-600 bg-amber-50" : "text-gray-300"
+                              "text-xs font-black px-2.5 py-1 rounded-full",
+                              item.violationCount > 0 ? "text-amber-700 bg-amber-50/80 border border-amber-100" : "text-gray-400 bg-gray-50/50"
                             )}>
-                              {item.violationCount}x
+                              {item.violationCount} Total
                             </span>
-                          </td>
-                        )}
-                        {rekapDataType === 'all' && (
-                          <td className="px-6 py-4 text-center">
-                            <span className="text-xs font-black text-violet-600 bg-violet-50 px-2.5 py-1 rounded-md">
-                              {item.totalCount} Catatan
+                            <span className="text-[9px] font-medium text-gray-400 whitespace-nowrap">
+                              0 selesai · {item.violationCount} aktif
                             </span>
-                          </td>
-                        )}
+                          </div>
+                        </td>
+
+                        {/* Dukungan Guru Eligibility Indicator Column */}
+                        <td className="px-6 py-4">
+                          <div className="flex flex-col gap-1.5 items-center justify-center">
+                            {item.latenessCount >= 3 && (
+                              <span 
+                                title="Fitur intervensi akan tersedia pada tahap berikutnya."
+                                className="text-[9px] font-black text-red-700 bg-red-50 border border-red-100 px-2.5 py-1 rounded-full uppercase tracking-wider text-center block cursor-help"
+                              >
+                                Dukungan Guru — Keterlambatan
+                              </span>
+                            )}
+                            {item.violationCount >= 3 && (
+                              <span 
+                                title="Fitur intervensi akan tersedia pada tahap berikutnya."
+                                className="text-[9px] font-black text-amber-700 bg-amber-50 border border-amber-100 px-2.5 py-1 rounded-full uppercase tracking-wider text-center block cursor-help"
+                              >
+                                Dukungan Guru — Pelanggaran Ringan
+                              </span>
+                            )}
+                            {item.latenessCount < 3 && item.violationCount < 3 && (
+                              <span className="text-[10px] font-bold text-gray-400 bg-gray-50/50 border border-gray-100/30 px-2.5 py-1 rounded-full">
+                                Belum perlu dukungan
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
                         <td className="px-6 py-4">
                           <p className="text-xs text-gray-500 font-medium">{item.lastRecordedDate}</p>
                         </td>
