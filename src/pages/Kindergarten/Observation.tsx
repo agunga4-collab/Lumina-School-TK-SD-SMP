@@ -183,24 +183,7 @@ export default function Observation() {
   const paramDomain = searchParams.get('domain');
   const { profile } = useAuth();
 
-  const canManageKindergartenObservation = React.useMemo(() => {
-    if (!profile) return false;
-    const role = profile.role;
-    const unitId = profile.unitId;
-
-    // Check if role is kindergarten_subject_teacher and unitId is KINDERGARTEN
-    if (role === 'kindergarten_subject_teacher' && unitId === 'KINDERGARTEN') {
-      return true;
-    }
-
-    // Include existing authorized Kindergarten roles if their unit allows Kindergarten Observation Data
-    if (['SUPER_ADMIN', 'HEAD_UNIT', 'TEACHER', 'HOMEROOM_TEACHER'].includes(role)) {
-      if (role === 'SUPER_ADMIN') return true;
-      if (unitId === 'KINDERGARTEN') return true;
-    }
-
-    return false;
-  }, [profile]);
+  const [selectedClassId, setSelectedClassId] = React.useState<string>('');
 
   const [students, setStudents] = React.useState<any[]>(() => getStoredStudents());
   const {
@@ -215,7 +198,31 @@ export default function Observation() {
     academicYearId: activeYear || '2026/2027'
   });
 
-  const [selectedClassId, setSelectedClassId] = React.useState<string>('');
+  const canManageKindergartenObservation = React.useMemo(() => {
+    if (!profile) return false;
+    const role = profile.role;
+    const unitId = profile.unitId;
+
+    if (role === 'SUPER_ADMIN') return true;
+
+    // Check if role is one of authorized Kindergarten staff roles
+    const authorizedRoles = ['SUPER_ADMIN', 'HEAD_UNIT', 'TEACHER', 'HOMEROOM_TEACHER', 'kindergarten_subject_teacher', 'BK_MENTOR'];
+    if (!authorizedRoles.includes(role)) return false;
+
+    // If unitId is KINDERGARTEN, they are authorized
+    if (unitId === 'KINDERGARTEN') return true;
+
+    // If they have selected a class, verify if they are assigned to this class
+    if (selectedClassId) {
+      if (isRestrictedToAssignedClasses) {
+        return Array.isArray(assignedClassIds) && assignedClassIds.includes(selectedClassId);
+      }
+      return true;
+    }
+
+    // Default fallback so they aren't blocked initially
+    return true;
+  }, [profile, selectedClassId, isRestrictedToAssignedClasses, assignedClassIds]);
 
   // Daily context state
   const [dailyContext, setDailyContext] = React.useState<any>(null);
@@ -1080,6 +1087,23 @@ export default function Observation() {
   const [isUploadingGeneral, setIsUploadingGeneral] = React.useState(false);
   const [uploadProgress, setUploadProgress] = React.useState<Record<string, boolean>>({});
 
+  const isContextComplete = React.useMemo(() => {
+    if (!observationDate || !selectedClassId || !selectedActivity) {
+      return false;
+    }
+    if (selectedActivity !== 'SPECIAL_ACTIVITY' && !selectedDomain) {
+      return false;
+    }
+    return true;
+  }, [observationDate, selectedClassId, selectedActivity, selectedDomain]);
+
+  const isGeneralPhotoDisabled = React.useMemo(() => {
+    if (!isContextComplete) return true;
+    if (isUploadingGeneral) return true;
+    if (!canManageKindergartenObservation) return true;
+    return false;
+  }, [isContextComplete, isUploadingGeneral, canManageKindergartenObservation]);
+
   // Camera Modal States
   const [activeCameraTarget, setActiveCameraTarget] = React.useState<{ type: 'general' | 'student'; studentId?: string } | null>(null);
   const [cameraStream, setCameraStream] = React.useState<MediaStream | null>(null);
@@ -1914,21 +1938,24 @@ export default function Observation() {
     }
     
     async function fetchComboDoc() {
+      // Reset all dependent states immediately when switching context to prevent any stale data leaks
+      setObservations({});
+      setGeneralPhoto(null);
+      setDocCreatedAt(null);
+      setDocCreatedBy(null);
+      setGeneralNote("");
+      lastSavedGeneralNoteRef.current = "";
+      setGeneralNoteUpdatedAt(null);
+      setGeneralNoteUpdatedBy(null);
+      setGeneralNoteUpdatedByName(null);
+      setSpecialActivityName("");
+      setSpecialActivityType("activity");
+      setIsSessionLocked(false);
+      setSessionStatus('new');
+      setCurrentDocId(null);
+      setIsUploadingGeneral(false);
+
       if (!selectedClassId) {
-        setObservations({});
-        setGeneralPhoto(null);
-        setDocCreatedAt(null);
-        setDocCreatedBy(null);
-        setGeneralNote("");
-        lastSavedGeneralNoteRef.current = "";
-        setGeneralNoteUpdatedAt(null);
-        setGeneralNoteUpdatedBy(null);
-        setGeneralNoteUpdatedByName(null);
-        setSpecialActivityName("");
-        setSpecialActivityType("activity");
-        setIsSessionLocked(false);
-        setSessionStatus('new');
-        setCurrentDocId(null);
         return;
       }
 
@@ -3706,7 +3733,21 @@ export default function Observation() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          {selectedClassId && !canManageKindergartenObservation && (
+            <div className="bg-rose-50 border border-rose-200 rounded-[2rem] p-12 text-center space-y-4 max-w-2xl mx-auto my-8 shadow-sm animate-fade-in">
+              <div className="w-16 h-16 rounded-full bg-rose-100 flex items-center justify-center text-rose-600 mx-auto animate-pulse">
+                <AlertTriangle size={32} />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-base font-black text-rose-900 uppercase tracking-widest">Akses Ditolak</h3>
+                <p className="text-xs text-rose-600 max-w-md mx-auto leading-relaxed font-semibold">
+                  Anda tidak memiliki akses untuk menginput observasi pada kelas ini. Silakan hubungi admin atau kepala unit untuk memeriksa daftar penugasan kelas Anda.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8" style={selectedClassId && !canManageKindergartenObservation ? { display: 'none' } : undefined}>
           
           {/* LEFT COLUMN: Configuration Block (4 grid columns) */}
           <div className="lg:col-span-4 space-y-6">
@@ -3804,16 +3845,17 @@ export default function Observation() {
                       <label 
                         className={cn(
                           "p-2 bg-white/90 hover:bg-white text-gray-800 rounded-xl font-bold text-[10px] transition-transform hover:scale-105 flex items-center gap-1 shadow-md cursor-pointer",
-                          !canManageKindergartenObservation && "opacity-50 cursor-not-allowed pointer-events-none"
+                          isGeneralPhotoDisabled && "opacity-50 cursor-not-allowed pointer-events-none"
                         )}
                       >
                         <RefreshCw size={12} className="text-emerald-600" /> File
                         <input 
+                          key={`file_general_active_${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`}
                           type="file" 
                           accept="image/*" 
                           onChange={handleGeneralPhotoUpload} 
                           className="hidden" 
-                          disabled={!canManageKindergartenObservation}
+                          disabled={isGeneralPhotoDisabled}
                         />
                       </label>
                       <button
@@ -3822,10 +3864,10 @@ export default function Observation() {
                           setActiveCameraTarget({ type: 'general' });
                           startCamera();
                         }}
-                        disabled={!canManageKindergartenObservation}
+                        disabled={isGeneralPhotoDisabled}
                         className={cn(
                           "p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-[10px] transition-transform hover:scale-105 flex items-center gap-1 shadow-md cursor-pointer border-0",
-                          !canManageKindergartenObservation && "opacity-50 cursor-not-allowed pointer-events-none"
+                          isGeneralPhotoDisabled && "opacity-50 cursor-not-allowed pointer-events-none"
                         )}
                       >
                         <Camera size={12} /> Kamera
@@ -3866,12 +3908,12 @@ export default function Observation() {
                     <label 
                       className={cn(
                         "flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase tracking-widest px-5 py-2.5 rounded-xl shadow-lg shadow-rose-100 transition-all hover:scale-103 cursor-pointer flex-1",
-                        !canManageKindergartenObservation && "opacity-50 cursor-not-allowed pointer-events-none"
+                        isGeneralPhotoDisabled && "opacity-50 cursor-not-allowed pointer-events-none"
                       )}
                     >
                       {isUploadingGeneral ? (
                         <>
-                          <Loader2 className="animate-spin" size={14} /> Membaca...
+                          <Loader2 className="animate-spin" size={14} /> Mengunggah foto…
                         </>
                       ) : (
                         <>
@@ -3879,11 +3921,12 @@ export default function Observation() {
                         </>
                       )}
                       <input 
+                        key={`file_general_empty_${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`}
                         type="file" 
                         accept="image/*" 
                         onChange={handleGeneralPhotoUpload} 
                         className="hidden" 
-                        disabled={!canManageKindergartenObservation}
+                        disabled={isGeneralPhotoDisabled}
                       />
                     </label>
 
@@ -3893,10 +3936,10 @@ export default function Observation() {
                         setActiveCameraTarget({ type: 'general' });
                         startCamera();
                       }}
-                      disabled={!canManageKindergartenObservation}
+                      disabled={isGeneralPhotoDisabled}
                       className={cn(
                         "flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-widest px-5 py-2.5 rounded-xl shadow-lg shadow-emerald-100 transition-all hover:scale-103 cursor-pointer flex-1 border-0",
-                        !canManageKindergartenObservation && "opacity-50 cursor-not-allowed pointer-events-none"
+                        isGeneralPhotoDisabled && "opacity-50 cursor-not-allowed pointer-events-none"
                       )}
                     >
                       <Camera size={14} /> Ambil dari Kamera
@@ -4452,6 +4495,7 @@ export default function Observation() {
                         )}
                         <span className="ml-1">File</span>
                         <input 
+                          key={`file_student_${student.id}_${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`}
                           type="file" 
                           accept="image/*" 
                           onChange={(e) => handleStudentPhotoUpload(student.id, e)} 
@@ -4491,8 +4535,8 @@ export default function Observation() {
           })()}
           </div>
           )}
-               {/* Bottom Save Action Panel */}
-          <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                {/* Bottom Save Action Panel */}
+          <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4" style={selectedClassId && !canManageKindergartenObservation ? { display: 'none' } : undefined}>
             <div className="flex items-center gap-3">
               <div className="p-3 rounded-full bg-emerald-50 text-emerald-600">
                 <Info size={18} />
