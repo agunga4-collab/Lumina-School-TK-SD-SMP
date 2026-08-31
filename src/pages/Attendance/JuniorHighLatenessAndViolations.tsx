@@ -287,6 +287,74 @@ export default function JuniorHighLatenessAndViolations() {
   const [studentTimeline, setStudentTimeline] = React.useState<any[]>([]);
   const [loadingTimeline, setLoadingTimeline] = React.useState(false);
 
+  // Teacher Support Interventions state variables
+  const [rekapSubTab, setRekapSubTab] = React.useState<'overview' | 'dukungan'>('overview');
+  const [dukunganSubTab, setDukunganSubTab] = React.useState<'lateness' | 'minor_violation'>('lateness');
+  const [interventions, setInterventions] = React.useState<any[]>([]);
+  const [loadingInterventions, setLoadingInterventions] = React.useState(false);
+  const [savingIntervention, setSavingIntervention] = React.useState(false);
+
+  // Intervention Modal Form state
+  const [showInterventionModal, setShowInterventionModal] = React.useState(false);
+  const [activeIntervention, setActiveIntervention] = React.useState<any | null>(null);
+  const [activeInterventionStudent, setActiveInterventionStudent] = React.useState<any | null>(null);
+  const [activeInterventionIssueType, setActiveInterventionIssueType] = React.useState<'lateness' | 'minor_violation'>('lateness');
+  const [selectedIncidentIds, setSelectedIncidentIds] = React.useState<Set<string>>(new Set());
+  const [interventionPlanText, setInterventionPlanText] = React.useState('');
+  const [activeInterventionStatus, setActiveInterventionStatus] = React.useState<'in_progress' | 'completed'>('in_progress');
+  const [interventionOutcomeNote, setInterventionOutcomeNote] = React.useState('');
+  const [studentEligibleIncidents, setStudentEligibleIncidents] = React.useState<any[]>([]);
+
+  // Derived state mappings for modal markup compatibility
+  const editingInterventionId = activeIntervention?.id || null;
+  const selectedInterventionStudent = activeInterventionStudent;
+  const selectedInterventionIssueType = activeInterventionIssueType;
+
+  const isJuniorHighStaff = React.useCallback(() => {
+    return ['TEACHER', 'ADMIN', 'SUPER_ADMIN'].includes(profile?.role || '');
+  }, [profile?.role]);
+
+  const resetInterventionForm = React.useCallback(() => {
+    setActiveIntervention(null);
+    setActiveInterventionStudent(null);
+    setSelectedIncidentIds(new Set());
+    setInterventionPlanText('');
+    setActiveInterventionStatus('in_progress');
+    setInterventionOutcomeNote('');
+    setStudentEligibleIncidents([]);
+  }, []);
+
+  // Subscribe to interventions for current activeYear and semester
+  React.useEffect(() => {
+    if (!activeYear) return;
+    setLoadingInterventions(true);
+    const q = query(
+      collection(db, 'teacherSupportInterventions'),
+      where('academicYear', '==', activeYear),
+      where('semester', '==', String(activeSemester))
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+      setInterventions(list);
+      setLoadingInterventions(false);
+    }, (error) => {
+      console.error("Error subscribing to interventions:", error);
+      setLoadingInterventions(false);
+    });
+    return () => unsubscribe();
+  }, [activeYear, activeSemester]);
+
+  // Set of completed incident IDs across all completed interventions
+  const completedIncidentIdsSet = React.useMemo(() => {
+    const completedIds = new Set<string>();
+    interventions.forEach(item => {
+      if (item.status === 'completed' && Array.isArray(item.incidentIds)) {
+        item.incidentIds.forEach((id: string) => completedIds.add(id));
+      }
+    });
+    return completedIds;
+  }, [interventions]);
+
   // ----------------------------------------------------
   // INITIAL LOAD & CONFIG SEEDING
   // ----------------------------------------------------
@@ -1150,6 +1218,145 @@ export default function JuniorHighLatenessAndViolations() {
     setRekapSemester(activeSemester || 1);
   };
 
+  // ==========================================
+  // GURU SUPPORT (INTERVENTION) HANDLERS
+  // ==========================================
+
+  const handleOpenNewInterventionModal = (student: any, issueType: 'lateness' | 'minor_violation') => {
+    resetInterventionForm();
+    setActiveInterventionStudent(student);
+    setActiveInterventionIssueType(issueType);
+
+    // Get all active incidents for this student of this type
+    const incidents = issueType === 'lateness'
+      ? rekapLatenessData.filter(r => r.studentId === student.studentId && !completedIncidentIdsSet.has(r.id))
+      : rekapViolationData.filter(r => r.studentId === student.studentId && !completedIncidentIdsSet.has(r.id));
+
+    setStudentEligibleIncidents(incidents);
+    // Pre-select all of them by default
+    setSelectedIncidentIds(new Set(incidents.map(inc => inc.id)));
+    setShowInterventionModal(true);
+  };
+
+  const handleOpenEditInterventionModal = (intervention: any, student: any) => {
+    resetInterventionForm();
+    setActiveIntervention(intervention);
+    setActiveInterventionStudent({
+      studentId: intervention.studentId,
+      studentName: intervention.studentName,
+      className: intervention.className,
+      classId: intervention.classId,
+    });
+    setActiveInterventionIssueType(intervention.issueType);
+    setInterventionPlanText(intervention.interventionPlan || '');
+    setActiveInterventionStatus(intervention.status || 'in_progress');
+    setInterventionOutcomeNote(intervention.outcomeNote || '');
+
+    // Get incidents: currently linked ones + any active ones for this student
+    const currentlyLinkedIds = intervention.incidentIds || [];
+    const activeIncidents = intervention.issueType === 'lateness'
+      ? rekapLatenessData.filter(r => r.studentId === intervention.studentId && (!completedIncidentIdsSet.has(r.id) || currentlyLinkedIds.includes(r.id)))
+      : rekapViolationData.filter(r => r.studentId === intervention.studentId && (!completedIncidentIdsSet.has(r.id) || currentlyLinkedIds.includes(r.id)));
+
+    setStudentEligibleIncidents(activeIncidents);
+    setSelectedIncidentIds(new Set(currentlyLinkedIds));
+    setShowInterventionModal(true);
+  };
+
+  const handleToggleIncidentSelection = (incidentId: string) => {
+    setSelectedIncidentIds(prev => {
+      const next = new Set(prev);
+      if (next.has(incidentId)) {
+        next.delete(incidentId);
+      } else {
+        next.add(incidentId);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllIncidents = () => {
+    setSelectedIncidentIds(new Set(studentEligibleIncidents.map(inc => inc.id)));
+  };
+
+  const handleClearSelectedIncidents = () => {
+    setSelectedIncidentIds(new Set());
+  };
+
+  const handleSaveIntervention = async () => {
+    if (!isJuniorHighStaff()) {
+      toast.error('Hanya staf/guru SMP yang memiliki otorisasi untuk mengelola intervensi.');
+      return;
+    }
+
+    if (selectedIncidentIds.size === 0) {
+      toast.error('Anda harus memilih setidaknya 1 catatan kejadian.');
+      return;
+    }
+
+    if (interventionPlanText.trim().length < 5) {
+      toast.error('Rencana dukungan guru wajib diisi (minimal 5 karakter).');
+      return;
+    }
+
+    if (activeInterventionStatus === 'completed' && interventionOutcomeNote.trim().length < 5) {
+      toast.error('Catatan hasil penyelesaian wajib diisi untuk intervensi selesai.');
+      return;
+    }
+
+    setSavingIntervention(true);
+    try {
+      const payload: any = {
+        studentId: activeInterventionStudent.studentId,
+        studentName: activeInterventionStudent.studentName,
+        className: activeInterventionStudent.className || 'Kelas Lain',
+        classId: activeInterventionStudent.classId || '',
+        academicYear: activeYear,
+        semester: activeSemester,
+        issueType: activeInterventionIssueType,
+        incidentIds: Array.from(selectedIncidentIds),
+        interventionPlan: interventionPlanText.trim(),
+        status: activeInterventionStatus,
+        updatedAt: serverTimestamp(),
+      };
+
+      if (activeInterventionStatus === 'completed') {
+        payload.outcomeNote = interventionOutcomeNote.trim();
+        payload.completedAt = serverTimestamp();
+        payload.completedBy = profile?.email || '';
+        payload.completedByName = profile?.displayName || 'Guru';
+      } else {
+        payload.outcomeNote = '';
+        payload.completedAt = null;
+        payload.completedBy = '';
+        payload.completedByName = '';
+      }
+
+      if (activeIntervention?.id) {
+        // Update existing intervention
+        const docRef = doc(db, 'teacherSupportInterventions', activeIntervention.id);
+        await updateDoc(docRef, payload);
+        toast.success('Sesi intervensi berhasil diperbarui.');
+      } else {
+        // Create new intervention
+        payload.createdAt = serverTimestamp();
+        payload.createdBy = profile?.email || '';
+        payload.createdByName = profile?.displayName || 'Guru';
+        
+        await addDoc(collection(db, 'teacherSupportInterventions'), payload);
+        toast.success('Dukungan Guru baru berhasil dimulai.');
+      }
+
+      setShowInterventionModal(false);
+      resetInterventionForm();
+    } catch (err: any) {
+      console.error('Error saving teacher support intervention:', err);
+      toast.error(`Gagal menyimpan intervensi: ${err.message || err}`);
+    } finally {
+      setSavingIntervention(false);
+    }
+  };
+
   // Compile Leaderboard from filtered records
   const leaderboardList = React.useMemo(() => {
     const studentMap: Record<string, {
@@ -1158,7 +1365,11 @@ export default function JuniorHighLatenessAndViolations() {
       className: string;
       classId: string;
       latenessCount: number;
+      latenessSelesaiCount: number;
+      latenessAktifCount: number;
       violationCount: number;
+      violationSelesaiCount: number;
+      violationAktifCount: number;
       totalCount: number;
       lastRecordedDate: string;
     }> = {};
@@ -1172,7 +1383,11 @@ export default function JuniorHighLatenessAndViolations() {
           className,
           classId,
           latenessCount: 0,
+          latenessSelesaiCount: 0,
+          latenessAktifCount: 0,
           violationCount: 0,
+          violationSelesaiCount: 0,
+          violationAktifCount: 0,
           totalCount: 0,
           lastRecordedDate: date
         };
@@ -1189,6 +1404,11 @@ export default function JuniorHighLatenessAndViolations() {
         if (!r.studentId) return;
         touchStudent(r.studentId, r.studentName, r.className || 'Kelas Lain', r.classId, r.date);
         studentMap[r.studentId].latenessCount++;
+        if (completedIncidentIdsSet.has(r.id)) {
+          studentMap[r.studentId].latenessSelesaiCount++;
+        } else {
+          studentMap[r.studentId].latenessAktifCount++;
+        }
         studentMap[r.studentId].totalCount++;
       });
     }
@@ -1199,6 +1419,11 @@ export default function JuniorHighLatenessAndViolations() {
         if (!r.studentId) return;
         touchStudent(r.studentId, r.studentName, r.className || 'Kelas Lain', r.classId, r.date);
         studentMap[r.studentId].violationCount++;
+        if (completedIncidentIdsSet.has(r.id)) {
+          studentMap[r.studentId].violationSelesaiCount++;
+        } else {
+          studentMap[r.studentId].violationAktifCount++;
+        }
         studentMap[r.studentId].totalCount++;
       });
     }
@@ -1217,7 +1442,7 @@ export default function JuniorHighLatenessAndViolations() {
     });
 
     return result;
-  }, [filteredLateness, filteredViolations, rekapDataType]);
+  }, [filteredLateness, filteredViolations, rekapDataType, completedIncidentIdsSet]);
 
   // Aggregate Metrics for cards
   const rekapMetrics = React.useMemo(() => {
@@ -1257,8 +1482,8 @@ export default function JuniorHighLatenessAndViolations() {
       }
     });
 
-    const needLatenessSupportCount = list.filter(s => s.latenessCount >= 3).length;
-    const needViolationSupportCount = list.filter(s => s.violationCount >= 3).length;
+    const needLatenessSupportCount = list.filter(s => s.latenessAktifCount >= 3).length;
+    const needViolationSupportCount = list.filter(s => s.violationAktifCount >= 3).length;
 
     return {
       totalLateness,
@@ -2411,401 +2636,643 @@ export default function JuniorHighLatenessAndViolations() {
               <span>{rekapError}</span>
             </div>
           )}
-          
-          {/* Controls / Filter Panel Card */}
-          <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-5">
-            <h3 className="font-black text-gray-900 text-sm flex items-center gap-2">
-              <Filter size={16} className="text-violet-600" />
-              Filter Rekap Keterlambatan dan Pelanggaran Ringan
-            </h3>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-              
-              {/* Date Range Start */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Mulai Tanggal</label>
-                <input
-                  type="date"
-                  value={rekapStartDate}
-                  onChange={(e) => setRekapStartDate(e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-100 rounded-xl px-3.5 py-2.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-violet-500/15"
-                />
-              </div>
 
-              {/* Date Range End */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Sampai Tanggal</label>
-                <input
-                  type="date"
-                  value={rekapEndDate}
-                  onChange={(e) => setRekapEndDate(e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-100 rounded-xl px-3.5 py-2.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-violet-500/15"
-                />
-              </div>
-
-              {/* Class filter */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Kelas ({rekapAcademicYear})</label>
-                <select
-                  value={rekapClassFilter}
-                  onChange={(e) => setRekapClassFilter(e.target.value)}
-                  disabled={loadingClasses}
-                  className="w-full bg-gray-50 border border-gray-100 rounded-xl px-3.5 py-2.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-violet-500/15 cursor-pointer disabled:opacity-50"
-                >
-                  {loadingClasses ? (
-                    <option value="all">Memuat kelas {rekapAcademicYear}...</option>
-                  ) : (
-                    <>
-                      <option value="all">Semua Kelas</option>
-                      {classes.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </>
-                  )}
-                </select>
-                {!loadingClasses && classes.length === 0 && (
-                  <p className="text-[10px] text-amber-600 font-bold mt-1 leading-normal">
-                    Belum ada kelas Junior High untuk tahun ajaran {rekapAcademicYear}.
-                  </p>
-                )}
-              </div>
-
-              {/* Data Type filter */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Jenis Catatan</label>
-                <select
-                  value={rekapDataType}
-                  onChange={(e) => setRekapDataType(e.target.value as any)}
-                  className="w-full bg-gray-50 border border-gray-100 rounded-xl px-3.5 py-2.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-violet-500/15 cursor-pointer"
-                >
-                  <option value="all">Semua Catatan</option>
-                  <option value="lateness">Hanya Keterlambatan</option>
-                  <option value="violations">Hanya Pelanggaran Ringan</option>
-                </select>
-              </div>
-
-              {/* Year & Semester Context */}
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Tahun Ajaran</label>
-                  <input
-                    type="text"
-                    value={rekapAcademicYear}
-                    disabled
-                    className="w-full bg-gray-100 border border-gray-100 text-gray-400 rounded-xl px-2 py-2.5 text-[10px] font-bold text-center"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Semester</label>
-                  <input
-                    type="text"
-                    value={`SM ${rekapSemester}`}
-                    disabled
-                    className="w-full bg-gray-100 border border-gray-100 text-gray-400 rounded-xl px-2 py-2.5 text-[10px] font-bold text-center"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-3 pt-2">
-              <button
-                type="button"
-                onClick={handleResetRekapFilters}
-                className="bg-gray-100 hover:bg-gray-200 text-gray-600 font-black px-6 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer"
-              >
-                Reset
-              </button>
-              <button
-                type="button"
-                onClick={handleApplyRekapFilters}
-                className="bg-violet-600 hover:bg-violet-700 text-white font-black px-8 py-2.5 rounded-xl shadow-md shadow-violet-50 transition-all text-xs uppercase tracking-wider cursor-pointer"
-              >
-                Terapkan Filter
-              </button>
-            </div>
-          </div>
-
-          {/* Aggregate Metrics Cards (4 columns) */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            
-            {/* Card 1 */}
-            <div 
-              onClick={() => setRekapDataType('lateness')}
+          {/* Sub Tab Navigation */}
+          <div className="flex border-b border-gray-100 pb-px">
+            <button
+              onClick={() => setRekapSubTab('overview')}
               className={cn(
-                "bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between cursor-pointer hover:border-violet-300 transition-all",
-                rekapDataType === 'lateness' && "ring-2 ring-violet-600/30 border-violet-400 bg-violet-50/10"
+                "px-5 py-2.5 font-bold text-xs uppercase tracking-wider border-b-2 -mb-px transition-all cursor-pointer",
+                rekapSubTab === 'overview'
+                  ? "text-violet-600 border-violet-600 font-black"
+                  : "text-gray-400 border-transparent hover:text-gray-600"
               )}
             >
-              <div>
-                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Total Keterlambatan</p>
-                {loadingRekap ? (
-                  <div className="h-6 w-16 bg-gray-100 animate-pulse rounded mt-2" />
-                ) : (
-                  <p className="text-xl font-black text-blue-600 mt-1">{rekapMetrics.totalLateness}x</p>
-                )}
-              </div>
-              <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl">
-                <Clock size={20} />
-              </div>
-            </div>
-
-            {/* Card 2 */}
-            <div 
-              onClick={() => setRekapDataType('violations')}
+              Tabel Rekap & Tren
+            </button>
+            <button
+              onClick={() => setRekapSubTab('dukungan')}
               className={cn(
-                "bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between cursor-pointer hover:border-violet-300 transition-all",
-                rekapDataType === 'violations' && "ring-2 ring-violet-600/30 border-violet-400 bg-violet-50/10"
+                "px-5 py-2.5 font-bold text-xs uppercase tracking-wider border-b-2 -mb-px transition-all cursor-pointer flex items-center gap-1.5",
+                rekapSubTab === 'dukungan'
+                  ? "text-violet-600 border-violet-600 font-black"
+                  : "text-gray-400 border-transparent hover:text-gray-600"
               )}
             >
-              <div>
-                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Total Pelanggaran Ringan</p>
-                {loadingRekap ? (
-                  <div className="h-6 w-16 bg-gray-100 animate-pulse rounded mt-2" />
-                ) : (
-                  <p className="text-xl font-black text-amber-600 mt-1">{rekapMetrics.totalViolations}x</p>
-                )}
-              </div>
-              <div className="p-3 bg-amber-50 text-amber-500 rounded-2xl">
-                <ClipboardList size={20} />
-              </div>
-            </div>
-
-            {/* Card 3 */}
-            <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
-              <div className="max-w-[70%]">
-                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa dengan Catatan Terbanyak</p>
-                {loadingRekap ? (
-                  <div className="h-4 w-32 bg-gray-100 animate-pulse rounded mt-2" />
-                ) : (
-                  <p className="text-xs font-bold text-gray-700 mt-1 truncate leading-relaxed">{rekapMetrics.topStudent}</p>
-                )}
-              </div>
-              <div className="p-3 bg-violet-50 text-violet-600 rounded-2xl">
-                <User size={20} />
-              </div>
-            </div>
-
-            {/* Card 4 */}
-            <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
-              <div className="max-w-[70%]">
-                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Kelas dengan Catatan Terbanyak</p>
-                {loadingRekap ? (
-                  <div className="h-4 w-32 bg-gray-100 animate-pulse rounded mt-2" />
-                ) : (
-                  <p className="text-xs font-bold text-gray-700 mt-1 truncate leading-relaxed">{rekapMetrics.topClass}</p>
-                )}
-              </div>
-              <div className="p-3 bg-gray-50 text-gray-500 rounded-2xl">
-                <LayoutDashboard size={20} />
-              </div>
-            </div>
+              <ShieldAlert size={14} />
+              Dukungan Guru (Intervensi)
+              {(rekapMetrics.needLatenessSupportCount > 0 || rekapMetrics.needViolationSupportCount > 0) && (
+                <span className="bg-red-100 text-red-600 text-[10px] font-black px-2 py-0.5 rounded-full animate-pulse ml-0.5">
+                  {rekapMetrics.needLatenessSupportCount + rekapMetrics.needViolationSupportCount}
+                </span>
+              )}
+            </button>
           </div>
 
-          {/* Support Eligibility Metrics Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-            
-            {/* Card 1: Siswa Perlu Dukungan Keterlambatan */}
-            <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa Perlu Dukungan Keterlambatan</p>
-                {loadingRekap ? (
-                  <div className="h-6 w-16 bg-gray-100 animate-pulse rounded mt-2" />
-                ) : (
-                  <p className="text-xl font-black text-red-600 mt-1">{rekapMetrics.needLatenessSupportCount} Siswa</p>
-                )}
-                <p className="text-[10px] text-gray-400 mt-1 font-medium">Siswa dengan &ge; 3 keterlambatan aktif</p>
-              </div>
-              <div className="p-3 bg-red-50 text-red-500 rounded-2xl">
-                <ShieldAlert size={20} />
-              </div>
-            </div>
-
-            {/* Card 2: Siswa Perlu Dukungan Pelanggaran Ringan */}
-            <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa Perlu Dukungan Pelanggaran Ringan</p>
-                {loadingRekap ? (
-                  <div className="h-6 w-16 bg-gray-100 animate-pulse rounded mt-2" />
-                ) : (
-                  <p className="text-xl font-black text-amber-600 mt-1">{rekapMetrics.needViolationSupportCount} Siswa</p>
-                )}
-                <p className="text-[10px] text-gray-400 mt-1 font-medium">Siswa dengan &ge; 3 pelanggaran ringan aktif</p>
-              </div>
-              <div className="p-3 bg-amber-50 text-amber-500 rounded-2xl">
-                <AlertCircle size={20} />
-              </div>
-            </div>
-
-          </div>
-
-          {/* Visual Chart Section */}
-          <div className="w-full bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6 animate-fade-in">
-            <div>
-              <h3 className="font-black text-gray-900 text-sm">Pola Catatan per Kelas</h3>
-            </div>
-
-            {loadingRekap ? (
-              <div className="h-64 flex flex-col items-center justify-center gap-2 text-gray-400">
-                <Loader2 size={24} className="animate-spin text-violet-500" />
-                <p className="text-xs font-medium">Menyusun data pola...</p>
-              </div>
-            ) : chartData.length === 0 ? (
-              <div className="h-64 flex items-center justify-center text-gray-400 italic text-xs">
-                Tidak ada data untuk rentang filter saat ini
-              </div>
-            ) : (
-              <div className="h-64 w-full text-xs">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={chartData}
-                    margin={{ top: 10, right: 10, left: -20, bottom: 5 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                    <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: '#9ca3af', fontWeight: 'bold' }} />
-                    <YAxis tickLine={false} axisLine={false} tick={{ fill: '#9ca3af', fontWeight: 'bold' }} />
-                    <Tooltip 
-                      contentStyle={{ background: '#ffffff', borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                      itemStyle={{ fontWeight: 'bold', fontSize: '11px' }}
+          {rekapSubTab === 'overview' ? (
+            <div className="space-y-6 animate-fade-in">
+              {/* Controls / Filter Panel Card */}
+              <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-5">
+                <h3 className="font-black text-gray-900 text-sm flex items-center gap-2">
+                  <Filter size={16} className="text-violet-600" />
+                  Filter Rekap Keterlambatan dan Pelanggaran Ringan
+                </h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                  
+                  {/* Date Range Start */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Mulai Tanggal</label>
+                    <input
+                      type="date"
+                      value={rekapStartDate}
+                      onChange={(e) => setRekapStartDate(e.target.value)}
+                      className="w-full bg-gray-50 border border-gray-100 rounded-xl px-3.5 py-2.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-violet-500/15"
                     />
-                     <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'black', textTransform: 'uppercase', letterSpacing: '0.05em' }} />
-                    {(rekapDataType === 'all' || rekapDataType === 'lateness') && (
-                      <Bar dataKey="Keterlambatan" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                  </div>
+
+                  {/* Date Range End */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Sampai Tanggal</label>
+                    <input
+                      type="date"
+                      value={rekapEndDate}
+                      onChange={(e) => setRekapEndDate(e.target.value)}
+                      className="w-full bg-gray-50 border border-gray-100 rounded-xl px-3.5 py-2.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-violet-500/15"
+                    />
+                  </div>
+
+                  {/* Class filter */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Kelas ({rekapAcademicYear})</label>
+                    <select
+                      value={rekapClassFilter}
+                      onChange={(e) => setRekapClassFilter(e.target.value)}
+                      disabled={loadingClasses}
+                      className="w-full bg-gray-50 border border-gray-100 rounded-xl px-3.5 py-2.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-violet-500/15 cursor-pointer disabled:opacity-50"
+                    >
+                      {loadingClasses ? (
+                        <option value="all">Memuat kelas {rekapAcademicYear}...</option>
+                      ) : (
+                        <>
+                          <option value="all">Semua Kelas</option>
+                          {classes.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </>
+                      )}
+                    </select>
+                    {!loadingClasses && classes.length === 0 && (
+                      <p className="text-[10px] text-amber-600 font-bold mt-1 leading-normal">
+                        Belum ada kelas Junior High untuk tahun ajaran {rekapAcademicYear}.
+                      </p>
                     )}
-                    {(rekapDataType === 'all' || rekapDataType === 'violations') && (
-                      <Bar dataKey="Pelanggaran Ringan" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                  </div>
+
+                  {/* Data Type filter */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Jenis Catatan</label>
+                    <select
+                      value={rekapDataType}
+                      onChange={(e) => setRekapDataType(e.target.value as any)}
+                      className="w-full bg-gray-50 border border-gray-100 rounded-xl px-3.5 py-2.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-violet-500/15 cursor-pointer"
+                    >
+                      <option value="all">Semua Catatan</option>
+                      <option value="lateness">Hanya Keterlambatan</option>
+                      <option value="violations">Hanya Pelanggaran Ringan</option>
+                    </select>
+                  </div>
+
+                  {/* Year & Semester Context */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Tahun Ajaran</label>
+                      <input
+                        type="text"
+                        value={rekapAcademicYear}
+                        disabled
+                        className="w-full bg-gray-100 border border-gray-100 text-gray-400 rounded-xl px-2 py-2.5 text-[10px] font-bold text-center"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Semester</label>
+                      <input
+                        type="text"
+                        value={`SM ${rekapSemester}`}
+                        disabled
+                        className="w-full bg-gray-100 border border-gray-100 text-gray-400 rounded-xl px-2 py-2.5 text-[10px] font-bold text-center"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleResetRekapFilters}
+                    className="bg-gray-100 hover:bg-gray-200 text-gray-600 font-black px-6 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer"
+                  >
+                    Reset
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleApplyRekapFilters}
+                    className="bg-violet-600 hover:bg-violet-700 text-white font-black px-8 py-2.5 rounded-xl shadow-md shadow-violet-50 transition-all text-xs uppercase tracking-wider cursor-pointer"
+                  >
+                    Terapkan Filter
+                  </button>
+                </div>
+              </div>
+
+              {/* Aggregate Metrics Cards (4 columns) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                
+                {/* Card 1 */}
+                <div 
+                  onClick={() => setRekapDataType('lateness')}
+                  className={cn(
+                    "bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between cursor-pointer hover:border-violet-300 transition-all",
+                    rekapDataType === 'lateness' && "ring-2 ring-violet-600/30 border-violet-400 bg-violet-50/10"
+                  )}
+                >
+                  <div>
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Total Keterlambatan</p>
+                    {loadingRekap ? (
+                      <div className="h-6 w-16 bg-gray-100 animate-pulse rounded mt-2" />
+                    ) : (
+                      <p className="text-xl font-black text-blue-600 mt-1">{rekapMetrics.totalLateness}x</p>
                     )}
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </div>
-
-          {/* Main Leaderboard Table */}
-          <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="p-6 border-b border-gray-50 flex items-center justify-between">
-              <div>
-                <h2 className="font-black text-gray-900 text-sm">Tabel Rekapitulasi Catatan Siswa</h2>
-              </div>
-              <span className="bg-violet-50 text-violet-700 text-xs font-black px-3 py-1 rounded-full uppercase tracking-wider">
-                {leaderboardList.length} Siswa Terdata
-              </span>
-            </div>
-
-            <div className="overflow-x-auto">
-              {loadingRekap ? (
-                <div className="p-12 flex flex-col items-center justify-center gap-2 text-gray-400">
-                  <Loader2 size={24} className="animate-spin text-violet-500" />
-                  <p className="text-xs font-medium uppercase tracking-widest">Menyusun data rekap...</p>
+                  </div>
+                  <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl">
+                    <Clock size={20} />
+                  </div>
                 </div>
-              ) : leaderboardList.length === 0 ? (
-                <div className="p-12 text-center text-gray-400">
-                  <p className="text-sm italic">Tidak ada catatan yang cocok dengan filter aktif.</p>
+
+                {/* Card 2 */}
+                <div 
+                  onClick={() => setRekapDataType('violations')}
+                  className={cn(
+                    "bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between cursor-pointer hover:border-violet-300 transition-all",
+                    rekapDataType === 'violations' && "ring-2 ring-violet-600/30 border-violet-400 bg-violet-50/10"
+                  )}
+                >
+                  <div>
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Total Pelanggaran Ringan</p>
+                    {loadingRekap ? (
+                      <div className="h-6 w-16 bg-gray-100 animate-pulse rounded mt-2" />
+                    ) : (
+                      <p className="text-xl font-black text-amber-600 mt-1">{rekapMetrics.totalViolations}x</p>
+                    )}
+                  </div>
+                  <div className="p-3 bg-amber-50 text-amber-500 rounded-2xl">
+                    <ClipboardList size={20} />
+                  </div>
                 </div>
-              ) : (
-                <table className="w-full text-left">
-                  <thead className="bg-gray-50/50">
-                    <tr>
-                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Urutan</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Kelas</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Keterlambatan</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Pelanggaran Ringan</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Dukungan Guru</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Terakhir Tercatat</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Aksi</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {leaderboardList.map((item, index) => (
-                      <tr key={item.studentId} className="hover:bg-gray-50/30 transition-all duration-200">
-                        <td className="px-6 py-4">
-                          <span className="text-xs font-bold text-gray-400"># {index + 1}</span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <p className="font-bold text-gray-900 text-sm">{item.studentName}</p>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded uppercase tracking-wider">
-                            {item.className}
-                          </span>
-                        </td>
-                        
-                        {/* Keterlambatan Column */}
-                        <td className="px-6 py-4 text-center">
-                          <div className="flex flex-col gap-1 items-center justify-center">
-                            <span className={cn(
-                              "text-xs font-black px-2.5 py-1 rounded-full",
-                              item.latenessCount > 0 ? "text-blue-700 bg-blue-50/80 border border-blue-100" : "text-gray-400 bg-gray-50/50"
-                            )}>
-                              {item.latenessCount} Total
-                            </span>
-                            <span className="text-[9px] font-medium text-gray-400 whitespace-nowrap">
-                              0 selesai · {item.latenessCount} aktif
-                            </span>
-                          </div>
-                        </td>
 
-                        {/* Pelanggaran Ringan Column */}
-                        <td className="px-6 py-4 text-center">
-                          <div className="flex flex-col gap-1 items-center justify-center">
-                            <span className={cn(
-                              "text-xs font-black px-2.5 py-1 rounded-full",
-                              item.violationCount > 0 ? "text-amber-700 bg-amber-50/80 border border-amber-100" : "text-gray-400 bg-gray-50/50"
-                            )}>
-                              {item.violationCount} Total
-                            </span>
-                            <span className="text-[9px] font-medium text-gray-400 whitespace-nowrap">
-                              0 selesai · {item.violationCount} aktif
-                            </span>
-                          </div>
-                        </td>
+                {/* Card 3 */}
+                <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
+                  <div className="max-w-[70%]">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa dengan Catatan Terbanyak</p>
+                    {loadingRekap ? (
+                      <div className="h-4 w-32 bg-gray-100 animate-pulse rounded mt-2" />
+                    ) : (
+                      <p className="text-xs font-bold text-gray-700 mt-1 truncate leading-relaxed">{rekapMetrics.topStudent}</p>
+                    )}
+                  </div>
+                  <div className="p-3 bg-violet-50 text-violet-600 rounded-2xl">
+                    <User size={20} />
+                  </div>
+                </div>
 
-                        {/* Dukungan Guru Eligibility Indicator Column */}
-                        <td className="px-6 py-4">
-                          <div className="flex flex-col gap-1.5 items-center justify-center">
-                            {item.latenessCount >= 3 && (
-                              <span 
-                                title="Fitur intervensi akan tersedia pada tahap berikutnya."
-                                className="text-[9px] font-black text-red-700 bg-red-50 border border-red-100 px-2.5 py-1 rounded-full uppercase tracking-wider text-center block cursor-help"
+                {/* Card 4 */}
+                <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
+                  <div className="max-w-[70%]">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Kelas dengan Catatan Terbanyak</p>
+                    {loadingRekap ? (
+                      <div className="h-4 w-32 bg-gray-100 animate-pulse rounded mt-2" />
+                    ) : (
+                      <p className="text-xs font-bold text-gray-700 mt-1 truncate leading-relaxed">{rekapMetrics.topClass}</p>
+                    )}
+                  </div>
+                  <div className="p-3 bg-gray-50 text-gray-500 rounded-2xl">
+                    <LayoutDashboard size={20} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Support Eligibility Metrics Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                
+                {/* Card 1: Siswa Perlu Dukungan Keterlambatan */}
+                <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa Perlu Dukungan Keterlambatan</p>
+                    {loadingRekap ? (
+                      <div className="h-6 w-16 bg-gray-100 animate-pulse rounded mt-2" />
+                    ) : (
+                      <p className="text-xl font-black text-red-600 mt-1">{rekapMetrics.needLatenessSupportCount} Siswa</p>
+                    )}
+                    <p className="text-[10px] text-gray-400 mt-1 font-medium">Siswa dengan &ge; 3 keterlambatan aktif</p>
+                  </div>
+                  <div className="p-3 bg-red-50 text-red-500 rounded-2xl">
+                    <ShieldAlert size={20} />
+                  </div>
+                </div>
+
+                {/* Card 2: Siswa Perlu Dukungan Pelanggaran Ringan */}
+                <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa Perlu Dukungan Pelanggaran Ringan</p>
+                    {loadingRekap ? (
+                      <div className="h-6 w-16 bg-gray-100 animate-pulse rounded mt-2" />
+                    ) : (
+                      <p className="text-xl font-black text-amber-600 mt-1">{rekapMetrics.needViolationSupportCount} Siswa</p>
+                    )}
+                    <p className="text-[10px] text-gray-400 mt-1 font-medium">Siswa dengan &ge; 3 pelanggaran ringan aktif</p>
+                  </div>
+                  <div className="p-3 bg-amber-50 text-amber-500 rounded-2xl">
+                    <AlertCircle size={20} />
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Visual Chart Section */}
+              <div className="w-full bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+                <div>
+                  <h3 className="font-black text-gray-900 text-sm">Pola Catatan per Kelas</h3>
+                </div>
+
+                {loadingRekap ? (
+                  <div className="h-64 flex flex-col items-center justify-center gap-2 text-gray-400">
+                    <Loader2 size={24} className="animate-spin text-violet-500" />
+                    <p className="text-xs font-medium">Menyusun data pola...</p>
+                  </div>
+                ) : chartData.length === 0 ? (
+                  <div className="h-64 flex items-center justify-center text-gray-400 italic text-xs">
+                    Tidak ada data untuk rentang filter saat ini
+                  </div>
+                ) : (
+                  <div className="h-64 w-full text-xs">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={chartData}
+                        margin={{ top: 10, right: 10, left: -20, bottom: 5 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                        <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: '#9ca3af', fontWeight: 'bold' }} />
+                        <YAxis tickLine={false} axisLine={false} tick={{ fill: '#9ca3af', fontWeight: 'bold' }} />
+                        <Tooltip 
+                          contentStyle={{ background: '#ffffff', borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                          itemStyle={{ fontWeight: 'bold', fontSize: '11px' }}
+                        />
+                         <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'black', textTransform: 'uppercase', letterSpacing: '0.05em' }} />
+                        {(rekapDataType === 'all' || rekapDataType === 'lateness') && (
+                          <Bar dataKey="Keterlambatan" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                        )}
+                        {(rekapDataType === 'all' || rekapDataType === 'violations') && (
+                          <Bar dataKey="Pelanggaran Ringan" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                        )}
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+
+              {/* Main Leaderboard Table */}
+              <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+                <div className="p-6 border-b border-gray-50 flex items-center justify-between">
+                  <div>
+                    <h2 className="font-black text-gray-900 text-sm">Tabel Rekapitulasi Catatan Siswa</h2>
+                  </div>
+                  <span className="bg-violet-50 text-violet-700 text-xs font-black px-3 py-1 rounded-full uppercase tracking-wider">
+                    {leaderboardList.length} Siswa Terdata
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto">
+                  {loadingRekap ? (
+                    <div className="p-12 flex flex-col items-center justify-center gap-2 text-gray-400">
+                      <Loader2 size={24} className="animate-spin text-violet-500" />
+                      <p className="text-xs font-medium uppercase tracking-widest">Menyusun data rekap...</p>
+                    </div>
+                  ) : leaderboardList.length === 0 ? (
+                    <div className="p-12 text-center text-gray-400">
+                      <p className="text-sm italic">Tidak ada catatan yang cocok dengan filter aktif.</p>
+                    </div>
+                  ) : (
+                    <table className="w-full text-left">
+                      <thead className="bg-gray-50/50">
+                        <tr>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Urutan</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Kelas</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Keterlambatan</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Pelanggaran Ringan</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Dukungan Guru</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Terakhir Tercatat</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {leaderboardList.map((item, index) => (
+                          <tr key={item.studentId} className="hover:bg-gray-50/30 transition-all duration-200">
+                            <td className="px-6 py-4">
+                              <span className="text-xs font-bold text-gray-400"># {index + 1}</span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <p className="font-bold text-gray-900 text-sm">{item.studentName}</p>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded uppercase tracking-wider">
+                                {item.className}
+                              </span>
+                            </td>
+                            
+                            {/* Keterlambatan Column */}
+                            <td className="px-6 py-4 text-center">
+                              <div className="flex flex-col gap-1 items-center justify-center">
+                                <span className={cn(
+                                  "text-xs font-black px-2.5 py-1 rounded-full",
+                                  item.latenessCount > 0 ? "text-blue-700 bg-blue-50/80 border border-blue-100" : "text-gray-400 bg-gray-50/50"
+                                )}>
+                                  {item.latenessCount} Total
+                                </span>
+                                <span className="text-[9px] font-medium text-gray-400 whitespace-nowrap">
+                                  {item.latenessSelesaiCount} selesai · {item.latenessAktifCount} aktif
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* Pelanggaran Ringan Column */}
+                            <td className="px-6 py-4 text-center">
+                              <div className="flex flex-col gap-1 items-center justify-center">
+                                <span className={cn(
+                                  "text-xs font-black px-2.5 py-1 rounded-full",
+                                  item.violationCount > 0 ? "text-amber-700 bg-amber-50/80 border border-amber-100" : "text-gray-400 bg-gray-50/50"
+                                )}>
+                                  {item.violationCount} Total
+                                </span>
+                                <span className="text-[9px] font-medium text-gray-400 whitespace-nowrap">
+                                  {item.violationSelesaiCount} selesai · {item.violationAktifCount} aktif
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* Dukungan Guru Eligibility Indicator Column */}
+                            <td className="px-6 py-4">
+                              <div className="flex flex-col gap-1.5 items-center justify-center">
+                                {item.latenessAktifCount >= 3 ? (
+                                  <button 
+                                    onClick={() => {
+                                      setRekapSubTab('dukungan');
+                                      setDukunganSubTab('lateness');
+                                    }}
+                                    className="text-[9px] font-black text-red-700 bg-red-50 border border-red-200 hover:bg-red-100 px-2.5 py-1 rounded-full uppercase tracking-wider text-center block cursor-pointer transition-all shadow-sm"
+                                  >
+                                    Dukungan Guru — Keterlambatan
+                                  </button>
+                                ) : null}
+                                {item.violationAktifCount >= 3 ? (
+                                  <button 
+                                    onClick={() => {
+                                      setRekapSubTab('dukungan');
+                                      setDukunganSubTab('minor_violation');
+                                    }}
+                                    className="text-[9px] font-black text-amber-700 bg-amber-50 border border-amber-200 hover:bg-amber-100 px-2.5 py-1 rounded-full uppercase tracking-wider text-center block cursor-pointer transition-all shadow-sm"
+                                  >
+                                    Dukungan Guru — Pelanggaran Ringan
+                                  </button>
+                                ) : null}
+                                {item.latenessAktifCount < 3 && item.violationAktifCount < 3 && (
+                                  <span className="text-[10px] font-bold text-gray-400 bg-gray-50/50 border border-gray-100/30 px-2.5 py-1 rounded-full">
+                                    Belum perlu dukungan
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+
+                            <td className="px-6 py-4">
+                              <p className="text-xs text-gray-500 font-medium">{item.lastRecordedDate}</p>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <button
+                                onClick={() => handleOpenStudentHistory(item)}
+                                className="flex items-center gap-1 bg-violet-50 hover:bg-violet-100 text-violet-600 font-black px-4 py-1.5 rounded-xl text-[10px] uppercase tracking-wider ml-auto cursor-pointer"
                               >
-                                Dukungan Guru — Keterlambatan
-                              </span>
-                            )}
-                            {item.violationCount >= 3 && (
-                              <span 
-                                title="Fitur intervensi akan tersedia pada tahap berikutnya."
-                                className="text-[9px] font-black text-amber-700 bg-amber-50 border border-amber-100 px-2.5 py-1 rounded-full uppercase tracking-wider text-center block cursor-help"
-                              >
-                                Dukungan Guru — Pelanggaran Ringan
-                              </span>
-                            )}
-                            {item.latenessCount < 3 && item.violationCount < 3 && (
-                              <span className="text-[10px] font-bold text-gray-400 bg-gray-50/50 border border-gray-100/30 px-2.5 py-1 rounded-full">
-                                Belum perlu dukungan
-                              </span>
-                            )}
-                          </div>
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <p className="text-xs text-gray-500 font-medium">{item.lastRecordedDate}</p>
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <button
-                            onClick={() => handleOpenStudentHistory(item)}
-                            className="flex items-center gap-1 bg-violet-50 hover:bg-violet-100 text-violet-600 font-black px-4 py-1.5 rounded-xl text-[10px] uppercase tracking-wider ml-auto cursor-pointer"
-                          >
-                            Lihat Riwayat
-                            <ArrowUpRight size={12} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
+                                Lihat Riwayat
+                                <ArrowUpRight size={12} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
+          ) : (
+            /* Dukungan Guru Workspace */
+            <div className="space-y-6 animate-fade-in">
+              {/* Secondary Tabs inside Dukungan Guru */}
+              <div className="flex border-b border-gray-100 pb-px gap-4">
+                <button
+                  onClick={() => setDukunganSubTab('lateness')}
+                  className={cn(
+                    "px-4 py-2 font-bold text-xs uppercase tracking-wider border-b-2 -mb-px transition-all cursor-pointer flex items-center gap-2",
+                    dukunganSubTab === 'lateness'
+                      ? "text-blue-600 border-blue-600 font-black"
+                      : "text-gray-400 border-transparent hover:text-gray-600"
+                  )}
+                >
+                  <Clock size={14} />
+                  Keterlambatan
+                </button>
+                <button
+                  onClick={() => setDukunganSubTab('minor_violation')}
+                  className={cn(
+                    "px-4 py-2 font-bold text-xs uppercase tracking-wider border-b-2 -mb-px transition-all cursor-pointer flex items-center gap-2",
+                    dukunganSubTab === 'minor_violation'
+                      ? "text-amber-600 border-amber-600 font-black"
+                      : "text-gray-400 border-transparent hover:text-gray-600"
+                  )}
+                >
+                  <ClipboardList size={14} />
+                  Pelanggaran Ringan
+                </button>
+              </div>
+
+              {/* Dukungan Guru Lists Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                
+                {/* Siswa Perlu Dukungan (Active/In Progress Cases) */}
+                <div className="lg:col-span-2 bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
+                  <div className="p-6 border-b border-gray-50">
+                    <h4 className="font-black text-gray-900 text-sm">
+                      Daftar Siswa Perlu Intervensi {dukunganSubTab === 'lateness' ? 'Keterlambatan' : 'Pelanggaran Ringan'}
+                    </h4>
+                    <p className="text-xs text-gray-400 mt-1">Siswa dengan &ge; 3 catatan aktif atau memiliki intervensi aktif yang belum selesai.</p>
+                  </div>
+
+                  <div className="divide-y divide-gray-50 flex-1 overflow-y-auto max-h-[600px]">
+                    {loadingInterventions ? (
+                      <div className="p-12 flex flex-col items-center justify-center gap-2 text-gray-400">
+                        <Loader2 size={24} className="animate-spin text-violet-500" />
+                        <p className="text-xs font-black uppercase tracking-wider">Memuat daftar dukungan...</p>
+                      </div>
+                    ) : (() => {
+                      const activeStudentsForDukungan = leaderboardList.filter(s => {
+                        const activeCount = dukunganSubTab === 'lateness' ? s.latenessAktifCount : s.violationAktifCount;
+                        const hasActiveIntervention = interventions.some(int => 
+                          int.studentId === s.studentId && 
+                          int.issueType === dukunganSubTab && 
+                          int.status === 'in_progress'
+                        );
+                        return activeCount >= 3 || hasActiveIntervention;
+                      });
+
+                      if (activeStudentsForDukungan.length === 0) {
+                        return (
+                          <div className="p-12 text-center text-gray-400">
+                            <p className="text-sm italic">Tidak ada siswa yang memerlukan dukungan intervensi saat ini.</p>
+                          </div>
+                        );
+                      }
+
+                      return activeStudentsForDukungan.map(s => {
+                        const activeCount = dukunganSubTab === 'lateness' ? s.latenessAktifCount : s.violationAktifCount;
+                        const selesaiCount = dukunganSubTab === 'lateness' ? s.latenessSelesaiCount : s.violationSelesaiCount;
+                        const activeInt = interventions.find(int => 
+                          int.studentId === s.studentId && 
+                          int.issueType === dukunganSubTab && 
+                          int.status === 'in_progress'
+                        );
+
+                        return (
+                          <div key={s.studentId} className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-gray-50/20 transition-all">
+                            <div className="space-y-1.5 max-w-md">
+                              <div className="flex items-center gap-2.5">
+                                <h5 className="font-bold text-gray-900 text-sm">{s.studentName}</h5>
+                                <span className="bg-blue-50 text-blue-600 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">
+                                  {s.className}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-400 font-medium">
+                                <span className="flex items-center gap-1 font-bold text-red-500">
+                                  <AlertCircle size={12} />
+                                  {activeCount} Catatan Aktif
+                                </span>
+                                <span>•</span>
+                                <span className="flex items-center gap-1 font-bold text-emerald-600">
+                                  <CheckCircle2 size={12} />
+                                  {selesaiCount} Diselesaikan
+                                </span>
+                              </div>
+
+                              {activeInt && (
+                                <div className="mt-3 p-3 bg-violet-50/30 rounded-2xl border border-violet-100/50 space-y-1 text-xs">
+                                  <p className="font-bold text-violet-700 flex items-center gap-1">
+                                    <ShieldAlert size={12} />
+                                    Intervensi Aktif Berjalan
+                                  </p>
+                                  <p className="text-gray-600 line-clamp-2 italic">&ldquo;{activeInt.interventionPlan}&rdquo;</p>
+                                  <p className="text-[10px] text-gray-400 font-bold mt-1">
+                                    Oleh: {activeInt.createdByName || 'Guru'} • {activeInt.incidentIds?.length || 0} catatan dicakup
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2 md:self-center shrink-0">
+                              {activeInt ? (
+                                <button
+                                  onClick={() => handleOpenEditInterventionModal(activeInt, s)}
+                                  className="bg-violet-600 hover:bg-violet-700 text-white text-[10px] font-black uppercase tracking-wider px-4 py-2.5 rounded-xl shadow-md shadow-violet-50 transition-all cursor-pointer"
+                                >
+                                  Edit / Selesaikan
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => handleOpenNewInterventionModal(s, dukunganSubTab)}
+                                  className="bg-red-600 hover:bg-red-700 text-white text-[10px] font-black uppercase tracking-wider px-4 py-2.5 rounded-xl shadow-md shadow-red-50 transition-all cursor-pointer"
+                                >
+                                  Mulai Dukungan
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+
+                {/* Riwayat Intervensi Selesai (Completed Cases sidebar) */}
+                <div className="bg-white rounded-3xl border border-gray-100 shadow-sm flex flex-col overflow-hidden h-full">
+                  <div className="p-6 border-b border-gray-50 bg-gray-50/30">
+                    <h4 className="font-black text-gray-900 text-sm">Riwayat Intervensi Selesai</h4>
+                    <p className="text-xs text-gray-400 mt-1">Daftar kasus yang sudah ditangani secara tuntas.</p>
+                  </div>
+
+                  <div className="divide-y divide-gray-100 overflow-y-auto max-h-[600px] flex-1">
+                    {loadingInterventions ? (
+                      <div className="p-12 flex flex-col items-center justify-center gap-2 text-gray-400">
+                        <Loader2 size={24} className="animate-spin text-violet-500" />
+                        <p className="text-xs font-black uppercase tracking-wider">Memuat riwayat...</p>
+                      </div>
+                    ) : (() => {
+                      const completedInterventions = interventions.filter(int => 
+                        int.issueType === dukunganSubTab && 
+                        int.status === 'completed'
+                      );
+
+                      if (completedInterventions.length === 0) {
+                        return (
+                          <div className="p-12 text-center text-gray-400 italic text-xs">
+                            Belum ada riwayat intervensi selesai untuk semester ini.
+                          </div>
+                        );
+                      }
+
+                      return completedInterventions.map(int => (
+                        <div key={int.id} className="p-5 space-y-3 hover:bg-gray-50/40 transition-all">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <p className="font-bold text-gray-800 text-sm">{int.studentName}</p>
+                              <p className="text-[10px] font-bold text-blue-600 mt-0.5">Kelas: {int.className}</p>
+                            </div>
+                            <span className="bg-emerald-50 text-emerald-700 text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border border-emerald-100 flex items-center gap-1">
+                              <Check size={10} />
+                              Selesai
+                            </span>
+                          </div>
+
+                          <div className="bg-gray-50 p-3 rounded-2xl border border-gray-50 space-y-2 text-xs text-gray-600">
+                            <div>
+                              <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">Rencana Dukungan</span>
+                              <p className="italic font-medium leading-relaxed mt-0.5">&ldquo;{int.interventionPlan}&rdquo;</p>
+                            </div>
+                            <div className="pt-2 border-t border-gray-200/50">
+                              <span className="text-[9px] font-black text-emerald-600 uppercase tracking-wider block">Catatan Hasil</span>
+                              <p className="font-semibold text-gray-700 mt-0.5">{int.outcomeNote}</p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between text-[10px] text-gray-400 font-bold pt-1">
+                            <span>Oleh: {int.createdByName || 'Staff'}</span>
+                            <span>{int.completedAt ? getFormattedDateLong(new Date(int.completedAt.seconds * 1000).toISOString().split('T')[0]) : 'Selesai'}</span>
+                          </div>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          )}
+
         </div>
       )}
 
@@ -2915,6 +3382,271 @@ export default function JuniorHighLatenessAndViolations() {
                 >
                   <BookOpen size={14} />
                   Buka Student Portfolio
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ---------------------------------------------------- */}
+      {/* TEACHER SUPPORT INTERVENTION CREATION/EDIT MODAL */}
+      {/* ---------------------------------------------------- */}
+      <AnimatePresence>
+        {showInterventionModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.5 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                if (!savingIntervention) {
+                  setShowInterventionModal(false);
+                  resetInterventionForm();
+                }
+              }}
+              className="absolute inset-0 bg-black/60"
+            />
+
+            {/* Modal Box */}
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-3xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl relative z-10 border border-gray-100"
+            >
+              {/* Header */}
+              <div className="p-6 border-b border-gray-50 flex items-center justify-between bg-violet-50/10">
+                <div>
+                  <span className="text-[9px] font-black text-violet-600 uppercase tracking-widest bg-violet-50 px-2.5 py-1 rounded-full">
+                    Dukungan Guru &bull; {selectedInterventionIssueType === 'lateness' ? 'Keterlambatan' : 'Pelanggaran Ringan'}
+                  </span>
+                  <h3 className="text-base font-black text-gray-900 mt-2">
+                    {editingInterventionId ? 'Edit Sesi Dukungan Guru' : 'Mulai Dukungan Guru Baru'}
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Siswa: <span className="font-bold text-gray-700">{selectedInterventionStudent?.studentName}</span> &bull; Kelas: {selectedInterventionStudent?.className}
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    if (!savingIntervention) {
+                      setShowInterventionModal(false);
+                      resetInterventionForm();
+                    }
+                  }}
+                  className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-600 cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                
+                {/* Section 1: Select Incidents */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">
+                      Pilih Catatan Kejadian yang Tercakup
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleSelectAllIncidents}
+                        className="text-[10px] font-bold text-violet-600 hover:text-violet-700 cursor-pointer"
+                      >
+                        Pilih Semua
+                      </button>
+                      <span className="text-gray-200 text-xs">|</span>
+                      <button
+                        type="button"
+                        onClick={handleClearSelectedIncidents}
+                        className="text-[10px] font-bold text-gray-400 hover:text-gray-600 cursor-pointer"
+                      >
+                        Kosongkan
+                      </button>
+                    </div>
+                  </div>
+
+                  {studentEligibleIncidents.length === 0 ? (
+                    <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 text-center text-xs text-gray-400 italic">
+                      Tidak ada catatan {selectedInterventionIssueType === 'lateness' ? 'keterlambatan' : 'pelanggaran ringan'} aktif yang tersedia.
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {studentEligibleIncidents.map(inc => {
+                        const isChecked = selectedIncidentIds.includes(inc.id);
+                        return (
+                          <div
+                            key={inc.id}
+                            onClick={() => handleToggleIncidentSelection(inc.id)}
+                            className={cn(
+                              "p-3 rounded-2xl border transition-all cursor-pointer flex items-start gap-3",
+                              isChecked
+                                ? "bg-violet-50/20 border-violet-200"
+                                : "bg-gray-50/50 border-gray-100 hover:bg-gray-50"
+                            )}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => {}} // handled by click container
+                              className="mt-0.5 rounded text-violet-600 focus:ring-violet-500/10 cursor-pointer"
+                            />
+                            <div className="flex-1 text-xs">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className={cn(
+                                  "text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded",
+                                  selectedInterventionIssueType === 'lateness' ? "bg-blue-50 text-blue-600" : "bg-amber-50 text-amber-600"
+                                )}>
+                                  {selectedInterventionIssueType === 'lateness' ? 'Keterlambatan' : 'Pelanggaran'}
+                                </span>
+                                <span className="font-bold text-gray-400">
+                                  {getFormattedDateLong(inc.date)}
+                                </span>
+                              </div>
+                              <p className="font-black text-gray-800 mt-1">
+                                {selectedInterventionIssueType === 'lateness' 
+                                  ? `Keterlambatan (${inc.timeString || inc.timeLabel || inc.minutesLate + ' menit'})` 
+                                  : (inc.violationLabel || inc.violationType || 'Pelanggaran Ringan')
+                                }
+                              </p>
+                              {inc.notes && (
+                                <p className="text-gray-500 mt-1 italic font-medium leading-normal">&ldquo;{inc.notes}&rdquo;</p>
+                              )}
+                              {inc.violationReason && (
+                                <p className="text-gray-500 mt-1 italic font-medium leading-normal">&ldquo;{inc.violationReason}&rdquo;</p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {selectedIncidentIds.length === 0 && (
+                    <p className="text-[10px] text-red-500 font-bold">
+                      * Anda harus memilih setidaknya 1 catatan kejadian untuk membuat/menyimpan intervensi.
+                    </p>
+                  )}
+                </div>
+
+                {/* Section 2: Intervention Plan */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">
+                    Rencana Dukungan Guru (Intervensi)
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={interventionPlanText}
+                    onChange={(e) => setInterventionPlanText(e.target.value)}
+                    placeholder="Rangkum rencana dukungan Guru (misal: bimbingan wali kelas, kesepakatan tata tertib, pemanggilan orang tua, bimbingan konseling)..."
+                    className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-4 py-3 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-violet-500/15 leading-relaxed"
+                  />
+                  {interventionPlanText.trim().length < 5 && (
+                    <p className="text-[10px] text-red-500 font-bold">
+                      * Rencana dukungan guru wajib diisi (minimal 5 karakter).
+                    </p>
+                  )}
+                </div>
+
+                {/* Section 3: Status selection */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">
+                    Status Dukungan Guru
+                  </label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <button
+                      type="button"
+                      onClick={() => setActiveInterventionStatus('in_progress')}
+                      className={cn(
+                        "p-4 rounded-2xl border text-left cursor-pointer transition-all flex flex-col gap-1",
+                        activeInterventionStatus === 'in_progress'
+                          ? "bg-amber-50/20 border-amber-300 ring-2 ring-amber-300/10"
+                          : "bg-gray-50/30 border-gray-100 hover:bg-gray-50"
+                      )}
+                    >
+                      <span className="text-xs font-black text-amber-600 flex items-center gap-1.5">
+                        <Loader2 size={12} className="animate-spin animate-none shrink-0" />
+                        Sedang Berjalan
+                      </span>
+                      <span className="text-[10px] font-medium text-gray-400">Kasus masih dipantau dan belum tuntas.</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveInterventionStatus('completed')}
+                      className={cn(
+                        "p-4 rounded-2xl border text-left cursor-pointer transition-all flex flex-col gap-1",
+                        activeInterventionStatus === 'completed'
+                          ? "bg-emerald-50/20 border-emerald-300 ring-2 ring-emerald-300/10"
+                          : "bg-gray-50/30 border-gray-100 hover:bg-gray-50"
+                      )}
+                    >
+                      <span className="text-xs font-black text-emerald-600 flex items-center gap-1.5">
+                        <CheckCircle2 size={12} className="shrink-0" />
+                        Selesai & Diselesaikan
+                      </span>
+                      <span className="text-[10px] font-medium text-gray-400">Seluruh kejadian yang dipilih ditandai diselesaikan.</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Section 4: Outcome note (visible if completed) */}
+                {activeInterventionStatus === 'completed' && (
+                  <div className="space-y-1.5 animate-fade-in">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">
+                      Catatan Hasil Penyelesaian (Wajib jika selesai)
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={interventionOutcomeNote}
+                      onChange={(e) => setInterventionOutcomeNote(e.target.value)}
+                      placeholder="Tuliskan kesimpulan hasil intervensi (misal: siswa berjanji mematuhi aturan, orang tua kooperatif dan menandatangani surat kesepakatan)..."
+                      className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-4 py-3 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-violet-500/15 leading-relaxed"
+                    />
+                    {interventionOutcomeNote.trim().length < 5 && (
+                      <p className="text-[10px] text-red-500 font-bold">
+                        * Catatan hasil penyelesaian wajib diisi untuk mengubah status ke Selesai (minimal 5 karakter).
+                      </p>
+                    )}
+                  </div>
+                )}
+
+              </div>
+
+              {/* Footer */}
+              <div className="p-6 border-t border-gray-50 bg-gray-50/30 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  disabled={savingIntervention}
+                  onClick={() => {
+                    setShowInterventionModal(false);
+                    resetInterventionForm();
+                  }}
+                  className="bg-gray-100 hover:bg-gray-200 text-gray-600 font-black px-6 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer disabled:opacity-50"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    savingIntervention ||
+                    selectedIncidentIds.length === 0 ||
+                    interventionPlanText.trim().length < 5 ||
+                    (activeInterventionStatus === 'completed' && interventionOutcomeNote.trim().length < 5)
+                  }
+                  onClick={handleSaveIntervention}
+                  className="bg-violet-600 hover:bg-violet-700 text-white font-black px-8 py-2.5 rounded-xl shadow-md shadow-violet-50 transition-all text-xs uppercase tracking-wider cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {savingIntervention ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      Menyimpan...
+                    </>
+                  ) : (
+                    'Simpan Intervensi'
+                  )}
                 </button>
               </div>
             </motion.div>

@@ -259,6 +259,32 @@ service cloud.firestore {
       && data.updatedAt == request.time;
     }
 
+    function isValidTeacherSupportIntervention(data) {
+      return data.keys().hasAll([
+        'id', 'studentId', 'studentName', 'classId', 'className',
+        'academicYear', 'semester', 'issueType', 'incidentIds',
+        'interventionPlan', 'status', 'outcomeNote', 'createdBy',
+        'createdByName', 'createdAt', 'updatedBy', 'updatedAt',
+        'completedBy', 'completedAt'
+      ])
+      && data.id is string && data.id.size() <= 128
+      && data.studentId is string && data.studentId.size() <= 128
+      && data.studentName is string && data.studentName.size() <= 200
+      && data.classId is string && data.classId.size() <= 128
+      && data.className is string && data.className.size() <= 128
+      && data.academicYear is string && data.academicYear.size() <= 32
+      && (data.semester == null || data.semester is string)
+      && data.issueType in ['lateness', 'minor_violation']
+      && data.incidentIds is list && data.incidentIds.size() > 0 && data.incidentIds.size() <= 50
+      && data.interventionPlan is string && data.interventionPlan.size() <= 2000
+      && data.status in ['in_progress', 'completed']
+      && (data.outcomeNote == null || (data.outcomeNote is string && data.outcomeNote.size() <= 2000))
+      && data.createdBy == request.auth.uid
+      && (data.createdByName == null || data.createdByName is string)
+      && (data.updatedBy == null || data.updatedBy is string)
+      && (data.completedBy == null || data.completedBy is string);
+    }
+
     match /users/{userId} {
       allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       allow list: if isAdmin() || (
@@ -342,6 +368,15 @@ service cloud.firestore {
         allow create: if isJuniorHighStaff();
         allow update, delete: if isAdmin() || (isJuniorHighStaff() && existing().reporterId == request.auth.uid);
       }
+    }
+
+    match /teacherSupportInterventions/{interventionId} {
+      allow read: if isActive() && isJuniorHighStaff();
+      allow create: if isJuniorHighStaff() && isValidTeacherSupportIntervention(incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isJuniorHighStaff() && isValidTeacherSupportIntervention(incoming()) && incoming().updatedAt == request.time
+        && incoming().createdBy == existing().createdBy && incoming().studentId == existing().studentId && incoming().issueType == existing().issueType
+        && (existing().status == 'in_progress' || isAdmin());
+      allow delete: if isAdmin();
     }
 
     match /juniorhigh_mtss_academic_cases/{caseId} {

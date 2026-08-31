@@ -942,6 +942,33 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["unit", "reportType", "studentId", "classId", "academicYear", "semester", "periodKey", "status", "generalComment"]
+    },
+    "TeacherSupportIntervention": {
+      "title": "TeacherSupportIntervention",
+      "description": "Teacher support interventions for chronic lateness or minor violations in Junior High.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "classId": { "type": "string" },
+        "className": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "semester": { "type": ["string", "null"] },
+        "issueType": { "type": "string", "enum": ["lateness", "minor_violation"] },
+        "incidentIds": { "type": "array", "items": { "type": "string" } },
+        "interventionPlan": { "type": "string" },
+        "status": { "type": "string", "enum": ["in_progress", "completed"] },
+        "outcomeNote": { "type": ["string", "null"] },
+        "createdBy": { "type": "string" },
+        "createdByName": { "type": ["string", "null"] },
+        "createdAt": { "type": "object" },
+        "updatedBy": { "type": ["string", "null"] },
+        "updatedAt": { "type": "object" },
+        "completedBy": { "type": ["string", "null"] },
+        "completedAt": { "type": ["object", "null"] }
+      },
+      "required": ["id", "studentId", "classId", "academicYear", "issueType", "incidentIds", "interventionPlan", "status", "createdBy", "createdAt"]
     }
   },
   "firestore": {
@@ -1175,6 +1202,10 @@
     "junior_high_monthly_report_comments/{commentId}": {
       "schema": "JuniorHighMonthlyReportComment",
       "description": "Student per-period general comments and attendance snapshot for junior high."
+    },
+    "teacherSupportInterventions/{interventionId}": {
+      "schema": "TeacherSupportIntervention",
+      "description": "Teacher support interventions for chronic lateness or minor violations in Junior High."
     }
   }
 }
