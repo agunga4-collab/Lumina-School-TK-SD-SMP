@@ -155,12 +155,53 @@ const getCurrentDateStr = () => {
   return formatter.format(new Date());
 };
 
-const getFormattedDateLong = (dateStr: string) => {
-  if (!dateStr) return '';
-  const [year, month, day] = dateStr.split('-').map(Number);
+const getFormattedDateLong = (dateStr: any) => {
+  if (typeof dateStr !== 'string' || !dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length < 3) return dateStr;
+  const [year, month, day] = parts.map(Number);
   const d = new Date(year, month - 1, day);
+  if (isNaN(d.getTime())) return dateStr;
   return d.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 };
+
+class InterventionErrorBoundary extends React.Component<any, any> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("Dukungan Guru Error Boundary caught an error:", error, errorInfo);
+  }
+
+  render() {
+    if ((this as any).state.hasError) {
+      return (
+        <div className="p-8 bg-red-50/50 rounded-3xl border border-red-100 text-center max-w-lg mx-auto my-12 space-y-4 relative z-10 bg-white shadow-xl">
+          <p className="text-sm font-black text-red-600">
+            Dukungan Guru tidak dapat dimuat.
+          </p>
+          <p className="text-xs text-gray-500 font-bold leading-normal">
+            Terdapat ketidakcocokan data atau kesalahan tak terduga dalam catatan kejadian siswa. Silakan tutup sesi untuk memulihkan halaman.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              (this as any).setState({ hasError: false });
+              (this as any).props.onReset();
+            }}
+            className="bg-red-600 hover:bg-red-700 text-white font-black px-6 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer"
+          >
+            Tutup & Coba Lagi
+          </button>
+        </div>
+      );
+    }
+    return (this as any).props.children;
+  }
+}
 
 const getInitials = (name: string) => {
   if (!name) return '';
@@ -347,11 +388,17 @@ export default function JuniorHighLatenessAndViolations() {
   // Set of completed incident IDs across all completed interventions
   const completedIncidentIdsSet = React.useMemo(() => {
     const completedIds = new Set<string>();
-    interventions.forEach(item => {
-      if (item.status === 'completed' && Array.isArray(item.incidentIds)) {
-        item.incidentIds.forEach((id: string) => completedIds.add(id));
-      }
-    });
+    if (Array.isArray(interventions)) {
+      interventions.forEach(item => {
+        if (item && item.status === 'completed' && Array.isArray(item.incidentIds)) {
+          item.incidentIds.forEach((id: any) => {
+            if (typeof id === 'string' && id.length > 0) {
+              completedIds.add(id);
+            }
+          });
+        }
+      });
+    }
     return completedIds;
   }, [interventions]);
 
@@ -1224,39 +1271,56 @@ export default function JuniorHighLatenessAndViolations() {
 
   const handleOpenNewInterventionModal = (student: any, issueType: 'lateness' | 'minor_violation') => {
     resetInterventionForm();
+    if (!student || typeof student.studentId !== 'string') {
+      toast.error('Data siswa tidak valid.');
+      return;
+    }
+    const safeIssueType = (issueType === 'minor_violation') ? 'minor_violation' : 'lateness';
+
     setActiveInterventionStudent(student);
-    setActiveInterventionIssueType(issueType);
+    setActiveInterventionIssueType(safeIssueType);
 
     // Get all active incidents for this student of this type
-    const incidents = issueType === 'lateness'
-      ? rekapLatenessData.filter(r => r.studentId === student.studentId && !completedIncidentIdsSet.has(r.id))
-      : rekapViolationData.filter(r => r.studentId === student.studentId && !completedIncidentIdsSet.has(r.id));
+    const incidents = safeIssueType === 'lateness'
+      ? rekapLatenessData.filter(r => r && typeof r.id === 'string' && r.studentId === student.studentId && !completedIncidentIdsSet.has(r.id))
+      : rekapViolationData.filter(r => r && typeof r.id === 'string' && r.studentId === student.studentId && !completedIncidentIdsSet.has(r.id));
 
     setStudentEligibleIncidents(incidents);
     // Pre-select all of them by default
-    setSelectedIncidentIds(new Set(incidents.map(inc => inc.id)));
+    const validIds = incidents.map(inc => inc.id).filter((id): id is string => typeof id === 'string' && id.length > 0);
+    setSelectedIncidentIds(new Set(validIds));
     setShowInterventionModal(true);
   };
 
   const handleOpenEditInterventionModal = (intervention: any, student: any) => {
     resetInterventionForm();
+    if (!intervention) {
+      toast.error('Data intervensi tidak valid.');
+      return;
+    }
     setActiveIntervention(intervention);
     setActiveInterventionStudent({
-      studentId: intervention.studentId,
-      studentName: intervention.studentName,
-      className: intervention.className,
-      classId: intervention.classId,
+      studentId: intervention.studentId || '',
+      studentName: intervention.studentName || 'Siswa',
+      className: intervention.className || 'Kelas Lain',
+      classId: intervention.classId || '',
     });
-    setActiveInterventionIssueType(intervention.issueType);
+    
+    const safeIssueType = (intervention.issueType === 'minor_violation') ? 'minor_violation' : 'lateness';
+    setActiveInterventionIssueType(safeIssueType);
     setInterventionPlanText(intervention.interventionPlan || '');
     setActiveInterventionStatus(intervention.status || 'in_progress');
     setInterventionOutcomeNote(intervention.outcomeNote || '');
 
-    // Get incidents: currently linked ones + any active ones for this student
-    const currentlyLinkedIds = intervention.incidentIds || [];
-    const activeIncidents = intervention.issueType === 'lateness'
-      ? rekapLatenessData.filter(r => r.studentId === intervention.studentId && (!completedIncidentIdsSet.has(r.id) || currentlyLinkedIds.includes(r.id)))
-      : rekapViolationData.filter(r => r.studentId === intervention.studentId && (!completedIncidentIdsSet.has(r.id) || currentlyLinkedIds.includes(r.id)));
+    // Normalize currently linked IDs
+    const currentlyLinkedIds = Array.isArray(intervention.incidentIds)
+      ? intervention.incidentIds.filter((id: any): id is string => typeof id === 'string' && id.length > 0)
+      : [];
+    const currentlyLinkedSet = new Set(currentlyLinkedIds);
+
+    const activeIncidents = safeIssueType === 'lateness'
+      ? rekapLatenessData.filter(r => r && typeof r.id === 'string' && r.studentId === intervention.studentId && (!completedIncidentIdsSet.has(r.id) || currentlyLinkedSet.has(r.id)))
+      : rekapViolationData.filter(r => r && typeof r.id === 'string' && r.studentId === intervention.studentId && (!completedIncidentIdsSet.has(r.id) || currentlyLinkedSet.has(r.id)));
 
     setStudentEligibleIncidents(activeIncidents);
     setSelectedIncidentIds(new Set(currentlyLinkedIds));
@@ -1276,7 +1340,8 @@ export default function JuniorHighLatenessAndViolations() {
   };
 
   const handleSelectAllIncidents = () => {
-    setSelectedIncidentIds(new Set(studentEligibleIncidents.map(inc => inc.id)));
+    const validIds = studentEligibleIncidents.map(inc => inc.id).filter((id): id is string => typeof id === 'string' && id.length > 0);
+    setSelectedIncidentIds(new Set(validIds));
   };
 
   const handleClearSelectedIncidents = () => {
@@ -1289,12 +1354,19 @@ export default function JuniorHighLatenessAndViolations() {
       return;
     }
 
-    if (selectedIncidentIds.size === 0) {
-      toast.error('Anda harus memilih setidaknya 1 catatan kejadian.');
+    const incidentIdsArray = Array.from(selectedIncidentIds).filter((id): id is string => typeof id === 'string' && id.length > 0);
+    if (incidentIdsArray.length === 0) {
+      toast.error('Anda harus memilih setidaknya 1 catatan kejadian yang valid.');
       return;
     }
 
-    if (interventionPlanText.trim().length < 5) {
+    if (!activeInterventionStudent?.studentId || typeof activeInterventionStudent.studentId !== 'string' || activeInterventionStudent.studentId.trim() === '') {
+      toast.error('ID siswa tidak valid.');
+      return;
+    }
+
+    const planText = interventionPlanText.trim();
+    if (planText.length < 5) {
       toast.error('Rencana dukungan guru wajib diisi (minimal 5 karakter).');
       return;
     }
@@ -1306,46 +1378,43 @@ export default function JuniorHighLatenessAndViolations() {
 
     setSavingIntervention(true);
     try {
+      const interventionId = activeIntervention?.id || doc(collection(db, 'teacherSupportInterventions')).id;
+      const safeIssueType = (activeInterventionIssueType === 'minor_violation') ? 'minor_violation' : 'lateness';
+
       const payload: any = {
+        id: interventionId,
         studentId: activeInterventionStudent.studentId,
-        studentName: activeInterventionStudent.studentName,
+        studentName: activeInterventionStudent.studentName || 'Siswa',
         className: activeInterventionStudent.className || 'Kelas Lain',
         classId: activeInterventionStudent.classId || '',
         academicYear: activeYear,
-        semester: activeSemester,
-        issueType: activeInterventionIssueType,
-        incidentIds: Array.from(selectedIncidentIds),
-        interventionPlan: interventionPlanText.trim(),
+        semester: String(activeSemester),
+        issueType: safeIssueType,
+        incidentIds: incidentIdsArray,
+        interventionPlan: planText,
         status: activeInterventionStatus,
+        outcomeNote: activeInterventionStatus === 'completed' ? interventionOutcomeNote.trim() : '',
+        updatedBy: profile?.uid || '',
         updatedAt: serverTimestamp(),
+        completedBy: activeInterventionStatus === 'completed' ? (profile?.uid || profile?.email || 'system') : '',
+        completedAt: activeInterventionStatus === 'completed' ? serverTimestamp() : null,
       };
 
-      if (activeInterventionStatus === 'completed') {
-        payload.outcomeNote = interventionOutcomeNote.trim();
-        payload.completedAt = serverTimestamp();
-        payload.completedBy = profile?.email || '';
-        payload.completedByName = profile?.displayName || 'Guru';
+      if (activeIntervention?.id) {
+        // Keep original creator fields on update
+        payload.createdAt = activeIntervention.createdAt || serverTimestamp();
+        payload.createdBy = activeIntervention.createdBy || profile?.uid || '';
+        payload.createdByName = activeIntervention.createdByName || profile?.displayName || 'Guru';
       } else {
-        payload.outcomeNote = '';
-        payload.completedAt = null;
-        payload.completedBy = '';
-        payload.completedByName = '';
+        // Seeding creator fields on create
+        payload.createdAt = serverTimestamp();
+        payload.createdBy = profile?.uid || '';
+        payload.createdByName = profile?.displayName || 'Guru';
       }
 
-      if (activeIntervention?.id) {
-        // Update existing intervention
-        const docRef = doc(db, 'teacherSupportInterventions', activeIntervention.id);
-        await updateDoc(docRef, payload);
-        toast.success('Sesi intervensi berhasil diperbarui.');
-      } else {
-        // Create new intervention
-        payload.createdAt = serverTimestamp();
-        payload.createdBy = profile?.email || '';
-        payload.createdByName = profile?.displayName || 'Guru';
-        
-        await addDoc(collection(db, 'teacherSupportInterventions'), payload);
-        toast.success('Dukungan Guru baru berhasil dimulai.');
-      }
+      // Using setDoc to satisfy both create and update while strictly complying with isValidTeacherSupportIntervention
+      await setDoc(doc(db, 'teacherSupportInterventions', interventionId), payload);
+      toast.success(activeIntervention?.id ? 'Sesi intervensi berhasil diperbarui.' : 'Dukungan Guru baru berhasil dimulai.');
 
       setShowInterventionModal(false);
       resetInterventionForm();
@@ -3409,13 +3478,17 @@ export default function JuniorHighLatenessAndViolations() {
               className="absolute inset-0 bg-black/60"
             />
 
-            {/* Modal Box */}
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-3xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl relative z-10 border border-gray-100"
-            >
+            <InterventionErrorBoundary onReset={() => {
+              setShowInterventionModal(false);
+              resetInterventionForm();
+            }}>
+              {/* Modal Box */}
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="bg-white rounded-3xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl relative z-10 border border-gray-100"
+              >
               {/* Header */}
               <div className="p-6 border-b border-gray-50 flex items-center justify-between bg-violet-50/10">
                 <div>
@@ -3477,7 +3550,7 @@ export default function JuniorHighLatenessAndViolations() {
                   ) : (
                     <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                       {studentEligibleIncidents.map(inc => {
-                        const isChecked = selectedIncidentIds.includes(inc.id);
+                        const isChecked = selectedIncidentIds instanceof Set ? selectedIncidentIds.has(inc.id) : false;
                         return (
                           <div
                             key={inc.id}
@@ -3632,7 +3705,7 @@ export default function JuniorHighLatenessAndViolations() {
                   type="button"
                   disabled={
                     savingIntervention ||
-                    selectedIncidentIds.length === 0 ||
+                    selectedIncidentIds.size === 0 ||
                     interventionPlanText.trim().length < 5 ||
                     (activeInterventionStatus === 'completed' && interventionOutcomeNote.trim().length < 5)
                   }
@@ -3650,6 +3723,7 @@ export default function JuniorHighLatenessAndViolations() {
                 </button>
               </div>
             </motion.div>
+            </InterventionErrorBoundary>
           </div>
         )}
       </AnimatePresence>
