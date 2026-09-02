@@ -427,6 +427,25 @@ export default function TeacherDashboard() {
     return missingStudents.length;
   }, [students, attendanceRecords, todayStr, isTodayWeekendOrHoliday, selectedClassId]);
 
+  const todaySalatIncompleteCount = useMemo(() => {
+    if (students.length === 0 || isTodayWeekendOrHoliday) {
+      return 0;
+    }
+    const todayRecords = attendanceRecords.filter(r => r.date === todayStr);
+    const missingStudents = students.filter(student => {
+      const record = todayRecords.find(r => r.studentId === student.id);
+      
+      const schoolStatus = record?.status;
+      if (schoolStatus && ['SAKIT', 'IZIN', 'ALPA'].includes(schoolStatus)) {
+        return false;
+      }
+      
+      const shalatStatus = (record as any)?.dhuhrPrayerStatus?.status || 'BELUM_DIISI';
+      return shalatStatus === 'BELUM_DIISI';
+    });
+    return missingStudents.length;
+  }, [students, attendanceRecords, todayStr, isTodayWeekendOrHoliday]);
+
   const missedAttendanceDays = useMemo(() => {
     if (students.length === 0) return [];
     // Filter school days before today
@@ -459,6 +478,36 @@ export default function TeacherDashboard() {
 
     return missedList;
   }, [students, attendanceRecords, last14SchoolDays, todayStr, selectedClassId]);
+
+  const missedSalatDays = useMemo(() => {
+    if (students.length === 0) return [];
+    const pastSchoolDays = last14SchoolDays.filter(d => d < todayStr);
+    const missedList: { date: string; unstatusCount: number }[] = [];
+
+    pastSchoolDays.forEach(dateStr => {
+      const recordsForDay = attendanceRecords.filter(r => r.date === dateStr);
+      const missingStudents = students.filter(student => {
+        const record = recordsForDay.find(r => r.studentId === student.id);
+        
+        const schoolStatus = record?.status;
+        if (schoolStatus && ['SAKIT', 'IZIN', 'ALPA'].includes(schoolStatus)) {
+          return false;
+        }
+        
+        const shalatStatus = (record as any)?.dhuhrPrayerStatus?.status || 'BELUM_DIISI';
+        return shalatStatus === 'BELUM_DIISI';
+      });
+
+      if (missingStudents.length > 0) {
+        missedList.push({
+          date: dateStr,
+          unstatusCount: missingStudents.length
+        });
+      }
+    });
+
+    return missedList.sort((a, b) => b.date.localeCompare(a.date));
+  }, [students, attendanceRecords, last14SchoolDays, todayStr]);
 
   // Calculations for Tardiness Section
   const tardyStudentsList = useMemo(() => {
@@ -694,72 +743,149 @@ export default function TeacherDashboard() {
                     </div>
                   </div>
 
-                  <div className="p-8 space-y-6">
-                    {/* Today Attendance alert */}
-                    {isTodayWeekendOrHoliday ? (
-                      <div className="flex items-center gap-3 p-6 bg-gray-50 rounded-2xl border border-gray-200">
-                        <Info className="text-gray-400 shrink-0" size={18} />
-                        <div>
-                          <h4 className="text-xs font-black text-gray-700 uppercase tracking-wider">Tidak Ada Absensi Hari Ini</h4>
-                          <p className="text-xs text-gray-500 font-medium mt-1">Hari ini adalah akhir pekan atau hari libur sekolah.</p>
-                        </div>
-                      </div>
-                    ) : todayAttendanceIncompleteCount > 0 ? (
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 bg-amber-50 rounded-2xl border border-amber-100">
-                        <div className="flex items-start gap-3">
-                          <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={18} />
-                          <div>
-                            <h4 className="text-xs font-black text-amber-900 uppercase tracking-wider">Absensi Hari Ini Belum Lengkap</h4>
-                            <p className="text-xs text-amber-700 font-medium mt-1">
-                              Terdapat <span className="font-bold">{todayAttendanceIncompleteCount}</span> siswa belum terisi status kehadiran untuk hari ini.
-                            </p>
-                          </div>
-                        </div>
-                        <Link
-                          to={`/attendance?classId=${selectedClassId}&date=${todayStr}`}
-                          className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm shrink-0 text-center"
-                        >
-                          Isi Kehadiran
-                        </Link>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-3 p-6 bg-emerald-50 rounded-2xl border border-emerald-100">
-                        <CheckCircle2 className="text-emerald-600" size={18} />
-                        <div>
-                          <h4 className="text-xs font-black text-emerald-900 uppercase tracking-wider">Absensi Hari Ini Selesai</h4>
-                          <p className="text-xs text-emerald-700 font-medium mt-1">Semua siswa telah tercatat hari ini.</p>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Missed Attendance list */}
-                    <div>
-                      <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-4 px-1">Daftar Absensi Tertinggal</h4>
-                      {missedAttendanceDays.length > 0 ? (
-                        <div className="space-y-3">
-                          {missedAttendanceDays.map((miss, idx) => (
-                            <div key={idx} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors">
-                              <div className="flex items-center gap-3">
-                                <Calendar size={14} className="text-gray-400" />
-                                <span className="text-xs font-bold text-gray-700">
-                                  {new Intl.DateTimeFormat('id-ID', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(miss.date))}
-                                </span>
-                                <span className="px-2.5 py-0.5 text-[9px] font-black uppercase bg-red-100 text-red-700 rounded-full tracking-wider">
-                                  {miss.unstatusCount} Belum Diabsen
-                                </span>
-                              </div>
-                              <Link
-                                to={`/attendance?classId=${selectedClassId}&date=${miss.date}`}
-                                className="text-[10px] font-black text-blue-600 uppercase tracking-widest hover:translate-x-1 transition-transform flex items-center gap-1"
-                              >
-                                Lengkapi <ChevronRight size={14} />
-                              </Link>
+                  <div className="p-8 space-y-8">
+                    {/* Today Attendance Alerts */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Presensi Harian Sekolah */}
+                      <div className="space-y-3">
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-400 px-1">Presensi Harian Sekolah</h4>
+                        {isTodayWeekendOrHoliday ? (
+                          <div className="flex items-center gap-3 p-5 bg-gray-50 rounded-2xl border border-gray-100 h-28">
+                            <Info className="text-gray-400 shrink-0" size={16} />
+                            <div>
+                              <h5 className="text-xs font-black text-gray-700 uppercase tracking-wider">Libur</h5>
+                              <p className="text-[11px] text-gray-500 mt-0.5 font-medium leading-relaxed">Hari libur atau akhir pekan sekolah.</p>
                             </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-gray-400 italic px-1 font-medium">Tidak ada tugas absensi yang tertinggal dalam 14 hari terakhir.</p>
-                      )}
+                          </div>
+                        ) : todayAttendanceIncompleteCount > 0 ? (
+                          <div className="flex flex-col justify-between p-5 bg-amber-50 rounded-2xl border border-amber-100 h-28">
+                            <div className="flex items-start gap-2.5">
+                              <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={16} />
+                              <div>
+                                <h5 className="text-xs font-black text-amber-900 uppercase tracking-wider">Belum Lengkap</h5>
+                                <p className="text-[11px] text-amber-700 mt-0.5 font-medium leading-relaxed">
+                                  Ada <span className="font-bold">{todayAttendanceIncompleteCount}</span> siswa belum diabsen.
+                                </p>
+                              </div>
+                            </div>
+                            <Link
+                              to={`/attendance?classId=${selectedClassId}&date=${todayStr}`}
+                              className="w-full text-center py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all"
+                            >
+                              Isi Absensi
+                            </Link>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-3 p-5 bg-emerald-50 rounded-2xl border border-emerald-100 h-28">
+                            <CheckCircle2 className="text-emerald-600" size={16} />
+                            <div>
+                              <h5 className="text-xs font-black text-emerald-900 uppercase tracking-wider">Selesai</h5>
+                              <p className="text-[11px] text-emerald-700 mt-0.5 font-medium leading-relaxed">Semua siswa di kelas asuhan telah diabsen hari ini.</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Presensi Shalat Dhuhur */}
+                      <div className="space-y-3">
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-400 px-1">Presensi Salat Zuhur</h4>
+                        {isTodayWeekendOrHoliday ? (
+                          <div className="flex items-center gap-3 p-5 bg-gray-50 rounded-2xl border border-gray-100 h-28">
+                            <Info className="text-gray-400 shrink-0" size={16} />
+                            <div>
+                              <h5 className="text-xs font-black text-gray-700 uppercase tracking-wider">Libur</h5>
+                              <p className="text-[11px] text-gray-500 mt-0.5 font-medium leading-relaxed">Hari libur atau akhir pekan sekolah.</p>
+                            </div>
+                          </div>
+                        ) : todaySalatIncompleteCount > 0 ? (
+                          <div className="flex flex-col justify-between p-5 bg-amber-50 rounded-2xl border border-amber-100 h-28">
+                            <div className="flex items-start gap-2.5">
+                              <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={16} />
+                              <div>
+                                <h5 className="text-xs font-black text-amber-900 uppercase tracking-wider">Belum Lengkap</h5>
+                                <p className="text-[11px] text-amber-700 mt-0.5 font-medium leading-relaxed">
+                                  Ada <span className="font-bold">{todaySalatIncompleteCount}</span> siswa belum terisi shalat.
+                                </p>
+                              </div>
+                            </div>
+                            <Link
+                              to={`/attendance?classId=${selectedClassId}&date=${todayStr}&attendanceType=DHUHUR`}
+                              className="w-full text-center py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all"
+                            >
+                              Isi Salat Zuhur
+                            </Link>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-3 p-5 bg-emerald-50 rounded-2xl border border-emerald-100 h-28">
+                            <CheckCircle2 className="text-emerald-600" size={16} />
+                            <div>
+                              <h5 className="text-xs font-black text-emerald-900 uppercase tracking-wider">Selesai</h5>
+                              <p className="text-[11px] text-emerald-700 mt-0.5 font-medium leading-relaxed">Semua siswa di kelas asuhan shalatnya telah tercatat.</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Missed Attendance lists */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-6 border-t border-gray-50">
+                      {/* Left missed: Absensi */}
+                      <div>
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-4 px-1">Absensi Sekolah Tertinggal</h4>
+                        {missedAttendanceDays.length > 0 ? (
+                          <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                            {missedAttendanceDays.map((miss, idx) => (
+                              <div key={idx} className="flex items-center justify-between p-3.5 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors">
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-xs font-bold text-gray-700">
+                                    {new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short' }).format(new Date(miss.date))}
+                                  </span>
+                                  <span className="text-[9px] font-black uppercase text-red-600 tracking-wider">
+                                    {miss.unstatusCount} Belum Diabsen
+                                  </span>
+                                </div>
+                                <Link
+                                  to={`/attendance?classId=${selectedClassId}&date=${miss.date}`}
+                                  className="text-[9px] font-black text-blue-600 uppercase tracking-widest hover:translate-x-0.5 transition-transform"
+                                >
+                                  Lengkapi →
+                                </Link>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-gray-400 italic px-1 font-medium">Tidak ada absensi tertinggal.</p>
+                        )}
+                      </div>
+
+                      {/* Right missed: Shalat Dhuhur */}
+                      <div>
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-4 px-1">Salat Zuhur Tertinggal</h4>
+                        {missedSalatDays.length > 0 ? (
+                          <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                            {missedSalatDays.map((miss, idx) => (
+                              <div key={idx} className="flex items-center justify-between p-3.5 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors">
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-xs font-bold text-gray-700">
+                                    {new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short' }).format(new Date(miss.date))}
+                                  </span>
+                                  <span className="text-[9px] font-black uppercase text-red-600 tracking-wider">
+                                    {miss.unstatusCount} Belum Diisi
+                                  </span>
+                                </div>
+                                <Link
+                                  to={`/attendance?classId=${selectedClassId}&date=${miss.date}&attendanceType=DHUHUR`}
+                                  className="text-[9px] font-black text-blue-600 uppercase tracking-widest hover:translate-x-0.5 transition-transform"
+                                >
+                                  Lengkapi →
+                                </Link>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-gray-400 italic px-1 font-medium">Tidak ada shalat tertinggal.</p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>

@@ -61,6 +61,7 @@ export default function HeadDashboard() {
   const [modalSearch, setModalSearch] = useState('');
 
   // --- Junior High Kehadiran Tab UI States ---
+  const [attendanceSubTab, setAttendanceSubTab] = useState<'SCHOOL' | 'DHUHUR'>('SCHOOL');
   const [schoolHolidays, setSchoolHolidays] = useState<string[]>([]);
   const [jhSearchTerm, setJhSearchTerm] = useState('');
   const [jhCurrentPage, setJhCurrentPage] = useState(1);
@@ -773,6 +774,142 @@ export default function HeadDashboard() {
     }).sort((a, b) => b.missingDates.length - a.missingDates.length);
   }, [filteredClasses, resolvedStudents, attendanceRecords, selectedYear, selectedSemester, auditDates, auditWorkingDaysCount, startDate, endDate]);
 
+  const jhRekapPengisianDhuhur = useMemo(() => {
+    return filteredClasses.map(cls => {
+      const roster = resolvedStudents.filter(s => {
+        if (s.academicYear && s.academicYear !== selectedYear) return false;
+        return isStudentInClass(s.classId, cls.id);
+      });
+
+      const rosterIds = new Set(roster.map(s => s.id));
+      const rosterCount = roster.length;
+      const classKeys = [cls.id, cls.name].filter(Boolean);
+      
+      const classRecordsForAudit = attendanceRecords.filter(rec => {
+        if (rec.academicYear && rec.academicYear !== selectedYear) return false;
+        if (rec.semester && String(rec.semester) !== String(selectedSemester)) return false;
+        if (!classKeys.includes(rec.classId)) return false;
+        return rec.date >= auditStartDate && rec.date <= auditEndDate;
+      });
+
+      const dateRecordsMap = new Map<string, any[]>();
+      classRecordsForAudit.forEach(rec => {
+        if (rec.date) {
+          if (!dateRecordsMap.has(rec.date)) {
+            dateRecordsMap.set(rec.date, []);
+          }
+          dateRecordsMap.get(rec.date)!.push(rec);
+        }
+      });
+
+      const missingDatesList: string[] = [];
+      
+      auditDates.forEach(dateStr => {
+        const dayRecords = dateRecordsMap.get(dateStr) || [];
+        
+        const incompleteForDay = roster.some(st => {
+          const rec = dayRecords.find(r => r.studentId === st.id);
+          const schoolStatus = rec?.status;
+          if (schoolStatus && ['SAKIT', 'IZIN', 'ALPA', 'S', 'I', 'A'].includes(String(schoolStatus).toUpperCase())) {
+            return false;
+          }
+          const shalatStatus = rec?.dhuhrPrayerStatus?.status || 'BELUM_DIISI';
+          return shalatStatus === 'BELUM_DIISI';
+        });
+
+        if (rosterCount > 0 && incompleteForDay) {
+          missingDatesList.push(dateStr);
+        }
+      });
+
+      missingDatesList.sort((a, b) => a.localeCompare(b));
+
+      let clsSalatBerjamaah = 0;
+      let clsSalatTotal = 0;
+      
+      attendanceRecords
+        .filter(rec => {
+          if (rec.academicYear && rec.academicYear !== selectedYear) return false;
+          if (rec.semester && String(rec.semester) !== String(selectedSemester)) return false;
+          if (!classKeys.includes(rec.classId)) return false;
+          return rec.date >= startDate && rec.date <= endDate;
+        })
+        .forEach(rec => {
+          const shalatStatus = rec.dhuhrPrayerStatus?.status || 'BELUM_DIISI';
+          if (shalatStatus === 'SALAT_BERJAMAAH') {
+            clsSalatBerjamaah++;
+            clsSalatTotal++;
+          } else if (shalatStatus === 'TIDAK_MENGIKUTI') {
+            clsSalatTotal++;
+          }
+        });
+
+      const salatRate = clsSalatTotal > 0 ? Math.min(100, Math.round((clsSalatBerjamaah / clsSalatTotal) * 100)) : 100;
+      const filledDaysCount = Math.max(0, auditWorkingDaysCount - missingDatesList.length);
+
+      return {
+        id: cls.id,
+        name: cls.name,
+        teacher: cls.homeroomTeacherName || 'Guru',
+        filledDaysCount,
+        missingDates: missingDatesList,
+        rate: salatRate,
+        rosterCount
+      };
+    }).sort((a, b) => b.missingDates.length - a.missingDates.length);
+  }, [filteredClasses, resolvedStudents, attendanceRecords, selectedYear, selectedSemester, auditDates, auditWorkingDaysCount, startDate, endDate]);
+
+  const lowestClassAuditDhuhur = useMemo(() => {
+    if (!isAuditValid || auditWorkingDaysCount === 0 || jhRekapPengisianDhuhur.length === 0) {
+      return '—';
+    }
+    const lowest = jhRekapPengisianDhuhur[0];
+    if (lowest.missingDates.length === 0) {
+      return 'Semua kelas lengkap';
+    }
+    return `${lowest.name} (${lowest.filledDaysCount}/${auditWorkingDaysCount} Hari)`;
+  }, [jhRekapPengisianDhuhur, auditWorkingDaysCount, isAuditValid]);
+
+  const jhAverageSalat = useMemo(() => {
+    let jamaahCount = 0;
+    let totalCount = 0;
+    attendanceRecords.forEach(rec => {
+      if (!isStudentFilteredForAttendance(rec.studentId)) return;
+      if (rec.academicYear && rec.academicYear !== selectedYear) return;
+      if (rec.semester && String(rec.semester) !== String(selectedSemester)) return;
+      if (rec.date < startDate || rec.date > endDate) return;
+      
+      const shalatStatus = rec.dhuhrPrayerStatus?.status || 'BELUM_DIISI';
+      if (shalatStatus === 'SALAT_BERJAMAAH') {
+        jamaahCount++;
+        totalCount++;
+      } else if (shalatStatus === 'TIDAK_MENGIKUTI') {
+        totalCount++;
+      }
+    });
+    return totalCount > 0 ? Math.min(100, Math.round((jamaahCount / totalCount) * 100)) : 100;
+  }, [attendanceRecords, isStudentFilteredForAttendance, selectedYear, selectedSemester, startDate, endDate]);
+
+  const jhSalatBreakdown = useMemo(() => {
+    let jamaah = 0;
+    let berhalangan = 0;
+    let izin = 0;
+    let tidakMengikuti = 0;
+    attendanceRecords.forEach(rec => {
+      if (!isStudentFilteredForAttendance(rec.studentId)) return;
+      if (rec.academicYear && rec.academicYear !== selectedYear) return;
+      if (rec.semester && String(rec.semester) !== String(selectedSemester)) return;
+      if (rec.date < startDate || rec.date > endDate) return;
+
+      const shalatStatus = rec.dhuhrPrayerStatus?.status || 'BELUM_DIISI';
+      if (shalatStatus === 'SALAT_BERJAMAAH') jamaah++;
+      else if (shalatStatus === 'BERHALANGAN') berhalangan++;
+      else if (shalatStatus === 'IZIN') izin++;
+      else if (shalatStatus === 'TIDAK_MENGIKUTI') tidakMengikuti++;
+    });
+    return { jamaah, berhalangan, izin, tidakMengikuti };
+  }, [attendanceRecords, isStudentFilteredForAttendance, selectedYear, selectedSemester, startDate, endDate]);
+
   const lowestClassAudit = useMemo(() => {
     if (!isAuditValid || auditWorkingDaysCount === 0 || jhRekapPengisian.length === 0) {
       return '—';
@@ -972,6 +1109,46 @@ export default function HeadDashboard() {
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [selectedStudentForAttendanceDetail, attendanceRecords, selectedYear, selectedSemester, startDate, endDate]);
 
+  const salatHistoryForSelectedStudent = useMemo(() => {
+    if (!selectedStudentForAttendanceDetail || !selectedStudentForAttendanceDetail.isSalat) return [];
+    
+    return attendanceRecords
+      .filter(rec => {
+        if (rec.studentId !== selectedStudentForAttendanceDetail.id) return false;
+        if (rec.academicYear && rec.academicYear !== selectedYear) return false;
+        if (rec.semester && String(rec.semester) !== String(selectedSemester)) return false;
+        if (rec.date < startDate || rec.date > endDate) return false;
+        return true;
+      })
+      .map(rec => {
+        const shalatStatus = rec.dhuhrPrayerStatus?.status || 'BELUM_DIISI';
+        let statusLabel = 'Belum Diisi';
+        let statusColor = 'text-gray-600 bg-gray-50 border-gray-100';
+
+        if (shalatStatus === 'SALAT_BERJAMAAH') {
+          statusLabel = 'Salat Berjamaah';
+          statusColor = 'text-emerald-700 bg-emerald-50 border-emerald-100';
+        } else if (shalatStatus === 'BERHALANGAN') {
+          statusLabel = 'Berhalangan';
+          statusColor = 'text-amber-700 bg-amber-50 border-amber-100';
+        } else if (shalatStatus === 'IZIN') {
+          statusLabel = 'Izin';
+          statusColor = 'text-blue-700 bg-blue-50 border-blue-100';
+        } else if (shalatStatus === 'TIDAK_MENGIKUTI') {
+          statusLabel = 'Tidak Mengikuti';
+          statusColor = 'text-red-700 bg-red-50 border-red-100';
+        }
+
+        return {
+          date: rec.date,
+          statusLabel,
+          statusColor,
+          note: rec.dhuhrPrayerStatus?.reason || rec.dhuhrPrayerStatus?.keterangan || '—'
+        };
+      })
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [selectedStudentForAttendanceDetail, attendanceRecords, selectedYear, selectedSemester, startDate, endDate]);
+
   const filteredJhAttentionStudents = useMemo(() => {
     const term = (jhSearchTerm || '').trim().toLowerCase();
     const safeAttentionStudents = Array.isArray(jhAttentionStudents) ? jhAttentionStudents : [];
@@ -989,6 +1166,124 @@ export default function HeadDashboard() {
     const start = (jhCurrentPage - 1) * jhItemsPerPage;
     return filteredJhAttentionStudents.slice(start, start + jhItemsPerPage);
   }, [filteredJhAttentionStudents, jhCurrentPage]);
+
+  const jhSalatAttentionStudents = useMemo(() => {
+    const studentStatsMap = new Map<string, { jamaah: number; berhalangan: number; izin: number; tidakMengikuti: number; totalRequired: number }>();
+    
+    const resolveStudentInfoLocal = (studentId: string, attendanceRecord?: any) => {
+      const activeEnrollment = enrollments.find(e => 
+        (e.studentId === studentId) && 
+        e.academicYear === selectedYear && 
+        e.status === 'active'
+      );
+
+      const studentProfile = students.find(s => 
+        s.id === studentId || 
+        s.luminaId === studentId || 
+        (activeEnrollment && (s.id === activeEnrollment.studentId || s.luminaId === activeEnrollment.studentId))
+      );
+
+      const studentName =
+        studentProfile?.fullName ||
+        studentProfile?.name ||
+        attendanceRecord?.studentName ||
+        "Siswa tidak ditemukan";
+
+      const studentNis =
+        studentProfile?.nis ||
+        attendanceRecord?.nis ||
+        "-";
+
+      const classId = activeEnrollment?.classId || studentProfile?.classId || attendanceRecord?.classId;
+      const classObj = classes.find(c => c.id === classId || c.name === classId);
+      const className = classObj?.name || '—';
+
+      return {
+        id: studentId,
+        name: studentName,
+        nis: studentNis,
+        classId: classId || '',
+        className: className,
+        isProfileFound: !!studentProfile
+      };
+    };
+
+    // Initialize with all filtered students
+    jhFilteredStudentsForAttendance.forEach(st => {
+      studentStatsMap.set(st.id, { jamaah: 0, berhalangan: 0, izin: 0, tidakMengikuti: 0, totalRequired: 0 });
+    });
+
+    // Accumulate Salat Zuhur record stats
+    attendanceRecords.forEach(rec => {
+      if (!rec.studentId) return;
+      if (rec.academicYear && rec.academicYear !== selectedYear) return;
+      if (rec.semester && String(rec.semester) !== String(selectedSemester)) return;
+      if (rec.date < startDate || rec.date > endDate) return;
+
+      if (!studentStatsMap.has(rec.studentId)) {
+        const resolved = resolveStudentInfoLocal(rec.studentId, rec);
+        const isClassMatched = selectedClassId === 'ALL' || resolved.classId === selectedClassId;
+        const isJuniorHigh = resolved.isProfileFound || classes.some(c => c.id === resolved.classId);
+        if (isJuniorHigh && isClassMatched) {
+          studentStatsMap.set(rec.studentId, { jamaah: 0, berhalangan: 0, izin: 0, tidakMengikuti: 0, totalRequired: 0 });
+        } else {
+          return;
+        }
+      }
+
+      const current = studentStatsMap.get(rec.studentId)!;
+      const shalatStatus = rec.dhuhrPrayerStatus?.status || 'BELUM_DIISI';
+      if (shalatStatus === 'SALAT_BERJAMAAH') {
+        current.jamaah++;
+        current.totalRequired++;
+      } else if (shalatStatus === 'TIDAK_MENGIKUTI') {
+        current.tidakMengikuti++;
+        current.totalRequired++;
+      } else if (shalatStatus === 'BERHALANGAN') {
+        current.berhalangan++;
+      } else if (shalatStatus === 'IZIN') {
+        current.izin++;
+      }
+    });
+
+    const list: any[] = [];
+    studentStatsMap.forEach((stats, studentId) => {
+      const resolved = resolveStudentInfoLocal(studentId);
+      const rate = stats.totalRequired > 0 ? Math.min(100, Math.round((stats.jamaah / stats.totalRequired) * 100)) : 100;
+      const needsAttention = stats.tidakMengikuti > 1 || (stats.totalRequired >= 3 && rate < 85);
+
+      if (needsAttention) {
+        list.push({
+          id: studentId,
+          name: resolved.name,
+          nis: resolved.nis,
+          classId: resolved.classId,
+          className: resolved.className,
+          ...stats,
+          rate
+        });
+      }
+    });
+
+    return list;
+  }, [jhFilteredStudentsForAttendance, attendanceRecords, enrollments, students, classes, selectedYear, selectedSemester, startDate, endDate, selectedClassId]);
+
+  const filteredJhSalatAttentionStudents = useMemo(() => {
+    const term = (jhSearchTerm || '').trim().toLowerCase();
+    const safeAttentionStudents = Array.isArray(jhSalatAttentionStudents) ? jhSalatAttentionStudents : [];
+    return safeAttentionStudents.filter(item => {
+      if (!item) return false;
+      const studentName = (item.name || '').toString().toLowerCase();
+      const className = (item.className || '').toString().toLowerCase();
+      return studentName.includes(term) || className.includes(term);
+    }).sort((a, b) => (b.tidakMengikuti || 0) - (a.tidakMengikuti || 0) || (a.rate || 0) - (b.rate || 0));
+  }, [jhSalatAttentionStudents, jhSearchTerm]);
+
+  const jhSalatTotalPages = Math.max(1, Math.ceil(filteredJhSalatAttentionStudents.length / jhItemsPerPage));
+  const paginatedJhSalatAttentionStudents = useMemo(() => {
+    const start = (jhCurrentPage - 1) * jhItemsPerPage;
+    return filteredJhSalatAttentionStudents.slice(start, start + jhItemsPerPage);
+  }, [filteredJhSalatAttentionStudents, jhCurrentPage]);
 
   const isAttendanceDataEmpty = useMemo(() => {
     const rangeRecords = attendanceRecords.filter(rec => {
@@ -1706,30 +2001,79 @@ export default function HeadDashboard() {
                 </div>
               ) : (
                 <>
+                  {/* Elegant Sub-tabs Switcher */}
+                  <div className="flex gap-2 p-1 bg-slate-100/80 rounded-2xl max-w-md border border-slate-200/50">
+                    <button
+                      onClick={() => {
+                        setAttendanceSubTab('SCHOOL');
+                        setJhCurrentPage(1);
+                      }}
+                      className={`flex-1 text-center py-2.5 px-4 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${
+                        attendanceSubTab === 'SCHOOL'
+                          ? 'bg-white text-blue-600 shadow-sm border border-slate-200/30'
+                          : 'text-slate-500 hover:text-slate-900'
+                      }`}
+                    >
+                      Presensi Sekolah
+                    </button>
+                    <button
+                      onClick={() => {
+                        setAttendanceSubTab('DHUHUR');
+                        setJhCurrentPage(1);
+                      }}
+                      className={`flex-1 text-center py-2.5 px-4 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${
+                        attendanceSubTab === 'DHUHUR'
+                          ? 'bg-white text-blue-600 shadow-sm border border-slate-200/30'
+                          : 'text-slate-500 hover:text-slate-900'
+                      }`}
+                    >
+                      Salat Zuhur
+                    </button>
+                  </div>
+
                   {/* Summary Cards */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
                     {/* Average Attendance Card */}
                     <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
                       <div className="space-y-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Rata-rata Kehadiran</span>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          {attendanceSubTab === 'SCHOOL' ? 'Rata-rata Kehadiran' : 'Rata-rata Shalat Berjamaah'}
+                        </span>
                         <div className="flex items-baseline gap-1.5">
-                          <span className="text-3xl font-black text-slate-900 tracking-tight">{jhAverageAttendance}%</span>
-                          <span className="text-[10px] font-semibold text-slate-500">kehadiran siswa</span>
+                          <span className="text-3xl font-black text-slate-900 tracking-tight">
+                            {attendanceSubTab === 'SCHOOL' ? `${jhAverageAttendance}%` : `${jhAverageSalat}%`}
+                          </span>
+                          <span className="text-[10px] font-semibold text-slate-500">
+                            {attendanceSubTab === 'SCHOOL' ? 'kehadiran siswa' : 'salat berjamaah'}
+                          </span>
                         </div>
                       </div>
                       <div className="p-3 bg-emerald-50 rounded-2xl text-emerald-600">
-                        <Users size={22} />
+                        {attendanceSubTab === 'SCHOOL' ? <Users size={22} /> : <Activity size={22} />}
                       </div>
                     </div>
 
-                    {/* Effective Working Days Card */}
+                    {/* Effective Working Days / Shalat Breakdown Card */}
                     <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
                       <div className="space-y-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Hari Kerja Efektif</span>
-                        <div className="flex items-baseline gap-1.5">
-                          <span className="text-3xl font-black text-slate-900 tracking-tight">{jhWorkingDaysForAnalysis}</span>
-                          <span className="text-[10px] font-semibold text-slate-500">Hari Sekolah</span>
-                        </div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          {attendanceSubTab === 'SCHOOL' ? 'Hari Kerja Efektif' : 'Detail Status Salat'}
+                        </span>
+                        {attendanceSubTab === 'SCHOOL' ? (
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="text-3xl font-black text-slate-900 tracking-tight">{jhWorkingDaysForAnalysis}</span>
+                            <span className="text-[10px] font-semibold text-slate-500">Hari Sekolah</span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col gap-0.5 pt-0.5">
+                            <span className="text-xs font-bold text-emerald-700">
+                              {jhSalatBreakdown.jamaah}x Berjamaah
+                            </span>
+                            <span className="text-[10px] font-medium text-slate-500">
+                              {jhSalatBreakdown.berhalangan}x Berhalangan • {jhSalatBreakdown.tidakMengikuti}x Tidak Ikut
+                            </span>
+                          </div>
+                        )}
                       </div>
                       <div className="p-3 bg-blue-50 rounded-2xl text-blue-600">
                         <Calendar size={22} />
@@ -1739,27 +2083,41 @@ export default function HeadDashboard() {
                     {/* Lowest Input Card */}
                     <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
                       <div className="space-y-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Pengisian Terendah</span>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          {attendanceSubTab === 'SCHOOL' ? 'Pengisian Terendah' : 'Pengisian Salat Terendah'}
+                        </span>
                         <div className="flex items-baseline gap-1.5">
                           <span className="text-sm font-black text-slate-900 tracking-tight block max-w-[180px] truncate">
-                            {lowestClassAudit}
+                            {attendanceSubTab === 'SCHOOL' ? lowestClassAudit : lowestClassAuditDhuhur}
                           </span>
                         </div>
                       </div>
-                      <div className={`p-3 rounded-2xl ${lowestClassAudit.includes('Semua') || lowestClassAudit === '—' ? 'bg-emerald-50 text-emerald-600' : 'bg-orange-50 text-orange-600'}`}>
-                        {lowestClassAudit.includes('Semua') || lowestClassAudit === '—' ? <CheckCircle2 size={22} /> : <AlertTriangle size={22} />}
+                      <div className={`p-3 rounded-2xl ${
+                        (attendanceSubTab === 'SCHOOL' ? lowestClassAudit : lowestClassAuditDhuhur).includes('Semua') || 
+                        (attendanceSubTab === 'SCHOOL' ? lowestClassAudit : lowestClassAuditDhuhur) === '—' 
+                          ? 'bg-emerald-50 text-emerald-600' 
+                          : 'bg-orange-50 text-orange-600'
+                      }`}>
+                        {(attendanceSubTab === 'SCHOOL' ? lowestClassAudit : lowestClassAuditDhuhur).includes('Semua') || 
+                        (attendanceSubTab === 'SCHOOL' ? lowestClassAudit : lowestClassAuditDhuhur) === '—' 
+                          ? <CheckCircle2 size={22} /> 
+                          : <AlertTriangle size={22} />}
                       </div>
                     </div>
                   </div>
 
                   {/* Audit and Recap Panels */}
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                    {/* Left Panel: Rekap Pengisian Kehadiran */}
+                    {/* Left Panel: Rekap Pengisian */}
                     <div className="lg:col-span-5 bg-white border border-gray-100 rounded-3xl p-6 shadow-sm flex flex-col space-y-4">
                       <div>
-                        <h4 className="text-sm font-black text-slate-900">Rekap Pengisian Kehadiran</h4>
+                        <h4 className="text-sm font-black text-slate-900">
+                          {attendanceSubTab === 'SCHOOL' ? 'Rekap Pengisian Kehadiran' : 'Rekap Pengisian Salat Zuhur'}
+                        </h4>
                         <p className="text-[11px] text-slate-400 font-bold leading-relaxed">
-                          Memastikan kelengkapan input kehadiran guru kelas Junior High sejak 20 Juli 2026.
+                          {attendanceSubTab === 'SCHOOL' 
+                            ? 'Memastikan kelengkapan input kehadiran guru kelas Junior High sejak 20 Juli 2026.' 
+                            : 'Memastikan kelengkapan input partisipasi Salat Zuhur berjamaah siswa.'}
                         </p>
                       </div>
 
@@ -1770,16 +2128,16 @@ export default function HeadDashboard() {
                             <span>Audit Belum Dimulai</span>
                           </div>
                           <p className="text-[10px] font-semibold">
-                            Audit kelengkapan input kehadiran dimulai pada 20 Juli 2026. Sila ubah filter Tanggal Sampai untuk melihat audit pengisian.
+                            Audit kelengkapan input dimulai pada 20 Juli 2026. Sila ubah filter Tanggal Sampai untuk melihat audit pengisian.
                           </p>
                         </div>
-                      ) : jhRekapPengisian.length === 0 ? (
+                      ) : (attendanceSubTab === 'SCHOOL' ? jhRekapPengisian.length : jhRekapPengisianDhuhur.length) === 0 ? (
                         <div className="text-center py-12 text-slate-400 font-bold text-xs uppercase tracking-wider">
                           Tidak ada kelas Junior High yang terdaftar.
                         </div>
                       ) : (
                         <div className="space-y-3 overflow-y-auto max-h-[500px] pr-1">
-                          {jhRekapPengisian.map((cls) => {
+                          {(attendanceSubTab === 'SCHOOL' ? jhRekapPengisian : jhRekapPengisianDhuhur).map((cls) => {
                             const isComplete = cls.missingDates.length === 0;
                             return (
                               <div 
@@ -1847,7 +2205,9 @@ export default function HeadDashboard() {
                         <div>
                           <h4 className="text-sm font-black text-slate-900">Siswa yang Butuh Perhatian</h4>
                           <p className="text-[11px] text-slate-400 font-bold leading-relaxed">
-                            Siswa dengan Alpa &gt; 1 hari atau total tidak hadir &gt; 3 hari pada rentang filter tanggal.
+                            {attendanceSubTab === 'SCHOOL' 
+                              ? 'Siswa dengan Alpa > 1 hari atau total tidak hadir > 3 hari pada rentang filter tanggal.' 
+                              : 'Siswa dengan "Tidak Mengikuti" Salat Zuhur > 1 hari pada rentang filter.'}
                           </p>
                         </div>
                         <div className="relative min-w-[180px]">
@@ -1863,85 +2223,166 @@ export default function HeadDashboard() {
                       </div>
 
                       <div className="flex-1 overflow-x-auto">
-                        {filteredJhAttentionStudents.length === 0 ? (
-                          <div className="text-center py-16 space-y-3">
-                            <div className="inline-flex p-3 bg-emerald-50 rounded-full text-emerald-500">
-                              <CheckCircle2 size={24} />
+                        {attendanceSubTab === 'SCHOOL' ? (
+                          filteredJhAttentionStudents.length === 0 ? (
+                            <div className="text-center py-16 space-y-3">
+                              <div className="inline-flex p-3 bg-emerald-50 rounded-full text-emerald-500">
+                                <CheckCircle2 size={24} />
+                              </div>
+                              <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">
+                                Tidak ada siswa yang membutuhkan perhatian kehadiran pada periode ini.
+                              </p>
                             </div>
-                            <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">
-                              Tidak ada siswa yang membutuhkan perhatian kehadiran pada periode ini.
-                            </p>
-                          </div>
-                        ) : (
-                          <table className="w-full text-left border-collapse">
-                            <thead>
-                              <tr className="border-b border-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-wider">
-                                <th className="py-3 px-4">Nama Siswa</th>
-                                <th className="py-3 px-2">Kelas</th>
-                                <th className="py-3 px-2 text-center">S</th>
-                                <th className="py-3 px-2 text-center">I</th>
-                                <th className="py-3 px-2 text-center">A</th>
-                                <th className="py-3 px-2 text-center">Tidak Hadir</th>
-                                <th className="py-3 px-2 text-center">Rasio</th>
-                                <th className="py-3 px-4 text-right">Aksi</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-50 text-xs font-semibold text-slate-700">
-                              {paginatedJhAttentionStudents.map((student) => {
-                                let badgeColor = 'bg-emerald-50 text-emerald-600 border-emerald-100';
-                                if (student.rate < 90) {
-                                  badgeColor = 'bg-red-50 text-red-600 border-red-100';
-                                } else if (student.rate < 95) {
-                                  badgeColor = 'bg-amber-50 text-amber-600 border-amber-100';
-                                }
+                          ) : (
+                            <table className="w-full text-left border-collapse">
+                              <thead>
+                                <tr className="border-b border-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                                  <th className="py-3 px-4">Nama Siswa</th>
+                                  <th className="py-3 px-2">Kelas</th>
+                                  <th className="py-3 px-2 text-center">S</th>
+                                  <th className="py-3 px-2 text-center">I</th>
+                                  <th className="py-3 px-2 text-center">A</th>
+                                  <th className="py-3 px-2 text-center">Tidak Hadir</th>
+                                  <th className="py-3 px-2 text-center">Rasio</th>
+                                  <th className="py-3 px-4 text-right">Aksi</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-50 text-xs font-semibold text-slate-700">
+                                {paginatedJhAttentionStudents.map((student) => {
+                                  let badgeColor = 'bg-emerald-50 text-emerald-600 border-emerald-100';
+                                  if (student.rate < 90) {
+                                    badgeColor = 'bg-red-50 text-red-600 border-red-100';
+                                  } else if (student.rate < 95) {
+                                    badgeColor = 'bg-amber-50 text-amber-600 border-amber-100';
+                                  }
 
-                                return (
-                                  <tr key={student.id} className="hover:bg-slate-50/50 transition-colors font-medium text-slate-600">
-                                    <td className="py-3 px-4 font-bold text-slate-900">
-                                      {student.name}
-                                    </td>
-                                    <td className="py-3 px-2 text-slate-500">
-                                      {student.className}
-                                    </td>
-                                    <td className="py-3 px-2 text-center font-bold">
-                                      {student.sakit}
-                                    </td>
-                                    <td className="py-3 px-2 text-center font-bold">
-                                      {student.izin}
-                                    </td>
-                                    <td className="py-3 px-2 text-center font-black text-red-600">
-                                      {student.alpa}
-                                    </td>
-                                    <td className="py-3 px-2 text-center font-bold text-slate-700">
-                                      {student.totalAbsence}
-                                    </td>
-                                    <td className="py-3 px-2 text-center">
-                                      <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold border ${badgeColor}`}>
-                                        {student.rate}%
-                                      </span>
-                                    </td>
-                                    <td className="py-3 px-4 text-right">
-                                      <button
-                                        onClick={() => setSelectedStudentForAttendanceDetail(student)}
-                                        className="inline-flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-100 text-blue-600 rounded-lg text-[10px] font-bold transition-all"
-                                      >
-                                        <span>Detail Siswa</span>
-                                        <ArrowRight size={10} />
-                                      </button>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
+                                  return (
+                                    <tr key={student.id} className="hover:bg-slate-50/50 transition-colors font-medium text-slate-600">
+                                      <td className="py-3 px-4 font-bold text-slate-900">
+                                        {student.name}
+                                      </td>
+                                      <td className="py-3 px-2 text-slate-500">
+                                        {student.className}
+                                      </td>
+                                      <td className="py-3 px-2 text-center font-bold">
+                                        {student.sakit}
+                                      </td>
+                                      <td className="py-3 px-2 text-center font-bold">
+                                        {student.izin}
+                                      </td>
+                                      <td className="py-3 px-2 text-center font-black text-red-600">
+                                        {student.alpa}
+                                      </td>
+                                      <td className="py-3 px-2 text-center font-bold text-slate-700">
+                                        {student.totalAbsence}
+                                      </td>
+                                      <td className="py-3 px-2 text-center">
+                                        <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold border ${badgeColor}`}>
+                                          {student.rate}%
+                                        </span>
+                                      </td>
+                                      <td className="py-3 px-4 text-right">
+                                        <button
+                                          onClick={() => setSelectedStudentForAttendanceDetail(student)}
+                                          className="inline-flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-100 text-blue-600 rounded-lg text-[10px] font-bold transition-all"
+                                        >
+                                          <span>Detail Siswa</span>
+                                          <ArrowRight size={10} />
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          )
+                        ) : (
+                          filteredJhSalatAttentionStudents.length === 0 ? (
+                            <div className="text-center py-16 space-y-3">
+                              <div className="inline-flex p-3 bg-emerald-50 rounded-full text-emerald-500">
+                                <CheckCircle2 size={24} />
+                              </div>
+                              <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">
+                                Tidak ada siswa yang membutuhkan perhatian Salat Zuhur pada periode ini.
+                              </p>
+                            </div>
+                          ) : (
+                            <table className="w-full text-left border-collapse">
+                              <thead>
+                                <tr className="border-b border-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                                  <th className="py-3 px-4">Nama Siswa</th>
+                                  <th className="py-3 px-2">Kelas</th>
+                                  <th className="py-3 px-2 text-center">Berjamaah</th>
+                                  <th className="py-3 px-2 text-center">Berhalangan</th>
+                                  <th className="py-3 px-2 text-center">Izin</th>
+                                  <th className="py-3 px-2 text-center text-red-600">Alpa Salat</th>
+                                  <th className="py-3 px-2 text-center">Rasio</th>
+                                  <th className="py-3 px-4 text-right">Aksi</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-50 text-xs font-semibold text-slate-700">
+                                {paginatedJhSalatAttentionStudents.map((student) => {
+                                  let badgeColor = 'bg-emerald-50 text-emerald-600 border-emerald-100';
+                                  if (student.rate < 85) {
+                                    badgeColor = 'bg-red-50 text-red-600 border-red-100';
+                                  } else if (student.rate < 95) {
+                                    badgeColor = 'bg-amber-50 text-amber-600 border-amber-100';
+                                  }
+
+                                  return (
+                                    <tr key={student.id} className="hover:bg-slate-50/50 transition-colors font-medium text-slate-600">
+                                      <td className="py-3 px-4 font-bold text-slate-900">
+                                        {student.name}
+                                      </td>
+                                      <td className="py-3 px-2 text-slate-500">
+                                        {student.className}
+                                      </td>
+                                      <td className="py-3 px-2 text-center font-bold text-emerald-700">
+                                        {student.jamaah}
+                                      </td>
+                                      <td className="py-3 px-2 text-center text-slate-500">
+                                        {student.berhalangan}
+                                      </td>
+                                      <td className="py-3 px-2 text-center text-slate-500">
+                                        {student.izin}
+                                      </td>
+                                      <td className="py-3 px-2 text-center font-black text-red-600">
+                                        {student.tidakMengikuti}
+                                      </td>
+                                      <td className="py-3 px-2 text-center">
+                                        <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold border ${badgeColor}`}>
+                                          {student.rate}%
+                                        </span>
+                                      </td>
+                                      <td className="py-3 px-4 text-right">
+                                        <button
+                                          onClick={() => setSelectedStudentForAttendanceDetail({ ...student, isSalat: true })}
+                                          className="inline-flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-100 text-blue-600 rounded-lg text-[10px] font-bold transition-all"
+                                        >
+                                          <span>Detail Salat</span>
+                                          <ArrowRight size={10} />
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          )
                         )}
                       </div>
 
                       {/* Pagination Footer */}
-                      {filteredJhAttentionStudents.length > jhItemsPerPage && (
+                      {(attendanceSubTab === 'SCHOOL' ? filteredJhAttentionStudents.length : filteredJhSalatAttentionStudents.length) > jhItemsPerPage && (
                         <div className="flex items-center justify-between pt-4 border-t border-slate-50">
                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">
-                            Menampilkan {Math.min(filteredJhAttentionStudents.length, (jhCurrentPage - 1) * jhItemsPerPage + 1)}-{Math.min(filteredJhAttentionStudents.length, jhCurrentPage * jhItemsPerPage)} dari {filteredJhAttentionStudents.length} siswa
+                            Menampilkan {Math.min(
+                              attendanceSubTab === 'SCHOOL' ? filteredJhAttentionStudents.length : filteredJhSalatAttentionStudents.length,
+                              (jhCurrentPage - 1) * jhItemsPerPage + 1
+                            )}-{Math.min(
+                              attendanceSubTab === 'SCHOOL' ? filteredJhAttentionStudents.length : filteredJhSalatAttentionStudents.length,
+                              jhCurrentPage * jhItemsPerPage
+                            )} dari {attendanceSubTab === 'SCHOOL' ? filteredJhAttentionStudents.length : filteredJhSalatAttentionStudents.length} siswa
                           </span>
                           <div className="flex items-center gap-2">
                             <button
@@ -1952,11 +2393,11 @@ export default function HeadDashboard() {
                               <ChevronLeft size={14} />
                             </button>
                             <span className="text-xs font-bold text-slate-600">
-                              {jhCurrentPage} / {jhTotalPages}
+                              {jhCurrentPage} / {attendanceSubTab === 'SCHOOL' ? jhTotalPages : jhSalatTotalPages}
                             </span>
                             <button
-                              onClick={() => setJhCurrentPage(prev => Math.min(jhTotalPages, prev + 1))}
-                              disabled={jhCurrentPage === jhTotalPages}
+                              onClick={() => setJhCurrentPage(prev => Math.min(attendanceSubTab === 'SCHOOL' ? jhTotalPages : jhSalatTotalPages, prev + 1))}
+                              disabled={jhCurrentPage === (attendanceSubTab === 'SCHOOL' ? jhTotalPages : jhSalatTotalPages)}
                               className="p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 transition-colors"
                             >
                               <ChevronRight size={14} />
@@ -2619,65 +3060,127 @@ export default function HeadDashboard() {
                 </div>
 
                 {/* Stats Summary Grid */}
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
-                    <p className="text-[9px] font-black text-slate-400 uppercase">Hadir</p>
-                    <p className="text-sm font-black text-slate-800 mt-0.5">{selectedStudentForAttendanceDetail.hadir}</p>
+                {selectedStudentForAttendanceDetail.isSalat ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    <div className="bg-emerald-50/50 p-3 rounded-xl border border-emerald-100 text-center">
+                      <p className="text-[9px] font-black text-emerald-700 uppercase">Berjamaah</p>
+                      <p className="text-sm font-black text-emerald-800 mt-0.5">{selectedStudentForAttendanceDetail.jamaah}</p>
+                    </div>
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
+                      <p className="text-[9px] font-black text-slate-400 uppercase">Berhalangan</p>
+                      <p className="text-sm font-black text-slate-800 mt-0.5">{selectedStudentForAttendanceDetail.berhalangan}</p>
+                    </div>
+                    <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100 text-center">
+                      <p className="text-[9px] font-black text-blue-700 uppercase">Izin</p>
+                      <p className="text-sm font-black text-blue-800 mt-0.5">{selectedStudentForAttendanceDetail.izin}</p>
+                    </div>
+                    <div className="bg-red-50/50 p-3 rounded-xl border border-red-100 text-center">
+                      <p className="text-[9px] font-black text-red-700 uppercase">Alpa Salat</p>
+                      <p className="text-sm font-black text-red-800 mt-0.5">{selectedStudentForAttendanceDetail.tidakMengikuti}</p>
+                    </div>
+                    <div className="col-span-2 sm:col-span-1 bg-[#002366]/5 p-3 rounded-xl border border-[#002366]/10 text-center">
+                      <p className="text-[9px] font-black text-[#002366] uppercase">Rasio</p>
+                      <p className="text-sm font-black text-[#002366] mt-0.5">{selectedStudentForAttendanceDetail.rate}%</p>
+                    </div>
                   </div>
-                  <div className="bg-amber-50/50 p-3 rounded-xl border border-amber-100 text-center">
-                    <p className="text-[9px] font-black text-amber-700 uppercase">Sakit</p>
-                    <p className="text-sm font-black text-amber-800 mt-0.5">{selectedStudentForAttendanceDetail.sakit}</p>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
+                      <p className="text-[9px] font-black text-slate-400 uppercase">Hadir</p>
+                      <p className="text-sm font-black text-slate-800 mt-0.5">{selectedStudentForAttendanceDetail.hadir}</p>
+                    </div>
+                    <div className="bg-amber-50/50 p-3 rounded-xl border border-amber-100 text-center">
+                      <p className="text-[9px] font-black text-amber-700 uppercase">Sakit</p>
+                      <p className="text-sm font-black text-amber-800 mt-0.5">{selectedStudentForAttendanceDetail.sakit}</p>
+                    </div>
+                    <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100 text-center">
+                      <p className="text-[9px] font-black text-blue-700 uppercase">Izin</p>
+                      <p className="text-sm font-black text-blue-800 mt-0.5">{selectedStudentForAttendanceDetail.izin}</p>
+                    </div>
+                    <div className="bg-red-50/50 p-3 rounded-xl border border-red-100 text-center">
+                      <p className="text-[9px] font-black text-red-700 uppercase">Alpa</p>
+                      <p className="text-sm font-black text-red-800 mt-0.5">{selectedStudentForAttendanceDetail.alpa}</p>
+                    </div>
+                    <div className="col-span-2 sm:col-span-1 bg-[#002366]/5 p-3 rounded-xl border border-[#002366]/10 text-center">
+                      <p className="text-[9px] font-black text-[#002366] uppercase">Rasio</p>
+                      <p className="text-sm font-black text-[#002366] mt-0.5">{selectedStudentForAttendanceDetail.rate}%</p>
+                    </div>
                   </div>
-                  <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100 text-center">
-                    <p className="text-[9px] font-black text-blue-700 uppercase">Izin</p>
-                    <p className="text-sm font-black text-blue-800 mt-0.5">{selectedStudentForAttendanceDetail.izin}</p>
-                  </div>
-                  <div className="bg-red-50/50 p-3 rounded-xl border border-red-100 text-center">
-                    <p className="text-[9px] font-black text-red-700 uppercase">Alpa</p>
-                    <p className="text-sm font-black text-red-800 mt-0.5">{selectedStudentForAttendanceDetail.alpa}</p>
-                  </div>
-                  <div className="col-span-2 sm:col-span-1 bg-[#002366]/5 p-3 rounded-xl border border-[#002366]/10 text-center">
-                    <p className="text-[9px] font-black text-[#002366] uppercase">Rasio</p>
-                    <p className="text-sm font-black text-[#002366] mt-0.5">{selectedStudentForAttendanceDetail.rate}%</p>
-                  </div>
-                </div>
+                )}
 
-                {/* Absent Dates List */}
+                {/* History List */}
                 <div className="space-y-3">
                   <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
                     <Calendar size={14} className="text-blue-600" />
-                    <span>Daftar Ketidakhadiran ({absentDatesForSelectedStudent.length})</span>
+                    <span>
+                      {selectedStudentForAttendanceDetail.isSalat 
+                        ? `Riwayat Shalat Zuhur (${salatHistoryForSelectedStudent.length})` 
+                        : `Daftar Ketidakhadiran (${absentDatesForSelectedStudent.length})`}
+                    </span>
                   </h4>
                   
-                  {absentDatesForSelectedStudent.length === 0 ? (
-                    <div className="p-6 text-center bg-emerald-50 rounded-2xl border border-emerald-100 space-y-2">
-                      <CheckCircle2 size={32} className="text-emerald-500 mx-auto" />
-                      <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Hadir Sempurna!</p>
-                      <p className="text-[10px] text-emerald-600 font-semibold">Siswa ini tercatat hadir penuh tanpa ketidakhadiran pada rentang filter ini.</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2 max-h-[250px] overflow-y-auto pr-1">
-                      {absentDatesForSelectedStudent.map((row: any, idx: number) => {
-                        const dateObj = new Date(row.date);
-                        const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-                        const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-                        const formattedDate = !isNaN(dateObj.getTime()) 
-                          ? `${days[dateObj.getDay()]}, ${dateObj.getDate()} ${months[dateObj.getMonth()]} ${dateObj.getFullYear()}`
-                          : row.date;
+                  {selectedStudentForAttendanceDetail.isSalat ? (
+                    salatHistoryForSelectedStudent.length === 0 ? (
+                      <div className="p-6 text-center bg-slate-50 rounded-2xl border border-slate-100 space-y-2">
+                        <CheckCircle2 size={32} className="text-slate-400 mx-auto" />
+                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Tidak Ada Data</p>
+                        <p className="text-[10px] text-slate-400 font-semibold">Belum ada riwayat shalat yang diinput pada rentang periode ini.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-[250px] overflow-y-auto pr-1">
+                        {salatHistoryForSelectedStudent.map((row: any, idx: number) => {
+                          const dateObj = new Date(row.date);
+                          const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+                          const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+                          const formattedDate = !isNaN(dateObj.getTime()) 
+                            ? `${days[dateObj.getDay()]} ${dateObj.getDate()} ${months[dateObj.getMonth()]} ${dateObj.getFullYear()}`
+                            : row.date;
 
-                        return (
-                          <div key={idx} className="p-3.5 bg-slate-50 border border-slate-100 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                            <div className="space-y-1">
-                              <span className="text-xs font-black text-slate-800">{formattedDate}</span>
-                              <p className="text-[10px] font-semibold text-slate-500">Keterangan: {row.note}</p>
+                          return (
+                            <div key={idx} className="p-3.5 bg-slate-50 border border-slate-100 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                              <div className="space-y-1">
+                                <span className="text-xs font-black text-slate-800">{formattedDate}</span>
+                                <p className="text-[10px] font-semibold text-slate-500">Keterangan: {row.note}</p>
+                              </div>
+                              <span className={cn("px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border self-start sm:self-auto", row.statusColor)}>
+                                {row.statusLabel}
+                              </span>
                             </div>
-                            <span className={cn("px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border self-start sm:self-auto", row.statusColor)}>
-                              {row.statusLabel}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
+                          );
+                        })}
+                      </div>
+                    )
+                  ) : (
+                    absentDatesForSelectedStudent.length === 0 ? (
+                      <div className="p-6 text-center bg-emerald-50 rounded-2xl border border-emerald-100 space-y-2">
+                        <CheckCircle2 size={32} className="text-emerald-500 mx-auto" />
+                        <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Hadir Sempurna!</p>
+                        <p className="text-[10px] text-emerald-600 font-semibold">Siswa ini tercatat hadir penuh tanpa ketidakhadiran pada rentang filter ini.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-[250px] overflow-y-auto pr-1">
+                        {absentDatesForSelectedStudent.map((row: any, idx: number) => {
+                          const dateObj = new Date(row.date);
+                          const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+                          const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+                          const formattedDate = !isNaN(dateObj.getTime()) 
+                            ? `${days[dateObj.getDay()]} ${dateObj.getDate()} ${months[dateObj.getMonth()]} ${dateObj.getFullYear()}`
+                            : row.date;
+
+                          return (
+                            <div key={idx} className="p-3.5 bg-slate-50 border border-slate-100 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                              <div className="space-y-1">
+                                <span className="text-xs font-black text-slate-800">{formattedDate}</span>
+                                <p className="text-[10px] font-semibold text-slate-500">Keterangan: {row.note}</p>
+                              </div>
+                              <span className={cn("px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border self-start sm:self-auto", row.statusColor)}>
+                                {row.statusLabel}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )
                   )}
                 </div>
 

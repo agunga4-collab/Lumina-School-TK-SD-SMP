@@ -311,8 +311,9 @@ export default function Attendance() {
   React.useEffect(() => {
     const loadStudents = async () => {
       // Check if selected date is a school day for the active unit
+      let schoolDayVal = true;
       try {
-        const schoolDayVal = await isAttendanceSchoolDay(selectedDate, activeUnit as any);
+        schoolDayVal = await isAttendanceSchoolDay(selectedDate, activeUnit as any);
         setIsSchoolDay(schoolDayVal);
       } catch (calErr) {
         console.warn('Failed to check if selected date is a school day:', calErr);
@@ -400,7 +401,7 @@ export default function Attendance() {
         }
 
         // Load existing records for today depending on type
-        const recordsCollection = attendanceType === 'DHUHUR' ? 'dhuhur_attendance_records' : 'attendance_records';
+        const recordsCollection = activeUnit === 'JUNIOR_HIGH' ? 'attendance_records' : (attendanceType === 'DHUHUR' ? 'dhuhur_attendance_records' : 'attendance_records');
         const recordsQ = query(
           collection(db, recordsCollection),
           where('classId', 'in', [classId, className]),
@@ -410,6 +411,7 @@ export default function Attendance() {
         const recordsMap = new Map(recordsSnap.docs.map(d => [d.data().studentId, d.data().status]));
         const notesMap = new Map(recordsSnap.docs.map(d => [d.data().studentId, d.data().note]));
         const emotionsMap = new Map(recordsSnap.docs.map(d => [d.data().studentId, d.data().emotion]));
+        const dhuhrStatusMap = new Map(recordsSnap.docs.map(d => [d.data().studentId, d.data().dhuhrPrayerStatus]));
 
         if (recordsSnap.size > 0) {
           setLastSaved({ date: selectedDate, classId: selectedClass });
@@ -418,12 +420,32 @@ export default function Attendance() {
         }
 
         if (studentList.length > 0) {
-          setStudents(studentList.map(s => ({
-            ...s,
-            status: (recordsMap.get(s.id) as any) || null,
-            note: notesMap.get(s.id) || '',
-            emotion: emotionsMap.get(s.id) || null
-          })));
+          setStudents(studentList.map(s => {
+            const schoolStatus = recordsMap.get(s.id) || null;
+            const dhuhrObj = dhuhrStatusMap.get(s.id) || null;
+            
+            let finalStatus = null;
+            if (activeUnit === 'JUNIOR_HIGH' && attendanceType === 'DHUHUR') {
+              if (!schoolDayVal) {
+                finalStatus = 'TIDAK_BERLAKU';
+              } else if (schoolStatus && ['SAKIT', 'IZIN', 'ALPA'].includes(schoolStatus)) {
+                finalStatus = 'TIDAK_BERLAKU';
+              } else {
+                finalStatus = dhuhrObj?.status || 'BELUM_DIISI';
+              }
+            } else {
+              finalStatus = recordsMap.get(s.id) || null;
+            }
+
+            return {
+              ...s,
+              status: finalStatus as any,
+              note: notesMap.get(s.id) || '',
+              emotion: emotionsMap.get(s.id) || null,
+              schoolStatus,
+              dhuhrPrayerStatus: dhuhrObj
+            };
+          }));
         } else {
           // No students found in this class
           setStudents([]);
@@ -443,6 +465,33 @@ export default function Attendance() {
   const handleDeleteOne = async (studentId: string) => {
     const student = students.find(s => s.id === studentId);
     if (!student) return;
+
+    if (activeUnit === 'JUNIOR_HIGH' && attendanceType === 'DHUHUR') {
+      if (!window.confirm(`Hapus kehadiran Shalat Dhuhur ${student.name} pada ${selectedDate}?`)) return;
+      
+      setDeleting(true);
+      try {
+        const recordId = `${selectedClass}_${selectedDate}_${studentId}`;
+        const docRef = doc(db, 'attendance_records', recordId);
+        await setDoc(docRef, {
+          dhuhrPrayerStatus: {
+            status: 'BELUM_DIISI',
+            updatedAt: serverTimestamp()
+          }
+        }, { merge: true });
+        
+        setStudents(students.map(s => s.id === studentId ? { ...s, status: 'BELUM_DIISI' as any, dhuhrPrayerStatus: { status: 'BELUM_DIISI' } } : s));
+        toast.success('Kehadiran Shalat Dhuhur Direset', { 
+          description: `Kehadiran Shalat Dhuhur untuk ${student.name} berhasil direset.` 
+        });
+      } catch (err) {
+        console.error('Delete error:', err);
+        toast.error('Gagal mereset data');
+      } finally {
+        setDeleting(false);
+      }
+      return;
+    }
 
     if (attendanceType === 'DHUHUR') {
       if (!window.confirm(`Hapus kehadiran Shalat Dhuhur ${student.name} pada ${selectedDate}?`)) return;
@@ -496,6 +545,38 @@ export default function Attendance() {
     const currentClassEntity = classes.find(c => c.id === selectedClass || c.name === selectedClass);
     const className = currentClassEntity?.name || selectedClass;
     const classId = currentClassEntity?.id || selectedClass;
+
+    if (activeUnit === 'JUNIOR_HIGH' && attendanceType === 'DHUHUR') {
+      const count = students.filter(s => s.status !== null && s.status !== 'BELUM_DIISI').length;
+      if (!window.confirm(`Anda akan mereset ${count} data Kehadiran Salat Zuhur kelas ${className} pada ${selectedDate}. Tindakan ini tidak dapat dibatalkan.`)) return;
+      
+      setDeleting(true);
+      try {
+        const batch = writeBatch(db);
+        students.forEach(s => {
+          const recordId = `${selectedClass}_${selectedDate}_${s.id}`;
+          batch.set(doc(db, 'attendance_records', recordId), {
+            dhuhrPrayerStatus: {
+              status: 'BELUM_DIISI',
+              updatedAt: serverTimestamp()
+            }
+          }, { merge: true });
+        });
+        await batch.commit();
+        
+        setStudents(students.map(s => ({ ...s, status: 'BELUM_DIISI' as any, dhuhrPrayerStatus: { status: 'BELUM_DIISI' } })));
+        setRefreshTrigger(prev => prev + 1);
+        toast.success('Pembersihan Selesai', { 
+          description: `Semua data Kehadiran Salat Zuhur berhasil direset.` 
+        });
+      } catch (err) {
+        console.error('Delete error:', err);
+        toast.error('Gagal mereset semua data');
+      } finally {
+        setDeleting(false);
+      }
+      return;
+    }
 
     if (attendanceType === 'DHUHUR') {
       const count = students.filter(s => s.status !== null).length;
@@ -590,7 +671,7 @@ export default function Attendance() {
         const classId = currentClassEntity?.id || selectedClass;
 
         // Query all records for this period
-        const recordsCollection = attendanceType === 'DHUHUR' ? 'dhuhur_attendance_records' : 'attendance_records';
+        const recordsCollection = activeUnit === 'JUNIOR_HIGH' ? 'attendance_records' : (attendanceType === 'DHUHUR' ? 'dhuhur_attendance_records' : 'attendance_records');
         
         let startLimit = '';
         let endLimit = '';
@@ -632,7 +713,6 @@ export default function Attendance() {
         snap.docs.forEach(doc => {
           const data = doc.data();
           const sId = data.studentId;
-          const status = data.status;
           const date = data.date; // YYYY-MM-DD
 
           // Filter strictly in-memory for active students in the selected-class roster
@@ -642,9 +722,19 @@ export default function Attendance() {
           if (!agg[sId]) agg[sId] = { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
           if (!matrix[sId]) matrix[sId] = {};
           
+          let status = data.status;
+          if (activeUnit === 'JUNIOR_HIGH' && attendanceType === 'DHUHUR') {
+            status = data.dhuhrPrayerStatus?.status || 'BELUM_DIISI';
+          }
+          
           matrix[sId][date] = status;
           
-          if (attendanceType === 'DHUHUR') {
+          if (activeUnit === 'JUNIOR_HIGH' && attendanceType === 'DHUHUR') {
+            if (status === 'SALAT_BERJAMAAH') { agg[sId].hadir++; totalHadir++; }
+            else if (status === 'BERHALANGAN') { agg[sId].late++; totalLate++; }
+            else if (status === 'IZIN') { agg[sId].izin++; totalIzin++; }
+            else if (status === 'TIDAK_MENGIKUTI') { agg[sId].alpa++; totalAlpa++; }
+          } else if (attendanceType === 'DHUHUR') {
             if (status === 'H') { agg[sId].hadir++; totalHadir++; }
             else if (status === 'T') { agg[sId].late++; totalLate++; }
             else if (status === 'A') { agg[sId].alpa++; totalAlpa++; }
@@ -662,7 +752,10 @@ export default function Attendance() {
           setRecapMatrix(matrix);
           
           let rateVal: number | null = null;
-          if (attendanceType === 'DHUHUR') {
+          if (activeUnit === 'JUNIOR_HIGH' && attendanceType === 'DHUHUR') {
+            const denom = totalHadir + totalLate + totalIzin + totalAlpa;
+            rateVal = denom > 0 ? Math.round((totalHadir / denom) * 100) : null;
+          } else if (attendanceType === 'DHUHUR') {
             const denom = totalHadir + totalLate + totalAlpa;
             rateVal = denom > 0 ? Math.round(((totalHadir + totalLate) / denom) * 100) : null;
           } else {
@@ -727,7 +820,45 @@ export default function Attendance() {
   };
 
   const handleStatusChange = (id: string, newStatus: AttendanceStatus | 'H' | 'T' | 'A') => {
-    setStudents(students.map(s => s.id === id ? { ...s, status: newStatus } : s));
+    setStudents(students.map(s => {
+      if (s.id !== id) return s;
+
+      if (activeUnit === 'JUNIOR_HIGH') {
+        if (attendanceType === 'DAILY') {
+          const isNonPresent = ['SAKIT', 'IZIN', 'ALPA'].includes(newStatus as string);
+          let updatedDhuhr = s.dhuhrPrayerStatus;
+          
+          if (isNonPresent && s.dhuhrPrayerStatus && s.dhuhrPrayerStatus.status !== 'TIDAK_BERLAKU' && s.dhuhrPrayerStatus.status !== 'BELUM_DIISI') {
+            toast.warning(`Peringatan: Status Salat Zuhur siswa "${s.name}" diatur ke "Tidak berlaku" karena presensi sekolah diubah menjadi Tidak Hadir.`, {
+              duration: 5000,
+            });
+            updatedDhuhr = {
+              ...s.dhuhrPrayerStatus,
+              status: 'TIDAK_BERLAKU',
+              updatedAt: new Date() as any
+            };
+          }
+          
+          return {
+            ...s,
+            status: newStatus as any,
+            schoolStatus: newStatus as any,
+            dhuhrPrayerStatus: updatedDhuhr
+          };
+        } else {
+          return {
+            ...s,
+            status: newStatus as any,
+            dhuhrPrayerStatus: {
+              ...(s.dhuhrPrayerStatus || {}),
+              status: newStatus as any
+            }
+          };
+        }
+      }
+
+      return { ...s, status: newStatus };
+    }));
   };
 
   const handleNoteChange = (id: string, note: string) => {
@@ -788,6 +919,12 @@ export default function Attendance() {
           recordData.schoolYear = activeAcademicYear;
         } else if (activeUnit === 'JUNIOR_HIGH') {
           recordData.unit = 'JUNIOR_HIGH';
+          if (student.dhuhrPrayerStatus) {
+            recordData.dhuhrPrayerStatus = {
+              ...student.dhuhrPrayerStatus,
+              updatedAt: serverTimestamp()
+            };
+          }
         }
 
         await setDoc(doc(db, 'attendance_records', recordId), recordData, { merge: true });
@@ -970,6 +1107,83 @@ export default function Attendance() {
   };
 
   const handleSaveDhuhurFirestore = async () => {
+    if (activeUnit === 'JUNIOR_HIGH') {
+      const unselectedCount = students.filter(s => s.status === null || s.status === 'BELUM_DIISI').length;
+      if (unselectedCount > 0) {
+        const confirmSave = window.confirm(`${unselectedCount} siswa belum memiliki status Salat Zuhur. Lanjutkan simpan?`);
+        if (!confirmSave) return;
+      }
+
+      setSaving(true);
+      let successCount = 0;
+
+      try {
+        const user = auth.currentUser;
+        const userEmail = user?.email || 'unknown_teacher';
+        const userName = userProfile?.name || userProfile?.displayName || user?.displayName || 'Guru';
+        const userUid = user?.uid || 'unknown_uid';
+
+        const currentClassEntity = classes.find(c => c.id === selectedClass || c.name === selectedClass);
+        const className = currentClassEntity?.name || selectedClass;
+        const classId = currentClassEntity?.id || selectedClass;
+
+        for (const student of students) {
+          if ((student.status === null || student.status === 'BELUM_DIISI') && !student.dhuhrPrayerStatus) {
+            continue;
+          }
+
+          const recordId = `${selectedClass}_${selectedDate}_${student.id}`;
+          
+          const existingDhuhr = student.dhuhrPrayerStatus;
+          const isNew = !existingDhuhr || !existingDhuhr.status || existingDhuhr.status === 'BELUM_DIISI';
+
+          const dhuhrPrayerStatus = {
+            status: student.status || 'BELUM_DIISI',
+            recordedBy: isNew ? userUid : (existingDhuhr?.recordedBy || userUid),
+            recordedByName: isNew ? userName : (existingDhuhr?.recordedByName || userName),
+            recordedByEmail: isNew ? userEmail : (existingDhuhr?.recordedByEmail || userEmail),
+            recordedAt: isNew ? serverTimestamp() : (existingDhuhr?.recordedAt || serverTimestamp()),
+            
+            updatedBy: userUid,
+            updatedByName: userName,
+            updatedByEmail: userEmail,
+            updatedAt: serverTimestamp()
+          };
+
+          const recordData: any = {
+            id: recordId,
+            studentId: student.id,
+            studentName: student.name,
+            classId: selectedClass,
+            academicYear: activeAcademicYear,
+            semester: activeSemester,
+            date: selectedDate,
+            unit: 'JUNIOR_HIGH',
+            dhuhrPrayerStatus,
+            updatedAt: serverTimestamp()
+          };
+
+          await setDoc(doc(db, 'attendance_records', recordId), recordData, { merge: true });
+          successCount++;
+        }
+
+        setLastSaved({ date: selectedDate, classId: selectedClass });
+        toast.success('Kehadiran Shalat Dhuhur Disimpan', {
+          description: `${successCount} data Salat Zuhur berhasil disimpan.`
+        });
+        setRefreshTrigger(prev => prev + 1);
+
+      } catch (err: any) {
+        console.error('Save Dhuhur error:', err);
+        toast.error('Gagal Simpan', {
+          description: err.message || 'Terjadi kesalahan saat menyimpan data Salat Zuhur.'
+        });
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
     const unselectedCount = students.filter(s => s.status === null).length;
     if (unselectedCount > 0) {
       const confirmSave = window.confirm(`${unselectedCount} siswa belum memiliki status kehadiran shalat Dhuhur. Lanjutkan simpan? (Siswa tanpa status tidak akan disimpan)`);
@@ -2112,7 +2326,15 @@ export default function Attendance() {
             </div>
           )}
 
-          {attendanceType === 'DHUHUR' ? (
+          {activeUnit === 'JUNIOR_HIGH' && attendanceType === 'DHUHUR' ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+              <RecapCard title="Partisipasi Shalat" value={loadingRecap || recapError || Object.keys(recapData).length === 0 || recapStats.attendanceRate === '—' ? '—' : `${recapStats.attendanceRate}%`} icon={<CheckCircle2 className="text-green-600" />} />
+              <RecapCard title="Shalat Berjamaah" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.hadir.toString()} icon={<CheckCircle2 className="text-emerald-500" />} />
+              <RecapCard title="Berhalangan" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.late.toString()} icon={<AlertCircle className="text-amber-500" />} />
+              <RecapCard title="Izin" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.izin.toString()} icon={<Clock className="text-blue-500" />} />
+              <RecapCard title="Tidak Mengikuti" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.alpa.toString()} icon={<UserX className="text-red-600" />} />
+            </div>
+          ) : attendanceType === 'DHUHUR' ? (
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
               <RecapCard title="Tingkat Tepat Waktu" value={loadingRecap || recapError || Object.keys(recapData).length === 0 || recapStats.attendanceRate === '—' ? '—' : `${recapStats.attendanceRate}%`} icon={<CheckCircle2 className="text-green-600" />} />
               <RecapCard title="Total Hadir" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.hadir.toString()} icon={<CheckCircle2 className="text-emerald-500" />} />
