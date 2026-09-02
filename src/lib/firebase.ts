@@ -2635,7 +2635,7 @@ export async function getTeachers(): Promise<AppUser[]> {
     const snap1 = await getDocs(q1);
     const activeOnes = snap1.docs
       .map(doc => ({ uid: doc.id, ...doc.data() } as AppUser))
-      .filter(u => ['TEACHER', 'BK_MENTOR', 'HEAD_JUNIOR', 'SUPER_ADMIN', 'HEAD_UNIT', 'STAFF'].includes(u.role));
+      .filter(u => ['TEACHER', 'BK_MENTOR', 'HEAD_JUNIOR', 'SUPER_ADMIN', 'HEAD_UNIT', 'STAFF', 'SECRETARY_KINDY', 'SECRETARY_ELEM', 'SECRETARY_JH'].includes(u.role));
 
     // 2. Get ready invites (to break circular dependency: can assign wali kelas before activation)
     const q2 = query(
@@ -2657,7 +2657,7 @@ export async function getTeachers(): Promise<AppUser[]> {
           jobTitle: data.jobTitle
         } as AppUser;
       })
-      .filter(i => ['TEACHER', 'BK_MENTOR', 'HEAD_JUNIOR', 'SUPER_ADMIN', 'HEAD_UNIT', 'STAFF'].includes(i.role));
+      .filter(i => ['TEACHER', 'BK_MENTOR', 'HEAD_JUNIOR', 'SUPER_ADMIN', 'HEAD_UNIT', 'STAFF', 'SECRETARY_KINDY', 'SECRETARY_ELEM', 'SECRETARY_JH'].includes(i.role));
 
     return [...activeOnes, ...invitedOnes].sort((a, b) => a.displayName.localeCompare(b.displayName));
   } catch (err: any) {

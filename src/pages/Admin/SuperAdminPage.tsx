@@ -73,6 +73,42 @@ const safeLower = (value: unknown): string => {
   return String(value).toLowerCase();
 };
 
+const getRoleLabel = (role: string | undefined | null): string => {
+  if (!role) return "-";
+  switch (role) {
+    case "SECRETARY_KINDY":
+      return "Sekretaris TK";
+    case "SECRETARY_ELEM":
+      return "Sekretaris SD";
+    case "SECRETARY_JH":
+      return "Sekretaris SMP";
+    case "SUPER_ADMIN":
+      return "Super Admin";
+    case "HEAD_UNIT":
+      return "Head Unit";
+    case "HEAD_JUNIOR":
+      return "Head Junior";
+    case "TEACHER":
+      return "Teacher";
+    case "HOMEROOM_TEACHER":
+      return "Homeroom Teacher";
+    case "kindergarten_subject_teacher":
+      return "Guru Bidang Studi TK";
+    case "BK_MENTOR":
+      return "BK Mentor";
+    case "STAFF":
+      return "Staff";
+    case "PROFILE_TEACHER":
+      return "Profile Teacher";
+    case "STUDENT":
+      return "Siswa";
+    case "PARENT":
+      return "Orang Tua";
+    default:
+      return role;
+  }
+};
+
 function SortIcon({ column, currentConfig }: { column: string; currentConfig: { key: string; direction: "asc" | "desc" } }) {
   if (currentConfig.key !== column) return <ArrowUpDown size={12} className="text-gray-300" />;
   return currentConfig.direction === "asc" ? <ChevronUp size={12} className="text-blue-500" /> : <ChevronDown size={12} className="text-blue-500" />;
@@ -1943,16 +1979,27 @@ export default function SuperAdminPage() {
             (i) => i.unitId === unit && i.role === "STUDENT",
           ).length,
           staff: invites.filter(
-            (i) =>
-              i.unitId === unit &&
-              [
-                "TEACHER",
-                "STAFF",
-                "BK_MENTOR",
-                "HEAD_UNIT",
-                "HEAD_JUNIOR",
-                "kindergarten_subject_teacher",
-              ].includes(i.role),
+            (i) => {
+              let itemUnit = i.unitId;
+              if (i.role === "SECRETARY_KINDY") itemUnit = "KINDERGARTEN";
+              else if (i.role === "SECRETARY_ELEM") itemUnit = "ELEMENTARY";
+              else if (i.role === "SECRETARY_JH") itemUnit = "JUNIOR_HIGH";
+
+              return (
+                itemUnit === unit &&
+                [
+                  "TEACHER",
+                  "STAFF",
+                  "BK_MENTOR",
+                  "HEAD_UNIT",
+                  "HEAD_JUNIOR",
+                  "kindergarten_subject_teacher",
+                  "SECRETARY_KINDY",
+                  "SECRETARY_ELEM",
+                  "SECRETARY_JH",
+                ].includes(i.role)
+              );
+            }
           ).length,
           classes: classes.filter((c) => c.unitId === unit).length,
           pending: pendingUsers.filter((u) => u.unitId === unit).length,
@@ -1986,13 +2033,23 @@ export default function SuperAdminPage() {
   const filteredInvites = invites.filter((i) => {
     if (!i) return false;
     const searchLower = safeLower(searchTerm);
+    const roleLabel = getRoleLabel(i.role);
     const matchesSearch =
       safeLower(i.email).includes(searchLower) ||
       safeLower(i.name).includes(searchLower) ||
-      safeLower(i.luminaId).includes(searchLower);
+      (i.displayName && safeLower(i.displayName).includes(searchLower)) ||
+      safeLower(i.luminaId).includes(searchLower) ||
+      (i.jobTitle && safeLower(i.jobTitle).includes(searchLower)) ||
+      safeLower(i.role).includes(searchLower) ||
+      safeLower(roleLabel).includes(searchLower);
+
+    let itemUnit = i.unitId;
+    if (i.role === "SECRETARY_KINDY") itemUnit = "KINDERGARTEN";
+    else if (i.role === "SECRETARY_ELEM") itemUnit = "ELEMENTARY";
+    else if (i.role === "SECRETARY_JH") itemUnit = "JUNIOR_HIGH";
 
     const matchesUnit = selectedUnit === "ALL" || 
-      i.unitId === selectedUnit || 
+      itemUnit === selectedUnit || 
       (i.role === "PARENT" && Array.isArray(i.linkedStudents) && i.linkedStudents.some(sid => studentIdToUnitId[sid] === selectedUnit));
 
     let matchesClass = true;
@@ -2023,7 +2080,7 @@ export default function SuperAdminPage() {
       return (
         matchesSearch &&
         matchesUnit &&
-        matchesClass && (
+        matchesClass &&
         [
           "SUPER_ADMIN",
           "HEAD_UNIT",
@@ -2033,15 +2090,10 @@ export default function SuperAdminPage() {
           "STAFF",
           "PROFILE_TEACHER",
           "kindergarten_subject_teacher",
-        ].includes(i.role) || [
-          "SUPER_ADMIN",
-          "HEAD_UNIT",
-          "HEAD_JUNIOR",
-          "TEACHER",
-          "BK_MENTOR",
-          "STAFF",
-          "kindergarten_subject_teacher",
-        ].includes(i.role))
+          "SECRETARY_KINDY",
+          "SECRETARY_ELEM",
+          "SECRETARY_JH",
+        ].includes(i.role)
       );
     }
     if (activeTab === "STUDENT") {
@@ -2243,17 +2295,28 @@ export default function SuperAdminPage() {
 
   const counts = {
     STAFF: invites.filter(
-      (i) =>
-        (selectedUnit === "ALL" || i.unitId === selectedUnit) &&
-        [
-          "TEACHER",
-          "STAFF",
-          "BK_MENTOR",
-          "HEAD_UNIT",
-          "HEAD_JUNIOR",
-          "SUPER_ADMIN",
-          "kindergarten_subject_teacher",
-        ].includes(i.role),
+      (i) => {
+        let itemUnit = i.unitId;
+        if (i.role === "SECRETARY_KINDY") itemUnit = "KINDERGARTEN";
+        else if (i.role === "SECRETARY_ELEM") itemUnit = "ELEMENTARY";
+        else if (i.role === "SECRETARY_JH") itemUnit = "JUNIOR_HIGH";
+
+        return (
+          (selectedUnit === "ALL" || itemUnit === selectedUnit) &&
+          [
+            "TEACHER",
+            "STAFF",
+            "BK_MENTOR",
+            "HEAD_UNIT",
+            "HEAD_JUNIOR",
+            "SUPER_ADMIN",
+            "kindergarten_subject_teacher",
+            "SECRETARY_KINDY",
+            "SECRETARY_ELEM",
+            "SECRETARY_JH",
+          ].includes(i.role)
+        );
+      }
     ).length,
     STUDENT: invites.filter(
       (i) =>
@@ -4290,7 +4353,7 @@ export default function SuperAdminPage() {
                           <td className="px-10 py-6">
                             <div className="flex flex-col gap-1">
                               <span className="text-[11px] font-black text-blue-600 uppercase tracking-tighter leading-none">
-                                {invite.role}
+                                {getRoleLabel(invite.role)}
                               </span>
                               {invite.jobTitle && (
                                 <span className="text-[9px] font-black text-gray-300 uppercase tracking-widest">
