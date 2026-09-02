@@ -9,6 +9,17 @@ export function getDashboardRoute(profile: User | null, activeUnit: UnitType | n
   // If pending or disabled, let standard route guards handle it (via AuthGuard / LoginPage redirects)
   if (profile.status === 'pending') return '/pending';
 
+  // Unit-scoped Secretary default routes
+  if (profile.role === 'SECRETARY_KINDY') {
+    return '/kindy/dashboard';
+  }
+  if (profile.role === 'SECRETARY_ELEM') {
+    return '/elementary/dashboard';
+  }
+  if (profile.role === 'SECRETARY_JH') {
+    return '/';
+  }
+
   // Junior High and Kindergarten student goes to student dashboard
   if (profile.role === 'STUDENT' && (activeUnit === 'JUNIOR_HIGH' || activeUnit === 'KINDERGARTEN')) {
     return '/student/dashboard';

@@ -1592,6 +1592,21 @@ export default function SuperAdminPage() {
 
   const handleCreateOrUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validate Unit-scoped Secretary roles match their unitId
+    if (formData.role === 'SECRETARY_KINDY' && formData.unitId !== 'KINDERGARTEN') {
+      alert("Error: Peran SECRETARY_KINDY harus dipasangkan dengan unit KINDERGARTEN!");
+      return;
+    }
+    if (formData.role === 'SECRETARY_ELEM' && formData.unitId !== 'ELEMENTARY') {
+      alert("Error: Peran SECRETARY_ELEM harus dipasangkan dengan unit ELEMENTARY!");
+      return;
+    }
+    if (formData.role === 'SECRETARY_JH' && formData.unitId !== 'JUNIOR_HIGH') {
+      alert("Error: Peran SECRETARY_JH harus dipasangkan dengan unit JUNIOR_HIGH!");
+      return;
+    }
+
     setFormLoading(true);
     try {
       if (editingId) {
@@ -6518,6 +6533,9 @@ export default function SuperAdminPage() {
                     <option value="HEAD_UNIT">HEAD_UNIT</option>
                     <option value="HEAD_JUNIOR">HEAD_JUNIOR</option>
                     <option value="BK_MENTOR">BK_MENTOR</option>
+                    <option value="SECRETARY_KINDY">SECRETARY_KINDY (Sekretaris TK)</option>
+                    <option value="SECRETARY_ELEM">SECRETARY_ELEM (Sekretaris SD)</option>
+                    <option value="SECRETARY_JH">SECRETARY_JH (Sekretaris SMP)</option>
                     <option value="STUDENT">STUDENT</option>
                     <option value="PARENT">PARENT</option>
                     <option value="SUPER_ADMIN">SUPER_ADMIN</option>

@@ -154,3 +154,52 @@ export function buildTeacherAssignmentIndexes(
     gpkTeacherIds
   };
 }
+
+/**
+ * Checks if a user has access to a specific class under the teacher/staff workflows.
+ * 
+ * Access rules:
+ * - SUPER_ADMIN: has access to all classes.
+ * - HEAD_UNIT / HEAD_JUNIOR: has view/access to all classes within their unitId.
+ * - SECRETARY_KINDY: has full operational access to KINDERGARTEN classes only.
+ * - SECRETARY_ELEM: has full operational access to ELEMENTARY classes only.
+ * - SECRETARY_JH: has full operational access to JUNIOR_HIGH classes only.
+ * - Standard teachers: restricted to their assigned classes.
+ */
+export function canAccessClassForTeacherWorkflow(profile: any, classData: any): boolean {
+  if (!profile) return false;
+  if (!classData) return false;
+
+  const role = profile.role;
+  const unit = classData.unitId;
+
+  if (role === 'SUPER_ADMIN') {
+    return true;
+  }
+
+  // HEAD_UNIT / HEAD_JUNIOR permissions
+  if (role === 'HEAD_UNIT' && profile.unitId === 'KINDERGARTEN' && unit === 'KINDERGARTEN') {
+    return true;
+  }
+  if (role === 'HEAD_UNIT' && profile.unitId === 'ELEMENTARY' && unit === 'ELEMENTARY') {
+    return true;
+  }
+  if (role === 'HEAD_JUNIOR' && unit === 'JUNIOR_HIGH') {
+    return true;
+  }
+
+  // Unit-scoped Secretaries
+  if (role === 'SECRETARY_KINDY' && unit === 'KINDERGARTEN') {
+    return true;
+  }
+  if (role === 'SECRETARY_ELEM' && unit === 'ELEMENTARY') {
+    return true;
+  }
+  if (role === 'SECRETARY_JH' && unit === 'JUNIOR_HIGH') {
+    return true;
+  }
+
+  // Delegate to existing assigned class check
+  return isTeacherAssignedToClass(classData, profile.uid);
+}
+

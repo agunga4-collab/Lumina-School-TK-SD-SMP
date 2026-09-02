@@ -234,6 +234,9 @@ export function Layout() {
 
   // Use state for activeUnit so Super Admin and Parents can switch
   const [activeUnit, setActiveUnit] = React.useState<UnitType | null>(() => {
+    if (profile?.role === 'SECRETARY_KINDY') return 'KINDERGARTEN';
+    if (profile?.role === 'SECRETARY_ELEM') return 'ELEMENTARY';
+    if (profile?.role === 'SECRETARY_JH') return 'JUNIOR_HIGH';
     if (profile?.role === 'HEAD_UNIT' && profile?.unitId === 'KINDERGARTEN') {
       return 'KINDERGARTEN';
     }
@@ -244,7 +247,13 @@ export function Layout() {
   const [showChatView, setShowChatView] = React.useState(false);
 
   React.useEffect(() => {
-    if (profile?.role === 'HEAD_UNIT' && profile?.unitId === 'KINDERGARTEN') {
+    if (profile?.role === 'SECRETARY_KINDY') {
+      if (activeUnit !== 'KINDERGARTEN') setActiveUnit('KINDERGARTEN');
+    } else if (profile?.role === 'SECRETARY_ELEM') {
+      if (activeUnit !== 'ELEMENTARY') setActiveUnit('ELEMENTARY');
+    } else if (profile?.role === 'SECRETARY_JH') {
+      if (activeUnit !== 'JUNIOR_HIGH') setActiveUnit('JUNIOR_HIGH');
+    } else if (profile?.role === 'HEAD_UNIT' && profile?.unitId === 'KINDERGARTEN') {
       if (activeUnit !== 'KINDERGARTEN') {
         setActiveUnit('KINDERGARTEN');
       }
@@ -361,9 +370,14 @@ export function Layout() {
 
   if (!currentUser) return null;
 
-  const currentUnit = (currentUser.role === 'kindergarten_subject_teacher' || (currentUser.role === 'HEAD_UNIT' && currentUser.unitId === 'KINDERGARTEN'))
-    ? 'KINDERGARTEN'
-    : (activeUnit || (currentUser.unitId as UnitType) || 'JUNIOR_HIGH');
+  const currentUnit = (
+    currentUser.role === 'SECRETARY_KINDY' ? 'KINDERGARTEN' :
+    currentUser.role === 'SECRETARY_ELEM' ? 'ELEMENTARY' :
+    currentUser.role === 'SECRETARY_JH' ? 'JUNIOR_HIGH' :
+    (currentUser.role === 'kindergarten_subject_teacher' || (currentUser.role === 'HEAD_UNIT' && currentUser.unitId === 'KINDERGARTEN'))
+      ? 'KINDERGARTEN'
+      : (activeUnit || (currentUser.unitId as UnitType) || 'JUNIOR_HIGH')
+  );
 
   if (location.pathname.includes('/conference/presentation/')) {
     return (
@@ -719,14 +733,14 @@ export function Layout() {
           </div>
 
           {/* Unit Specific Menus (Teacher & Admin Only) */}
-          {(currentUser.role === 'TEACHER' || currentUser.role === 'HEAD_UNIT' || currentUser.role === 'HEAD_JUNIOR' || currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'BK_MENTOR' || currentUser.role === 'kindergarten_subject_teacher') && (
+          {(currentUser.role === 'TEACHER' || currentUser.role === 'HEAD_UNIT' || currentUser.role === 'HEAD_JUNIOR' || currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'BK_MENTOR' || currentUser.role === 'kindergarten_subject_teacher' || currentUser.role === 'SECRETARY_KINDY' || currentUser.role === 'SECRETARY_ELEM' || currentUser.role === 'SECRETARY_JH') && (
             <>
               {currentUnit === 'KINDERGARTEN' && (
                 <div className="space-y-1">
                   <NavSectionLabel label="Keseharian & Belajar" />
                   {currentUser.role !== 'kindergarten_subject_teacher' && (
                     <>
-                      {(['SUPER_ADMIN', 'HEAD_UNIT'].includes(currentUser.role) || hasKindyClassAssignment) && (
+                      {(['SUPER_ADMIN', 'HEAD_UNIT', 'SECRETARY_KINDY'].includes(currentUser.role) || hasKindyClassAssignment) && (
                         <NavItem to="/kindy/dashboard" icon={<LayoutDashboard size={18} />} label="Dashboard" />
                       )}
                       <NavItem to="/class-data" icon={<Users size={18} />} label="Data Kelas" />
@@ -749,7 +763,7 @@ export function Layout() {
               {currentUnit === 'ELEMENTARY' && (
                 <div className="space-y-1">
                   <NavSectionLabel label="Akademik" />
-                  {(['SUPER_ADMIN', 'HEAD_UNIT'].includes(currentUser.role) || hasElementaryClassAssignment) && (
+                  {(['SUPER_ADMIN', 'HEAD_UNIT', 'SECRETARY_ELEM'].includes(currentUser.role) || hasElementaryClassAssignment) && (
                     <NavItem to="/elementary/dashboard" icon={<LayoutDashboard size={18} />} label="Dashboard Guru Kelas" />
                   )}
                   <NavItem to="/class-data" icon={<Users size={18} />} label="Data Kelas" />
@@ -797,10 +811,10 @@ export function Layout() {
                   <NavItem to="/junior-high/literasi-numerasi" icon={<BookOpen size={18} />} label="Literasi & Numerasi" />
                   <NavItem to="/junior-high/learning-power-up" icon={<CheckSquare size={18} />} label="Learning Power-Up" />
                   <NavItem to="/self-exploration" icon={<Sparkles size={18} />} label="Self-Exploration" />
-                  {['SUPER_ADMIN', 'HEAD_JUNIOR', 'TEACHER'].includes(currentUser.role) && (
+                  {['SUPER_ADMIN', 'HEAD_JUNIOR', 'TEACHER', 'SECRETARY_JH'].includes(currentUser.role) && (
                     <NavItem to="/junior-high/unit-activities" icon={<Compass size={18} />} label="Unit Aktivitas" />
                   )}
-                  {['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL'].includes(currentUser.role) && (
+                  {['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL', 'SECRETARY_JH'].includes(currentUser.role) && (
                     <>
                       <button
                         onClick={() => setMonthlyReportOpen(!monthlyReportOpen)}
@@ -836,7 +850,7 @@ export function Layout() {
                   )}
                   <NavItem to="/junior-high/behavior/mtss/overview" icon={<ShieldAlert size={18} />} label="MTSS Behavior" />
                   <NavItem to="/junior-high/academic/mtss/overview" icon={<GraduationCap size={18} />} label="MTSS Academic" />
-                  {['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR'].includes(currentUser.role) && (
+                  {['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR', 'SECRETARY_JH'].includes(currentUser.role) && (
                     <>
                       <NavItem to="/junior-high/conference/workspace" icon={<Users size={18} />} label="3-Way Conf Workspace" />
                       {/* <NavItem to="/junior-high/conference/tracker" icon={<TrendingUp size={18} />} label="SMART Goal Tracker" /> */}

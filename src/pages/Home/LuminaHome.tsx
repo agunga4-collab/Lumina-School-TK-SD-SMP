@@ -61,7 +61,7 @@ export default function LuminaHome() {
     return <HeadDashboard />;
   }
 
-  if (activeUnit === 'JUNIOR_HIGH' && (userRole === 'TEACHER' || userRole === 'BK_MENTOR')) {
+  if (activeUnit === 'JUNIOR_HIGH' && (userRole === 'TEACHER' || userRole === 'BK_MENTOR' || userRole === 'SECRETARY_JH')) {
     return (
       <>
         <TeacherDashboard />
@@ -216,7 +216,7 @@ export default function LuminaHome() {
 
 function Shortcut({ role, unit }: { role: UserRole; unit: UnitType }) {
   const isHead = role === 'HEAD_UNIT' || role === 'HEAD_JUNIOR' || role === 'SUPER_ADMIN';
-  const isTeacher = role === 'TEACHER';
+  const isTeacher = role === 'TEACHER' || role === 'SECRETARY_KINDY' || role === 'SECRETARY_ELEM' || role === 'SECRETARY_JH';
   const isBK = role === 'BK_MENTOR';
   const isParent = role === 'PARENT';
   const isStudent = role === 'STUDENT';

@@ -161,6 +161,52 @@ function RoleGuard({ children, roles }: { children: React.ReactNode, roles: stri
     }
   }
 
+  // Scoped unit access for SECRETARY_KINDY
+  if (profile?.role === 'SECRETARY_KINDY') {
+    const path = window.location.pathname.toLowerCase();
+    if (
+      path.includes('/elementary') || 
+      path.includes('/junior-high') || 
+      path.includes('/admin') ||
+      path.includes('/head-elementary') ||
+      path.includes('/settings') ||
+      path.includes('/report-config')
+    ) {
+      return <Navigate to="/" replace />;
+    }
+  }
+
+  // Scoped unit access for SECRETARY_ELEM
+  if (profile?.role === 'SECRETARY_ELEM') {
+    const path = window.location.pathname.toLowerCase();
+    if (
+      path.includes('/kindy') || 
+      path.includes('/junior-high') || 
+      path.includes('/admin') ||
+      path.includes('/head-kindy') ||
+      path.includes('/settings') ||
+      path.includes('/report-config')
+    ) {
+      return <Navigate to="/" replace />;
+    }
+  }
+
+  // Scoped unit access for SECRETARY_JH
+  if (profile?.role === 'SECRETARY_JH') {
+    const path = window.location.pathname.toLowerCase();
+    if (
+      path.includes('/kindy') || 
+      path.includes('/elementary') || 
+      path.includes('/admin') ||
+      path.includes('/head-kindy') ||
+      path.includes('/head-elementary') ||
+      path.includes('/settings') ||
+      path.includes('/report-config')
+    ) {
+      return <Navigate to="/" replace />;
+    }
+  }
+
   return <>{children}</>;
 }
 
@@ -427,32 +473,32 @@ export default function App() {
           <Route path="elementary/literasi-numerasi" element={<ElementaryLiteracyNumeracy />} />
           <Route path="elementary/literasi-numerasi/input" element={<ElementaryLiteracyInputPage />} />
           <Route path="elementary/dashboard" element={
-            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER']}>
+            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER', 'SECRETARY_ELEM']}>
               <ElementaryTeacherDashboard />
             </RoleGuard>
           } />
           <Route path="elementary/mtss-academic" element={
-            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER']}>
+            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER', 'SECRETARY_ELEM']}>
               <MTSSAcademicDashboard />
             </RoleGuard>
           } />
           <Route path="elementary/ldss" element={
-            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER']}>
+            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER', 'SECRETARY_ELEM']}>
               <LdssPage />
             </RoleGuard>
           } />
           <Route path="elementary/anecdote" element={
-            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER']}>
+            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER', 'SECRETARY_ELEM']}>
               <ClassAnecdotePage />
             </RoleGuard>
           } />
           <Route path="elementary/ldss/settings" element={
-            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER']}>
+            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER', 'SECRETARY_ELEM']}>
               <LdssPage />
             </RoleGuard>
           } />
           <Route path="elementary/ldss/settings/:age" element={
-            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER']}>
+            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER', 'SECRETARY_ELEM']}>
               <LdssPage />
             </RoleGuard>
           } />
@@ -476,47 +522,47 @@ export default function App() {
           <Route path="junior-high">
             <Route path="literasi-numerasi" element={<JuniorHighLiteracyNumeracy />} />
             <Route path="learning-power-up" element={
-              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'COORDINATOR']}>
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'COORDINATOR', 'SECRETARY_JH']}>
                 <LearningPowerUpTeacherPage />
               </RoleGuard>
             } />
             <Route path="unit-activities" element={
-              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_JUNIOR', 'TEACHER']}>
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_JUNIOR', 'TEACHER', 'SECRETARY_JH']}>
                 <UnitActivitiesPage />
               </RoleGuard>
             } />
             <Route path="monthly-report" element={
-              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL']}>
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL', 'SECRETARY_JH']}>
                 <MonthlyReportSummaryPage />
               </RoleGuard>
             } />
             <Route path="monthly-comments" element={
-              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL']}>
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL', 'SECRETARY_JH']}>
                 <MonthlyReportCommentsPage />
               </RoleGuard>
             } />
             <Route path="monthly-report-preview" element={
-              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL']}>
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL', 'SECRETARY_JH']}>
                 <MonthlyReportPreviewPage />
               </RoleGuard>
             } />
             <Route path="monthly-report-template" element={
-              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL']}>
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL', 'SECRETARY_JH']}>
                 <MonthlyReportTemplatePage />
               </RoleGuard>
             } />
             <Route path="monthly-report-pdf" element={
-              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL']}>
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL', 'SECRETARY_JH']}>
                 <MonthlyReportPdfPage />
               </RoleGuard>
             } />
             <Route path="monthly-report-pdf-link" element={
-              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL']}>
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL', 'SECRETARY_JH']}>
                 <MonthlyReportPdfLinkPage />
               </RoleGuard>
             } />
             <Route path="aap" element={
-              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL']}>
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL', 'SECRETARY_JH']}>
                 <AAPStaffPage />
               </RoleGuard>
             } />
@@ -526,12 +572,12 @@ export default function App() {
               </RoleGuard>
             } />
             <Route path="conference/workspace" element={
-              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR']}>
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR', 'SECRETARY_JH']}>
                 <TeacherConferenceWorkspace />
               </RoleGuard>
             } />
             <Route path="conference/tracker" element={
-              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR']}>
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR', 'SECRETARY_JH']}>
                 <StaffSmartGoalTrackerPage />
               </RoleGuard>
             } />

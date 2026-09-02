@@ -25,6 +25,17 @@ export function useTeacherAssignedClasses({
   const isRestrictedToAssignedClasses = useMemo(() => {
     if (!userRole) return true; // Default to restricted if no profile loaded yet
     
+    // Check unit-scoped Secretaries
+    if (userRole === 'SECRETARY_KINDY' && unit === 'KINDERGARTEN') {
+      return false;
+    }
+    if (userRole === 'SECRETARY_ELEM' && unit === 'ELEMENTARY') {
+      return false;
+    }
+    if (userRole === 'SECRETARY_JH' && unit === 'JUNIOR_HIGH') {
+      return false;
+    }
+
     const hasKgSubjectTeacherPermission = 
       userRole === 'kindergarten_subject_teacher' || 
       (profile?.permissions && profile.permissions.includes('kindergarten_observation_all_classes'));

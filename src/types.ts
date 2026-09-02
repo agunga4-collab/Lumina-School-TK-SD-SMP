@@ -730,7 +730,10 @@ export type UserRole =
   | 'COORDINATOR'
   | 'HOMEROOM_TEACHER'
   | 'COUNSELOR'
-  | 'kindergarten_subject_teacher';
+  | 'kindergarten_subject_teacher'
+  | 'SECRETARY_KINDY'
+  | 'SECRETARY_ELEM'
+  | 'SECRETARY_JH';
 
 export type UserStatus = 'active' | 'pending' | 'disabled';
 export type UnitType = 'KINDERGARTEN' | 'ELEMENTARY' | 'JUNIOR_HIGH';

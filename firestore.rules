@@ -41,18 +41,57 @@ service cloud.firestore {
         (userRole() == 'TEACHER' || userRole() == 'HOMEROOM_TEACHER');
     }
 
+    function isSecretaryKindy() {
+      return isActive() && userRole() == 'SECRETARY_KINDY' && currentUser().unitId == 'KINDERGARTEN';
+    }
+
+    function isSecretaryElem() {
+      return isActive() && userRole() == 'SECRETARY_ELEM' && currentUser().unitId == 'ELEMENTARY';
+    }
+
+    function isSecretaryJH() {
+      return isActive() && userRole() == 'SECRETARY_JH' && currentUser().unitId == 'JUNIOR_HIGH';
+    }
+
+    function isKindergartenClass(classId) {
+      return exists(/databases/$(database)/documents/classes/$(classId)) &&
+        get(/databases/$(database)/documents/classes/$(classId)).data.unitId == 'KINDERGARTEN';
+    }
+
+    function isElementaryClass(classId) {
+      return exists(/databases/$(database)/documents/classes/$(classId)) &&
+        get(/databases/$(database)/documents/classes/$(classId)).data.unitId == 'ELEMENTARY';
+    }
+
+    function isJuniorHighClass(classId) {
+      return exists(/databases/$(database)/documents/classes/$(classId)) &&
+        get(/databases/$(database)/documents/classes/$(classId)).data.unitId == 'JUNIOR_HIGH';
+    }
+
+    function isSecretaryKindyClassAccess(classId) {
+      return isSecretaryKindy() && isKindergartenClass(classId);
+    }
+
+    function isSecretaryElemClassAccess(classId) {
+      return isSecretaryElem() && isElementaryClass(classId);
+    }
+
+    function isSecretaryJHClassAccess(classId) {
+      return isSecretaryJH() && isJuniorHighClass(classId);
+    }
+
     function isJuniorHighStaff() {
       return isActive() && userRole() in [
         'TEACHER', 'HEAD_JUNIOR', 'BK_MENTOR',
         'MTSS_ACADEMIC_PJ', 'SUPER_ADMIN', 'HEAD_UNIT',
         'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR',
-        'HOMEROOM_TEACHER', 'COUNSELOR'
+        'HOMEROOM_TEACHER', 'COUNSELOR', 'SECRETARY_JH'
       ];
     }
 
     function isJHConferenceStaff() {
       return isActive() && userRole() in [
-        'SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR'
+        'SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR', 'SECRETARY_JH'
       ];
     }
 
@@ -183,7 +222,8 @@ service cloud.firestore {
           'PARENT', 'STUDENT', 'SUPER_ADMIN', 'GUEST',
           'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL',
           'COORDINATOR', 'HOMEROOM_TEACHER', 'COUNSELOR',
-          'kindergarten_subject_teacher'
+          'kindergarten_subject_teacher', 'SECRETARY_KINDY',
+          'SECRETARY_ELEM', 'SECRETARY_JH'
         ]
         && data.status in ['active', 'pending', 'disabled'];
     }
@@ -486,31 +526,31 @@ service cloud.firestore {
     }
 
     match /elementary_mtss_cases/{caseId} {
-      allow read: if isActive() && (isTeacher() || isAdmin() || isJuniorHighStaff() || isLinkedStudent(resource.data.studentId));
-      allow write: if isTeacher() || isAdmin() || isJuniorHighStaff();
+      allow read: if isActive() && (isTeacher() || isSecretaryElem() || isAdmin() || isJuniorHighStaff() || isLinkedStudent(resource.data.studentId));
+      allow write: if isTeacher() || isSecretaryElem() || isAdmin() || isJuniorHighStaff();
 
       match /coaching_sessions/{sessionId} {
-        allow read: if isActive() && (isTeacher() || isAdmin() || isJuniorHighStaff() || isLinkedStudent(get(/databases/$(database)/documents/elementary_mtss_cases/$(caseId)).data.studentId));
-        allow write: if isTeacher() || isAdmin() || isJuniorHighStaff();
+        allow read: if isActive() && (isTeacher() || isSecretaryElem() || isAdmin() || isJuniorHighStaff() || isLinkedStudent(get(/databases/$(database)/documents/elementary_mtss_cases/$(caseId)).data.studentId));
+        allow write: if isTeacher() || isSecretaryElem() || isAdmin() || isJuniorHighStaff();
       }
     }
 
     match /elementary_mtss_batch_sheets/{sheetId} {
-      allow read, write: if isActive() && (isTeacher() || isAdmin() || isJuniorHighStaff());
+      allow read, write: if isActive() && (isTeacher() || isSecretaryElem() || isAdmin() || isJuniorHighStaff());
     }
 
     match /elementary_literacy_numeracy/{recordId} {
-      allow read: if isActive() && (isTeacher() || isAdmin() || isJuniorHighStaff() || isLinkedStudent(existing().studentId));
-      allow write: if isTeacher() || isAdmin() || isJuniorHighStaff();
+      allow read: if isActive() && (isTeacher() || isSecretaryElemClassAccess(existing().classId) || isAdmin() || isJuniorHighStaff() || isLinkedStudent(existing().studentId));
+      allow write: if isTeacher() || isSecretaryElemClassAccess(incoming().classId) || isAdmin() || isJuniorHighStaff();
     }
 
     match /elementary_literacy_numeracy_records/{recordId} {
-      allow read: if isActive() && (isTeacher() || isAdmin() || isJuniorHighStaff() || isLinkedStudent(existing().studentId));
-      allow write: if isTeacher() || isAdmin() || isJuniorHighStaff();
+      allow read: if isActive() && (isTeacher() || isSecretaryElemClassAccess(existing().classId) || isAdmin() || isJuniorHighStaff() || isLinkedStudent(existing().studentId));
+      allow write: if isTeacher() || isSecretaryElemClassAccess(incoming().classId) || isAdmin() || isJuniorHighStaff();
     }
 
     match /elementaryLiteracyNumeracySheetConfigs/{configId} {
-      allow read: if isActive() && (isTeacher() || isAdmin() || isJuniorHighStaff());
+      allow read: if isActive() && (isTeacher() || isSecretaryElem() || isAdmin() || isJuniorHighStaff());
       allow write: if isAdmin();
     }
 
@@ -709,42 +749,36 @@ service cloud.firestore {
     }
 
     match /attendance/{attendanceId} {
-      allow read: if isActive() && isTeacher();
-      allow read: if isActive() && isJuniorHighStaff();
-      allow read: if isAdmin();
+      allow read: if isActive() && (isTeacher() || isSecretaryKindyClassAccess(existing().classId) || isSecretaryElemClassAccess(existing().classId) || isSecretaryJHClassAccess(existing().classId) || isJuniorHighStaff() || isAdmin());
       allow read: if isActive() && isLinkedStudent(existing().studentId);
-      allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
+      allow write: if isTeacher() || isSecretaryKindyClassAccess(incoming().classId) || isSecretaryElemClassAccess(incoming().classId) || isSecretaryJHClassAccess(incoming().classId) || isJuniorHighStaff() || isAdmin();
     }
 
     match /attendance_records/{recordId} {
-      allow read: if isActive() && isTeacher();
-      allow read: if isActive() && isJuniorHighStaff();
-      allow read: if isAdmin();
+      allow read: if isActive() && (isTeacher() || isSecretaryKindyClassAccess(existing().classId) || isSecretaryElemClassAccess(existing().classId) || isSecretaryJHClassAccess(existing().classId) || isJuniorHighStaff() || isAdmin());
       allow read: if isActive() && isLinkedStudent(existing().studentId);
-      allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
+      allow write: if isTeacher() || isSecretaryKindyClassAccess(incoming().classId) || isSecretaryElemClassAccess(incoming().classId) || isSecretaryJHClassAccess(incoming().classId) || isJuniorHighStaff() || isAdmin();
     }
 
     match /dhuhur_attendance_records/{recordId} {
-      allow read: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin());
+      allow read: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin() || isSecretaryJH());
       allow delete: if isActive() 
-        && (isJuniorHighStaff() || isTeacher() || isAdmin())
+        && (isJuniorHighStaff() || isTeacher() || isAdmin() || isSecretaryJH())
         && resource.data.unit == 'JUNIOR_HIGH'
         && resource.data.backupType == 'DHUHUR_ATTENDANCE';
-      allow create, update: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin());
+      allow create, update: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin() || isSecretaryJH());
     }
 
     match /lateness_records/{recordId} {
-      allow read: if isActive() && isTeacher();
-      allow read: if isActive() && isJuniorHighStaff();
-      allow read: if isAdmin();
+      allow read: if isActive() && (isTeacher() || isSecretaryKindyClassAccess(existing().classId) || isSecretaryElemClassAccess(existing().classId) || isSecretaryJHClassAccess(existing().classId) || isJuniorHighStaff() || isAdmin());
       allow read: if isActive() && isLinkedStudent(existing().studentId);
-      allow write: if isTeacher() || isJuniorHighStaff() || isAdmin();
+      allow write: if isTeacher() || isSecretaryKindyClassAccess(incoming().classId) || isSecretaryElemClassAccess(incoming().classId) || isSecretaryJHClassAccess(incoming().classId) || isJuniorHighStaff() || isAdmin();
     }
 
     match /minor_violations/{violationId} {
-      allow read: if isActive() && (isTeacher() || isJuniorHighStaff() || isAdmin());
+      allow read: if isActive() && (isTeacher() || isSecretaryKindyClassAccess(existing().classId) || isSecretaryElemClassAccess(existing().classId) || isSecretaryJHClassAccess(existing().classId) || isJuniorHighStaff() || isAdmin());
       allow read: if isActive() && isLinkedStudent(existing().studentId);
-      allow write: if isActive() && (isTeacher() || isJuniorHighStaff() || isAdmin());
+      allow write: if isActive() && (isTeacher() || isSecretaryKindyClassAccess(incoming().classId) || isSecretaryElemClassAccess(incoming().classId) || isSecretaryJHClassAccess(incoming().classId) || isJuniorHighStaff() || isAdmin());
     }
 
     match /minor_violation_types/{typeId} {
@@ -772,15 +806,13 @@ service cloud.firestore {
       allow write: if isAdmin() || isJuniorHighStaff();
     }
 
-    function isKindergartenClass(classId) {
-      return exists(/databases/$(database)/documents/classes/$(classId)) &&
-        get(/databases/$(database)/documents/classes/$(classId)).data.unitId == 'KINDERGARTEN';
-    }
+    // isKindergartenClass is defined above
 
     match /observations/{observationId} {
       allow read: if isActive() && (
         isTeacher() ||
         isJuniorHighStaff() ||
+        isSecretaryKindy() ||
         (userRole() == 'kindergarten_subject_teacher' && currentUser().unitId == 'KINDERGARTEN')
       );
       allow read: if isAdmin();
@@ -789,6 +821,8 @@ service cloud.firestore {
         isTeacher() ||
         isJuniorHighStaff() ||
         isAdmin() ||
+        isSecretaryKindyClassAccess(incoming().classId) ||
+        isSecretaryKindyClassAccess(existing().classId) ||
         (userRole() == 'kindergarten_subject_teacher' && currentUser().unitId == 'KINDERGARTEN' && (
           (request.method == 'create' && isKindergartenClass(incoming().classId)) ||
           (request.method == 'update' && isKindergartenClass(existing().classId) && isKindergartenClass(incoming().classId)) ||
@@ -802,6 +836,7 @@ service cloud.firestore {
         isTeacher() ||
         isJuniorHighStaff() ||
         isAdmin() ||
+        isSecretaryKindy() ||
         (userRole() == 'kindergarten_subject_teacher' && currentUser().unitId == 'KINDERGARTEN')
       );
     }
@@ -810,12 +845,14 @@ service cloud.firestore {
       allow read: if isActive() && (
         isAdmin() ||
         (userRole() == 'HEAD_UNIT') ||
+        isSecretaryKindyClassAccess(resource.data.classId) ||
         (isTeacher() && isTeacherAssignedToClass(resource.data.classId)) ||
         isLinkedStudent(resource.data.studentId)
       );
       allow write: if isActive() && (
         isAdmin() ||
         (userRole() == 'HEAD_UNIT') ||
+        isSecretaryKindyClassAccess(incoming().classId) ||
         (isTeacher() && isTeacherAssignedToClass(incoming().classId))
       ) && isValidAAPAssessment(incoming());
     }
@@ -824,12 +861,14 @@ service cloud.firestore {
       allow read: if isActive() && (
         isAdmin() ||
         (userRole() == 'HEAD_UNIT') ||
+        isSecretaryKindyClassAccess(resource.data.classId) ||
         (isTeacher() && isTeacherAssignedToClass(resource.data.classId)) ||
         isLinkedStudent(resource.data.studentId)
       );
       allow write: if isActive() && (
         isAdmin() ||
         (userRole() == 'HEAD_UNIT') ||
+        isSecretaryKindyClassAccess(incoming().classId) ||
         (isTeacher() && isTeacherAssignedToClass(incoming().classId))
       ) && isValidAAPFollowupPlan(incoming());
     }
@@ -838,17 +877,20 @@ service cloud.firestore {
       allow read: if isActive() && (
         isAdmin() ||
         (userRole() == 'HEAD_UNIT') ||
+        isSecretaryKindyClassAccess(resource.data.classId) ||
         (isTeacher() && isTeacherAssignedToClass(resource.data.classId)) ||
         isLinkedStudent(resource.data.studentId)
       );
       allow create, update: if isActive() && (
         isAdmin() ||
         (userRole() == 'HEAD_UNIT') ||
+        isSecretaryKindyClassAccess(incoming().classId) ||
         (isTeacher() && isTeacherAssignedToClass(incoming().classId))
       );
       allow delete: if isActive() && (
         isAdmin() ||
         (userRole() == 'HEAD_UNIT') ||
+        isSecretaryKindyClassAccess(resource.data.classId) ||
         (isTeacher() && isTeacherAssignedToClass(resource.data.classId))
       );
     }
@@ -857,12 +899,14 @@ service cloud.firestore {
       allow read: if isActive() && (
         isAdmin() ||
         (userRole() == 'HEAD_UNIT') ||
+        isSecretaryKindyClassAccess(resource.data.classId) ||
         (isTeacher() && isTeacherAssignedToClass(resource.data.classId)) ||
         isLinkedStudent(resource.data.studentId)
       );
       allow write: if isActive() && (
         isAdmin() ||
         (userRole() == 'HEAD_UNIT') ||
+        isSecretaryKindyClassAccess(incoming().classId) ||
         (isTeacher() && isTeacherAssignedToClass(incoming().classId))
       ) && isValidAAPMidtermReview(incoming()) && (
         (existing() == null) ||
@@ -875,12 +919,14 @@ service cloud.firestore {
       allow read: if isActive() && (
         isAdmin() ||
         (userRole() == 'HEAD_UNIT') ||
+        isSecretaryKindyClassAccess(resource.data.classId) ||
         (isTeacher() && isTeacherAssignedToClass(resource.data.classId)) ||
         isLinkedStudent(resource.data.studentId)
       );
       allow write: if isActive() && (
         isAdmin() ||
         (userRole() == 'HEAD_UNIT') ||
+        isSecretaryKindyClassAccess(incoming().classId) ||
         (isTeacher() && isTeacherAssignedToClass(incoming().classId))
       ) && isValidAAPEndOfTermReport(incoming()) && (
         (existing() == null) ||
@@ -1009,12 +1055,12 @@ service cloud.firestore {
 
     match /published_kg_reports/{reportId} {
       allow read: if isActive() &&
-        (isJuniorHighStaff() || isTeacher() || isOwnStudentData(existing().studentId));
-      allow create: if isJuniorHighStaff() || isAdmin() || isTeacher();
-      allow update: if (isJuniorHighStaff() || isAdmin() || isTeacher()) ||
+        (isJuniorHighStaff() || isTeacher() || isSecretaryKindy() || isOwnStudentData(existing().studentId));
+      allow create: if isJuniorHighStaff() || isAdmin() || isTeacher() || isSecretaryKindy();
+      allow update: if (isJuniorHighStaff() || isAdmin() || isTeacher() || isSecretaryKindy()) ||
         (isActive() && isOwnStudentData(existing().studentId) &&
          incoming().diff(existing()).affectedKeys().hasOnly(['studentViewedAt', 'lastStudentViewedAt', 'pdfOpenedAt', 'viewCount']));
-      allow delete: if isJuniorHighStaff() || isAdmin() || isTeacher();
+      allow delete: if isJuniorHighStaff() || isAdmin() || isTeacher() || isSecretaryKindy();
     }
 
     match /published_junior_high_monthly_reports/{reportId} {
@@ -1028,14 +1074,14 @@ service cloud.firestore {
     }
 
     match /archived_kg_reports/{reportId} {
-      allow read: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin());
-      allow create: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin());
-      allow update: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin());
-      allow delete: if isActive() && (isJuniorHighStaff() || isTeacher() || isAdmin());
+      allow read: if isActive() && (isJuniorHighStaff() || isTeacher() || isSecretaryKindy() || isAdmin());
+      allow create: if isActive() && (isJuniorHighStaff() || isTeacher() || isSecretaryKindy() || isAdmin());
+      allow update: if isActive() && (isJuniorHighStaff() || isTeacher() || isSecretaryKindy() || isAdmin());
+      allow delete: if isActive() && (isJuniorHighStaff() || isTeacher() || isSecretaryKindy() || isAdmin());
     }
 
     match /weekly_summary_drafts/{draftId} {
-      allow read, write: if (isActive() && (isJuniorHighStaff() || isTeacher())) || isAdmin();
+      allow read, write: if (isActive() && (isJuniorHighStaff() || isTeacher() || isSecretaryKindy() || isSecretaryElem() || isSecretaryJH())) || isAdmin();
     }
 
     match /ldssTemplates/{templateId} {
@@ -1153,18 +1199,21 @@ service cloud.firestore {
       allow read: if isActive() && (
         isAdmin() ||
         (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL')) ||
+        isSecretaryElem() ||
         (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL'))
       );
       
       allow create: if isActive() && (
         isAdmin() ||
         (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL')) ||
+        isSecretaryElemClassAccess(incoming().classId) ||
         (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL') && isTeacherAssignedToClass(incoming().classId))
       ) && isValidClassAnecdote(incoming());
       
       allow update: if isActive() && (
         isAdmin() ||
         (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL')) ||
+        isSecretaryElemClassAccess(incoming().classId) ||
         (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL') && isTeacherAssignedToClass(incoming().classId))
       ) && isValidClassAnecdoteUpdate(incoming())
         && incoming().studentId == existing().studentId
@@ -1176,6 +1225,7 @@ service cloud.firestore {
       allow delete: if isActive() && (
         isAdmin() ||
         (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL')) ||
+        isSecretaryElemClassAccess(existing().classId) ||
         (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL') && isTeacherAssignedToClass(existing().classId))
       );
     }
