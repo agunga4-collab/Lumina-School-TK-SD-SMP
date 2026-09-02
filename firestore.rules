@@ -1299,9 +1299,42 @@ service cloud.firestore {
       allow list: if isActive() && (isJuniorHighStaff() || isAdmin());
       allow get: if isActive() && (
         (isJuniorHighStaff() || isAdmin()) ||
-        (isOwnStudentData(resource.data.studentId) && resource.data.status == 'PUBLISHED')
+        ((isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)) && (resource.data.status == 'PUBLISHED' || resource.data.status == 'PERLU_PUBLISH_ULANG'))
       );
-      allow write: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow create: if isActive() && (
+        isAdmin() ||
+        (
+          isJuniorHighStaff() && (
+            (!isTeacher() || isTeacherAssignedToClass(request.resource.data.classId)) &&
+            (!('componentAudit' in request.resource.data) || (
+              (!('numeracy' in request.resource.data.componentAudit) || request.resource.data.componentAudit.numeracy.updatedBy == request.auth.uid) &&
+              (!('readingFluency' in request.resource.data.componentAudit) || request.resource.data.componentAudit.readingFluency.updatedBy == request.auth.uid) &&
+              (!('mengaji' in request.resource.data.componentAudit) || request.resource.data.componentAudit.mengaji.updatedBy == request.auth.uid)
+            ))
+          )
+        )
+      );
+      allow update: if isActive() && (
+        isAdmin() ||
+        (
+          isJuniorHighStaff() && (
+            (!isTeacher() || isTeacherAssignedToClass(request.resource.data.classId)) &&
+            (!('componentAudit' in request.resource.data) || (
+              (!('numeracy' in request.resource.data.componentAudit) || request.resource.data.componentAudit.numeracy.updatedBy == request.auth.uid) &&
+              (!('readingFluency' in request.resource.data.componentAudit) || request.resource.data.componentAudit.readingFluency.updatedBy == request.auth.uid) &&
+              (!('mengaji' in request.resource.data.componentAudit) || request.resource.data.componentAudit.mengaji.updatedBy == request.auth.uid)
+            ))
+          )
+        )
+      );
+      allow delete: if isActive() && (
+        isAdmin() ||
+        (
+          isJuniorHighStaff() && (
+            (!isTeacher() || isTeacherAssignedToClass(resource.data.classId))
+          )
+        )
+      );
     }
   }
 }

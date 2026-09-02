@@ -168,9 +168,21 @@ export default function AAPStudentPage() {
         const snap = await getDoc(docRef);
 
         if (snap.exists()) {
-          const data = snap.data() as JuniorHighAAPResult;
-          if (data.status === 'PUBLISHED') {
-            setAapResult(data);
+          const data = snap.data() as JuniorHighAAPResult & { publishedData?: any };
+          if (data.status === 'PUBLISHED' || data.status === 'PERLU_PUBLISH_ULANG') {
+            if (data.publishedData) {
+              setAapResult({
+                ...data,
+                mathLevel: data.publishedData.mathLevel ?? '',
+                readingFluencyLevel: data.publishedData.readingFluencyLevel ?? '',
+                mengajiMaterial: data.publishedData.mengajiMaterial ?? '',
+                mengajiCategory: data.publishedData.mengajiCategory ?? '',
+                bahasaIndonesiaLevel: data.publishedData.bahasaIndonesiaLevel ?? null,
+                bahasaIndonesiaLabel: data.publishedData.bahasaIndonesiaLabel ?? '',
+              });
+            } else {
+              setAapResult(data);
+            }
           } else {
             setAapResult(null); // Keep as null to trigger 'Not published yet' message
           }

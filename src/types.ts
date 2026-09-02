@@ -2285,7 +2285,49 @@ export interface JuniorHighAAPResult {
   mengajiCategory: 'ISYROF' | 'MUBTADI' | 'MAQBUL' | 'JAYYID' | '';
   bahasaIndonesiaLevel: number | null; // 1, 2, 3, 4
   bahasaIndonesiaLabel: 'Perlu Pendampingan Intensif' | 'Perlu Penguatan Terarah' | 'Siap Berkembang' | 'Siap Lanjut' | '';
-  status: 'DRAFT' | 'PUBLISHED';
+  status: 'DRAFT' | 'PUBLISHED' | 'PERLU_PUBLISH_ULANG' | 'PARSIAL' | 'KOSONG' | 'LENGKAP';
+  componentAudit?: {
+    numeracy?: {
+      createdBy: string;
+      createdByName?: string;
+      createdByEmail?: string;
+      createdAt: any;
+      updatedBy: string;
+      updatedByName?: string;
+      updatedByEmail?: string;
+      updatedAt: any;
+    };
+    readingFluency?: {
+      createdBy: string;
+      createdByName?: string;
+      createdByEmail?: string;
+      createdAt: any;
+      updatedBy: string;
+      updatedByName?: string;
+      updatedByEmail?: string;
+      updatedAt: any;
+    };
+    mengaji?: {
+      createdBy: string;
+      createdByName?: string;
+      createdByEmail?: string;
+      createdAt: any;
+      updatedBy: string;
+      updatedByName?: string;
+      updatedByEmail?: string;
+      updatedAt: any;
+    };
+  };
+  publishedData?: {
+    mathLevel: string;
+    readingFluencyLevel: string;
+    mengajiMaterial: string;
+    mengajiCategory: string;
+    bahasaIndonesiaLevel: number | null;
+    bahasaIndonesiaLabel: string;
+    publishedAt: any;
+    publishedBy: string;
+  };
   createdAt: any; // Firestore timestamp or number or any
   createdBy: string;
   updatedAt: any;

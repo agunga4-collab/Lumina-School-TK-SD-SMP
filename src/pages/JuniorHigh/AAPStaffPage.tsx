@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { 
   Search, Filter, ClipboardList, CheckCircle2, AlertTriangle, Trash2, 
-  Loader2, Sparkles, Send, FileSpreadsheet, Eye, RefreshCw, XCircle
+  Loader2, Sparkles, Send, FileSpreadsheet, Eye, RefreshCw, XCircle,
+  X, BookOpen, Calculator
 } from 'lucide-react';
 import { 
   getActiveStudents, db 
@@ -11,8 +12,33 @@ import { useAuth } from '../../context/AuthContext';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, makeAAPResultId } from '../../lib/utils';
-import { collection, doc, writeBatch, deleteDoc, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, writeBatch, deleteDoc, getDocs, getDoc, query, where, serverTimestamp } from 'firebase/firestore';
 import { toast } from 'sonner';
+
+// Helper to determine if a teacher has authorization to access a class
+const checkClassAccess = (classObj: any, userProfile: any): boolean => {
+  if (!classObj || !userProfile) return false;
+
+  // Admins and non-teacher staff roles bypass standard class-access restrictions
+  const superRoles = ['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'SECRETARY_JH', 'COORDINATOR'];
+  if (superRoles.includes(userProfile.role)) {
+    return true;
+  }
+
+  // If standard teacher or homeroom teacher, verify assignment
+  const uid = userProfile.uid;
+  
+  const isHomeroom = classObj.homeroomTeacherId === uid ||
+    (classObj.homeroomTeacherIds && classObj.homeroomTeacherIds.includes(uid)) ||
+    (classObj.waliKelasIds && classObj.waliKelasIds.includes(uid));
+
+  const isAssigned = (classObj.assignedTeacherIds && classObj.assignedTeacherIds.includes(uid)) ||
+    (classObj.gpkTeacherIds && classObj.gpkTeacherIds.includes(uid));
+
+  const hasAssignmentInArray = classObj.teacherAssignments && classObj.teacherAssignments.some((a: any) => a.userId === uid);
+
+  return !!(isHomeroom || isAssigned || hasAssignmentInArray);
+};
 
 // Parsing and Normalization Helpers
 const normalizeName = (name: string): string => {
@@ -81,6 +107,204 @@ const parseBahasaIndonesia = (raw: string): { level: number; label: 'Perlu Penda
   return null;
 };
 
+// Helper to format audit timestamps
+const formatAuditDate = (timestamp: any): string => {
+  if (!timestamp) return '';
+  let date: Date;
+  if (typeof timestamp.toDate === 'function') {
+    date = timestamp.toDate();
+  } else if (timestamp instanceof Date) {
+    date = timestamp;
+  } else if (typeof timestamp === 'number' || typeof timestamp === 'string') {
+    date = new Date(timestamp);
+  } else if (timestamp.seconds !== undefined) {
+    date = new Date(timestamp.seconds * 1000);
+  } else {
+    return '';
+  }
+  return date.toLocaleString('id-ID', {
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  });
+};
+
+// Multi-component completeness & status helper
+const getStudentAAPStatusAndTerisi = (result: JuniorHighAAPResult | undefined) => {
+  if (!result) {
+    return {
+      status: 'KOSONG',
+      terisiText: '0/3 komponen terisi',
+      filledCount: 0
+    };
+  }
+
+  const hasNumeracy = !!result.mathLevel;
+  const hasReadingFluency = !!result.readingFluencyLevel;
+  const hasMengaji = !!result.mengajiMaterial && !!result.mengajiCategory;
+
+  const filledCount = (hasNumeracy ? 1 : 0) + (hasReadingFluency ? 1 : 0) + (hasMengaji ? 1 : 0);
+
+  if (filledCount === 0) {
+    return {
+      status: 'KOSONG',
+      terisiText: '0/3 komponen terisi',
+      filledCount: 0
+    };
+  }
+
+  const isLengkap = filledCount === 3;
+
+  let status: 'PARSIAL' | 'LENGKAP' | 'PUBLISHED' | 'PERLU_PUBLISH_ULANG' = 'PARSIAL';
+  if (isLengkap) {
+    if (result.status === 'PUBLISHED') {
+      status = 'PUBLISHED';
+    } else if (result.status === 'PERLU_PUBLISH_ULANG') {
+      status = 'PERLU_PUBLISH_ULANG';
+    } else {
+      status = 'LENGKAP';
+    }
+  } else {
+    status = 'PARSIAL';
+  }
+
+  return {
+    status,
+    terisiText: `${filledCount}/3 komponen terisi`,
+    filledCount
+  };
+};
+
+// Build new component-level audit metadata
+const buildNewComponentAudit = (
+  existingAudit: any,
+  currentFields: {
+    mathLevel: string;
+    readingFluencyLevel: string;
+    mengajiMaterial: string;
+    mengajiCategory: string;
+  },
+  existingFields: {
+    mathLevel: string;
+    readingFluencyLevel: string;
+    mengajiMaterial: string;
+    mengajiCategory: string;
+  } | undefined,
+  user: any
+) => {
+  const audit: any = existingAudit ? { ...existingAudit } : {};
+
+  const userUid = user.uid || '';
+  const userName = user.displayName || user.name || user.fullName || 'Staf';
+  const userEmail = user.email || '';
+  const now = new Date();
+
+  const userIdentity = {
+    uid: userUid,
+    name: userName,
+    email: userEmail
+  };
+
+  // 1. Numeracy
+  const hasNumeracy = !!currentFields.mathLevel;
+  if (hasNumeracy) {
+    const prevAudit = audit.numeracy;
+    const valChanged = !existingFields || currentFields.mathLevel !== existingFields.mathLevel;
+    
+    if (!prevAudit) {
+      audit.numeracy = {
+        createdBy: userIdentity.uid,
+        createdByName: userIdentity.name,
+        createdByEmail: userIdentity.email,
+        createdAt: now,
+        updatedBy: userIdentity.uid,
+        updatedByName: userIdentity.name,
+        updatedByEmail: userIdentity.email,
+        updatedAt: now
+      };
+    } else if (valChanged) {
+      audit.numeracy = {
+        ...prevAudit,
+        updatedBy: userIdentity.uid,
+        updatedByName: userIdentity.name,
+        updatedByEmail: userIdentity.email,
+        updatedAt: now
+      };
+    }
+  } else {
+    if (!existingFields?.mathLevel) {
+      delete audit.numeracy;
+    }
+  }
+
+  // 2. Reading Fluency
+  const hasReading = !!currentFields.readingFluencyLevel;
+  if (hasReading) {
+    const prevAudit = audit.readingFluency;
+    const valChanged = !existingFields || currentFields.readingFluencyLevel !== existingFields.readingFluencyLevel;
+
+    if (!prevAudit) {
+      audit.readingFluency = {
+        createdBy: userIdentity.uid,
+        createdByName: userIdentity.name,
+        createdByEmail: userIdentity.email,
+        createdAt: now,
+        updatedBy: userIdentity.uid,
+        updatedByName: userIdentity.name,
+        updatedByEmail: userIdentity.email,
+        updatedAt: now
+      };
+    } else if (valChanged) {
+      audit.readingFluency = {
+        ...prevAudit,
+        updatedBy: userIdentity.uid,
+        updatedByName: userIdentity.name,
+        updatedByEmail: userIdentity.email,
+        updatedAt: now
+      };
+    }
+  } else {
+    if (!existingFields?.readingFluencyLevel) {
+      delete audit.readingFluency;
+    }
+  }
+
+  // 3. Mengaji
+  const hasMengaji = !!currentFields.mengajiMaterial && !!currentFields.mengajiCategory;
+  if (hasMengaji) {
+    const prevAudit = audit.mengaji;
+    const valChanged = !existingFields || 
+      currentFields.mengajiMaterial !== existingFields.mengajiMaterial ||
+      currentFields.mengajiCategory !== existingFields.mengajiCategory;
+
+    if (!prevAudit) {
+      audit.mengaji = {
+        createdBy: userIdentity.uid,
+        createdByName: userIdentity.name,
+        createdByEmail: userIdentity.email,
+        createdAt: now,
+        updatedBy: userIdentity.uid,
+        updatedByName: userIdentity.name,
+        updatedByEmail: userIdentity.email,
+        updatedAt: now
+      };
+    } else if (valChanged) {
+      audit.mengaji = {
+        ...prevAudit,
+        updatedBy: userIdentity.uid,
+        updatedByName: userIdentity.name,
+        updatedByEmail: userIdentity.email,
+        updatedAt: now
+      };
+    }
+  } else {
+    if (!(existingFields?.mengajiMaterial && existingFields?.mengajiCategory)) {
+      delete audit.mengaji;
+    }
+  }
+
+  return audit;
+};
+
 interface PreviewRow {
   index: number;
   rawNo: string;
@@ -104,6 +328,54 @@ interface PreviewRow {
   validationError?: string;
 }
 
+const renderComponentAudit = (audit: any, isCurrentlyFilled: boolean) => {
+  if (!audit) {
+    if (isCurrentlyFilled) {
+      return (
+        <span className="text-[10px] text-gray-400 italic">
+          Riwayat input tidak tersedia
+        </span>
+      );
+    }
+    return (
+      <span className="text-[10px] text-gray-400 italic">
+        Belum diisi
+      </span>
+    );
+  }
+
+  const createdTime = formatAuditDate(audit.createdAt);
+  const updatedTime = formatAuditDate(audit.updatedAt);
+  const createdName = audit.createdByName || 'Staf';
+  const updatedName = audit.updatedByName || 'Staf';
+
+  const isCreatedAndUpdatedBySame = audit.createdBy === audit.updatedBy;
+
+  if (isCreatedAndUpdatedBySame || !audit.updatedBy) {
+    return (
+      <div className="text-right">
+        <p className="text-[9px] text-gray-500 font-bold leading-tight">
+          Diinput oleh: <span className="text-indigo-600">{createdName}</span>
+        </p>
+        <p className="text-[9px] text-gray-400 font-medium">
+          {createdTime}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-right">
+      <p className="text-[9px] text-gray-500 font-bold leading-tight">
+        Diinput: <span className="text-indigo-600">{createdName}</span>
+      </p>
+      <p className="text-[9px] text-gray-500 font-bold leading-tight mt-0.5">
+        Terakhir diperbarui: <span className="text-amber-600">{updatedName}</span> · <span className="text-gray-400 font-medium">{updatedTime}</span>
+      </p>
+    </div>
+  );
+};
+
 export default function AAPStaffPage() {
   const { profile } = useAuth();
   const { activeYear } = useAcademicYear();
@@ -112,6 +384,9 @@ export default function AAPStaffPage() {
   const [selectedYear, setSelectedYear] = React.useState<string>(activeYear || '');
   const [selectedClassId, setSelectedClassId] = React.useState<string>('');
   
+  // Search state
+  const [searchQuery, setSearchQuery] = React.useState<string>('');
+
   // Master data
   const [classes, setClasses] = React.useState<any[]>([]);
   const [roster, setRoster] = React.useState<Student[]>([]);
@@ -129,6 +404,21 @@ export default function AAPStaffPage() {
   const [dataLoading, setDataLoading] = React.useState<boolean>(false);
   const [saveLoading, setSaveLoading] = React.useState<boolean>(false);
 
+  // Individual edit modal states
+  const [isEditModalOpen, setIsEditModalOpen] = React.useState<boolean>(false);
+  const [editingStudent, setEditingStudent] = React.useState<Student | null>(null);
+  const [editingResult, setEditingResult] = React.useState<JuniorHighAAPResult | null>(null);
+  const [openedUpdatedAt, setOpenedUpdatedAt] = React.useState<any>(null); // For conflict checks
+
+  const [formValues, setFormValues] = React.useState({
+    mathLevel: '' as 'Beginning Understanding' | 'Supported Understanding' | 'Independent Understanding' | 'Demonstrating Mastery' | '',
+    readingFluencyLevel: '' as 'IR+' | 'ER' | 'ER EN' | '',
+    mengajiMaterial: '' as any,
+    mengajiCategory: '' as any,
+    bahasaIndonesiaLevel: null as number | null,
+    bahasaIndonesiaLabel: '' as any
+  });
+
   // Check role authorization
   const isAuthorized = React.useMemo(() => {
     if (!profile) return false;
@@ -136,7 +426,7 @@ export default function AAPStaffPage() {
       'TEACHER', 'HEAD_JUNIOR', 'BK_MENTOR',
       'MTSS_ACADEMIC_PJ', 'SUPER_ADMIN', 'HEAD_UNIT',
       'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR',
-      'HOMEROOM_TEACHER', 'COUNSELOR'
+      'HOMEROOM_TEACHER', 'COUNSELOR', 'SECRETARY_JH'
     ];
     return staffRoles.includes(profile.role);
   }, [profile]);
@@ -154,10 +444,17 @@ export default function AAPStaffPage() {
     try {
       const q = query(collection(db, 'classes'), where('unitId', '==', 'JUNIOR_HIGH'));
       const snap = await getDocs(q);
-      const list = snap.docs
+      let list = snap.docs
         .map(d => ({ id: d.id, ...d.data() } as any))
         .filter(c => c.academicYear === selectedYear && c.status === 'active')
         .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+      // Apply standard teacher class permissions filtering
+      const isTeacherRole = ['TEACHER', 'HOMEROOM_TEACHER'].includes(profile?.role || '');
+      const isSuperUser = ['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'SECRETARY_JH', 'COORDINATOR'].includes(profile?.role || '');
+      if (isTeacherRole && !isSuperUser) {
+        list = list.filter(c => checkClassAccess(c, profile));
+      }
 
       setClasses(list);
       if (list.length > 0) {
@@ -174,7 +471,7 @@ export default function AAPStaffPage() {
     } finally {
       setMetaLoading(false);
     }
-  }, [isAuthorized, selectedYear, selectedClassId]);
+  }, [isAuthorized, selectedYear, selectedClassId, profile]);
 
   React.useEffect(() => {
     fetchClasses();
@@ -219,6 +516,12 @@ export default function AAPStaffPage() {
   const currentClassObj = React.useMemo(() => {
     return classes.find(c => c.id === selectedClassId) || null;
   }, [classes, selectedClassId]);
+
+  // Class assignment access verification
+  const isClassAccessGranted = React.useMemo(() => {
+    if (!currentClassObj) return false;
+    return checkClassAccess(currentClassObj, profile);
+  }, [currentClassObj, profile]);
 
   // Handle bulk paste and auto-matching
   const handlePreview = () => {
@@ -424,8 +727,28 @@ export default function AAPStaffPage() {
 
       validRows.forEach(row => {
         const student = roster.find(s => s.id === row.studentId);
-        const docId = makeAAPResultId(row.studentId, selectedYear);
+        const docId = makeAAPResultId(row.studentId || '', selectedYear);
         const ref = doc(db, 'junior_high_aap_results', docId);
+
+        const existing = existingResults.find(e => e.studentId === row.studentId);
+
+        // Build per-component audits for newly filled fields
+        const updatedAudit = buildNewComponentAudit(
+          existing?.componentAudit,
+          {
+            mathLevel: row.mathLevel,
+            readingFluencyLevel: row.readingFluencyLevel,
+            mengajiMaterial: row.mengajiMaterial,
+            mengajiCategory: row.mengajiCategory
+          },
+          existing ? {
+            mathLevel: existing.mathLevel || '',
+            readingFluencyLevel: existing.readingFluencyLevel || '',
+            mengajiMaterial: existing.mengajiMaterial || '',
+            mengajiCategory: existing.mengajiCategory || ''
+          } : undefined,
+          profile
+        );
 
         const payload: any = {
           studentId: row.studentId,
@@ -441,15 +764,18 @@ export default function AAPStaffPage() {
           bahasaIndonesiaLevel: row.bahasaIndonesiaLevel,
           bahasaIndonesiaLabel: row.bahasaIndonesiaLabel,
           status: targetStatus,
+          componentAudit: updatedAudit,
           updatedAt: serverTimestamp(),
           updatedBy: profile?.email || 'admin'
         };
 
-        // Preserve stable createdAt/createdBy if possible (handled on client fallback)
-        const existing = existingResults.find(e => e.studentId === row.studentId);
+        // Preserve stable properties
         if (existing) {
           payload.createdAt = existing.createdAt;
           payload.createdBy = existing.createdBy;
+          if (existing.publishedData) {
+            payload.publishedData = existing.publishedData;
+          }
         } else {
           payload.createdAt = serverTimestamp();
           payload.createdBy = profile?.email || 'admin';
@@ -458,6 +784,16 @@ export default function AAPStaffPage() {
         if (targetStatus === 'PUBLISHED') {
           payload.publishedAt = serverTimestamp();
           payload.publishedBy = profile?.email || 'admin';
+          payload.publishedData = {
+            mathLevel: row.mathLevel,
+            readingFluencyLevel: row.readingFluencyLevel,
+            mengajiMaterial: row.mengajiMaterial,
+            mengajiCategory: row.mengajiCategory,
+            bahasaIndonesiaLevel: row.bahasaIndonesiaLevel,
+            bahasaIndonesiaLabel: row.bahasaIndonesiaLabel,
+            publishedAt: new Date(),
+            publishedBy: profile?.email || 'admin'
+          };
         }
 
         batch.set(ref, payload, { merge: true });
@@ -497,6 +833,244 @@ export default function AAPStaffPage() {
     }
   };
 
+  // Individual modal open & fields assignment
+  const openEditModal = (student: Student, result: JuniorHighAAPResult | undefined) => {
+    if (!isClassAccessGranted) {
+      toast.error("Akses Ditolak: Anda tidak memiliki akses ke kelas ini.");
+      return;
+    }
+    setEditingStudent(student);
+    setEditingResult(result || null);
+    setOpenedUpdatedAt(result?.updatedAt || null);
+    setFormValues({
+      mathLevel: result?.mathLevel || '',
+      readingFluencyLevel: result?.readingFluencyLevel || '',
+      mengajiMaterial: result?.mengajiMaterial || '',
+      mengajiCategory: result?.mengajiCategory || '',
+      bahasaIndonesiaLevel: result?.bahasaIndonesiaLevel || null,
+      bahasaIndonesiaLabel: result?.bahasaIndonesiaLabel || ''
+    });
+    setIsEditModalOpen(true);
+  };
+
+  const closeEditModal = () => {
+    setIsEditModalOpen(false);
+    setEditingStudent(null);
+    setEditingResult(null);
+    setOpenedUpdatedAt(null);
+  };
+
+  // Individual Save implementation with conflict checking
+  const handleSaveIndividual = async () => {
+    if (!editingStudent) return;
+
+    // Validation rules
+    const hasMaterial = !!formValues.mengajiMaterial;
+    const hasCategory = !!formValues.mengajiCategory;
+    if (hasMaterial && !hasCategory) {
+      toast.error("Mengaji: Jika materi diisi, capaian/kategori wajib ditentukan.");
+      return;
+    }
+    if (!hasMaterial && hasCategory) {
+      toast.error("Mengaji: Jika capaian/kategori ditentukan, materi wajib diisi.");
+      return;
+    }
+
+    setSaveLoading(true);
+    try {
+      const docId = makeAAPResultId(editingStudent.id, selectedYear);
+      const ref = doc(db, 'junior_high_aap_results', docId);
+
+      // Fetch current database state for conflict check
+      const snap = await getDoc(ref);
+      let latestDoc: any = null;
+      if (snap.exists()) {
+        latestDoc = snap.data();
+        if (openedUpdatedAt && latestDoc.updatedAt) {
+          const openedTime = typeof openedUpdatedAt.toDate === 'function' ? openedUpdatedAt.toDate().getTime() : new Date(openedUpdatedAt).getTime();
+          const latestTime = typeof latestDoc.updatedAt.toDate === 'function' ? latestDoc.updatedAt.toDate().getTime() : new Date(latestDoc.updatedAt).getTime();
+          
+          if (latestTime > openedTime + 1000) { // 1s tolerance
+            toast.error("Konflik terdeteksi: Data ini telah diperbarui oleh guru lain. Memuat data terbaru...");
+            setEditingResult(latestDoc);
+            setFormValues({
+              mathLevel: latestDoc.mathLevel || '',
+              readingFluencyLevel: latestDoc.readingFluencyLevel || '',
+              mengajiMaterial: latestDoc.mengajiMaterial || '',
+              mengajiCategory: latestDoc.mengajiCategory || '',
+              bahasaIndonesiaLevel: latestDoc.bahasaIndonesiaLevel || null,
+              bahasaIndonesiaLabel: latestDoc.bahasaIndonesiaLabel || ''
+            });
+            setOpenedUpdatedAt(latestDoc.updatedAt);
+            setSaveLoading(false);
+            return;
+          }
+        }
+      }
+
+      // Build component audit
+      const updatedAudit = buildNewComponentAudit(
+        latestDoc?.componentAudit,
+        formValues,
+        latestDoc ? {
+          mathLevel: latestDoc.mathLevel || '',
+          readingFluencyLevel: latestDoc.readingFluencyLevel || '',
+          mengajiMaterial: latestDoc.mengajiMaterial || '',
+          mengajiCategory: latestDoc.mengajiCategory || ''
+        } : undefined,
+        profile
+      );
+
+      // Determine correct status
+      const { status: calculatedStatus } = getStudentAAPStatusAndTerisi({
+        mathLevel: formValues.mathLevel,
+        readingFluencyLevel: formValues.readingFluencyLevel,
+        mengajiMaterial: formValues.mengajiMaterial,
+        mengajiCategory: formValues.mengajiCategory,
+        status: latestDoc?.status
+      } as any);
+
+      let targetStatus: 'DRAFT' | 'PUBLISHED' | 'PERLU_PUBLISH_ULANG' = 'DRAFT';
+      if (latestDoc?.status === 'PUBLISHED' || latestDoc?.status === 'PERLU_PUBLISH_ULANG') {
+        targetStatus = 'PERLU_PUBLISH_ULANG';
+      }
+
+      const payload: any = {
+        studentId: editingStudent.id,
+        studentNameSnapshot: editingStudent.name || editingStudent.fullName,
+        nisSnapshot: editingStudent.nisSnapshot || editingStudent.nis || null,
+        classId: selectedClassId,
+        classNameSnapshot: currentClassObj?.name || 'Class',
+        academicYear: selectedYear,
+        mathLevel: formValues.mathLevel,
+        readingFluencyLevel: formValues.readingFluencyLevel,
+        mengajiMaterial: formValues.mengajiMaterial,
+        mengajiCategory: formValues.mengajiCategory,
+        bahasaIndonesiaLevel: formValues.bahasaIndonesiaLevel,
+        bahasaIndonesiaLabel: formValues.bahasaIndonesiaLabel,
+        status: targetStatus,
+        componentAudit: updatedAudit,
+        updatedAt: serverTimestamp(),
+        updatedBy: profile?.email || 'admin'
+      };
+
+      // Retain previously publishedData snapshot
+      if (latestDoc && latestDoc.publishedData) {
+        payload.publishedData = latestDoc.publishedData;
+      }
+
+      if (latestDoc) {
+        payload.createdAt = latestDoc.createdAt;
+        payload.createdBy = latestDoc.createdBy;
+      } else {
+        payload.createdAt = serverTimestamp();
+        payload.createdBy = profile?.email || 'admin';
+      }
+
+      await writeBatch(db).set(ref, payload, { merge: true }).commit();
+
+      // Clear, concise save status feedback
+      if (targetStatus === 'PERLU_PUBLISH_ULANG') {
+        toast.success("Perubahan tersimpan. Perlu publish ulang agar terlihat oleh siswa.");
+      } else if (calculatedStatus === 'LENGKAP') {
+        toast.success("AAP lengkap dan siap diterbitkan");
+      } else if (calculatedStatus === 'PARSIAL') {
+        toast.success("AAP tersimpan sebagai data parsial");
+      } else {
+        toast.success("Perubahan AAP berhasil disimpan");
+      }
+
+      closeEditModal();
+      fetchRosterAndResults();
+    } catch (err) {
+      console.error("Error saving AAP:", err);
+      toast.error("Gagal menyimpan perubahan AAP.");
+    } finally {
+      setSaveLoading(false);
+    }
+  };
+
+  // Single student manual Publish / Republish
+  const handlePublishIndividual = async (studentId: string) => {
+    if (!isClassAccessGranted) {
+      toast.error("Akses Ditolak: Anda tidak memiliki akses ke kelas ini.");
+      return;
+    }
+    const student = roster.find(s => s.id === studentId);
+    if (!student) return;
+
+    const result = existingResults.find(r => r.studentId === studentId);
+    if (!result) {
+      toast.error("Data AAP tidak ditemukan. Harap isi data terlebih dahulu.");
+      return;
+    }
+
+    const { status: calcStatus } = getStudentAAPStatusAndTerisi(result);
+    if (calcStatus === 'KOSONG' || calcStatus === 'PARSIAL') {
+      toast.error("Data AAP parsial tidak dapat dipublikasikan. Harap lengkapi semua komponen terlebih dahulu.");
+      return;
+    }
+
+    const confirmPublish = window.confirm(`Apakah Anda yakin ingin menerbitkan hasil Asesmen untuk siswa ${student.name || student.fullName}?`);
+    if (!confirmPublish) return;
+
+    setSaveLoading(true);
+    try {
+      const docId = makeAAPResultId(studentId, selectedYear);
+      const ref = doc(db, 'junior_high_aap_results', docId);
+
+      const payload: any = {
+        status: 'PUBLISHED',
+        publishedAt: serverTimestamp(),
+        publishedBy: profile?.email || 'admin',
+        publishedData: {
+          mathLevel: result.mathLevel || '',
+          readingFluencyLevel: result.readingFluencyLevel || '',
+          mengajiMaterial: result.mengajiMaterial || '',
+          mengajiCategory: result.mengajiCategory || '',
+          bahasaIndonesiaLevel: result.bahasaIndonesiaLevel || null,
+          bahasaIndonesiaLabel: result.bahasaIndonesiaLabel || '',
+          publishedAt: new Date(),
+          publishedBy: profile?.email || 'admin'
+        }
+      };
+
+      await writeBatch(db).set(ref, payload, { merge: true }).commit();
+      toast.success("Data AAP berhasil dipublikasikan ke siswa.");
+      fetchRosterAndResults();
+    } catch (err) {
+      console.error("Gagal mempublikasikan AAP:", err);
+      toast.error("Gagal mempublikasikan data.");
+    } finally {
+      setSaveLoading(false);
+    }
+  };
+
+  // Filtering student roster list by search query
+  const filteredRoster = React.useMemo(() => {
+    if (!searchQuery.trim()) return roster;
+    const qLower = searchQuery.toLowerCase().trim();
+    return roster.filter(student => {
+      const result = existingResults.find(r => r.studentId === student.id);
+      
+      const nameMatch = (student.name || '').toLowerCase().includes(qLower) || 
+                        (student.fullName || '').toLowerCase().includes(qLower);
+      const emailMatch = (student.email || '').toLowerCase().includes(qLower);
+      
+      let assessmentMatch = false;
+      if (result) {
+        assessmentMatch = (result.mathLevel || '').toLowerCase().includes(qLower) ||
+                          (result.readingFluencyLevel || '').toLowerCase().includes(qLower) ||
+                          (result.mengajiMaterial || '').toLowerCase().includes(qLower) ||
+                          (result.mengajiCategory || '').toLowerCase().includes(qLower) ||
+                          (result.bahasaIndonesiaLabel || '').toLowerCase().includes(qLower) ||
+                          (result.status || '').toLowerCase().includes(qLower);
+      }
+      
+      return nameMatch || emailMatch || assessmentMatch;
+    });
+  }, [roster, existingResults, searchQuery]);
+
   if (!profile) return null;
 
   if (!isAuthorized) {
@@ -527,11 +1101,16 @@ export default function AAPStaffPage() {
           {viewMode === 'LIST' ? (
             <button 
               onClick={() => {
+                if (!isClassAccessGranted) {
+                  toast.error("Akses Ditolak: Anda tidak memiliki akses ke kelas ini.");
+                  return;
+                }
                 setRawText('');
                 setPreviewRows([]);
                 setViewMode('IMPORT');
               }}
-              className="flex items-center gap-2 px-6 py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-[2rem] font-black uppercase text-[10px] tracking-widest shadow-lg shadow-blue-100 transition-all active:scale-95"
+              disabled={!selectedClassId || !isClassAccessGranted}
+              className="flex items-center gap-2 px-6 py-3.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-[2rem] font-black uppercase text-[10px] tracking-widest shadow-lg shadow-blue-100 transition-all active:scale-95"
             >
               <ClipboardList size={14} /> Impor Massal AAP
             </button>
@@ -586,6 +1165,23 @@ export default function AAPStaffPage() {
               )}
             </select>
           </div>
+
+          {/* Search Query Filter */}
+          {viewMode === 'LIST' && selectedClassId && (
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 block pl-2">Cari Nama / Hasil</label>
+              <div className="relative">
+                <Search size={16} className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="Cari siswa atau capaian..."
+                  className="w-full h-14 pl-12 pr-6 bg-gray-50 border-none rounded-2xl text-xs font-semibold focus:ring-2 focus:ring-blue-600 focus:bg-white transition-all"
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -597,6 +1193,12 @@ export default function AAPStaffPage() {
             <div className="p-20 bg-gray-50 rounded-[3rem] border-2 border-dashed border-gray-200 text-center">
               <AlertTriangle className="w-12 h-12 text-gray-300 mx-auto mb-4" />
               <p className="text-xs font-black text-gray-400 uppercase tracking-widest">Silakan tentukan tahun ajaran dan kelas aktif.</p>
+            </div>
+          ) : !isClassAccessGranted ? (
+            <div className="p-20 bg-red-50/20 rounded-[3rem] border-2 border-dashed border-red-200 text-center">
+              <XCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+              <h3 className="text-sm font-black text-red-700 uppercase tracking-widest">Akses Kelas Terbatas</h3>
+              <p className="text-xs text-gray-500 mt-2">Anda tidak memiliki wewenang untuk melihat atau mengelola data kelas ini di tahun ajaran terpilih.</p>
             </div>
           ) : dataLoading ? (
             <div className="py-24 text-center">
@@ -611,7 +1213,7 @@ export default function AAPStaffPage() {
             <div className="bg-white rounded-[3rem] border border-gray-100 shadow-sm overflow-hidden">
               <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex flex-wrap items-center justify-between gap-4">
                 <span className="text-[11px] font-black uppercase tracking-wider text-gray-400">
-                  Roster Kelas: {roster.length} Siswa | Status Hasil AAP
+                  Roster Kelas: {filteredRoster.length} Siswa | Status Hasil AAP
                 </span>
                 <span className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-100 px-3 py-1.5 rounded-full uppercase tracking-wider">
                   {existingResults.filter(r => r.status === 'PUBLISHED').length} Rilis / {existingResults.filter(r => r.status === 'DRAFT').length} Draft
@@ -627,14 +1229,22 @@ export default function AAPStaffPage() {
                       <th className="px-6 py-4">Reading Fluency</th>
                       <th className="px-6 py-4">Mengaji</th>
                       <th className="px-6 py-4">Bahasa Indonesia</th>
-                      <th className="px-6 py-4 text-center">Status</th>
-                      <th className="px-6 py-4 text-right w-24">Aksi</th>
+                      <th className="px-6 py-4 text-center">Status & Completion</th>
+                      <th className="px-6 py-4 text-right w-44">Aksi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {roster.map((student, idx) => {
+                    {filteredRoster.map((student, idx) => {
                       const result = existingResults.find(r => r.studentId === student.id);
-                      
+                      const { status, terisiText } = getStudentAAPStatusAndTerisi(result);
+
+                      // Compact actions text mapping
+                      let primaryActionText = 'Isi AAP';
+                      if (status === 'PARSIAL') primaryActionText = 'Lanjutkan AAP';
+                      else if (status === 'LENGKAP' || status === 'PUBLISHED' || status === 'PERLU_PUBLISH_ULANG') {
+                        primaryActionText = 'Edit AAP';
+                      }
+
                       return (
                         <tr key={student.id} className="hover:bg-gray-50/50 transition-colors">
                           <td className="px-6 py-4 text-center text-xs font-black text-gray-400">
@@ -650,49 +1260,79 @@ export default function AAPStaffPage() {
                             {result?.readingFluencyLevel || <span className="text-gray-300 italic">—</span>}
                           </td>
                           <td className="px-6 py-4 text-xs font-medium text-gray-600">
-                            {result ? (
+                            {result?.mengajiMaterial && result?.mengajiCategory ? (
                               <div className="space-y-0.5">
-                                <p className="font-bold text-gray-800">{result.mengajiMaterial || '—'}</p>
-                                <p className="text-[10px] uppercase text-emerald-600 tracking-wider font-black">{result.mengajiCategory || '—'}</p>
+                                <p className="font-bold text-gray-800">{result.mengajiMaterial}</p>
+                                <p className="text-[10px] uppercase text-emerald-600 tracking-wider font-black">{result.mengajiCategory}</p>
                               </div>
                             ) : (
                               <span className="text-gray-300 italic">—</span>
                             )}
                           </td>
                           <td className="px-6 py-4 text-xs font-medium text-gray-600">
-                            {result ? (
+                            {result?.bahasaIndonesiaLabel ? (
                               <div className="space-y-0.5">
-                                <p className="font-bold text-gray-800">{result.bahasaIndonesiaLabel || '—'}</p>
-                                <p className="text-[10px] text-blue-600 tracking-wider font-black">Level {result.bahasaIndonesiaLevel || '—'}</p>
+                                <p className="font-bold text-gray-800">{result.bahasaIndonesiaLabel}</p>
+                                <p className="text-[10px] text-blue-600 tracking-wider font-black">Level {result.bahasaIndonesiaLevel}</p>
                               </div>
                             ) : (
                               <span className="text-gray-300 italic">—</span>
                             )}
                           </td>
                           <td className="px-6 py-4 text-center">
-                            {result ? (
+                            <div className="flex flex-col items-center gap-1">
                               <span className={cn(
                                 "inline-block px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider",
-                                result.status === 'PUBLISHED' ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-amber-50 text-amber-700 border border-amber-100"
+                                status === 'PUBLISHED' ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
+                                status === 'PERLU_PUBLISH_ULANG' ? "bg-orange-50 text-orange-700 border border-orange-200" :
+                                status === 'LENGKAP' ? "bg-purple-50 text-purple-700 border border-purple-200" :
+                                status === 'PARSIAL' ? "bg-blue-50 text-blue-700 border border-blue-200" :
+                                "bg-gray-100 text-gray-500 border border-gray-200"
                               )}>
-                                {result.status}
+                                {status.replace(/_/g, ' ')}
                               </span>
-                            ) : (
-                              <span className="inline-block px-3 py-1 bg-gray-50 text-gray-400 text-[9px] font-black uppercase tracking-wider rounded-full">
-                                Kosong
+                              <span className="text-[9px] font-black text-gray-400 uppercase tracking-tight">
+                                {terisiText}
                               </span>
-                            )}
+                            </div>
                           </td>
                           <td className="px-6 py-4 text-right">
-                            {result && (
+                            <div className="flex items-center justify-end gap-2">
+                              {/* Primary Action Button */}
                               <button
-                                onClick={() => handleDeleteResult(student.id)}
-                                className="p-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition-all"
-                                title="Batal Rilis / Hapus data"
+                                onClick={() => openEditModal(student, result)}
+                                className={cn(
+                                  "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all",
+                                  status === 'KOSONG' ? "bg-blue-600 hover:bg-blue-700 text-white shadow-sm" :
+                                  status === 'PARSIAL' ? "bg-indigo-50 hover:bg-indigo-100 text-indigo-700" :
+                                  "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                                )}
                               >
-                                <Trash2 size={14} />
+                                {primaryActionText}
                               </button>
-                            )}
+
+                              {/* Manual Publish / Republish Trigger */}
+                              {(status === 'LENGKAP' || status === 'PERLU_PUBLISH_ULANG') && (
+                                <button
+                                  onClick={() => handlePublishIndividual(student.id)}
+                                  className="p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl transition-all"
+                                  title="Publikasikan ke Siswa"
+                                >
+                                  <Send size={13} />
+                                </button>
+                              )}
+
+                              {/* Unpublish Action */}
+                              {result && (
+                                <button
+                                  onClick={() => handleDeleteResult(student.id)}
+                                  className="p-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition-all"
+                                  title="Hapus data / Batal Rilis"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -922,6 +1562,179 @@ export default function AAPStaffPage() {
           
         </div>
       )}
+
+      {/* Center Modal Edit Dialog */}
+      <AnimatePresence>
+        {isEditModalOpen && editingStudent && (
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[2.5rem] border border-gray-100 shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              {/* Modal Header */}
+              <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-blue-600">Edit Asesmen Awal</span>
+                  <h3 className="text-xl font-black text-gray-900 uppercase italic leading-none mt-1">
+                    {editingStudent.name || editingStudent.fullName}
+                  </h3>
+                </div>
+                <button 
+                  onClick={closeEditModal}
+                  className="p-2 hover:bg-gray-100 rounded-full transition-all text-gray-400 hover:text-gray-600"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-8 space-y-6 overflow-y-auto flex-1">
+                {/* Numerasi Component Card */}
+                <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-50 pb-2">
+                    <h4 className="text-xs font-black uppercase tracking-widest text-indigo-900 flex items-center gap-2">
+                      <Calculator size={16} className="text-indigo-600" /> Numerasi (Matematika)
+                    </h4>
+                    {renderComponentAudit(editingResult?.componentAudit?.numeracy, !!formValues.mathLevel)}
+                  </div>
+                  <select
+                    value={formValues.mathLevel}
+                    onChange={e => setFormValues(prev => ({ ...prev, mathLevel: e.target.value as any }))}
+                    className="w-full h-12 px-4 bg-gray-50 rounded-xl border-none text-xs font-bold focus:ring-2 focus:ring-indigo-600"
+                  >
+                    <option value="">— Kosong / Belum Diisi —</option>
+                    <option value="Beginning Understanding">Beginning Understanding</option>
+                    <option value="Supported Understanding">Supported Understanding</option>
+                    <option value="Independent Understanding">Independent Understanding</option>
+                    <option value="Demonstrating Mastery">Demonstrating Mastery</option>
+                  </select>
+                </div>
+
+                {/* Reading Fluency Component Card */}
+                <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-50 pb-2">
+                    <h4 className="text-xs font-black uppercase tracking-widest text-amber-900 flex items-center gap-2">
+                      <BookOpen size={16} className="text-amber-600" /> Reading Fluency (Bahasa Inggris)
+                    </h4>
+                    {renderComponentAudit(editingResult?.componentAudit?.readingFluency, !!formValues.readingFluencyLevel)}
+                  </div>
+                  <select
+                    value={formValues.readingFluencyLevel}
+                    onChange={e => setFormValues(prev => ({ ...prev, readingFluencyLevel: e.target.value as any }))}
+                    className="w-full h-12 px-4 bg-gray-50 rounded-xl border-none text-xs font-bold focus:ring-2 focus:ring-amber-600"
+                  >
+                    <option value="">— Kosong / Belum Diisi —</option>
+                    <option value="IR+">IR+</option>
+                    <option value="ER">ER</option>
+                    <option value="ER EN">ER EN</option>
+                  </select>
+                </div>
+
+                {/* Mengaji Component Card */}
+                <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-50 pb-2">
+                    <h4 className="text-xs font-black uppercase tracking-widest text-emerald-900 flex items-center gap-2">
+                      <Sparkles size={16} className="text-emerald-600" /> Mengaji (Quran)
+                    </h4>
+                    {renderComponentAudit(editingResult?.componentAudit?.mengaji, !!formValues.mengajiMaterial && !!formValues.mengajiCategory)}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase tracking-wider text-gray-400">Materi</label>
+                      <select
+                        value={formValues.mengajiMaterial}
+                        onChange={e => setFormValues(prev => ({ ...prev, mengajiMaterial: e.target.value as any }))}
+                        className="w-full h-12 px-4 bg-gray-50 rounded-xl border-none text-xs font-bold focus:ring-2 focus:ring-emerald-600"
+                      >
+                        <option value="">— Kosong / Belum Diisi —</option>
+                        <option value="IQRO 1">IQRO 1</option>
+                        <option value="IQRO 2">IQRO 2</option>
+                        <option value="IQRO 3">IQRO 3</option>
+                        <option value="IQRO 4">IQRO 4</option>
+                        <option value="IQRO 5">IQRO 5</option>
+                        <option value="IQRO 6">IQRO 6</option>
+                        <option value="JUZ AMMA">JUZ AMMA</option>
+                        <option value="ALQURAN">ALQURAN</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase tracking-wider text-gray-400">Capaian</label>
+                      <select
+                        value={formValues.mengajiCategory}
+                        onChange={e => setFormValues(prev => ({ ...prev, mengajiCategory: e.target.value as any }))}
+                        className="w-full h-12 px-4 bg-gray-50 rounded-xl border-none text-xs font-bold focus:ring-2 focus:ring-emerald-600 text-emerald-700 bg-emerald-50"
+                      >
+                        <option value="">— Kosong / Belum Diisi —</option>
+                        <option value="ISYROF">ISYROF</option>
+                        <option value="MUBTADI">MUBTADI</option>
+                        <option value="MAQBUL">MAQBUL</option>
+                        <option value="JAYYID">JAYYID</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bahasa Indonesia Component Card */}
+                <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
+                  <h4 className="text-xs font-black uppercase tracking-widest text-blue-900 flex items-center gap-2">
+                    <ClipboardList size={16} className="text-blue-600" /> Bahasa Indonesia (Opsional)
+                  </h4>
+                  <select
+                    value={formValues.bahasaIndonesiaLabel}
+                    onChange={e => {
+                      const label = e.target.value;
+                      const parsed = parseBahasaIndonesia(label);
+                      setFormValues(prev => ({
+                        ...prev,
+                        bahasaIndonesiaLabel: label as any,
+                        bahasaIndonesiaLevel: parsed?.level || null
+                      }));
+                    }}
+                    className="w-full h-12 px-4 bg-gray-50 rounded-xl border-none text-xs font-bold focus:ring-2 focus:ring-blue-600"
+                  >
+                    <option value="">— Kosong / Belum Diisi —</option>
+                    <option value="Perlu Pendampingan Intensif">Perlu Pendampingan Intensif (Lvl 1)</option>
+                    <option value="Perlu Penguatan Terarah">Perlu Penguatan Terarah (Lvl 2)</option>
+                    <option value="Siap Berkembang">Siap Berkembang (Lvl 3)</option>
+                    <option value="Siap Lanjut">Siap Lanjut (Lvl 4)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-6 border-t border-gray-100 bg-gray-50/50 flex flex-wrap items-center justify-between gap-4">
+                <div className="text-xs text-gray-400 font-bold">
+                  Completion: {getStudentAAPStatusAndTerisi({
+                    mathLevel: formValues.mathLevel,
+                    readingFluencyLevel: formValues.readingFluencyLevel,
+                    mengajiMaterial: formValues.mengajiMaterial,
+                    mengajiCategory: formValues.mengajiCategory,
+                    status: editingResult?.status
+                  } as any).terisiText}
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={closeEditModal}
+                    className="px-5 py-3 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-xl font-bold uppercase text-[10px] tracking-widest transition-all"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    onClick={handleSaveIndividual}
+                    disabled={saveLoading}
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-blue-100 transition-all active:scale-95 disabled:opacity-55"
+                  >
+                    {saveLoading ? <Loader2 className="animate-spin" size={12} /> : null}
+                    Simpan Perubahan
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </div>
   );
