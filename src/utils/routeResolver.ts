@@ -14,6 +14,12 @@ export function getDashboardRoute(profile: User | null, activeUnit: UnitType | n
     return '/student/dashboard';
   }
 
+  // Kindergarten teacher/staff roles go to the Kindergarten dashboard
+  const kindyTeacherRoles = ['TEACHER', 'HOMEROOM_TEACHER', 'kindergarten_subject_teacher', 'BK_MENTOR'];
+  if (kindyTeacherRoles.includes(profile.role) && activeUnit === 'KINDERGARTEN') {
+    return '/kindy/dashboard';
+  }
+
   // Fallback / standard landing route
   return '/';
 }
