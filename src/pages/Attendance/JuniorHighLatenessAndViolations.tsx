@@ -290,6 +290,143 @@ export default function JuniorHighLatenessAndViolations() {
   const [studentSearchInput, setStudentSearchInput] = React.useState('');
   const [showStudentDropdown, setShowStudentDropdown] = React.useState(false);
 
+  // Global search autocomplete states
+  const [violationSearchInput, setViolationSearchInput] = React.useState('');
+  const [showViolationDropdown, setShowViolationDropdown] = React.useState(false);
+  const [categoryManuallySelected, setCategoryManuallySelected] = React.useState(false);
+  const [highlightedViolationIndex, setHighlightedViolationIndex] = React.useState(0);
+
+  // flat list of all prepared violations
+  const allPreparedViolations = React.useMemo(() => {
+    const list: Array<{
+      categoryId: string;
+      categoryLabel: string;
+      code: string;
+      label: string;
+      helperText?: string;
+    }> = [];
+    
+    JUNIOR_HIGH_VIOLATIONS_MASTER.forEach(category => {
+      if (category.id === 'other') return;
+      category.violations.forEach(v => {
+        list.push({
+          categoryId: category.id,
+          categoryLabel: category.label,
+          code: v.code,
+          label: v.label,
+          helperText: v.helperText
+        });
+      });
+    });
+    
+    return list;
+  }, []);
+
+  // Filtered prepared violations based on search input and selected category
+  const filteredPreparedViolations = React.useMemo(() => {
+    let list = allPreparedViolations;
+    
+    // If a category was chosen, filter the list to only that category's violations
+    if (selectedViolationCategory && selectedViolationCategory !== 'other') {
+      list = list.filter(v => v.categoryId === selectedViolationCategory);
+    }
+    
+    const queryStr = violationSearchInput.trim().toLowerCase();
+    if (!queryStr) return list;
+    
+    // We want to perform case-insensitive, whitespace-insensitive search
+    // to match code, violation label, category label, or helper text
+    return list.filter(v => {
+      const codeMatch = v.code.toLowerCase().includes(queryStr);
+      const labelMatch = v.label.toLowerCase().includes(queryStr);
+      const catMatch = v.categoryLabel.toLowerCase().includes(queryStr);
+      const helperMatch = v.helperText ? v.helperText.toLowerCase().includes(queryStr) : false;
+      
+      return codeMatch || labelMatch || catMatch || helperMatch;
+    });
+  }, [allPreparedViolations, selectedViolationCategory, violationSearchInput]);
+
+  // Group filtered violations by category for UI presentation
+  const groupedFilteredViolations = React.useMemo(() => {
+    const groups: Record<string, { label: string; items: Array<any> }> = {};
+    filteredPreparedViolations.forEach((item, index) => {
+      const itemWithIndex = { ...item, flatIndex: index };
+      if (!groups[item.categoryId]) {
+        groups[item.categoryId] = {
+          label: item.categoryLabel,
+          items: []
+        };
+      }
+      groups[item.categoryId].items.push(itemWithIndex);
+    });
+    return Object.values(groups);
+  }, [filteredPreparedViolations]);
+
+  // Selection handler for global search selection
+  const selectViolation = (v: any) => {
+    if (v === null) {
+      setSelectedViolationCode('');
+      setViolationSearchInput('');
+      if (!categoryManuallySelected) {
+        setSelectedViolationCategory('');
+      }
+    } else {
+      setSelectedViolationCategory(v.categoryId);
+      setSelectedViolationCode(v.code);
+      setViolationSearchInput(`${v.code} · ${v.label}`);
+    }
+    setShowViolationDropdown(false);
+  };
+
+  const handleViolationInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!showViolationDropdown) {
+      if (e.key === 'ArrowDown' || e.key === 'Enter') {
+        setShowViolationDropdown(true);
+        setHighlightedViolationIndex(0);
+        e.preventDefault();
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightedViolationIndex(prev => 
+        Math.min(prev + 1, filteredPreparedViolations.length - 1)
+      );
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightedViolationIndex(prev => Math.max(prev - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (filteredPreparedViolations.length > 0 && highlightedViolationIndex >= 0 && highlightedViolationIndex < filteredPreparedViolations.length) {
+        const selected = filteredPreparedViolations[highlightedViolationIndex];
+        selectViolation(selected);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setShowViolationDropdown(false);
+    }
+  };
+
+  // Helper to render text with highlighted matching search query
+  const highlightMatch = (text: string, search: string) => {
+    if (!search || !search.trim()) return <span>{text}</span>;
+    const cleanSearch = search.trim().replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'); // escape regex chars
+    const regex = new RegExp(`(${cleanSearch})`, 'gi');
+    const parts = text.split(regex);
+    return (
+      <span>
+        {parts.map((part, i) => 
+          regex.test(part) ? (
+            <mark key={i} className="bg-amber-100 text-amber-950 font-extrabold rounded px-0.5">{part}</mark>
+          ) : (
+            part
+          )
+        )}
+      </span>
+    );
+  };
+
   // Inline edit states for saved violations
   const [editingViolationId, setEditingViolationId] = React.useState<string | null>(null);
   const [editingViolationType, setEditingViolationType] = React.useState('');
@@ -935,6 +1072,8 @@ export default function JuniorHighLatenessAndViolations() {
       setSelectedViolationCode('');
       setCustomViolationText('');
       setViolationNotes('');
+      setViolationSearchInput('');
+      setCategoryManuallySelected(false);
     } catch (err) {
       console.error('Error saving minor violation:', err);
       toast.error('Gagal menyimpan catatan pelanggaran ringan.');
@@ -2388,6 +2527,8 @@ export default function JuniorHighLatenessAndViolations() {
                           setSelectedViolationCategory(catId);
                           setSelectedViolationCode('');
                           setCustomViolationText('');
+                          setViolationSearchInput('');
+                          setCategoryManuallySelected(catId !== '');
                         }}
                         className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 font-bold cursor-pointer"
                         required
@@ -2401,7 +2542,7 @@ export default function JuniorHighLatenessAndViolations() {
                   </div>
 
                   {/* Violation Selector or Manual Input */}
-                  <div className="space-y-2">
+                  <div className="space-y-2 relative">
                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Jenis Pelanggaran *</label>
                     {selectedViolationCategory === 'other' ? (
                       <input
@@ -2414,27 +2555,96 @@ export default function JuniorHighLatenessAndViolations() {
                         required
                       />
                     ) : (
-                      <select
-                        value={selectedViolationCode}
-                        onChange={(e) => setSelectedViolationCode(e.target.value)}
-                        className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                        disabled={!selectedViolationCategory}
-                        required
-                      >
-                        <option value="">
-                          {!selectedViolationCategory 
-                            ? 'Pilih kategori terlebih dahulu' 
-                            : '-- Pilih Jenis Pelanggaran --'
-                          }
-                        </option>
-                        {selectedViolationCategory && 
-                          JUNIOR_HIGH_VIOLATIONS_MASTER.find(c => c.id === selectedViolationCategory)?.violations.map(v => (
-                            <option key={v.code} value={v.code}>
-                              {v.code} - {v.label}
-                            </option>
-                          ))
-                        }
-                      </select>
+                      <div className="relative">
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder="🔍 Cari contoh: kaos kaki, HP, sampah, seragam..."
+                            value={violationSearchInput}
+                            onChange={(e) => {
+                              setViolationSearchInput(e.target.value);
+                              setShowViolationDropdown(true);
+                              setHighlightedViolationIndex(0);
+                              
+                              if (!e.target.value) {
+                                selectViolation(null);
+                              }
+                            }}
+                            onFocus={() => {
+                              setShowViolationDropdown(true);
+                              setHighlightedViolationIndex(0);
+                            }}
+                            onKeyDown={handleViolationInputKeyDown}
+                            className="w-full bg-gray-50 border border-gray-100 rounded-xl pl-4 pr-10 py-3 text-xs outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 font-bold"
+                            required={!selectedViolationCode}
+                          />
+                          
+                          {violationSearchInput ? (
+                            <button
+                              type="button"
+                              onClick={() => selectViolation(null)}
+                              className="absolute right-3 top-3.5 text-gray-400 hover:text-red-500 transition-all cursor-pointer"
+                              title="Hapus pilihan"
+                            >
+                              <X size={14} />
+                            </button>
+                          ) : (
+                            <Search size={14} className="absolute right-3 top-3.5 text-gray-400 pointer-events-none" />
+                          )}
+                        </div>
+
+                        {/* Search Autocomplete Dropdown */}
+                        {showViolationDropdown && selectedViolationCategory !== 'other' && (
+                          <div className="absolute z-30 left-0 right-0 mt-1 max-h-64 overflow-y-auto bg-white border border-gray-100 shadow-xl rounded-xl divide-y divide-gray-50 p-1">
+                            {filteredPreparedViolations.length === 0 ? (
+                              <div className="p-3 text-xs text-gray-400 italic">Jenis pelanggaran tidak ditemukan</div>
+                            ) : (
+                              groupedFilteredViolations.map((group) => (
+                                <div key={group.label} className="p-1">
+                                  <div className="px-2 py-1 text-[9px] font-black text-amber-500 uppercase tracking-widest bg-amber-500/5 rounded-md mb-1 select-none">
+                                    {group.label}
+                                  </div>
+                                  <div className="space-y-0.5">
+                                    {group.items.map((item) => {
+                                      const isHighlighted = item.flatIndex === highlightedViolationIndex;
+                                      const isSelected = selectedViolationCode === item.code && selectedViolationCategory === item.categoryId;
+                                      return (
+                                        <button
+                                          key={item.code}
+                                          type="button"
+                                          onMouseEnter={() => setHighlightedViolationIndex(item.flatIndex)}
+                                          onClick={() => selectViolation(item)}
+                                          className={cn(
+                                            "w-full text-left px-3 py-2 rounded-lg text-xs transition-all block",
+                                            isHighlighted ? "bg-amber-500/5 text-amber-950 font-extrabold" : "text-gray-700 font-bold hover:bg-gray-50/50",
+                                            isSelected && "bg-amber-500/10 text-amber-900 font-black border-l-2 border-amber-500 rounded-l-none"
+                                          )}
+                                        >
+                                          <div className="flex items-center justify-between">
+                                            <span className="truncate">
+                                              {highlightMatch(item.code, violationSearchInput)} · {highlightMatch(item.label, violationSearchInput)}
+                                            </span>
+                                            {isSelected && <Check size={14} className="text-amber-600 shrink-0 ml-2" />}
+                                          </div>
+                                          <div className="text-[10px] text-gray-400 font-medium mt-0.5">
+                                            {highlightMatch(item.categoryLabel, violationSearchInput)}
+                                          </div>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        )}
+                        {showViolationDropdown && (
+                          <div 
+                            className="fixed inset-0 z-20" 
+                            onClick={() => setShowViolationDropdown(false)}
+                          />
+                        )}
+                      </div>
                     )}
 
                     {/* Helper text tooltip for selected prepared violation */}
