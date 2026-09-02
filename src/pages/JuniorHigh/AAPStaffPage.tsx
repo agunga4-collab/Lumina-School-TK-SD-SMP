@@ -444,38 +444,34 @@ export default function AAPStaffPage() {
     try {
       const q = query(collection(db, 'classes'), where('unitId', '==', 'JUNIOR_HIGH'));
       const snap = await getDocs(q);
-      let list = snap.docs
+      const list = snap.docs
         .map(d => ({ id: d.id, ...d.data() } as any))
         .filter(c => c.academicYear === selectedYear && c.status === 'active')
         .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-      // Apply standard teacher class permissions filtering
-      const isTeacherRole = ['TEACHER', 'HOMEROOM_TEACHER'].includes(profile?.role || '');
-      const isSuperUser = ['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'SECRETARY_JH', 'COORDINATOR'].includes(profile?.role || '');
-      if (isTeacherRole && !isSuperUser) {
-        list = list.filter(c => checkClassAccess(c, profile));
-      }
-
       setClasses(list);
-      if (list.length > 0) {
-        const exists = list.some(c => c.id === selectedClassId);
-        if (!exists) {
-          setSelectedClassId(list[0].id);
-        }
-      } else {
-        setSelectedClassId('');
-      }
     } catch (err) {
       console.error("Error fetching classes:", err);
       toast.error("Gagal memuat daftar kelas.");
     } finally {
       setMetaLoading(false);
     }
-  }, [isAuthorized, selectedYear, selectedClassId, profile]);
+  }, [isAuthorized, selectedYear]);
 
   React.useEffect(() => {
     fetchClasses();
   }, [fetchClasses]);
+
+  React.useEffect(() => {
+    if (classes.length > 0) {
+      const exists = classes.some(c => c.id === selectedClassId);
+      if (!exists) {
+        setSelectedClassId(classes[0].id);
+      }
+    } else {
+      setSelectedClassId('');
+    }
+  }, [classes, selectedClassId]);
 
   // Load Roster and existing AAP results
   const fetchRosterAndResults = React.useCallback(async () => {
@@ -485,6 +481,8 @@ export default function AAPStaffPage() {
       return;
     }
     setDataLoading(true);
+    setRoster([]);
+    setExistingResults([]);
     try {
       // 1. Get active student roster
       const students = await getActiveStudents(selectedClassId, selectedYear);
@@ -520,8 +518,9 @@ export default function AAPStaffPage() {
   // Class assignment access verification
   const isClassAccessGranted = React.useMemo(() => {
     if (!currentClassObj) return false;
-    return checkClassAccess(currentClassObj, profile);
-  }, [currentClassObj, profile]);
+    // For Junior High AAP page, all authorized staff have access to all classes
+    return isAuthorized;
+  }, [currentClassObj, isAuthorized]);
 
   // Handle bulk paste and auto-matching
   const handlePreview = () => {

@@ -68,6 +68,23 @@ service cloud.firestore {
         get(/databases/$(database)/documents/classes/$(classId)).data.unitId == 'JUNIOR_HIGH';
     }
 
+    function isJuniorHighTeacherOrAuthorizedStaff() {
+      return isActive() && isJuniorHighStaff() && (
+        !isTeacher() || (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')
+      );
+    }
+
+    function isJuniorHighAAPTeacherForClass(classId) {
+      return isActive() &&
+        isJuniorHighTeacherOrAuthorizedStaff() &&
+        isJuniorHighClass(classId);
+    }
+
+    function isStudentInClass(studentId, classId) {
+      return exists(/databases/$(database)/documents/students/$(studentId)) &&
+        get(/databases/$(database)/documents/students/$(studentId)).data.classId == classId;
+    }
+
     function isSecretaryKindyClassAccess(classId) {
       return isSecretaryKindy() && isKindergartenClass(classId);
     }
@@ -1304,35 +1321,42 @@ service cloud.firestore {
       allow create: if isActive() && (
         isAdmin() ||
         (
-          isJuniorHighStaff() && (
-            (!isTeacher() || isTeacherAssignedToClass(request.resource.data.classId)) &&
-            (!('componentAudit' in request.resource.data) || (
-              (!('numeracy' in request.resource.data.componentAudit) || request.resource.data.componentAudit.numeracy.updatedBy == request.auth.uid) &&
-              (!('readingFluency' in request.resource.data.componentAudit) || request.resource.data.componentAudit.readingFluency.updatedBy == request.auth.uid) &&
-              (!('mengaji' in request.resource.data.componentAudit) || request.resource.data.componentAudit.mengaji.updatedBy == request.auth.uid)
-            ))
-          )
+          isJuniorHighAAPTeacherForClass(request.resource.data.classId) &&
+          get(/databases/$(database)/documents/classes/$(request.resource.data.classId)).data.academicYear == request.resource.data.academicYear &&
+          get(/databases/$(database)/documents/classes/$(request.resource.data.classId)).data.status != 'archived' &&
+          isStudentInClass(request.resource.data.studentId, request.resource.data.classId) &&
+          request.resource.data.studentId != null && request.resource.data.studentId != "" &&
+          request.resource.data.classId != null && request.resource.data.classId != "" &&
+          request.resource.data.academicYear != null && request.resource.data.academicYear != "" &&
+          (!('componentAudit' in request.resource.data) || (
+            (!('numeracy' in request.resource.data.componentAudit) || request.resource.data.componentAudit.numeracy.updatedBy == request.auth.uid) &&
+            (!('readingFluency' in request.resource.data.componentAudit) || request.resource.data.componentAudit.readingFluency.updatedBy == request.auth.uid) &&
+            (!('mengaji' in request.resource.data.componentAudit) || request.resource.data.componentAudit.mengaji.updatedBy == request.auth.uid)
+          ))
         )
       );
       allow update: if isActive() && (
         isAdmin() ||
         (
-          isJuniorHighStaff() && (
-            (!isTeacher() || isTeacherAssignedToClass(request.resource.data.classId)) &&
-            (!('componentAudit' in request.resource.data) || (
-              (!('numeracy' in request.resource.data.componentAudit) || request.resource.data.componentAudit.numeracy.updatedBy == request.auth.uid) &&
-              (!('readingFluency' in request.resource.data.componentAudit) || request.resource.data.componentAudit.readingFluency.updatedBy == request.auth.uid) &&
-              (!('mengaji' in request.resource.data.componentAudit) || request.resource.data.componentAudit.mengaji.updatedBy == request.auth.uid)
-            ))
-          )
+          isJuniorHighAAPTeacherForClass(request.resource.data.classId) &&
+          get(/databases/$(database)/documents/classes/$(request.resource.data.classId)).data.academicYear == request.resource.data.academicYear &&
+          get(/databases/$(database)/documents/classes/$(request.resource.data.classId)).data.status != 'archived' &&
+          isStudentInClass(request.resource.data.studentId, request.resource.data.classId) &&
+          request.resource.data.studentId != null && request.resource.data.studentId != "" &&
+          request.resource.data.classId != null && request.resource.data.classId != "" &&
+          request.resource.data.academicYear != null && request.resource.data.academicYear != "" &&
+          request.resource.data.studentId == existing().studentId &&
+          (!('componentAudit' in request.resource.data) || (
+            (!('numeracy' in request.resource.data.componentAudit) || request.resource.data.componentAudit.numeracy.updatedBy == request.auth.uid) &&
+            (!('readingFluency' in request.resource.data.componentAudit) || request.resource.data.componentAudit.readingFluency.updatedBy == request.auth.uid) &&
+            (!('mengaji' in request.resource.data.componentAudit) || request.resource.data.componentAudit.mengaji.updatedBy == request.auth.uid)
+          ))
         )
       );
       allow delete: if isActive() && (
         isAdmin() ||
         (
-          isJuniorHighStaff() && (
-            (!isTeacher() || isTeacherAssignedToClass(resource.data.classId))
-          )
+          isJuniorHighAAPTeacherForClass(resource.data.classId)
         )
       );
     }
