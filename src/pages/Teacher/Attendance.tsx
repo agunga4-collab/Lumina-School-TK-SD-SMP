@@ -59,6 +59,73 @@ interface StudentAttendance {
 
 const mockStudents: StudentAttendance[] = [];
 
+interface ExtractedRecord {
+  studentId: string;
+  status: string;
+  note?: string;
+}
+
+function extractRecordsFromDoc(docData: any): ExtractedRecord[] {
+  const list: ExtractedRecord[] = [];
+  if (!docData) return list;
+  
+  // 1. Single student document format
+  if (docData.studentId) {
+    const status = docData.status || docData.dhuhrPrayerStatus?.status;
+    if (status) {
+      list.push({
+        studentId: docData.studentId,
+        status: status,
+        note: docData.note || docData.dhuhrPrayerStatus?.note || ""
+      });
+    }
+  }
+  
+  // 2. Class per date nested list format (e.g. 'students' or 'records' or 'attendance')
+  const arrayCandidates = [docData.students, docData.records, docData.attendance];
+  for (const candidate of arrayCandidates) {
+    if (Array.isArray(candidate)) {
+      candidate.forEach((item: any) => {
+        if (item && item.studentId) {
+          const status = item.status || item.dhuhrPrayerStatus?.status;
+          if (status) {
+            list.push({
+              studentId: item.studentId,
+              status: status,
+              note: item.note || item.dhuhrPrayerStatus?.note || ""
+            });
+          }
+        }
+      });
+    }
+  }
+  
+  const mapCandidates = [docData.students, docData.records, docData.attendance];
+  for (const candidate of mapCandidates) {
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+      Object.entries(candidate).forEach(([key, val]: [string, any]) => {
+        if (val && typeof val === 'object') {
+          const status = val.status || val.dhuhrPrayerStatus?.status;
+          if (status) {
+            list.push({
+              studentId: val.studentId || key,
+              status: status,
+              note: val.note || val.dhuhrPrayerStatus?.note || ""
+            });
+          }
+        } else if (typeof val === 'string') {
+          list.push({
+            studentId: key,
+            status: val
+          });
+        }
+      });
+    }
+  }
+  
+  return list;
+}
+
 export default function Attendance() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -401,54 +468,131 @@ export default function Attendance() {
         }
 
         // Load existing records for today depending on type
-        const recordsCollection = activeUnit === 'JUNIOR_HIGH' ? 'attendance_records' : (attendanceType === 'DHUHUR' ? 'dhuhur_attendance_records' : 'attendance_records');
-        const recordsQ = query(
-          collection(db, recordsCollection),
-          where('classId', 'in', [classId, className]),
-          where('date', '==', selectedDate)
-        );
-        const recordsSnap = await getDocs(recordsQ);
-        const recordsMap = new Map(recordsSnap.docs.map(d => [d.data().studentId, d.data().status]));
-        const notesMap = new Map(recordsSnap.docs.map(d => [d.data().studentId, d.data().note]));
-        const emotionsMap = new Map(recordsSnap.docs.map(d => [d.data().studentId, d.data().emotion]));
-        const dhuhrStatusMap = new Map(recordsSnap.docs.map(d => [d.data().studentId, d.data().dhuhrPrayerStatus]));
+        let recordsMap = new Map<string, string>();
+        let notesMap = new Map<string, string>();
+        let emotionsMap = new Map<string, any>();
+        let dhuhrStatusMap = new Map<string, any>();
+        let lastSavedFound = false;
 
-        if (recordsSnap.size > 0) {
-          setLastSaved({ date: selectedDate, classId: selectedClass });
-        } else {
-          setLastSaved(null);
-        }
+        if (attendanceType === 'DHUHUR') {
+          // 1. Fetch from dhuhur_attendance_records
+          const dhuhurQ = query(
+            collection(db, 'dhuhur_attendance_records'),
+            where('classId', 'in', [classId, className]),
+            where('date', '==', selectedDate)
+          );
+          const dhuhurSnap = await getDocs(dhuhurQ);
+          
+          // 2. Fetch from attendance_records to get schoolStatus (for SAKIT, IZIN, ALPA checks)
+          const schoolQ = query(
+            collection(db, 'attendance_records'),
+            where('classId', 'in', [classId, className]),
+            where('date', '==', selectedDate)
+          );
+          const schoolSnap = await getDocs(schoolQ);
+          const schoolStatusMap = new Map(schoolSnap.docs.map(d => [d.data().studentId, d.data().status]));
 
-        if (studentList.length > 0) {
-          setStudents(studentList.map(s => {
-            const schoolStatus = recordsMap.get(s.id) || null;
-            const dhuhrObj = dhuhrStatusMap.get(s.id) || null;
-            
-            let finalStatus = null;
-            if (activeUnit === 'JUNIOR_HIGH' && attendanceType === 'DHUHUR') {
-              if (!schoolDayVal) {
-                finalStatus = 'TIDAK_BERLAKU';
-              } else if (schoolStatus && ['SAKIT', 'IZIN', 'ALPA'].includes(schoolStatus)) {
-                finalStatus = 'TIDAK_BERLAKU';
+          // Extracted records from dhuhur_attendance_records
+          const extractedList: ExtractedRecord[] = [];
+          dhuhurSnap.docs.forEach(doc => {
+            extractedList.push(...extractRecordsFromDoc(doc.data()));
+          });
+
+          const extractedStatusMap = new Map(extractedList.map(item => [item.studentId, item.status]));
+          const extractedNotesMap = new Map(extractedList.map(item => [item.studentId, item.note || ""]));
+
+          if (extractedList.length > 0) {
+            lastSavedFound = true;
+          }
+
+          // Map students
+          if (studentList.length > 0) {
+            setStudents(studentList.map(s => {
+              const schoolStatus = schoolStatusMap.get(s.id) || null;
+              const shalatStatus = extractedStatusMap.get(s.id) || null; // e.g. SALAT_BERJAMAAH, BERHALANGAN, IZIN, TIDAK_MENGIKUTI
+              const shalatNote = extractedNotesMap.get(s.id) || "";
+
+              let finalStatus = null;
+              if (activeUnit === 'JUNIOR_HIGH') {
+                if (!schoolDayVal) {
+                  finalStatus = 'TIDAK_BERLAKU';
+                } else if (schoolStatus && ['SAKIT', 'IZIN', 'ALPA'].includes(schoolStatus)) {
+                  finalStatus = 'TIDAK_BERLAKU';
+                } else {
+                  finalStatus = shalatStatus || 'BELUM_DIISI';
+                }
               } else {
-                finalStatus = dhuhrObj?.status || 'BELUM_DIISI';
+                finalStatus = shalatStatus || null;
               }
-            } else {
-              finalStatus = recordsMap.get(s.id) || null;
-            }
 
-            return {
-              ...s,
-              status: finalStatus as any,
-              note: notesMap.get(s.id) || '',
-              emotion: emotionsMap.get(s.id) || null,
-              schoolStatus,
-              dhuhrPrayerStatus: dhuhrObj
-            };
-          }));
+              return {
+                ...s,
+                status: finalStatus as any,
+                note: shalatNote,
+                emotion: null,
+                schoolStatus,
+                dhuhrPrayerStatus: shalatStatus ? { status: shalatStatus } : null
+              };
+            }));
+          } else {
+            setStudents([]);
+          }
+
+          if (lastSavedFound) {
+            setLastSaved({ date: selectedDate, classId: selectedClass });
+          } else {
+            setLastSaved(null);
+          }
+
+          // Development logging for Salat Dhuhur query:
+          console.log('[DEV LOG] Daily Shalat Dhuhur Query Result:', {
+            activeClassId: classId,
+            selectedDate,
+            academicYear: activeAcademicYear,
+            dhuhurDocsReturned: dhuhurSnap.size,
+            extractedListSize: extractedList.length,
+            schoolDocsReturned: schoolSnap.size,
+            mappedStudentsCount: studentList.length
+          });
+
         } else {
-          // No students found in this class
-          setStudents([]);
+          // Standard Attendance
+          const recordsQ = query(
+            collection(db, 'attendance_records'),
+            where('classId', 'in', [classId, className]),
+            where('date', '==', selectedDate)
+          );
+          const recordsSnap = await getDocs(recordsQ);
+          recordsMap = new Map(recordsSnap.docs.map(d => [d.data().studentId, d.data().status]));
+          notesMap = new Map(recordsSnap.docs.map(d => [d.data().studentId, d.data().note]));
+          emotionsMap = new Map(recordsSnap.docs.map(d => [d.data().studentId, d.data().emotion]));
+          dhuhrStatusMap = new Map(recordsSnap.docs.map(d => [d.data().studentId, d.data().dhuhrPrayerStatus]));
+
+          if (recordsSnap.size > 0) {
+            setLastSaved({ date: selectedDate, classId: selectedClass });
+          } else {
+            setLastSaved(null);
+          }
+
+          if (studentList.length > 0) {
+            setStudents(studentList.map(s => {
+              const schoolStatus = recordsMap.get(s.id) || null;
+              const dhuhrObj = dhuhrStatusMap.get(s.id) || null;
+              
+              let finalStatus = schoolStatus;
+
+              return {
+                ...s,
+                status: finalStatus as any,
+                note: notesMap.get(s.id) || '',
+                emotion: emotionsMap.get(s.id) || null,
+                schoolStatus,
+                dhuhrPrayerStatus: dhuhrObj
+              };
+            }));
+          } else {
+            setStudents([]);
+          }
         }
       } catch (err: any) {
         console.error('Error loading students:', err);
@@ -671,7 +815,7 @@ export default function Attendance() {
         const classId = currentClassEntity?.id || selectedClass;
 
         // Query all records for this period
-        const recordsCollection = activeUnit === 'JUNIOR_HIGH' ? 'attendance_records' : (attendanceType === 'DHUHUR' ? 'dhuhur_attendance_records' : 'attendance_records');
+        const recordsCollection = attendanceType === 'DHUHUR' ? 'dhuhur_attendance_records' : 'attendance_records';
         
         let startLimit = '';
         let endLimit = '';
@@ -701,7 +845,23 @@ export default function Attendance() {
         let totalAlpa = 0;
         let totalLate = 0;
 
-        const hasRecords = snap.docs.length > 0;
+        // Defensive extraction from Firestore documents
+        const extractedMonthlyList: { studentId: string; date: string; status: string }[] = [];
+        snap.docs.forEach(doc => {
+          const docData = doc.data();
+          const date = docData.date;
+          if (!date) return;
+          const records = extractRecordsFromDoc(docData);
+          records.forEach(r => {
+            extractedMonthlyList.push({
+              studentId: r.studentId,
+              date: date,
+              status: r.status
+            });
+          });
+        });
+
+        const hasRecords = extractedMonthlyList.length > 0;
         if (hasRecords) {
           // Initialize active roster students with zeroes so if they have no records, they show 0 instead of -
           students.forEach(s => {
@@ -710,10 +870,9 @@ export default function Attendance() {
           });
         }
 
-        snap.docs.forEach(doc => {
-          const data = doc.data();
-          const sId = data.studentId;
-          const date = data.date; // YYYY-MM-DD
+        extractedMonthlyList.forEach(item => {
+          const sId = item.studentId;
+          const date = item.date;
 
           // Filter strictly in-memory for active students in the selected-class roster
           const isInRoster = students.some(st => st.id === sId);
@@ -722,10 +881,7 @@ export default function Attendance() {
           if (!agg[sId]) agg[sId] = { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
           if (!matrix[sId]) matrix[sId] = {};
           
-          let status = data.status;
-          if (activeUnit === 'JUNIOR_HIGH' && attendanceType === 'DHUHUR') {
-            status = data.dhuhrPrayerStatus?.status || 'BELUM_DIISI';
-          }
+          const status = item.status;
           
           matrix[sId][date] = status;
           
@@ -745,6 +901,16 @@ export default function Attendance() {
             else if (status === 'ALPA') { agg[sId].alpa++; totalAlpa++; }
             else if (status === 'LATE') { agg[sId].late++; totalLate++; }
           }
+        });
+
+        // Development logging for monthly Salat Dhuhur query:
+        console.log('[DEV LOG] Monthly Shalat Dhuhur Query Result:', {
+          activeClassId: classId,
+          selectedDateRange: { startLimit, endLimit },
+          academicYear: activeAcademicYear,
+          firestoreDocsReturned: snap.size,
+          extractedRecordsCount: extractedMonthlyList.length,
+          mappedStudentStatuses: { totalHadir, totalSakit, totalIzin, totalAlpa, totalLate }
         });
 
         if (hasRecords) {
@@ -1164,6 +1330,35 @@ export default function Attendance() {
           };
 
           await setDoc(doc(db, 'attendance_records', recordId), recordData, { merge: true });
+
+          // Also save to dhuhur_attendance_records to ensure perfect sync
+          const academicYearId = activeAcademicYear.replace(/\//g, '-');
+          const dhuhurRecordId = `dhuhur_${selectedClass}_${selectedDate}_${student.id}`;
+          const dhuhurRecord = {
+            id: dhuhurRecordId,
+            studentId: student.id,
+            classId: selectedClass,
+            date: selectedDate,
+            unit: 'JUNIOR_HIGH',
+            status: student.status || 'BELUM_DIISI',
+            note: student.note || "",
+            academicYearId,
+            academicYear: activeAcademicYear,
+            semester: parseInt(activeSemester, 10),
+            studentNameSnapshot: student.name,
+            classNameSnapshot: className,
+            recordedByUid: userUid,
+            recordedByEmail: userEmail,
+            recordedAt: isNew ? serverTimestamp() : (existingDhuhr?.recordedAt || serverTimestamp()),
+            updatedAt: serverTimestamp(),
+            backupType: 'DHUHUR_ATTENDANCE',
+            syncStatus: 'PENDING',
+            lastSyncAt: null,
+            syncError: null,
+            retryCount: 0
+          };
+          await setDoc(doc(db, 'dhuhur_attendance_records', dhuhurRecordId), dhuhurRecord, { merge: true });
+
           successCount++;
         }
 
@@ -2443,7 +2638,9 @@ export default function Attendance() {
                   </div>
                   <h4 className="font-bold text-gray-900 text-sm mb-1">Tidak Ada Data</h4>
                   <p className="text-xs text-gray-500 leading-relaxed">
-                    Tidak ditemukan catatan kehadiran untuk kelas dan periode yang Anda pilih.
+                    {attendanceType === 'DHUHUR'
+                      ? 'Belum ada data Kehadiran Shalat Dhuhur pada periode ini.'
+                      : 'Tidak ditemukan catatan kehadiran untuk kelas dan periode yang Anda pilih.'}
                   </p>
                 </div>
               ) : recapViewMode === 'SUMMARY' ? (
