@@ -2521,7 +2521,7 @@ export default function WeeklyReview() {
                 </div>
                 <div className="px-[16px] py-[14px] text-[14px] leading-[1.58] text-left text-gray-900 bg-white flex-1 whitespace-pre-wrap font-normal">
                   {finalGeneralComments || (
-                    <span className="text-[13px] text-gray-400 italic">Komentar perkembangan mingguan belum diisi oleh guru.</span>
+                    <span className="text-[13px] text-gray-400 italic">General comments belum diisi oleh guru.</span>
                   )}
                 </div>
               </div>

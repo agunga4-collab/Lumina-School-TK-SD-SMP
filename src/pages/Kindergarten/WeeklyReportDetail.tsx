@@ -248,6 +248,11 @@ export default function WeeklyReportDetail() {
 
   const periodRange = `${formatDateIndonesia(snapshot.period?.startDate)} - ${formatDateIndonesia(snapshot.period?.endDate)}`;
 
+  const commentFormat =
+    snapshot.commentFormat === "GENERAL_COMMENT"
+      ? "GENERAL_COMMENT"
+      : "LEGACY_TWO_COMMENTS";
+
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col items-center py-0 sm:py-6">
       <div className="w-full max-w-md bg-white min-h-screen sm:min-h-0 sm:rounded-3xl shadow-xl border-x border-gray-100 flex flex-col relative pb-12 overflow-x-hidden">
@@ -430,31 +435,48 @@ export default function WeeklyReportDetail() {
           </div>
         </div>
 
-        {/* 3. CATATAN MINGGUAN GURU */}
-        <div className="p-4 space-y-2">
-          <div className="flex items-center gap-2 border-b border-gray-100 pb-2">
-            <div className="w-1.5 h-4 bg-[#109E58] rounded-full" />
-            <h2 className="text-xs font-black uppercase tracking-wider text-gray-800">
-              CATATAN MINGGUAN GURU
-            </h2>
+        {commentFormat === 'GENERAL_COMMENT' ? (
+          /* 3. GENERAL COMMENTS */
+          <div className="p-4 space-y-2">
+            <div className="flex items-center gap-2 border-b border-gray-100 pb-2">
+              <div className="w-1.5 h-4 bg-[#109E58] rounded-full" />
+              <h2 className="text-xs font-black uppercase tracking-wider text-gray-800">
+                GENERAL COMMENTS
+              </h2>
+            </div>
+            <div className="p-4 bg-emerald-50/60 border border-emerald-100 rounded-2xl text-xs font-semibold text-gray-800 leading-relaxed whitespace-pre-line shadow-sm">
+              {snapshot.generalComments?.trim() || "General comments belum diisi oleh guru."}
+            </div>
           </div>
-          <div className="p-4 bg-emerald-50/60 border border-emerald-100 rounded-2xl text-xs font-semibold text-gray-800 leading-relaxed whitespace-pre-line shadow-sm">
-            {snapshot.weeklyComments?.trim() || "Guru belum menambahkan catatan mingguan."}
-          </div>
-        </div>
+        ) : (
+          <>
+            {/* 3. CATATAN MINGGUAN GURU */}
+            <div className="p-4 space-y-2">
+              <div className="flex items-center gap-2 border-b border-gray-100 pb-2">
+                <div className="w-1.5 h-4 bg-[#109E58] rounded-full" />
+                <h2 className="text-xs font-black uppercase tracking-wider text-gray-800">
+                  CATATAN MINGGUAN GURU
+                </h2>
+              </div>
+              <div className="p-4 bg-emerald-50/60 border border-emerald-100 rounded-2xl text-xs font-semibold text-gray-800 leading-relaxed whitespace-pre-line shadow-sm">
+                {snapshot.weeklyComments?.trim() || "Guru belum menambahkan catatan mingguan."}
+              </div>
+            </div>
 
-        {/* 4. PERKEMBANGAN SOSIAL-EMOSIONAL */}
-        <div className="p-4 space-y-2">
-          <div className="flex items-center gap-2 border-b border-gray-100 pb-2">
-            <div className="w-1.5 h-4 bg-[#109E58] rounded-full" />
-            <h2 className="text-xs font-black uppercase tracking-wider text-gray-800">
-              PERKEMBANGAN SOSIAL-EMOSIONAL
-            </h2>
-          </div>
-          <div className="p-4 bg-white border border-gray-200 rounded-2xl text-xs font-semibold text-gray-800 leading-relaxed whitespace-pre-line shadow-sm">
-            {snapshot.socialEmotionalComment?.trim() || "Guru belum menambahkan catatan sosial-emosional."}
-          </div>
-        </div>
+            {/* 4. PERKEMBANGAN SOSIAL-EMOSIONAL */}
+            <div className="p-4 space-y-2">
+              <div className="flex items-center gap-2 border-b border-gray-100 pb-2">
+                <div className="w-1.5 h-4 bg-[#109E58] rounded-full" />
+                <h2 className="text-xs font-black uppercase tracking-wider text-gray-800">
+                  PERKEMBANGAN SOSIAL-EMOSIONAL
+                </h2>
+              </div>
+              <div className="p-4 bg-white border border-gray-200 rounded-2xl text-xs font-semibold text-gray-800 leading-relaxed whitespace-pre-line shadow-sm">
+                {snapshot.socialEmotionalComment?.trim() || "Guru belum menambahkan catatan sosial-emosional."}
+              </div>
+            </div>
+          </>
+        )}
 
         {/* 5. TANDA TANGAN & UNDUH PDF */}
         <div className="p-4 border-t border-gray-100 pt-5 space-y-4">
