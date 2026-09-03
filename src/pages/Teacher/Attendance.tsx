@@ -43,6 +43,7 @@ import { AttendanceStatus, AttendanceRecord, Student, UnitType, Class } from '..
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { attendanceSyncService, attendanceBackupConfigService } from '../../services/attendanceBackupConfigService';
 import { toast } from 'sonner';
+import { getDhuhurAttendanceRecords, calculateDhuhurRecap } from '../../services/dhuhurAttendanceService';
 import StudentSearch from '../../components/StudentSearch';
 import AttendanceStatusSelector from '../../components/AttendanceStatusSelector';
 import AttendanceStudentCard from '../../components/AttendanceStudentCard';
@@ -814,9 +815,6 @@ export default function Attendance() {
         const className = currentClassEntity?.name || selectedClass;
         const classId = currentClassEntity?.id || selectedClass;
 
-        // Query all records for this period
-        const recordsCollection = attendanceType === 'DHUHUR' ? 'dhuhur_attendance_records' : 'attendance_records';
-        
         let startLimit = '';
         let endLimit = '';
         if (recapPeriodMode === 'MONTHLY') {
@@ -828,129 +826,203 @@ export default function Attendance() {
           endLimit = recapEndDate;
         }
 
-        const q = query(
-          collection(db, recordsCollection),
-          where('classId', 'in', [classId, className]),
-          where('date', '>=', startLimit),
-          where('date', '<=', endLimit)
-        );
-
-        const snap = await getDocs(q);
-        const agg: Record<string, { hadir: number, sakit: number, izin: number, alpa: number, late: number }> = {};
-        const matrix: Record<string, Record<string, string>> = {};
-        
-        let totalHadir = 0;
-        let totalSakit = 0;
-        let totalIzin = 0;
-        let totalAlpa = 0;
-        let totalLate = 0;
-
-        // Defensive extraction from Firestore documents
-        const extractedMonthlyList: { studentId: string; date: string; status: string }[] = [];
-        snap.docs.forEach(doc => {
-          const docData = doc.data();
-          const date = docData.date;
-          if (!date) return;
-          const records = extractRecordsFromDoc(docData);
-          records.forEach(r => {
-            extractedMonthlyList.push({
-              studentId: r.studentId,
-              date: date,
-              status: r.status
-            });
+        if (activeUnit === 'JUNIOR_HIGH' && attendanceType === 'DHUHUR') {
+          const { records, sourceDocumentCount } = await getDhuhurAttendanceRecords({
+            unit: "JUNIOR_HIGH",
+            classId: classId,
+            academicYear: activeAcademicYear,
+            semester: parseInt(activeSemester, 10),
+            startDate: startLimit,
+            endDate: endLimit
           });
-        });
 
-        const hasRecords = extractedMonthlyList.length > 0;
-        if (hasRecords) {
-          // Initialize active roster students with zeroes so if they have no records, they show 0 instead of -
+          // Pure recap calculation
+          const recap = calculateDhuhurRecap(records);
+
+          // Generate student aggregates & daily matrix
+          const agg: Record<string, { hadir: number, sakit: number, izin: number, alpa: number, late: number }> = {};
+          const matrix: Record<string, Record<string, string>> = {};
+
+          // Warm-up states for active class students
           students.forEach(s => {
             agg[s.id] = { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
             matrix[s.id] = {};
           });
-        }
 
-        extractedMonthlyList.forEach(item => {
-          const sId = item.studentId;
-          const date = item.date;
+          let unknownStatusCount = 0;
 
-          // Filter strictly in-memory for active students in the selected-class roster
-          const isInRoster = students.some(st => st.id === sId);
-          if (!isInRoster) return;
+          records.forEach(entry => {
+            const sId = entry.studentId;
+            const date = entry.date;
+            const status = entry.status;
 
-          if (!agg[sId]) agg[sId] = { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
-          if (!matrix[sId]) matrix[sId] = {};
+            const isInRoster = students.some(st => st.id === sId);
+            if (!isInRoster) return;
+
+            if (!agg[sId]) agg[sId] = { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
+            if (!matrix[sId]) matrix[sId] = {};
+
+            matrix[sId][date] = status;
+
+            if (status === 'SALAT_BERJAMAAH') {
+              agg[sId].hadir++;
+            } else if (status === 'BERHALANGAN') {
+              agg[sId].late++;
+            } else if (status === 'IZIN') {
+              agg[sId].izin++;
+            } else if (status === 'TIDAK_MENGIKUTI') {
+              agg[sId].alpa++;
+            } else if (status === 'BELUM_DIISI' || status === 'TIDAK_BERLAKU') {
+              // no counters
+            } else {
+              unknownStatusCount++;
+            }
+          });
+
+          const denom = recap.salatBerjamaah + recap.berhalangan + recap.izin + recap.tidakMengikuti;
+          const rateVal = denom > 0 ? Math.round((recap.salatBerjamaah / denom) * 100) : null;
+
+          // Compact development-only diagnostics block
+          if (process.env.NODE_ENV !== 'production') {
+            console.log('[DEV DIAGNOSTICS] Salat Dhuhur Recap:', {
+              selectedClassId: classId,
+              selectedAcademicYear: activeAcademicYear,
+              selectedSemester: activeSemester,
+              dateRange: { startLimit, endLimit },
+              firestoreDocumentCount: sourceDocumentCount,
+              normalizedEntryCount: records.length,
+              unknownStatusCount,
+              computedRecapResult: recap
+            });
+          }
+
+          if (records.length > 0) {
+            setRecapData(agg);
+            setRecapMatrix(matrix);
+            setRecapStats({
+              hadir: recap.salatBerjamaah,
+              sakit: 0,
+              izin: recap.izin,
+              alpa: recap.tidakMengikuti,
+              late: recap.berhalangan,
+              attendanceRate: rateVal !== null ? rateVal : '—'
+            });
+          } else {
+            setRecapData({});
+            setRecapMatrix({});
+            setRecapStats({
+              hadir: 0,
+              sakit: 0,
+              izin: 0,
+              alpa: 0,
+              late: 0,
+              attendanceRate: '—'
+            });
+          }
+
+        } else {
+          // Query all records for this period (Standard School/Legacy)
+          const recordsCollection = attendanceType === 'DHUHUR' ? 'dhuhur_attendance_records' : 'attendance_records';
+          const q = query(
+            collection(db, recordsCollection),
+            where('classId', 'in', [classId, className]),
+            where('date', '>=', startLimit),
+            where('date', '<=', endLimit)
+          );
+
+          const snap = await getDocs(q);
+          const agg: Record<string, { hadir: number, sakit: number, izin: number, alpa: number, late: number }> = {};
+          const matrix: Record<string, Record<string, string>> = {};
           
-          const status = item.status;
-          
-          matrix[sId][date] = status;
-          
-          if (activeUnit === 'JUNIOR_HIGH' && attendanceType === 'DHUHUR') {
-            if (status === 'SALAT_BERJAMAAH') { agg[sId].hadir++; totalHadir++; }
-            else if (status === 'BERHALANGAN') { agg[sId].late++; totalLate++; }
-            else if (status === 'IZIN') { agg[sId].izin++; totalIzin++; }
-            else if (status === 'TIDAK_MENGIKUTI') { agg[sId].alpa++; totalAlpa++; }
-          } else if (attendanceType === 'DHUHUR') {
+          let totalHadir = 0;
+          let totalSakit = 0;
+          let totalIzin = 0;
+          let totalAlpa = 0;
+          let totalLate = 0;
+
+          // Defensive extraction from Firestore documents
+          const extractedMonthlyList: { studentId: string; date: string; status: string }[] = [];
+          snap.docs.forEach(doc => {
+            const docData = doc.data();
+            const date = docData.date;
+            if (!date) return;
+            const records = extractRecordsFromDoc(docData);
+            records.forEach(r => {
+              extractedMonthlyList.push({
+                studentId: r.studentId,
+                date: date,
+                status: r.status
+              });
+            });
+          });
+
+          const hasRecords = extractedMonthlyList.length > 0;
+          if (hasRecords) {
+            students.forEach(s => {
+              agg[s.id] = { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
+              matrix[s.id] = {};
+            });
+          }
+
+          extractedMonthlyList.forEach(item => {
+            const sId = item.studentId;
+            const date = item.date;
+
+            const isInRoster = students.some(st => st.id === sId);
+            if (!isInRoster) return;
+
+            if (!agg[sId]) agg[sId] = { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
+            if (!matrix[sId]) matrix[sId] = {};
+            
+            const status = item.status;
+            matrix[sId][date] = status;
+            
             if (status === 'H') { agg[sId].hadir++; totalHadir++; }
             else if (status === 'T') { agg[sId].late++; totalLate++; }
             else if (status === 'A') { agg[sId].alpa++; totalAlpa++; }
-          } else {
-            if (status === 'HADIR') { agg[sId].hadir++; totalHadir++; }
-            else if (status === 'SAKIT') { agg[sId].sakit++; totalSakit++; }
-            else if (status === 'IZIN') { agg[sId].izin++; totalIzin++; }
-            else if (status === 'ALPA') { agg[sId].alpa++; totalAlpa++; }
-            else if (status === 'LATE') { agg[sId].late++; totalLate++; }
-          }
-        });
-
-        // Development logging for monthly Salat Dhuhur query:
-        console.log('[DEV LOG] Monthly Shalat Dhuhur Query Result:', {
-          activeClassId: classId,
-          selectedDateRange: { startLimit, endLimit },
-          academicYear: activeAcademicYear,
-          firestoreDocsReturned: snap.size,
-          extractedRecordsCount: extractedMonthlyList.length,
-          mappedStudentStatuses: { totalHadir, totalSakit, totalIzin, totalAlpa, totalLate }
-        });
-
-        if (hasRecords) {
-          setRecapData(agg);
-          setRecapMatrix(matrix);
-          
-          let rateVal: number | null = null;
-          if (activeUnit === 'JUNIOR_HIGH' && attendanceType === 'DHUHUR') {
-            const denom = totalHadir + totalLate + totalIzin + totalAlpa;
-            rateVal = denom > 0 ? Math.round((totalHadir / denom) * 100) : null;
-          } else if (attendanceType === 'DHUHUR') {
-            const denom = totalHadir + totalLate + totalAlpa;
-            rateVal = denom > 0 ? Math.round(((totalHadir + totalLate) / denom) * 100) : null;
-          } else {
-            const denom = totalHadir + totalLate + totalSakit + totalIzin + totalAlpa;
-            rateVal = denom > 0 ? Math.round(((totalHadir + totalLate) / denom) * 100) : null;
-          }
-
-          setRecapStats({
-            hadir: totalHadir,
-            sakit: totalSakit,
-            izin: totalIzin,
-            alpa: totalAlpa,
-            late: totalLate,
-            attendanceRate: rateVal !== null ? rateVal : '—'
+            else {
+              if (status === 'HADIR') { agg[sId].hadir++; totalHadir++; }
+              else if (status === 'SAKIT') { agg[sId].sakit++; totalSakit++; }
+              else if (status === 'IZIN') { agg[sId].izin++; totalIzin++; }
+              else if (status === 'ALPA') { agg[sId].alpa++; totalAlpa++; }
+              else if (status === 'LATE') { agg[sId].late++; totalLate++; }
+            }
           });
-        } else {
-          // No records found
-          setRecapData({});
-          setRecapMatrix({});
-          setRecapStats({
-            hadir: 0,
-            sakit: 0,
-            izin: 0,
-            alpa: 0,
-            late: 0,
-            attendanceRate: '—'
-          });
+
+          if (hasRecords) {
+            setRecapData(agg);
+            setRecapMatrix(matrix);
+            
+            let rateVal: number | null = null;
+            if (attendanceType === 'DHUHUR') {
+              const denom = totalHadir + totalLate + totalAlpa;
+              rateVal = denom > 0 ? Math.round(((totalHadir + totalLate) / denom) * 100) : null;
+            } else {
+              const denom = totalHadir + totalLate + totalSakit + totalIzin + totalAlpa;
+              rateVal = denom > 0 ? Math.round(((totalHadir + totalLate) / denom) * 100) : null;
+            }
+
+            setRecapStats({
+              hadir: totalHadir,
+              sakit: totalSakit,
+              izin: totalIzin,
+              alpa: totalAlpa,
+              late: totalLate,
+              attendanceRate: rateVal !== null ? rateVal : '—'
+            });
+          } else {
+            setRecapData({});
+            setRecapMatrix({});
+            setRecapStats({
+              hadir: 0,
+              sakit: 0,
+              izin: 0,
+              alpa: 0,
+              late: 0,
+              attendanceRate: '—'
+            });
+          }
         }
-
       } catch (err: any) {
         console.error('Error loading monthly recap:', err);
         const isPerm = err?.code === 'permission-denied' || err?.message?.toLowerCase().includes('permission') || err?.message?.toLowerCase().includes('denied');
@@ -2523,27 +2595,27 @@ export default function Attendance() {
 
           {activeUnit === 'JUNIOR_HIGH' && attendanceType === 'DHUHUR' ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-              <RecapCard title="Partisipasi Shalat" value={loadingRecap || recapError || Object.keys(recapData).length === 0 || recapStats.attendanceRate === '—' ? '—' : `${recapStats.attendanceRate}%`} icon={<CheckCircle2 className="text-green-600" />} />
-              <RecapCard title="Shalat Berjamaah" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.hadir.toString()} icon={<CheckCircle2 className="text-emerald-500" />} />
-              <RecapCard title="Berhalangan" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.late.toString()} icon={<AlertCircle className="text-amber-500" />} />
-              <RecapCard title="Izin" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.izin.toString()} icon={<Clock className="text-blue-500" />} />
-              <RecapCard title="Tidak Mengikuti" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.alpa.toString()} icon={<UserX className="text-red-600" />} />
+              <RecapCard title="Partisipasi Shalat" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 || recapStats.attendanceRate === '—' ? '—' : `${recapStats.attendanceRate}%`)} icon={<CheckCircle2 className="text-green-600" />} />
+              <RecapCard title="Shalat Berjamaah" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.hadir.toString())} icon={<CheckCircle2 className="text-emerald-500" />} />
+              <RecapCard title="Berhalangan" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.late.toString())} icon={<AlertCircle className="text-amber-500" />} />
+              <RecapCard title="Izin" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.izin.toString())} icon={<Clock className="text-blue-500" />} />
+              <RecapCard title="Tidak Mengikuti" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.alpa.toString())} icon={<UserX className="text-red-600" />} />
             </div>
           ) : attendanceType === 'DHUHUR' ? (
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-              <RecapCard title="Tingkat Tepat Waktu" value={loadingRecap || recapError || Object.keys(recapData).length === 0 || recapStats.attendanceRate === '—' ? '—' : `${recapStats.attendanceRate}%`} icon={<CheckCircle2 className="text-green-600" />} />
-              <RecapCard title="Total Hadir" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.hadir.toString()} icon={<CheckCircle2 className="text-emerald-500" />} />
-              <RecapCard title="Total Terlambat" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.late.toString()} icon={<Clock className="text-orange-600" />} />
-              <RecapCard title="Total Absen" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.alpa.toString()} icon={<UserX className="text-red-600" />} />
+              <RecapCard title="Tingkat Tepat Waktu" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 || recapStats.attendanceRate === '—' ? '—' : `${recapStats.attendanceRate}%`)} icon={<CheckCircle2 className="text-green-600" />} />
+              <RecapCard title="Total Hadir" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.hadir.toString())} icon={<CheckCircle2 className="text-emerald-500" />} />
+              <RecapCard title="Total Terlambat" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.late.toString())} icon={<Clock className="text-orange-600" />} />
+              <RecapCard title="Total Absen" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.alpa.toString())} icon={<UserX className="text-red-600" />} />
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-              <RecapCard title="Tingkat Hadir" value={loadingRecap || recapError || Object.keys(recapData).length === 0 || recapStats.attendanceRate === '—' ? '—' : `${recapStats.attendanceRate}%`} icon={<CheckCircle2 className="text-green-600" />} />
-              <RecapCard title="Total Hadir" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.hadir.toString()} icon={<CheckCircle2 className="text-emerald-500" />} />
-              <RecapCard title="Total Sakit" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.sakit.toString()} icon={<Clock className="text-blue-600" />} />
-              <RecapCard title="Total Izin" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.izin.toString()} icon={<AlertCircle className="text-yellow-600" />} />
-              <RecapCard title="Total Alpa" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.alpa.toString()} icon={<UserX className="text-red-600" />} />
-              <RecapCard title="Total Terlambat" value={loadingRecap || recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.late.toString()} icon={<Clock className="text-orange-500" />} />
+              <RecapCard title="Tingkat Hadir" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 || recapStats.attendanceRate === '—' ? '—' : `${recapStats.attendanceRate}%`)} icon={<CheckCircle2 className="text-green-600" />} />
+              <RecapCard title="Total Hadir" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.hadir.toString())} icon={<CheckCircle2 className="text-emerald-500" />} />
+              <RecapCard title="Total Sakit" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.sakit.toString())} icon={<Clock className="text-blue-600" />} />
+              <RecapCard title="Total Izin" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.izin.toString())} icon={<AlertCircle className="text-yellow-600" />} />
+              <RecapCard title="Total Alpa" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.alpa.toString())} icon={<UserX className="text-red-600" />} />
+              <RecapCard title="Total Terlambat" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.late.toString())} icon={<Clock className="text-orange-500" />} />
             </div>
           )}
 
@@ -2938,12 +3010,17 @@ function StatusBtnDhuhur({ active, type, label, title, onClick }: { active: bool
 }
 
 function RecapCard({ title, value, icon }: { title: string; value: string; icon: React.ReactNode }) {
+  const isLoading = value === 'Loading...';
   return (
     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
-      <div className="w-12 h-12 bg-gray-50 rounded-xl flex items-center justify-center">{icon}</div>
-      <div>
+      <div className="w-12 h-12 bg-gray-50 rounded-xl flex items-center justify-center shrink-0">{icon}</div>
+      <div className="flex-1 min-w-0">
         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{title}</p>
-        <p className="text-xl font-bold text-gray-900">{value}</p>
+        {isLoading ? (
+          <div className="h-6 w-16 bg-gray-200 animate-pulse rounded mt-1" />
+        ) : (
+          <p className="text-xl font-bold text-gray-900 truncate">{value}</p>
+        )}
       </div>
     </div>
   );

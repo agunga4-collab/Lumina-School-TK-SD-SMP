@@ -18,6 +18,7 @@ import { collection, query, where, getDocs, doc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { UnitType } from '../../types';
 import { useAcademicYear } from '../../context/AcademicYearContext';
+import { getDhuhurAttendanceRecords, calculateDhuhurRecap } from '../../services/dhuhurAttendanceService';
 
 export default function HeadDashboard() {
   const { activeUnit } = useOutletContext<{ activeUnit: UnitType }>();
@@ -40,6 +41,8 @@ export default function HeadDashboard() {
   const [classes, setClasses] = useState<any[]>([]);
   const [students, setStudents] = useState<any[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<any[]>([]);
+  const [dhuhurAttendanceRecords, setDhuhurAttendanceRecords] = useState<any[]>([]);
+  const [loadingDhuhur, setLoadingDhuhur] = useState(false);
   const [latenessRecords, setLatenessRecords] = useState<any[]>([]);
   const [behaviorCases, setBehaviorCases] = useState<any[]>([]);
   const [academicCases, setAcademicCases] = useState<any[]>([]);
@@ -183,6 +186,41 @@ export default function HeadDashboard() {
     };
     fetchData();
   }, []);
+
+  // --- Fetch Dhuhur Data Reactively ---
+  useEffect(() => {
+    const fetchDhuhurDataForDashboard = async () => {
+      setLoadingDhuhur(true);
+      try {
+        const { records, sourceDocumentCount } = await getDhuhurAttendanceRecords({
+          unit: "JUNIOR_HIGH",
+          academicYear: selectedYear,
+          semester: Number(selectedSemester),
+          startDate: startDate,
+          endDate: endDate
+        });
+
+        // Diagnostics
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('[DEV DIAGNOSTICS] HeadDashboard Dhuhur Query:', {
+            dateRange: { startDate, endDate },
+            selectedYear,
+            selectedSemester,
+            sourceDocumentCount,
+            normalizedRecordsCount: records.length
+          });
+        }
+
+        setDhuhurAttendanceRecords(records);
+      } catch (err) {
+        console.error("Error loading Dhuhur attendance for dashboard:", err);
+      } finally {
+        setLoadingDhuhur(false);
+      }
+    };
+
+    fetchDhuhurDataForDashboard();
+  }, [startDate, endDate, selectedYear, selectedSemester]);
 
   // --- Dynamic Filtering Helpers ---
   const filteredClasses = useMemo(() => {
@@ -775,45 +813,49 @@ export default function HeadDashboard() {
   }, [filteredClasses, resolvedStudents, attendanceRecords, selectedYear, selectedSemester, auditDates, auditWorkingDaysCount, startDate, endDate]);
 
   const jhRekapPengisianDhuhur = useMemo(() => {
+    // Build a fast lookup map for Salat Dhuhur records: key: studentId_date
+    const dhuhurLookup = new Map<string, string>();
+    dhuhurAttendanceRecords.forEach(rec => {
+      dhuhurLookup.set(`${rec.studentId}_${rec.date}`, rec.status);
+    });
+
     return filteredClasses.map(cls => {
       const roster = resolvedStudents.filter(s => {
         if (s.academicYear && s.academicYear !== selectedYear) return false;
         return isStudentInClass(s.classId, cls.id);
       });
 
-      const rosterIds = new Set(roster.map(s => s.id));
       const rosterCount = roster.length;
       const classKeys = [cls.id, cls.name].filter(Boolean);
-      
-      const classRecordsForAudit = attendanceRecords.filter(rec => {
+
+      // We still need class school records for checking if a student is absent/sick/etc on a given date
+      const schoolRecordsForAudit = attendanceRecords.filter(rec => {
         if (rec.academicYear && rec.academicYear !== selectedYear) return false;
         if (rec.semester && String(rec.semester) !== String(selectedSemester)) return false;
         if (!classKeys.includes(rec.classId)) return false;
         return rec.date >= auditStartDate && rec.date <= auditEndDate;
       });
 
-      const dateRecordsMap = new Map<string, any[]>();
-      classRecordsForAudit.forEach(rec => {
-        if (rec.date) {
-          if (!dateRecordsMap.has(rec.date)) {
-            dateRecordsMap.set(rec.date, []);
-          }
-          dateRecordsMap.get(rec.date)!.push(rec);
+      const schoolRecordsMap = new Map<string, any>(); // key: `${studentId}_${date}`
+      schoolRecordsForAudit.forEach(rec => {
+        if (rec.studentId && rec.date) {
+          schoolRecordsMap.set(`${rec.studentId}_${rec.date}`, rec);
         }
       });
 
       const missingDatesList: string[] = [];
       
       auditDates.forEach(dateStr => {
-        const dayRecords = dateRecordsMap.get(dateStr) || [];
-        
         const incompleteForDay = roster.some(st => {
-          const rec = dayRecords.find(r => r.studentId === st.id);
-          const schoolStatus = rec?.status;
+          // If the student has a school absence/sick/etc record for this date, they are excused from Salat Dhuhur
+          const schoolRec = schoolRecordsMap.get(`${st.id}_${dateStr}`);
+          const schoolStatus = schoolRec?.status;
           if (schoolStatus && ['SAKIT', 'IZIN', 'ALPA', 'S', 'I', 'A'].includes(String(schoolStatus).toUpperCase())) {
             return false;
           }
-          const shalatStatus = rec?.dhuhrPrayerStatus?.status || 'BELUM_DIISI';
+
+          // Look up their Salat Dhuhur status
+          const shalatStatus = dhuhurLookup.get(`${st.id}_${dateStr}`) || 'BELUM_DIISI';
           return shalatStatus === 'BELUM_DIISI';
         });
 
@@ -826,23 +868,22 @@ export default function HeadDashboard() {
 
       let clsSalatBerjamaah = 0;
       let clsSalatTotal = 0;
-      
-      attendanceRecords
-        .filter(rec => {
-          if (rec.academicYear && rec.academicYear !== selectedYear) return false;
-          if (rec.semester && String(rec.semester) !== String(selectedSemester)) return false;
-          if (!classKeys.includes(rec.classId)) return false;
-          return rec.date >= startDate && rec.date <= endDate;
-        })
-        .forEach(rec => {
-          const shalatStatus = rec.dhuhrPrayerStatus?.status || 'BELUM_DIISI';
-          if (shalatStatus === 'SALAT_BERJAMAAH') {
-            clsSalatBerjamaah++;
-            clsSalatTotal++;
-          } else if (shalatStatus === 'TIDAK_MENGIKUTI') {
-            clsSalatTotal++;
-          }
-        });
+
+      // Filter dhuhurAttendanceRecords for this class and date range
+      dhuhurAttendanceRecords.forEach(rec => {
+        // Must belong to this class roster & date range
+        if (rec.date < startDate || rec.date > endDate) return;
+        const isInRoster = roster.some(st => st.id === rec.studentId);
+        if (!isInRoster) return;
+
+        const status = rec.status;
+        if (status === 'SALAT_BERJAMAAH') {
+          clsSalatBerjamaah++;
+          clsSalatTotal++;
+        } else if (status === 'BERHALANGAN' || status === 'IZIN' || status === 'TIDAK_MENGIKUTI') {
+          clsSalatTotal++;
+        }
+      });
 
       const salatRate = clsSalatTotal > 0 ? Math.min(100, Math.round((clsSalatBerjamaah / clsSalatTotal) * 100)) : 100;
       const filledDaysCount = Math.max(0, auditWorkingDaysCount - missingDatesList.length);
@@ -857,7 +898,7 @@ export default function HeadDashboard() {
         rosterCount
       };
     }).sort((a, b) => b.missingDates.length - a.missingDates.length);
-  }, [filteredClasses, resolvedStudents, attendanceRecords, selectedYear, selectedSemester, auditDates, auditWorkingDaysCount, startDate, endDate]);
+  }, [filteredClasses, resolvedStudents, attendanceRecords, dhuhurAttendanceRecords, selectedYear, selectedSemester, auditDates, auditWorkingDaysCount, startDate, endDate, auditStartDate, auditEndDate]);
 
   const lowestClassAuditDhuhur = useMemo(() => {
     if (!isAuditValid || auditWorkingDaysCount === 0 || jhRekapPengisianDhuhur.length === 0) {
@@ -873,42 +914,43 @@ export default function HeadDashboard() {
   const jhAverageSalat = useMemo(() => {
     let jamaahCount = 0;
     let totalCount = 0;
-    attendanceRecords.forEach(rec => {
+
+    dhuhurAttendanceRecords.forEach(rec => {
+      // Must be filtered for attendance
       if (!isStudentFilteredForAttendance(rec.studentId)) return;
-      if (rec.academicYear && rec.academicYear !== selectedYear) return;
-      if (rec.semester && String(rec.semester) !== String(selectedSemester)) return;
       if (rec.date < startDate || rec.date > endDate) return;
-      
-      const shalatStatus = rec.dhuhrPrayerStatus?.status || 'BELUM_DIISI';
-      if (shalatStatus === 'SALAT_BERJAMAAH') {
+
+      const status = rec.status;
+      if (status === 'SALAT_BERJAMAAH') {
         jamaahCount++;
         totalCount++;
-      } else if (shalatStatus === 'TIDAK_MENGIKUTI') {
+      } else if (status === 'BERHALANGAN' || status === 'IZIN' || status === 'TIDAK_MENGIKUTI') {
         totalCount++;
       }
     });
+
     return totalCount > 0 ? Math.min(100, Math.round((jamaahCount / totalCount) * 100)) : 100;
-  }, [attendanceRecords, isStudentFilteredForAttendance, selectedYear, selectedSemester, startDate, endDate]);
+  }, [dhuhurAttendanceRecords, isStudentFilteredForAttendance, startDate, endDate]);
 
   const jhSalatBreakdown = useMemo(() => {
     let jamaah = 0;
     let berhalangan = 0;
     let izin = 0;
     let tidakMengikuti = 0;
-    attendanceRecords.forEach(rec => {
+
+    dhuhurAttendanceRecords.forEach(rec => {
       if (!isStudentFilteredForAttendance(rec.studentId)) return;
-      if (rec.academicYear && rec.academicYear !== selectedYear) return;
-      if (rec.semester && String(rec.semester) !== String(selectedSemester)) return;
       if (rec.date < startDate || rec.date > endDate) return;
 
-      const shalatStatus = rec.dhuhrPrayerStatus?.status || 'BELUM_DIISI';
-      if (shalatStatus === 'SALAT_BERJAMAAH') jamaah++;
-      else if (shalatStatus === 'BERHALANGAN') berhalangan++;
-      else if (shalatStatus === 'IZIN') izin++;
-      else if (shalatStatus === 'TIDAK_MENGIKUTI') tidakMengikuti++;
+      const status = rec.status;
+      if (status === 'SALAT_BERJAMAAH') jamaah++;
+      else if (status === 'BERHALANGAN') berhalangan++;
+      else if (status === 'IZIN') izin++;
+      else if (status === 'TIDAK_MENGIKUTI') tidakMengikuti++;
     });
+
     return { jamaah, berhalangan, izin, tidakMengikuti };
-  }, [attendanceRecords, isStudentFilteredForAttendance, selectedYear, selectedSemester, startDate, endDate]);
+  }, [dhuhurAttendanceRecords, isStudentFilteredForAttendance, startDate, endDate]);
 
   const lowestClassAudit = useMemo(() => {
     if (!isAuditValid || auditWorkingDaysCount === 0 || jhRekapPengisian.length === 0) {
@@ -2031,7 +2073,14 @@ export default function HeadDashboard() {
                     </button>
                   </div>
 
-                  {/* Summary Cards */}
+                  {attendanceSubTab === 'DHUHUR' && loadingDhuhur ? (
+                    <div className="p-12 bg-white rounded-3xl border border-slate-100 shadow-sm flex flex-col items-center justify-center space-y-3 mt-6 animate-pulse">
+                      <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
+                      <p className="text-xs font-bold text-slate-500">Memuat analisis data Kehadiran Shalat Dhuhur...</p>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Summary Cards */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
                     {/* Average Attendance Card */}
                     <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
@@ -2407,6 +2456,8 @@ export default function HeadDashboard() {
                       )}
                     </div>
                   </div>
+                  </>
+                )}
                 </>
               )}
             </div>
