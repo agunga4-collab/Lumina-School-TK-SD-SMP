@@ -1954,20 +1954,31 @@ export default function WeeklySummary() {
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-gray-100/70 text-gray-800 text-[11px] font-black uppercase tracking-wider border-b border-gray-150">
-                <th className="py-4 pl-6 pr-3 w-12 text-center font-sans">No</th>
-                <th className="py-4 px-4 min-w-[150px] font-sans">Student Info</th>
-                <th className="py-4 px-4 min-w-[210px] bg-yellow-50/20 font-sans">Attendance Checklist Data</th>
-                <th className="py-4 px-4 min-w-[150px] text-center font-sans">SEL Comments</th>
-                <th className="py-4 px-4 min-w-[210px] bg-emerald-50/10 font-sans">Observation Data Summary</th>
-                <th className="py-4 px-4 min-w-[150px] text-center font-sans">Observation Comments</th>
-                <th className="py-4 pr-6 pl-2 w-12 text-center font-sans">Edit</th>
-              </tr>
+              {startDateStr >= KINDY_GENERAL_COMMENTS_CUTOVER_DATE ? (
+                <tr className="bg-gray-100/70 text-gray-800 text-[11px] font-black uppercase tracking-wider border-b border-gray-150">
+                  <th className="py-4 pl-6 pr-3 w-12 text-center font-sans">No</th>
+                  <th className="py-4 px-4 min-w-[150px] font-sans">Student Info</th>
+                  <th className="py-4 px-4 min-w-[210px] bg-yellow-50/20 font-sans">Attendance Checklist Data</th>
+                  <th className="py-4 px-4 min-w-[210px] bg-emerald-50/10 font-sans">Observation Data Summary</th>
+                  <th className="py-4 px-4 min-w-[150px] text-center font-sans">General Comments</th>
+                  <th className="py-4 pr-6 pl-2 w-12 text-center font-sans">Edit</th>
+                </tr>
+              ) : (
+                <tr className="bg-gray-100/70 text-gray-800 text-[11px] font-black uppercase tracking-wider border-b border-gray-150">
+                  <th className="py-4 pl-6 pr-3 w-12 text-center font-sans">No</th>
+                  <th className="py-4 px-4 min-w-[150px] font-sans">Student Info</th>
+                  <th className="py-4 px-4 min-w-[210px] bg-yellow-50/20 font-sans">Attendance Checklist Data</th>
+                  <th className="py-4 px-4 min-w-[150px] text-center font-sans">SEL Comments</th>
+                  <th className="py-4 px-4 min-w-[210px] bg-emerald-50/10 font-sans">Observation Data Summary</th>
+                  <th className="py-4 px-4 min-w-[150px] text-center font-sans">Observation Comments</th>
+                  <th className="py-4 pr-6 pl-2 w-12 text-center font-sans">Edit</th>
+                </tr>
+              )}
             </thead>
             <tbody className="divide-y divide-gray-150">
               {filteredStudents.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-gray-400 font-bold bg-white font-sans">
+                  <td colSpan={startDateStr >= KINDY_GENERAL_COMMENTS_CUTOVER_DATE ? 6 : 7} className="py-12 text-center text-gray-400 font-bold bg-white font-sans">
                     <div className="flex flex-col items-center justify-center gap-2.5">
                       <AlertCircle className="text-gray-300" size={32} />
                       <div>
@@ -1992,6 +2003,9 @@ export default function WeeklySummary() {
                   // Comment existence indicators
                   const hasSelComment = draft?.attendanceCommentTeacherEdited || draft?.attendanceCommentAiDraft;
                   const hasWeeklyComment = draft?.observationCommentTeacherEdited || draft?.observationCommentAiDraft;
+                  const hasGeneralComment = draft?.generalComments?.trim();
+
+                  const isGeneralCommentsPeriod = startDateStr >= KINDY_GENERAL_COMMENTS_CUTOVER_DATE;
 
                   return (
                     <React.Fragment key={student.id}>
@@ -2056,66 +2070,105 @@ export default function WeeklySummary() {
                           </div>
                         </td>
 
-                        {/* 4. Generate Comment Actions (SEL) */}
-                        <td className="py-5 px-4 text-center">
-                          <div className="flex flex-col items-center gap-1.5 justify-center">
-                            {hasSelComment ? (
-                              <span className="inline-flex items-center gap-1 bg-green-50 text-green-700 text-[10px] font-extrabold px-2 py-1 rounded border border-green-200 select-none font-sans">
-                                <CheckCircle2 size={11} /> Ready
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 bg-gray-50 text-gray-400 text-[9px] font-extrabold px-2 py-1 rounded border border-gray-150 select-none font-sans">
-                                No comment
-                              </span>
-                            )}
+                        {isGeneralCommentsPeriod ? (
+                          <>
+                            {/* 4. Observation Summary */}
+                            <td className="py-5 px-4 bg-emerald-50/5 font-sans min-w-[200px]">
+                              {renderObservationDataSummary(draft?.weeklyObservationItems)}
+                            </td>
 
-                            <button
-                              onClick={() => handleGenerateSelIndividual(student.id)}
-                              disabled={generatingSelId === student.id}
-                              className="text-[9.5px] font-black text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100/80 transition-all border border-emerald-200 px-2.5 py-1 rounded-lg cursor-pointer disabled:opacity-50 font-sans"
-                            >
-                              {generatingSelId === student.id ? (
-                                <Loader2 className="animate-spin inline-block mr-1" size={10} />
-                              ) : (
-                                <Sparkles className="inline-block mr-1 text-emerald-600" size={10} />
-                              )}
-                              {hasSelComment ? 'Re-Generate' : 'Generate'}
-                            </button>
-                          </div>
-                        </td>
+                            {/* 5. General Comment Actions */}
+                            <td className="py-5 px-4 text-center">
+                              <div className="flex flex-col items-center gap-1.5 justify-center">
+                                {hasGeneralComment ? (
+                                  <span className="inline-flex items-center gap-1 bg-green-50 text-green-700 text-[10px] font-extrabold px-2 py-1 rounded border border-green-200 select-none font-sans">
+                                    <CheckCircle2 size={11} /> Ready
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 bg-gray-50 text-gray-400 text-[9px] font-extrabold px-2 py-1 rounded border border-gray-150 select-none font-sans">
+                                    No comment
+                                  </span>
+                                )}
 
-                        {/* 5. Observation Summary */}
-                        <td className="py-5 px-4 bg-emerald-50/5 font-sans min-w-[200px]">
-                          {renderObservationDataSummary(draft?.weeklyObservationItems)}
-                        </td>
+                                <button
+                                  onClick={() => handleGenerateGeneralIndividual(student.id)}
+                                  disabled={generatingGeneralId === student.id}
+                                  className="text-[9.5px] font-black text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100/80 transition-all border border-emerald-200 px-2.5 py-1 rounded-lg cursor-pointer disabled:opacity-50 font-sans"
+                                >
+                                  {generatingGeneralId === student.id ? (
+                                    <Loader2 className="animate-spin inline-block mr-1" size={10} />
+                                  ) : (
+                                    <Sparkles className="inline-block mr-1 text-emerald-600" size={10} />
+                                  )}
+                                  {hasGeneralComment ? 'Re-Generate' : 'Generate'}
+                                </button>
+                              </div>
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            {/* 4. Generate Comment Actions (SEL) */}
+                            <td className="py-5 px-4 text-center">
+                              <div className="flex flex-col items-center gap-1.5 justify-center">
+                                {hasSelComment ? (
+                                  <span className="inline-flex items-center gap-1 bg-green-50 text-green-700 text-[10px] font-extrabold px-2 py-1 rounded border border-green-200 select-none font-sans">
+                                    <CheckCircle2 size={11} /> Ready
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 bg-gray-50 text-gray-400 text-[9px] font-extrabold px-2 py-1 rounded border border-gray-150 select-none font-sans">
+                                    No comment
+                                  </span>
+                                )}
 
-                        {/* 6. Generate Comment Actions (Observation) */}
-                        <td className="py-5 px-4 text-center">
-                          <div className="flex flex-col items-center gap-1.5 justify-center">
-                            {hasWeeklyComment ? (
-                              <span className="inline-flex items-center gap-1 bg-green-50 text-green-700 text-[10px] font-extrabold px-2 py-1 rounded border border-green-200 select-none font-sans">
-                                <CheckCircle2 size={11} /> Ready
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 bg-gray-50 text-gray-400 text-[9px] font-extrabold px-2 py-1 rounded border border-gray-150 select-none font-sans">
-                                No comment
-                              </span>
-                            )}
+                                <button
+                                  onClick={() => handleGenerateSelIndividual(student.id)}
+                                  disabled={generatingSelId === student.id}
+                                  className="text-[9.5px] font-black text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100/80 transition-all border border-emerald-200 px-2.5 py-1 rounded-lg cursor-pointer disabled:opacity-50 font-sans"
+                                >
+                                  {generatingSelId === student.id ? (
+                                    <Loader2 className="animate-spin inline-block mr-1" size={10} />
+                                  ) : (
+                                    <Sparkles className="inline-block mr-1 text-emerald-600" size={10} />
+                                  )}
+                                  {hasSelComment ? 'Re-Generate' : 'Generate'}
+                                </button>
+                              </div>
+                            </td>
 
-                            <button
-                              onClick={() => handleGenerateWeeklyIndividual(student.id)}
-                              disabled={generatingWeeklyId === student.id}
-                              className="text-[9.5px] font-black text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100/80 transition-all border border-emerald-200 px-2.5 py-1 rounded-lg cursor-pointer disabled:opacity-50 font-sans"
-                            >
-                              {generatingWeeklyId === student.id ? (
-                                <Loader2 className="animate-spin inline-block mr-1" size={10} />
-                              ) : (
-                                <Sparkles className="inline-block mr-1 text-emerald-600" size={10} />
-                              )}
-                              {hasWeeklyComment ? 'Re-Generate' : 'Generate'}
-                            </button>
-                          </div>
-                        </td>
+                            {/* 5. Observation Summary */}
+                            <td className="py-5 px-4 bg-emerald-50/5 font-sans min-w-[200px]">
+                              {renderObservationDataSummary(draft?.weeklyObservationItems)}
+                            </td>
+
+                            {/* 6. Generate Comment Actions (Observation) */}
+                            <td className="py-5 px-4 text-center">
+                              <div className="flex flex-col items-center gap-1.5 justify-center">
+                                {hasWeeklyComment ? (
+                                  <span className="inline-flex items-center gap-1 bg-green-50 text-green-700 text-[10px] font-extrabold px-2 py-1 rounded border border-green-200 select-none font-sans">
+                                    <CheckCircle2 size={11} /> Ready
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 bg-gray-50 text-gray-400 text-[9px] font-extrabold px-2 py-1 rounded border border-gray-150 select-none font-sans">
+                                    No comment
+                                  </span>
+                                )}
+
+                                <button
+                                  onClick={() => handleGenerateWeeklyIndividual(student.id)}
+                                  disabled={generatingWeeklyId === student.id}
+                                  className="text-[9.5px] font-black text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100/80 transition-all border border-emerald-200 px-2.5 py-1 rounded-lg cursor-pointer disabled:opacity-50 font-sans"
+                                >
+                                  {generatingWeeklyId === student.id ? (
+                                    <Loader2 className="animate-spin inline-block mr-1" size={10} />
+                                  ) : (
+                                    <Sparkles className="inline-block mr-1 text-emerald-600" size={10} />
+                                  )}
+                                  {hasWeeklyComment ? 'Re-Generate' : 'Generate'}
+                                </button>
+                              </div>
+                            </td>
+                          </>
+                        )}
 
                         {/* Expand control */}
                         <td className="py-5 pr-6 pl-2 text-center">
@@ -2136,7 +2189,7 @@ export default function WeeklySummary() {
                       {/* Collapsible Edit Panel (Draft textareas per student) */}
                       {isExpanded && (
                         <tr className="bg-emerald-50/15">
-                          <td colSpan={7} className="py-5 px-8 border-b border-gray-200 font-sans">
+                          <td colSpan={isGeneralCommentsPeriod ? 6 : 7} className="py-5 px-8 border-b border-gray-200 font-sans">
                             <motion.div 
                               initial={{ opacity: 0, y: -8 }}
                               animate={{ opacity: 1, y: 0 }}

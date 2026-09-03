@@ -1294,40 +1294,68 @@ export function resolveKindergartenCommentFormat({
   isNewUnsavedDraft?: boolean;
   periodStartDate?: string;
 }): KindergartenCommentFormat {
-  // 1. If report.status indicates published, sent, ready_to_send, or archived:
-  //    use persisted reportSnapshot.commentFormat/templateVersion if valid;
-  //    otherwise return LEGACY_TWO_COMMENTS.
+  // 1. Published, sent, ready_to_send, or archived report:
+  //    - if stored snapshot has GENERAL_COMMENT, render General Comments;
+  //    - otherwise always render legacy two comments.
+  //    - never infer format from cutover date.
   if (report && (report.status === 'published' || report.status === 'sent' || report.status === 'ready_to_send' || report.status === 'archived')) {
     const snap = report.reportSnapshot || {};
-    if (snap.commentFormat === 'GENERAL_COMMENT' || snap.commentFormat === 'LEGACY_TWO_COMMENTS') {
-      return snap.commentFormat;
+    if (snap.commentFormat === 'GENERAL_COMMENT') {
+      return 'GENERAL_COMMENT';
     }
     return 'LEGACY_TWO_COMMENTS';
   }
 
-  // 2. If an existing draft has valid commentFormat: use it.
-  if (report && (report.commentFormat === 'GENERAL_COMMENT' || report.commentFormat === 'LEGACY_TWO_COMMENTS')) {
-    return report.commentFormat;
+  // 2. Existing draft with explicit GENERAL_COMMENT:
+  if (report && report.commentFormat === 'GENERAL_COMMENT') {
+    return 'GENERAL_COMMENT';
   }
 
-  // 3. If an existing draft has weeklyComments or socialEmotional: return LEGACY_TWO_COMMENTS.
-  if (report && (
-    report.weeklyComments || 
-    report.socialEmotional || 
-    report.observationCommentTeacherEdited || 
-    report.attendanceCommentTeacherEdited
-  )) {
+  // 3. Existing draft with explicit LEGACY_TWO_COMMENTS:
+  if (report && report.commentFormat === 'LEGACY_TWO_COMMENTS') {
     return 'LEGACY_TWO_COMMENTS';
   }
 
-  // 4. If an existing draft has no format metadata: return LEGACY_TWO_COMMENTS.
+  // Helper to check for meaningful legacy content
+  const hasMeaningfulLegacyContent = (rep: any): boolean => {
+    if (!rep) return false;
+    const fields = [
+      'weeklyComments',
+      'socialEmotional',
+      'observationCommentTeacherEdited',
+      'attendanceCommentTeacherEdited',
+      'observationCommentAiDraft',
+      'attendanceCommentAiDraft',
+      'teacherEditedWeeklyComments',
+      'teacherEditedSocialEmotional',
+      'aiWeeklyCommentsDraft',
+      'aiSocialEmotionalDraft'
+    ];
+    for (const field of fields) {
+      const val = rep[field];
+      if (typeof val === 'string' && val.trim() !== '') {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // 4. Existing draft with meaningful legacy comment content:
+  if (report && hasMeaningfulLegacyContent(report)) {
+    return 'LEGACY_TWO_COMMENTS';
+  }
+
+  // 5. Draft with no explicit format and no meaningful legacy content:
   if (report && !isNewUnsavedDraft) {
+    if (periodStartDate) {
+      if (periodStartDate >= KINDY_GENERAL_COMMENTS_CUTOVER_DATE) {
+        return 'GENERAL_COMMENT';
+      }
+    }
     return 'LEGACY_TWO_COMMENTS';
   }
 
-  // 5. Only when creating a genuinely new, unsaved Kindergarten draft:
-  //    - if periodStartDate >= 2026-08-31, return GENERAL_COMMENT;
-  //    - otherwise return LEGACY_TWO_COMMENTS.
+  // 6. New unsaved draft:
   if (isNewUnsavedDraft && periodStartDate) {
     if (periodStartDate >= KINDY_GENERAL_COMMENTS_CUTOVER_DATE) {
       return 'GENERAL_COMMENT';
