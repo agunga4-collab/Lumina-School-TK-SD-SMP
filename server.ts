@@ -5065,7 +5065,8 @@ export function sanitizeAiComment(text: string): string {
 export async function getPrompt(key: string, variables?: Record<string, string>): Promise<string> {
   const defaultTemplates: Record<string, string> = {
     kindergarten_weekly_report: "Buat sebuah laporan narasi mingguan untuk seorang siswa yang berada di {{ageGroupStageString}}. Gunakan 6 developmental stages (Nilai Agama dan Budi Pekerti, Sosial-Emosional, Bahasa, Kognitif, Fisik-Motorik, Seni) sebagai hal yang menjadi fokus dalam laporan. Mulai dengan 'Minggu ini,' atau '{{nickName}} ...'. Gunakan EYD dengan benar. Jika ada domain atau sentra yang berulang, penjelasan digabung saja dan tidak berulang. Jangan gunakan tanda seru. Buat dalam 1 paragraf utuh/tidak terpisah.\n\nPENTING: HANYA berikan teks komentar utama saja. JANGAN gunakan pengantar seperti 'Berikut komentar...', 'Tentu, ini draf...', dll. JANGAN bungkus dalam tanda kutip. JANGAN gunakan format markdown seperti tebal atau miring.\n\nBerikut data observasi mingguan siswa:\n{{observationSummary}}",
-    kindergarten_sel_report: "Saya ingin membuat komentar mingguan untuk laporan perkembangan Sosial Emosional siswa {{ageGroupStageString}}. Berikut adalah data kehadiran dan emosi siswa dalam 1 minggu terakhir:\nHappy: {{happy}}, Sad: {{sad}}, Angry: {{angry}}, OK: {{ok}}, No News: {{noNews}}, Sick: {{sick}}, Izin: {{izin}}, Early Leave: {{earlyLeave}}\nBuatkan saya satu paragraf komentar dalam bahasa Indonesia yang singkat dan positif, cocok untuk laporan mingguan. Komentar harus sesuai dengan tahapan perkembangan sosial emosional anak usia yang sesuai, menggambarkan kemampuan anak mengenali dan mengekspresikan emosi, serta bagaimana ia merespons dukungan orang dewasa.\nGunakan bahasa yang hangat untuk ananda bernama: {{nickName}}\n\nPENTING: HANYA berikan teks komentar utama saja. JANGAN gunakan pengantar seperti 'Berikut komentar...', 'Tentu, ini draf...', dll. JANGAN bungkus dalam tanda kutip. JANGAN gunakan format markdown seperti tebal atau miring."
+    kindergarten_sel_report: "Saya ingin membuat komentar mingguan untuk laporan perkembangan Sosial Emosional siswa {{ageGroupStageString}}. Berikut adalah data kehadiran dan emosi siswa dalam 1 minggu terakhir:\nHappy: {{happy}}, Sad: {{sad}}, Angry: {{angry}}, OK: {{ok}}, No News: {{noNews}}, Sick: {{sick}}, Izin: {{izin}}, Early Leave: {{earlyLeave}}\nBuatkan saya satu paragraf komentar dalam bahasa Indonesia yang singkat dan positif, cocok untuk laporan mingguan. Komentar harus sesuai dengan tahapan perkembangan sosial emosional anak usia yang sesuai, menggambarkan kemampuan anak mengenali dan mengekspresikan emosi, serta bagaimana ia merespons dukungan orang dewasa.\nGunakan bahasa yang hangat untuk ananda bernama: {{nickName}}\n\nPENTING: HANYA berikan teks komentar utama saja. JANGAN gunakan pengantar seperti 'Berikut komentar...', 'Tentu, ini draf...', dll. JANGAN bungkus dalam tanda kutip. JANGAN gunakan format markdown seperti tebal atau miring.",
+    kindergarten_general_comment: "Buat sebuah laporan komentar umum (General Comments) mingguan dalam bahasa Indonesia yang hangat, profesional, dan kondusif untuk siswa yang berada di {{ageGroupStageString}} bernama {{nickName}} (Nama Lengkap: {{studentName}}).\n\nSintesiskan data observasi mingguan dan data kehadiran/sosial-emosional siswa berikut:\n\n=== DATA OBSERVASI ===\n{{observationSummary}}\n\n=== DATA KEHADIRAN & EMOSI ===\nHappy: {{happy}}, Sad: {{sad}}, Angry: {{angry}}, OK: {{ok}}, No News: {{noNews}}, Sick: {{sick}}, Izin: {{izin}}, Early Leave: {{earlyLeave}}\n\n=== ATURAN PEMBUATAN ===\n1. Komentar harus berupa satu paragraf naratif utuh/tidak terpisah yang hangat, konstruktif, dan ramah terhadap orang tua. Jangan pisahkan menjadi dua bagian/seksi.\n2. JANGAN sertakan label internal mentah seperti MB/BSH/BSB atau BB secara literal, melainkan deskripsikan perkembangannya secara mengalir (misal: 'mulai berkembang dengan baik', 'berkembang sesuai harapan', dll).\n3. JANGAN mengarang atau memformulasikan observasi yang absen atau tidak ada dalam input data di atas.\n4. Jika data observasi atau kehadiran minim, tangani secara bijak dan tetap berikan apresiasi positif atas kehadiran atau hal-hal mendasar tanpa membingkai perkembangan normal anak sebagai defisit.\n5. Hindari penggunaan tanda seru (!). Gunakan EYD dengan benar.\n6. HANYA berikan draf komentar utama saja. JANGAN gunakan pengantar atau penutup seperti 'Berikut komentar...', 'Tentu saja...', dll. JANGAN gunakan tanda kutip di awal dan akhir draf."
   };
 
   try {
@@ -5459,6 +5460,79 @@ app.post("/api/kindergarten/generate-sel-comment", async (req, res) => {
   } catch (error: any) {
     console.error("[SelCommentsAI] Error calling AI API:", error);
     res.status(500).json({ error: error.message || "Gagal mengenerate komentar SEL menggunakan AI." });
+  }
+});
+
+// API: Generate Weekly General Comment Synthesizing Observations & Attendance/Emotional Checklist
+app.post("/api/kindergarten/generate-general-comment", async (req, res) => {
+  try {
+    const { studentName, nickName, ageGroup, observationSummary, attendanceSummary } = req.body;
+    if (!studentName) {
+      return res.status(400).json({ error: "Missing studentName" });
+    }
+
+    const API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
+    if (!API_KEY || API_KEY.trim() === "") {
+      return res.status(500).json({ error: "AI API key is not configured on the server." });
+    }
+
+    const stageString = ageGroup === 'PRA_TK' ? 'Pra TK (usia 2-4 tahun)' : ageGroup === 'TK_B' ? 'TK B (usia 5-6 tahun)' : 'TK A (usia 4-5 tahun)';
+
+    let formattedObs = "Tidak ada records observasi minggu ini.";
+    if (Array.isArray(observationSummary) && observationSummary.length > 0) {
+      formattedObs = observationSummary.map(obs => {
+        const mergedNotesStr = Array.isArray(obs.mergedNotes) && obs.mergedNotes.length > 0
+          ? obs.mergedNotes.map((n: string) => `- ${n}`).join("\n")
+          : "- Mengikuti aktivitas dengan baik.";
+        return `Domain: ${obs.domain}\nAktivitas: ${obs.activityList?.join(", ") || "-"}\nCapaian: ${obs.grades?.join(", ") || "-"}\nCatatan Perkembangan:\n${mergedNotesStr}`;
+      }).join("\n\n");
+    }
+
+    const h = attendanceSummary?.happy || 0;
+    const s = attendanceSummary?.sad || 0;
+    const a = attendanceSummary?.angry || 0;
+    const o = attendanceSummary?.ok || 0;
+    const n = attendanceSummary?.noNews || 0;
+    const sk = attendanceSummary?.sick || 0;
+    const i = attendanceSummary?.izin || 0;
+    const el = attendanceSummary?.earlyLeave || 0;
+
+    const prompt = await getPrompt("kindergarten_general_comment", {
+      studentName,
+      nickName: nickName || studentName,
+      ageGroupStageString: stageString,
+      observationSummary: formattedObs,
+      happy: String(h),
+      sad: String(s),
+      angry: String(a),
+      ok: String(o),
+      noNews: String(n),
+      sick: String(sk),
+      izin: String(i),
+      earlyLeave: String(el),
+    });
+
+    const BASE_URL = process.env.VITE_AI_BASE_URL || "https://api.koboillm.com/v1";
+    const MODEL = process.env.VITE_AI_MODEL || "gemini/gemini-2.5-flash-lite";
+
+    const aiResponse = await axios.post(`${BASE_URL}/chat/completions`, {
+      model: MODEL,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.7
+    }, {
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${API_KEY}`,
+      },
+      timeout: 30000
+    });
+
+    const textResult = aiResponse.data?.choices?.[0]?.message?.content || "";
+    const sanitizedText = sanitizeAiComment(textResult);
+    res.json({ text: sanitizedText });
+  } catch (error: any) {
+    console.error("[GeneralCommentsAI] Error calling AI API:", error);
+    res.status(500).json({ error: error.message || "Gagal mengenerate general comment menggunakan AI." });
   }
 });
 

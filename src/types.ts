@@ -1765,7 +1765,18 @@ export type KGWeeklyReportDraft = {
   aiSocialEmotionalDraft?: string;
   teacherEditedWeeklyComments?: string;
   teacherEditedSocialEmotional?: string;
+  generalComments?: string;
+  commentFormat?: KindergartenCommentFormat;
+  templateVersion?: KindergartenTemplateVersion;
 };
+
+export type KindergartenCommentFormat =
+  | "LEGACY_TWO_COMMENTS"
+  | "GENERAL_COMMENT";
+
+export type KindergartenTemplateVersion =
+  | "KINDY_WEEKLY_V1_LEGACY"
+  | "KINDY_WEEKLY_V2_GENERAL_COMMENT";
 
 export interface PromptTemplate {
   id: string;

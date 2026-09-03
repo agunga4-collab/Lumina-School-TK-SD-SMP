@@ -14,7 +14,9 @@ import {
   formatDateToKey,
   getStoredStudents,
   saveStoredStudents,
-  aggregateKGWeeklyReportForPeriod
+  aggregateKGWeeklyReportForPeriod,
+  resolveKindergartenCommentFormat,
+  KINDY_GENERAL_COMMENTS_CUTOVER_DATE
 } from '../../lib/kindergartenWeeklyReport';
 import { collection, query, where, getDocs, addDoc, deleteDoc, doc, updateDoc, getDoc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
@@ -1405,6 +1407,8 @@ export default function WeeklyReview() {
         week: finalWeek,
         weeklyComments: finalWeeklyComments,
         socialEmotional: finalSocialEmotional,
+        generalComments: finalGeneralComments,
+        commentFormat: resolvedFormat,
         publishedAt: Date.now(),
         driveFileId,
         driveFileUrl,
@@ -1437,6 +1441,8 @@ export default function WeeklyReview() {
 
           weeklyComments: finalWeeklyComments,
           socialEmotionalComment: finalSocialEmotional,
+          generalComments: finalGeneralComments,
+          commentFormat: resolvedFormat,
 
           attendanceSummary: {
             present: attPresent,
@@ -1584,6 +1590,12 @@ export default function WeeklyReview() {
 
   // Safe checks and extracted properties
   const hasDraft = !!loadedDraft;
+  const resolvedFormat = resolveKindergartenCommentFormat({
+    periodStartDate: startDateStr,
+    report: loadedDraft,
+    isNewUnsavedDraft: !loadedDraft
+  });
+  const finalGeneralComments = loadedDraft?.generalComments || '';
   const finalWeeklyComments = loadedDraft?.observationCommentTeacherEdited || loadedDraft?.observationCommentAiDraft || loadedDraft?.teacherEditedWeeklyComments || loadedDraft?.aiWeeklyCommentsDraft || '';
   const finalSocialEmotional = loadedDraft?.attendanceCommentTeacherEdited || loadedDraft?.attendanceCommentAiDraft || loadedDraft?.teacherEditedSocialEmotional || loadedDraft?.aiSocialEmotionalDraft || '';
   const finalTheme = (loadedDraft?.theme && loadedDraft.theme.trim() !== '') 
@@ -1771,6 +1783,7 @@ export default function WeeklyReview() {
         !!matchingDraft.socialEmotional || 
         !!matchingDraft.attendanceCommentTeacherEdited || 
         !!matchingDraft.observationCommentTeacherEdited ||
+        !!matchingDraft.generalComments ||
         !!matchingDraft.updatedAt
       );
 
@@ -2500,34 +2513,51 @@ export default function WeeklyReview() {
               </div>
             </div>
 
-            {/* Section pertama: WEEKLY COMMENTS */}
-            <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col min-h-[145px] mt-4">
-              <div className="bg-[#109E58] text-white text-center flex items-center justify-center h-[27px] font-bold text-[13px] leading-[1.2] tracking-wider uppercase">
-                WEEKLY COMMENTS
+            {resolvedFormat === 'GENERAL_COMMENT' ? (
+              /* Unified General Comments Box */
+              <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col min-h-[312px] mt-4">
+                <div className="bg-[#109E58] text-white text-center flex items-center justify-center h-[27px] font-bold text-[13px] leading-[1.2] tracking-wider uppercase">
+                  GENERAL COMMENTS
+                </div>
+                <div className="px-[16px] py-[14px] text-[14px] leading-[1.58] text-left text-gray-900 bg-white flex-1 whitespace-pre-wrap font-normal">
+                  {finalGeneralComments || (
+                    <span className="text-[13px] text-gray-400 italic">Komentar perkembangan mingguan belum diisi oleh guru.</span>
+                  )}
+                </div>
               </div>
-              <div className="px-[16px] py-[14px] text-[14px] leading-[1.58] text-left text-gray-900 bg-white flex-1 whitespace-pre-wrap font-normal">
-                {finalWeeklyComments || (
-                  <span className="text-[13px] text-gray-400 italic">Komentar perkembangan mingguan belum diisi oleh guru.</span>
-                )}
-              </div>
-            </div>
+            ) : (
+              /* Separate Legacy Comments */
+              <>
+                {/* Section pertama: WEEKLY COMMENTS */}
+                <div className="border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col min-h-[145px] mt-4">
+                  <div className="bg-[#109E58] text-white text-center flex items-center justify-center h-[27px] font-bold text-[13px] leading-[1.2] tracking-wider uppercase">
+                    WEEKLY COMMENTS
+                  </div>
+                  <div className="px-[16px] py-[14px] text-[14px] leading-[1.58] text-left text-gray-900 bg-white flex-1 whitespace-pre-wrap font-normal">
+                    {finalWeeklyComments || (
+                      <span className="text-[13px] text-gray-400 italic">Komentar perkembangan mingguan belum diisi oleh guru.</span>
+                    )}
+                  </div>
+                </div>
 
-            {/* Spasi antara komentar */}
-            <div className="h-[22px]"></div>
+                {/* Spasi antara komentar */}
+                <div className="h-[22px]"></div>
 
-            {/* Section kedua: SOCIAL-EMOTIONAL LEARNING DEVELOPMENT */}
-            <div className={`border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col ${finalSocialEmotional ? 'min-h-[145px]' : 'min-h-[150px]'}`}>
-              <div className="bg-[#109E58] text-white text-center flex items-center justify-center h-[27px] font-bold text-[13px] leading-[1.2] tracking-wider uppercase">
-                SOCIAL-EMOTIONAL LEARNING DEVELOPMENT
-              </div>
-              <div className="px-[16px] py-[14px] text-left text-gray-900 bg-white flex-1 whitespace-pre-wrap font-normal">
-                {finalSocialEmotional ? (
-                  <div className="text-[14px] leading-[1.55]">{finalSocialEmotional}</div>
-                ) : (
-                  <span className="text-[13px] text-gray-400 italic block">Komentar sosial-emosional belum diisi oleh guru.</span>
-                )}
-              </div>
-            </div>
+                {/* Section kedua: SOCIAL-EMOTIONAL LEARNING DEVELOPMENT */}
+                <div className={`border-2 border-[#109E58] rounded-sm overflow-hidden bg-white flex flex-col ${finalSocialEmotional ? 'min-h-[145px]' : 'min-h-[150px]'}`}>
+                  <div className="bg-[#109E58] text-white text-center flex items-center justify-center h-[27px] font-bold text-[13px] leading-[1.2] tracking-wider uppercase">
+                    SOCIAL-EMOTIONAL LEARNING DEVELOPMENT
+                  </div>
+                  <div className="px-[16px] py-[14px] text-left text-gray-900 bg-white flex-1 whitespace-pre-wrap font-normal">
+                    {finalSocialEmotional ? (
+                      <div className="text-[14px] leading-[1.55]">{finalSocialEmotional}</div>
+                    ) : (
+                      <span className="text-[13px] text-gray-400 italic block">Komentar sosial-emosional belum diisi oleh guru.</span>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
 
             {/* Area Tanda Tangan: Guru Kelas Centered */}
             <div 

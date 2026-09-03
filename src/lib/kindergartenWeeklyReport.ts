@@ -1,4 +1,4 @@
-import { KGWeeklyReportDraft, KGDomain, KGActivity } from '../types';
+import { KGWeeklyReportDraft, KGDomain, KGActivity, KindergartenCommentFormat, KindergartenTemplateVersion } from '../types';
 import { buildStudentNameIndex, resolveAttendanceStudent } from './namecentricResolver';
 import { resolveCanonicalClassId } from './kindergartenMetadataCache';
 
@@ -1282,3 +1282,58 @@ export function aggregateKGWeeklyReportForPeriod(
     endDate: endDateStr
   };
 }
+
+export const KINDY_GENERAL_COMMENTS_CUTOVER_DATE = "2026-08-31";
+
+export function resolveKindergartenCommentFormat({
+  report,
+  isNewUnsavedDraft,
+  periodStartDate,
+}: {
+  report?: any;
+  isNewUnsavedDraft?: boolean;
+  periodStartDate?: string;
+}): KindergartenCommentFormat {
+  // 1. If report.status indicates published, sent, ready_to_send, or archived:
+  //    use persisted reportSnapshot.commentFormat/templateVersion if valid;
+  //    otherwise return LEGACY_TWO_COMMENTS.
+  if (report && (report.status === 'published' || report.status === 'sent' || report.status === 'ready_to_send' || report.status === 'archived')) {
+    const snap = report.reportSnapshot || {};
+    if (snap.commentFormat === 'GENERAL_COMMENT' || snap.commentFormat === 'LEGACY_TWO_COMMENTS') {
+      return snap.commentFormat;
+    }
+    return 'LEGACY_TWO_COMMENTS';
+  }
+
+  // 2. If an existing draft has valid commentFormat: use it.
+  if (report && (report.commentFormat === 'GENERAL_COMMENT' || report.commentFormat === 'LEGACY_TWO_COMMENTS')) {
+    return report.commentFormat;
+  }
+
+  // 3. If an existing draft has weeklyComments or socialEmotional: return LEGACY_TWO_COMMENTS.
+  if (report && (
+    report.weeklyComments || 
+    report.socialEmotional || 
+    report.observationCommentTeacherEdited || 
+    report.attendanceCommentTeacherEdited
+  )) {
+    return 'LEGACY_TWO_COMMENTS';
+  }
+
+  // 4. If an existing draft has no format metadata: return LEGACY_TWO_COMMENTS.
+  if (report && !isNewUnsavedDraft) {
+    return 'LEGACY_TWO_COMMENTS';
+  }
+
+  // 5. Only when creating a genuinely new, unsaved Kindergarten draft:
+  //    - if periodStartDate >= 2026-08-31, return GENERAL_COMMENT;
+  //    - otherwise return LEGACY_TWO_COMMENTS.
+  if (isNewUnsavedDraft && periodStartDate) {
+    if (periodStartDate >= KINDY_GENERAL_COMMENTS_CUTOVER_DATE) {
+      return 'GENERAL_COMMENT';
+    }
+  }
+
+  return 'LEGACY_TWO_COMMENTS';
+}
+

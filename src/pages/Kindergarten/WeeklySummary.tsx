@@ -14,7 +14,9 @@ import {
   formatDateToKey, 
   getMonday,
   getStoredStudents,
-  saveStoredStudents
+  saveStoredStudents,
+  resolveKindergartenCommentFormat,
+  KINDY_GENERAL_COMMENTS_CUTOVER_DATE
 } from '../../lib/kindergartenWeeklyReport';
 import { collection, query, where, getDocs, doc, setDoc, getDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
@@ -765,6 +767,9 @@ export default function WeeklySummary() {
             fetchedDraftsMap[data.studentId] = {
               id: docSnap.id,
               ...data,
+              generalComments: data.generalComments || '',
+              commentFormat: data.commentFormat || 'LEGACY_TWO_COMMENTS',
+              templateVersion: data.templateVersion || 'KINDY_WEEKLY_V1_LEGACY',
               // Map the custom backend fields to standard frontend state fields
               attendanceCommentTeacherEdited: data.socialEmotional || data.attendanceCommentTeacherEdited || '',
               observationCommentTeacherEdited: data.weeklyComments || data.observationCommentTeacherEdited || ''
@@ -892,26 +897,27 @@ export default function WeeklySummary() {
   // Specific loading states for per-student actions
   const [generatingSelId, setGeneratingSelId] = React.useState<string | null>(null);
   const [generatingWeeklyId, setGeneratingWeeklyId] = React.useState<string | null>(null);
+  const [generatingGeneralId, setGeneratingGeneralId] = React.useState<string | null>(null);
 
   // Speech-to-text and AI Refinement states
   interface RefineState {
     studentId: string;
     studentName: string;
-    fieldType: 'social_emotional' | 'weekly_domains';
+    fieldType: 'social_emotional' | 'weekly_domains' | 'general_comments';
     originalText: string;
     refinedText: string;
   }
 
   const SpeechRecognitionAPI = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
-  const [activeRecording, setActiveRecording] = React.useState<{ studentId: string; fieldType: 'social_emotional' | 'weekly_domains' } | null>(null);
+  const [activeRecording, setActiveRecording] = React.useState<{ studentId: string; fieldType: 'social_emotional' | 'weekly_domains' | 'general_comments' } | null>(null);
   const [refineReview, setRefineReview] = React.useState<RefineState | null>(null);
-  const [refiningField, setRefiningField] = React.useState<{ studentId: string; fieldType: 'social_emotional' | 'weekly_domains' } | null>(null);
+  const [refiningField, setRefiningField] = React.useState<{ studentId: string; fieldType: 'social_emotional' | 'weekly_domains' | 'general_comments' } | null>(null);
 
   const recognitionRef = React.useRef<any>(null);
   const recordingStateRef = React.useRef<{
     studentId: string;
-    fieldType: 'social_emotional' | 'weekly_domains';
+    fieldType: 'social_emotional' | 'weekly_domains' | 'general_comments';
     baseText: string;
     finalTranscript: string;
     interimTranscript: string;
@@ -960,7 +966,7 @@ export default function WeeklySummary() {
     finishRecording();
   };
 
-  const startRecording = (studentId: string, fieldType: 'social_emotional' | 'weekly_domains', currentVal: string) => {
+  const startRecording = (studentId: string, fieldType: 'social_emotional' | 'weekly_domains' | 'general_comments', currentVal: string) => {
     if (recognitionRef.current) {
       stopRecording();
     }
@@ -1013,6 +1019,8 @@ export default function WeeklySummary() {
         // Update local state in real-time
         if (state.fieldType === 'social_emotional') {
           handleLocalDraftChange(state.studentId, { attendanceCommentTeacherEdited: combined });
+        } else if (state.fieldType === 'general_comments') {
+          handleLocalDraftChange(state.studentId, { generalComments: combined });
         } else {
           handleLocalDraftChange(state.studentId, { observationCommentTeacherEdited: combined });
         }
@@ -1040,7 +1048,7 @@ export default function WeeklySummary() {
     }
   };
 
-  const handleRefineComment = async (studentId: string, studentName: string, fieldType: 'social_emotional' | 'weekly_domains', currentText: string) => {
+  const handleRefineComment = async (studentId: string, studentName: string, fieldType: 'social_emotional' | 'weekly_domains' | 'general_comments', currentText: string) => {
     if (!currentText || currentText.trim() === "") {
       toast.error("Teks komentar kosong.");
       return;
@@ -1166,6 +1174,7 @@ export default function WeeklySummary() {
         savedParsed = {
           ...savedParsed,
           ...dbDraft,
+          generalComments: dbDraft.generalComments || savedParsed.generalComments || '',
           attendanceCommentTeacherEdited: dbDraft.socialEmotional || dbDraft.attendanceCommentTeacherEdited || savedParsed.attendanceCommentTeacherEdited || '',
           observationCommentTeacherEdited: dbDraft.weeklyComments || dbDraft.observationCommentTeacherEdited || savedParsed.observationCommentTeacherEdited || '',
           theme: dbDraft.theme || savedParsed.theme || '',
@@ -1173,10 +1182,31 @@ export default function WeeklySummary() {
         };
       }
 
+      const hasDbDraft = dbDraft && Object.keys(dbDraft).length > 0;
+      const hasSavedParsed = savedParsed && Object.keys(savedParsed).length > 0;
+
+      const format = resolveKindergartenCommentFormat({
+        report: hasDbDraft ? dbDraft : (hasSavedParsed ? savedParsed : undefined),
+        isNewUnsavedDraft: !hasDbDraft && !hasSavedParsed,
+        periodStartDate: startDateStr
+      });
+
+      // Prefill rules if genuinely new eligible draft and legacy values are present
+      if (format === 'GENERAL_COMMENT' && !dbDraft?.generalComments && !savedParsed?.generalComments) {
+        const weeklyCommentsPrefill = dbDraft?.weeklyComments || savedParsed?.observationCommentTeacherEdited || '';
+        const socialEmotionalPrefill = dbDraft?.socialEmotional || savedParsed?.attendanceCommentTeacherEdited || '';
+        if (weeklyCommentsPrefill && socialEmotionalPrefill) {
+          savedParsed.generalComments = `${weeklyCommentsPrefill}\n\n${socialEmotionalPrefill}`.trim();
+        }
+      }
+
       // Final draft state
       drafts[s.id] = {
         ...liveData,
         ...savedParsed,
+        commentFormat: format,
+        templateVersion: format === 'GENERAL_COMMENT' ? 'KINDY_WEEKLY_V2_GENERAL_COMMENT' : 'KINDY_WEEKLY_V1_LEGACY',
+        generalComments: savedParsed.generalComments || '',
         attendanceSummary: liveData.attendanceSummary,
         weeklyObservationItems: liveData.weeklyObservationItems,
         groupedObservationSummary: liveData.groupedObservationSummary,
@@ -1241,7 +1271,9 @@ export default function WeeklySummary() {
       const docId = `${studentId}_${startDateStr}_${endDateStr}`;
       const docRef = doc(db, 'weekly_summary_drafts', docId);
 
-      const dbPayload = {
+      const format = mergedDraft.commentFormat || 'LEGACY_TWO_COMMENTS';
+
+      const dbPayload: any = {
         studentId,
         studentName: studentObj?.name || mergedDraft.studentName || 'Siswa',
         classId: selectedClassId,
@@ -1251,15 +1283,31 @@ export default function WeeklySummary() {
         endDate: endDateStr,
         theme: mergedDraft.theme || '',
         week: mergedDraft.week || globalWeek || '',
-        socialEmotional: mergedDraft.attendanceCommentTeacherEdited || mergedDraft.socialEmotional || '',
-        weeklyComments: mergedDraft.observationCommentTeacherEdited || mergedDraft.weeklyComments || '',
-        attendanceCommentAiDraft: mergedDraft.attendanceCommentAiDraft || '',
-        attendanceCommentTeacherEdited: mergedDraft.attendanceCommentTeacherEdited || '',
-        observationCommentAiDraft: mergedDraft.observationCommentAiDraft || '',
-        observationCommentTeacherEdited: mergedDraft.observationCommentTeacherEdited || '',
         updatedAt: Date.now(),
         updatedBy: currentUser?.email || 'Teacher'
       };
+
+      if (format === 'GENERAL_COMMENT') {
+        dbPayload.generalComments = mergedDraft.generalComments || '';
+        dbPayload.commentFormat = 'GENERAL_COMMENT';
+        dbPayload.templateVersion = 'KINDY_WEEKLY_V2_GENERAL_COMMENT';
+        // Ensure legacy fields are cleared on save
+        dbPayload.socialEmotional = '';
+        dbPayload.weeklyComments = '';
+        dbPayload.attendanceCommentAiDraft = '';
+        dbPayload.attendanceCommentTeacherEdited = '';
+        dbPayload.observationCommentAiDraft = '';
+        dbPayload.observationCommentTeacherEdited = '';
+      } else {
+        dbPayload.socialEmotional = mergedDraft.attendanceCommentTeacherEdited || mergedDraft.socialEmotional || '';
+        dbPayload.weeklyComments = mergedDraft.observationCommentTeacherEdited || mergedDraft.weeklyComments || '';
+        dbPayload.attendanceCommentAiDraft = mergedDraft.attendanceCommentAiDraft || '';
+        dbPayload.attendanceCommentTeacherEdited = mergedDraft.attendanceCommentTeacherEdited || '';
+        dbPayload.observationCommentAiDraft = mergedDraft.observationCommentAiDraft || '';
+        dbPayload.observationCommentTeacherEdited = mergedDraft.observationCommentTeacherEdited || '';
+        dbPayload.commentFormat = 'LEGACY_TWO_COMMENTS';
+        dbPayload.templateVersion = 'KINDY_WEEKLY_V1_LEGACY';
+      }
 
       await setDoc(docRef, dbPayload, { merge: true });
 
@@ -1271,7 +1319,8 @@ export default function WeeklySummary() {
           id: docId,
           ...dbPayload,
           attendanceCommentTeacherEdited: dbPayload.attendanceCommentTeacherEdited || '',
-          observationCommentTeacherEdited: dbPayload.observationCommentTeacherEdited || ''
+          observationCommentTeacherEdited: dbPayload.observationCommentTeacherEdited || '',
+          generalComments: dbPayload.generalComments || ''
         }
       }));
 
@@ -1469,6 +1518,78 @@ export default function WeeklySummary() {
       toast.error(e.message || `Gagal menghubungkan Guru AI Lumina. Silakan isi draf secara manual.`);
     } finally {
       setGeneratingWeeklyId(null);
+    }
+  };
+
+  const handleGenerateGeneralIndividual = async (studentId: string) => {
+    let currentDraft = studentDrafts[studentId];
+    if (!currentDraft) {
+      currentDraft = aggregateKGWeeklyReportForPeriod(
+        studentId, 
+        startDateStr, 
+        endDateStr,
+        firestoreAttendance,
+        firestoreObservations,
+        students,
+        firestoreDailyContexts,
+        classes
+      );
+    }
+
+    setGeneratingGeneralId(studentId);
+    try {
+      const response = await fetch('/api/kindergarten/generate-general-comment', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          studentName: currentDraft.studentName,
+          nickName: currentDraft.nickName || currentDraft.studentName.split(' ')[0],
+          ageGroup: currentDraft.ageGroup || 'TK_A',
+          observationSummary: currentDraft.groupedObservationSummary || [],
+          attendanceSummary: currentDraft.attendanceSummary
+        })
+      });
+
+      if (!response.ok) {
+        let errorMessage = 'Gagal memanggil API Guru AI Lumina';
+        try {
+          const errData = await response.json();
+          errorMessage = errData.error || errorMessage;
+        } catch (_) {}
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+      const generatedText = data.text || '';
+
+      await saveIndividualStudentDraft(studentId, {
+        ...currentDraft,
+        theme: currentDraft.theme || globalTheme,
+        week: currentDraft.week || globalWeek,
+        generalComments: generatedText
+      });
+
+      toast.success(`General Comments untuk ${currentDraft.studentName} berhasil digenerate! ✨`);
+    } catch (e: any) {
+      console.error(e);
+      const sampleNotes = (currentDraft.groupedObservationSummary || [])
+        .map((obs: any) => obs.mergedNotes?.join(' '))
+        .filter(Boolean)
+        .join('. ');
+
+      const fallbackText = sampleNotes || '';
+      
+      await saveIndividualStudentDraft(studentId, {
+        ...currentDraft,
+        theme: currentDraft.theme || globalTheme,
+        week: currentDraft.week || globalWeek,
+        generalComments: fallbackText
+      });
+      toast.error(e.message || `Gagal menghubungkan Guru AI Lumina. Silakan isi draf secara manual.`);
+    } finally {
+      setGeneratingGeneralId(null);
     }
   };
 
@@ -2091,158 +2212,58 @@ export default function WeeklySummary() {
                                 </div>
                               </div>
 
-                              {/* Double Comments Row */}
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                                
-                                {/* 1. SEL Comment block */}
+                              {/* Comments Section (Conditional) */}
+                              {draft?.commentFormat === 'GENERAL_COMMENT' ? (
+                                /* Unified General Comments Block */
                                 <div className="bg-white p-4 rounded-2xl border border-gray-150 space-y-2">
                                   <div className="flex justify-between items-center">
-                                    <span className="text-[10.5px] font-black text-gray-700 flex items-center gap-1">
-                                      <Smile size={13} className="text-yellow-500" />
-                                      Social-Emotional Development Comment
-                                    </span>
-                                    <button
-                                      onClick={() => handleGenerateSelIndividual(student.id)}
-                                      disabled={generatingSelId === student.id}
-                                      className="text-[9.5px] font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded px-2 py-0.5 cursor-pointer font-sans"
-                                    >
-                                      {generatingSelId === student.id ? <Loader2 className="animate-spin inline mr-1" size={9} /> : <Sparkles className="inline mr-1" size={9} />}
-                                      Refill AI
-                                    </button>
-                                  </div>
-
-                                  <textarea
-                                    value={draft?.attendanceCommentTeacherEdited || draft?.attendanceCommentAiDraft || ''}
-                                    onChange={(e) => {
-                                      handleLocalDraftChange(student.id, { attendanceCommentTeacherEdited: e.target.value });
-                                    }}
-                                    rows={5}
-                                    className="w-full bg-gray-50/50 p-3.5 rounded-xl border border-gray-200 outline-none focus:bg-white text-xs sm:text-sm text-gray-900 leading-relaxed font-serif resize-y min-h-[110px]"
-                                    placeholder="Ketikan masukan guru atau generate via tombol AI di atas..."
-                                  />
-                                  <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5 pt-1 border-t border-gray-100">
-                                    <div className="flex items-center gap-1.5 font-sans">
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const isRec = activeRecording?.studentId === student.id && activeRecording?.fieldType === 'social_emotional';
-                                          if (isRec) {
-                                            stopRecording();
-                                          } else {
-                                            startRecording(
-                                              student.id,
-                                              'social_emotional',
-                                              draft?.attendanceCommentTeacherEdited || draft?.attendanceCommentAiDraft || ''
-                                            );
-                                          }
-                                        }}
-                                        className={cn(
-                                          "flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded transition-all cursor-pointer",
-                                          activeRecording?.studentId === student.id && activeRecording?.fieldType === 'social_emotional'
-                                            ? "bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 animate-pulse font-sans"
-                                            : "bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200 font-sans"
-                                        )}
-                                      >
-                                        {activeRecording?.studentId === student.id && activeRecording?.fieldType === 'social_emotional' ? (
-                                          <>
-                                            <MicOff size={11} className="text-red-600" />
-                                            <span>Berhenti</span>
-                                          </>
-                                        ) : (
-                                          <>
-                                            <Mic size={11} className="text-gray-600" />
-                                            <span>Dikte</span>
-                                          </>
-                                        )}
-                                      </button>
-                                      {activeRecording?.studentId === student.id && activeRecording?.fieldType === 'social_emotional' && (
-                                        <span className="text-[10px] text-red-500 font-bold italic animate-pulse font-sans">
-                                          Mendengarkan...
-                                        </span>
-                                      )}
-                                    </div>
-
-                                    <div className="flex items-center gap-2 font-sans">
-                                      {draft?.attendanceCommentAiDraft && (draft?.attendanceCommentTeacherEdited === draft?.attendanceCommentAiDraft) && (
-                                        <span className="text-[8px] bg-sky-50 text-sky-700 border border-sky-100 rounded px-1.5 py-0.5 font-bold tracking-wide font-sans">
-                                          Original AI Draft Drafted
-                                        </span>
-                                      )}
-                                      <button
-                                        type="button"
-                                        onClick={() => handleRefineComment(
-                                          student.id,
-                                          student.name,
-                                          'social_emotional',
-                                          draft?.attendanceCommentTeacherEdited || draft?.attendanceCommentAiDraft || ''
-                                        )}
-                                        disabled={
-                                          !(draft?.attendanceCommentTeacherEdited || draft?.attendanceCommentAiDraft || '').trim() ||
-                                          (refiningField?.studentId === student.id && refiningField?.fieldType === 'social_emotional')
-                                        }
-                                        className="flex items-center gap-1 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed px-2.5 py-1 rounded transition-all cursor-pointer font-sans"
-                                      >
-                                        {refiningField?.studentId === student.id && refiningField?.fieldType === 'social_emotional' ? (
-                                          <Loader2 size={11} className="animate-spin text-indigo-600" />
-                                        ) : (
-                                          <Sparkles size={11} className="text-indigo-600" />
-                                        )}
-                                        <span>Rapikan dengan AI</span>
-                                      </button>
-                                    </div>
-                                  </div>
-                                </div>
-
-                                {/* 2. Observation Comment block */}
-                                <div className="bg-white p-4 rounded-2xl border border-gray-150 space-y-2 font-sans">
-                                  <div className="flex justify-between items-center">
-                                    <span className="text-[10.5px] font-black text-gray-700 flex items-center gap-1">
+                                    <span className="text-[10.5px] font-black text-gray-700 flex items-center gap-1 font-sans">
                                       <BookOpen size={13} className="text-emerald-500" />
-                                      Weekly Comments (6 Domains Progress)
+                                      General Comments (Unified Progress)
                                     </span>
                                     <button
-                                      onClick={() => handleGenerateWeeklyIndividual(student.id)}
-                                      disabled={generatingWeeklyId === student.id}
+                                      onClick={() => handleGenerateGeneralIndividual(student.id)}
+                                      disabled={generatingGeneralId === student.id}
                                       className="text-[9.5px] font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded px-2 py-0.5 cursor-pointer font-sans"
                                     >
-                                      {generatingWeeklyId === student.id ? <Loader2 className="animate-spin inline mr-1" size={9} /> : <Sparkles className="inline mr-1" size={9} />}
+                                      {generatingGeneralId === student.id ? <Loader2 className="animate-spin inline mr-1" size={9} /> : <Sparkles className="inline mr-1" size={9} />}
                                       Refill AI
                                     </button>
                                   </div>
 
                                   <textarea
-                                    value={draft?.observationCommentTeacherEdited || draft?.observationCommentAiDraft || ''}
+                                    value={draft?.generalComments || ''}
                                     onChange={(e) => {
-                                      handleLocalDraftChange(student.id, { observationCommentTeacherEdited: e.target.value });
+                                      handleLocalDraftChange(student.id, { generalComments: e.target.value });
                                     }}
                                     rows={5}
                                     className="w-full bg-gray-50/50 p-3.5 rounded-xl border border-gray-200 outline-none focus:bg-white text-xs sm:text-sm text-gray-900 leading-relaxed font-serif resize-y min-h-[110px]"
-                                    placeholder="Tuliskan catatan akademik atau generate melalui tombol AI diatas..."
+                                    placeholder="Tuliskan draf komentar umum siswa atau generate via tombol AI di atas..."
                                   />
-                                  <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5 pt-1 border-t border-gray-100">
+                                  <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5 pt-1 border-t border-gray-100 font-sans">
                                     <div className="flex items-center gap-1.5 font-sans">
                                       <button
                                         type="button"
                                         onClick={() => {
-                                          const isRec = activeRecording?.studentId === student.id && activeRecording?.fieldType === 'weekly_domains';
+                                          const isRec = activeRecording?.studentId === student.id && activeRecording?.fieldType === 'general_comments';
                                           if (isRec) {
                                             stopRecording();
                                           } else {
                                             startRecording(
                                               student.id,
-                                              'weekly_domains',
-                                              draft?.observationCommentTeacherEdited || draft?.observationCommentAiDraft || ''
+                                              'general_comments',
+                                              draft?.generalComments || ''
                                             );
                                           }
                                         }}
                                         className={cn(
                                           "flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded transition-all cursor-pointer",
-                                          activeRecording?.studentId === student.id && activeRecording?.fieldType === 'weekly_domains'
+                                          activeRecording?.studentId === student.id && activeRecording?.fieldType === 'general_comments'
                                             ? "bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 animate-pulse font-sans"
                                             : "bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200 font-sans"
                                         )}
                                       >
-                                        {activeRecording?.studentId === student.id && activeRecording?.fieldType === 'weekly_domains' ? (
+                                        {activeRecording?.studentId === student.id && activeRecording?.fieldType === 'general_comments' ? (
                                           <>
                                             <MicOff size={11} className="text-red-600" />
                                             <span>Berhenti</span>
@@ -2254,7 +2275,7 @@ export default function WeeklySummary() {
                                           </>
                                         )}
                                       </button>
-                                      {activeRecording?.studentId === student.id && activeRecording?.fieldType === 'weekly_domains' && (
+                                      {activeRecording?.studentId === student.id && activeRecording?.fieldType === 'general_comments' && (
                                         <span className="text-[10px] text-red-500 font-bold italic animate-pulse font-sans">
                                           Mendengarkan...
                                         </span>
@@ -2262,26 +2283,21 @@ export default function WeeklySummary() {
                                     </div>
 
                                     <div className="flex items-center gap-2 font-sans">
-                                      {draft?.observationCommentAiDraft && (draft?.observationCommentTeacherEdited === draft?.observationCommentAiDraft) && (
-                                        <span className="text-[8px] bg-sky-50 text-sky-700 border border-sky-100 rounded px-1.5 py-0.5 font-bold tracking-wide font-sans">
-                                          Original AI Draft Drafted
-                                        </span>
-                                      )}
                                       <button
                                         type="button"
                                         onClick={() => handleRefineComment(
                                           student.id,
                                           student.name,
-                                          'weekly_domains',
-                                          draft?.observationCommentTeacherEdited || draft?.observationCommentAiDraft || ''
+                                          'general_comments',
+                                          draft?.generalComments || ''
                                         )}
                                         disabled={
-                                          !(draft?.observationCommentTeacherEdited || draft?.observationCommentAiDraft || '').trim() ||
-                                          (refiningField?.studentId === student.id && refiningField?.fieldType === 'weekly_domains')
+                                          !(draft?.generalComments || '').trim() ||
+                                          (refiningField?.studentId === student.id && refiningField?.fieldType === 'general_comments')
                                         }
                                         className="flex items-center gap-1 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed px-2.5 py-1 rounded transition-all cursor-pointer font-sans"
                                       >
-                                        {refiningField?.studentId === student.id && refiningField?.fieldType === 'weekly_domains' ? (
+                                        {refiningField?.studentId === student.id && refiningField?.fieldType === 'general_comments' ? (
                                           <Loader2 size={11} className="animate-spin text-indigo-600" />
                                         ) : (
                                           <Sparkles size={11} className="text-indigo-600" />
@@ -2291,8 +2307,210 @@ export default function WeeklySummary() {
                                     </div>
                                   </div>
                                 </div>
+                              ) : (
+                                /* Double Comments Row */
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                  
+                                  {/* 1. SEL Comment block */}
+                                  <div className="bg-white p-4 rounded-2xl border border-gray-150 space-y-2">
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-[10.5px] font-black text-gray-700 flex items-center gap-1">
+                                        <Smile size={13} className="text-yellow-500" />
+                                        Social-Emotional Development Comment
+                                      </span>
+                                      <button
+                                        onClick={() => handleGenerateSelIndividual(student.id)}
+                                        disabled={generatingSelId === student.id}
+                                        className="text-[9.5px] font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded px-2 py-0.5 cursor-pointer font-sans"
+                                      >
+                                        {generatingSelId === student.id ? <Loader2 className="animate-spin inline mr-1" size={9} /> : <Sparkles className="inline mr-1" size={9} />}
+                                        Refill AI
+                                      </button>
+                                    </div>
 
-                              </div>
+                                    <textarea
+                                      value={draft?.attendanceCommentTeacherEdited || draft?.attendanceCommentAiDraft || ''}
+                                      onChange={(e) => {
+                                        handleLocalDraftChange(student.id, { attendanceCommentTeacherEdited: e.target.value });
+                                      }}
+                                      rows={5}
+                                      className="w-full bg-gray-50/50 p-3.5 rounded-xl border border-gray-200 outline-none focus:bg-white text-xs sm:text-sm text-gray-900 leading-relaxed font-serif resize-y min-h-[110px]"
+                                      placeholder="Ketikan masukan guru atau generate via tombol AI di atas..."
+                                    />
+                                    <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5 pt-1 border-t border-gray-100 font-sans">
+                                      <div className="flex items-center gap-1.5 font-sans">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const isRec = activeRecording?.studentId === student.id && activeRecording?.fieldType === 'social_emotional';
+                                            if (isRec) {
+                                              stopRecording();
+                                            } else {
+                                              startRecording(
+                                                student.id,
+                                                'social_emotional',
+                                                draft?.attendanceCommentTeacherEdited || draft?.attendanceCommentAiDraft || ''
+                                              );
+                                            }
+                                          }}
+                                          className={cn(
+                                            "flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded transition-all cursor-pointer font-sans",
+                                            activeRecording?.studentId === student.id && activeRecording?.fieldType === 'social_emotional'
+                                              ? "bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 animate-pulse"
+                                              : "bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200"
+                                          )}
+                                        >
+                                          {activeRecording?.studentId === student.id && activeRecording?.fieldType === 'social_emotional' ? (
+                                            <>
+                                              <MicOff size={11} className="text-red-600" />
+                                              <span>Berhenti</span>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <Mic size={11} className="text-gray-600" />
+                                              <span>Dikte</span>
+                                            </>
+                                          )}
+                                        </button>
+                                        {activeRecording?.studentId === student.id && activeRecording?.fieldType === 'social_emotional' && (
+                                          <span className="text-[10px] text-red-500 font-bold italic animate-pulse font-sans">
+                                            Mendengarkan...
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      <div className="flex items-center gap-2 font-sans">
+                                        {draft?.attendanceCommentAiDraft && (draft?.attendanceCommentTeacherEdited === draft?.attendanceCommentAiDraft) && (
+                                          <span className="text-[8px] bg-sky-50 text-sky-700 border border-sky-100 rounded px-1.5 py-0.5 font-bold tracking-wide font-sans">
+                                            Original AI Draft Drafted
+                                          </span>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRefineComment(
+                                            student.id,
+                                            student.name,
+                                            'social_emotional',
+                                            draft?.attendanceCommentTeacherEdited || draft?.attendanceCommentAiDraft || ''
+                                          )}
+                                          disabled={
+                                            !(draft?.attendanceCommentTeacherEdited || draft?.attendanceCommentAiDraft || '').trim() ||
+                                            (refiningField?.studentId === student.id && refiningField?.fieldType === 'social_emotional')
+                                          }
+                                          className="flex items-center gap-1 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed px-2.5 py-1 rounded transition-all cursor-pointer font-sans"
+                                        >
+                                          {refiningField?.studentId === student.id && refiningField?.fieldType === 'social_emotional' ? (
+                                            <Loader2 size={11} className="animate-spin text-indigo-600" />
+                                          ) : (
+                                            <Sparkles size={11} className="text-indigo-600" />
+                                          )}
+                                          <span>Rapikan dengan AI</span>
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* 2. Observation Comment block */}
+                                  <div className="bg-white p-4 rounded-2xl border border-gray-150 space-y-2 font-sans">
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-[10.5px] font-black text-gray-700 flex items-center gap-1 font-sans">
+                                        <BookOpen size={13} className="text-emerald-500" />
+                                        Weekly Comments (6 Domains Progress)
+                                      </span>
+                                      <button
+                                        onClick={() => handleGenerateWeeklyIndividual(student.id)}
+                                        disabled={generatingWeeklyId === student.id}
+                                        className="text-[9.5px] font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded px-2 py-0.5 cursor-pointer font-sans"
+                                      >
+                                        {generatingWeeklyId === student.id ? <Loader2 className="animate-spin inline mr-1" size={9} /> : <Sparkles className="inline mr-1" size={9} />}
+                                        Refill AI
+                                      </button>
+                                    </div>
+
+                                    <textarea
+                                      value={draft?.observationCommentTeacherEdited || draft?.observationCommentAiDraft || ''}
+                                      onChange={(e) => {
+                                        handleLocalDraftChange(student.id, { observationCommentTeacherEdited: e.target.value });
+                                      }}
+                                      rows={5}
+                                      className="w-full bg-gray-50/50 p-3.5 rounded-xl border border-gray-200 outline-none focus:bg-white text-xs sm:text-sm text-gray-900 leading-relaxed font-serif resize-y min-h-[110px]"
+                                      placeholder="Tuliskan catatan akademik atau generate melalui tombol AI diatas..."
+                                    />
+                                    <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5 pt-1 border-t border-gray-100 font-sans">
+                                      <div className="flex items-center gap-1.5 font-sans">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const isRec = activeRecording?.studentId === student.id && activeRecording?.fieldType === 'weekly_domains';
+                                            if (isRec) {
+                                              stopRecording();
+                                            } else {
+                                              startRecording(
+                                                student.id,
+                                                'weekly_domains',
+                                                draft?.observationCommentTeacherEdited || draft?.observationCommentAiDraft || ''
+                                              );
+                                            }
+                                          }}
+                                          className={cn(
+                                            "flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded transition-all cursor-pointer font-sans",
+                                            activeRecording?.studentId === student.id && activeRecording?.fieldType === 'weekly_domains'
+                                              ? "bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 animate-pulse"
+                                              : "bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200"
+                                          )}
+                                        >
+                                          {activeRecording?.studentId === student.id && activeRecording?.fieldType === 'weekly_domains' ? (
+                                            <>
+                                              <MicOff size={11} className="text-red-600" />
+                                              <span>Berhenti</span>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <Mic size={11} className="text-gray-600" />
+                                              <span>Dikte</span>
+                                            </>
+                                          )}
+                                        </button>
+                                        {activeRecording?.studentId === student.id && activeRecording?.fieldType === 'weekly_domains' && (
+                                          <span className="text-[10px] text-red-500 font-bold italic animate-pulse font-sans">
+                                            Mendengarkan...
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      <div className="flex items-center gap-2 font-sans">
+                                        {draft?.observationCommentAiDraft && (draft?.observationCommentTeacherEdited === draft?.observationCommentAiDraft) && (
+                                          <span className="text-[8px] bg-sky-50 text-sky-700 border border-sky-100 rounded px-1.5 py-0.5 font-bold tracking-wide font-sans">
+                                            Original AI Draft Drafted
+                                          </span>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRefineComment(
+                                            student.id,
+                                            student.name,
+                                            'weekly_domains',
+                                            draft?.observationCommentTeacherEdited || draft?.observationCommentAiDraft || ''
+                                          )}
+                                          disabled={
+                                            !(draft?.observationCommentTeacherEdited || draft?.observationCommentAiDraft || '').trim() ||
+                                            (refiningField?.studentId === student.id && refiningField?.fieldType === 'weekly_domains')
+                                          }
+                                          className="flex items-center gap-1 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed px-2.5 py-1 rounded transition-all cursor-pointer font-sans"
+                                        >
+                                          {refiningField?.studentId === student.id && refiningField?.fieldType === 'weekly_domains' ? (
+                                            <Loader2 size={11} className="animate-spin text-indigo-600" />
+                                          ) : (
+                                            <Sparkles size={11} className="text-indigo-600" />
+                                          )}
+                                          <span>Rapikan dengan AI</span>
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                </div>
+                              )}
 
                               {/* Work snap preview inside workspace */}
                               {draft?.dailySnapshots?.length > 0 && (
@@ -2716,6 +2934,8 @@ export default function WeeklySummary() {
                       const { studentId, fieldType, refinedText } = refineReview;
                       if (fieldType === 'social_emotional') {
                         handleLocalDraftChange(studentId, { attendanceCommentTeacherEdited: refinedText });
+                      } else if (fieldType === 'general_comments') {
+                        handleLocalDraftChange(studentId, { generalComments: refinedText });
                       } else {
                         handleLocalDraftChange(studentId, { observationCommentTeacherEdited: refinedText });
                       }
@@ -2732,6 +2952,8 @@ export default function WeeklySummary() {
                       const { studentId, fieldType, refinedText } = refineReview;
                       if (fieldType === 'social_emotional') {
                         handleLocalDraftChange(studentId, { attendanceCommentTeacherEdited: refinedText });
+                      } else if (fieldType === 'general_comments') {
+                        handleLocalDraftChange(studentId, { generalComments: refinedText });
                       } else {
                         handleLocalDraftChange(studentId, { observationCommentTeacherEdited: refinedText });
                       }
