@@ -110,12 +110,14 @@ export default function ReportConfigPage() {
     }
   };
 
-  const handleSignatureUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSignatureUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith('image/')) {
-      alert("Hanya file gambar yang diperbolehkan!");
+    // Supported formats check: PNG, JPG, JPEG
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg'];
+    if (!allowedTypes.includes(file.type)) {
+      alert("Format file tidak didukung! Harap pilih file gambar (.png, .jpg, .jpeg)!");
       return;
     }
     if (file.size > 2 * 1024 * 1024) {
@@ -125,54 +127,63 @@ export default function ReportConfigPage() {
 
     setUploading(true);
     const reader = new FileReader();
-    reader.onload = async (event) => {
+    reader.onload = (event) => {
       const base64 = event.target?.result as string;
-      try {
-        const token = await auth.currentUser?.getIdToken();
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json"
-        };
-        if (token) {
-          headers["Authorization"] = `Bearer ${token}`;
+      
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            throw new Error("Gagal menginisialisasi canvas.");
+          }
+
+          // Signature bounds: Resize and compress to an elegant size (300 x 150 px)
+          const targetWidth = 300;
+          const targetHeight = 150;
+
+          canvas.width = targetWidth;
+          canvas.height = targetHeight;
+
+          ctx.fillStyle = "transparent";
+          ctx.fillRect(0, 0, targetWidth, targetHeight);
+          ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+
+          // Highly compressed PNG or JPEG image
+          const compressedBase64 = canvas.toDataURL("image/png");
+
+          setConfig(prev => prev ? ({
+            ...prev,
+            principalSignatureUrl: compressedBase64,
+            principalSignatureStoragePath: "base64_compressed"
+          } as any) : null);
+
+          alert("Tanda tangan berhasil diunggah! Jangan lupa klik 'Simpan Semua' untuk menyimpan konfigurasi.");
+        } catch (err: any) {
+          console.error("[SignatureUpload] Failed to compress signature using HTML canvas:", err);
+          alert("Upload tanda tangan gagal. Silakan coba lagi atau hubungi administrator.");
+        } finally {
+          setUploading(false);
         }
-
-        const response = await fetch("/api/settings/upload-signature", {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ base64 })
-        });
-
-        if (!response.ok) {
-          const errData = await response.json();
-          throw new Error(errData.error || errData.message || "Gagal mengunggah ke server");
-        }
-
-        const data = await response.json();
-
-        setConfig(prev => prev ? ({
-          ...prev,
-          principalSignatureUrl: data.downloadUrl,
-          principalSignatureStoragePath: data.storagePath
-        } as any) : null);
-
-        alert("Tanda tangan berhasil diunggah! Jangan lupa klik 'Simpan Semua' untuk menyimpan konfigurasi.");
-      } catch (err: any) {
-        console.error("Error uploading signature:", err);
-        alert(`Gagal mengunggah tanda tangan: ${err.message}`);
-      } finally {
+      };
+      img.onerror = (err) => {
+        console.error("[SignatureUpload] Failed to load signature image object:", err);
+        alert("Upload tanda tangan gagal. Silakan coba lagi atau hubungi administrator.");
         setUploading(false);
-      }
+      };
+      img.src = base64;
     };
-    reader.onerror = () => {
-      alert("Gagal membaca file gambar!");
+    reader.onerror = (err) => {
+      console.error("[SignatureUpload] FileReader failed to process signature:", err);
+      alert("Upload tanda tangan gagal. Silakan coba lagi atau hubungi administrator.");
       setUploading(false);
     };
     reader.readAsDataURL(file);
   };
 
-  const handleSignatureRemove = async () => {
+  const handleSignatureRemove = () => {
     if (!config || !('principalSignatureUrl' in config)) return;
-    const path = (config as any).principalSignatureStoragePath;
     
     setConfig(prev => prev ? ({
       ...prev,
@@ -180,25 +191,6 @@ export default function ReportConfigPage() {
       principalSignatureStoragePath: null
     } as any) : null);
 
-    if (path) {
-      try {
-        const token = await auth.currentUser?.getIdToken();
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json"
-        };
-        if (token) {
-          headers["Authorization"] = `Bearer ${token}`;
-        }
-
-        await fetch("/api/settings/delete-signature", {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ storagePath: path })
-        });
-      } catch (err) {
-        console.warn("Could not delete file from storage (might already be deleted):", err);
-      }
-    }
     alert("Tanda tangan dihapus dari draf konfigurasi. Jangan lupa klik 'Simpan Semua' untuk menyimpan.");
   };
 
