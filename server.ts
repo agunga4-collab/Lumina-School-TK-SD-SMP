@@ -11,6 +11,7 @@ import type { LGBackupStatus, LGBackupSummary, LGBackupLog } from "./src/types";
 import { resolveAcademicYearAndPeriod } from "./src/utils/academicYearResolver";
 import crypto from "crypto";
 import { uploadPlanPhoto, getPlanPhotoBase64 } from "./src/lib/googleDrive";
+import { getStorage, getDownloadURL } from "firebase-admin/storage";
 
 const app = express();
 app.use(express.json({ limit: "50mb" }));
@@ -368,6 +369,107 @@ app.post("/api/observations/upload-photo", async (req, res) => {
     return res.status(500).json({
       success: false,
       error: error.message || "An expected error occurred during Google Drive file synchronization."
+    });
+  }
+});
+
+// API: Upload Kindergarten Principal signature to Firebase Storage via Admin SDK (bypassing browser CORS)
+app.post("/api/settings/upload-signature", async (req, res) => {
+  try {
+    const { base64 } = req.body;
+    if (!base64) {
+      return res.status(400).json({ error: "Missing physical image file data (base64)" });
+    }
+
+    // 1. Convert base64 to buffer
+    let base64Data = base64;
+    let mimeType = "image/png";
+    if (base64.includes(";base64,")) {
+      const parts = base64.split(";base64,");
+      const match = parts[0].match(/data:(.*)/);
+      if (match) {
+        mimeType = match[1];
+      }
+      base64Data = parts[1];
+    }
+    const buffer = Buffer.from(base64Data, "base64");
+
+    // 2. Setup path (Kindergarten-only configuration path)
+    const storagePath = `signatories/kindergarten/principal_signature_${Date.now()}`;
+
+    // 3. Get the default Storage bucket
+    const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+    let bucketName = "luminaschoolproject.firebasestorage.app";
+    if (fs.existsSync(firebaseConfigPath)) {
+      const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
+      if (firebaseConfig.storageBucket) {
+        bucketName = firebaseConfig.storageBucket;
+      }
+    }
+
+    console.log(`[SignatureUpload] Uploading to bucket "${bucketName}" at path "${storagePath}"...`);
+    const bucket = getStorage().bucket(bucketName);
+    const fileRef = bucket.file(storagePath);
+
+    // 4. Save file to bucket
+    await fileRef.save(buffer, {
+      metadata: {
+        contentType: mimeType,
+      }
+    });
+
+    // 5. Get persistent download URL
+    const downloadUrl = await getDownloadURL(fileRef);
+    console.log(`[SignatureUpload] Upload success! URL: ${downloadUrl}`);
+
+    return res.json({
+      success: true,
+      downloadUrl,
+      storagePath
+    });
+  } catch (error: any) {
+    console.error("[SignatureUpload] Critical failure occurred:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || "An expected error occurred during signature upload."
+    });
+  }
+});
+
+// API: Delete Kindergarten Principal signature from Firebase Storage via Admin SDK (bypassing browser CORS)
+app.post("/api/settings/delete-signature", async (req, res) => {
+  try {
+    const { storagePath } = req.body;
+    if (!storagePath) {
+      return res.status(400).json({ error: "Missing storagePath" });
+    }
+
+    const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+    let bucketName = "luminaschoolproject.firebasestorage.app";
+    if (fs.existsSync(firebaseConfigPath)) {
+      const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
+      if (firebaseConfig.storageBucket) {
+        bucketName = firebaseConfig.storageBucket;
+      }
+    }
+
+    console.log(`[SignatureDelete] Deleting from bucket "${bucketName}" at path "${storagePath}"...`);
+    const bucket = getStorage().bucket(bucketName);
+    const fileRef = bucket.file(storagePath);
+
+    await fileRef.delete().catch((err) => {
+      console.warn("[SignatureDelete] Warning: file might already be deleted:", err.message);
+    });
+
+    return res.json({
+      success: true,
+      message: "Signature deleted successfully."
+    });
+  } catch (error: any) {
+    console.error("[SignatureDelete] Critical failure occurred:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || "An expected error occurred during signature deletion."
     });
   }
 });

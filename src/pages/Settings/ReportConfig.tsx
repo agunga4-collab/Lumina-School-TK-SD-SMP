@@ -18,12 +18,7 @@ import {
   getLearningGoals, 
   getReportConfig, 
   updateReportConfig,
-  db,
-  storage,
-  ref,
-  uploadBytes,
-  getDownloadURL,
-  deleteObject
+  db
 } from '../../lib/firebase';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { cn } from '../../lib/utils';
@@ -128,25 +123,44 @@ export default function ReportConfigPage() {
     }
 
     setUploading(true);
-    try {
-      const path = `signatories/kindergarten/principal_signature_${Date.now()}`;
-      const storageRef = ref(storage, path);
-      await uploadBytes(storageRef, file);
-      const downloadUrl = await getDownloadURL(storageRef);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const base64 = event.target?.result as string;
+      try {
+        const response = await fetch("/api/settings/upload-signature", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ base64 })
+        });
 
-      setConfig(prev => prev ? ({
-        ...prev,
-        principalSignatureUrl: downloadUrl,
-        principalSignatureStoragePath: path
-      } as any) : null);
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || "Gagal mengunggah ke server");
+        }
 
-      alert("Tanda tangan berhasil diunggah! Jangan lupa klik 'Simpan Semua' untuk menyimpan konfigurasi.");
-    } catch (err: any) {
-      console.error("Error uploading signature to Firebase Storage:", err);
-      alert(`Gagal mengunggah tanda tangan: ${err.message}`);
-    } finally {
+        const data = await response.json();
+
+        setConfig(prev => prev ? ({
+          ...prev,
+          principalSignatureUrl: data.downloadUrl,
+          principalSignatureStoragePath: data.storagePath
+        } as any) : null);
+
+        alert("Tanda tangan berhasil diunggah! Jangan lupa klik 'Simpan Semua' untuk menyimpan konfigurasi.");
+      } catch (err: any) {
+        console.error("Error uploading signature:", err);
+        alert(`Gagal mengunggah tanda tangan: ${err.message}`);
+      } finally {
+        setUploading(false);
+      }
+    };
+    reader.onerror = () => {
+      alert("Gagal membaca file gambar!");
       setUploading(false);
-    }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSignatureRemove = async () => {
@@ -161,8 +175,13 @@ export default function ReportConfigPage() {
 
     if (path) {
       try {
-        const storageRef = ref(storage, path);
-        await deleteObject(storageRef);
+        await fetch("/api/settings/delete-signature", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ storagePath: path })
+        });
       } catch (err) {
         console.warn("Could not delete file from storage (might already be deleted):", err);
       }
