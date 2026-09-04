@@ -32,6 +32,29 @@ try {
         credential: cert(serviceAccount),
       });
     }
+
+    // Startup storage bucket validation check
+    const bucketName = process.env.FIREBASE_STORAGE_BUCKET || process.env.GCS_BUCKET_NAME;
+    if (!bucketName) {
+      console.warn("Signature upload storage configuration is invalid.");
+    } else {
+      try {
+        const bucket = getStorage().bucket(bucketName);
+        bucket.exists()
+          .then(([exists]) => {
+            if (!exists) {
+              console.warn("Signature upload storage configuration is invalid.");
+            } else {
+              console.log(`[SignatureUpload] Signature upload storage configuration is verified and active on bucket: ${bucketName}`);
+            }
+          })
+          .catch(() => {
+            console.warn("Signature upload storage configuration is invalid.");
+          });
+      } catch (err) {
+        console.warn("Signature upload storage configuration is invalid.");
+      }
+    }
   }
 } catch (err: any) {
   console.error("[FirebaseAdmin] Initialization failed:", err.message);
@@ -381,7 +404,46 @@ app.post("/api/settings/upload-signature", async (req, res) => {
       return res.status(400).json({ error: "Missing physical image file data (base64)" });
     }
 
-    // 1. Convert base64 to buffer
+    // 1. Authorization Check (Super Admin / Kindergarten Head Unit only)
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized: Missing or invalid Authorization header." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    let decodedToken;
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    const db = getAdminDb();
+    if (!db) {
+      return res.status(500).json({ error: "Firestore is not online." });
+    }
+
+    const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+    const userData = userDoc.exists ? userDoc.data() : null;
+    const userRole = userData?.role || null;
+    const userUnitId = userData?.unitId || null;
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
+    const isAuthorizedKindergartenHeadUnit = userRole === "HEAD_UNIT" && userUnitId === "KINDERGARTEN";
+
+    if (!isSuperAdmin && !isAuthorizedKindergartenHeadUnit) {
+      return res.status(403).json({ error: "Access denied. Active Super Admin or Kindergarten Head Unit permission required." });
+    }
+
+    // 2. Resolve Bucket Name from environment variables (No hard-coded values)
+    const bucketName = process.env.FIREBASE_STORAGE_BUCKET || process.env.GCS_BUCKET_NAME;
+    if (!bucketName) {
+      console.warn("Signature upload storage configuration is invalid.");
+      return res.status(400).json({
+        message: "Upload tanda tangan gagal. Konfigurasi penyimpanan belum tersedia."
+      });
+    }
+
+    // 3. Convert base64 to buffer and validate MIME type/size
     let base64Data = base64;
     let mimeType = "image/png";
     if (base64.includes(";base64,")) {
@@ -392,33 +454,31 @@ app.post("/api/settings/upload-signature", async (req, res) => {
       }
       base64Data = parts[1];
     }
-    const buffer = Buffer.from(base64Data, "base64");
 
-    // 2. Setup path (Kindergarten-only configuration path)
-    const storagePath = `signatories/kindergarten/principal_signature_${Date.now()}`;
-
-    // 3. Get the default Storage bucket
-    const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
-    let bucketName = "luminaschoolproject.firebasestorage.app";
-    if (fs.existsSync(firebaseConfigPath)) {
-      const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
-      if (firebaseConfig.storageBucket) {
-        bucketName = firebaseConfig.storageBucket;
-      }
+    if (!mimeType.startsWith("image/")) {
+      return res.status(400).json({ error: "Hanya file gambar yang diperbolehkan!" });
     }
+
+    const buffer = Buffer.from(base64Data, "base64");
+    if (buffer.length > 2 * 1024 * 1024) {
+      return res.status(400).json({ error: "Ukuran gambar maksimal 2MB!" });
+    }
+
+    // 4. Setup path (Kindergarten-only target object scope)
+    const storagePath = `signatories/kindergarten/principal_signature_${Date.now()}`;
 
     console.log(`[SignatureUpload] Uploading to bucket "${bucketName}" at path "${storagePath}"...`);
     const bucket = getStorage().bucket(bucketName);
     const fileRef = bucket.file(storagePath);
 
-    // 4. Save file to bucket
+    // 5. Save file to bucket
     await fileRef.save(buffer, {
       metadata: {
         contentType: mimeType,
       }
     });
 
-    // 5. Get persistent download URL
+    // 6. Get persistent download URL
     const downloadUrl = await getDownloadURL(fileRef);
     console.log(`[SignatureUpload] Upload success! URL: ${downloadUrl}`);
 
@@ -428,10 +488,9 @@ app.post("/api/settings/upload-signature", async (req, res) => {
       storagePath
     });
   } catch (error: any) {
-    console.error("[SignatureUpload] Critical failure occurred:", error);
+    console.error("[SignatureUpload] Actual failure during upload to bucket:", error);
     return res.status(500).json({
-      success: false,
-      error: error.message || "An expected error occurred during signature upload."
+      message: "Upload tanda tangan gagal. Konfigurasi penyimpanan belum tersedia."
     });
   }
 });
@@ -444,13 +503,43 @@ app.post("/api/settings/delete-signature", async (req, res) => {
       return res.status(400).json({ error: "Missing storagePath" });
     }
 
-    const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
-    let bucketName = "luminaschoolproject.firebasestorage.app";
-    if (fs.existsSync(firebaseConfigPath)) {
-      const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
-      if (firebaseConfig.storageBucket) {
-        bucketName = firebaseConfig.storageBucket;
-      }
+    // 1. Authorization Check (Super Admin / Kindergarten Head Unit only)
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized: Missing or invalid Authorization header." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    let decodedToken;
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    const db = getAdminDb();
+    if (!db) {
+      return res.status(500).json({ error: "Firestore is not online." });
+    }
+
+    const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+    const userData = userDoc.exists ? userDoc.data() : null;
+    const userRole = userData?.role || null;
+    const userUnitId = userData?.unitId || null;
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
+    const isAuthorizedKindergartenHeadUnit = userRole === "HEAD_UNIT" && userUnitId === "KINDERGARTEN";
+
+    if (!isSuperAdmin && !isAuthorizedKindergartenHeadUnit) {
+      return res.status(403).json({ error: "Access denied. Active Super Admin or Kindergarten Head Unit permission required." });
+    }
+
+    // 2. Resolve Bucket Name from environment variables
+    const bucketName = process.env.FIREBASE_STORAGE_BUCKET || process.env.GCS_BUCKET_NAME;
+    if (!bucketName) {
+      console.warn("Signature upload storage configuration is invalid.");
+      return res.status(400).json({
+        message: "Upload tanda tangan gagal. Konfigurasi penyimpanan belum tersedia."
+      });
     }
 
     console.log(`[SignatureDelete] Deleting from bucket "${bucketName}" at path "${storagePath}"...`);
@@ -466,10 +555,9 @@ app.post("/api/settings/delete-signature", async (req, res) => {
       message: "Signature deleted successfully."
     });
   } catch (error: any) {
-    console.error("[SignatureDelete] Critical failure occurred:", error);
+    console.error("[SignatureDelete] Actual failure during deletion from bucket:", error);
     return res.status(500).json({
-      success: false,
-      error: error.message || "An expected error occurred during signature deletion."
+      message: "Upload tanda tangan gagal. Konfigurasi penyimpanan belum tersedia."
     });
   }
 });

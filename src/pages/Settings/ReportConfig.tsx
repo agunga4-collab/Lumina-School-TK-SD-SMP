@@ -18,7 +18,8 @@ import {
   getLearningGoals, 
   getReportConfig, 
   updateReportConfig,
-  db
+  db,
+  auth
 } from '../../lib/firebase';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { cn } from '../../lib/utils';
@@ -127,17 +128,23 @@ export default function ReportConfigPage() {
     reader.onload = async (event) => {
       const base64 = event.target?.result as string;
       try {
+        const token = await auth.currentUser?.getIdToken();
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json"
+        };
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
+
         const response = await fetch("/api/settings/upload-signature", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
+          headers,
           body: JSON.stringify({ base64 })
         });
 
         if (!response.ok) {
           const errData = await response.json();
-          throw new Error(errData.error || "Gagal mengunggah ke server");
+          throw new Error(errData.error || errData.message || "Gagal mengunggah ke server");
         }
 
         const data = await response.json();
@@ -175,11 +182,17 @@ export default function ReportConfigPage() {
 
     if (path) {
       try {
+        const token = await auth.currentUser?.getIdToken();
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json"
+        };
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
+
         await fetch("/api/settings/delete-signature", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
+          headers,
           body: JSON.stringify({ storagePath: path })
         });
       } catch (err) {
