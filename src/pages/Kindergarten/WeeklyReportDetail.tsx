@@ -480,26 +480,101 @@ export default function WeeklyReportDetail() {
 
         {/* 5. TANDA TANGAN & UNDUH PDF */}
         <div className="p-4 border-t border-gray-100 pt-5 space-y-4">
-          <div className="flex justify-between items-center bg-gray-50 p-3.5 rounded-2xl border border-gray-100">
-            <div className="space-y-0.5">
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Wali Kelas / Guru</p>
-              <p className="text-xs font-extrabold text-gray-900">
-                {snapshot.teacherName || report.publishedByEmail || 'Wali Kelas'}
-              </p>
-            </div>
-            {snapshot.teacherSignatureUrl ? (
-              <img 
-                src={snapshot.teacherSignatureUrl} 
-                alt="Tanda Tangan Guru" 
-                className="h-10 object-contain"
-              />
-            ) : (
-              <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg">
-                <UserCheck size={12} />
-                <span>Terverifikasi</span>
+          {snapshot.signatories ? (
+            <div className="grid grid-cols-2 gap-4">
+              {/* Kolom Kiri: Principal */}
+              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 flex flex-col justify-between space-y-3 text-center">
+                <div className="space-y-1">
+                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+                    Depok, {(() => {
+                      try {
+                        const d = new Date(snapshot.period?.endDate || report.endDate || report.period?.endDate);
+                        const day = d.getDate();
+                        const month = d.toLocaleDateString('en-US', { month: 'long' });
+                        const year = d.getFullYear();
+                        return `${day} ${month} ${year}`;
+                      } catch {
+                        return '';
+                      }
+                    })()}
+                  </p>
+                  <p className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider">
+                    {snapshot.signatories.principal?.title || 'Principal'}
+                  </p>
+                </div>
+                <div className="h-16 flex items-center justify-center">
+                  {snapshot.signatories.principal?.signatureUrl ? (
+                    <img 
+                      src={snapshot.signatories.principal.signatureUrl} 
+                      alt="Tanda Tangan Principal" 
+                      className="max-h-14 object-contain mix-blend-multiply"
+                      referrerPolicy="no-referrer"
+                      crossOrigin="anonymous"
+                    />
+                  ) : (
+                    <div className="h-14" />
+                  )}
+                </div>
+                <div className="pt-1 border-t border-gray-200/60">
+                  <p className="text-[10px] font-extrabold text-gray-900 uppercase tracking-wider">
+                    {snapshot.signatories.principal?.name || 'Principal Belum Diatur'}
+                  </p>
+                </div>
               </div>
-            )}
-          </div>
+
+              {/* Kolom Kanan: Class Teacher */}
+              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 flex flex-col justify-between space-y-3 text-center">
+                <div className="space-y-1">
+                  <p className="text-[9px] font-bold text-transparent select-none">Placeholder</p>
+                  <p className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider">
+                    Class Teacher
+                  </p>
+                </div>
+                <div className="h-16 flex items-center justify-center">
+                  {snapshot.signatories.classTeacher?.signatureUrl ? (
+                    <img 
+                      src={snapshot.signatories.classTeacher.signatureUrl} 
+                      alt="Tanda Tangan Guru" 
+                      className="max-h-14 object-contain mix-blend-multiply"
+                      referrerPolicy="no-referrer"
+                      crossOrigin="anonymous"
+                    />
+                  ) : (
+                    <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg">
+                      <UserCheck size={12} />
+                      <span>Terverifikasi</span>
+                    </div>
+                  )}
+                </div>
+                <div className="pt-1 border-t border-gray-200/60">
+                  <p className="text-[10px] font-extrabold text-gray-900 uppercase tracking-wider">
+                    {snapshot.signatories.classTeacher?.name || snapshot.teacherName || report.publishedByEmail || 'Class Teacher'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex justify-between items-center bg-gray-50 p-3.5 rounded-2xl border border-gray-100">
+              <div className="space-y-0.5">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Wali Kelas / Guru</p>
+                <p className="text-xs font-extrabold text-gray-900">
+                  {snapshot.teacherName || report.publishedByEmail || 'Wali Kelas'}
+                </p>
+              </div>
+              {snapshot.teacherSignatureUrl ? (
+                <img 
+                  src={snapshot.teacherSignatureUrl} 
+                  alt="Tanda Tangan Guru" 
+                  className="h-10 object-contain"
+                />
+              ) : (
+                <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg">
+                  <UserCheck size={12} />
+                  <span>Terverifikasi</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {report.driveFileUrl && (
             <a

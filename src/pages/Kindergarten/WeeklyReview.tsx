@@ -271,6 +271,35 @@ export default function WeeklyReview() {
   const [resolvedTeacherName, setResolvedTeacherName] = React.useState<string | null>(null);
   const [isSignatureLoading, setIsSignatureLoading] = React.useState<boolean>(false);
 
+  const [kindySignatory, setKindySignatory] = React.useState<{
+    principalName: string;
+    principalTitle: string;
+    principalSignatureUrl: string | null;
+  } | null>(null);
+
+  React.useEffect(() => {
+    let active = true;
+    const fetchKindySignatory = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'reportConfig', 'KINDERGARTEN'));
+        if (snap.exists() && active) {
+          const data = snap.data();
+          setKindySignatory({
+            principalName: data.principalName || '',
+            principalTitle: data.principalTitle || 'Principal',
+            principalSignatureUrl: data.principalSignatureUrl || null
+          });
+        }
+      } catch (err) {
+        console.error("Error fetching Kindergarten signatory config:", err);
+      }
+    };
+    fetchKindySignatory();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   React.useEffect(() => {
     let active = true;
     const currentStudentObj = students.find(s => s.id === selectedStudentId);
@@ -1443,6 +1472,18 @@ export default function WeeklyReview() {
           socialEmotionalComment: finalSocialEmotional,
           generalComments: finalGeneralComments,
           commentFormat: resolvedFormat,
+          signatories: {
+            principal: {
+              name: kindySignatory?.principalName || '',
+              title: kindySignatory?.principalTitle || 'Principal',
+              signatureUrl: kindySignatory?.principalSignatureUrl || null
+            },
+            classTeacher: {
+              name: resolvedTeacherName ? resolvedTeacherName.replace(/^\s*\(UNDANGAN\)\s*/i, "") : '',
+              title: 'Class Teacher',
+              signatureUrl: resolvedSignatureUrl || null
+            }
+          },
 
           attendanceSummary: {
             present: attPresent,
@@ -2559,14 +2600,58 @@ export default function WeeklyReview() {
               </>
             )}
 
-            {/* Area Tanda Tangan: Guru Kelas Centered */}
+            {/* Area Tanda Tangan: Dua Kolom (Principal di Kiri, Class Teacher di Kanan) */}
             <div 
-              className="w-full flex justify-center mt-5 mb-4 print:break-inside-avoid [break-inside:avoid]"
+              className="w-full grid grid-cols-2 gap-12 mt-8 mb-6 print:break-inside-avoid [break-inside:avoid]"
               style={{ breakInside: 'avoid', pageBreakInside: 'avoid' }}
             >
-              <div className="flex flex-col items-center text-center text-xs w-64">
-                <span className="font-bold text-gray-500 text-[10px]">{formattedSignDate}</span>
-                <span className="font-bold text-gray-600 text-[10.5px] mt-0.5">Guru Kelas</span>
+              {/* Kolom Kiri: Principal */}
+              <div className="flex flex-col items-center text-center text-xs">
+                <span className="font-bold text-gray-500 text-[10px] h-4">
+                  Depok, {(() => {
+                    try {
+                      const d = new Date(endDateStr);
+                      const day = d.getDate();
+                      const month = d.toLocaleDateString('en-US', { month: 'long' });
+                      const year = d.getFullYear();
+                      return `${day} ${month} ${year}`;
+                    } catch {
+                      return '22 May 2026';
+                    }
+                  })()}
+                </span>
+                <span className="font-bold text-gray-600 text-[10.5px] mt-0.5 uppercase tracking-wider">
+                  {kindySignatory?.principalTitle || 'Principal'}
+                </span>
+                
+                <div className="h-[68px] flex items-center justify-center my-2">
+                  {kindySignatory?.principalSignatureUrl ? (
+                    <img
+                      src={kindySignatory.principalSignatureUrl}
+                      alt="Tanda Tangan Principal"
+                      className="max-h-[64px] object-contain mix-blend-multiply"
+                      style={{ objectFit: 'contain' }}
+                      referrerPolicy="no-referrer"
+                      crossOrigin="anonymous"
+                    />
+                  ) : (
+                    <div className="h-[64px]" />
+                  )}
+                </div>
+
+                <div className="text-center font-sans flex flex-col items-center gap-0.5 w-full">
+                  <span className="text-center font-extrabold text-[11px] text-gray-900 border-b border-solid border-gray-900 w-44 pb-0.5 mx-auto uppercase">
+                    {kindySignatory?.principalName || (
+                      <span className="text-gray-400 italic font-bold text-[10px]">Principal Belum Diatur</span>
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              {/* Kolom Kanan: Class Teacher */}
+              <div className="flex flex-col items-center text-center text-xs">
+                <span className="font-bold text-gray-500 text-[10px] h-4"></span>
+                <span className="font-bold text-gray-600 text-[10.5px] mt-0.5 uppercase tracking-wider">Class Teacher</span>
                 
                 <div className="h-[68px] flex items-center justify-center my-2">
                   {isSignatureLoading ? (
