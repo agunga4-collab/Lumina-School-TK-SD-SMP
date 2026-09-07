@@ -52,6 +52,11 @@ export default function MonthlyReportPreviewPage() {
   const [commentsMap, setCommentsMap] = React.useState<Record<string, JuniorHighMonthlyReportComment>>({});
   const [loadingComments, setLoadingComments] = React.useState<boolean>(false);
 
+  // Dynamic UA States
+  const [unitActivityEnrollments, setUnitActivityEnrollments] = React.useState<any[]>([]);
+  const [semesterSummariesMap, setSemesterSummariesMap] = React.useState<Record<string, string>>({});
+  const [loadingUaData, setLoadingUaData] = React.useState<boolean>(false);
+
   // Error states for source health
   const [studentsError, setStudentsError] = React.useState<boolean>(false);
   const [summaryError, setSummaryError] = React.useState<boolean>(false);
@@ -178,6 +183,8 @@ export default function MonthlyReportPreviewPage() {
     setStudents([]);
     setClassSummary(null);
     setCommentsMap({});
+    setUnitActivityEnrollments([]);
+    setSemesterSummariesMap({});
     setStudentsError(false);
     setSummaryError(false);
     setCommentsError(false);
@@ -254,6 +261,43 @@ export default function MonthlyReportPreviewPage() {
       setCommentsError(true);
     } finally {
       setLoadingComments(false);
+    }
+
+    // 4. Fetch UA Enrollments and summaries if UA is active
+    if (isUaActive) {
+      setLoadingUaData(true);
+      try {
+        const [enrollSnap, summariesSnap] = await Promise.all([
+          getDocs(query(
+            collection(db, 'junior_high_unit_activity_enrollments'),
+            where('academicYear', '==', selectedYear),
+            where('semester', '==', selectedSemester),
+            where('status', '==', 'CONFIRMED')
+          )),
+          getDocs(query(
+            collection(db, 'junior_high_unit_activity_semester_summaries'),
+            where('academicYear', '==', selectedYear),
+            where('semester', '==', selectedSemester),
+            where('month', '==', selectedMonth)
+          ))
+        ]);
+
+        const enrollmentsList = enrollSnap.docs.map(docSnap => docSnap.data());
+        setUnitActivityEnrollments(enrollmentsList);
+
+        const sMap: Record<string, string> = {};
+        summariesSnap.docs.forEach(docSnap => {
+          const data = docSnap.data();
+          if (data.normalizedUaName) {
+            sMap[data.normalizedUaName] = data.summary || '';
+          }
+        });
+        setSemesterSummariesMap(sMap);
+      } catch (err) {
+        console.error('Error fetching UA data for preview:', err);
+      } finally {
+        setLoadingUaData(false);
+      }
     }
   };
 
@@ -829,6 +873,53 @@ export default function MonthlyReportPreviewPage() {
                           </strong>
                         </div>
                       </div>
+
+                      {/* Dynamic Unit Activities for this student (Requirement 3 & 4) */}
+                      {isUaActive && (() => {
+                        const studentEnrollments = unitActivityEnrollments.filter(e => e.studentId === student.id);
+                        if (studentEnrollments.length === 0) return null;
+                        
+                        return (
+                          <div className="space-y-2 mt-3 mb-1">
+                            <span className="text-[10px] font-bold text-purple-700 uppercase tracking-wider block">
+                              Unit Activities ({studentEnrollments.length})
+                            </span>
+                            <div className="space-y-2">
+                              {studentEnrollments.map((enroll, eIdx) => {
+                                const uaName = enroll.normalizedUaName;
+                                const narrative = semesterSummariesMap[uaName];
+                                
+                                if (!narrative || narrative.trim().length === 0) {
+                                  // Enrollment exists but narrative is missing: show staff warning ONLY
+                                  return (
+                                    <div key={eIdx} className="border border-dashed border-amber-200 bg-amber-50/30 p-2.5 rounded-lg text-[11px] flex gap-2 text-amber-800 leading-normal">
+                                      <ShieldAlert size={14} className="shrink-0 text-amber-600 mt-0.5" />
+                                      <div>
+                                        <p className="font-bold">{uaName}</p>
+                                        <p className="text-[10px] font-medium text-amber-700">
+                                          Peringatan Staf: Deskripsi narasi bulanan belum diisi untuk "{uaName}". Orang tua tidak akan melihat bagian kosong ini pada lembar PDF.
+                                        </p>
+                                      </div>
+                                    </div>
+                                  );
+                                }
+
+                                return (
+                                  <div key={eIdx} className="border border-purple-100 bg-purple-50/10 p-3 rounded-lg text-xs space-y-1">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="bg-purple-100 text-purple-800 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase">
+                                        UA • {enroll.category || 'Dinamis'}
+                                      </span>
+                                      <strong className="text-slate-800">{uaName}</strong>
+                                    </div>
+                                    <p className="text-slate-650 leading-relaxed whitespace-pre-wrap">{narrative}</p>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* Comment text rendering wrapper based on status */}
                       <div className="text-xs">

@@ -83,24 +83,26 @@ export default function MonthlyReportPdfPage() {
   // Fetch active Unit Activity enrollments and semester summaries
   React.useEffect(() => {
     const fetchUaData = async () => {
-      if (!selectedYear || !selectedSemester) return;
+      if (!selectedYear || !selectedSemester || !selectedMonth) return;
       setLoadingUaData(true);
       try {
         const [enrollSnap, summariesSnap] = await Promise.all([
           getDocs(query(
-            collection(db, 'junior_high_unit_activity'),
+            collection(db, 'junior_high_unit_activity_enrollments'),
             where('academicYear', '==', selectedYear),
-            where('semester', '==', parseInt(selectedSemester) || 1),
             where('status', '==', 'CONFIRMED')
           )),
           getDocs(query(
             collection(db, 'junior_high_unit_activity_semester_summaries'),
             where('academicYear', '==', selectedYear),
-            where('semester', '==', selectedSemester)
+            where('semester', '==', selectedSemester),
+            where('month', '==', selectedMonth)
           ))
         ]);
 
-        const enrollmentsList = enrollSnap.docs.map(docSnap => docSnap.data());
+        const enrollmentsList = enrollSnap.docs
+          .map(docSnap => docSnap.data())
+          .filter(e => String(e.semester) === String(selectedSemester));
         setUnitActivityEnrollments(enrollmentsList);
 
         const sMap: Record<string, string> = {};
@@ -118,7 +120,7 @@ export default function MonthlyReportPdfPage() {
       }
     };
     fetchUaData();
-  }, [selectedYear, selectedSemester]);
+  }, [selectedYear, selectedSemester, selectedMonth]);
 
   // Find selected class object
   const selectedClassObj = React.useMemo(() => {
@@ -686,7 +688,7 @@ export default function MonthlyReportPdfPage() {
           id: `ua_dyn_${e.normalizedUaName}_${index}`,
           category: 'UNIT_ACTIVITY',
           title: e.normalizedUaName,
-          summary: desc
+          summary: desc.trim() || '[PERINGATAN STAF: Deskripsi narasi bulanan belum diisi di menu Unit Aktivitas. Orang tua tidak akan melihat bagian kosong ini.]'
         };
       }).sort((a, b) => a.title.localeCompare(b.title));
     }
@@ -812,12 +814,22 @@ export default function MonthlyReportPdfPage() {
             <div className="mb-5">
               <h3 className="text-xs font-bold uppercase tracking-wider text-[#002366] border-b border-[#002366]/20 pb-1 mb-2">Unit Activities</h3>
               <div className="space-y-2">
-                {unitActivities.map((item, idx) => (
-                  <div key={idx} className="bg-slate-50/50 border border-slate-150 rounded-lg p-2.5 text-[10.5px]">
-                    <h4 className="font-bold text-slate-800 mb-0.5">{item.title}</h4>
-                    <p className="text-slate-600 leading-normal whitespace-pre-wrap">{item.summary}</p>
-                  </div>
-                ))}
+                {unitActivities.map((item, idx) => {
+                  const isStaffWarning = item.summary.startsWith('[PERINGATAN STAF:');
+                  return (
+                    <div 
+                      key={idx} 
+                      className={`rounded-lg p-2.5 text-[10.5px] ${
+                        isStaffWarning 
+                          ? 'bg-amber-50/30 border border-dashed border-amber-200 text-amber-800' 
+                          : 'bg-slate-50/50 border border-slate-150 text-slate-600'
+                      }`}
+                    >
+                      <h4 className="font-bold text-slate-800 mb-0.5">{item.title}</h4>
+                      <p className="leading-normal whitespace-pre-wrap">{item.summary}</p>
+                    </div>
+                  );
+                })}
                 {unitActivities.length === 0 && (
                   <p className="text-[10.5px] text-slate-400 italic">No unit activities recorded for this period.</p>
                 )}

@@ -2352,6 +2352,7 @@ export interface JuniorHighUnitActivitySemesterSummary {
   unit: "JUNIOR_HIGH";
   academicYear: string;
   semester: string;
+  month?: string; // Add optional month for monthly narratives
   normalizedUaName: string;
   activityName: string;
   category: string | null;

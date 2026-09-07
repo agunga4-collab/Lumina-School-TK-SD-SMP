@@ -1242,14 +1242,11 @@ export default function MonthlyReportSummaryPage() {
               </div>
 
               {isUaActive && (
-                <div className="mx-5 mt-5 p-4 bg-blue-50 border border-blue-200 rounded-xl flex gap-3 text-[#002366]">
-                  <Info size={20} className="shrink-0 mt-0.5" />
-                  <div className="space-y-1 text-xs">
-                    <p className="font-bold">Informasi Pengisian Unit Aktivitas</p>
-                    <p className="font-medium text-slate-600 leading-relaxed">
-                      Mulai Tahun Ajaran 2026/2027 Semester 1, deskripsi narasi pembelajaran **Unit Activity** dikelola secara terpusat pada menu **Junior High → Unit Aktivitas → Deskripsi Unit Activity Semester**. Laporan bulanan siswa akan otomatis terisi secara dinamis sesuai status pendaftaran aktif siswa. Anda tidak perlu (dan tidak dapat) menambahkan Unit Activity secara manual di halaman ini.
-                    </p>
-                  </div>
+                <div className="mx-5 mt-5 p-4 bg-blue-50/70 border border-blue-100 rounded-xl flex gap-3 text-[#002366] items-center">
+                  <Info size={16} className="shrink-0 text-blue-600" />
+                  <p className="text-xs font-semibold text-blue-800">
+                    Unit Activity diambil otomatis dari Unit Aktivitas sesuai enrollment siswa dan bulan laporan.
+                  </p>
                 </div>
               )}
 
@@ -1355,7 +1352,7 @@ export default function MonthlyReportSummaryPage() {
                               </select>
                               {isUaActive && item.category === 'UNIT_ACTIVITY' && (
                                 <p className="text-[10px] text-amber-600 font-bold mt-1 leading-normal">
-                                  Kategori ini terkunci karena laporan menggunakan Unit Activity Semester dinamis.
+                                  Kategori ini terkunci karena laporan menggunakan Unit Activity Bulanan dinamis.
                                 </p>
                               )}
 

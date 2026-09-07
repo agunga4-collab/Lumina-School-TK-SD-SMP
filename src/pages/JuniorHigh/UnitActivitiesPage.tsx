@@ -99,6 +99,12 @@ export default function UnitActivitiesPage() {
   // Tab State
   const [activeTab, setActiveTab] = React.useState<'active_semester' | 'student_history' | 'import_history' | 'semester_descriptions'>('active_semester');
 
+  // Month select state for monthly descriptions
+  const [selectedMonth, setSelectedMonth] = React.useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+
   // Semester summaries state
   const [semesterSummaries, setSemesterSummaries] = React.useState<JuniorHighUnitActivitySemesterSummary[]>([]);
   const [loadingSummaries, setLoadingSummaries] = React.useState(false);
@@ -111,6 +117,7 @@ export default function UnitActivitiesPage() {
     nextTab?: 'active_semester' | 'student_history' | 'import_history' | 'semester_descriptions';
     nextYear?: string;
     nextSemester?: string;
+    nextMonth?: string;
   } | null>(null);
 
   // Master list of all students for matching
@@ -281,6 +288,7 @@ export default function UnitActivitiesPage() {
         collection(db, 'junior_high_unit_activity_semester_summaries'),
         where('academicYear', '==', selectedYear),
         where('semester', '==', selectedSemester),
+        where('month', '==', selectedMonth),
         where('unit', '==', 'JUNIOR_HIGH')
       );
       const snapshot = await getDocs(q);
@@ -310,7 +318,7 @@ export default function UnitActivitiesPage() {
     try {
       const summaryText = editingSummaries[normalizedUaName] || '';
       const yearNorm = selectedYear.replace('/', '_');
-      const docId = `JUNIOR_HIGH_${yearNorm}_${selectedSemester}_${normalizedUaName}`;
+      const docId = `JUNIOR_HIGH_${yearNorm}_${selectedSemester}_${selectedMonth}_${normalizedUaName}`;
       const summaryDocRef = doc(db, 'junior_high_unit_activity_semester_summaries', docId);
 
       const timestampNow = new Date().getTime();
@@ -323,6 +331,7 @@ export default function UnitActivitiesPage() {
         unit: 'JUNIOR_HIGH',
         academicYear: selectedYear,
         semester: selectedSemester,
+        month: selectedMonth,
         normalizedUaName,
         activityName: normalizedUaName,
         category,
@@ -382,7 +391,7 @@ export default function UnitActivitiesPage() {
         const normalizedUaName = act.normalizedUaName;
         const category = act.category;
         const summaryText = editingSummaries[normalizedUaName] || '';
-        const docId = `JUNIOR_HIGH_${yearNorm}_${selectedSemester}_${normalizedUaName}`;
+        const docId = `JUNIOR_HIGH_${yearNorm}_${selectedSemester}_${selectedMonth}_${normalizedUaName}`;
         const summaryDocRef = doc(db, 'junior_high_unit_activity_semester_summaries', docId);
 
         const timestampNow = new Date().getTime();
@@ -393,6 +402,7 @@ export default function UnitActivitiesPage() {
           unit: 'JUNIOR_HIGH',
           academicYear: selectedYear,
           semester: selectedSemester,
+          month: selectedMonth,
           normalizedUaName,
           activityName: normalizedUaName,
           category,
@@ -462,9 +472,17 @@ export default function UnitActivitiesPage() {
     }
   };
 
+  const trySetMonth = (month: string) => {
+    if (hasUnsavedChanges()) {
+      setShowUnsavedConfirm({ nextMonth: month });
+    } else {
+      setSelectedMonth(month);
+    }
+  };
+
   const confirmDiscardChanges = () => {
     if (showUnsavedConfirm) {
-      const { nextTab, nextYear, nextSemester } = showUnsavedConfirm;
+      const { nextTab, nextYear, nextSemester, nextMonth } = showUnsavedConfirm;
       const reverted: Record<string, string> = {};
       Object.keys(originalSummaries).forEach(k => {
         reverted[k] = originalSummaries[k];
@@ -474,13 +492,14 @@ export default function UnitActivitiesPage() {
       if (nextTab) setActiveTab(nextTab);
       if (nextYear) setSelectedYear(nextYear);
       if (nextSemester) setSelectedSemester(nextSemester);
+      if (nextMonth) setSelectedMonth(nextMonth);
     }
     setShowUnsavedConfirm(null);
   };
 
   React.useEffect(() => {
     fetchSemesterSummaries();
-  }, [selectedYear, selectedSemester]);
+  }, [selectedYear, selectedSemester, selectedMonth]);
 
   const uniqueActivities = React.useMemo(() => {
     const activeEnrollments = enrollments.filter(e => e.status === 'CONFIRMED');
@@ -1367,7 +1386,7 @@ export default function UnitActivitiesPage() {
               : 'border-transparent text-gray-400 hover:text-gray-600'
           }`}
         >
-          Deskripsi Unit Activity Semester
+          Deskripsi Unit Activity Bulanan
         </button>
       </div>
 
@@ -2093,9 +2112,9 @@ export default function UnitActivitiesPage() {
                 <AlertCircle size={20} />
               </div>
               <div className="space-y-1">
-                <h3 className="text-xs font-bold text-gray-900 uppercase tracking-wider">Deskripsi Unit Activity Semester</h3>
+                <h3 className="text-xs font-bold text-gray-900 uppercase tracking-wider text-[#002366]">Deskripsi Unit Activity Bulanan</h3>
                 <p className="text-xs text-gray-600 leading-relaxed font-medium">
-                  Tulis deskripsi aktivitas di bawah ini sekali untuk Semester {selectedSemester} TA {selectedYear}. Deskripsi ini akan secara otomatis muncul di Monthly Report siswa yang terdaftar dalam aktivitas bersangkutan.
+                  Tulis deskripsi aktivitas bulanan untuk program Unit Activity di bawah ini. Pilih Tahun Ajaran, Semester, dan Bulan yang diinginkan. Deskripsi ini akan secara otomatis ditarik ke dalam **Monthly Report** siswa yang terdaftar dalam aktivitas bersangkutan di bulan laporan tersebut.
                 </p>
               </div>
             </div>
@@ -2113,7 +2132,19 @@ export default function UnitActivitiesPage() {
           </div>
 
           {/* Inline Filters */}
-          <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col sm:flex-row items-center gap-4">
+          <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col md:flex-row items-center gap-4">
+            {/* Bulan Selector */}
+            <div className="w-full md:w-64 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+              <Calendar size={14} className="text-[#002366] flex-shrink-0" />
+              <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">Bulan:</span>
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={(e) => trySetMonth(e.target.value)}
+                className="bg-transparent border-0 p-0 text-xs font-semibold text-gray-700 focus:outline-none focus:ring-0 w-full cursor-pointer"
+              />
+            </div>
+
             <div className="relative flex-1 w-full">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
               <input
