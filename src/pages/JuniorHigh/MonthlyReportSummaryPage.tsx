@@ -1179,9 +1179,9 @@ export default function MonthlyReportSummaryPage() {
                   <textarea
                     value={learningSummary}
                     onChange={(e) => setLearningSummary(e.target.value)}
-                    rows={4}
+                    rows={8}
                     placeholder="Berikan gambaran lengkap petualangan belajar kelas di bulan ini..."
-                    className="w-full rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] text-sm"
+                    className="w-full rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] text-sm min-h-[220px] max-h-[420px] resize-y overflow-y-auto"
                   />
                 </div>
               </div>
@@ -1333,9 +1333,9 @@ export default function MonthlyReportSummaryPage() {
                               <textarea
                                 value={item.summary}
                                 onChange={(e) => handleItemChange(item.id, 'summary', e.target.value)}
-                                rows={4}
+                                rows={6}
                                 placeholder="Tuliskan ringkasan detail aktivitas yang dilakukan pada minggu atau unit ini..."
-                                className="w-full text-xs rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366]"
+                                className="w-full text-xs rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] min-h-[180px] max-h-[420px] resize-y overflow-y-auto"
                               />
                             </div>
                           </div>
