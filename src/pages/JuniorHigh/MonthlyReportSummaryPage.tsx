@@ -107,6 +107,29 @@ export default function MonthlyReportSummaryPage() {
   const [reportItems, setReportItems] = React.useState<ReportItem[]>([]);
   const [draftStatus, setDraftStatus] = React.useState<'DRAFT' | 'READY'>('DRAFT');
 
+  const isUaActive = React.useMemo(() => {
+    if (!selectedYear || !selectedSemester || !selectedMonth) return false;
+    const currentFirstYear = parseInt(selectedYear.split('/')[0]) || 0;
+    const activationFirstYear = 2026;
+
+    if (currentFirstYear > activationFirstYear) {
+      return true;
+    }
+    if (currentFirstYear < activationFirstYear) {
+      return false;
+    }
+
+    if (selectedSemester === '2') {
+      return true;
+    }
+    if (selectedSemester === '1') {
+      if (selectedMonth >= '2026-08') {
+        return true;
+      }
+    }
+    return false;
+  }, [selectedYear, selectedSemester, selectedMonth]);
+
   // Async states
   const [isLoadingDraft, setIsLoadingDraft] = React.useState<boolean>(false);
   const [isSaving, setIsSaving] = React.useState<boolean>(false);
@@ -1207,21 +1230,35 @@ export default function MonthlyReportSummaryPage() {
                   >
                     <Plus size={14} /> + Lesson
                   </button>
-                  <button
-                    onClick={() => handleAddItem('UNIT_ACTIVITY')}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold border border-purple-200 transition-colors"
-                  >
-                    <Plus size={14} /> + Unit Activity
-                  </button>
+                  {!isUaActive && (
+                    <button
+                      onClick={() => handleAddItem('UNIT_ACTIVITY')}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold border border-purple-200 transition-colors"
+                    >
+                      <Plus size={14} /> + Unit Activity
+                    </button>
+                  )}
                 </div>
               </div>
+
+              {isUaActive && (
+                <div className="mx-5 mt-5 p-4 bg-blue-50 border border-blue-200 rounded-xl flex gap-3 text-[#002366]">
+                  <Info size={20} className="shrink-0 mt-0.5" />
+                  <div className="space-y-1 text-xs">
+                    <p className="font-bold">Informasi Pengisian Unit Aktivitas</p>
+                    <p className="font-medium text-slate-600 leading-relaxed">
+                      Mulai Tahun Ajaran 2026/2027 Semester 1, deskripsi narasi pembelajaran **Unit Activity** dikelola secara terpusat pada menu **Junior High → Unit Aktivitas → Deskripsi Unit Activity Semester**. Laporan bulanan siswa akan otomatis terisi secara dinamis sesuai status pendaftaran aktif siswa. Anda tidak perlu (dan tidak dapat) menambahkan Unit Activity secara manual di halaman ini.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               <div className="p-5">
                 {reportItems.length === 0 ? (
                   <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 text-center bg-slate-50/30">
                     <Info size={28} className="mx-auto text-slate-400 mb-2" />
                     <p className="text-sm font-semibold text-slate-600">Belum ada item ditambahkan</p>
-                    <p className="text-xs text-slate-400 mt-1 mb-4">Tambahkan setidaknya satu item Weekly Lesson atau Unit Activity menggunakan tombol di kanan atas.</p>
+                    <p className="text-xs text-slate-400 mt-1 mb-4">Tambahkan setidaknya satu item Weekly Lesson menggunakan tombol di kanan atas.</p>
                     <div className="flex items-center justify-center gap-3">
                       <button
                         onClick={() => handleAddItem('WEEKLY_LESSON')}
@@ -1229,12 +1266,14 @@ export default function MonthlyReportSummaryPage() {
                       >
                         <Plus size={14} /> Tambah Weekly Lesson
                       </button>
-                      <button
-                        onClick={() => handleAddItem('UNIT_ACTIVITY')}
-                        className="flex items-center gap-1 px-4 py-2 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700 transition-all"
-                      >
-                        <Plus size={14} /> Tambah Unit Activity
-                      </button>
+                      {!isUaActive && (
+                        <button
+                          onClick={() => handleAddItem('UNIT_ACTIVITY')}
+                          className="flex items-center gap-1 px-4 py-2 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700 transition-all"
+                        >
+                          <Plus size={14} /> Tambah Unit Activity
+                        </button>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -1306,11 +1345,19 @@ export default function MonthlyReportSummaryPage() {
                               <select
                                 value={item.category}
                                 onChange={(e) => handleItemChange(item.id, 'category', e.target.value as any)}
-                                className="w-full text-xs rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-1.5 bg-slate-50/50"
+                                disabled={isUaActive}
+                                className={`w-full text-xs rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-1.5 ${
+                                  isUaActive ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-slate-50/50'
+                                }`}
                               >
                                 <option value="WEEKLY_LESSON">Weekly Lesson</option>
                                 <option value="UNIT_ACTIVITY">Unit Activity</option>
                               </select>
+                              {isUaActive && item.category === 'UNIT_ACTIVITY' && (
+                                <p className="text-[10px] text-amber-600 font-bold mt-1 leading-normal">
+                                  Kategori ini terkunci karena laporan menggunakan Unit Activity Semester dinamis.
+                                </p>
+                              )}
 
                               <div className="mt-3">
                                 <label className="block text-xs font-semibold text-slate-600 mb-1">

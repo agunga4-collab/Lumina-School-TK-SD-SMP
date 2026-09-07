@@ -1267,6 +1267,20 @@ service cloud.firestore {
         incoming().unit == 'JUNIOR_HIGH';
     }
 
+    match /junior_high_unit_activity_semester_summaries/{summaryId} {
+      allow read: if isActive() && (
+        isJuniorHighStaff() ||
+        isAdmin() ||
+        isStudent() ||
+        isParent()
+      );
+
+      allow create, update: if isActive() && (isJuniorHighStaff() || isAdmin()) &&
+        incoming().unit == 'JUNIOR_HIGH';
+
+      allow delete: if isActive() && (isJuniorHighStaff() || isAdmin());
+    }
+
     match /junior_high_unit_activity_import_batches/{batchId} {
       allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
 

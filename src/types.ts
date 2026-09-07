@@ -2347,4 +2347,25 @@ export interface JuniorHighAAPResult {
   publishedBy?: string | null;
 }
 
+export interface JuniorHighUnitActivitySemesterSummary {
+  id: string;
+  unit: "JUNIOR_HIGH";
+  academicYear: string;
+  semester: string;
+  normalizedUaName: string;
+  activityName: string;
+  category: string | null;
+  summary: string;
+  eligibleGrades: string[];
+  status: "ACTIVE" | "INACTIVE";
+  createdAt: any;
+  createdByUid: string;
+  createdByName: string;
+  createdByEmail: string;
+  updatedAt: any;
+  updatedByUid: string;
+  updatedByName: string;
+  updatedByEmail: string;
+}
+
 

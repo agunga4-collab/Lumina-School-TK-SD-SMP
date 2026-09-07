@@ -62,6 +62,29 @@ export default function MonthlyReportPreviewPage() {
     return classesList.find(c => c.id === selectedClassId);
   }, [classesList, selectedClassId]);
 
+  const isUaActive = React.useMemo(() => {
+    if (!selectedYear || !selectedSemester || !selectedMonth) return false;
+    const currentFirstYear = parseInt(selectedYear.split('/')[0]) || 0;
+    const activationFirstYear = 2026;
+
+    if (currentFirstYear > activationFirstYear) {
+      return true;
+    }
+    if (currentFirstYear < activationFirstYear) {
+      return false;
+    }
+
+    if (selectedSemester === '2') {
+      return true;
+    }
+    if (selectedSemester === '1') {
+      if (selectedMonth >= '2026-08') {
+        return true;
+      }
+    }
+    return false;
+  }, [selectedYear, selectedSemester, selectedMonth]);
+
   // Derive student IDs for the query input
   const activeStudentIds = React.useMemo(() => {
     return students.map(s => s.id);
@@ -599,34 +622,62 @@ export default function MonthlyReportPreviewPage() {
                   </div>
 
                   {/* Weekly & Unit Activities list rendering */}
-                  {classSummary.sections?.weeklyLessonsAndUnitActivities && classSummary.sections.weeklyLessonsAndUnitActivities.length > 0 && (
-                    <div className="space-y-3">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase block">Weekly Lessons & Unit Activities</span>
-                      <div className="space-y-2">
-                        {classSummary.sections.weeklyLessonsAndUnitActivities.map((item, index) => (
-                          <div 
-                            key={item.id || index}
-                            className={`border rounded-lg p-3 text-xs flex gap-3 ${
-                              item.category === 'WEEKLY_LESSON' ? 'bg-blue-50/20 border-blue-100' : 'bg-purple-50/10 border-purple-100'
-                            }`}
-                          >
-                            <span className="font-bold text-slate-400 mt-0.5">#{index + 1}</span>
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-1.5">
-                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                                  item.category === 'WEEKLY_LESSON' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'
-                                }`}>
-                                  {item.category === 'WEEKLY_LESSON' ? 'WEEKLY' : 'UA'}
-                                </span>
-                                <strong className="text-slate-800">{item.title}</strong>
+                  {classSummary.sections?.weeklyLessonsAndUnitActivities && classSummary.sections.weeklyLessonsAndUnitActivities.length > 0 && (() => {
+                    const filteredItems = isUaActive 
+                      ? classSummary.sections.weeklyLessonsAndUnitActivities.filter(item => item.category === 'WEEKLY_LESSON')
+                      : classSummary.sections.weeklyLessonsAndUnitActivities;
+
+                    if (filteredItems.length === 0 && !isUaActive) return null;
+
+                    return (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between animate-fade-in">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase block">
+                            Weekly Lessons {!isUaActive && '& Unit Activities'}
+                          </span>
+                          {isUaActive && (
+                            <span className="text-[9px] font-extrabold text-[#002366] bg-blue-50/50 border border-blue-100 px-2 py-0.5 rounded">
+                              Unit Activities Terpusat & Dinamis (Aktif)
+                            </span>
+                          )}
+                        </div>
+                        {filteredItems.length > 0 ? (
+                          <div className="space-y-2">
+                            {filteredItems.map((item, index) => (
+                              <div 
+                                key={item.id || index}
+                                className={`border rounded-lg p-3 text-xs flex gap-3 ${
+                                  item.category === 'WEEKLY_LESSON' ? 'bg-blue-50/20 border-blue-100' : 'bg-purple-50/10 border-purple-100'
+                                }`}
+                              >
+                                <span className="font-bold text-slate-400 mt-0.5">#{index + 1}</span>
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                                      item.category === 'WEEKLY_LESSON' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'
+                                    }`}>
+                                      {item.category === 'WEEKLY_LESSON' ? 'WEEKLY' : 'UA'}
+                                    </span>
+                                    <strong className="text-slate-800">{item.title}</strong>
+                                  </div>
+                                  <p className="text-slate-600 leading-relaxed whitespace-pre-wrap">{item.summary}</p>
+                                </div>
                               </div>
-                              <p className="text-slate-600 leading-relaxed whitespace-pre-wrap">{item.summary}</p>
-                            </div>
+                            ))}
                           </div>
-                        ))}
+                        ) : (
+                          <div className="border border-dashed border-slate-200 rounded-xl p-6 text-center bg-slate-50/20 text-slate-400 text-xs italic">
+                            Belum ada item Weekly Lesson ditambahkan.
+                          </div>
+                        )}
+                        {isUaActive && (
+                          <p className="text-[10.5px] text-slate-400 leading-normal italic mt-2">
+                            * Unit Activity siswa bersifat dinamis berdasarkan pendaftaran terkonfirmasi di **Junior High → Unit Aktivitas** dan tidak tercantum pada ringkasan kelas di atas. Narasi lengkap akan dimuat secara otomatis di lembar PDF masing-masing siswa.
+                          </p>
+                        )}
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
               )}
             </div>

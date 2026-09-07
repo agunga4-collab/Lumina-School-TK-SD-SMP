@@ -10,7 +10,7 @@ import { collection, addDoc, getDocs, doc, updateDoc, query, where, writeBatch }
 import { useAuth } from '../../context/AuthContext';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { toast } from 'sonner';
-import type { Student, Class, UnitActivityEnrollment, JuniorHighUnitActivityImportBatch } from '../../types';
+import type { Student, Class, UnitActivityEnrollment, JuniorHighUnitActivityImportBatch, JuniorHighUnitActivitySemesterSummary } from '../../types';
 import * as XLSX from 'xlsx';
 
 const CATEGORIES = [
@@ -97,7 +97,21 @@ export default function UnitActivitiesPage() {
   const [loadingEnrollments, setLoadingEnrollments] = React.useState(false);
 
   // Tab State
-  const [activeTab, setActiveTab] = React.useState<'active_semester' | 'student_history' | 'import_history'>('active_semester');
+  const [activeTab, setActiveTab] = React.useState<'active_semester' | 'student_history' | 'import_history' | 'semester_descriptions'>('active_semester');
+
+  // Semester summaries state
+  const [semesterSummaries, setSemesterSummaries] = React.useState<JuniorHighUnitActivitySemesterSummary[]>([]);
+  const [loadingSummaries, setLoadingSummaries] = React.useState(false);
+  const [editingSummaries, setEditingSummaries] = React.useState<Record<string, string>>({});
+  const [originalSummaries, setOriginalSummaries] = React.useState<Record<string, string>>({});
+  const [savingSummaryFor, setSavingSummaryFor] = React.useState<string | null>(null);
+
+  // Unsaved Warning State
+  const [showUnsavedConfirm, setShowUnsavedConfirm] = React.useState<{
+    nextTab?: 'active_semester' | 'student_history' | 'import_history' | 'semester_descriptions';
+    nextYear?: string;
+    nextSemester?: string;
+  } | null>(null);
 
   // Master list of all students for matching
   const [allStudentsList, setAllStudentsList] = React.useState<Student[]>([]);
@@ -259,6 +273,243 @@ export default function UnitActivitiesPage() {
   React.useEffect(() => {
     fetchEnrollments();
   }, [selectedYear, selectedSemester]);
+
+  const fetchSemesterSummaries = async () => {
+    setLoadingSummaries(true);
+    try {
+      const q = query(
+        collection(db, 'junior_high_unit_activity_semester_summaries'),
+        where('academicYear', '==', selectedYear),
+        where('semester', '==', selectedSemester),
+        where('unit', '==', 'JUNIOR_HIGH')
+      );
+      const snapshot = await getDocs(q);
+      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JuniorHighUnitActivitySemesterSummary));
+      setSemesterSummaries(list);
+
+      // Populate editing states
+      const editMap: Record<string, string> = {};
+      const origMap: Record<string, string> = {};
+      list.forEach(item => {
+        editMap[item.normalizedUaName] = item.summary || '';
+        origMap[item.normalizedUaName] = item.summary || '';
+      });
+      setEditingSummaries(editMap);
+      setOriginalSummaries(origMap);
+    } catch (err) {
+      console.error('Error loading semester summaries:', err);
+      toast.error('Gagal memuat deskripsi semester');
+    } finally {
+      setLoadingSummaries(false);
+    }
+  };
+
+  const handleSaveSummary = async (normalizedUaName: string, category: string) => {
+    if (!profile) return;
+    setSavingSummaryFor(normalizedUaName);
+    try {
+      const summaryText = editingSummaries[normalizedUaName] || '';
+      const yearNorm = selectedYear.replace('/', '_');
+      const docId = `JUNIOR_HIGH_${yearNorm}_${selectedSemester}_${normalizedUaName}`;
+      const summaryDocRef = doc(db, 'junior_high_unit_activity_semester_summaries', docId);
+
+      const timestampNow = new Date().getTime();
+      const existingRecord = semesterSummaries.find(s => s.normalizedUaName === normalizedUaName);
+
+      const { setDoc } = await import('firebase/firestore');
+
+      const payload: Partial<JuniorHighUnitActivitySemesterSummary> = {
+        id: docId,
+        unit: 'JUNIOR_HIGH',
+        academicYear: selectedYear,
+        semester: selectedSemester,
+        normalizedUaName,
+        activityName: normalizedUaName,
+        category,
+        summary: summaryText,
+        eligibleGrades: ['7', '8', '9'],
+        status: 'ACTIVE',
+        updatedAt: timestampNow,
+        updatedByUid: profile.uid,
+        updatedByName: profile.displayName || profile.email || 'Teacher',
+        updatedByEmail: profile.email || '',
+      };
+
+      if (!existingRecord) {
+        payload.createdAt = timestampNow;
+        payload.createdByUid = profile.uid;
+        payload.createdByName = profile.displayName || profile.email || 'Teacher';
+        payload.createdByEmail = profile.email || '';
+      } else {
+        payload.createdAt = existingRecord.createdAt || timestampNow;
+        payload.createdByUid = existingRecord.createdByUid || profile.uid;
+        payload.createdByName = existingRecord.createdByName || 'Teacher';
+        payload.createdByEmail = existingRecord.createdByEmail || '';
+      }
+
+      await setDoc(summaryDocRef, payload, { merge: true });
+      toast.success(`Deskripsi ${normalizedUaName} berhasil disimpan`);
+
+      setOriginalSummaries(prev => ({ ...prev, [normalizedUaName]: summaryText }));
+      await fetchSemesterSummaries();
+    } catch (err) {
+      console.error('Error saving summary:', err);
+      toast.error('Gagal menyimpan deskripsi');
+    } finally {
+      setSavingSummaryFor(null);
+    }
+  };
+
+  const handleSaveAll = async (uniqueActivities: Array<any>) => {
+    if (!profile) return;
+    setIsSaving(true);
+    try {
+      const changedActivities = uniqueActivities.filter(act => {
+        const current = editingSummaries[act.normalizedUaName] || '';
+        const original = originalSummaries[act.normalizedUaName] || '';
+        return current !== original;
+      });
+
+      if (changedActivities.length === 0) {
+        toast.info('Tidak ada perubahan untuk disimpan');
+        return;
+      }
+
+      const { setDoc } = await import('firebase/firestore');
+      const yearNorm = selectedYear.replace('/', '_');
+
+      for (const act of changedActivities) {
+        const normalizedUaName = act.normalizedUaName;
+        const category = act.category;
+        const summaryText = editingSummaries[normalizedUaName] || '';
+        const docId = `JUNIOR_HIGH_${yearNorm}_${selectedSemester}_${normalizedUaName}`;
+        const summaryDocRef = doc(db, 'junior_high_unit_activity_semester_summaries', docId);
+
+        const timestampNow = new Date().getTime();
+        const existingRecord = semesterSummaries.find(s => s.normalizedUaName === normalizedUaName);
+
+        const payload: Partial<JuniorHighUnitActivitySemesterSummary> = {
+          id: docId,
+          unit: 'JUNIOR_HIGH',
+          academicYear: selectedYear,
+          semester: selectedSemester,
+          normalizedUaName,
+          activityName: normalizedUaName,
+          category,
+          summary: summaryText,
+          eligibleGrades: ['7', '8', '9'],
+          status: 'ACTIVE',
+          updatedAt: timestampNow,
+          updatedByUid: profile.uid,
+          updatedByName: profile.displayName || profile.email || 'Teacher',
+          updatedByEmail: profile.email || '',
+        };
+
+        if (!existingRecord) {
+          payload.createdAt = timestampNow;
+          payload.createdByUid = profile.uid;
+          payload.createdByName = profile.displayName || profile.email || 'Teacher';
+          payload.createdByEmail = profile.email || '';
+        } else {
+          payload.createdAt = existingRecord.createdAt || timestampNow;
+          payload.createdByUid = existingRecord.createdByUid || profile.uid;
+          payload.createdByName = existingRecord.createdByName || 'Teacher';
+          payload.createdByEmail = existingRecord.createdByEmail || '';
+        }
+
+        await setDoc(summaryDocRef, payload, { merge: true });
+      }
+
+      toast.success(`Berhasil menyimpan ${changedActivities.length} deskripsi`);
+      await fetchSemesterSummaries();
+    } catch (err) {
+      console.error('Error in save all:', err);
+      toast.error('Gagal melakukan simpan semua');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const hasUnsavedChanges = () => {
+    return Object.keys(editingSummaries).some(key => {
+      const current = editingSummaries[key] || '';
+      const original = originalSummaries[key] || '';
+      return current !== original;
+    });
+  };
+
+  const trySetTab = (tab: any) => {
+    if (hasUnsavedChanges()) {
+      setShowUnsavedConfirm({ nextTab: tab });
+    } else {
+      setActiveTab(tab);
+    }
+  };
+
+  const trySetYear = (year: string) => {
+    if (hasUnsavedChanges()) {
+      setShowUnsavedConfirm({ nextYear: year });
+    } else {
+      setSelectedYear(year);
+    }
+  };
+
+  const trySetSemester = (sem: string) => {
+    if (hasUnsavedChanges()) {
+      setShowUnsavedConfirm({ nextSemester: sem });
+    } else {
+      setSelectedSemester(sem);
+    }
+  };
+
+  const confirmDiscardChanges = () => {
+    if (showUnsavedConfirm) {
+      const { nextTab, nextYear, nextSemester } = showUnsavedConfirm;
+      const reverted: Record<string, string> = {};
+      Object.keys(originalSummaries).forEach(k => {
+        reverted[k] = originalSummaries[k];
+      });
+      setEditingSummaries(reverted);
+
+      if (nextTab) setActiveTab(nextTab);
+      if (nextYear) setSelectedYear(nextYear);
+      if (nextSemester) setSelectedSemester(nextSemester);
+    }
+    setShowUnsavedConfirm(null);
+  };
+
+  React.useEffect(() => {
+    fetchSemesterSummaries();
+  }, [selectedYear, selectedSemester]);
+
+  const uniqueActivities = React.useMemo(() => {
+    const activeEnrollments = enrollments.filter(e => e.status === 'CONFIRMED');
+    const map: Record<string, {
+      normalizedUaName: string;
+      category: string;
+      enrollmentCount: number;
+      grades: Set<string>;
+      classes: Set<string>;
+    }> = {};
+
+    activeEnrollments.forEach(e => {
+      const name = e.normalizedUaName || 'Unknown';
+      if (!map[name]) {
+        map[name] = {
+          normalizedUaName: name,
+          category: e.category || 'Uncategorized',
+          enrollmentCount: 0,
+          grades: new Set<string>(),
+          classes: new Set<string>()
+        };
+      }
+      map[name].enrollmentCount += 1;
+      if (e.grade) map[name].grades.add(e.grade);
+      if (e.className) map[name].classes.add(e.className);
+    });
+
+    return Object.values(map).sort((a, b) => a.normalizedUaName.localeCompare(b.normalizedUaName));
+  }, [enrollments]);
 
   const fetchImportBatches = async () => {
     setLoadingBatches(true);
@@ -1042,7 +1293,7 @@ export default function UnitActivitiesPage() {
             <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">TA</span>
             <select
               value={selectedYear}
-              onChange={(e) => setSelectedYear(e.target.value)}
+              onChange={(e) => trySetYear(e.target.value)}
               className="bg-transparent text-xs font-semibold text-gray-700 focus:outline-none"
             >
               <option value="2026/2027">2026/2027</option>
@@ -1054,7 +1305,7 @@ export default function UnitActivitiesPage() {
             <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Sem</span>
             <select
               value={selectedSemester}
-              onChange={(e) => setSelectedSemester(e.target.value)}
+              onChange={(e) => trySetSemester(e.target.value)}
               className="bg-transparent text-xs font-semibold text-gray-700 focus:outline-none"
             >
               <option value="1">1</option>
@@ -1077,7 +1328,7 @@ export default function UnitActivitiesPage() {
       {/* Tab Switcher */}
       <div className="flex gap-1 border-b border-gray-200">
         <button
-          onClick={() => setActiveTab('active_semester')}
+          onClick={() => trySetTab('active_semester')}
           className={`pb-3 px-4 text-xs font-bold transition-all border-b-2 -mb-[1px] cursor-pointer ${
             activeTab === 'active_semester'
               ? 'border-[#002366] text-[#002366]'
@@ -1087,7 +1338,7 @@ export default function UnitActivitiesPage() {
           Peserta Semester Aktif
         </button>
         <button
-          onClick={() => setActiveTab('student_history')}
+          onClick={() => trySetTab('student_history')}
           className={`pb-3 px-4 text-xs font-bold transition-all border-b-2 -mb-[1px] cursor-pointer ${
             activeTab === 'student_history'
               ? 'border-[#002366] text-[#002366]'
@@ -1098,7 +1349,7 @@ export default function UnitActivitiesPage() {
         </button>
         {canManage && (
           <button
-            onClick={() => setActiveTab('import_history')}
+            onClick={() => trySetTab('import_history')}
             className={`pb-3 px-4 text-xs font-bold transition-all border-b-2 -mb-[1px] cursor-pointer ${
               activeTab === 'import_history'
                 ? 'border-[#002366] text-[#002366]'
@@ -1108,6 +1359,16 @@ export default function UnitActivitiesPage() {
             Import Riwayat
           </button>
         )}
+        <button
+          onClick={() => trySetTab('semester_descriptions')}
+          className={`pb-3 px-4 text-xs font-bold transition-all border-b-2 -mb-[1px] cursor-pointer ${
+            activeTab === 'semester_descriptions'
+              ? 'border-[#002366] text-[#002366]'
+              : 'border-transparent text-gray-400 hover:text-gray-600'
+          }`}
+        >
+          Deskripsi Unit Activity Semester
+        </button>
       </div>
 
       {activeTab === 'active_semester' && (
@@ -1820,6 +2081,241 @@ export default function UnitActivitiesPage() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {activeTab === 'semester_descriptions' && (
+        <div className="space-y-6">
+          {/* Informational Notice & Header */}
+          <div className="bg-blue-50/50 border border-blue-100 p-5 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="flex gap-3">
+              <div className="p-2 bg-blue-100/50 text-[#002366] rounded-xl self-start md:self-center">
+                <AlertCircle size={20} />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-xs font-bold text-gray-900 uppercase tracking-wider">Deskripsi Unit Activity Semester</h3>
+                <p className="text-xs text-gray-600 leading-relaxed font-medium">
+                  Tulis deskripsi aktivitas di bawah ini sekali untuk Semester {selectedSemester} TA {selectedYear}. Deskripsi ini akan secara otomatis muncul di Monthly Report siswa yang terdaftar dalam aktivitas bersangkutan.
+                </p>
+              </div>
+            </div>
+
+            {hasUnsavedChanges() && (
+              <button
+                onClick={() => handleSaveAll(uniqueActivities)}
+                disabled={isSaving}
+                className="inline-flex items-center gap-1.5 bg-[#002366] hover:bg-blue-800 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 shadow-sm cursor-pointer whitespace-nowrap"
+              >
+                {isSaving ? <RefreshCw size={13} className="animate-spin" /> : <CheckCircle size={14} />}
+                Simpan Semua Perubahan
+              </button>
+            )}
+          </div>
+
+          {/* Inline Filters */}
+          <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col sm:flex-row items-center gap-4">
+            <div className="relative flex-1 w-full">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+              <input
+                type="text"
+                placeholder="Cari aktivitas..."
+                value={searchKeyword}
+                onChange={(e) => setSearchKeyword(e.target.value)}
+                className="w-full bg-slate-50 border border-gray-200 rounded-xl pl-9 pr-4 py-2 text-xs font-semibold text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+              />
+            </div>
+            
+            <div className="w-full sm:w-48">
+              <select
+                value={filterCategory}
+                onChange={(e) => setFilterCategory(e.target.value)}
+                className="w-full bg-slate-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-semibold text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+              >
+                <option value="ALL">Semua Kategori</option>
+                {CATEGORIES.map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Activities List */}
+          <div className="space-y-4">
+            {loadingSummaries || loadingEnrollments ? (
+              <div className="bg-white p-12 text-center rounded-2xl border border-gray-100 shadow-sm">
+                <RefreshCw className="mx-auto text-blue-600 animate-spin mb-3" size={24} />
+                <p className="text-xs text-gray-500 font-bold">Memuat data aktivitas dan deskripsi...</p>
+              </div>
+            ) : (() => {
+              const filtered = uniqueActivities.filter(act => {
+                const matchesSearch = act.normalizedUaName.toLowerCase().includes(searchKeyword.toLowerCase());
+                const matchesCategory = filterCategory === 'ALL' || act.category === filterCategory;
+                return matchesSearch && matchesCategory;
+              });
+
+              if (filtered.length === 0) {
+                return (
+                  <div className="bg-white p-12 text-center rounded-2xl border border-gray-100 shadow-sm">
+                    <HelpCircle className="mx-auto text-gray-300 mb-3" size={28} />
+                    <p className="text-xs text-gray-400 italic font-bold">Tidak ada aktivitas yang sesuai dengan filter.</p>
+                  </div>
+                );
+              }
+
+              return filtered.map(act => {
+                const name = act.normalizedUaName;
+                const text = editingSummaries[name] || '';
+                const orig = originalSummaries[name] || '';
+                const isChanged = text !== orig;
+                const isSavingThis = savingSummaryFor === name;
+                const isFilled = text.trim().length > 0;
+
+                const classesStr = Array.from(act.classes).join(', ');
+                const gradesStr = Array.from(act.grades).map(g => `Grade ${g}`).join(', ');
+
+                return (
+                  <div
+                    key={name}
+                    className={`bg-white rounded-2xl border transition-all p-5 shadow-sm flex flex-col md:flex-row gap-6 ${
+                      isChanged ? 'border-amber-300 ring-1 ring-amber-100' : 'border-gray-100'
+                    }`}
+                  >
+                    {/* Activity Info Sidebar inside the Row */}
+                    <div className="md:w-1/3 space-y-3.5 border-b md:border-b-0 md:border-r border-gray-100 pb-4 md:pb-0 md:pr-6 flex flex-col justify-between">
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-xs font-bold text-gray-800 uppercase tracking-tight">{name}</span>
+                          <span className="bg-blue-50 text-blue-700 border border-blue-100 text-[9px] font-bold px-2 py-0.5 rounded-full">
+                            {act.category}
+                          </span>
+                        </div>
+                        
+                        <div className="space-y-1.5 text-[11px] text-gray-500 font-semibold leading-normal">
+                          <p className="flex items-center gap-1">
+                            <span className="text-gray-400">Peserta:</span>
+                            <span className="text-gray-700 font-bold">{act.enrollmentCount} Siswa</span>
+                          </p>
+                          <p className="flex items-center gap-1">
+                            <span className="text-gray-400">Kelas:</span>
+                            <span className="text-gray-700 font-medium">{classesStr || '-'}</span>
+                          </p>
+                          <p className="flex items-center gap-1">
+                            <span className="text-gray-400">Tingkat:</span>
+                            <span className="text-gray-700 font-medium">{gradesStr || '-'}</span>
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Status Badges */}
+                      <div className="flex flex-wrap items-center gap-2 pt-2">
+                        {isFilled ? (
+                          <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-100 text-[10px] font-bold px-2.5 py-1 rounded-lg shadow-sm">
+                            <CheckCircle size={11} /> Sudah diisi
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-700 border border-rose-100 text-[10px] font-bold px-2.5 py-1 rounded-lg shadow-sm">
+                            <AlertCircle size={11} /> Belum diisi
+                          </span>
+                        )}
+
+                        {isChanged && (
+                          <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-100 text-[10px] font-bold px-2.5 py-1 rounded-lg shadow-sm animate-pulse">
+                            Belum Disimpan
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Editor Workspace */}
+                    <div className="flex-1 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">
+                          Deskripsi Aktivitas (Narasi)
+                        </label>
+                        {isChanged && (
+                          <span className="text-[10px] font-bold text-amber-600">Perubahan Belum Disimpan</span>
+                        )}
+                      </div>
+
+                      <textarea
+                        value={text}
+                        onChange={(e) => setEditingSummaries(prev => ({ ...prev, [name]: e.target.value }))}
+                        placeholder={`Masukkan deskripsi narasi pembelajaran untuk unit ${name} di semester ini...`}
+                        className="w-full border border-gray-200 rounded-xl p-3.5 text-xs font-medium text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all min-h-[160px] resize-y"
+                      />
+
+                      <div className="flex justify-end gap-2 pt-1">
+                        {isChanged && (
+                          <button
+                            onClick={() => {
+                              setEditingSummaries(prev => ({ ...prev, [name]: orig }));
+                            }}
+                            className="bg-slate-50 hover:bg-slate-100 text-gray-600 border border-slate-200 px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer"
+                          >
+                            Batal
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleSaveSummary(name, act.category)}
+                          disabled={isSavingThis || !isChanged}
+                          className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 border cursor-pointer ${
+                            isChanged
+                              ? 'bg-blue-600 hover:bg-blue-700 text-white border-blue-600 shadow-sm'
+                              : 'bg-slate-50 text-gray-400 border-gray-100 cursor-not-allowed'
+                          }`}
+                        >
+                          {isSavingThis ? (
+                            <RefreshCw size={13} className="animate-spin" />
+                          ) : (
+                            <CheckCircle size={13} />
+                          )}
+                          Simpan
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* Unsaved Changes Confirmation Modal */}
+      {showUnsavedConfirm && (
+        <div className="fixed inset-0 bg-slate-950/40 z-50 flex items-center justify-center p-4 backdrop-blur-[2px]">
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-white rounded-2xl border border-gray-200 shadow-2xl w-full max-w-md p-6 space-y-4"
+          >
+            <div className="flex gap-3 text-amber-600">
+              <div className="p-2 bg-amber-50 rounded-xl shrink-0">
+                <AlertTriangle size={24} />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-gray-900 leading-normal">Perubahan Belum Disimpan</h3>
+                <p className="text-[11px] text-gray-500 leading-normal mt-0.5">
+                  Anda memiliki beberapa perubahan deskripsi Unit Activity Semester yang belum disimpan. Jika Anda berpindah halaman atau mengganti filter sekarang, perubahan Anda akan hilang.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowUnsavedConfirm(null)}
+                className="px-4 py-2 border border-gray-200 rounded-xl text-xs font-bold text-gray-500 bg-white hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                Batal (Tetap di sini)
+              </button>
+              <button
+                onClick={confirmDiscardChanges}
+                className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+              >
+                Abaikan Perubahan
+              </button>
+            </div>
+          </motion.div>
         </div>
       )}
 

@@ -75,6 +75,51 @@ export default function MonthlyReportPdfPage() {
   // Current generating context
   const [generatingStudent, setGeneratingStudent] = React.useState<Student | null>(null);
 
+  // Dynamic Semester Unit Activities
+  const [unitActivityEnrollments, setUnitActivityEnrollments] = React.useState<any[]>([]);
+  const [semesterSummariesMap, setSemesterSummariesMap] = React.useState<Record<string, string>>({});
+  const [loadingUaData, setLoadingUaData] = React.useState<boolean>(false);
+
+  // Fetch active Unit Activity enrollments and semester summaries
+  React.useEffect(() => {
+    const fetchUaData = async () => {
+      if (!selectedYear || !selectedSemester) return;
+      setLoadingUaData(true);
+      try {
+        const [enrollSnap, summariesSnap] = await Promise.all([
+          getDocs(query(
+            collection(db, 'junior_high_unit_activity'),
+            where('academicYear', '==', selectedYear),
+            where('semester', '==', parseInt(selectedSemester) || 1),
+            where('status', '==', 'CONFIRMED')
+          )),
+          getDocs(query(
+            collection(db, 'junior_high_unit_activity_semester_summaries'),
+            where('academicYear', '==', selectedYear),
+            where('semester', '==', selectedSemester)
+          ))
+        ]);
+
+        const enrollmentsList = enrollSnap.docs.map(docSnap => docSnap.data());
+        setUnitActivityEnrollments(enrollmentsList);
+
+        const sMap: Record<string, string> = {};
+        summariesSnap.docs.forEach(docSnap => {
+          const data = docSnap.data();
+          if (data.normalizedUaName) {
+            sMap[data.normalizedUaName] = data.summary || '';
+          }
+        });
+        setSemesterSummariesMap(sMap);
+      } catch (err) {
+        console.error('[MonthlyReportPdfPage] Error fetching UA master data:', err);
+      } finally {
+        setLoadingUaData(false);
+      }
+    };
+    fetchUaData();
+  }, [selectedYear, selectedSemester]);
+
   // Find selected class object
   const selectedClassObj = React.useMemo(() => {
     return classesList.find(c => c.id === selectedClassId);
@@ -606,12 +651,51 @@ export default function MonthlyReportPdfPage() {
       .sort((a, b) => a.order - b.order);
   }, [classSummary]);
 
+  const isUaActive = React.useMemo(() => {
+    if (!selectedYear || !selectedSemester || !selectedMonth) return false;
+    const currentFirstYear = parseInt(selectedYear.split('/')[0]) || 0;
+    const activationFirstYear = 2026;
+
+    if (currentFirstYear > activationFirstYear) {
+      return true;
+    }
+    if (currentFirstYear < activationFirstYear) {
+      return false;
+    }
+
+    if (selectedSemester === '2') {
+      return true;
+    }
+    if (selectedSemester === '1') {
+      if (selectedMonth >= '2026-08') {
+        return true;
+      }
+    }
+    return false;
+  }, [selectedYear, selectedSemester, selectedMonth]);
+
   const unitActivities = React.useMemo(() => {
+    if (isUaActive) {
+      if (!generatingStudent) return [];
+      const studentEnrollments = unitActivityEnrollments.filter(
+        e => e.studentId === generatingStudent.id && e.status === 'CONFIRMED'
+      );
+      return studentEnrollments.map((e, index) => {
+        const desc = semesterSummariesMap[e.normalizedUaName] || '';
+        return {
+          id: `ua_dyn_${e.normalizedUaName}_${index}`,
+          category: 'UNIT_ACTIVITY',
+          title: e.normalizedUaName,
+          summary: desc
+        };
+      }).sort((a, b) => a.title.localeCompare(b.title));
+    }
+
     if (!classSummary) return [];
     return (classSummary.sections?.weeklyLessonsAndUnitActivities || [])
       .filter(item => item.category === 'UNIT_ACTIVITY')
       .sort((a, b) => a.order - b.order);
-  }, [classSummary]);
+  }, [isUaActive, generatingStudent, unitActivityEnrollments, semesterSummariesMap, classSummary]);
 
   // Pre-calculate approved self exploration reflection content for generatingStudent
   const approvedSelfExplorationSlots = React.useMemo(() => {
