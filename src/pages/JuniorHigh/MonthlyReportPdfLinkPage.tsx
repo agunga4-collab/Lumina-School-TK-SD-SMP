@@ -55,7 +55,7 @@ function cleanName(name: string): string {
 }
 
 export default function MonthlyReportPdfLinkPage() {
-  const { currentUser } = useAuth();
+  const { user: currentUser } = useAuth();
   const { activeYear, activeSemester } = useAcademicYear();
 
   // Selected parameters

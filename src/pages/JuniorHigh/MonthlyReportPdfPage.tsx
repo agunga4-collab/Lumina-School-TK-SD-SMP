@@ -39,7 +39,7 @@ function getIndonesianMonthLabel(periodKey: string): string {
 }
 
 export default function MonthlyReportPdfPage() {
-  const { profile, currentUser } = useAuth();
+  const { profile, user: currentUser } = useAuth();
   const { activeYear, activeSemester } = useAcademicYear();
 
   // Context Filter states
@@ -634,6 +634,22 @@ export default function MonthlyReportPdfPage() {
       );
 
     } catch (err: any) {
+      // Structured logging for Firestore Permission Error
+      console.error('[DEV DEBUG] PDF GENERATION FAILURE DETECTED', {
+        operationName: 'generate_pdf_or_save_metadata',
+        collectionPath: 'published_junior_high_monthly_reports',
+        operationType: 'create', // setting metadata
+        authenticatedUid: currentUser?.uid || 'N/A',
+        authenticatedRole: profile?.role || 'N/A',
+        selectedClassId: selectedClassId,
+        studentId: student.id,
+        academicYear: selectedYear,
+        semester: selectedSemester,
+        periodKey: selectedMonth,
+        firebaseErrorCode: err?.code || 'N/A',
+        firebaseErrorMessage: err?.message || String(err),
+      });
+
       console.error('[MonthlyReportPdfPage] PDF Generation/Upload Error:', err);
       if (err.message && err.message.startsWith('AUTH_DENIED')) {
         toast.error("Akses Google Drive ditolak. Silakan login kembali dengan memberikan izin akses Google Drive.", { id: "jh-publish", duration: 6000 });

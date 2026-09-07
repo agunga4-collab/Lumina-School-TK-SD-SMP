@@ -57,7 +57,7 @@ const MEETING_STATUS_OPTIONS = [
 
 export default function CoachingSpreadsheet() {
   const navigate = useNavigate();
-  const { currentUser } = useAuth();
+  const { user: currentUser } = useAuth();
   const { filters } = useOutletContext<{ filters: { academicYear: string; semester: '1' | '2' } }>();
 
   // CORE LIST & UTILS

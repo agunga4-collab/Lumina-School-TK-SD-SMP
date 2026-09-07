@@ -94,7 +94,19 @@ export async function getNextReportVersion(
     });
 
     return maxVersion + 1;
-  } catch (err) {
+  } catch (err: any) {
+    console.error('[DEV DEBUG] GET NEXT VERSION FAILURE DETECTED', {
+      operationName: 'getNextReportVersion',
+      collectionPath: 'published_junior_high_monthly_reports',
+      operationType: 'read/query',
+      studentId,
+      classId,
+      academicYear,
+      semester,
+      periodKey,
+      firebaseErrorCode: err?.code || 'N/A',
+      firebaseErrorMessage: err?.message || String(err),
+    });
     console.error('[getNextReportVersion] Error calculating next version:', err);
     return 1; // Default to 1 on failure to prevent blocking
   }
