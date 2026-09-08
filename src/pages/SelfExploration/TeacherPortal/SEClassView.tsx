@@ -62,6 +62,7 @@ export default function SEClassView() {
   const [loading, setLoading] = React.useState(true);
   const [selectedEnrollment, setSelectedEnrollment] = React.useState<SEEnrollment | null>(null);
   const [showApprovalModal, setShowApprovalModal] = React.useState(false);
+  const [initialApprovalSlot, setInitialApprovalSlot] = React.useState<number>(1);
   const [showCommentModal, setShowCommentModal] = React.useState(false);
   const [assessments, setAssessments] = React.useState<SESelfAssessment[]>([]);
 
@@ -426,8 +427,9 @@ export default function SEClassView() {
     return { total, unfinished, draft, submitted, revision, completed, notAvailable };
   }, [sortedRoster, enrollments, selectedCycleId, cycles, getStudentStatus, getStudentReflection]);
 
-  const handleOpenApproval = (enroll: SEEnrollment) => {
+  const handleOpenApproval = (enroll: SEEnrollment, initialSlot: number = 1) => {
     setSelectedEnrollment(enroll);
+    setInitialApprovalSlot(initialSlot);
     setShowApprovalModal(true);
   };
 
@@ -560,7 +562,11 @@ export default function SEClassView() {
                               const choiceStatus = getChoiceStatusLabel(c.status, c.approvalStatus);
                               const hasAttachment = c.formAttachments && c.formAttachments.length > 0;
                               return (
-                                 <div key={slotNum} className="p-4 bg-gray-50 rounded-2xl flex items-center justify-between gap-3 group">
+                                 <div 
+                                    key={slotNum} 
+                                    onClick={() => handleOpenApproval(enroll, slotNum)}
+                                    className="p-4 bg-gray-50 rounded-2xl flex items-center justify-between gap-3 group cursor-pointer hover:bg-gray-100 transition-colors"
+                                 >
                                     <div className="space-y-0.5 flex-1 min-w-0">
                                        <div className="flex items-center gap-1.5">
                                           <span className="text-[8px] font-black uppercase text-gray-400 tracking-widest">Slot {slotNum}</span>
@@ -590,7 +596,11 @@ export default function SEClassView() {
                               );
                            } else {
                               return (
-                                 <div key={slotNum} className="p-4 bg-gray-50/50 border border-dashed border-gray-200 rounded-2xl flex items-center justify-between group py-5">
+                                 <div 
+                                    key={slotNum} 
+                                    onClick={() => handleOpenApproval(enroll, slotNum)}
+                                    className="p-4 bg-gray-50/50 border border-dashed border-gray-200 rounded-2xl flex items-center justify-between group py-5 cursor-pointer hover:bg-gray-100 transition-colors"
+                                 >
                                     <div className="space-y-0.5">
                                        <span className="text-[8px] font-black uppercase text-gray-400 tracking-widest">Slot {slotNum}</span>
                                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider italic">Belum Memilih</p>
@@ -607,7 +617,10 @@ export default function SEClassView() {
 
                   <div className="flex flex-col gap-2 pt-4 border-t border-gray-50">
                      <button 
-                        onClick={() => handleOpenApproval(enroll)}
+                        onClick={() => {
+                           const defaultSlot = enroll.choices?.some(c => c.slot === 1) ? 1 : (enroll.choices?.[0]?.slot || 1);
+                           handleOpenApproval(enroll, defaultSlot);
+                        }}
                         className={cn(
                           "w-full py-3 rounded-xl font-black uppercase text-[9px] tracking-widest transition-all",
                           enroll.status === 'Belum Memilih' 
@@ -811,6 +824,7 @@ export default function SEClassView() {
              enrollment={selectedEnrollment} 
              onClose={() => setShowApprovalModal(false)}
              onSuccess={() => { setShowApprovalModal(false); fetchInitial(); }}
+             initialSlot={initialApprovalSlot}
            />
          )}
          {showCommentModal && selectedEnrollment && (
@@ -835,7 +849,17 @@ export default function SEClassView() {
   );
 }
 
-function ApprovalModal({ enrollment, onClose, onSuccess }: { enrollment: SEEnrollment, onClose: () => void, onSuccess: () => void }) {
+function ApprovalModal({ 
+  enrollment, 
+  onClose, 
+  onSuccess,
+  initialSlot = 1
+}: { 
+  enrollment: SEEnrollment, 
+  onClose: () => void, 
+  onSuccess: () => void,
+  initialSlot?: number
+}) {
   const { profile } = useAuth();
   const [activeTab, setActiveTab] = React.useState<'choices' | 'weekly'>('weekly');
   const [submitting, setSubmitting] = React.useState(false);
@@ -849,7 +873,7 @@ function ApprovalModal({ enrollment, onClose, onSuccess }: { enrollment: SEEnrol
 
   // Tab 2 state (17 week plans)
   const [plansDoc, setPlansDoc] = React.useState<any | null>(null);
-  const [selectedPlanSlot, setSelectedPlanSlot] = React.useState<number>(1);
+  const [selectedPlanSlot, setSelectedPlanSlot] = React.useState<number>(initialSlot);
   const [scanningPlan, setScanningPlan] = React.useState(false);
   const [scanConfidence, setScanConfidence] = React.useState<'high' | 'medium' | 'low' | null>(null);
   const [resetModalPlanIndex, setResetModalPlanIndex] = React.useState<number | null>(null);
@@ -888,6 +912,10 @@ function ApprovalModal({ enrollment, onClose, onSuccess }: { enrollment: SEEnrol
     });
     return images;
   }, [localChoices]);
+
+  const slotImages = React.useMemo(() => {
+    return existingImages.filter(img => img.slot === selectedPlanSlot);
+  }, [existingImages, selectedPlanSlot]);
 
   const handleScanExistingEvidence = async () => {
     if (!isStaff) {
@@ -1781,6 +1809,20 @@ function ApprovalModal({ enrollment, onClose, onSuccess }: { enrollment: SEEnrol
                       </div>
                    )}
 
+                   {/* Slot Identity Banner */}
+                   {(() => {
+                      const canonicalChoice = localChoices.find(c => c.slot === selectedPlanSlot);
+                      const displayStr = canonicalChoice 
+                        ? `Slot ${selectedPlanSlot} · ${canonicalChoice.strand === 'Physical' ? 'Material/Physical' : canonicalChoice.strand} · ${canonicalChoice.activityName || canonicalChoice.customActivity || 'Belum Memilih Aktivitas'}` 
+                        : `Slot ${selectedPlanSlot}`;
+                      return (
+                         <div className="p-5 bg-blue-50/20 border border-blue-100/55 rounded-3xl flex items-center gap-3">
+                            <div className="w-2 h-2 rounded-full bg-blue-600 animate-pulse shrink-0" />
+                            <span className="text-xs font-black uppercase tracking-wider text-blue-900/90">{displayStr}</span>
+                         </div>
+                      );
+                   })()}
+
                    {/* AI Scan handwritten Table Option */}
                    {isStaff && (
                       <div className="p-8 bg-blue-50/40 rounded-3xl border border-blue-100 space-y-4">
@@ -1800,14 +1842,14 @@ function ApprovalModal({ enrollment, onClose, onSuccess }: { enrollment: SEEnrol
                                Gunakan Bukti yang Sudah Diunggah
                             </h5>
                             
-                            {existingImages.length > 0 ? (
+                            {slotImages.length > 0 ? (
                                <div className="space-y-4">
                                   <p className="text-[9.5px] font-semibold text-blue-700 leading-relaxed">
                                      Pilih foto rencana/tabel yang jelas. Foto aktivitas biasa mungkin tidak dapat dibaca sebagai rencana 17 minggu.
                                   </p>
                                   
                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                     {existingImages.map((img) => {
+                                     {slotImages.map((img) => {
                                         const isSelected = selectedEvidenceId === img.id;
                                         return (
                                            <div 
