@@ -664,7 +664,7 @@ export default function LearningPowerUpStudentPage() {
               // Check if there's a differentiated assignment for this week & subject
               const asg = assignments.find(a => a.weekStartDate === activeUnifiedWeek.weekStartDate && a.subjectKey === field);
               
-              let status: string = 'NOT_STARTED';
+              let status: 'NOT_STARTED' | 'SUBMITTED' | 'REVISION_REQUIRED' | 'VERIFIED' = 'NOT_STARTED';
               let overdue: boolean = false;
               let taskDescription: string = '';
               let title: string = `Tugas ${cfg.label}`;
@@ -673,7 +673,7 @@ export default function LearningPowerUpStudentPage() {
               let weekEndDate = activeUnifiedWeek.weekEndDate;
 
               if (asg) {
-                status = asg.status;
+                status = asg.status === 'ASSIGNED' ? 'NOT_STARTED' : asg.status;
                 overdue = isOverdue(asg.weekEndDate) && status !== 'VERIFIED';
                 taskDescription = asg.taskInstructions;
                 title = asg.taskTitle;
@@ -803,7 +803,8 @@ export default function LearningPowerUpStudentPage() {
             const asg = activeTaskDetail.assignment;
             const cfg = CATEGORY_CONFIG[activeTaskDetail.field];
             
-            const status = isDiff && asg ? asg.status : (activePackage ? (progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.status || 'NOT_STARTED') : 'NOT_STARTED');
+            const rawStatus = isDiff && asg ? asg.status : (activePackage ? (progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.status || 'NOT_STARTED') : 'NOT_STARTED');
+            const status: "NOT_STARTED" | "SUBMITTED" | "REVISION_REQUIRED" | "VERIFIED" = rawStatus === 'ASSIGNED' ? 'NOT_STARTED' : rawStatus;
             const revisionNote = isDiff && asg ? asg.revisionNote : (activePackage ? progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.revisionNote : undefined);
             const history = isDiff && asg ? asg.history : (activePackage ? (progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.history || []) : []);
             
@@ -903,7 +904,7 @@ export default function LearningPowerUpStudentPage() {
                       {/* Actions based on status */}
                       <div className="pt-2">
                         {/* NOT STARTED / DEFAULT / ASSIGNED */}
-                        {(status === 'NOT_STARTED' || status === 'ASSIGNED') && (
+                        {(status === 'NOT_STARTED') && (
                           <button
                             onClick={() => {
                               if (isDiff && asg) {
