@@ -802,6 +802,69 @@
       },
       "required": ["id", "packageId", "studentId", "classId", "academicYearId", "field", "status", "updatedAt"]
     },
+    "LearningPowerUpTaskBatch": {
+      "title": "LearningPowerUpTaskBatch",
+      "description": "Subject-specific, multi-class weekly level-differentiated tasks batch.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "subjectKey": { "type": "string", "enum": ["bahasaIndonesia", "english", "mengaji", "numerasi"] },
+        "subjectArea": { "type": "string", "enum": ["BAHASA_INDONESIA", "ENGLISH_READING", "MENGAJI", "NUMERACY"] },
+        "academicYearId": { "type": "string" },
+        "semester": { "type": "string", "enum": ["1", "2"] },
+        "targetClassIds": { "type": "array", "items": { "type": "string" } },
+        "weekStartDate": { "type": "string" },
+        "weekEndDate": { "type": "string" },
+        "weekLabel": { "type": "string" },
+        "levelTasks": { "type": "object" },
+        "status": { "type": "string", "enum": ["DRAFT", "PUBLISHED", "CLOSED", "CANCELLED"] },
+        "createdBy": { "type": "string" },
+        "createdByEmail": { "type": "string" },
+        "createdByName": { "type": "string" },
+        "createdAt": { "type": "object" },
+        "updatedBy": { "type": "string" },
+        "updatedByEmail": { "type": "string" },
+        "updatedByName": { "type": "string" },
+        "updatedAt": { "type": "object" },
+        "publishedBy": { "type": "string" },
+        "publishedByEmail": { "type": "string" },
+        "publishedByName": { "type": "string" },
+        "publishedAt": { "type": "object" }
+      },
+      "required": ["id", "subjectKey", "subjectArea", "academicYearId", "semester", "targetClassIds", "weekStartDate", "weekEndDate", "weekLabel", "levelTasks", "status", "createdBy", "createdByEmail", "createdByName", "createdAt"]
+    },
+    "LearningPowerUpAssignment": {
+      "title": "LearningPowerUpAssignment",
+      "description": "Durable individual subject-level student assignment snapshot.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "taskBatchId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentNameSnapshot": { "type": "string" },
+        "classId": { "type": "string" },
+        "classNameSnapshot": { "type": "string" },
+        "subjectKey": { "type": "string", "enum": ["bahasaIndonesia", "english", "mengaji", "numerasi"] },
+        "subjectArea": { "type": "string", "enum": ["BAHASA_INDONESIA", "ENGLISH_READING", "MENGAJI", "NUMERACY"] },
+        "levelSnapshot": { "type": "string" },
+        "taskTitle": { "type": "string" },
+        "taskInstructions": { "type": "string" },
+        "academicYearId": { "type": "string" },
+        "semester": { "type": "string", "enum": ["1", "2"] },
+        "weekStartDate": { "type": "string" },
+        "weekEndDate": { "type": "string" },
+        "weekLabel": { "type": "string" },
+        "status": { "type": "string", "enum": ["ASSIGNED", "SUBMITTED", "REVISION_REQUIRED", "VERIFIED"] },
+        "submittedAt": { "type": "object" },
+        "verifiedAt": { "type": "object" },
+        "verifiedBy": { "type": "string" },
+        "verifiedByUid": { "type": "string" },
+        "revisionNote": { "type": "string" },
+        "history": { "type": "array" },
+        "updatedAt": { "type": "object" }
+      },
+      "required": ["id", "taskBatchId", "studentId", "studentNameSnapshot", "classId", "classNameSnapshot", "subjectKey", "subjectArea", "levelSnapshot", "taskTitle", "taskInstructions", "academicYearId", "semester", "weekStartDate", "weekEndDate", "weekLabel", "status", "history", "updatedAt"]
+    },
     "AAPFollowupPlan": {
       "title": "AAPFollowupPlan",
       "description": "Followup plans for Kindergarten Academic Achievement Profile (AAP).",
@@ -1171,6 +1234,14 @@
     "learning_power_up_progress/{progressId}": {
       "schema": "LearningPowerUpProgress",
       "description": "Progress tracking for an individual task in a weekly package."
+    },
+    "learning_power_up_task_batches/{batchId}": {
+      "schema": "LearningPowerUpTaskBatch",
+      "description": "Subject-specific weekly level-differentiated tasks batch for multiple classes."
+    },
+    "learning_power_up_assignments/{assignmentId}": {
+      "schema": "LearningPowerUpAssignment",
+      "description": "Durable individual subject-level student assignment snapshot and tracking."
     },
     "aap_followup_plans/{planId}": {
       "schema": "AAPFollowupPlan",

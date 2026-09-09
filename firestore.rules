@@ -182,6 +182,40 @@ service cloud.firestore {
         get(/databases/$(database)/documents/classes/$(classId)).data.academicYear == get(/databases/$(database)/documents/systemConfig/academicYear).data.activeAcademicYear;
     }
 
+    function isValidLearningPowerUpTaskBatch(data) {
+      return data.id != null && data.id != "" &&
+             data.subjectKey != null && data.subjectKey != "" &&
+             data.subjectArea != null && data.subjectArea != "" &&
+             data.academicYearId != null && data.academicYearId != "" &&
+             data.semester != null && (data.semester == "1" || data.semester == "2") &&
+             data.targetClassIds != null && data.targetClassIds.size() >= 1 &&
+             data.weekStartDate != null && data.weekStartDate != "" &&
+             data.weekEndDate != null && data.weekEndDate != "" &&
+             data.levelTasks != null &&
+             data.status != null && data.status in ["DRAFT", "PUBLISHED", "CLOSED", "CANCELLED"] &&
+             data.createdBy != null && data.createdBy != "" &&
+             data.createdAt != null;
+    }
+
+    function isValidLearningPowerUpAssignment(data) {
+      return data.id != null && data.id != "" &&
+             data.taskBatchId != null && data.taskBatchId != "" &&
+             data.studentId != null && data.studentId != "" &&
+             data.classId != null && data.classId != "" &&
+             data.subjectKey != null && data.subjectKey != "" &&
+             data.subjectArea != null && data.subjectArea != "" &&
+             data.levelSnapshot != null && data.levelSnapshot != "" &&
+             data.taskTitle != null &&
+             data.taskInstructions != null &&
+             data.academicYearId != null && data.academicYearId != "" &&
+             data.semester != null && (data.semester == "1" || data.semester == "2") &&
+             data.weekStartDate != null && data.weekStartDate != "" &&
+             data.weekEndDate != null && data.weekEndDate != "" &&
+             data.status != null && data.status in ["ASSIGNED", "SUBMITTED", "REVISION_REQUIRED", "VERIFIED"] &&
+             data.history != null &&
+             data.updatedAt != null;
+    }
+
     function isValidAAPAssessment(data) {
       return data.studentId != null && data.studentId != "" &&
              data.classId != null && data.classId != "" &&
@@ -964,10 +998,24 @@ service cloud.firestore {
     }
 
     match /learning_power_up_progress/{progressId} {
-      allow read: if isActive() && (isAdmin() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(resource.data.classId)) || isStudent() || isParent());
-      allow create: if isAdmin() || isStudent() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(request.resource.data.classId));
-      allow update: if isAdmin() || isStudent() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(request.resource.data.classId) && isActiveJuniorHighClassInActiveYear(resource.data.classId));
-      allow delete: if isAdmin() || isStudent() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(resource.data.classId));
+      allow read: if isActive() && (isAdmin() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(resource.data.classId)) || isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId));
+      allow create: if isAdmin() || isOwnStudentData(request.resource.data.studentId) || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(request.resource.data.classId));
+      allow update: if isAdmin() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(request.resource.data.classId) && isActiveJuniorHighClassInActiveYear(resource.data.classId)) || (isOwnStudentData(resource.data.studentId) && isOwnStudentData(request.resource.data.studentId) && request.resource.data.status == "SUBMITTED" && (resource.data.status == "NOT_STARTED" || resource.data.status == "REVISION_REQUIRED" || resource.data.status == "SUBMITTED"));
+      allow delete: if isAdmin() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(resource.data.classId));
+    }
+
+    match /learning_power_up_task_batches/{batchId} {
+      allow read: if isActive() && (isAdmin() || isJuniorHighStaff() || (isStudent() && resource.data.status == "PUBLISHED"));
+      allow create: if isValidLearningPowerUpTaskBatch(request.resource.data) && (isAdmin() || (isJuniorHighStaff() && (isTeacherAssignedToClass(request.resource.data.targetClassIds[0]) || userRole() in ["HEAD_UNIT", "HEAD_JUNIOR", "PRINCIPAL", "VICE_PRINCIPAL", "COORDINATOR"])));
+      allow update: if isValidLearningPowerUpTaskBatch(request.resource.data) && (isAdmin() || (isJuniorHighStaff() && ((isTeacherAssignedToClass(resource.data.targetClassIds[0]) && isTeacherAssignedToClass(request.resource.data.targetClassIds[0])) || userRole() in ["HEAD_UNIT", "HEAD_JUNIOR", "PRINCIPAL", "VICE_PRINCIPAL", "COORDINATOR"])));
+      allow delete: if isAdmin() || (isJuniorHighStaff() && (isTeacherAssignedToClass(resource.data.targetClassIds[0]) || userRole() in ["HEAD_UNIT", "HEAD_JUNIOR", "PRINCIPAL", "VICE_PRINCIPAL", "COORDINATOR"]));
+    }
+
+    match /learning_power_up_assignments/{assignmentId} {
+      allow read: if isActive() && (isAdmin() || (isJuniorHighStaff() && isTeacherAssignedToClass(resource.data.classId)) || isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId));
+      allow create: if isValidLearningPowerUpAssignment(request.resource.data) && (isAdmin() || (isJuniorHighStaff() && isTeacherAssignedToClass(request.resource.data.classId)));
+      allow update: if isValidLearningPowerUpAssignment(request.resource.data) && (isAdmin() || (isJuniorHighStaff() && isTeacherAssignedToClass(resource.data.classId) && isTeacherAssignedToClass(request.resource.data.classId)) || (isOwnStudentData(resource.data.studentId) && isOwnStudentData(request.resource.data.studentId) && request.resource.data.status == "SUBMITTED" && (resource.data.status == "ASSIGNED" || resource.data.status == "REVISION_REQUIRED" || resource.data.status == "SUBMITTED")));
+      allow delete: if isAdmin() || (isJuniorHighStaff() && isTeacherAssignedToClass(resource.data.classId));
     }
 
     match /lxd/{lxdId} {

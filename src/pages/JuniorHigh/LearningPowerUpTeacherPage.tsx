@@ -32,6 +32,21 @@ import {
 } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { isTeacherAssignedToClass } from '../../services/classTeacherAssignmentService';
+import {
+  resolveStudentActiveSubjectLevel,
+  resolveTeacherAuthorizedScope,
+  generateDeterministicAssignmentId,
+  LPU_SUBJECT_MAP
+} from '../../services/learningPowerUpService';
+import {
+  LearningPowerUpTaskBatch,
+  LearningPowerUpAssignment,
+  LpuSubjectKey,
+  LpuSubjectArea,
+  LpuLevelTask,
+  LpuAssignmentHistoryEntry
+} from '../../types';
+
 
 interface LearningPowerUpPackage {
   id: string; // learning_power_up_{classId}_{weekStartDate}
@@ -287,6 +302,40 @@ export default function LearningPowerUpTeacherPage() {
     numerasi: ''
   });
 
+  // --- New-Style LPU Batch States ---
+  const [newSubject, setNewSubject] = React.useState<LpuSubjectKey | ''>('');
+  const [newTargetClassIds, setNewTargetClassIds] = React.useState<string[]>([]);
+  const [newWeekStartDate, setNewWeekStartDate] = React.useState('');
+  const [newWeekEndDate, setNewWeekEndDate] = React.useState('');
+  const [newWeekLabel, setNewWeekLabel] = React.useState('');
+  const [newSemester, setNewSemester] = React.useState<'1' | '2'>('1');
+  const [levelTasks, setLevelTasks] = React.useState<Record<string, { title: string; instructions: string }>>({});
+  
+  // Roster resolved with student level info
+  const [rosterLevels, setRosterLevels] = React.useState<Array<{
+    student: any;
+    classId: string;
+    className: string;
+    level: string;
+    resolved: boolean;
+  }>>([]);
+  const [loadingRosterLevels, setLoadingRosterLevels] = React.useState(false);
+
+  // New-style Batch collection list
+  const [taskBatches, setTaskBatches] = React.useState<LearningPowerUpTaskBatch[]>([]);
+  const [editingBatchId, setEditingBatchId] = React.useState<string | null>(null);
+
+  // Publish confirmation modal state
+  const [publishPreflight, setPublishPreflight] = React.useState<{
+    batch: Partial<LearningPowerUpTaskBatch>;
+    recipientsCountByLevel: Record<string, number>;
+    studentsWithoutLevel: any[];
+    studentsSkippedNoTask: any[];
+    classesNames: string[];
+  } | null>(null);
+  const [isPublishing, setIsPublishing] = React.useState(false);
+
+
   // Verification modal states
   const [verifyingProgress, setVerifyingProgress] = React.useState<{
     student: Student;
@@ -488,6 +537,9 @@ export default function LearningPowerUpTeacherPage() {
       })) as TaskProgress[];
       setProgresses(loadedProgresses);
 
+      // Load new task batches as well
+      await loadTaskBatches();
+
     } catch (err) {
       console.error("Error loading class data for tracker:", err);
       toast.error("Gagal memuat data tracker kelas.");
@@ -496,11 +548,165 @@ export default function LearningPowerUpTeacherPage() {
     }
   };
 
+  const loadTaskBatches = async () => {
+    if (!activeYear) return;
+    try {
+      const q = query(
+        collection(db, 'learning_power_up_task_batches'),
+        where('academicYearId', '==', activeYear)
+      );
+      const snap = await getDocs(q);
+      const batches = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as LearningPowerUpTaskBatch[];
+      batches.sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate));
+      setTaskBatches(batches);
+    } catch (err) {
+      console.error("Error loading task batches:", err);
+    }
+  };
+
   React.useEffect(() => {
     if (selectedClassId && activeYear) {
       loadClassData();
     }
   }, [selectedClassId, activeYear]);
+
+  // Load roster and levels dynamically for new batch setup
+  React.useEffect(() => {
+    const loadRosterAndLevels = async () => {
+      if (!newSubject || newTargetClassIds.length === 0 || !activeYear) {
+        setRosterLevels([]);
+        return;
+      }
+
+      setLoadingRosterLevels(true);
+      try {
+        // Fetch all students for selected classes
+        const allStudentsInClasses: any[] = [];
+        for (const classId of newTargetClassIds) {
+          const roster = await getActiveStudents(classId, activeYear) || [];
+          const enriched = await Promise.all(roster.map(async (student: any) => {
+            const nis = await resolveNisForStudent(student);
+            return { ...student, nis };
+          }));
+          allStudentsInClasses.push(...enriched);
+        }
+
+        // Query lits/num records for the active year and subject
+        const qRecords = query(
+          collection(db, 'junior_high_literacy_numeracy_records'),
+          where('schoolYear', '==', activeYear),
+          where('subjectArea', '==', LPU_SUBJECT_MAP[newSubject])
+        );
+        const recordsSnap = await getDocs(qRecords);
+        const recordsByStudentId: Record<string, any> = {};
+        
+        // Priority weight/order to resolve session key
+        const SESSION_PRIORITY: Record<string, number> = {
+          'SEMESTER_1_START': 1,
+          'SEMESTER_1_END': 2,
+          'SPRING_ASSESSMENT_3': 3,
+          'SEMESTER_2_START': 4,
+          'SEMESTER_2_END': 5
+        };
+
+        recordsSnap.forEach(docSnap => {
+          const data = docSnap.data();
+          if (data.studentId) {
+            const existing = recordsByStudentId[data.studentId];
+            if (!existing) {
+              recordsByStudentId[data.studentId] = data;
+            } else {
+              const priorityA = SESSION_PRIORITY[data.sessionKey] || 0;
+              const priorityB = SESSION_PRIORITY[existing.sessionKey] || 0;
+              if (priorityA > priorityB) {
+                recordsByStudentId[data.studentId] = data;
+              }
+            }
+          }
+        });
+
+        const getLevelFromRecord = (record: any, subj: LpuSubjectKey): string => {
+          if (!record) return '';
+          switch (subj) {
+            case 'bahasaIndonesia':
+              return record.readingLevel || '';
+            case 'english':
+              return record.readingLevel || '';
+            case 'mengaji':
+              return record.level || '';
+            case 'numerasi':
+              return record.mathLevel || '';
+            default:
+              return '';
+          }
+        };
+
+        // Map students to levels
+        const resolvedList = allStudentsInClasses.map(student => {
+          const classObj = classes.find(c => c.id === student.classId);
+          const record = recordsByStudentId[student.id];
+          const level = getLevelFromRecord(record, newSubject);
+          return {
+            student,
+            classId: student.classId,
+            className: classObj?.name || student.classId || 'Unknown Class',
+            level: level, // empty string if none
+            resolved: !!level
+          };
+        });
+
+        setRosterLevels(resolvedList);
+
+        // Now, initialize levelTasks for only represented levels
+        const uniqueLevels = Array.from(new Set(resolvedList.filter(r => r.resolved).map(r => r.level)));
+        const newLevelTasks: Record<string, { title: string; instructions: string }> = {};
+        uniqueLevels.forEach(lvl => {
+          newLevelTasks[lvl] = levelTasks[lvl] || { title: '', instructions: '' };
+        });
+        setLevelTasks(newLevelTasks);
+
+      } catch (err) {
+        console.error("Error loading roster and levels:", err);
+        toast.error("Gagal memuat level kemampuan siswa.");
+      } finally {
+        setLoadingRosterLevels(false);
+      }
+    };
+
+    loadRosterAndLevels();
+  }, [newSubject, newTargetClassIds, activeYear, classes]);
+
+  const resolveNisForStudent = async (student: any) => {
+    let foundNis = 
+      student.nis ||
+      student.NIS ||
+      student.studentNumber ||
+      student.nisSiswa ||
+      student.profile?.nis ||
+      student.studentProfile?.nis ||
+      student.luminaId;
+
+    if (!foundNis && student.id) {
+      try {
+        const sDoc = await getDoc(doc(db, 'students', student.id));
+        if (sDoc.exists()) {
+          const sData = sDoc.data();
+          foundNis = 
+            sData.luminaId ||
+            sData.nis ||
+            sData.NIS ||
+            sData.studentNumber ||
+            sData.nisSiswa ||
+            sData.profile?.nis ||
+            sData.studentProfile?.nis;
+        }
+      } catch (err) {
+        console.warn("Error resolving NIS:", err);
+      }
+    }
+    return foundNis ? String(foundNis) : "-";
+  };
+
 
   // Handle start date picker change - auto updates end date & weekLabel
   const handleStartDateChange = (val: string) => {
@@ -667,6 +873,342 @@ export default function LearningPowerUpTeacherPage() {
     toast.success("Data tugas berhasil dimasukkan ke form di atas. Anda dapat mengubah dan menyimpannya.");
     window.scrollTo({ top: 300, behavior: 'smooth' });
   };
+
+  // --- New-Style Task Batch Handlers ---
+  
+  const validateTeacherScopeForBatch = (subject: LpuSubjectKey, classIds: string[]): { isValid: boolean; error?: string } => {
+    for (const classId of classIds) {
+      const classObj = classes.find(c => c.id === classId);
+      if (!classObj) {
+        return { isValid: false, error: `Kelas tidak ditemukan: ${classId}` };
+      }
+      const auth = resolveTeacherAuthorizedScope(currentUser, classObj, subject, true);
+      if (!auth.isAuthorized) {
+        return { isValid: false, error: `Anda tidak berwenang untuk ${CATEGORY_CONFIG[subject]?.label || subject} di kelas ${classObj.name}: ${auth.reason}` };
+      }
+    }
+    return { isValid: true };
+  };
+
+  const handleSaveNewBatchDraft = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newSubject) {
+      toast.error("Harap pilih Subject!");
+      return;
+    }
+    if (newTargetClassIds.length === 0) {
+      toast.error("Harap pilih setidaknya satu Kelas Target!");
+      return;
+    }
+    if (!newWeekStartDate || !newWeekEndDate) {
+      toast.error("Harap isi rentang Tanggal!");
+      return;
+    }
+
+    // Validate teacher scope
+    const validation = validateTeacherScopeForBatch(newSubject, newTargetClassIds);
+    if (!validation.isValid) {
+      toast.error(validation.error);
+      return;
+    }
+
+    // Ensure at least one task is entered
+    const hasSomeTask = (Object.values(levelTasks) as Array<{ title: string; instructions: string }>).some(t => t.title.trim() && t.instructions.trim());
+    if (!hasSomeTask) {
+      toast.error("Harap masukkan setidaknya satu judul dan instruksi tugas untuk level kemampuan!");
+      return;
+    }
+
+    setLoadingData(true);
+    try {
+      const batchId = editingBatchId || `batch_${newSubject}_${newWeekStartDate}_${activeYear.replace('/', '_')}`;
+      const cleanLevelTasks: Record<string, LpuLevelTask> = {};
+      Object.entries(levelTasks).forEach(([lvl, rawTask]) => {
+        const task = rawTask as { title: string; instructions: string };
+        if (task.title.trim() || task.instructions.trim()) {
+          cleanLevelTasks[lvl] = {
+            title: task.title.trim(),
+            instructions: task.instructions.trim()
+          };
+        }
+      });
+
+      const isEditing = !!editingBatchId;
+      const batchDoc: LearningPowerUpTaskBatch = {
+        id: batchId,
+        subjectKey: newSubject,
+        subjectArea: LPU_SUBJECT_MAP[newSubject],
+        academicYearId: activeYear,
+        semester: newSemester,
+        targetClassIds: newTargetClassIds,
+        weekStartDate: newWeekStartDate,
+        weekEndDate: newWeekEndDate,
+        weekLabel: newWeekLabel || `Pekan (${formatDateShort(newWeekStartDate)} - ${formatDateShort(newWeekEndDate)})`,
+        levelTasks: cleanLevelTasks,
+        status: 'DRAFT',
+        createdBy: isEditing ? (taskBatches.find(b => b.id === batchId)?.createdBy || currentUser.uid) : currentUser.uid,
+        createdByEmail: isEditing ? (taskBatches.find(b => b.id === batchId)?.createdByEmail || currentUser.email || '') : (currentUser.email || ''),
+        createdByName: isEditing ? (taskBatches.find(b => b.id === batchId)?.createdByName || currentUser.displayName || '') : (currentUser.displayName || ''),
+        createdAt: isEditing ? (taskBatches.find(b => b.id === batchId)?.createdAt || serverTimestamp()) : serverTimestamp(),
+        updatedBy: currentUser.uid,
+        updatedByEmail: currentUser.email || '',
+        updatedByName: currentUser.displayName || '',
+        updatedAt: serverTimestamp()
+      };
+
+      await setDoc(doc(db, 'learning_power_up_task_batches', batchId), batchDoc);
+      toast.success("Draft tugas berhasil disimpan!");
+      
+      resetNewBatchForm();
+      await loadTaskBatches();
+    } catch (err) {
+      console.error("Error saving draft batch:", err);
+      toast.error("Gagal menyimpan draft tugas.");
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  const handlePublishPreflight = () => {
+    if (!newSubject) {
+      toast.error("Harap pilih Subject!");
+      return;
+    }
+    if (newTargetClassIds.length === 0) {
+      toast.error("Harap pilih Kelas Target!");
+      return;
+    }
+    if (!newWeekStartDate || !newWeekEndDate) {
+      toast.error("Harap isi rentang Tanggal!");
+      return;
+    }
+
+    // Validate teacher scope
+    const validation = validateTeacherScopeForBatch(newSubject, newTargetClassIds);
+    if (!validation.isValid) {
+      toast.error(validation.error);
+      return;
+    }
+
+    // Ensure at least one task is entered
+    const hasSomeTask = (Object.values(levelTasks) as Array<{ title: string; instructions: string }>).some(t => t.title.trim() && t.instructions.trim());
+    if (!hasSomeTask) {
+      toast.error("Harap masukkan setidaknya satu judul dan instruksi tugas untuk level kemampuan!");
+      return;
+    }
+
+    // Count recipients per level
+    const recipientsCountByLevel: Record<string, number> = {};
+    const studentsWithoutLevel: any[] = [];
+    const studentsSkippedNoTask: any[] = [];
+
+    rosterLevels.forEach(({ student, className, level, resolved }) => {
+      if (!resolved || !level) {
+        studentsWithoutLevel.push({ student, className });
+      } else {
+        const task = levelTasks[level] as { title: string; instructions: string } | undefined;
+        const hasTask = task && task.title.trim() && task.instructions.trim();
+        if (!hasTask) {
+          studentsSkippedNoTask.push({ student, className, level });
+        } else {
+          recipientsCountByLevel[level] = (recipientsCountByLevel[level] || 0) + 1;
+        }
+      }
+    });
+
+    const classesNames = newTargetClassIds.map(cid => classes.find(c => c.id === cid)?.name || cid);
+
+    const batchObj: Partial<LearningPowerUpTaskBatch> = {
+      subjectKey: newSubject,
+      subjectArea: LPU_SUBJECT_MAP[newSubject],
+      academicYearId: activeYear,
+      semester: newSemester,
+      targetClassIds: newTargetClassIds,
+      weekStartDate: newWeekStartDate,
+      weekEndDate: newWeekEndDate,
+      weekLabel: newWeekLabel || `Pekan (${formatDateShort(newWeekStartDate)} - ${formatDateShort(newWeekEndDate)})`,
+      levelTasks: levelTasks
+    };
+
+    setPublishPreflight({
+      batch: batchObj,
+      recipientsCountByLevel,
+      studentsWithoutLevel,
+      studentsSkippedNoTask,
+      classesNames
+    });
+  };
+
+  const executePublishBatch = async () => {
+    if (!publishPreflight) return;
+    setIsPublishing(true);
+
+    try {
+      const { batch } = publishPreflight;
+      const batchId = editingBatchId || `batch_${batch.subjectKey}_${batch.weekStartDate}_${activeYear.replace('/', '_')}`;
+
+      // 1. Prepare clean levelTasks
+      const cleanLevelTasks: Record<string, LpuLevelTask> = {};
+      Object.entries(levelTasks).forEach(([lvl, rawTask]) => {
+        const task = rawTask as { title: string; instructions: string };
+        if (task.title.trim() || task.instructions.trim()) {
+          cleanLevelTasks[lvl] = {
+            title: task.title.trim(),
+            instructions: task.instructions.trim()
+          };
+        }
+      });
+
+      // 2. Prepare task batch record
+      const isEditing = !!editingBatchId;
+      const batchDoc: LearningPowerUpTaskBatch = {
+        id: batchId,
+        subjectKey: batch.subjectKey!,
+        subjectArea: batch.subjectArea!,
+        academicYearId: activeYear,
+        semester: batch.semester!,
+        targetClassIds: batch.targetClassIds!,
+        weekStartDate: batch.weekStartDate!,
+        weekEndDate: batch.weekEndDate!,
+        weekLabel: batch.weekLabel!,
+        levelTasks: cleanLevelTasks,
+        status: 'PUBLISHED',
+        createdBy: isEditing ? (taskBatches.find(b => b.id === batchId)?.createdBy || currentUser.uid) : currentUser.uid,
+        createdByEmail: isEditing ? (taskBatches.find(b => b.id === batchId)?.createdByEmail || currentUser.email || '') : (currentUser.email || ''),
+        createdByName: isEditing ? (taskBatches.find(b => b.id === batchId)?.createdByName || currentUser.displayName || '') : (currentUser.displayName || ''),
+        createdAt: isEditing ? (taskBatches.find(b => b.id === batchId)?.createdAt || serverTimestamp()) : serverTimestamp(),
+        updatedBy: currentUser.uid,
+        updatedByEmail: currentUser.email || '',
+        updatedByName: currentUser.displayName || '',
+        updatedAt: serverTimestamp(),
+        publishedBy: currentUser.uid,
+        publishedByEmail: currentUser.email || '',
+        publishedByName: currentUser.displayName || '',
+        publishedAt: serverTimestamp()
+      };
+
+      // 3. Collect all assignments to create
+      const assignmentsToCreate: LearningPowerUpAssignment[] = [];
+      rosterLevels.forEach(({ student, className, level, resolved }) => {
+        if (resolved && level) {
+          const task = levelTasks[level];
+          if (task && task.title.trim() && task.instructions.trim()) {
+            const assignmentId = generateDeterministicAssignmentId(batchId, student.id, batch.subjectKey!);
+            
+            const historyEntry: LpuAssignmentHistoryEntry = {
+              action: 'ASSIGN',
+              performedByUid: currentUser.uid,
+              performedByName: currentUser.displayName || currentUser.email || 'Guru',
+              performedByRole: currentUser.role,
+              timestamp: new Date()
+            };
+
+            const assignmentDoc: LearningPowerUpAssignment = {
+              id: assignmentId,
+              taskBatchId: batchId,
+              studentId: student.id,
+              studentNameSnapshot: student.name,
+              classId: student.classId,
+              classNameSnapshot: className,
+              subjectKey: batch.subjectKey!,
+              subjectArea: batch.subjectArea!,
+              levelSnapshot: level,
+              taskTitle: task.title.trim(),
+              taskInstructions: task.instructions.trim(),
+              academicYearId: activeYear,
+              semester: batch.semester!,
+              weekStartDate: batch.weekStartDate!,
+              weekEndDate: batch.weekEndDate!,
+              weekLabel: batch.weekLabel!,
+              status: 'ASSIGNED',
+              history: [historyEntry],
+              updatedAt: serverTimestamp()
+            };
+
+            assignmentsToCreate.push(assignmentDoc);
+          }
+        }
+      });
+
+      // 4. Batch-write assignments in chunks of 400 to protect limits
+      const chunkSize = 400;
+      for (let i = 0; i < assignmentsToCreate.length; i += chunkSize) {
+        const chunk = assignmentsToCreate.slice(i, i + chunkSize);
+        const writeB = writeBatch(db);
+        chunk.forEach(asg => {
+          writeB.set(doc(db, 'learning_power_up_assignments', asg.id), asg);
+        });
+        await writeB.commit();
+      }
+
+      // 5. Finally, write the published task batch doc to mark it as PUBLISHED
+      await setDoc(doc(db, 'learning_power_up_task_batches', batchId), batchDoc);
+
+      toast.success(`Berhasil menerbitkan tugas! ${assignmentsToCreate.length} tugas individu berhasil disebar.`);
+      setPublishPreflight(null);
+      resetNewBatchForm();
+      await loadTaskBatches();
+    } catch (err) {
+      console.error("Error executing publish:", err);
+      toast.error("Gagal menerbitkan tugas. Pastikan Anda memiliki koneksi internet stabil.");
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+
+  const handleEditBatch = (batch: LearningPowerUpTaskBatch) => {
+    setEditingBatchId(batch.id);
+    setNewSubject(batch.subjectKey);
+    setNewTargetClassIds(batch.targetClassIds);
+    setNewWeekStartDate(batch.weekStartDate);
+    setNewWeekEndDate(batch.weekEndDate);
+    setNewWeekLabel(batch.weekLabel);
+    setNewSemester(batch.semester);
+    setLevelTasks(batch.levelTasks);
+    toast.success("Data tugas berhasil dimasukkan ke form di atas. Anda dapat mengubah, menyimpan draft, atau langsung menerbitkannya.");
+    window.scrollTo({ top: 300, behavior: 'smooth' });
+  };
+
+  const handleDeleteBatch = async (batchId: string) => {
+    if (!confirm("Apakah Anda yakin ingin menghapus draft tugas ini?")) {
+      return;
+    }
+    setLoadingData(true);
+    try {
+      await deleteDoc(doc(db, 'learning_power_up_task_batches', batchId));
+      
+      const q = query(collection(db, 'learning_power_up_assignments'), where('taskBatchId', '==', batchId));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const writeB = writeBatch(db);
+        snap.docs.forEach(docSnap => {
+          writeB.delete(docSnap.ref);
+        });
+        await writeB.commit();
+      }
+
+      toast.success("Draft tugas berhasil dihapus.");
+      await loadTaskBatches();
+    } catch (err) {
+      console.error("Error deleting batch:", err);
+      toast.error("Gagal menghapus draft tugas.");
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  const resetNewBatchForm = () => {
+    setNewSubject('');
+    setNewTargetClassIds([]);
+    setNewWeekStartDate('');
+    setNewWeekEndDate('');
+    setNewWeekLabel('');
+    setNewSemester('1');
+    setLevelTasks({});
+    setRosterLevels([]);
+    setEditingBatchId(null);
+  };
+
 
   // Filter student roster by name search
   const filteredStudents = students.filter(s => 
@@ -1302,234 +1844,488 @@ export default function LearningPowerUpTeacherPage() {
       )}
 
       {/* TAB 2 — KELOLA TUGAS */}
-      {activeTab === 'MANAGE_TASKS' && (
-        <div className="space-y-8">
-          
-          {/* Main Form: Atur Tugas */}
-          <form onSubmit={handleSavePackage} className="bg-white rounded-[2rem] border border-slate-100 p-8 shadow-sm space-y-6">
-            <div className="border-b border-slate-100 pb-4">
-              <h2 className="text-xl font-bold text-gray-900">Atur Tugas</h2>
-              <p className="text-xs font-semibold text-gray-400">Atur paket tugas untuk seluruh bidang studi aktif sekaligus berdasarkan rentang tanggal.</p>
-            </div>
+      {/* TAB 2 — KELOLA TUGAS */}
+      {activeTab === 'MANAGE_TASKS' && (() => {
+        const allSubjects: Array<{ key: LpuSubjectKey; label: string }> = [
+          { key: 'bahasaIndonesia', label: 'Bahasa Indonesia' },
+          { key: 'english', label: 'English Reading' },
+          { key: 'mengaji', label: 'Mengaji' },
+          { key: 'numerasi', label: 'Numerasi' }
+        ];
 
-            {/* Date Pickers */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Tanggal Mulai</label>
-                <input
-                  type="date"
-                  required
-                  value={weekStartDate}
-                  onChange={(e) => handleStartDateChange(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold"
-                />
+        const authorizedClassesForSelectedSubject = classes.filter(c => {
+          if (!newSubject) return false;
+          const auth = resolveTeacherAuthorizedScope(currentUser, c, newSubject, true);
+          return auth.isAuthorized;
+        });
+
+        return (
+          <div className="space-y-8">
+            
+            {/* Main Form: Atur Tugas */}
+            <div className="bg-white rounded-[2rem] border border-slate-100 p-8 shadow-sm space-y-6 animate-fadeIn">
+              <div className="border-b border-slate-100 pb-4">
+                <h2 className="text-xl font-bold text-gray-900">
+                  {editingBatchId ? 'Edit Tugas LPU (Laju Pemahaman)' : 'Buat Tugas LPU Baru (Laju Pemahaman)'}
+                </h2>
+                <p className="text-xs font-semibold text-gray-400">Atur tugas berorientasi level kemampuan secara subject-first, multi-class, dan task-per-level.</p>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Tanggal Selesai</label>
-                <input
-                  type="date"
-                  required
-                  value={weekEndDate}
-                  onChange={(e) => setWeekEndDate(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold"
-                />
-              </div>
-            </div>
-
-            {/* Copy Feature */}
-            {packages.length > 0 && (
-              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <h4 className="text-xs font-black text-gray-700 flex items-center gap-1.5">
-                    <Copy size={14} className="text-[#109E58]" />
-                    Salin Tugas dari Periode Sebelumnya
-                  </h4>
-                  <p className="text-[10px] text-gray-400 font-bold leading-none">Menyalin teks instruksi tugas per bidang. Tidak menyalin progres siswa.</p>
-                </div>
-                <div className="flex gap-2 w-full sm:w-auto">
+              {/* Subject Dropdown Selector */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Subject Saya</label>
                   <select
-                    value={copiedFromWeekId}
-                    onChange={(e) => setCopiedFromWeekId(e.target.value)}
-                    className="bg-white border border-slate-200 text-xs px-3 py-2 rounded-lg font-semibold flex-1 sm:flex-initial"
+                    value={newSubject}
+                    onChange={(e) => {
+                      setNewSubject(e.target.value as LpuSubjectKey);
+                      setNewTargetClassIds([]); // Reset selected classes on subject change
+                    }}
+                    className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold"
                   >
-                    <option value="">-- Pilih Periode --</option>
-                    {packages.map(p => (
-                      <option key={p.id} value={p.id}>{formatDateRange(p.weekStartDate, p.weekEndDate)}</option>
+                    <option value="">-- Pilih Subject --</option>
+                    {allSubjects.filter(sub => {
+                      if (['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR'].includes(currentUser.role)) {
+                        return true;
+                      }
+                      return classes.some(c => resolveTeacherAuthorizedScope(currentUser, c, sub.key, true).isAuthorized);
+                    }).map(sub => (
+                      <option key={sub.key} value={sub.key}>
+                        {CATEGORY_CONFIG[sub.key]?.label || sub.label}
+                      </option>
                     ))}
                   </select>
-                  <button
-                    type="button"
-                    onClick={handleCopyFromPrevious}
-                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-black uppercase tracking-wider rounded-lg transition-all"
+                </div>
+
+                {/* Semester Choice */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Semester</label>
+                  <select
+                    value={newSemester}
+                    onChange={(e) => setNewSemester(e.target.value as '1' | '2')}
+                    className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold"
                   >
-                    Salin Tugas
-                  </button>
+                    <option value="1">Semester 1</option>
+                    <option value="2">Semester 2</option>
+                  </select>
                 </div>
               </div>
-            )}
 
-            {/* 4 Textareas */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-              <div className="space-y-1.5 border border-slate-100 bg-slate-50/20 p-4 rounded-2xl">
-                <label className="text-xs font-black text-blue-700 flex items-center gap-2">
-                  <BookOpen size={16} />
-                  Bahasa Indonesia (Opsional)
-                </label>
-                <textarea
-                  rows={4}
-                  placeholder="Tulis instruksi tugas Bahasa Indonesia..."
-                  value={tasksForm.bahasaIndonesia}
-                  onChange={(e) => setTasksForm(prev => ({ ...prev, bahasaIndonesia: e.target.value }))}
-                  className="w-full bg-white border border-slate-200 text-xs px-4 py-3 rounded-xl focus:outline-none font-medium leading-relaxed"
-                />
+              {/* Kelas Target (Multi-Select checkboxes) */}
+              {newSubject && (
+                <div className="space-y-2.5 p-4 bg-slate-50/50 border border-slate-200/50 rounded-2xl">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">Kelas Target (Pilih satu atau lebih)</label>
+                  {authorizedClassesForSelectedSubject.length > 0 ? (
+                    <div className="flex flex-wrap gap-3">
+                      {authorizedClassesForSelectedSubject.map(cls => (
+                        <label
+                          key={cls.id}
+                          className={cn(
+                            "flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-all select-none",
+                            newTargetClassIds.includes(cls.id)
+                              ? "bg-violet-500 border-violet-500 text-white shadow-sm"
+                              : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            className="hidden"
+                            checked={newTargetClassIds.includes(cls.id)}
+                            onChange={() => {
+                              if (newTargetClassIds.includes(cls.id)) {
+                                setNewTargetClassIds(prev => prev.filter(id => id !== cls.id));
+                              } else {
+                                setNewTargetClassIds(prev => [...prev, cls.id]);
+                              }
+                            }}
+                          />
+                          {cls.name}
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-rose-500 font-bold">Anda tidak memiliki hak akses/wewenang mengajar di kelas mana pun untuk mata pelajaran ini.</p>
+                  )}
+                </div>
+              )}
+
+              {/* Date Pickers & Week Label */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Tanggal Mulai</label>
+                  <input
+                    type="date"
+                    required
+                    value={newWeekStartDate}
+                    onChange={(e) => {
+                      const start = e.target.value;
+                      setNewWeekStartDate(start);
+                      if (start) {
+                        const d = new Date(start);
+                        d.setDate(d.getDate() + 6);
+                        const end = d.toISOString().split('T')[0];
+                        setNewWeekEndDate(end);
+                        setNewWeekLabel(`Pekan (${formatDateShort(start)} - ${formatDateShort(end)})`);
+                      }
+                    }}
+                    className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Tanggal Selesai</label>
+                  <input
+                    type="date"
+                    required
+                    value={newWeekEndDate}
+                    onChange={(e) => setNewWeekEndDate(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Label Pekan (Opsional)</label>
+                  <input
+                    type="text"
+                    placeholder="Misal: Pekan UTS"
+                    value={newWeekLabel}
+                    onChange={(e) => setNewWeekLabel(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold"
+                  />
+                </div>
               </div>
 
-              <div className="space-y-1.5 border border-slate-100 bg-slate-50/20 p-4 rounded-2xl">
-                <label className="text-xs font-black text-violet-700 flex items-center gap-2">
-                  <Languages size={16} />
-                  English (Opsional)
-                </label>
-                <textarea
-                  rows={4}
-                  placeholder="Tulis instruksi tugas English..."
-                  value={tasksForm.english}
-                  onChange={(e) => setTasksForm(prev => ({ ...prev, english: e.target.value }))}
-                  className="w-full bg-white border border-slate-200 text-xs px-4 py-3 rounded-xl focus:outline-none font-medium leading-relaxed"
-                />
-              </div>
+              {/* Tugas per Level & Roster Table */}
+              {newSubject && newTargetClassIds.length > 0 && (
+                <div className="space-y-6 border-t border-slate-100 pt-6">
+                  {loadingRosterLevels ? (
+                    <div className="flex flex-col items-center justify-center py-10 space-y-2">
+                      <Loader2 size={24} className="animate-spin text-slate-400" />
+                      <p className="text-xs text-slate-400 font-bold">Memuat level kemampuan roster...</p>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Tugas per Level input fields */}
+                      <div className="space-y-4">
+                        <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider">Tugas per Level</h3>
+                        {Object.keys(levelTasks).length > 0 ? (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {Object.keys(levelTasks).map((levelKey) => (
+                              <div key={levelKey} className="p-5 bg-slate-50/60 border border-slate-200/50 rounded-[1.5rem] space-y-3 shadow-sm hover:border-slate-300 transition-all">
+                                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                                  <span className="text-[10px] font-black text-violet-700 bg-violet-50 border border-violet-100 px-3 py-1 rounded-full uppercase">
+                                    Level: {levelKey}
+                                  </span>
+                                  <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                                    {rosterLevels.filter(r => r.level === levelKey).length} Siswa
+                                  </span>
+                                </div>
+                                <div className="space-y-3">
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-500 block">Judul Tugas</label>
+                                    <input
+                                      type="text"
+                                      placeholder={`Judul tugas untuk Level ${levelKey}`}
+                                      value={levelTasks[levelKey]?.title || ''}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setLevelTasks(prev => ({
+                                          ...prev,
+                                          [levelKey]: { ...prev[levelKey], title: val }
+                                        }));
+                                      }}
+                                      className="w-full bg-white border border-slate-200 text-xs px-3.5 py-2.5 rounded-xl focus:outline-none font-bold"
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-500 block">Instruksi Tugas</label>
+                                    <textarea
+                                      rows={3}
+                                      placeholder={`Tulis langkah pengerjaan tugas level ${levelKey}...`}
+                                      value={levelTasks[levelKey]?.instructions || ''}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setLevelTasks(prev => ({
+                                          ...prev,
+                                          [levelKey]: { ...prev[levelKey], instructions: val }
+                                        }));
+                                      }}
+                                      className="w-full bg-white border border-slate-200 text-xs px-3.5 py-2.5 rounded-xl focus:outline-none font-medium leading-relaxed"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="p-8 bg-slate-50/50 border border-dashed border-slate-200 rounded-3xl text-center text-xs text-slate-400 font-bold">
+                            Tidak ada level kemampuan yang saat ini dimiliki oleh siswa di kelas-kelas yang dipilih.
+                          </div>
+                        )}
+                      </div>
 
-              <div className="space-y-1.5 border border-slate-100 bg-slate-50/20 p-4 rounded-2xl">
-                <label className="text-xs font-black text-emerald-700 flex items-center gap-2">
-                  <BookMarked size={16} />
-                  Mengaji (Opsional)
-                </label>
-                <textarea
-                  rows={4}
-                  placeholder="Tulis instruksi tugas Mengaji..."
-                  value={tasksForm.mengaji}
-                  onChange={(e) => setTasksForm(prev => ({ ...prev, mengaji: e.target.value }))}
-                  className="w-full bg-white border border-slate-200 text-xs px-4 py-3 rounded-xl focus:outline-none font-medium leading-relaxed"
-                />
-              </div>
-
-              <div className="space-y-1.5 border border-slate-100 bg-slate-50/20 p-4 rounded-2xl">
-                <label className="text-xs font-black text-amber-700 flex items-center gap-2">
-                  <Calculator size={16} />
-                  Numerasi (Opsional)
-                </label>
-                <textarea
-                  rows={4}
-                  placeholder="Tulis instruksi tugas Numerasi..."
-                  value={tasksForm.numerasi}
-                  onChange={(e) => setTasksForm(prev => ({ ...prev, numerasi: e.target.value }))}
-                  className="w-full bg-white border border-slate-200 text-xs px-4 py-3 rounded-xl focus:outline-none font-medium leading-relaxed"
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-4">
-              <button
-                type="submit"
-                disabled={loadingData}
-                className="px-6 py-3.5 bg-[#109E58] hover:bg-[#0d854a] text-white text-xs font-black uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center gap-2"
-              >
-                {loadingData ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                Simpan Tugas
-              </button>
-            </div>
-          </form>
-
-          {/* List of Created Packages */}
-          <div className="space-y-4">
-            <div className="border-b border-slate-100 pb-2">
-              <h3 className="text-md font-black text-gray-900">Daftar Tugas</h3>
-              <p className="text-xs font-semibold text-gray-400">Daftar tugas berdasarkan rentang tanggal.</p>
-            </div>
-
-            {packages.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {packages.map(pkg => (
-                  <div key={pkg.id} className="bg-white border border-slate-100 rounded-[2rem] p-6 shadow-sm flex flex-col justify-between space-y-4">
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-black text-[#109E58] bg-[#109E58]/10 border border-[#109E58]/20 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-                          SMP JUNIOR HIGH
-                        </span>
-                        <div className="flex gap-1">
-                          <button
-                            onClick={() => handleEditPackage(pkg)}
-                            className="p-1.5 hover:bg-slate-50 text-gray-500 hover:text-[#109E58] rounded-lg transition-all"
-                            title="Edit Tugas"
-                          >
-                            <Edit size={16} />
-                          </button>
-                          <button
-                            onClick={() => handleDeletePackage(pkg.id)}
-                            className="p-1.5 hover:bg-rose-50 text-gray-500 hover:text-rose-600 rounded-lg transition-all"
-                            title="Hapus Tugas"
-                          >
-                            <Trash2 size={16} />
-                          </button>
+                      {/* Read-only Roster Table */}
+                      <div className="border-t border-slate-100 pt-6 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider">
+                            Daftar Siswa & Level Terpilih
+                          </h3>
+                          <span className="text-xs font-black text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
+                            {rosterLevels.length} Siswa
+                          </span>
+                        </div>
+                        
+                        <div className="max-h-72 overflow-y-auto border border-slate-100 rounded-[1.5rem] bg-white">
+                          <table className="w-full text-left border-collapse text-xs">
+                            <thead>
+                              <tr className="bg-slate-50/80 text-slate-400 font-bold border-b border-slate-100 uppercase tracking-wider text-[10px]">
+                                <th className="py-3 px-5">Siswa</th>
+                                <th className="py-3 px-5">Kelas</th>
+                                <th className="py-3 px-5">Level Subject</th>
+                                <th className="py-3 px-5">Status Penerbitan</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-50">
+                              {rosterLevels.map(({ student, className, level, resolved }, idx) => (
+                                <tr key={`${student.id}-${idx}`} className="hover:bg-slate-50/40">
+                                  <td className="py-3 px-5 font-bold text-gray-900">{student.name}</td>
+                                  <td className="py-3 px-5 text-gray-500 font-semibold">{className}</td>
+                                  <td className="py-3 px-5 font-black">
+                                    {resolved ? (
+                                      <span className="text-violet-700 bg-violet-50 px-2.5 py-1 rounded-full border border-violet-100 uppercase tracking-wider text-[10px]">
+                                        {level}
+                                      </span>
+                                    ) : (
+                                      <span className="text-rose-600 bg-rose-50 px-2.5 py-1 rounded-full border border-rose-100 uppercase tracking-wider text-[10px]">
+                                        Belum Ada Level
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="py-3 px-5 font-bold">
+                                    {resolved ? (
+                                      levelTasks[level]?.title?.trim() && levelTasks[level]?.instructions?.trim() ? (
+                                        <span className="text-[#109E58] flex items-center gap-1.5">
+                                          <CheckCircle2 size={14} /> Ready
+                                        </span>
+                                      ) : (
+                                        <span className="text-amber-600 flex items-center gap-1.5">
+                                          <AlertCircle size={14} /> No Level Task
+                                        </span>
+                                      )
+                                    ) : (
+                                      <span className="text-rose-500 flex items-center gap-1.5">
+                                        <X size={14} /> Skipped
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
                         </div>
                       </div>
+                    </>
+                  )}
+                </div>
+              )}
 
-                      <div className="space-y-1">
-                        <h4 className="text-md font-black text-gray-900 tracking-tight leading-snug">
-                          {formatDateRange(pkg.weekStartDate, pkg.weekEndDate)}
-                        </h4>
-                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">
-                          Mulai: {formatDateFull(pkg.weekStartDate)}
-                        </p>
-                      </div>
+              {/* Actions for creating/editing */}
+              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+                {editingBatchId && (
+                  <button
+                    type="button"
+                    onClick={resetNewBatchForm}
+                    className="px-5 py-3 border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-black uppercase tracking-wider rounded-xl transition-all"
+                  >
+                    Batal Edit
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => handleSaveNewBatchDraft()}
+                  disabled={loadingData || !newSubject || newTargetClassIds.length === 0}
+                  className="px-5 py-3 border border-[#109E58] text-[#109E58] hover:bg-[#109E58]/5 text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center gap-2 disabled:opacity-50"
+                >
+                  {loadingData ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                  Simpan Draft
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePublishPreflight}
+                  disabled={loadingData || !newSubject || newTargetClassIds.length === 0}
+                  className="px-5 py-3 bg-[#109E58] hover:bg-[#0d854a] text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center gap-2 disabled:opacity-50"
+                >
+                  <Send size={16} />
+                  Terbitkan Tugas
+                </button>
+              </div>
+            </div>
 
-                      {/* Display task list with counts */}
-                      <div className="space-y-2 pt-2 border-t border-slate-100">
-                        {pkg.tasks.bahasaIndonesia && (
-                          <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
-                            <BookOpen size={14} className="text-blue-500" />
-                            <span>Bahasa Indonesia</span>
+            {/* List of Created Task Batches */}
+            <div className="space-y-4">
+              <div className="border-b border-slate-100 pb-2">
+                <h3 className="text-md font-black text-gray-900">Daftar Tugas LPU</h3>
+                <p className="text-xs font-semibold text-gray-400">Daftar tugas berorientasi level kemampuan siswa.</p>
+              </div>
+
+              {taskBatches.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {taskBatches.map(batch => (
+                    <div key={batch.id} className="bg-white border border-slate-100 rounded-[2rem] p-6 shadow-sm flex flex-col justify-between space-y-4">
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className={cn(
+                            "text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider border",
+                            batch.status === 'PUBLISHED'
+                              ? "text-[#109E58] bg-[#109E58]/10 border-[#109E58]/20"
+                              : "text-amber-700 bg-amber-50 border-amber-200"
+                          )}>
+                            {batch.status === 'PUBLISHED' ? 'Terbit (Published)' : 'Draft'}
+                          </span>
+                          
+                          <div className="flex gap-1">
+                            {batch.status === 'DRAFT' && (
+                              <>
+                                <button
+                                  onClick={() => handleEditBatch(batch)}
+                                  className="p-1.5 hover:bg-slate-50 text-gray-500 hover:text-[#109E58] rounded-lg transition-all"
+                                  title="Edit Draft"
+                                >
+                                  <Edit size={16} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteBatch(batch.id)}
+                                  className="p-1.5 hover:bg-rose-50 text-gray-500 hover:text-rose-600 rounded-lg transition-all"
+                                  title="Hapus Draft"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </>
+                            )}
                           </div>
-                        )}
-                        {pkg.tasks.english && (
-                          <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
-                            <Languages size={14} className="text-violet-500" />
-                            <span>English</span>
+                        </div>
+
+                        <div className="space-y-1">
+                          <h4 className="text-md font-black text-gray-900 tracking-tight leading-snug">
+                            {CATEGORY_CONFIG[batch.subjectKey]?.label || batch.subjectKey}
+                          </h4>
+                          <p className="text-[10px] text-gray-500 font-bold uppercase">
+                            {batch.targetClassIds.map(cid => classes.find(c => c.id === cid)?.name || cid).join(', ')}
+                          </p>
+                          <p className="text-[10px] text-gray-400 font-bold uppercase">
+                            {batch.weekLabel}
+                          </p>
+                        </div>
+
+                        {/* Configured levels with tasks */}
+                        <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Tugas per Level:</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {Object.keys(batch.levelTasks).map(lvl => (
+                              <span key={lvl} className="text-[9px] font-bold text-violet-700 bg-violet-50 px-2 py-0.5 rounded-full border border-violet-100 uppercase" title={batch.levelTasks[lvl].title}>
+                                {lvl}
+                              </span>
+                            ))}
                           </div>
-                        )}
-                        {pkg.tasks.mengaji && (
-                          <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
-                            <BookMarked size={14} className="text-emerald-500" />
-                            <span>Mengaji</span>
-                          </div>
-                        )}
-                        {pkg.tasks.numerasi && (
-                          <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
-                            <Calculator size={14} className="text-amber-500" />
-                            <span>Numerasi</span>
-                          </div>
-                        )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="bg-slate-50 border border-slate-100 rounded-[2rem] p-12 text-center max-w-xl mx-auto space-y-4">
-                <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400 mx-auto">
-                  <FileText size={32} />
+                  ))}
                 </div>
-                <div className="space-y-1">
-                  <h3 className="text-lg font-black text-gray-900">Belum Ada Tugas</h3>
-                  <p className="text-sm text-gray-500 font-semibold leading-relaxed">
-                    Gunakan form di atas untuk mengatur tugas penguatan belajar bagi siswa berdasarkan rentang tanggal.
-                  </p>
+              ) : (
+                <div className="bg-slate-50 border border-slate-100 rounded-[2rem] p-12 text-center max-w-xl mx-auto space-y-4">
+                  <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400 mx-auto">
+                    <FileText size={32} />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-lg font-black text-gray-900">Belum Ada Tugas LPU Baru</h3>
+                    <p className="text-sm text-gray-500 font-semibold leading-relaxed">
+                      Gunakan form di atas untuk membuat draf atau menerbitkan tugas per level LPU yang baru.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Legacy Packages (Tugas Lama) */}
+            {packages.length > 0 && (
+              <div className="space-y-4 border-t border-slate-100 pt-8">
+                <div className="pb-2">
+                  <h3 className="text-md font-black text-slate-400 uppercase tracking-wider">Daftar Paket Tugas Kelas (Legacy / Lama)</h3>
+                  <p className="text-xs font-semibold text-slate-400">Paket tugas lama sebelum transisi LPU multi-class berorientasi level.</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {packages.map(pkg => (
+                    <div key={pkg.id} className="bg-white border border-slate-100 rounded-[2rem] p-6 shadow-sm flex flex-col justify-between space-y-4 opacity-75 hover:opacity-100 transition-all">
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black text-gray-500 bg-gray-100 border border-gray-200 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                            SMP JUNIOR HIGH (LEGACY)
+                          </span>
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => handleEditPackage(pkg)}
+                              className="p-1.5 hover:bg-slate-50 text-gray-500 hover:text-[#109E58] rounded-lg transition-all"
+                              title="Edit Tugas Lama"
+                            >
+                              <Edit size={16} />
+                            </button>
+                            <button
+                              onClick={() => handleDeletePackage(pkg.id)}
+                              className="p-1.5 hover:bg-rose-50 text-gray-500 hover:text-rose-600 rounded-lg transition-all"
+                              title="Hapus Tugas Lama"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <h4 className="text-md font-black text-gray-900 tracking-tight leading-snug">
+                            {formatDateRange(pkg.weekStartDate, pkg.weekEndDate)}
+                          </h4>
+                          <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">
+                            Mulai: {formatDateFull(pkg.weekStartDate)}
+                          </p>
+                        </div>
+
+                        <div className="space-y-2 pt-2 border-t border-slate-100">
+                          {pkg.tasks.bahasaIndonesia && (
+                            <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
+                              <BookOpen size={14} className="text-blue-500" />
+                              <span>Bahasa Indonesia</span>
+                            </div>
+                          )}
+                          {pkg.tasks.english && (
+                            <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
+                              <Languages size={14} className="text-violet-500" />
+                              <span>English</span>
+                            </div>
+                          )}
+                          {pkg.tasks.mengaji && (
+                            <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
+                              <BookMarked size={14} className="text-emerald-500" />
+                              <span>Mengaji</span>
+                            </div>
+                          )}
+                          {pkg.tasks.numerasi && (
+                            <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
+                              <Calculator size={14} className="text-amber-500" />
+                              <span>Numerasi</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
           </div>
-        </div>
-      )}
+        );
+      })()}
+
 
       {/* VERIFICATION DIALOG MODAL */}
       <AnimatePresence>
@@ -1697,6 +2493,145 @@ export default function LearningPowerUpTeacherPage() {
                     </div>
                   )}
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* PUBLISH PREFLIGHT CONFIRMATION DIALOG MODAL */}
+      <AnimatePresence>
+        {publishPreflight && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto" id="publish-preflight-overlay">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[2rem] shadow-2xl max-w-lg w-full p-8 space-y-6 relative border border-slate-100 flex flex-col max-h-[90vh] overflow-hidden"
+              id="publish-preflight-body"
+            >
+              <button 
+                onClick={() => setPublishPreflight(null)}
+                className="absolute top-6 right-6 p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-700 transition-all z-10"
+              >
+                <X size={16} />
+              </button>
+
+              <div className="space-y-2 shrink-0">
+                <span className="px-3 py-1 bg-amber-50 text-amber-700 text-[9px] font-black uppercase tracking-widest rounded-full border border-amber-200 inline-block">
+                  Preflight Penerbitan Tugas
+                </span>
+                <h3 className="text-xl font-black text-gray-900 tracking-tight">
+                  Konfirmasi Penerbitan LPU
+                </h3>
+                <p className="text-xs text-gray-400 font-semibold leading-relaxed">
+                  Harap verifikasi parameter target dan sebaran level sebelum menerbitkan tugas.
+                </p>
+              </div>
+
+              {/* Preflight Scrollable Details */}
+              <div className="flex-1 overflow-y-auto space-y-5 pr-1 py-1">
+                {/* General Scope */}
+                <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-2.5 text-xs font-semibold text-gray-600">
+                  <div className="flex justify-between items-center pb-2 border-b border-slate-200/50">
+                    <span className="text-gray-400 font-bold uppercase tracking-wider text-[9px]">Mata Pelajaran</span>
+                    <span className="text-gray-900 font-black uppercase">{CATEGORY_CONFIG[publishPreflight.batch.subjectKey!]?.label || publishPreflight.batch.subjectKey}</span>
+                  </div>
+                  <div className="flex justify-between items-start pb-2 border-b border-slate-200/50">
+                    <span className="text-gray-400 font-bold uppercase tracking-wider text-[9px]">Target Kelas</span>
+                    <span className="text-gray-900 font-black text-right max-w-[60%]">{publishPreflight.classesNames.join(', ')}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400 font-bold uppercase tracking-wider text-[9px]">Periode Pekan</span>
+                    <span className="text-gray-900 font-black">{publishPreflight.batch.weekLabel}</span>
+                  </div>
+                </div>
+
+                {/* Recipients per level */}
+                <div className="space-y-2">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Sebaran Penerima per Level:</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    {Object.entries(publishPreflight.recipientsCountByLevel).map(([lvl, count]) => (
+                      <div key={lvl} className="p-3 bg-slate-50 border border-slate-150 rounded-xl flex items-center justify-between">
+                        <span className="text-[10px] font-black text-violet-700 bg-violet-50 border border-violet-100 px-2 py-0.5 rounded-full uppercase">{lvl}</span>
+                        <span className="text-xs font-black text-gray-900">{count} Siswa</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Students without level warning */}
+                {publishPreflight.studentsWithoutLevel.length > 0 && (
+                  <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl space-y-2 text-xs">
+                    <span className="font-black text-rose-700 flex items-center gap-1.5 uppercase text-[10px] tracking-wider">
+                      <AlertTriangle size={14} /> Siswa Tanpa Level ({publishPreflight.studentsWithoutLevel.length})
+                    </span>
+                    <p className="text-[11px] text-rose-600 font-semibold leading-relaxed">
+                      Siswa berikut tidak terdaftar level kemampuannya dalam database, sehingga TIDAK akan menerima tugas individu ini:
+                    </p>
+                    <div className="max-h-24 overflow-y-auto bg-white/60 rounded-xl p-2.5 text-[11px] text-rose-700 font-bold space-y-1 divide-y divide-rose-100/50">
+                      {publishPreflight.studentsWithoutLevel.map(({ student, className }, idx) => (
+                        <div key={idx} className="pt-1 first:pt-0">
+                          {student.name} ({className})
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Students skipped due to no level task warning */}
+                {publishPreflight.studentsSkippedNoTask.length > 0 && (
+                  <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl space-y-2 text-xs">
+                    <span className="font-black text-amber-700 flex items-center gap-1.5 uppercase text-[10px] tracking-wider">
+                      <AlertCircle size={14} /> Siswa Dilewati Karena Tugas Level Kosong ({publishPreflight.studentsSkippedNoTask.length})
+                    </span>
+                    <p className="text-[11px] text-amber-600 font-semibold leading-relaxed">
+                      Siswa berikut memiliki level kemampuan, tetapi tugas untuk level mereka belum diisi/dikosongkan, sehingga mereka TIDAK akan menerima tugas:
+                    </p>
+                    <div className="max-h-24 overflow-y-auto bg-white/60 rounded-xl p-2.5 text-[11px] text-amber-700 font-bold space-y-1 divide-y divide-amber-100/50">
+                      {publishPreflight.studentsSkippedNoTask.map(({ student, className, level }, idx) => (
+                        <div key={idx} className="pt-1 first:pt-0">
+                          {student.name} ({className}) - Level: {level}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Static warning notice */}
+                <div className="p-3 bg-blue-50/50 border border-blue-100 rounded-xl text-[10px] text-blue-600 font-semibold leading-relaxed flex gap-2">
+                  <Info size={14} className="shrink-0 text-blue-500 mt-0.5" />
+                  <span>
+                    <strong>Penting:</strong> Setelah diterbitkan, tugas bersifat <strong>tetap (fixed)</strong> untuk masing-masing siswa dan tidak akan berubah secara dinamis meskipun level siswa diubah di kemudian hari.
+                  </span>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="grid grid-cols-2 gap-3 pt-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={isPublishing}
+                  onClick={() => setPublishPreflight(null)}
+                  className="py-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 font-black text-xs uppercase tracking-widest rounded-xl transition-all"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  disabled={isPublishing}
+                  onClick={executePublishBatch}
+                  className="py-3 bg-[#109E58] hover:bg-[#0d854a] text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5"
+                >
+                  {isPublishing ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <>
+                      <Check size={16} strokeWidth={3} />
+                      Konfirmasi & Terbitkan
+                    </>
+                  )}
+                </button>
               </div>
             </motion.div>
           </div>

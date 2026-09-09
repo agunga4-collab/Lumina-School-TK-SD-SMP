@@ -9,7 +9,7 @@ import {
   X, Info, Send, CornerDownLeft, AlertTriangle
 } from 'lucide-react';
 import { useOutletContext, Navigate } from 'react-router-dom';
-import { User as AppUser, Student } from '../../types';
+import { User as AppUser, Student, LearningPowerUpAssignment, LpuAssignmentHistoryEntry } from '../../types';
 import { cn } from '../../lib/utils';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { 
@@ -22,7 +22,7 @@ import {
   setDoc, 
   serverTimestamp 
 } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { db, handleFirestoreError } from '../../lib/firebase';
 import { toast } from 'sonner';
 
 interface LearningPowerUpPackage {
@@ -117,6 +117,14 @@ export default function LearningPowerUpStudentPage() {
   // Feature specific states
   const [packages, setPackages] = React.useState<LearningPowerUpPackage[]>([]);
   const [progresses, setProgresses] = React.useState<Record<string, TaskProgress>>({});
+  const [assignments, setAssignments] = React.useState<LearningPowerUpAssignment[]>([]);
+  interface UnifiedWeek {
+    id: string;
+    weekStartDate: string;
+    weekEndDate: string;
+    weekLabel: string;
+  }
+  const [weeks, setWeeks] = React.useState<UnifiedWeek[]>([]);
   const [selectedWeek, setSelectedWeek] = React.useState<string>('');
   const [loadingTasks, setLoadingTasks] = React.useState(false);
 
@@ -124,6 +132,8 @@ export default function LearningPowerUpStudentPage() {
   const [activeTaskDetail, setActiveTaskDetail] = React.useState<{
     field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi';
     taskDescription: string;
+    isDifferentiated: boolean;
+    assignment?: LearningPowerUpAssignment;
   } | null>(null);
   const [isSubmittingAction, setIsSubmittingAction] = React.useState(false);
 
@@ -233,10 +243,6 @@ export default function LearningPowerUpStudentPage() {
       loadedPackages.sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate));
       setPackages(loadedPackages);
 
-      if (loadedPackages.length > 0 && !selectedWeek) {
-        setSelectedWeek(loadedPackages[0].id);
-      }
-
       // 2. Fetch student's progress
       const qProgress = query(
         collection(db, 'learning_power_up_progress'),
@@ -251,9 +257,51 @@ export default function LearningPowerUpStudentPage() {
         progressMap[`${p.packageId}_${p.field}`] = { id: d.id, ...p };
       });
       setProgresses(progressMap);
-    } catch (err) {
-      console.error("Error loading learning power-up packages/progress:", err);
+
+      // 3. Fetch student's individual assignments
+      const qAssignments = query(
+        collection(db, 'learning_power_up_assignments'),
+        where('studentId', '==', studentData.id),
+        where('academicYearId', '==', activeYear)
+      );
+      const assignmentsSnap = await getDocs(qAssignments);
+      const loadedAssignments = assignmentsSnap.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      })) as LearningPowerUpAssignment[];
+      setAssignments(loadedAssignments);
+
+      // 4. Build unified weeks
+      const weekMap = new Map<string, UnifiedWeek>();
+      loadedPackages.forEach(p => {
+        weekMap.set(p.weekStartDate, {
+          id: p.id,
+          weekStartDate: p.weekStartDate,
+          weekEndDate: p.weekEndDate,
+          weekLabel: p.weekLabel
+        });
+      });
+      loadedAssignments.forEach(asg => {
+        if (!weekMap.has(asg.weekStartDate)) {
+          weekMap.set(asg.weekStartDate, {
+            id: 'diff_' + asg.weekStartDate,
+            weekStartDate: asg.weekStartDate,
+            weekEndDate: asg.weekEndDate,
+            weekLabel: asg.weekLabel
+          });
+        }
+      });
+
+      const sortedWeeks = Array.from(weekMap.values()).sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate));
+      setWeeks(sortedWeeks);
+
+      if (sortedWeeks.length > 0 && !selectedWeek) {
+        setSelectedWeek(sortedWeeks[0].id);
+      }
+    } catch (err: any) {
+      console.error("Error loading learning power-up packages/progress/assignments:", err);
       toast.error("Gagal memuat tugas mingguan.");
+      handleFirestoreError(err, 'list', 'learning_power_up_tasks');
     } finally {
       setLoadingTasks(false);
     }
@@ -300,19 +348,37 @@ export default function LearningPowerUpStudentPage() {
     return null;
   }
 
-  // Current selected package
-  const activePackage = packages.find(p => p.id === selectedWeek);
-  
-  // Extract active fields of the current selected package (where description is not empty)
-  const activeFields = activePackage ? (['bahasaIndonesia', 'english', 'mengaji', 'numerasi'] as const).filter(
-    field => activePackage.tasks[field] && activePackage.tasks[field]?.trim()
-  ) : [];
+  // Find current selected unified week
+  const activeUnifiedWeek = weeks.find(w => w.id === selectedWeek);
 
-  // Summary counts for current selected package
+  // Current selected legacy package, if any, matching the selected unified week start date
+  const activePackage = activeUnifiedWeek ? packages.find(p => p.weekStartDate === activeUnifiedWeek.weekStartDate) : null;
+  
+  // Extract active fields of the current selected week. 
+  // A field is active if there is an individual assignment OR a legacy package task with text.
+  const activeFields = activeUnifiedWeek ? (['bahasaIndonesia', 'english', 'mengaji', 'numerasi'] as const).filter(field => {
+    // Has individual assignment?
+    const hasAsg = assignments.some(asg => asg.weekStartDate === activeUnifiedWeek.weekStartDate && asg.subjectKey === field);
+    if (hasAsg) return true;
+    // Or has legacy package task?
+    const legPack = packages.find(p => p.weekStartDate === activeUnifiedWeek.weekStartDate);
+    return !!(legPack && legPack.tasks[field] && legPack.tasks[field]?.trim());
+  }) : [];
+
+  // Summary counts for current selected week
   const totalWeekTasks = activeFields.length;
-  const verifiedCount = activePackage ? activeFields.filter(
-    field => progresses[`${activePackage.id}_${field}`]?.status === 'VERIFIED'
-  ).length : 0;
+  const verifiedCount = activeUnifiedWeek ? activeFields.filter(field => {
+    // Individual assignment has priority
+    const asg = assignments.find(a => a.weekStartDate === activeUnifiedWeek.weekStartDate && a.subjectKey === field);
+    if (asg) {
+      return asg.status === 'VERIFIED';
+    }
+    const legPack = packages.find(p => p.weekStartDate === activeUnifiedWeek.weekStartDate);
+    if (legPack) {
+      return progresses[`${legPack.id}_${field}`]?.status === 'VERIFIED';
+    }
+    return false;
+  }).length : 0;
 
   // Overdue status check helper
   const isOverdue = (endDate: string) => {
@@ -410,10 +476,75 @@ export default function LearningPowerUpStudentPage() {
     }
   };
 
-  // Determine overall uncompleted active task fields for the current selected package
-  const uncompletedActiveFieldsCount = activePackage ? activeFields.filter(field => {
-    const status = progresses[`${activePackage.id}_${field}`]?.status || 'NOT_STARTED';
-    return status === 'NOT_STARTED' || status === 'REVISION_REQUIRED';
+  // Submit differentiated assignment completion action handler
+  const handleAssignmentSubmit = async (assignmentId: string, isRevision: boolean) => {
+    const asg = assignments.find(a => a.id === assignmentId);
+    if (!asg) return;
+    setIsSubmittingAction(true);
+    try {
+      const currentHistory = asg.history || [];
+      const now = new Date();
+      
+      const newHistoryItem: LpuAssignmentHistoryEntry = {
+        action: 'SUBMIT',
+        performedByUid: currentUser.uid,
+        performedByName: studentData.name,
+        performedByRole: 'STUDENT',
+        timestamp: now,
+        note: isRevision ? "Siswa mengirim ulang tugas setelah revisi." : "Siswa menandai tugas selesai."
+      };
+
+      const docRef = doc(db, 'learning_power_up_assignments', asg.id);
+      
+      const updatedFields = {
+        status: 'SUBMITTED',
+        submittedAt: serverTimestamp(),
+        history: [...currentHistory, newHistoryItem],
+        updatedAt: serverTimestamp()
+      };
+
+      await setDoc(docRef, updatedFields, { merge: true });
+      toast.success(isRevision ? "Tugas berhasil dikirim ulang!" : "Tugas berhasil ditandai selesai.");
+      
+      // Update activeTaskDetail to reflect the newly submitted assignment in the modal
+      if (activeTaskDetail && activeTaskDetail.assignment?.id === asg.id) {
+        setActiveTaskDetail(prev => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            assignment: {
+              ...asg,
+              status: 'SUBMITTED',
+              submittedAt: now,
+              history: [...currentHistory, newHistoryItem]
+            }
+          };
+        });
+      }
+
+      // Reload lists
+      await loadTasksAndProgress();
+    } catch (err: any) {
+      console.error("Error submitting assignment:", err);
+      toast.error("Gagal mengirim laporan tugas.");
+      handleFirestoreError(err, 'update', `learning_power_up_assignments/${asg.id}`);
+    } finally {
+      setIsSubmittingAction(false);
+    }
+  };
+
+  // Determine overall uncompleted active task fields for the current selected week
+  const uncompletedActiveFieldsCount = activeUnifiedWeek ? activeFields.filter(field => {
+    const asg = assignments.find(a => a.weekStartDate === activeUnifiedWeek.weekStartDate && a.subjectKey === field);
+    if (asg) {
+      return asg.status === 'ASSIGNED' || asg.status === 'REVISION_REQUIRED';
+    }
+    const legPack = packages.find(p => p.weekStartDate === activeUnifiedWeek.weekStartDate);
+    if (legPack) {
+      const status = progresses[`${legPack.id}_${field}`]?.status || 'NOT_STARTED';
+      return status === 'NOT_STARTED' || status === 'REVISION_REQUIRED';
+    }
+    return false;
   }).length : 0;
 
   return (
@@ -500,14 +631,14 @@ export default function LearningPowerUpStudentPage() {
 
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-gray-500 uppercase tracking-widest">Pilih Pekan:</span>
-            {packages.length > 0 ? (
+            {weeks.length > 0 ? (
               <select
                 value={selectedWeek}
                 onChange={(e) => setSelectedWeek(e.target.value)}
                 className="bg-white border border-slate-200 text-gray-700 font-bold text-sm px-4 py-2.5 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-[#109E58]/20 focus:border-[#109E58]"
               >
-                {packages.map(p => (
-                  <option key={p.id} value={p.id}>{p.weekLabel}</option>
+                {weeks.map(w => (
+                  <option key={w.id} value={w.id}>{w.weekLabel}</option>
                 ))}
               </select>
             ) : (
@@ -524,15 +655,40 @@ export default function LearningPowerUpStudentPage() {
             <Loader2 className="w-8 h-8 text-[#109E58] animate-spin" />
             <p className="text-xs text-gray-400 font-bold">Memuat daftar tugas...</p>
           </div>
-        ) : activeFields.length > 0 && activePackage ? (
+        ) : activeFields.length > 0 && activeUnifiedWeek ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6" id="tasks-list-grid">
             {activeFields.map(field => {
               const cfg = CATEGORY_CONFIG[field];
               const IconComp = cfg.icon;
-              const progress = progresses[`${activePackage.id}_${field}`];
-              const status = progress?.status || 'NOT_STARTED';
-              const overdue = isOverdue(activePackage.weekEndDate) && status !== 'VERIFIED';
-              const taskDescription = activePackage.tasks[field] || '';
+
+              // Check if there's a differentiated assignment for this week & subject
+              const asg = assignments.find(a => a.weekStartDate === activeUnifiedWeek.weekStartDate && a.subjectKey === field);
+              
+              let status: string = 'NOT_STARTED';
+              let overdue: boolean = false;
+              let taskDescription: string = '';
+              let title: string = `Tugas ${cfg.label}`;
+              let isDifferentiated = false;
+              let weekLabel = activeUnifiedWeek.weekLabel;
+              let weekEndDate = activeUnifiedWeek.weekEndDate;
+
+              if (asg) {
+                status = asg.status;
+                overdue = isOverdue(asg.weekEndDate) && status !== 'VERIFIED';
+                taskDescription = asg.taskInstructions;
+                title = asg.taskTitle;
+                isDifferentiated = true;
+                weekLabel = asg.weekLabel;
+                weekEndDate = asg.weekEndDate;
+              } else if (activePackage) {
+                const progress = progresses[`${activePackage.id}_${field}`];
+                status = progress?.status || 'NOT_STARTED';
+                overdue = isOverdue(activePackage.weekEndDate) && status !== 'VERIFIED';
+                taskDescription = activePackage.tasks[field] || '';
+                title = `Tugas ${cfg.label}`;
+                weekLabel = activePackage.weekLabel;
+                weekEndDate = activePackage.weekEndDate;
+              }
 
               return (
                 <div 
@@ -568,11 +724,18 @@ export default function LearningPowerUpStudentPage() {
 
                     {/* Task Title */}
                     <div className="space-y-1">
-                      <h3 className="text-md font-bold text-gray-900 tracking-tight line-clamp-2">
-                        Tugas {cfg.label}
-                      </h3>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h3 className="text-md font-bold text-gray-900 tracking-tight line-clamp-2">
+                          {title}
+                        </h3>
+                        {isDifferentiated && asg && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-[#109E58]/10 text-[#109E58] border border-[#109E58]/20 shrink-0">
+                            Level {asg.levelSnapshot}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-gray-400 font-medium">
-                        Pekan: {activePackage.weekLabel}
+                        Pekan: {weekLabel}
                       </p>
                     </div>
 
@@ -590,18 +753,23 @@ export default function LearningPowerUpStudentPage() {
                       </span>
                       <span className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
                         <Calendar size={14} className="text-gray-400" />
-                        Minggu, {new Date(activePackage.weekEndDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+                        Minggu, {weekEndDate ? new Date(weekEndDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : '-'}
                       </span>
                     </div>
 
                     {/* Status Badge */}
                     <div className="pt-1">
-                      {getStatusBadge(status, activePackage.weekEndDate)}
+                      {getStatusBadge(status, weekEndDate)}
                     </div>
 
                     {/* Action Button */}
                     <button
-                      onClick={() => setActiveTaskDetail({ field, taskDescription })}
+                      onClick={() => setActiveTaskDetail({ 
+                        field, 
+                        taskDescription, 
+                        isDifferentiated: isDifferentiated, 
+                        assignment: asg 
+                      })}
                       className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 mt-2"
                     >
                       Tampilkan Detail
@@ -629,219 +797,273 @@ export default function LearningPowerUpStudentPage() {
 
       {/* Modal Detail Tugas */}
       <AnimatePresence>
-        {activeTaskDetail && activePackage && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto" id="task-detail-modal-overlay">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-[2.5rem] shadow-2xl max-w-5xl w-full overflow-hidden flex flex-col md:flex-row relative"
-              id="task-detail-modal-body"
-            >
-              {/* Close Button */}
-              <button 
-                onClick={() => setActiveTaskDetail(null)}
-                className="absolute top-6 right-6 p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-700 transition-all z-10"
-              >
-                <X size={18} />
-              </button>
+        {activeTaskDetail && (
+          (() => {
+            const isDiff = activeTaskDetail.isDifferentiated;
+            const asg = activeTaskDetail.assignment;
+            const cfg = CATEGORY_CONFIG[activeTaskDetail.field];
+            
+            const status = isDiff && asg ? asg.status : (activePackage ? (progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.status || 'NOT_STARTED') : 'NOT_STARTED');
+            const revisionNote = isDiff && asg ? asg.revisionNote : (activePackage ? progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.revisionNote : undefined);
+            const history = isDiff && asg ? asg.history : (activePackage ? (progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.history || []) : []);
+            
+            const weekLabel = isDiff && asg ? asg.weekLabel : (activeUnifiedWeek?.weekLabel || '');
+            const weekEndDate = isDiff && asg ? asg.weekEndDate : (activeUnifiedWeek?.weekEndDate || '');
+            const title = isDiff && asg ? asg.taskTitle : `Tugas Penguatan ${cfg?.label}`;
+            
+            const getFormattedTime = (ts: any) => {
+              if (!ts) return '';
+              if (typeof ts === 'string') return ts;
+              if (ts.toDate && typeof ts.toDate === 'function') {
+                return ts.toDate().toLocaleString('id-ID', { hour12: false });
+              }
+              if (ts.seconds) {
+                return new Date(ts.seconds * 1000).toLocaleString('id-ID', { hour12: false });
+              }
+              return '';
+            };
 
-              {/* KOTAK KIRI - TUGAS SAYA */}
-              <div className="flex-1 p-8 md:p-10 border-r border-slate-100 bg-white space-y-6">
-                <div>
-                  <span className="px-3 py-1.5 bg-[#109E58]/10 text-[#109E58] text-[9px] font-black uppercase tracking-widest rounded-full border border-[#109E58]/20 inline-block mb-3">
-                    KOTAK KIRI — TUGAS SAYA
-                  </span>
-                  
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border", CATEGORY_CONFIG[activeTaskDetail.field]?.colorClass)}>
-                      {React.createElement(CATEGORY_CONFIG[activeTaskDetail.field]?.icon || BookOpen, { size: 20 })}
-                    </div>
+            return (
+              <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto" id="task-detail-modal-overlay">
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                  className="bg-white rounded-[2.5rem] shadow-2xl max-w-5xl w-full overflow-hidden flex flex-col md:flex-row relative"
+                  id="task-detail-modal-body"
+                >
+                  {/* Close Button */}
+                  <button 
+                    onClick={() => setActiveTaskDetail(null)}
+                    className="absolute top-6 right-6 p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-700 transition-all z-10"
+                  >
+                    <X size={18} />
+                  </button>
+
+                  {/* KOTAK KIRI - TUGAS SAYA */}
+                  <div className="flex-1 p-8 md:p-10 border-r border-slate-100 bg-white space-y-6">
                     <div>
-                      <span className="text-[9px] font-black text-gray-400 tracking-wider block">KATEGORI TUGAS</span>
-                      <h4 className="text-xs font-black text-gray-700">{CATEGORY_CONFIG[activeTaskDetail.field]?.label}</h4>
-                    </div>
-                  </div>
-
-                  <h3 className="text-2xl font-black text-gray-900 tracking-tight">
-                    Tugas Penguatan {CATEGORY_CONFIG[activeTaskDetail.field]?.label}
-                  </h3>
-                </div>
-
-                {/* Instruction container */}
-                <div className="space-y-2">
-                  <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest">Instruksi Tugas</h4>
-                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 text-sm text-gray-700 font-medium leading-relaxed max-h-40 overflow-y-auto">
-                    {activeTaskDetail.taskDescription}
-                  </div>
-                </div>
-
-                {/* Date / Metadata info row */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Periode</span>
-                    <span className="text-xs font-bold text-gray-700 block">{activePackage.weekLabel}</span>
-                  </div>
-                  <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Batas Waktu</span>
-                    <span className="text-xs font-bold text-red-600 block">
-                      Minggu, {new Date(activePackage.weekEndDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Workflow actions & status indicator */}
-                <div className="pt-4 border-t border-slate-100 space-y-4">
-                  <div className="space-y-1">
-                    <span className="text-xs font-black text-gray-400 uppercase tracking-wider block">Status Saat Ini</span>
-                    <div>
-                      {getStatusBadge(progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.status, activePackage.weekEndDate)}
-                    </div>
-                  </div>
-
-                  {/* Actions based on status */}
-                  <div className="pt-2">
-                    {/* NOT STARTED / DEFAULT */}
-                    {(!progresses[`${activePackage.id}_${activeTaskDetail.field}`] || progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.status === 'NOT_STARTED') && (
-                      <button
-                        onClick={() => handleTaskSubmit(activeTaskDetail.field, false)}
-                        disabled={isSubmittingAction}
-                        className="w-full py-4 bg-[#109E58] hover:bg-[#0d854a] disabled:bg-[#109E58]/50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
-                      >
-                        {isSubmittingAction ? (
-                          <>
-                            <Loader2 size={16} className="animate-spin" />
-                            Memproses...
-                          </>
-                        ) : (
-                          <>
-                            <CheckSquare size={16} />
-                            Saya Sudah Selesai
-                          </>
-                        )}
-                      </button>
-                    )}
-
-                    {/* SUBMITTED */}
-                    {progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.status === 'SUBMITTED' && (
-                      <div className="bg-amber-50/50 border border-amber-200 rounded-2xl p-4 text-center">
-                        <p className="text-sm font-bold text-amber-900">Menunggu Verifikasi Coach</p>
-                        <p className="text-xs text-amber-700 font-medium mt-1 leading-relaxed">
-                          Tugasmu sudah dikirim dan sedang diperiksa guru. Tidak ada tindakan lanjutan yang perlu kamu lakukan sekarang.
-                        </p>
-                      </div>
-                    )}
-
-                    {/* REVISION_REQUIRED */}
-                    {progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.status === 'REVISION_REQUIRED' && (
-                      <button
-                        onClick={() => handleTaskSubmit(activeTaskDetail.field, true)}
-                        disabled={isSubmittingAction}
-                        className="w-full py-4 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-500/50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-2 animate-pulse"
-                      >
-                        {isSubmittingAction ? (
-                          <>
-                            <Loader2 size={16} className="animate-spin" />
-                            Mengirim Ulang...
-                          </>
-                        ) : (
-                          <>
-                            <CornerDownLeft size={16} />
-                            Kirim Ulang Setelah Revisi
-                          </>
-                        )}
-                      </button>
-                    )}
-
-                    {/* VERIFIED */}
-                    {progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.status === 'VERIFIED' && (
-                      <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center">
-                        <p className="text-sm font-bold text-emerald-900 flex items-center justify-center gap-1.5">
-                          <CheckCircle2 size={16} className="text-emerald-500" />
-                          Telah Diverifikasi Guru
-                        </p>
-                        <p className="text-xs text-emerald-700 font-medium mt-1 leading-relaxed">
-                          Luar biasa! Tugas ini telah disetujui dan ditandai selesai oleh guru. Selamat atas kerja kerasmu pekan ini!
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* KOTAK KANAN - STATUS & CATATAN GURU */}
-              <div className="flex-1 p-8 md:p-10 bg-slate-50 space-y-6">
-                <div>
-                  <span className="px-3 py-1.5 bg-slate-200 text-slate-700 text-[9px] font-black uppercase tracking-widest rounded-full border border-slate-300 inline-block mb-4">
-                    KOTAK KANAN — STATUS & CATATAN GURU
-                  </span>
-                  <h3 className="text-lg font-black text-gray-900">Riwayat & Catatan Guru</h3>
-                  <p className="text-xs font-semibold text-gray-400">Linimasa riwayat pengajuan dan catatan revisi.</p>
-                </div>
-
-                {/* Coach notes if exist */}
-                {progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.revisionNote && (
-                  <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 space-y-2">
-                    <span className="text-[10px] font-black text-rose-700 uppercase tracking-wider block">Catatan Revisi dari Guru:</span>
-                    <p className="text-xs font-bold text-rose-900 leading-relaxed bg-white p-3 rounded-xl border border-rose-100 shadow-sm">
-                      "{progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.revisionNote}"
-                    </p>
-                  </div>
-                )}
-
-                {/* History timeline log list */}
-                <div className="space-y-3">
-                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Log Aktivitas</span>
-                  
-                  <div className="space-y-4 max-h-60 overflow-y-auto pr-1">
-                    {progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.history && progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.history!.length > 0 ? (
-                      progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.history!.map((h, idx) => (
-                        <div key={idx} className="flex gap-3 text-xs">
-                          {/* Timeline dot */}
-                          <div className="flex flex-col items-center">
-                            <div className={cn(
-                              "w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-white font-black text-[10px]",
-                              h.action === 'VERIFY' ? "bg-emerald-500" :
-                              h.action === 'REVISION_REQUEST' ? "bg-rose-500" : "bg-blue-500"
-                            )}>
-                              {idx + 1}
-                            </div>
-                            {idx < progresses[`${activePackage.id}_${activeTaskDetail.field}`]!.history!.length - 1 && (
-                              <div className="w-0.5 bg-slate-200 flex-1 min-h-[20px]" />
-                            )}
-                          </div>
-                          
-                          {/* Timeline card */}
-                          <div className="bg-white p-3 rounded-xl border border-slate-100 flex-1 space-y-1">
-                            <div className="flex items-center justify-between text-[10px] font-semibold text-gray-400">
-                              <span>{h.timestamp}</span>
-                              <span className="font-bold text-gray-500">{h.actorName}</span>
-                            </div>
-                            <p className="font-bold text-gray-800 text-xs">
-                              {h.action === 'SUBMIT' && "Mengirim tugas untuk diperiksa."}
-                              {h.action === 'RESUBMIT' && "Mengirim ulang tugas setelah revisi."}
-                              {h.action === 'REVISION_REQUEST' && "Guru meminta revisi tugas."}
-                              {h.action === 'VERIFY' && "Guru menyetujui & memverifikasi tugas selesai."}
-                            </p>
-                            {h.note && (
-                              <p className="text-[11px] text-gray-500 italic leading-normal bg-slate-50 px-2 py-1.5 rounded border border-slate-100 mt-1">
-                                "{h.note}"
-                              </p>
-                            )}
-                          </div>
+                      <span className="px-3 py-1.5 bg-[#109E58]/10 text-[#109E58] text-[9px] font-black uppercase tracking-widest rounded-full border border-[#109E58]/20 inline-block mb-3">
+                        KOTAK KIRI — TUGAS SAYA {isDiff && "— TERDIFERENSIASI"}
+                      </span>
+                      
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border", cfg?.colorClass)}>
+                          {React.createElement(cfg?.icon || BookOpen, { size: 20 })}
                         </div>
-                      ))
-                    ) : (
-                      <div className="text-center py-6 text-xs text-gray-400 font-semibold bg-white rounded-xl border border-slate-200/50">
-                        Belum ada aktivitas tercatat. Lakukan pengiriman tugas pertama Anda!
+                        <div>
+                          <span className="text-[9px] font-black text-gray-400 tracking-wider block">KATEGORI TUGAS</span>
+                          <h4 className="text-xs font-black text-gray-700">{cfg?.label}</h4>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-2xl font-black text-gray-900 tracking-tight">
+                          {title}
+                        </h3>
+                        {isDiff && asg && (
+                          <span className="px-3 py-1 bg-indigo-100 text-indigo-700 text-[11px] font-black uppercase tracking-wider rounded-xl border border-indigo-200 inline-block">
+                            Level {asg.levelSnapshot}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Instruction container */}
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest">Instruksi Tugas</h4>
+                      <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 text-sm text-gray-700 font-medium leading-relaxed max-h-40 overflow-y-auto">
+                        {activeTaskDetail.taskDescription}
+                      </div>
+                    </div>
+
+                    {/* Date / Metadata info row */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100">
+                        <span className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Periode</span>
+                        <span className="text-xs font-bold text-gray-700 block">{weekLabel}</span>
+                      </div>
+                      <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100">
+                        <span className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Batas Waktu</span>
+                        <span className="text-xs font-bold text-red-600 block">
+                          Minggu, {weekEndDate ? new Date(weekEndDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : '-'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Workflow actions & status indicator */}
+                    <div className="pt-4 border-t border-slate-100 space-y-4">
+                      <div className="space-y-1">
+                        <span className="text-xs font-black text-gray-400 uppercase tracking-wider block">Status Saat Ini</span>
+                        <div>
+                          {getStatusBadge(status, weekEndDate)}
+                        </div>
+                      </div>
+
+                      {/* Actions based on status */}
+                      <div className="pt-2">
+                        {/* NOT STARTED / DEFAULT / ASSIGNED */}
+                        {(status === 'NOT_STARTED' || status === 'ASSIGNED') && (
+                          <button
+                            onClick={() => {
+                              if (isDiff && asg) {
+                                handleAssignmentSubmit(asg.id, false);
+                              } else {
+                                handleTaskSubmit(activeTaskDetail.field, false);
+                              }
+                            }}
+                            disabled={isSubmittingAction}
+                            className="w-full py-4 bg-[#109E58] hover:bg-[#0d854a] disabled:bg-[#109E58]/50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
+                          >
+                            {isSubmittingAction ? (
+                              <>
+                                <Loader2 size={16} className="animate-spin" />
+                                Memproses...
+                              </>
+                            ) : (
+                              <>
+                                <CheckSquare size={16} />
+                                Saya Sudah Selesai
+                              </>
+                            )}
+                          </button>
+                        )}
+
+                        {/* SUBMITTED */}
+                        {status === 'SUBMITTED' && (
+                          <div className="bg-amber-50/50 border border-amber-200 rounded-2xl p-4 text-center">
+                            <p className="text-sm font-bold text-amber-900">Menunggu Verifikasi Coach</p>
+                            <p className="text-xs text-amber-700 font-medium mt-1 leading-relaxed">
+                              Tugasmu sudah dikirim dan sedang diperiksa guru. Tidak ada tindakan lanjutan yang perlu kamu lakukan sekarang.
+                            </p>
+                          </div>
+                        )}
+
+                        {/* REVISION_REQUIRED */}
+                        {status === 'REVISION_REQUIRED' && (
+                          <button
+                            onClick={() => {
+                              if (isDiff && asg) {
+                                handleAssignmentSubmit(asg.id, true);
+                              } else {
+                                handleTaskSubmit(activeTaskDetail.field, true);
+                              }
+                            }}
+                            disabled={isSubmittingAction}
+                            className="w-full py-4 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-500/50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-2 animate-pulse"
+                          >
+                            {isSubmittingAction ? (
+                              <>
+                                <Loader2 size={16} className="animate-spin" />
+                                Mengirim Ulang...
+                              </>
+                            ) : (
+                              <>
+                                <CornerDownLeft size={16} />
+                                Kirim Ulang Setelah Revisi
+                              </>
+                            )}
+                          </button>
+                        )}
+
+                        {/* VERIFIED */}
+                        {status === 'VERIFIED' && (
+                          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center">
+                            <p className="text-sm font-bold text-emerald-900 flex items-center justify-center gap-1.5">
+                              <CheckCircle2 size={16} className="text-emerald-500" />
+                              Telah Diverifikasi Guru
+                            </p>
+                            <p className="text-xs text-emerald-700 font-medium mt-1 leading-relaxed">
+                              Luar biasa! Tugas ini telah disetujui dan ditandai selesai oleh guru. Selamat atas kerja kerasmu pekan ini!
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* KOTAK KANAN - STATUS & CATATAN GURU */}
+                  <div className="flex-1 p-8 md:p-10 bg-slate-50 space-y-6">
+                    <div>
+                      <span className="px-3 py-1.5 bg-slate-200 text-slate-700 text-[9px] font-black uppercase tracking-widest rounded-full border border-slate-300 inline-block mb-4">
+                        KOTAK KANAN — STATUS & CATATAN GURU
+                      </span>
+                      <h3 className="text-lg font-black text-gray-900">Riwayat & Catatan Guru</h3>
+                      <p className="text-xs font-semibold text-gray-400">Linimasa riwayat pengajuan dan catatan revisi.</p>
+                    </div>
+
+                    {/* Coach notes if exist */}
+                    {revisionNote && (
+                      <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 space-y-2">
+                        <span className="text-[10px] font-black text-rose-700 uppercase tracking-wider block">Catatan Revisi dari Guru:</span>
+                        <p className="text-xs font-bold text-rose-900 leading-relaxed bg-white p-3 rounded-xl border border-rose-100 shadow-sm">
+                          "{revisionNote}"
+                        </p>
                       </div>
                     )}
-                  </div>
-                </div>
 
+                    {/* History timeline log list */}
+                    <div className="space-y-3">
+                      <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Log Aktivitas</span>
+                      
+                      <div className="space-y-4 max-h-60 overflow-y-auto pr-1">
+                        {history && history.length > 0 ? (
+                          history.map((h: any, idx: number) => {
+                            const actorName = isDiff ? h.performedByName : h.actorName;
+                            const action = h.action;
+                            const timestampStr = isDiff ? getFormattedTime(h.timestamp) : h.timestamp;
+                            
+                            return (
+                              <div key={idx} className="flex gap-3 text-xs">
+                                {/* Timeline dot */}
+                                <div className="flex flex-col items-center">
+                                  <div className={cn(
+                                    "w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-white font-black text-[10px]",
+                                    action === 'VERIFY' ? "bg-emerald-500" :
+                                    action === 'REVISION_REQUEST' ? "bg-rose-500" : "bg-blue-500"
+                                  )}>
+                                    {idx + 1}
+                                  </div>
+                                  {idx < history.length - 1 && (
+                                    <div className="w-0.5 bg-slate-200 flex-1 min-h-[20px]" />
+                                  )}
+                                </div>
+                                
+                                {/* Timeline card */}
+                                <div className="bg-white p-3 rounded-xl border border-slate-100 flex-1 space-y-1">
+                                  <div className="flex items-center justify-between text-[10px] font-semibold text-gray-400">
+                                    <span>{timestampStr}</span>
+                                    <span className="font-bold text-gray-500">{actorName || 'Siswa'}</span>
+                                  </div>
+                                  <p className="font-bold text-gray-800 text-xs">
+                                    {action === 'ASSIGN' && "Tugas ditugaskan oleh guru."}
+                                    {action === 'SUBMIT' && "Mengirim tugas untuk diperiksa."}
+                                    {action === 'RESUBMIT' && "Mengirim ulang tugas setelah revisi."}
+                                    {action === 'REVISION_REQUEST' && "Guru meminta revisi tugas."}
+                                    {action === 'VERIFY' && "Guru menyetujui & memverifikasi tugas selesai."}
+                                  </p>
+                                  {h.note && (
+                                    <p className="text-[11px] text-gray-500 italic leading-normal bg-slate-50 px-2 py-1.5 rounded border border-slate-100 mt-1">
+                                      "{h.note}"
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="text-center py-6 text-xs text-gray-400 font-semibold bg-white rounded-xl border border-slate-200/50">
+                            Belum ada aktivitas tercatat. Lakukan pengiriman tugas pertama Anda!
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                  </div>
+                </motion.div>
               </div>
-            </motion.div>
-          </div>
+            );
+          })()
         )}
       </AnimatePresence>
 

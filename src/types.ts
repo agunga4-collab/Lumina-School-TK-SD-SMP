@@ -2369,4 +2369,80 @@ export interface JuniorHighUnitActivitySemesterSummary {
   updatedByEmail: string;
 }
 
+// --- Learning Power-Up Redesign Types ---
+
+export type LpuSubjectKey = 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi';
+
+export type LpuSubjectArea = 'BAHASA_INDONESIA' | 'ENGLISH_READING' | 'MENGAJI' | 'NUMERACY';
+
+export interface LpuLevelTask {
+  title: string;
+  instructions: string;
+}
+
+export interface LearningPowerUpTaskBatch {
+  id: string; // Document ID
+  subjectKey: LpuSubjectKey;
+  subjectArea: LpuSubjectArea;
+  academicYearId: string;
+  semester: '1' | '2';
+  targetClassIds: string[];
+  weekStartDate: string; // YYYY-MM-DD
+  weekEndDate: string; // YYYY-MM-DD
+  weekLabel: string;
+  levelTasks: {
+    [levelKey: string]: LpuLevelTask;
+  };
+  status: 'DRAFT' | 'PUBLISHED' | 'CLOSED' | 'CANCELLED';
+  createdBy: string;
+  createdByEmail: string;
+  createdByName: string;
+  createdAt: any; // Firestore Timestamp
+  updatedBy?: string;
+  updatedByEmail?: string;
+  updatedByName?: string;
+  updatedAt?: any; // Firestore Timestamp
+  publishedBy?: string;
+  publishedByEmail?: string;
+  publishedByName?: string;
+  publishedAt?: any; // Firestore Timestamp
+}
+
+export interface LpuAssignmentHistoryEntry {
+  action: 'ASSIGN' | 'SUBMIT' | 'REVISION_REQUEST' | 'VERIFY';
+  performedByUid: string;
+  performedByName: string;
+  performedByRole: string;
+  timestamp: any; // Firestore Timestamp
+  note?: string;
+}
+
+export interface LearningPowerUpAssignment {
+  id: string; // Deterministic: assignment_{taskBatchId}_{studentId}_{subjectKey}
+  taskBatchId: string;
+  studentId: string;
+  studentNameSnapshot: string;
+  classId: string;
+  classNameSnapshot: string;
+  subjectKey: LpuSubjectKey;
+  subjectArea: LpuSubjectArea;
+  levelSnapshot: string; // Level label at assignment time (e.g., 'IR+', 'ER')
+  taskTitle: string;
+  taskInstructions: string;
+  academicYearId: string;
+  semester: '1' | '2';
+  weekStartDate: string; // YYYY-MM-DD
+  weekEndDate: string; // YYYY-MM-DD
+  weekLabel: string;
+  status: 'ASSIGNED' | 'SUBMITTED' | 'REVISION_REQUIRED' | 'VERIFIED';
+  submittedAt?: any; // Firestore Timestamp
+  verifiedAt?: any; // Firestore Timestamp
+  verifiedBy?: string; // Teacher name
+  verifiedByUid?: string;
+  revisionNote?: string;
+  history: LpuAssignmentHistoryEntry[];
+  updatedAt: any; // Firestore Timestamp
+}
+
+
 
