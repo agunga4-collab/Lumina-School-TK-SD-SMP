@@ -4,7 +4,7 @@ import {
   FileText, Calendar, Users, RefreshCw, AlertCircle, Info, CheckCircle2, 
   ArrowRight, ExternalLink, Loader2
 } from 'lucide-react';
-import { db, getClasses, getActiveStudents } from '../../lib/firebase';
+import { db, getClasses, getActiveStudents, getReportConfig } from '../../lib/firebase';
 import { doc, getDoc, getDocs, query, collection, where } from 'firebase/firestore';
 import { useAuth } from '../../context/AuthContext';
 import { useAcademicYear } from '../../context/AcademicYearContext';
@@ -38,6 +38,31 @@ function getIndonesianMonthLabel(periodKey: string): string {
   return periodKey;
 }
 
+const englishMonths = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+function getEnglishPeriodDetails(periodKey: string) {
+  if (!periodKey || !periodKey.includes('-')) {
+    return { day: '31', monthName: 'August', year: '2026' };
+  }
+  const [yearStr, monthStr] = periodKey.split('-');
+  const yearVal = parseInt(yearStr, 10);
+  const monthVal = parseInt(monthStr, 10);
+  const monthIdx = monthVal - 1;
+  const monthName = (monthIdx >= 0 && monthIdx < 12) ? englishMonths[monthIdx] : 'August';
+  
+  // Get last day of the month
+  const lastDay = new Date(yearVal, monthVal, 0).getDate();
+  
+  return {
+    day: String(lastDay),
+    monthName,
+    year: String(yearVal)
+  };
+}
+
 export default function MonthlyReportPdfPage() {
   const { profile, user: currentUser } = useAuth();
   const { activeYear, activeSemester } = useAcademicYear();
@@ -47,6 +72,33 @@ export default function MonthlyReportPdfPage() {
   const [selectedSemester, setSelectedSemester] = React.useState<string>('1');
   const [selectedMonth, setSelectedMonth] = React.useState<string>('');
   const [selectedClassId, setSelectedClassId] = React.useState<string>('');
+
+  // Logos and configs
+  const [logos, setLogos] = React.useState<any>(null);
+  const [reportConfig, setReportConfig] = React.useState<any>(null);
+  const [homeroomTeacherProfile, setHomeroomTeacherProfile] = React.useState<any>(null);
+
+  React.useEffect(() => {
+    const fetchLogosAndConfig = async () => {
+      try {
+        const logoDoc = await getDoc(doc(db, "settings", "logos"));
+        if (logoDoc.exists()) {
+          setLogos(logoDoc.data() as any);
+        }
+      } catch (err) {
+        console.warn("Failed to load school logos in PDF page:", err);
+      }
+      try {
+        const configSnap = await getReportConfig('JUNIOR_HIGH');
+        if (configSnap) {
+          setReportConfig(configSnap);
+        }
+      } catch (err) {
+        console.warn("Failed to load report config for JUNIOR_HIGH in PDF page:", err);
+      }
+    };
+    fetchLogosAndConfig();
+  }, []);
 
   // Loaded data states
   const [classesList, setClassesList] = React.useState<Class[]>([]);
@@ -126,6 +178,27 @@ export default function MonthlyReportPdfPage() {
   const selectedClassObj = React.useMemo(() => {
     return classesList.find(c => c.id === selectedClassId);
   }, [classesList, selectedClassId]);
+
+  React.useEffect(() => {
+    const fetchHomeroomTeacher = async () => {
+      if (!selectedClassObj?.homeroomTeacherId) {
+        setHomeroomTeacherProfile(null);
+        return;
+      }
+      try {
+        const userDoc = await getDoc(doc(db, 'users', selectedClassObj.homeroomTeacherId));
+        if (userDoc.exists()) {
+          setHomeroomTeacherProfile(userDoc.data());
+        } else {
+          setHomeroomTeacherProfile(null);
+        }
+      } catch (err) {
+        console.warn("Failed to fetch homeroom teacher profile for signatures:", err);
+        setHomeroomTeacherProfile(null);
+      }
+    };
+    fetchHomeroomTeacher();
+  }, [selectedClassObj]);
 
   // Map student IDs
   const activeStudentIds = React.useMemo(() => {
@@ -546,12 +619,44 @@ export default function MonthlyReportPdfPage() {
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = pdf.internal.pageSize.getHeight();
 
+      const periodDetails = getEnglishPeriodDetails(selectedMonth);
+      const studentReflectionDoc = reflectionMap[student.id];
+      const studentApprovedSlots = (studentReflectionDoc?.overallStatus === 'APPROVED')
+        ? (studentReflectionDoc.slots || [])
+            .filter((slot: any) => slot.status === 'APPROVED' && slot.reflectionText?.trim())
+            .sort((a: any, b: any) => a.slot - b.slot)
+        : [];
+
       // Page 1
       pdf.addImage(imgData1, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
+      
+      // Invisible selectable/searchable text overlay for Page 1
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(1);
+      pdf.text(`STUDENT'S MONTHLY PROGRESS REPORT`, 10, 10);
+      pdf.text(`Student's name : ${student.name}`, 10, 12);
+      pdf.text(`Class : ${selectedClassObj?.name || ''}`, 10, 14);
+      pdf.text(`Period : ${periodDetails.monthName} ${periodDetails.year}`, 10, 16);
+      pdf.text(`LEARNING JOURNEY: ${classSummary?.sections?.learningJourney?.title || ''} - ${classSummary?.sections?.learningJourney?.summary || ''}`, 10, 18);
+      weeklyLessons.forEach((item, index) => {
+        pdf.text(`WEEKLY LESSONS ${index + 1}: ${item.title} - ${item.summary}`, 10, 20 + (index * 2));
+      });
       
       // Page 2
       pdf.addPage();
       pdf.addImage(imgData2, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
+
+      // Invisible selectable/searchable text overlay for Page 2
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(1);
+      pdf.text(`Student's name : ${student.name}`, 10, 10);
+      pdf.text(`SELF EXPLORATION & MONTHLY REFLECTIONS`, 10, 12);
+      studentApprovedSlots.forEach((slot, index) => {
+        pdf.text(`Slot ${slot.slot}: ${slot.strandNameSnapshot} - ${slot.activityNameSnapshot} - ${slot.reflectionText}`, 10, 14 + (index * 2));
+      });
+      pdf.text(`Attendance: Sick Leave : ${studentAttendanceMap[student.id]?.sickLeave ?? 0}, Excused Leave : ${studentAttendanceMap[student.id]?.excusedLeave ?? 0}, Absent : ${studentAttendanceMap[student.id]?.absent ?? 0}`, 10, 40);
+      pdf.text(`GENERAL COMMENTS: ${commentsMap[student.id]?.generalComment || ''}`, 10, 45);
+      pdf.text(`Acknowledged by Principal ${reportConfig?.principalName || "Yusfina Hendrifiana"} Homeroom Teacher ${selectedClassObj?.homeroomTeacherName || "Wali Kelas"}`, 10, 60);
 
       const pdfBlob = pdf.output('blob');
 
@@ -725,6 +830,8 @@ export default function MonthlyReportPdfPage() {
       .sort((a: any, b: any) => a.slot - b.slot);
   }, [generatingStudent, reflectionMap]);
 
+  const periodDetails = getEnglishPeriodDetails(selectedMonth);
+
   return (
     <div className="min-h-screen bg-slate-50/50 p-6">
       {/* Hidden Render Template Zone */}
@@ -736,7 +843,7 @@ export default function MonthlyReportPdfPage() {
             style={{
               width: '794px',
               height: '1123px',
-              padding: '40px',
+              padding: '24px',
               boxSizing: 'border-box',
               backgroundColor: '#ffffff',
               position: 'relative',
@@ -745,63 +852,123 @@ export default function MonthlyReportPdfPage() {
               fontFamily: 'system-ui, sans-serif'
             }}
           >
-            {/* School / Document Header */}
-            <div className="flex justify-between items-end border-b-2 border-[#002366] pb-3 mb-6">
+            {/* Page Frame */}
+            <div 
+              style={{
+                flex: 1,
+                border: '3px solid #129A95',
+                padding: '24px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                boxSizing: 'border-box',
+                position: 'relative'
+              }}
+            >
+              {/* Header Container */}
               <div>
-                <h1 className="text-xl font-black tracking-tight text-[#002366] leading-none mb-1">LUMINA ACADEMY</h1>
-                <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold leading-none">Junior High School Division</p>
-              </div>
-              <div className="text-right">
-                <h2 className="text-lg font-extrabold tracking-tight text-slate-800 leading-none mb-1">Monthly Report</h2>
-                <p className="text-[10px] font-bold text-slate-500 leading-none">Academic Year {selectedYear}</p>
-              </div>
-            </div>
-
-            {/* Student Identity Metadata */}
-            <div className="grid grid-cols-2 gap-4 bg-slate-50 border border-slate-200/60 rounded-lg p-3.5 mb-6 text-[11px]">
-              <div className="space-y-1.5">
-                <div className="flex"><span className="w-24 font-bold text-slate-500">Student Name:</span><span className="font-semibold text-slate-800">{generatingStudent.name}</span></div>
-                <div className="flex"><span className="w-24 font-bold text-slate-500">Class / Grade:</span><span className="font-semibold text-slate-800">{selectedClassObj?.name} / Grade {generatingStudent.grade}</span></div>
-                {generatingStudent.attendanceNumber !== undefined && (
-                  <div className="flex"><span className="w-24 font-bold text-slate-500">No. Absen:</span><span className="font-semibold text-slate-800">{generatingStudent.attendanceNumber}</span></div>
-                )}
-              </div>
-              <div className="space-y-1.5">
-                <div className="flex"><span className="w-24 font-bold text-slate-500">Academic Year:</span><span className="font-semibold text-slate-800">{selectedYear}</span></div>
-                <div className="flex"><span className="w-24 font-bold text-slate-500">Semester:</span><span className="font-semibold text-slate-800">Semester {selectedSemester}</span></div>
-                <div className="flex"><span className="w-24 font-bold text-slate-500">Period:</span><span className="font-semibold text-slate-800">{getIndonesianMonthLabel(selectedMonth)}</span></div>
-              </div>
-            </div>
-
-            {/* Section 3: Learning Journey */}
-            <div className="mb-5">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-[#002366] border-b border-[#002366]/20 pb-1 mb-2">Learning Journey</h3>
-              <div className="bg-[#002366]/5 border border-[#002366]/10 rounded-lg p-3">
-                <h4 className="text-[11px] font-bold text-slate-800 mb-1">{classSummary?.sections?.learningJourney?.title || 'No Title'}</h4>
-                <p className="text-[10.5px] text-slate-600 leading-normal whitespace-pre-wrap">{classSummary?.sections?.learningJourney?.summary || 'No Summary'}</p>
-              </div>
-            </div>
-
-            {/* Section 4: Weekly Lessons */}
-            <div className="mb-5 flex-1 overflow-hidden">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-[#002366] border-b border-[#002366]/20 pb-1 mb-2">Weekly Lessons</h3>
-              <div className="space-y-2">
-                {weeklyLessons.map((item, idx) => (
-                  <div key={idx} className="bg-slate-50/50 border border-slate-150 rounded-lg p-2.5 text-[10.5px]">
-                    <h4 className="font-bold text-slate-800 mb-0.5">{item.title}</h4>
-                    <p className="text-slate-600 leading-normal whitespace-pre-wrap">{item.summary}</p>
+                <div className="flex items-start justify-between">
+                  <div>
+                    {logos?.JUNIOR_HIGH?.rectangular ? (
+                      <img 
+                        src={logos.JUNIOR_HIGH.rectangular} 
+                        alt="Lazuardi Junior High Logo" 
+                        style={{ height: '48px', width: 'auto', objectFit: 'contain' }}
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="text-sm font-bold text-[#129A95] uppercase">
+                        Lazuardi Junior High
+                      </div>
+                    )}
                   </div>
-                ))}
-                {weeklyLessons.length === 0 && (
-                  <p className="text-[10.5px] text-slate-400 italic">No weekly lessons recorded for this period.</p>
-                )}
-              </div>
-            </div>
+                  <div className="text-[11px] text-slate-800 space-y-0.5 text-right font-medium">
+                    <div>Student's name : <span className="font-bold">{generatingStudent.name}</span></div>
+                    <div>Class : <span className="font-bold">{selectedClassObj?.name}</span></div>
+                    <div>Period : <span className="font-bold">{periodDetails.monthName} {periodDetails.year}</span></div>
+                  </div>
+                </div>
 
-            {/* Footer at absolute bottom of page 1 */}
-            <div className="absolute bottom-5 left-10 right-10 flex justify-between items-center text-[9px] text-slate-400 border-t border-slate-100 pt-2">
-              <span>Page 1 of 2</span>
-              <span>Generated from Lumina on {new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}.</span>
+                {/* Main Title */}
+                <div className="text-center my-4">
+                  <h1 className="text-sm font-black tracking-wider text-[#002366]">
+                    STUDENT'S MONTHLY PROGRESS REPORT
+                  </h1>
+                </div>
+
+                {/* Blue Header Band */}
+                <div style={{ height: '5px', backgroundColor: '#002366', width: '100%' }} className="mb-6" />
+
+                {/* Table 1: Learning Journey & Summary */}
+                <div className="mb-6">
+                  <table className="w-full text-left border-collapse" style={{ tableLayout: 'fixed' }}>
+                    <thead>
+                      <tr className="bg-[#002366] text-white text-[10px] font-bold uppercase tracking-wider">
+                        <th className="border border-slate-300 p-2.5 w-[35%]">LEARNING JOURNEY</th>
+                        <th className="border border-slate-300 p-2.5 w-[65%]">SUMMARY</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="bg-white text-[10.5px]">
+                        <td className="border border-slate-200 p-3 font-bold align-top text-slate-800">
+                          {classSummary?.sections?.learningJourney?.title || 'Learning Journey'}
+                        </td>
+                        <td className="border border-slate-200 p-3 text-slate-600 align-top leading-normal whitespace-pre-wrap">
+                          {classSummary?.sections?.learningJourney?.summary || 'No summary available.'}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Table 2: Weekly Lessons & Summary */}
+                <div className="overflow-hidden">
+                  <table className="w-full text-left border-collapse" style={{ tableLayout: 'fixed' }}>
+                    <thead>
+                      <tr className="bg-[#002366] text-white text-[10px] font-bold uppercase tracking-wider">
+                        <th className="border border-slate-300 p-2.5 w-[35%]">WEEKLY LESSONS</th>
+                        <th className="border border-slate-300 p-2.5 w-[65%]">SUMMARY</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {weeklyLessons.map((item, idx) => (
+                        <tr key={idx} className="bg-white text-[10px]">
+                          <td className="border border-slate-200 p-2.5 font-bold align-top text-slate-800">
+                            {item.title}
+                          </td>
+                          <td className="border border-slate-200 p-2.5 text-slate-600 align-top leading-normal whitespace-pre-wrap">
+                            {item.summary}
+                          </td>
+                        </tr>
+                      ))}
+                      {weeklyLessons.length === 0 && (
+                        <tr className="bg-white text-[10px]">
+                          <td colSpan={2} className="border border-slate-200 p-4 text-center text-slate-400 italic">
+                            No weekly lessons recorded for this period.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Green Footer Strip */}
+              <div 
+                style={{
+                  backgroundColor: '#109E58',
+                  margin: 'auto -24px -24px -24px',
+                  height: '28px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxSizing: 'border-box'
+                }}
+              >
+                <span className="text-[8.5px] text-white font-semibold tracking-wide uppercase">
+                  Griya Cinere I, Jl. Telaga Warna Blok H, Depok
+                </span>
+              </div>
             </div>
           </div>
 
@@ -811,7 +978,7 @@ export default function MonthlyReportPdfPage() {
             style={{
               width: '794px',
               height: '1123px',
-              padding: '40px',
+              padding: '24px',
               boxSizing: 'border-box',
               backgroundColor: '#ffffff',
               position: 'relative',
@@ -820,93 +987,189 @@ export default function MonthlyReportPdfPage() {
               fontFamily: 'system-ui, sans-serif'
             }}
           >
-            {/* Header Mini */}
-            <div className="flex justify-between items-end border-b border-[#002366]/20 pb-1.5 mb-5">
-              <span className="text-[10px] font-bold text-[#002366]">Lumina Academy — Monthly Report</span>
-              <span className="text-[9px] text-slate-400">{generatingStudent.name} ({selectedClassObj?.name})</span>
-            </div>
-
-            {/* Section 5: Unit Activities */}
-            <div className="mb-5">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-[#002366] border-b border-[#002366]/20 pb-1 mb-2">Unit Activities</h3>
-              <div className="space-y-2">
-                {unitActivities.map((item, idx) => {
-                  const isStaffWarning = item.summary.startsWith('[PERINGATAN STAF:');
-                  return (
-                    <div 
-                      key={idx} 
-                      className={`rounded-lg p-2.5 text-[10.5px] ${
-                        isStaffWarning 
-                          ? 'bg-amber-50/30 border border-dashed border-amber-200 text-amber-800' 
-                          : 'bg-slate-50/50 border border-slate-150 text-slate-600'
-                      }`}
-                    >
-                      <h4 className="font-bold text-slate-800 mb-0.5">{item.title}</h4>
-                      <p className="leading-normal whitespace-pre-wrap">{item.summary}</p>
-                    </div>
-                  );
-                })}
-                {unitActivities.length === 0 && (
-                  <p className="text-[10.5px] text-slate-400 italic">No unit activities recorded for this period.</p>
-                )}
-              </div>
-            </div>
-
-            {/* Section 6: Attendance */}
-            <div className="mb-5">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-[#002366] border-b border-[#002366]/20 pb-1 mb-2">Attendance</h3>
-              <div className="grid grid-cols-3 gap-4 text-center">
-                <div className="bg-slate-50 border border-slate-150 rounded-lg py-2">
-                  <span className="block text-[9px] font-bold text-slate-400 uppercase">Sick Leave</span>
-                  <strong className="text-[14px] font-extrabold text-slate-800">
-                    {Number(studentAttendanceMap[generatingStudent.id]?.sickLeave ?? 0)}
-                  </strong>
-                </div>
-                <div className="bg-slate-50 border border-slate-150 rounded-lg py-2">
-                  <span className="block text-[9px] font-bold text-slate-400 uppercase">Excused Leave</span>
-                  <strong className="text-[14px] font-extrabold text-slate-800">
-                    {Number(studentAttendanceMap[generatingStudent.id]?.excusedLeave ?? 0)}
-                  </strong>
-                </div>
-                <div className="bg-slate-50 border border-slate-150 rounded-lg py-2">
-                  <span className="block text-[9px] font-bold text-slate-400 uppercase">Absent</span>
-                  <strong className="text-[14px] font-extrabold text-slate-800">
-                    {Number(studentAttendanceMap[generatingStudent.id]?.absent ?? 0)}
-                  </strong>
-                </div>
-              </div>
-            </div>
-
-            {/* Section 7: Self-Exploration Reflection */}
-            {approvedSelfExplorationSlots.length > 0 && (
-              <div className="mb-5">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-[#002366] border-b border-[#002366]/20 pb-1 mb-2">Self-Exploration Reflection</h3>
-                <div className="space-y-2">
-                  {approvedSelfExplorationSlots.map((slot: any) => (
-                    <div key={slot.slot} className="bg-slate-50/50 border border-slate-150 rounded-lg p-2.5 text-[10px]">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <span className="px-1 py-0.2 bg-blue-100 text-blue-800 text-[8px] font-extrabold rounded">Slot {slot.slot}</span>
-                        <span className="font-bold text-slate-800">{slot.strandNameSnapshot} — {slot.activityNameSnapshot}</span>
+            {/* Page Frame */}
+            <div 
+              style={{
+                flex: 1,
+                border: '3px solid #129A95',
+                padding: '24px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                boxSizing: 'border-box',
+                position: 'relative'
+              }}
+            >
+              {/* Header & Content Container */}
+              <div>
+                <div className="flex items-start justify-between">
+                  <div>
+                    {logos?.JUNIOR_HIGH?.rectangular ? (
+                      <img 
+                        src={logos.JUNIOR_HIGH.rectangular} 
+                        alt="Lazuardi Junior High Logo" 
+                        style={{ height: '48px', width: 'auto', objectFit: 'contain' }}
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="text-sm font-bold text-[#129A95] uppercase">
+                        Lazuardi Junior High
                       </div>
-                      <p className="text-slate-600 leading-relaxed whitespace-pre-wrap">{slot.reflectionText}</p>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-slate-800 space-y-0.5 text-right font-medium">
+                    <div>Student's name : <span className="font-bold">{generatingStudent.name}</span></div>
+                    <div>Class : <span className="font-bold">{selectedClassObj?.name}</span></div>
+                    <div>Period : <span className="font-bold">{periodDetails.monthName} {periodDetails.year}</span></div>
+                  </div>
+                </div>
+
+                {/* Main Title (Optional but keeps consistent header size) */}
+                <div className="text-center my-4">
+                  <h1 className="text-sm font-black tracking-wider text-[#002366]">
+                    STUDENT'S MONTHLY PROGRESS REPORT
+                  </h1>
+                </div>
+
+                {/* Blue Header Band */}
+                <div style={{ height: '5px', backgroundColor: '#002366', width: '100%' }} className="mb-6" />
+
+                {/* Table 1: Self Exploration & Reflections */}
+                <div className="mb-6">
+                  <table className="w-full text-left border-collapse" style={{ tableLayout: 'fixed' }}>
+                    <thead>
+                      <tr className="bg-[#002366] text-white text-[10px] font-bold uppercase tracking-wider">
+                        <th className="border border-slate-300 p-2.5 w-[35%]">SELF EXPLORATION</th>
+                        <th className="border border-slate-300 p-2.5 w-[65%]">MONTHLY REFLECTIONS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {approvedSelfExplorationSlots.map((slot: any) => (
+                        <tr key={slot.slot} className="bg-white text-[10px]">
+                          <td className="border border-slate-200 p-2.5 align-top text-slate-800">
+                            <div className="font-bold text-[#002366] mb-0.5">Slot {slot.slot}</div>
+                            <div className="font-semibold text-slate-700">{slot.strandNameSnapshot}</div>
+                            <div className="text-[9px] text-slate-500 mt-0.5">{slot.activityNameSnapshot}</div>
+                          </td>
+                          <td className="border border-slate-200 p-2.5 text-slate-600 align-top leading-normal whitespace-pre-wrap">
+                            {slot.reflectionText}
+                          </td>
+                        </tr>
+                      ))}
+                      {approvedSelfExplorationSlots.length === 0 && (
+                        <tr className="bg-white text-[10px]">
+                          <td colSpan={2} className="border border-slate-200 p-4 text-center text-slate-400 italic">
+                            No self-exploration reflections approved for this period.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Table 2: Attendance & General Comments */}
+                <div className="mb-6">
+                  <table className="w-full text-left border-collapse" style={{ tableLayout: 'fixed' }}>
+                    <thead>
+                      <tr className="bg-[#002366] text-white text-[10px] font-bold uppercase tracking-wider">
+                        <th className="border border-slate-300 p-2.5 w-[35%]">Attendance</th>
+                        <th className="border border-slate-300 p-2.5 w-[65%]">GENERAL COMMENTS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="bg-white text-[10px]">
+                        <td className="border border-slate-200 p-3 align-top text-slate-800 font-semibold space-y-1">
+                          <div>Sick Leave : <span className="font-bold text-slate-950">{Number(studentAttendanceMap[generatingStudent.id]?.sickLeave ?? 0)}</span></div>
+                          <div>Excused Leave : <span className="font-bold text-slate-950">{Number(studentAttendanceMap[generatingStudent.id]?.excusedLeave ?? 0)}</span></div>
+                          <div>Absent : <span className="font-bold text-slate-950">{Number(studentAttendanceMap[generatingStudent.id]?.absent ?? 0)}</span></div>
+                        </td>
+                        <td className="border border-slate-200 p-3 text-slate-700 align-top leading-normal whitespace-pre-wrap text-[10px]">
+                          {commentsMap[generatingStudent.id]?.generalComment || 'No general comments recorded.'}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Signature Area */}
+                <div className="pt-2">
+                  <div className="text-[10px] font-medium text-slate-800 mb-1">
+                    Depok, {periodDetails.day} {periodDetails.monthName} {periodDetails.year}
+                  </div>
+                  <div className="text-[10px] font-semibold text-slate-800 mb-2">
+                    Acknowledged by,
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-12 mt-2">
+                    {/* Left Column: Principal */}
+                    <div className="flex flex-col justify-between" style={{ minHeight: '80px' }}>
+                      <div className="text-[10px] font-bold text-slate-800">Principal</div>
+                      <div style={{ height: '30px' }} className="flex items-center">
+                        {reportConfig?.principalSignatureUrl ? (
+                          <img 
+                            src={reportConfig.principalSignatureUrl} 
+                            alt="Principal Signature" 
+                            style={{ height: '30px', width: 'auto', objectFit: 'contain' }}
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <div style={{ height: '30px' }} />
+                        )}
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-bold text-slate-900 underline leading-tight">
+                          {reportConfig?.principalName || "Yusfina Hendrifiana"}
+                        </div>
+                        <div className="text-[8.5px] text-slate-500 leading-tight">
+                          NIY: {reportConfig?.principalNIY || "197708032005012002"}
+                        </div>
+                      </div>
                     </div>
-                  ))}
+
+                    {/* Right Column: Homeroom Teacher */}
+                    <div className="flex flex-col justify-between" style={{ minHeight: '80px' }}>
+                      <div className="text-[10px] font-bold text-slate-800">Homeroom Teacher</div>
+                      <div style={{ height: '30px' }} className="flex items-center">
+                        {homeroomTeacherProfile?.signatureUrl ? (
+                          <img 
+                            src={homeroomTeacherProfile.signatureUrl} 
+                            alt="Homeroom Teacher Signature" 
+                            style={{ height: '30px', width: 'auto', objectFit: 'contain' }}
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <div style={{ height: '30px' }} />
+                        )}
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-bold text-slate-900 underline leading-tight">
+                          {selectedClassObj?.homeroomTeacherName || homeroomTeacherProfile?.displayName || "Wali Kelas"}
+                        </div>
+                        <div className="text-[8.5px] text-slate-500 leading-tight">
+                          NIY: {homeroomTeacherProfile?.niy || "-"}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
-            )}
 
-            {/* Section 8: General Comments */}
-            <div className="mb-5 flex-1 overflow-hidden">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-[#002366] border-b border-[#002366]/20 pb-1 mb-2">General Comments</h3>
-              <div className="bg-slate-50 border border-slate-150 rounded-lg p-3 text-[10.5px] leading-normal text-slate-700 whitespace-pre-wrap">
-                {commentsMap[generatingStudent.id]?.generalComment}
+              {/* Green Footer Strip */}
+              <div 
+                style={{
+                  backgroundColor: '#109E58',
+                  margin: 'auto -24px -24px -24px',
+                  height: '28px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxSizing: 'border-box'
+                }}
+              >
+                <span className="text-[8.5px] text-white font-semibold tracking-wide uppercase">
+                  Griya Cinere I, Jl. Telaga Warna Blok H, Depok
+                </span>
               </div>
-            </div>
-
-            {/* Footer at absolute bottom of page 2 */}
-            <div className="absolute bottom-5 left-10 right-10 flex justify-between items-center text-[9px] text-slate-400 border-t border-slate-100 pt-2">
-              <span>Page 2 of 2</span>
-              <span>Generated from Lumina on {new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}.</span>
             </div>
           </div>
         </div>
