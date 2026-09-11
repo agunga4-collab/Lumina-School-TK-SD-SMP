@@ -4,7 +4,7 @@ import {
   FileText, Calendar, Users, RefreshCw, AlertCircle, Info, CheckCircle2, 
   ArrowRight, ExternalLink, Loader2
 } from 'lucide-react';
-import { db, getClasses, getActiveStudents, getReportConfig, resolveMonthlyReportSigners } from '../../lib/firebase';
+import { db, getClasses, getActiveStudents, getReportConfig } from '../../lib/firebase';
 import { doc, getDoc, getDocs, query, collection, where } from 'firebase/firestore';
 import { useAuth } from '../../context/AuthContext';
 import { useAcademicYear } from '../../context/AcademicYearContext';
@@ -77,56 +77,6 @@ export default function MonthlyReportPdfPage() {
   const [logos, setLogos] = React.useState<any>(null);
   const [reportConfig, setReportConfig] = React.useState<any>(null);
   const [homeroomTeacherProfile, setHomeroomTeacherProfile] = React.useState<any>(null);
-
-  // Active resolved signers for Junior High with Cache and Async Safety
-  const [resolvedSigners, setResolvedSigners] = React.useState<any>(null);
-  const [loadingSigners, setLoadingSigners] = React.useState<boolean>(false);
-  const [signerError, setSignerError] = React.useState<string | null>(null);
-
-  React.useEffect(() => {
-    let isCurrent = true;
-
-    const fetchSigners = async () => {
-      if (!selectedClassId || !selectedYear) {
-        setResolvedSigners(null);
-        setSignerError(null);
-        return;
-      }
-
-      setLoadingSigners(true);
-      setSignerError(null);
-      setResolvedSigners(null); // Reset signer state on input change to prevent cross-unit leakage
-
-      try {
-        const signers = await resolveMonthlyReportSigners({
-          unit: 'JUNIOR_HIGH',
-          reportType: 'MONTHLY_PROGRESS',
-          academicYear: selectedYear,
-          classId: selectedClassId,
-        });
-
-        if (isCurrent) {
-          setResolvedSigners(signers);
-        }
-      } catch (err: any) {
-        if (isCurrent) {
-          console.warn("Signer resolution failed:", err);
-          setSignerError(err.message || "Gagal memuat konfigurasi Principal.");
-          setResolvedSigners(null);
-        }
-      } finally {
-        if (isCurrent) {
-          setLoadingSigners(false);
-        }
-      }
-    };
-
-    fetchSigners();
-
-    return () => {
-      isCurrent = false; // Prevents older async request from overwriting a newer request
-    };
-  }, [selectedYear, selectedClassId]);
 
   React.useEffect(() => {
     const fetchLogosAndConfig = async () => {
@@ -567,12 +517,6 @@ export default function MonthlyReportPdfPage() {
       return;
     }
 
-    // Strict JUNIOR_HIGH principal configuration validation before PDF generation
-    if (!resolvedSigners || resolvedSigners.unit !== 'JUNIOR_HIGH' || !resolvedSigners.principalName || resolvedSigners.status === 'inactive' || resolvedSigners.status === 'disabled') {
-      toast.error('Konfigurasi Principal Monthly Report SMP belum tersedia. Silakan lengkapi Report Config untuk unit Junior High.');
-      return;
-    }
-
     // Double check comment and attendance is fully present
     const commentObj = commentsMap[student.id];
     if (!commentObj || commentObj.status !== 'FINAL') {
@@ -712,7 +656,7 @@ export default function MonthlyReportPdfPage() {
       });
       pdf.text(`Attendance: Sick Leave : ${studentAttendanceMap[student.id]?.sickLeave ?? 0}, Excused Leave : ${studentAttendanceMap[student.id]?.excusedLeave ?? 0}, Absent : ${studentAttendanceMap[student.id]?.absent ?? 0}`, 10, 40);
       pdf.text(`GENERAL COMMENTS: ${commentsMap[student.id]?.generalComment || ''}`, 10, 45);
-      pdf.text(`Acknowledged by Principal ${resolvedSigners?.principalName || "Maryati Hulalata"} Homeroom Teacher ${selectedClassObj?.homeroomTeacherName || "Wali Kelas"}`, 10, 60);
+      pdf.text(`Acknowledged by Principal ${reportConfig?.principalName || "Yusfina Hendrifiana"} Homeroom Teacher ${selectedClassObj?.homeroomTeacherName || "Wali Kelas"}`, 10, 60);
 
       const pdfBlob = pdf.output('blob');
 
@@ -912,7 +856,7 @@ export default function MonthlyReportPdfPage() {
             <div 
               style={{
                 flex: 1,
-                border: '3px solid #002366',
+                border: '3px solid #129A95',
                 padding: '24px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -929,11 +873,11 @@ export default function MonthlyReportPdfPage() {
                       <img 
                         src={logos.JUNIOR_HIGH.rectangular} 
                         alt="Lazuardi Junior High Logo" 
-                        style={{ width: '145px', height: 'auto', objectFit: 'contain' }}
+                        style={{ height: '48px', width: 'auto', objectFit: 'contain' }}
                         referrerPolicy="no-referrer"
                       />
                     ) : (
-                      <div className="text-sm font-bold text-[#002366] uppercase" style={{ width: '145px' }}>
+                      <div className="text-sm font-bold text-[#129A95] uppercase">
                         Lazuardi Junior High
                       </div>
                     )}
@@ -1009,25 +953,20 @@ export default function MonthlyReportPdfPage() {
                 </div>
               </div>
 
-              {/* Blue Footer Strip */}
+              {/* Green Footer Strip */}
               <div 
                 style={{
-                  backgroundColor: '#002366',
+                  backgroundColor: '#109E58',
                   margin: 'auto -24px -24px -24px',
-                  height: '40px',
+                  height: '28px',
                   display: 'flex',
-                  flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  boxSizing: 'border-box',
-                  padding: '2px 12px'
+                  boxSizing: 'border-box'
                 }}
               >
-                <span style={{ fontSize: '9px', color: '#ffffff', fontWeight: 600, letterSpacing: '0.025em', textAlign: 'center' }}>
-                  Griya Cinere I, Jl. Garuda Ujung No. 35, Cinere, Kec Limo, Kota Depok, Jawa Barat 16515
-                </span>
-                <span style={{ fontSize: '8.5px', color: '#ffffff', fontWeight: 500, opacity: 0.9, marginTop: '1px', textAlign: 'center' }}>
-                  Telp. (021) 753 4841 Email: information@lazuardi.sch.id WhatsApp: +62 813 8925 7784
+                <span className="text-[8.5px] text-white font-semibold tracking-wide uppercase">
+                  Griya Cinere I, Jl. Telaga Warna Blok H, Depok
                 </span>
               </div>
             </div>
@@ -1052,7 +991,7 @@ export default function MonthlyReportPdfPage() {
             <div 
               style={{
                 flex: 1,
-                border: '3px solid #002366',
+                border: '3px solid #129A95',
                 padding: '24px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -1069,11 +1008,11 @@ export default function MonthlyReportPdfPage() {
                       <img 
                         src={logos.JUNIOR_HIGH.rectangular} 
                         alt="Lazuardi Junior High Logo" 
-                        style={{ width: '145px', height: 'auto', objectFit: 'contain' }}
+                        style={{ height: '48px', width: 'auto', objectFit: 'contain' }}
                         referrerPolicy="no-referrer"
                       />
                     ) : (
-                      <div className="text-sm font-bold text-[#002366] uppercase" style={{ width: '145px' }}>
+                      <div className="text-sm font-bold text-[#129A95] uppercase">
                         Lazuardi Junior High
                       </div>
                     )}
@@ -1166,9 +1105,9 @@ export default function MonthlyReportPdfPage() {
                     <div className="flex flex-col justify-between" style={{ minHeight: '80px' }}>
                       <div className="text-[10px] font-bold text-slate-800">Principal</div>
                       <div style={{ height: '30px' }} className="flex items-center">
-                        {resolvedSigners?.principalSignatureUrl ? (
+                        {reportConfig?.principalSignatureUrl ? (
                           <img 
-                            src={resolvedSigners.principalSignatureUrl} 
+                            src={reportConfig.principalSignatureUrl} 
                             alt="Principal Signature" 
                             style={{ height: '30px', width: 'auto', objectFit: 'contain' }}
                             referrerPolicy="no-referrer"
@@ -1179,10 +1118,10 @@ export default function MonthlyReportPdfPage() {
                       </div>
                       <div>
                         <div className="text-[10px] font-bold text-slate-900 underline leading-tight">
-                          {resolvedSigners?.principalName || "Maryati Hulalata"}
+                          {reportConfig?.principalName || "Yusfina Hendrifiana"}
                         </div>
                         <div className="text-[8.5px] text-slate-500 leading-tight">
-                          NIY: {resolvedSigners?.principalNIY || "-"}
+                          NIY: {reportConfig?.principalNIY || "197708032005012002"}
                         </div>
                       </div>
                     </div>
@@ -1215,25 +1154,20 @@ export default function MonthlyReportPdfPage() {
                 </div>
               </div>
 
-              {/* Blue Footer Strip */}
+              {/* Green Footer Strip */}
               <div 
                 style={{
-                  backgroundColor: '#002366',
+                  backgroundColor: '#109E58',
                   margin: 'auto -24px -24px -24px',
-                  height: '40px',
+                  height: '28px',
                   display: 'flex',
-                  flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  boxSizing: 'border-box',
-                  padding: '2px 12px'
+                  boxSizing: 'border-box'
                 }}
               >
-                <span style={{ fontSize: '9px', color: '#ffffff', fontWeight: 600, letterSpacing: '0.025em', textAlign: 'center' }}>
-                  Griya Cinere I, Jl. Garuda Ujung No. 35, Cinere, Kec Limo, Kota Depok, Jawa Barat 16515
-                </span>
-                <span style={{ fontSize: '8.5px', color: '#ffffff', fontWeight: 500, opacity: 0.9, marginTop: '1px', textAlign: 'center' }}>
-                  Telp. (021) 753 4841 Email: information@lazuardi.sch.id WhatsApp: +62 813 8925 7784
+                <span className="text-[8.5px] text-white font-semibold tracking-wide uppercase">
+                  Griya Cinere I, Jl. Telaga Warna Blok H, Depok
                 </span>
               </div>
             </div>
