@@ -76,6 +76,7 @@ export default function MonthlyReportPdfPage() {
   // Logos and configs
   const [logos, setLogos] = React.useState<any>(null);
   const [reportConfig, setReportConfig] = React.useState<any>(null);
+  const [isPrincipalConfigMissing, setIsPrincipalConfigMissing] = React.useState<boolean>(false);
   const [homeroomTeacherProfile, setHomeroomTeacherProfile] = React.useState<any>(null);
 
   React.useEffect(() => {
@@ -88,17 +89,60 @@ export default function MonthlyReportPdfPage() {
       } catch (err) {
         console.warn("Failed to load school logos in PDF page:", err);
       }
+
       try {
-        const configSnap = await getReportConfig('JUNIOR_HIGH');
-        if (configSnap) {
-          setReportConfig(configSnap);
+        setIsPrincipalConfigMissing(false);
+        const q = query(collection(db, "reportConfig"), where("status", "==", "active"));
+        const snap = await getDocs(q);
+        const configs = snap.docs.map(d => ({ id: d.id, ...d.data() as any }));
+
+        // Required lookup priority:
+        // 1. Active exact JUNIOR_HIGH + MONTHLY_PROGRESS + academicYear configuration
+        let resolved = configs.find(c => 
+          (c.unit === 'JUNIOR_HIGH' || c.unitId === 'JUNIOR_HIGH') &&
+          c.reportType === 'MONTHLY_PROGRESS' &&
+          c.academicYear === selectedYear
+        );
+
+        // 2. Active JUNIOR_HIGH + MONTHLY_PROGRESS default
+        if (!resolved) {
+          resolved = configs.find(c => 
+            (c.unit === 'JUNIOR_HIGH' || c.unitId === 'JUNIOR_HIGH') &&
+            c.reportType === 'MONTHLY_PROGRESS' &&
+            (!c.academicYear || c.academicYear === '')
+          );
+        }
+
+        // 3. Active JUNIOR_HIGH default
+        if (!resolved) {
+          resolved = configs.find(c => 
+            (c.unit === 'JUNIOR_HIGH' || c.unitId === 'JUNIOR_HIGH') &&
+            (!c.reportType || c.reportType === '' || c.reportType === 'DEFAULT')
+          );
+        }
+
+        // Fallback by ID 'JUNIOR_HIGH' if active and correct unit
+        if (!resolved) {
+          const defaultDoc = configs.find(c => c.id === 'JUNIOR_HIGH');
+          if (defaultDoc && (defaultDoc.unit === 'JUNIOR_HIGH' || defaultDoc.unitId === 'JUNIOR_HIGH')) {
+            resolved = defaultDoc;
+          }
+        }
+
+        if (resolved) {
+          setReportConfig(resolved);
+        } else {
+          setReportConfig(null);
+          setIsPrincipalConfigMissing(true);
         }
       } catch (err) {
-        console.warn("Failed to load report config for JUNIOR_HIGH in PDF page:", err);
+        console.warn("Failed to resolve JUNIOR_HIGH principal config:", err);
+        setReportConfig(null);
+        setIsPrincipalConfigMissing(true);
       }
     };
     fetchLogosAndConfig();
-  }, []);
+  }, [selectedYear]);
 
   // Loaded data states
   const [classesList, setClassesList] = React.useState<Class[]>([]);
@@ -512,6 +556,11 @@ export default function MonthlyReportPdfPage() {
   const { getGoogleDriveToken } = useAuth();
 
   const handleGeneratePdf = async (student: Student) => {
+    if (isPrincipalConfigMissing || !reportConfig) {
+      toast.error('Konfigurasi Principal Monthly Report SMP belum tersedia.');
+      return;
+    }
+
     if (!isGlobalReady) {
       toast.error('Lengkapi seluruh validasi report sebelum membuat PDF.');
       return;
@@ -641,6 +690,8 @@ export default function MonthlyReportPdfPage() {
       weeklyLessons.forEach((item, index) => {
         pdf.text(`WEEKLY LESSONS ${index + 1}: ${item.title} - ${item.summary}`, 10, 20 + (index * 2));
       });
+      pdf.text(`Griya Cinere I, Jl. Garuda Ujung No. 35, Cinere, Kec Limo, Kota Depok, Jawa barat 16515`, 10, 200);
+      pdf.text(`Telp. (021) 753 4841 Email: information@lazuardi.sch.id WhatsApp: +62 813 8925 7784`, 10, 202);
       
       // Page 2
       pdf.addPage();
@@ -656,7 +707,9 @@ export default function MonthlyReportPdfPage() {
       });
       pdf.text(`Attendance: Sick Leave : ${studentAttendanceMap[student.id]?.sickLeave ?? 0}, Excused Leave : ${studentAttendanceMap[student.id]?.excusedLeave ?? 0}, Absent : ${studentAttendanceMap[student.id]?.absent ?? 0}`, 10, 40);
       pdf.text(`GENERAL COMMENTS: ${commentsMap[student.id]?.generalComment || ''}`, 10, 45);
-      pdf.text(`Acknowledged by Principal ${reportConfig?.principalName || "Yusfina Hendrifiana"} Homeroom Teacher ${selectedClassObj?.homeroomTeacherName || "Wali Kelas"}`, 10, 60);
+      pdf.text(`Acknowledged by Principal ${reportConfig?.principalName || ""} Homeroom Teacher ${selectedClassObj?.homeroomTeacherName || "Wali Kelas"}`, 10, 60);
+      pdf.text(`Griya Cinere I, Jl. Garuda Ujung No. 35, Cinere, Kec Limo, Kota Depok, Jawa barat 16515`, 10, 200);
+      pdf.text(`Telp. (021) 753 4841 Email: information@lazuardi.sch.id WhatsApp: +62 813 8925 7784`, 10, 202);
 
       const pdfBlob = pdf.output('blob');
 
@@ -873,7 +926,7 @@ export default function MonthlyReportPdfPage() {
                       <img 
                         src={logos.JUNIOR_HIGH.rectangular} 
                         alt="Lazuardi Junior High Logo" 
-                        style={{ height: '48px', width: 'auto', objectFit: 'contain' }}
+                        style={{ height: '60px', width: 'auto', objectFit: 'contain' }}
                         referrerPolicy="no-referrer"
                       />
                     ) : (
@@ -956,18 +1009,23 @@ export default function MonthlyReportPdfPage() {
               {/* Green Footer Strip */}
               <div 
                 style={{
-                  backgroundColor: '#109E58',
+                  backgroundColor: '#002366',
                   margin: 'auto -24px -24px -24px',
                   height: '28px',
                   display: 'flex',
+                  flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  boxSizing: 'border-box'
+                  boxSizing: 'border-box',
+                  gap: '1px'
                 }}
               >
-                <span className="text-[8.5px] text-white font-semibold tracking-wide uppercase">
-                  Griya Cinere I, Jl. Telaga Warna Blok H, Depok
-                </span>
+                <div style={{ fontSize: '7px', color: '#ffffff', fontWeight: 600, textTransform: 'none', lineHeight: 1.1, textAlign: 'center' }}>
+                  Griya Cinere I, Jl. Garuda Ujung No. 35, Cinere, Kec Limo, Kota Depok, Jawa barat 16515
+                </div>
+                <div style={{ fontSize: '7px', color: '#ffffff', fontWeight: 600, textTransform: 'none', lineHeight: 1.1, textAlign: 'center' }}>
+                  Telp. (021) 753 4841 Email: information@lazuardi.sch.id WhatsApp: +62 813 8925 7784
+                </div>
               </div>
             </div>
           </div>
@@ -1008,7 +1066,7 @@ export default function MonthlyReportPdfPage() {
                       <img 
                         src={logos.JUNIOR_HIGH.rectangular} 
                         alt="Lazuardi Junior High Logo" 
-                        style={{ height: '48px', width: 'auto', objectFit: 'contain' }}
+                        style={{ height: '60px', width: 'auto', objectFit: 'contain' }}
                         referrerPolicy="no-referrer"
                       />
                     ) : (
@@ -1118,10 +1176,10 @@ export default function MonthlyReportPdfPage() {
                       </div>
                       <div>
                         <div className="text-[10px] font-bold text-slate-900 underline leading-tight">
-                          {reportConfig?.principalName || "Yusfina Hendrifiana"}
+                          {reportConfig?.principalName || ""}
                         </div>
                         <div className="text-[8.5px] text-slate-500 leading-tight">
-                          NIY: {reportConfig?.principalNIY || "197708032005012002"}
+                          NIY: {reportConfig?.principalNIY || ""}
                         </div>
                       </div>
                     </div>
@@ -1157,18 +1215,23 @@ export default function MonthlyReportPdfPage() {
               {/* Green Footer Strip */}
               <div 
                 style={{
-                  backgroundColor: '#109E58',
+                  backgroundColor: '#002366',
                   margin: 'auto -24px -24px -24px',
                   height: '28px',
                   display: 'flex',
+                  flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  boxSizing: 'border-box'
+                  boxSizing: 'border-box',
+                  gap: '1px'
                 }}
               >
-                <span className="text-[8.5px] text-white font-semibold tracking-wide uppercase">
-                  Griya Cinere I, Jl. Telaga Warna Blok H, Depok
-                </span>
+                <div style={{ fontSize: '7px', color: '#ffffff', fontWeight: 600, textTransform: 'none', lineHeight: 1.1, textAlign: 'center' }}>
+                  Griya Cinere I, Jl. Garuda Ujung No. 35, Cinere, Kec Limo, Kota Depok, Jawa barat 16515
+                </div>
+                <div style={{ fontSize: '7px', color: '#ffffff', fontWeight: 600, textTransform: 'none', lineHeight: 1.1, textAlign: 'center' }}>
+                  Telp. (021) 753 4841 Email: information@lazuardi.sch.id WhatsApp: +62 813 8925 7784
+                </div>
               </div>
             </div>
           </div>
@@ -1292,6 +1355,19 @@ export default function MonthlyReportPdfPage() {
           </div>
         )}
       </div>
+
+      {/* Principal Configuration Missing Warning Banner */}
+      {isPrincipalConfigMissing && (
+        <div className="mx-auto max-w-6xl bg-red-50 border border-red-200 rounded-xl p-4 mb-6 flex gap-3">
+          <AlertCircle className="text-red-600 shrink-0 mt-0.5" size={18} />
+          <div>
+            <strong className="text-red-800 text-sm font-bold block mb-0.5">Konfigurasi Principal Error</strong>
+            <p className="text-red-700 text-xs leading-relaxed">
+              Konfigurasi Principal Monthly Report SMP belum tersedia.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Global Readiness Warning Banner */}
       {!loadingStudents && !loadingSummary && !loadingComments && students.length > 0 && !isGlobalReady && (
@@ -1420,9 +1496,9 @@ export default function MonthlyReportPdfPage() {
                       <td className="pr-6 py-4 text-right">
                         <button
                           onClick={() => handleGeneratePdf(student)}
-                          disabled={!isGlobalReady || !studentReadiness || !!generatingStudent}
+                          disabled={!isGlobalReady || !studentReadiness || !!generatingStudent || isPrincipalConfigMissing || !reportConfig}
                           className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm transition-all cursor-pointer ${
-                            isGlobalReady && studentReadiness && !generatingStudent
+                            isGlobalReady && studentReadiness && !generatingStudent && !isPrincipalConfigMissing && reportConfig
                               ? 'bg-[#002366] text-white hover:bg-[#002366]/90'
                               : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed shadow-none'
                           }`}
