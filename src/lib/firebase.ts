@@ -1262,6 +1262,102 @@ export async function getReportConfig(unitId: string): Promise<ReportConfig | nu
   }
 }
 
+export interface MonthlyReportSignersInput {
+  unit: 'JUNIOR_HIGH' | 'KINDERGARTEN' | 'ELEMENTARY';
+  reportType: string;
+  academicYear: string;
+  classId: string;
+}
+
+export interface MonthlyReportSignersResult {
+  unit: string;
+  principalName: string;
+  principalTitle?: string;
+  principalNIY?: string;
+  principalSignatureUrl?: string;
+  status?: string;
+  reportType?: string;
+  academicYear?: string;
+}
+
+export async function resolveMonthlyReportSigners(input: MonthlyReportSignersInput): Promise<MonthlyReportSignersResult> {
+  const { unit, reportType, academicYear } = input;
+  
+  if (unit !== 'JUNIOR_HIGH') {
+    throw new Error("This resolver is strictly configured for JUNIOR_HIGH reports.");
+  }
+
+  // Fetch all configs from reportConfig
+  const colRef = collection(db, 'reportConfig');
+  const querySnap = await getDocs(colRef);
+  
+  const configs = querySnap.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as any[];
+
+  // Filter for active JUNIOR_HIGH configs
+  const activeJHConfigs = configs.filter(c => {
+    const isJH = (c.unit === 'JUNIOR_HIGH' || c.unitId === 'JUNIOR_HIGH' || c.id === 'JUNIOR_HIGH');
+    const isActive = c.status !== 'inactive' && c.status !== 'disabled';
+    return isJH && isActive;
+  });
+
+  // Priority 1: Active exact configuration
+  const exactMatch = activeJHConfigs.find(c => 
+    c.reportType === reportType && 
+    c.academicYear === academicYear
+  );
+  if (exactMatch) {
+    return {
+      unit: 'JUNIOR_HIGH',
+      principalName: exactMatch.principalName || '',
+      principalTitle: exactMatch.principalTitle || 'Principal',
+      principalNIY: exactMatch.principalNIY || '',
+      principalSignatureUrl: exactMatch.principalSignatureUrl || '',
+      status: exactMatch.status || 'active',
+      reportType: exactMatch.reportType,
+      academicYear: exactMatch.academicYear
+    };
+  }
+
+  // Priority 2: Active Junior High Monthly Progress default
+  const typeMatch = activeJHConfigs.find(c => 
+    c.reportType === reportType
+  );
+  if (typeMatch) {
+    return {
+      unit: 'JUNIOR_HIGH',
+      principalName: typeMatch.principalName || '',
+      principalTitle: typeMatch.principalTitle || 'Principal',
+      principalNIY: typeMatch.principalNIY || '',
+      principalSignatureUrl: typeMatch.principalSignatureUrl || '',
+      status: typeMatch.status || 'active',
+      reportType: typeMatch.reportType,
+      academicYear: typeMatch.academicYear
+    };
+  }
+
+  // Priority 3: Active Junior High unit default
+  const unitMatch = activeJHConfigs.find(c => 
+    c.unit === 'JUNIOR_HIGH' || c.unitId === 'JUNIOR_HIGH' || c.id === 'JUNIOR_HIGH'
+  );
+  if (unitMatch) {
+    return {
+      unit: 'JUNIOR_HIGH',
+      principalName: unitMatch.principalName || '',
+      principalTitle: unitMatch.principalTitle || 'Principal',
+      principalNIY: unitMatch.principalNIY || '',
+      principalSignatureUrl: unitMatch.principalSignatureUrl || '',
+      status: unitMatch.status || 'active',
+      reportType: unitMatch.reportType,
+      academicYear: unitMatch.academicYear
+    };
+  }
+
+  throw new Error("Konfigurasi Principal Monthly Report SMP belum tersedia. Silakan lengkapi Report Config untuk unit Junior High.");
+}
+
 export async function updateReportConfig(unitId: string, config: ReportConfig): Promise<void> {
   try {
     await setDoc(doc(db, 'reportConfig', unitId), config);
