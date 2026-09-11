@@ -909,7 +909,7 @@ export default function MonthlyReportPdfPage() {
             <div 
               style={{
                 flex: 1,
-                border: '3px solid #129A95',
+                border: '3px solid #002366',
                 padding: '24px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -926,11 +926,11 @@ export default function MonthlyReportPdfPage() {
                       <img 
                         src={logos.JUNIOR_HIGH.rectangular} 
                         alt="Lazuardi Junior High Logo" 
-                        style={{ height: '60px', width: 'auto', objectFit: 'contain' }}
+                        style={{ width: '180px', height: 'auto', maxHeight: '60px', objectFit: 'contain' }}
                         referrerPolicy="no-referrer"
                       />
                     ) : (
-                      <div className="text-sm font-bold text-[#129A95] uppercase">
+                      <div className="text-sm font-bold text-[#002366] uppercase">
                         Lazuardi Junior High
                       </div>
                     )}
@@ -1049,7 +1049,7 @@ export default function MonthlyReportPdfPage() {
             <div 
               style={{
                 flex: 1,
-                border: '3px solid #129A95',
+                border: '3px solid #002366',
                 padding: '24px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -1066,11 +1066,11 @@ export default function MonthlyReportPdfPage() {
                       <img 
                         src={logos.JUNIOR_HIGH.rectangular} 
                         alt="Lazuardi Junior High Logo" 
-                        style={{ height: '60px', width: 'auto', objectFit: 'contain' }}
+                        style={{ width: '180px', height: 'auto', maxHeight: '60px', objectFit: 'contain' }}
                         referrerPolicy="no-referrer"
                       />
                     ) : (
-                      <div className="text-sm font-bold text-[#129A95] uppercase">
+                      <div className="text-sm font-bold text-[#002366] uppercase">
                         Lazuardi Junior High
                       </div>
                     )}
