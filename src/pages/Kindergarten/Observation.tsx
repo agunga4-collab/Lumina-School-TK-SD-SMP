@@ -1087,6 +1087,14 @@ export default function Observation() {
   const [isUploadingGeneral, setIsUploadingGeneral] = React.useState(false);
   const [uploadProgress, setUploadProgress] = React.useState<Record<string, boolean>>({});
 
+  // Comprehensive Upload State variables
+  const [generalUploadState, setGeneralUploadState] = React.useState<'idle' | 'validating' | 'preparing' | 'uploading' | 'saving metadata' | 'success' | 'error'>('idle');
+  const [studentUploadStates, setStudentUploadStates] = React.useState<Record<string, 'idle' | 'validating' | 'preparing' | 'uploading' | 'saving metadata' | 'success' | 'error'>>({});
+
+  // Retain failed files for seamless client-side retry
+  const [lastFailedGeneralFile, setLastFailedGeneralFile] = React.useState<File | null>(null);
+  const [lastFailedStudentFiles, setLastFailedStudentFiles] = React.useState<Record<string, File>>({});
+
   const isContextComplete = React.useMemo(() => {
     if (!observationDate || !selectedClassId || !selectedActivity) {
       return false;
@@ -1099,10 +1107,158 @@ export default function Observation() {
 
   const isGeneralPhotoDisabled = React.useMemo(() => {
     if (!isContextComplete) return true;
-    if (isUploadingGeneral) return true;
+    if (isUploadingGeneral || generalUploadState === 'validating' || generalUploadState === 'preparing' || generalUploadState === 'uploading' || generalUploadState === 'saving metadata') return true;
     if (!canManageKindergartenObservation) return true;
+    if (isSessionLocked) return true;
     return false;
-  }, [isContextComplete, isUploadingGeneral, canManageKindergartenObservation]);
+  }, [isContextComplete, isUploadingGeneral, generalUploadState, canManageKindergartenObservation, isSessionLocked]);
+
+  const isStudentPhotoDisabled = React.useMemo(() => {
+    return (studentId: string) => {
+      if (!isContextComplete) return true;
+      const state = studentUploadStates[studentId] || 'idle';
+      if (uploadProgress[studentId] || state === 'validating' || state === 'preparing' || state === 'uploading' || state === 'saving metadata') return true;
+      if (!canManageKindergartenObservation) return true;
+      if (isSessionLocked) return true;
+      return false;
+    };
+  }, [isContextComplete, uploadProgress, studentUploadStates, canManageKindergartenObservation, isSessionLocked]);
+
+  // Master status mapping for disabled buttons and informative tooltips
+  const getUploadStatusAndMessage = React.useCallback((targetStudentId?: string) => {
+    if (targetStudentId) {
+      const state = studentUploadStates[targetStudentId] || 'idle';
+      if (uploadProgress[targetStudentId] || state === 'validating' || state === 'preparing' || state === 'uploading' || state === 'saving metadata') {
+        return {
+          status: 'uploading',
+          message: 'Proses unggah foto sedang berlangsung…'
+        };
+      }
+    } else {
+      if (isUploadingGeneral || generalUploadState === 'validating' || generalUploadState === 'preparing' || generalUploadState === 'uploading' || generalUploadState === 'saving metadata') {
+        return {
+          status: 'uploading',
+          message: 'Proses unggah foto sedang berlangsung…'
+        };
+      }
+    }
+
+    if (!canManageKindergartenObservation) {
+      return {
+        status: 'unauthorized',
+        message: 'Anda tidak memiliki akses untuk mengunggah di kelas ini.'
+      };
+    }
+
+    if (isSessionLocked) {
+      return {
+        status: 'locked',
+        message: 'Sesi hari ini telah terkunci. Aktifkan mode edit untuk mengubah.'
+      };
+    }
+
+    if (selectedClassId && classes.length > 0 && !classes.some(c => c.id === selectedClassId)) {
+      return {
+        status: 'class_unavailable',
+        message: 'Pilihan kelas sebelumnya tidak tersedia pada tahun ajaran aktif. Silakan pilih kelas kembali.'
+      };
+    }
+
+    const missingFields: string[] = [];
+    if (!selectedClassId) missingFields.push('Kelas');
+    if (!observationDate) missingFields.push('Tanggal');
+    if (!selectedActivity) missingFields.push('Sentra/Sesi');
+    if (selectedActivity !== 'SPECIAL_ACTIVITY' && !selectedDomain) {
+      missingFields.push('Domain Perkembangan');
+    }
+
+    if (missingFields.length > 0) {
+      return {
+        status: 'incomplete',
+        message: `Foto belum dapat diunggah. Lengkapi terlebih dahulu: ${missingFields.join(', ')}.`
+      };
+    }
+
+    return {
+      status: 'ready',
+      message: 'Foto siap diunggah.'
+    };
+  }, [classes, selectedClassId, observationDate, selectedActivity, selectedDomain, canManageKindergartenObservation, isSessionLocked, generalUploadState, studentUploadStates, isUploadingGeneral, uploadProgress]);
+
+  // Image prep constant & helper
+  const MAX_ORIGINAL_SIZE_MB = 20;
+  const MAX_LONG_EDGE = 1920;
+  const JPEG_QUALITY = 0.82;
+
+  const prepareImageFile = React.useCallback(async (file: File): Promise<{ base64: string; originalSize: number; compressedSize: number }> => {
+    const validTypes = ['image/jpeg', 'image/jpg', 'image/png'];
+    if (!validTypes.includes(file.type)) {
+      throw new Error('Format file tidak didukung. Gunakan JPG atau PNG.');
+    }
+
+    const fileSizeMB = file.size / (1024 * 1024);
+    if (fileSizeMB > MAX_ORIGINAL_SIZE_MB) {
+      throw new Error(`File terlalu besar. Pilih foto maksimal ${MAX_ORIGINAL_SIZE_MB}MB.`);
+    }
+
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            let width = img.width;
+            let height = img.height;
+
+            if (width > MAX_LONG_EDGE || height > MAX_LONG_EDGE) {
+              if (width > height) {
+                height = Math.round((height * MAX_LONG_EDGE) / width);
+                width = MAX_LONG_EDGE;
+              } else {
+                width = Math.round((width * MAX_LONG_EDGE) / height);
+                height = MAX_LONG_EDGE;
+              }
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              throw new Error('Gagal memproses gambar client-side (Canvas context error).');
+            }
+
+            ctx.drawImage(img, 0, 0, width, height);
+            const compressedBase64 = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+            const compressedSize = Math.round((compressedBase64.length * 3) / 4);
+
+            console.log(`[Diagnostic] Image preparation completed successfully.
+              - Original Name: ${file.name}
+              - Original Size: ${(file.size / 1024).toFixed(1)} KB
+              - Compressed Size: ${(compressedSize / 1024).toFixed(1)} KB
+              - Dimensions: ${img.width}x${img.height} -> ${width}x${height}
+              - Reduction: ${(((file.size - compressedSize) / file.size) * 100).toFixed(1)}%`);
+
+            resolve({
+              base64: compressedBase64,
+              originalSize: file.size,
+              compressedSize
+            });
+          } catch (err: any) {
+            reject(new Error(`Gagal mengompresi foto: ${err.message || String(err)}`));
+          }
+        };
+        img.onerror = () => {
+          reject(new Error('Gagal memuat file gambar untuk kompresi.'));
+        };
+        img.src = event.target?.result as string;
+      };
+      reader.onerror = () => {
+        reject(new Error('Gagal membaca file dari perangkat.'));
+      };
+      reader.readAsDataURL(file);
+    });
+  }, []);
 
   // Camera Modal States
   const [activeCameraTarget, setActiveCameraTarget] = React.useState<{ type: 'general' | 'student'; studentId?: string } | null>(null);
@@ -1204,6 +1360,45 @@ export default function Observation() {
       }
     }
   }, [selectedClassId, isRestrictedToAssignedClasses, assignedClassIds, primaryClassId, isLoadingClasses]);
+
+  // Active-Year preference validation
+  React.useEffect(() => {
+    if (!profile?.uid || isLoadingClasses || classes.length === 0) return;
+
+    const currentYearKey = `teacher_last_selected_class_${profile.uid}_KINDERGARTEN_${activeYear || '2026/2027'}`;
+    const allStorageKeys = Object.keys(localStorage);
+    let hasClearedInvalidPreference = false;
+
+    for (const key of allStorageKeys) {
+      if (key.startsWith(`teacher_last_selected_class_${profile.uid}_KINDERGARTEN_`)) {
+        try {
+          const item = localStorage.getItem(key);
+          if (item) {
+            const parsed = JSON.parse(item);
+            if (parsed && parsed.classId) {
+              const isClassInActiveRoster = classes.some(c => c.id === parsed.classId);
+              const isKeyForCurrentYear = key === currentYearKey;
+
+              if (!isClassInActiveRoster || !isKeyForCurrentYear) {
+                localStorage.removeItem(key);
+                hasClearedInvalidPreference = true;
+                console.log(`[Preference Validation] Cleared invalid preference key: ${key}`);
+              }
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+
+    if (hasClearedInvalidPreference) {
+      toast.error("Pilihan kelas sebelumnya tidak tersedia pada tahun ajaran aktif. Silakan pilih kelas kembali.", {
+        id: 'stale-class-preference-toast'
+      });
+      setSelectedClassId('');
+    }
+  }, [activeYear, classes, isLoadingClasses, profile?.uid]);
 
   // Load students from cache-enhanced Firestore service
   React.useEffect(() => {
@@ -2697,10 +2892,7 @@ export default function Observation() {
   };
 
   // Real uploader for general activity photo
-  const handleGeneralPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const performGeneralUpload = async (file: File) => {
     if (!canManageKindergartenObservation) {
       toast.error('Anda tidak memiliki izin untuk mengunggah foto observasi unit TK.');
       return;
@@ -2716,54 +2908,75 @@ export default function Observation() {
     const academicYear = activeYear || 'Unknown';
     const targetDate = observationDate;
 
+    // Generate client-side correlationId for idempotency
+    const correlationId = `lpu_${selectedClassId}_general_${observationDate}_${file.name.replace(/[^a-zA-Z0-9]/g, '')}_${file.size}`;
+
     setIsUploadingGeneral(true);
-    toast.loading('Mengunggah foto kegiatan utama ke Google Drive...', { id: 'upload-general' });
+    setGeneralUploadState('validating');
+    const toastId = 'upload-general';
+    toast.loading('Memvalidasi dan menyiapkan foto...', { id: toastId });
 
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      try {
-        const response = await fetch('/api/observations/upload-photo', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            base64: reader.result as string,
-            type: 'general',
-            academicYear,
-            className,
-            observationDate: targetDate,
-            uploadedBy: 'Lumina Teacher'
-          })
-        });
+    try {
+      // Step 1: Validate & Compress Image client-side
+      setGeneralUploadState('preparing');
+      const prepared = await prepareImageFile(file);
 
-        if (!response.ok) {
-          const errData = await response.json();
-          throw new Error(errData.error || 'Server error uploading file');
-        }
+      // Step 2: Upload to backend
+      setGeneralUploadState('uploading');
+      toast.loading('Mengunggah foto kegiatan utama ke Google Drive...', { id: toastId });
 
-        const resData = await response.json();
-        const previewUrl = resData.metadata.previewUrl;
+      const response = await fetch('/api/observations/upload-photo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          base64: prepared.base64,
+          type: 'general',
+          academicYear,
+          className,
+          observationDate: targetDate,
+          uploadedBy: profile?.name || 'Lumina Teacher',
+          correlationId
+        })
+      });
 
-        setGeneralPhoto(previewUrl);
-        toast.success('Foto Kegiatan Utama berhasil disinkronisasi ke Google Drive! ✨', { id: 'upload-general' });
-      } catch (err: any) {
-        console.error('[UploadGeneral] Failed:', err);
-        toast.error(`Gagal mengunggah foto ke Google Drive: ${err.message || String(err)}`, { id: 'upload-general' });
-      } finally {
-        setIsUploadingGeneral(false);
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Server error uploading file');
       }
-    };
-    reader.onerror = () => {
+
+      setGeneralUploadState('saving metadata');
+      const resData = await response.json();
+      const previewUrl = resData.metadata.previewUrl;
+
+      setGeneralPhoto(previewUrl);
+      setGeneralUploadState('success');
+      setLastFailedGeneralFile(null); // Clear retry state
+      toast.success('Foto Kegiatan Utama berhasil disinkronisasi ke Google Drive! ✨', { id: toastId });
+    } catch (err: any) {
+      console.error('[UploadGeneral] Failed:', err);
+      setGeneralUploadState('error');
+      setLastFailedGeneralFile(file); // Retain file for retry
+      toast.error(`Gagal mengunggah foto ke Google Drive: ${err.message || String(err)}`, { id: toastId });
+    } finally {
       setIsUploadingGeneral(false);
-      toast.error('Gagal membaca berkas foto.', { id: 'upload-general' });
-    };
-    reader.readAsDataURL(file);
+    }
+  };
+
+  const handleGeneralPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await performGeneralUpload(file);
+    e.target.value = '';
+  };
+
+  const retryGeneralPhotoUpload = async () => {
+    if (lastFailedGeneralFile) {
+      await performGeneralUpload(lastFailedGeneralFile);
+    }
   };
 
   // Real uploader for specific student photo
-  const handleStudentPhotoUpload = async (studentId: string, e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const performStudentUpload = async (studentId: string, file: File) => {
     if (!canManageKindergartenObservation) {
       toast.error('Anda tidak memiliki izin untuk mengunggah foto observasi unit TK.');
       return;
@@ -2782,49 +2995,78 @@ export default function Observation() {
     const student = students.find(s => s.id === studentId);
     const studentName = student ? student.name : 'Siswa';
 
+    // Generate client-side correlationId for idempotency
+    const correlationId = `lpu_${selectedClassId}_student_${studentId}_${observationDate}_${file.name.replace(/[^a-zA-Z0-9]/g, '')}_${file.size}`;
+
     setUploadProgress(prev => ({ ...prev, [studentId]: true }));
-    toast.loading(`Mengunggah foto ${studentName} ke Google Drive...`, { id: `upload-${studentId}` });
+    setStudentUploadStates(prev => ({ ...prev, [studentId]: 'validating' }));
+    const toastId = `upload-${studentId}`;
+    toast.loading(`Memvalidasi dan menyiapkan foto ${studentName}...`, { id: toastId });
 
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      try {
-        const response = await fetch('/api/observations/upload-photo', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            base64: reader.result as string,
-            type: 'student',
-            academicYear,
-            className,
-            studentId,
-            studentName,
-            observationDate: targetDate,
-            uploadedBy: 'Lumina Teacher'
-          })
-        });
+    try {
+      // Step 1: Validate & Compress Image client-side
+      setStudentUploadStates(prev => ({ ...prev, [studentId]: 'preparing' }));
+      const prepared = await prepareImageFile(file);
 
-        if (!response.ok) {
-          const errData = await response.json();
-          throw new Error(errData.error || 'Server error uploading file');
-        }
+      // Step 2: Upload to backend
+      setStudentUploadStates(prev => ({ ...prev, [studentId]: 'uploading' }));
+      toast.loading(`Mengunggah foto ${studentName} ke Google Drive...`, { id: toastId });
 
-        const resData = await response.json();
-        const previewUrl = resData.metadata.previewUrl;
+      const response = await fetch('/api/observations/upload-photo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          base64: prepared.base64,
+          type: 'student',
+          academicYear,
+          className,
+          studentId,
+          studentName,
+          observationDate: targetDate,
+          uploadedBy: profile?.name || 'Lumina Teacher',
+          correlationId
+        })
+      });
 
-        updateStudentField(studentId, 'photo', previewUrl);
-        toast.success(`Foto khusus ${studentName} berhasil disinkronisasi ke Google Drive! 📸`, { id: `upload-${studentId}` });
-      } catch (err: any) {
-        console.error(`[UploadStudent-${studentId}] Failed:`, err);
-        toast.error(`Gagal mengunggah foto ke Google Drive: ${err.message || String(err)}`, { id: `upload-${studentId}` });
-      } finally {
-        setUploadProgress(prev => ({ ...prev, [studentId]: false }));
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Server error uploading file');
       }
-    };
-    reader.onerror = () => {
+
+      setStudentUploadStates(prev => ({ ...prev, [studentId]: 'saving metadata' }));
+      const resData = await response.json();
+      const previewUrl = resData.metadata.previewUrl;
+
+      updateStudentField(studentId, 'photo', previewUrl);
+      setStudentUploadStates(prev => ({ ...prev, [studentId]: 'success' }));
+      setLastFailedStudentFiles(prev => {
+        const updated = { ...prev };
+        delete updated[studentId];
+        return updated;
+      });
+      toast.success(`Foto khusus ${studentName} berhasil disinkronisasi ke Google Drive! 📸`, { id: toastId });
+    } catch (err: any) {
+      console.error(`[UploadStudent-${studentId}] Failed:`, err);
+      setStudentUploadStates(prev => ({ ...prev, [studentId]: 'error' }));
+      setLastFailedStudentFiles(prev => ({ ...prev, [studentId]: file }));
+      toast.error(`Gagal mengunggah foto ke Google Drive: ${err.message || String(err)}`, { id: toastId });
+    } finally {
       setUploadProgress(prev => ({ ...prev, [studentId]: false }));
-      toast.error('Gagal membaca berkas foto.', { id: `upload-${studentId}` });
-    };
-    reader.readAsDataURL(file);
+    }
+  };
+
+  const handleStudentPhotoUpload = async (studentId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await performStudentUpload(studentId, file);
+    e.target.value = '';
+  };
+
+  const retryStudentPhotoUpload = async (studentId: string) => {
+    const failedFile = lastFailedStudentFiles[studentId];
+    if (failedFile) {
+      await performStudentUpload(studentId, failedFile);
+    }
   };
 
   const startCamera = async (deviceId?: string) => {
@@ -2892,15 +3134,18 @@ export default function Observation() {
       if (!ctx) throw new Error("Could not create canvas context");
       
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const base64 = canvas.toDataURL('image/jpeg', 0.85);
+      const base64 = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
 
       const targetType = activeCameraTarget.type;
       const targetStudentId = activeCameraTarget.studentId;
       
       stopCamera();
       
+      const correlationId = `cam_${selectedClassId}_${targetType}_${targetStudentId || 'general'}_${observationDate}_${Date.now()}`;
+
       if (targetType === 'general') {
         setIsUploadingGeneral(true);
+        setGeneralUploadState('uploading');
         toast.loading('Mengunggah foto kamera ke Google Drive...', { id: 'upload-general' });
         
         const response = await fetch('/api/observations/upload-photo', {
@@ -2912,7 +3157,8 @@ export default function Observation() {
             academicYear: activeYear || 'Unknown',
             className: classes.find(c => c.id === selectedClassId)?.name || 'General',
             observationDate,
-            uploadedBy: 'Lumina Teacher'
+            uploadedBy: profile?.name || 'Lumina Teacher',
+            correlationId
           })
         });
 
@@ -2923,6 +3169,7 @@ export default function Observation() {
 
         const resData = await response.json();
         setGeneralPhoto(resData.metadata.previewUrl);
+        setGeneralUploadState('success');
         toast.success('Foto Kamera Kegiatan Utama berhasil disinkronisasi ke Google Drive! ✨', { id: 'upload-general' });
         
       } else if (targetType === 'student' && targetStudentId) {
@@ -2930,6 +3177,7 @@ export default function Observation() {
         const studentName = student ? student.name : 'Siswa';
 
         setUploadProgress(prev => ({ ...prev, [targetStudentId]: true }));
+        setStudentUploadStates(prev => ({ ...prev, [targetStudentId]: 'uploading' }));
         toast.loading(`Mengunggah foto kamera ${studentName} ke Google Drive...`, { id: `upload-${targetStudentId}` });
 
         const response = await fetch('/api/observations/upload-photo', {
@@ -2943,7 +3191,8 @@ export default function Observation() {
             studentId: targetStudentId,
             studentName,
             observationDate,
-            uploadedBy: 'Lumina Teacher'
+            uploadedBy: profile?.name || 'Lumina Teacher',
+            correlationId
           })
         });
 
@@ -2954,10 +3203,17 @@ export default function Observation() {
 
         const resData = await response.json();
         updateStudentField(targetStudentId, 'photo', resData.metadata.previewUrl);
+        setStudentUploadStates(prev => ({ ...prev, [targetStudentId]: 'success' }));
         toast.success(`Foto kamera ${studentName} berhasil disinkronisasi ke Google Drive! 📸`, { id: `upload-${targetStudentId}` });
       }
     } catch (err: any) {
       console.error("Gagal mengambil foto dari kamera:", err);
+      if (activeCameraTarget?.type === 'general') {
+        setGeneralUploadState('error');
+      } else if (activeCameraTarget?.type === 'student' && activeCameraTarget.studentId) {
+        const sid = activeCameraTarget.studentId;
+        setStudentUploadStates(prev => ({ ...prev, [sid]: 'error' }));
+      }
       toast.error(`Gagal mengunggah foto kamera: ${err.message || String(err)}`);
     } finally {
       setIsUploadingGeneral(false);
@@ -3904,6 +4160,22 @@ export default function Observation() {
                       Sesi ini tidak dapat disimpan sebelum Foto General diunggah.
                     </p>
                   </div>
+
+                  {generalUploadState === 'error' && lastFailedGeneralFile && (
+                    <div className="w-full p-3 bg-rose-50 border border-rose-150 rounded-xl flex flex-col items-center gap-2 text-center">
+                      <span className="text-[10px] text-rose-800 font-bold leading-normal">
+                        Gagal mengunggah {lastFailedGeneralFile.name}. Silakan coba lagi.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={retryGeneralPhotoUpload}
+                        className="py-1.5 px-4 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-[9px] uppercase tracking-widest rounded-lg flex items-center gap-1.5 cursor-pointer transition-all border-0 shadow-sm"
+                      >
+                        <RefreshCw size={10} /> Coba Lagi
+                      </button>
+                    </div>
+                  )}
+
                   <div className="flex flex-col sm:flex-row gap-2.5 w-full justify-center">
                     <label 
                       className={cn(
@@ -3911,11 +4183,27 @@ export default function Observation() {
                         isGeneralPhotoDisabled && "opacity-50 cursor-not-allowed pointer-events-none"
                       )}
                     >
-                      {isUploadingGeneral ? (
+                      {generalUploadState === 'validating' && (
                         <>
-                          <Loader2 className="animate-spin" size={14} /> Mengunggah foto…
+                          <Loader2 className="animate-spin" size={14} /> Memvalidasi…
                         </>
-                      ) : (
+                      )}
+                      {generalUploadState === 'preparing' && (
+                        <>
+                          <Loader2 className="animate-spin" size={14} /> Menyiapkan foto…
+                        </>
+                      )}
+                      {generalUploadState === 'uploading' && (
+                        <>
+                          <Loader2 className="animate-spin" size={14} /> Mengunggah…
+                        </>
+                      )}
+                      {generalUploadState === 'saving metadata' && (
+                        <>
+                          <Loader2 className="animate-spin" size={14} /> Sinkronisasi data…
+                        </>
+                      )}
+                      {['idle', 'success', 'error'].includes(generalUploadState) && (
                         <>
                           <Upload size={14} /> Unggah Foto Kegiatan
                         </>
@@ -3944,6 +4232,10 @@ export default function Observation() {
                     >
                       <Camera size={14} /> Ambil dari Kamera
                     </button>
+                  </div>
+
+                  <div className="text-[10px] font-bold text-gray-500 mt-1 max-w-[280px] leading-normal text-center bg-gray-50 p-2 rounded-xl border border-gray-100">
+                    💡 Status: {getUploadStatusAndMessage().message}
                   </div>
                 </motion.div>
               )}
@@ -4477,49 +4769,84 @@ export default function Observation() {
                     </div>
 
                     {/* Camera and File upload buttons */}
-                    <div className="flex gap-1.5 w-full">
-                      <label
-                        className={cn(
-                          "flex-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all flex items-center justify-center gap-1 cursor-pointer",
-                          hasSpecificPhoto 
-                            ? "bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700" 
-                            : "bg-white hover:bg-gray-50 border-gray-200 text-gray-600",
-                          !canManageKindergartenObservation && "opacity-50 cursor-not-allowed pointer-events-none"
-                        )}
-                        title="Unggah file foto dari perangkat"
-                      >
-                        {uploadProgress[student.id] ? (
-                          <Loader2 className="animate-spin" size={10} />
-                        ) : (
-                          <Upload size={10} />
-                        )}
-                        <span className="ml-1">File</span>
-                        <input 
-                          key={`file_student_${student.id}_${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`}
-                          type="file" 
-                          accept="image/*" 
-                          onChange={(e) => handleStudentPhotoUpload(student.id, e)} 
-                          className="hidden" 
-                          disabled={!canManageKindergartenObservation}
-                        />
-                      </label>
+                    <div className="space-y-1.5 w-full">
+                      {studentUploadStates[student.id] === 'error' && lastFailedStudentFiles[student.id] && (
+                        <div className="w-full p-2 bg-rose-50 border border-rose-150 rounded-xl flex flex-col items-center gap-1 text-center">
+                          <span className="text-[8px] text-rose-800 font-bold leading-normal">
+                            Unggah gagal. Coba lagi?
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => retryStudentPhotoUpload(student.id)}
+                            className="py-1 px-3 bg-rose-600 hover:bg-rose-700 text-white font-black text-[8px] uppercase tracking-widest rounded-lg flex items-center gap-1 transition-all border-0 shadow-sm cursor-pointer"
+                          >
+                            <RefreshCw size={8} /> Coba Lagi
+                          </button>
+                        </div>
+                      )}
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveCameraTarget({ type: 'student', studentId: student.id });
-                          startCamera();
-                        }}
-                        disabled={!canManageKindergartenObservation}
-                        className={cn(
-                          "flex-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border bg-emerald-600 hover:bg-emerald-700 text-white transition-all flex items-center justify-center gap-1 cursor-pointer",
-                          !canManageKindergartenObservation && "opacity-50 cursor-not-allowed pointer-events-none"
-                        )}
-                        title="Ambil foto langsung menggunakan kamera"
-                      >
-                        <Camera size={10} />
-                        <span className="ml-1">Kamera</span>
-                      </button>
+                      <div className="flex gap-1.5 w-full">
+                        <label
+                          className={cn(
+                            "flex-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all flex items-center justify-center gap-1 cursor-pointer",
+                            hasSpecificPhoto 
+                              ? "bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700" 
+                              : "bg-white hover:bg-gray-50 border-gray-200 text-gray-600",
+                            isStudentPhotoDisabled(student.id) && "opacity-50 cursor-not-allowed pointer-events-none"
+                          )}
+                          title={getUploadStatusAndMessage(student.id).message}
+                        >
+                          {studentUploadStates[student.id] === 'validating' && (
+                            <Loader2 className="animate-spin" size={10} />
+                          )}
+                          {studentUploadStates[student.id] === 'preparing' && (
+                            <Loader2 className="animate-spin" size={10} />
+                          )}
+                          {studentUploadStates[student.id] === 'uploading' && (
+                            <Loader2 className="animate-spin" size={10} />
+                          )}
+                          {studentUploadStates[student.id] === 'saving metadata' && (
+                            <Loader2 className="animate-spin" size={10} />
+                          )}
+                          {!['validating', 'preparing', 'uploading', 'saving metadata'].includes(studentUploadStates[student.id] || 'idle') && (
+                            <Upload size={10} />
+                          )}
+                          <span className="ml-1">
+                            {studentUploadStates[student.id] === 'saving metadata' ? 'Simpan' : 'File'}
+                          </span>
+                          <input 
+                            key={`file_student_${student.id}_${selectedClassId}_${selectedActivity}_${selectedDomain}_${observationDate}`}
+                            type="file" 
+                            accept="image/*" 
+                            onChange={(e) => handleStudentPhotoUpload(student.id, e)} 
+                            className="hidden" 
+                            disabled={isStudentPhotoDisabled(student.id)}
+                          />
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveCameraTarget({ type: 'student', studentId: student.id });
+                            startCamera();
+                          }}
+                          disabled={isStudentPhotoDisabled(student.id)}
+                          className={cn(
+                            "flex-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border bg-emerald-600 hover:bg-emerald-700 text-white transition-all flex items-center justify-center gap-1 cursor-pointer",
+                            isStudentPhotoDisabled(student.id) && "opacity-50 cursor-not-allowed pointer-events-none"
+                          )}
+                          title="Ambil foto langsung menggunakan kamera"
+                        >
+                          <Camera size={10} />
+                          <span className="ml-1">Kamera</span>
+                        </button>
+                      </div>
+
+                      {!isContextComplete && (
+                        <span className="text-[7.5px] text-rose-600 font-bold block text-center leading-none">
+                          ⚠️ Lengkapi Kelas/Sentra/Domain
+                        </span>
+                      )}
                     </div>
                     
                     {!hasSpecificPhoto && generalPhoto && (

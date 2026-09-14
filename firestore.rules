@@ -1048,8 +1048,14 @@ service cloud.firestore {
         isAdmin() || 
         (
           isJuniorHighStaff() && 
-          isTeacherAssignedToClass(resource.data.classId) && 
-          isTeacherAssignedToClass(request.resource.data.classId) && (
+          (
+            isTeacherAssignedToClass(resource.data.classId) || 
+            userRole() in ["SUPER_ADMIN", "HEAD_UNIT", "HEAD_JUNIOR", "PRINCIPAL", "VICE_PRINCIPAL", "COORDINATOR"]
+          ) && 
+          (
+            isTeacherAssignedToClass(request.resource.data.classId) || 
+            userRole() in ["SUPER_ADMIN", "HEAD_UNIT", "HEAD_JUNIOR", "PRINCIPAL", "VICE_PRINCIPAL", "COORDINATOR"]
+          ) && (
             (resource.data.status == request.resource.data.status) || (
               request.resource.data.status == "CANCELLED" && 
               request.resource.data.isCancelled == true && 

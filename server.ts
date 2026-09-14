@@ -183,39 +183,90 @@ async function uploadJsonToDrive(folderId: string, fileName: string, data: any, 
 }
 
 
-// Helper to find or create folders, escaping single quotes in query
-async function findOrCreateObsFolder(name: string, parentId: string) {
-  // Drive API query escaping is backslash single-quote
-  const escapedName = name.replace(/'/g, "\\'");
-  const q = `name = '${escapedName}' and '${parentId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-  
-  try {
-    const response = await drive.files.list({
-      q,
-      supportsAllDrives: true,
-      includeItemsFromAllDrives: true,
-      fields: 'files(id, name)',
-    });
+// Shared process-level locks for serializing concurrent directory creations
+const folderCreationLocks: Record<string, Promise<string>> = {};
 
-    if (response.data.files && response.data.files.length > 0) {
-      return response.data.files[0].id!;
+// Helper to find or create folders, escaping single quotes in query
+async function findOrCreateObsFolder(name: string, parentId: string): Promise<string> {
+  const lockKey = `${parentId}_${name}`;
+
+  if (folderCreationLocks[lockKey]) {
+    try {
+      return await folderCreationLocks[lockKey];
+    } catch (e) {
+      delete folderCreationLocks[lockKey];
     }
-  } catch (error) {
-    console.error(`[findOrCreateObsFolder] Search failed for ${name}:`, error);
   }
 
-  // Create folder if not found
-  const folder = await drive.files.create({
-    requestBody: {
-      name,
-      mimeType: 'application/vnd.google-apps.folder',
-      parents: [parentId]
-    },
-    supportsAllDrives: true,
-    fields: 'id',
-  });
+  const creationPromise = (async () => {
+    const escapedName = name.replace(/'/g, "\\'");
+    const q = `name = '${escapedName}' and '${parentId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
 
-  return folder.data.id!;
+    let retries = 3;
+    let delay = 300;
+
+    while (retries > 0) {
+      try {
+        const response = await drive.files.list({
+          q,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+          fields: 'files(id, name)',
+        });
+
+        if (response.data.files && response.data.files.length > 0) {
+          return response.data.files[0].id!;
+        }
+      } catch (error) {
+        console.error(`[findOrCreateObsFolder] Search failed for ${name} (retries left: ${retries}):`, error);
+      }
+
+      try {
+        const folder = await drive.files.create({
+          requestBody: {
+            name,
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: [parentId]
+          },
+          supportsAllDrives: true,
+          fields: 'id',
+        });
+
+        if (folder.data.id) {
+          return folder.data.id;
+        }
+      } catch (createError: any) {
+        const status = createError.status || createError.code || (createError.response && createError.response.status);
+        console.warn(`[findOrCreateObsFolder] Create failed for ${name} (status ${status}, retries left: ${retries}):`, createError.message || createError);
+
+        if (status === 409 || status === 429 || status >= 500) {
+          retries--;
+          if (retries === 0) {
+            throw createError;
+          }
+          const jitter = Math.random() * 150;
+          await new Promise(resolve => setTimeout(resolve, delay + jitter));
+          delay *= 2;
+          continue;
+        } else {
+          throw createError;
+        }
+      }
+      retries--;
+    }
+    throw new Error(`Failed to resolve or create folder '${name}' after retries.`);
+  })();
+
+  folderCreationLocks[lockKey] = creationPromise;
+
+  try {
+    const folderId = await creationPromise;
+    return folderId;
+  } finally {
+    setTimeout(() => {
+      delete folderCreationLocks[lockKey];
+    }, 10000);
+  }
 }
 
 // Recursively ensure all folders in the array exist
@@ -239,7 +290,8 @@ app.post("/api/observations/upload-photo", async (req, res) => {
       studentId,
       studentName,
       observationDate,
-      uploadedBy
+      uploadedBy,
+      correlationId
     } = req.body;
 
     if (!base64) {
@@ -269,6 +321,7 @@ app.post("/api/observations/upload-photo", async (req, res) => {
 
     let folderPathArray: string[] = [];
     let fileName = "";
+    const cleanCorrelation = correlationId ? correlationId.replace(/[^a-zA-Z0-9_\-]/g, "_") : `ts_${Date.now()}`;
 
     if (type === "general") {
       folderPathArray = [
@@ -279,11 +332,9 @@ app.post("/api/observations/upload-photo", async (req, res) => {
         cleanClassName,
         observationDate
       ];
-      // general-{className}-{yyyyMMdd}-{timestamp}.jpg
       const cleanClassNameSlug = cleanClassName.toLowerCase().replace(/[^a-z0-9_\-]/g, "_");
-      fileName = `general-${cleanClassNameSlug}-${cleanDate}-${Date.now()}.jpg`;
+      fileName = `general-${cleanClassNameSlug}-${cleanDate}-${cleanCorrelation}.jpg`;
     } else {
-      // student-{studentId}-{yyyyMMdd}-{timestamp}.jpg
       const studentIdentifier = studentName && studentId ? `${studentName}_${studentId}` : (studentId || "unknown_student");
       folderPathArray = [
         "Observation Photos",
@@ -295,46 +346,78 @@ app.post("/api/observations/upload-photo", async (req, res) => {
         observationDate
       ];
       const cleanId = studentId ? studentId.toLowerCase().replace(/[^a-z0-9_\-]/g, "_") : "unknown";
-      fileName = `student-${cleanId}-${cleanDate}-${Date.now()}.jpg`;
+      fileName = `student-${cleanId}-${cleanDate}-${cleanCorrelation}.jpg`;
     }
 
     // 3. Resolve the exact Google Drive parent folder ID
     const rootId = "1mEDcuWvzEqIObEUGDPm46EaVqW94mtJP";
     console.log(`[PhotoUpload] Resolving Drive structure under root folder ${rootId} for path: /${folderPathArray.join('/')}`);
-    const parentFolderId = await ensureObsFolderPath(folderPathArray, rootId);
-
-    // 4. Upload file to Google Drive
-    const mediaStream = Readable.from(buffer);
-    const driveResponse = await drive.files.create({
-      requestBody: {
-        name: fileName,
-        parents: [parentFolderId],
-        mimeType: mimeType
-      },
-      media: {
-        mimeType: mimeType,
-        body: mediaStream
-      },
-      supportsAllDrives: true,
-      fields: "id"
-    });
-
-    const fileId = driveResponse.data.id!;
-    console.log(`[PhotoUpload] Success! Created file ${fileName} with ID ${fileId}`);
-
-    // 5. Grant anyone reader permission so it can be previewed/embedded in report canvases
+    
+    let parentFolderId = "";
     try {
-      await drive.permissions.create({
-        fileId: fileId,
-        requestBody: {
-          role: "reader",
-          type: "anyone"
-        },
-        supportsAllDrives: true
+      parentFolderId = await ensureObsFolderPath(folderPathArray, rootId);
+    } catch (folderErr: any) {
+      console.error("[PhotoUpload] Folder resolution failed:", folderErr);
+      return res.status(503).json({
+        success: false,
+        error: "Folder Google Drive tidak siap. Silakan coba ulang beberapa saat lagi."
       });
-      console.log(`[PhotoUpload] Access permission to 'anyone/reader' granted successfully for file ${fileId}`);
-    } catch (permError: any) {
-      console.warn(`[PhotoUpload] Warning: failed to grant permissions: ${permError.message}`);
+    }
+
+    // 4. Check for existing file in Drive to prevent duplicate uploads on retry
+    let fileId = "";
+    const escapedFileName = fileName.replace(/'/g, "\\'");
+    const fileQuery = `name = '${escapedFileName}' and '${parentFolderId}' in parents and trashed = false`;
+
+    try {
+      const existingResponse = await drive.files.list({
+        q: fileQuery,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+        fields: 'files(id, name)',
+      });
+
+      if (existingResponse.data.files && existingResponse.data.files.length > 0) {
+        fileId = existingResponse.data.files[0].id!;
+        console.log(`[PhotoUpload] Idempotency: Reusing existing Drive file ${fileName} with ID ${fileId}`);
+      }
+    } catch (queryErr) {
+      console.error("[PhotoUpload] Error checking for existing file in Drive:", queryErr);
+    }
+
+    // 5. Upload file if not already existing
+    if (!fileId) {
+      const mediaStream = Readable.from(buffer);
+      const driveResponse = await drive.files.create({
+        requestBody: {
+          name: fileName,
+          parents: [parentFolderId],
+          mimeType: mimeType
+        },
+        media: {
+          mimeType: mimeType,
+          body: mediaStream
+        },
+        supportsAllDrives: true,
+        fields: "id"
+      });
+      fileId = driveResponse.data.id!;
+      console.log(`[PhotoUpload] Success! Created file ${fileName} with ID ${fileId}`);
+
+      // Grant anyone reader permission
+      try {
+        await drive.permissions.create({
+          fileId: fileId,
+          requestBody: {
+            role: "reader",
+            type: "anyone"
+          },
+          supportsAllDrives: true
+        });
+        console.log(`[PhotoUpload] Access permission to 'anyone/reader' granted successfully for file ${fileId}`);
+      } catch (permError: any) {
+        console.warn(`[PhotoUpload] Warning: failed to grant permissions: ${permError.message}`);
+      }
     }
 
     // 6. Build final metadata payload
@@ -350,11 +433,21 @@ app.post("/api/observations/upload-photo", async (req, res) => {
       studentId: studentId || null,
       observationDate: observationDate,
       uploadedAt: Date.now(),
-      uploadedBy: uploadedBy || "Lumina Teacher"
+      uploadedBy: uploadedBy || "Lumina Teacher",
+      correlationId: correlationId || null
     };
 
-    // 7. Save metadata permanently to Firestore separate collection for logs
-    await adminDb.collection("kg_observation_photos").doc(fileId).set(metadata);
+    // 7. Save metadata permanently to Firestore
+    try {
+      await adminDb.collection("kg_observation_photos").doc(fileId).set(metadata);
+    } catch (firestoreErr: any) {
+      console.error("[PhotoUpload] Firestore log failed, preserving correlation metadata:", firestoreErr);
+      return res.status(500).json({
+        success: false,
+        error: "Upload foto gagal. Silakan coba ulang beberapa saat lagi.",
+        reconcileMetadata: { driveFileId: fileId, correlationId }
+      });
+    }
 
     // 8. Return response
     return res.json({
@@ -367,7 +460,7 @@ app.post("/api/observations/upload-photo", async (req, res) => {
     console.error("[PhotoUpload] Critical failures occurred:", error);
     return res.status(500).json({
       success: false,
-      error: error.message || "An expected error occurred during Google Drive file synchronization."
+      error: "Upload foto gagal. Silakan coba ulang beberapa saat lagi."
     });
   }
 });
