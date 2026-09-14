@@ -129,6 +129,126 @@ const CATEGORY_CONFIG = {
   }
 };
 
+const formatLpuDateTime = (value: any, fallback: string = '-'): string => {
+  if (value === null || value === undefined || value === '') return fallback;
+  
+  let d: Date;
+  
+  if (value && typeof value.toDate === 'function') {
+    try {
+      d = value.toDate();
+    } catch (e) {
+      return fallback;
+    }
+  } 
+  else if (value && typeof value === 'object' && 'seconds' in value) {
+    try {
+      const secs = Number(value.seconds);
+      const nanos = Number(value.nanoseconds || 0);
+      d = new Date(secs * 1000 + Math.floor(nanos / 1_000_000));
+    } catch (e) {
+      return fallback;
+    }
+  } 
+  else if (value instanceof Date) {
+    d = value;
+  } 
+  else if (typeof value === 'number') {
+    d = new Date(value);
+  } 
+  else if (typeof value === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      try {
+        const parts = value.split('-');
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1;
+        const day = parseInt(parts[2], 10);
+        d = new Date(year, month, day, 12, 0, 0);
+      } catch (e) {
+        return fallback;
+      }
+    } else {
+      d = new Date(value);
+    }
+  } 
+  else {
+    return fallback;
+  }
+
+  if (!d || isNaN(d.getTime())) return fallback;
+
+  try {
+    const idMonths = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+    const day = d.getDate();
+    const month = idMonths[d.getMonth()];
+    const year = d.getFullYear();
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    return `${day} ${month} ${year}, ${hours}.${minutes}`;
+  } catch (e) {
+    return fallback;
+  }
+};
+
+const formatLpuDate = (value: any, fallback: string = '-'): string => {
+  if (value === null || value === undefined || value === '') return fallback;
+  
+  let d: Date;
+  
+  if (value && typeof value.toDate === 'function') {
+    try {
+      d = value.toDate();
+    } catch (e) {
+      return fallback;
+    }
+  } 
+  else if (value && typeof value === 'object' && 'seconds' in value) {
+    try {
+      const secs = Number(value.seconds);
+      const nanos = Number(value.nanoseconds || 0);
+      d = new Date(secs * 1000 + Math.floor(nanos / 1_000_000));
+    } catch (e) {
+      return fallback;
+    }
+  } 
+  else if (value instanceof Date) {
+    d = value;
+  } 
+  else if (typeof value === 'number') {
+    d = new Date(value);
+  } 
+  else if (typeof value === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      try {
+        const parts = value.split('-');
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1;
+        const day = parseInt(parts[2], 10);
+        d = new Date(year, month, day, 12, 0, 0);
+      } catch (e) {
+        return fallback;
+      }
+    } else {
+      d = new Date(value);
+    }
+  } 
+  else {
+    return fallback;
+  }
+
+  if (!d || isNaN(d.getTime())) return fallback;
+
+  try {
+    const idMonths = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+    const day = d.getDate();
+    const month = idMonths[d.getMonth()];
+    const year = d.getFullYear();
+    return `${day} ${month} ${year}`;
+  } catch (e) {
+    return fallback;
+  }
+};
+
 const formatDateShort = (dateStr: string) => {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -173,21 +293,7 @@ const formatDateRange = (startStr: string, endStr: string) => {
 };
 
 const formatVerificationTime = (timestamp: any) => {
-  if (!timestamp) return '';
-  let d: Date;
-  if (timestamp.toDate && typeof timestamp.toDate === 'function') {
-    d = timestamp.toDate();
-  } else {
-    d = new Date(timestamp);
-  }
-  if (isNaN(d.getTime())) return '';
-  const idMonths = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-  const day = d.getDate();
-  const month = idMonths[d.getMonth()];
-  const year = d.getFullYear();
-  const hours = String(d.getHours()).padStart(2, '0');
-  const minutes = String(d.getMinutes()).padStart(2, '0');
-  return `${day} ${month} ${year}, ${hours}.${minutes}`;
+  return formatLpuDateTime(timestamp, '');
 };
 
 const canTeacherVerifySubject = (
@@ -268,7 +374,55 @@ const canTeacherVerifySubject = (
   return false;
 };
 
+class LearningPowerUpErrorBoundary extends React.Component<any, any> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.error("Learning Power-Up Error Boundary caught an error:", error, errorInfo);
+    }
+  }
+
+  render() {
+    if ((this as any).state.hasError) {
+      return (
+        <div className="p-8 bg-rose-50/50 rounded-3xl border border-rose-100 text-center max-w-lg mx-auto my-12 space-y-4 relative z-10 bg-white shadow-xl">
+          <p className="text-sm font-black text-rose-600">
+            Terjadi masalah saat memuat Learning Power-Up.
+          </p>
+          <p className="text-xs text-gray-500 font-bold leading-normal">
+            Halaman gagal dimuat karena kesalahan yang tidak terduga atau data yang tidak valid. Silakan muat ulang halaman untuk mencoba kembali.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              (this as any).setState({ hasError: false });
+              window.location.reload();
+            }}
+            className="bg-rose-600 hover:bg-rose-700 text-white font-black px-6 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer"
+          >
+            Muat Ulang
+          </button>
+        </div>
+      );
+    }
+    return (this as any).props.children;
+  }
+}
+
 export default function LearningPowerUpTeacherPage() {
+  return (
+    <LearningPowerUpErrorBoundary>
+      <LearningPowerUpTeacherPageContent />
+    </LearningPowerUpErrorBoundary>
+  );
+}
+
+function LearningPowerUpTeacherPageContent() {
   const { currentUser } = useOutletContext<{ currentUser: AppUser }>();
   const { activeYear } = useAcademicYear();
 
@@ -2681,7 +2835,7 @@ export default function LearningPowerUpTeacherPage() {
                               </p>
                             )}
                             <p className="text-[9px] text-gray-400 font-bold uppercase mt-1">
-                              Oleh: {(batch as any).cancelledBy || '-'} • {((batch as any).cancelledAt?.toDate ? (batch as any).cancelledAt.toDate() : new Date()).toLocaleString('id-ID')}
+                              Oleh: {(batch as any).cancelledBy || '-'} • {formatLpuDateTime((batch as any).cancelledAt)}
                             </p>
                           </div>
                         )}
@@ -2927,7 +3081,7 @@ export default function LearningPowerUpTeacherPage() {
 
                         <div className="bg-white p-3 rounded-xl border border-slate-100 flex-1 space-y-1">
                           <div className="flex items-center justify-between text-[10px] font-semibold text-gray-400">
-                            <span>{h.timestamp}</span>
+                            <span>{formatLpuDateTime(h.timestamp)}</span>
                             <span className="font-bold text-gray-500">{h.actorName}</span>
                           </div>
                           <p className="font-bold text-gray-800 text-xs">
