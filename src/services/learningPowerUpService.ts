@@ -247,3 +247,35 @@ export function generateDeterministicAssignmentId(
   }
   return `assignment_${taskBatchId}_${studentId}_${subjectKey}`;
 }
+
+/**
+ * 5. Safe, timezone-resilient date-only formatter for Indonesian locale.
+ * Outputs format: e.g. "Kamis, 17 September 2026"
+ */
+export function formatLearningPowerUpDate(dateStr: string): string {
+  if (!dateStr) return '-';
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) {
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr;
+    return date.toLocaleDateString('id-ID', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    });
+  }
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1; // 0-indexed
+  const day = parseInt(parts[2], 10);
+
+  const localDate = new Date(year, month, day, 12, 0, 0);
+
+  return localDate.toLocaleDateString('id-ID', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  });
+}
+

@@ -365,6 +365,21 @@ export default function LearningPowerUpTeacherPage() {
     studentCount: number;
   } | null>(null);
 
+  // --- New-Style LPU Assignment and Cancellation States ---
+  const [loadedAssignments, setLoadedAssignments] = React.useState<LearningPowerUpAssignment[]>([]);
+  const [cancellingBatch, setCancellingBatch] = React.useState<LearningPowerUpTaskBatch | null>(null);
+  const [cancellationReason, setCancellationReason] = React.useState<'Salah kelas' | 'Salah periode' | 'Konten perlu diperbaiki' | 'Duplikat' | 'Lainnya' | ''>('');
+  const [cancellationNote, setCancellationNote] = React.useState('');
+  const [isCancelling, setIsCancelling] = React.useState(false);
+  const [cancellingBatchStats, setCancellingBatchStats] = React.useState<{
+    totalAssignments: number;
+    notStarted: number;
+    submitted: number;
+    verified: number;
+    revision: number;
+  } | null>(null);
+  const [showArchivedCancelled, setShowArchivedCancelled] = React.useState(false);
+
   // Load Classes on mount
   React.useEffect(() => {
     const loadClassesList = async () => {
@@ -501,20 +516,62 @@ export default function LearningPowerUpTeacherPage() {
 
       setStudents(enrichedStudents);
 
-      // 2. Load packages for this class & year
-      const qPackages = query(
+      // 2. Load level-based batches for this class & year
+      const qBatches = query(
+        collection(db, 'learning_power_up_task_batches'),
+        where('academicYearId', '==', activeYear),
+        where('targetClassIds', 'array-contains', selectedClassId)
+      );
+      const batchesSnap = await getDocs(qBatches);
+      const classLevelBatches = batchesSnap.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as LearningPowerUpTaskBatch[];
+
+      const filteredClassBatches = classLevelBatches.filter(b => 
+        b.status === 'PUBLISHED' || (showArchivedCancelled && (b.status === 'CANCELLED' || b.status === 'ARCHIVED'))
+      );
+
+      // Build virtual packages for level-based weeks
+      const uniqueWeekStarts = Array.from(new Set(filteredClassBatches.map(b => b.weekStartDate)));
+      const virtualPackages: LearningPowerUpPackage[] = uniqueWeekStarts.map(weekStart => {
+        const weekBatches = filteredClassBatches.filter(b => b.weekStartDate === weekStart);
+        return {
+          id: `level_week_${weekStart}`,
+          unit: 'JUNIOR_HIGH',
+          academicYearId: activeYear,
+          classId: selectedClassId,
+          weekStartDate: weekStart,
+          weekEndDate: weekBatches[0].weekEndDate,
+          weekLabel: weekBatches[0].weekLabel,
+          tasks: {
+            bahasaIndonesia: weekBatches.find(b => b.subjectKey === 'bahasaIndonesia') ? "Tugas Level-Based" : null,
+            english: weekBatches.find(b => b.subjectKey === 'english') ? "Tugas Level-Based" : null,
+            mengaji: weekBatches.find(b => b.subjectKey === 'mengaji') ? "Tugas Level-Based" : null,
+            numerasi: weekBatches.find(b => b.subjectKey === 'numerasi') ? "Tugas Level-Based" : null,
+          },
+          copiedFromWeekId: null,
+          createdBy: weekBatches[0].createdBy,
+          createdAt: weekBatches[0].createdAt,
+          updatedAt: weekBatches[0].updatedAt
+        };
+      });
+
+      // 2.5 Load legacy packages for this class & year
+      const qLegacyPackages = query(
         collection(db, 'learning_power_up_tasks'),
         where('classId', '==', selectedClassId),
         where('academicYearId', '==', activeYear),
         where('unit', '==', 'JUNIOR_HIGH')
       );
-      const packagesSnap = await getDocs(qPackages);
-      const loadedPackages = packagesSnap.docs.map(doc => ({
+      const legacyPackagesSnap = await getDocs(qLegacyPackages);
+      const legacyPackages = legacyPackagesSnap.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as LearningPowerUpPackage[];
 
-      // Sort by start date descending
+      // Sort combined packages by start date descending
+      const loadedPackages = [...virtualPackages, ...legacyPackages];
       loadedPackages.sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate));
       setPackages(loadedPackages);
 
@@ -524,18 +581,67 @@ export default function LearningPowerUpTeacherPage() {
         setSelectedWeek(loadedPackages[0].id);
       }
 
-      // 3. Load progress records for this class & year
-      const qProgress = query(
+      // 3. Load level-based assignments
+      const qAssignments = query(
+        collection(db, 'learning_power_up_assignments'),
+        where('academicYearId', '==', activeYear),
+        where('classId', '==', selectedClassId)
+      );
+      const assignmentsSnap = await getDocs(qAssignments);
+      const loadedAsgs = assignmentsSnap.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as LearningPowerUpAssignment[];
+      setLoadedAssignments(loadedAsgs);
+
+      // Map level-based assignments to virtual TaskProgress records
+      const virtualProgresses: TaskProgress[] = loadedAsgs.map(asg => {
+        let status: TaskProgress['status'] = 'NOT_STARTED';
+        if (asg.isCancelled) {
+          status = 'CANCELLED' as any;
+        } else if (asg.status === 'VERIFIED') {
+          status = 'VERIFIED';
+        } else if (asg.status === 'SUBMITTED') {
+          status = 'SUBMITTED';
+        } else if (asg.status === 'REVISION_REQUIRED') {
+          status = 'REVISION_REQUIRED';
+        } else {
+          status = 'NOT_STARTED';
+        }
+
+        return {
+          id: asg.id,
+          packageId: `level_week_${asg.weekStartDate}`,
+          taskPackageId: `level_week_${asg.weekStartDate}`,
+          studentId: asg.studentId,
+          classId: asg.classId,
+          academicYearId: asg.academicYearId,
+          field: asg.subjectKey,
+          subjectKey: asg.subjectKey,
+          status: status,
+          verifiedAt: asg.verifiedAt,
+          verifiedBy: asg.verifiedBy,
+          verifiedByEmail: asg.verifiedByEmail,
+          verifiedByName: asg.verifiedByName,
+          verificationMethod: asg.verificationMethod,
+          revisionNote: asg.history?.filter(h => h.action === 'REVISION_REQUEST' && h.note).slice(-1)[0]?.note || '',
+          history: asg.history || []
+        } as any;
+      });
+
+      // 3.5 Load legacy progress records for this class & year
+      const qLegacyProgress = query(
         collection(db, 'learning_power_up_progress'),
         where('classId', '==', selectedClassId),
         where('academicYearId', '==', activeYear)
       );
-      const progressSnap = await getDocs(qProgress);
-      const loadedProgresses = progressSnap.docs.map(doc => ({
+      const legacyProgressSnap = await getDocs(qLegacyProgress);
+      const legacyProgresses = legacyProgressSnap.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as TaskProgress[];
-      setProgresses(loadedProgresses);
+      
+      setProgresses([...virtualProgresses, ...legacyProgresses]);
 
       // Load new task batches as well
       await loadTaskBatches();
@@ -568,7 +674,7 @@ export default function LearningPowerUpTeacherPage() {
     if (selectedClassId && activeYear) {
       loadClassData();
     }
-  }, [selectedClassId, activeYear]);
+  }, [selectedClassId, activeYear, showArchivedCancelled]);
 
   // Load roster and levels dynamically for new batch setup
   React.useEffect(() => {
@@ -1197,6 +1303,100 @@ export default function LearningPowerUpTeacherPage() {
     }
   };
 
+  const handleCancelBatchClick = async (batch: LearningPowerUpTaskBatch) => {
+    setLoadingData(true);
+    try {
+      const q = query(
+        collection(db, 'learning_power_up_assignments'),
+        where('taskBatchId', '==', batch.id)
+      );
+      const snap = await getDocs(q);
+      const asgs = snap.docs.map(doc => doc.data() as LearningPowerUpAssignment);
+      
+      const totalAssignments = asgs.length;
+      const notStarted = asgs.filter(a => !a.status || a.status === 'ASSIGNED').length;
+      const submitted = asgs.filter(a => (a.status as string) === 'SUBMITTED' || (a.status as string) === 'PENDING_VERIFICATION').length;
+      const verified = asgs.filter(a => (a.status as string) === 'VERIFIED' || (a.status as string) === 'COMPLETED').length;
+      const revision = asgs.filter(a => (a.status as string) === 'REVISION_REQUIRED' || (a.status as string) === 'RETURNED').length;
+
+      setCancellingBatchStats({
+        totalAssignments,
+        notStarted,
+        submitted,
+        verified,
+        revision
+      });
+      setCancellingBatch(batch);
+      setCancellationReason('');
+      setCancellationNote('');
+    } catch (err) {
+      console.error("Error loading stats for cancellation:", err);
+      toast.error("Gagal memuat statistik tugas.");
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  const handleCancelBatchSubmit = async () => {
+    if (!cancellingBatch || !cancellationReason) {
+      toast.error("Silakan pilih alasan pembatalan.");
+      return;
+    }
+
+    setIsCancelling(true);
+    try {
+      const batchRef = doc(db, 'learning_power_up_task_batches', cancellingBatch.id);
+      
+      await setDoc(batchRef, {
+        status: 'CANCELLED',
+        cancellationReason: cancellationReason,
+        cancellationNote: cancellationNote.trim(),
+        cancelledAt: serverTimestamp(),
+        cancelledBy: currentUser.displayName || currentUser.email || 'Guru',
+        cancelledByUid: currentUser.uid
+      }, { merge: true });
+
+      const q = query(
+        collection(db, 'learning_power_up_assignments'),
+        where('taskBatchId', '==', cancellingBatch.id)
+      );
+      const snap = await getDocs(q);
+      
+      if (!snap.empty) {
+        const batchWrite = writeBatch(db);
+        snap.docs.forEach(docSnap => {
+          const asg = docSnap.data() as LearningPowerUpAssignment;
+          const newHistoryEntry: LpuAssignmentHistoryEntry = {
+            action: 'CANCEL' as any,
+            performedByUid: currentUser.uid,
+            performedByName: currentUser.displayName || currentUser.email || 'Guru',
+            performedByRole: currentUser.role,
+            timestamp: new Date(),
+            note: `Tugas dibatalkan oleh guru. Alasan: ${cancellationReason}. Catatan: ${cancellationNote.trim()}`
+          };
+
+          batchWrite.set(docSnap.ref, {
+            isCancelled: true,
+            status: 'CANCELLED',
+            history: [...(asg.history || []), newHistoryEntry],
+            updatedAt: serverTimestamp()
+          }, { merge: true });
+        });
+        await batchWrite.commit();
+      }
+
+      toast.success("Tugas berhasil dibatalkan.");
+      setCancellingBatch(null);
+      setCancellingBatchStats(null);
+      await loadClassData();
+    } catch (err) {
+      console.error("Error cancelling batch:", err);
+      toast.error("Gagal membatalkan tugas.");
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
   const resetNewBatchForm = () => {
     setNewSubject('');
     setNewTargetClassIds([]);
@@ -1273,6 +1473,50 @@ export default function LearningPowerUpTeacherPage() {
 
     setIsSavingVerification(true);
     try {
+      if (activePackage.id.startsWith('level_week_')) {
+        const targetBatch = taskBatches.find(b => 
+          b.weekStartDate === activePackage.weekStartDate && 
+          b.subjectKey === field &&
+          b.targetClassIds.includes(selectedClassId)
+        );
+        if (!targetBatch) {
+          toast.error("Gagal menemukan batch tugas level-based.");
+          return;
+        }
+
+        const assignmentId = generateDeterministicAssignmentId(targetBatch.id, student.id, field);
+        const existingAsg = loadedAssignments.find(a => a.id === assignmentId);
+        
+        const newHistoryEntry: LpuAssignmentHistoryEntry = {
+          action: isApproved ? 'VERIFY' : 'REVISION_REQUEST',
+          performedByUid: currentUser.uid,
+          performedByName: currentUser.displayName || currentUser.email || 'Guru',
+          performedByRole: currentUser.role,
+          timestamp: new Date(),
+          note: isApproved ? "Guru memverifikasi tugas selesai." : `Guru meminta revisi: "${verificationNote}"`
+        };
+
+        const updatedHistory = existingAsg ? [...(existingAsg.history || []), newHistoryEntry] : [newHistoryEntry];
+
+        const assignmentUpdate = {
+          status: isApproved ? 'VERIFIED' : 'REVISION_REQUIRED',
+          verifiedAt: isApproved ? serverTimestamp() : null,
+          verifiedBy: isApproved ? (currentUser.displayName || currentUser.email || "Guru") : null,
+          verifiedByName: isApproved ? (currentUser.displayName || currentUser.email || "Guru") : null,
+          verifiedByEmail: isApproved ? (currentUser.email || null) : null,
+          verificationMethod: isApproved ? ("INDIVIDUAL" as const) : null,
+          revisionNote: isApproved ? null : verificationNote,
+          history: updatedHistory,
+          updatedAt: serverTimestamp()
+        };
+
+        await setDoc(doc(db, 'learning_power_up_assignments', assignmentId), assignmentUpdate, { merge: true });
+        toast.success(isApproved ? "Tugas berhasil diverifikasi selesai!" : "Revisi berhasil diajukan ke siswa.");
+        setVerifyingProgress(null);
+        await loadClassData();
+        return;
+      }
+
       const progressId = progress?.id || `progress_${activePackage.id}_${student.id}_${field}`;
       const currentHistory = progress?.history || [];
       const nowStr = new Date().toLocaleString('id-ID', { hour12: false });
@@ -1351,6 +1595,56 @@ export default function LearningPowerUpTeacherPage() {
 
     setLoadingData(true);
     try {
+      if (activePackage.id.startsWith('level_week_')) {
+        const targetBatch = taskBatches.find(b => 
+          b.weekStartDate === activePackage.weekStartDate && 
+          b.subjectKey === field &&
+          b.targetClassIds.includes(selectedClassId)
+        );
+        if (!targetBatch) {
+          toast.error("Gagal menemukan batch tugas level-based.");
+          setBulkConfirm(null);
+          setLoadingData(false);
+          return;
+        }
+
+        const batch = writeBatch(db);
+        for (const student of students) {
+          const assignmentId = generateDeterministicAssignmentId(targetBatch.id, student.id, field);
+          const existingAsg = loadedAssignments.find(a => a.id === assignmentId);
+          if (!existingAsg) continue;
+
+          const newHistoryEntry: LpuAssignmentHistoryEntry = {
+            action: 'VERIFY',
+            performedByUid: currentUser.uid,
+            performedByName: currentUser.displayName || currentUser.email || 'Guru',
+            performedByRole: currentUser.role,
+            timestamp: new Date(),
+            note: "Verifikasi massal oleh guru."
+          };
+
+          const updatedHistory = [...(existingAsg.history || []), newHistoryEntry];
+          const assignmentUpdate = {
+            status: 'VERIFIED',
+            verifiedAt: serverTimestamp(),
+            verifiedBy: currentUser.displayName || currentUser.email || "Guru",
+            verifiedByName: currentUser.displayName || currentUser.email || "Guru",
+            verifiedByEmail: currentUser.email || null,
+            verificationMethod: "BULK" as const,
+            history: updatedHistory,
+            updatedAt: serverTimestamp()
+          };
+
+          batch.set(doc(db, 'learning_power_up_assignments', assignmentId), assignmentUpdate, { merge: true });
+        }
+
+        await batch.commit();
+        toast.success(`Berhasil melakukan verifikasi massal untuk seluruh siswa kelas pada bidang ${CATEGORY_CONFIG[field].label}!`);
+        setBulkConfirm(null);
+        await loadClassData();
+        return;
+      }
+
       const batch = writeBatch(db);
       const nowStr = new Date().toLocaleString('id-ID', { hour12: false });
 
@@ -1420,6 +1714,51 @@ export default function LearningPowerUpTeacherPage() {
 
     setLoadingData(true);
     try {
+      if (activePackage.id.startsWith('level_week_')) {
+        const targetBatch = taskBatches.find(b => 
+          b.weekStartDate === activePackage.weekStartDate && 
+          b.subjectKey === field &&
+          b.targetClassIds.includes(selectedClassId)
+        );
+        if (!targetBatch) {
+          toast.error("Gagal menemukan batch tugas level-based.");
+          setUnverifyingProgress(null);
+          setLoadingData(false);
+          return;
+        }
+
+        const assignmentId = generateDeterministicAssignmentId(targetBatch.id, student.id, field);
+        const existingAsg = loadedAssignments.find(a => a.id === assignmentId);
+
+        const newHistoryEntry: LpuAssignmentHistoryEntry = {
+          action: 'ASSIGN',
+          performedByUid: currentUser.uid,
+          performedByName: currentUser.displayName || currentUser.email || 'Guru',
+          performedByRole: currentUser.role,
+          timestamp: new Date(),
+          note: "Pembatalan verifikasi tugas manual."
+        };
+
+        const updatedHistory = existingAsg ? [...(existingAsg.history || []), newHistoryEntry] : [newHistoryEntry];
+
+        const assignmentUpdate = {
+          status: 'ASSIGNED',
+          verifiedAt: null,
+          verifiedBy: null,
+          verifiedByName: null,
+          verifiedByEmail: null,
+          verificationMethod: null,
+          history: updatedHistory,
+          updatedAt: serverTimestamp()
+        };
+
+        await setDoc(doc(db, 'learning_power_up_assignments', assignmentId), assignmentUpdate, { merge: true });
+        toast.success(`Berhasil membatalkan verifikasi tugas ${CATEGORY_CONFIG[field].label} untuk ${student.name}!`);
+        setUnverifyingProgress(null);
+        await loadClassData();
+        return;
+      }
+
       const progressId = progress.id;
       const currentHistory = progress.history || [];
       const nowStr = new Date().toLocaleString('id-ID', { hour12: false });
@@ -1493,6 +1832,56 @@ export default function LearningPowerUpTeacherPage() {
 
     setLoadingData(true);
     try {
+      if (activePackage.id.startsWith('level_week_')) {
+        const targetBatch = taskBatches.find(b => 
+          b.weekStartDate === activePackage.weekStartDate && 
+          b.subjectKey === field &&
+          b.targetClassIds.includes(selectedClassId)
+        );
+        if (!targetBatch) {
+          toast.error("Gagal menemukan batch tugas level-based.");
+          setBulkUnverifyConfirm(null);
+          setLoadingData(false);
+          return;
+        }
+
+        const batch = writeBatch(db);
+        for (const student of students) {
+          const assignmentId = generateDeterministicAssignmentId(targetBatch.id, student.id, field);
+          const existingAsg = loadedAssignments.find(a => a.id === assignmentId);
+          if (!existingAsg) continue;
+
+          const newHistoryEntry: LpuAssignmentHistoryEntry = {
+            action: 'ASSIGN',
+            performedByUid: currentUser.uid,
+            performedByName: currentUser.displayName || currentUser.email || 'Guru',
+            performedByRole: currentUser.role,
+            timestamp: new Date(),
+            note: "Pembatalan verifikasi massal oleh guru."
+          };
+
+          const updatedHistory = [...(existingAsg.history || []), newHistoryEntry];
+          const assignmentUpdate = {
+            status: 'ASSIGNED',
+            verifiedAt: null,
+            verifiedBy: null,
+            verifiedByName: null,
+            verifiedByEmail: null,
+            verificationMethod: null,
+            history: updatedHistory,
+            updatedAt: serverTimestamp()
+          };
+
+          batch.set(doc(db, 'learning_power_up_assignments', assignmentId), assignmentUpdate, { merge: true });
+        }
+
+        await batch.commit();
+        toast.success(`Berhasil membatalkan verifikasi massal untuk seluruh siswa kelas pada bidang ${CATEGORY_CONFIG[field].label}!`);
+        setBulkUnverifyConfirm(null);
+        await loadClassData();
+        return;
+      }
+
       const batch = writeBatch(db);
       const nowStr = new Date().toLocaleString('id-ID', { hour12: false });
 
@@ -1643,7 +2032,7 @@ export default function LearningPowerUpTeacherPage() {
         <div className="space-y-6">
           {/* Tracker Filters Control Bar */}
           <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-100">
-            <div className="flex flex-wrap items-center gap-4">
+            <div className="flex flex-wrap items-center gap-6">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-gray-500 uppercase tracking-widest">Periode:</span>
                 {packages.length > 0 ? (
@@ -1657,9 +2046,23 @@ export default function LearningPowerUpTeacherPage() {
                     ))}
                   </select>
                 ) : (
-                  <span className="text-xs font-bold text-gray-400 italic">Belum ada tugas dibuat</span>
+                  <span className="text-xs font-bold text-gray-400 italic">
+                    Belum ada tugas aktif untuk kelas {classes.find(c => c.id === selectedClassId)?.name || 'terpilih'} pada periode ini.
+                  </span>
                 )}
               </div>
+
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showArchivedCancelled}
+                  onChange={(e) => setShowArchivedCancelled(e.target.checked)}
+                  className="rounded border-slate-200 text-[#109E58] focus:ring-[#109E58]"
+                />
+                <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">
+                  Tampilkan Riwayat (Arsip & Batal)
+                </span>
+              </label>
             </div>
 
             {/* Student Search */}
@@ -1751,38 +2154,62 @@ export default function LearningPowerUpTeacherPage() {
                               verifiedInWeekCount++;
                             }
 
+                            // If selected week is level-based, look up the assignment levelSnapshot
+                            const isLevelBased = selectedWeek.startsWith('level_week_');
+                            const asg = isLevelBased ? loadedAssignments.find(a => 
+                              a.studentId === student.id && 
+                              `level_week_${a.weekStartDate}` === selectedWeek && 
+                              a.subjectKey === field
+                            ) : null;
+                            const levelSnapshot = asg ? asg.levelSnapshot : null;
+
                             return (
                               <td 
                                 key={field} 
                                 className="py-4 px-6 text-center align-middle relative group"
                               >
-                                <button
-                                  onClick={() => handleCellClick(student, field)}
-                                  className="inline-flex items-center justify-center p-1 rounded-xl transition-all hover:bg-slate-100 focus:outline-none"
-                                >
-                                  {status === 'VERIFIED' && (
-                                    <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center border border-emerald-200">
-                                      <Check size={18} strokeWidth={3} />
-                                    </div>
+                                <div className="flex flex-col items-center gap-1.5 justify-center">
+                                  {levelSnapshot && (
+                                    <span className="text-[9px] font-extrabold text-violet-700 bg-violet-50 border border-violet-100 px-1.5 py-0.5 rounded-md uppercase tracking-wider block">
+                                      {levelSnapshot}
+                                    </span>
                                   )}
-                                  {status === 'SUBMITTED' && (
-                                    <div className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1 text-[10px] font-black uppercase animate-pulse">
-                                      <Clock size={12} className="text-amber-500" />
-                                      Butuh Verifikasi
-                                    </div>
-                                  )}
-                                  {status === 'REVISION_REQUIRED' && (
-                                    <div className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1 text-[10px] font-black uppercase">
-                                      <AlertTriangle size={12} className="text-rose-500" />
-                                      Revisi
-                                    </div>
-                                  )}
-                                  {status === 'NOT_STARTED' && (
-                                    <div className="w-8 h-8 rounded-lg border border-slate-200/60 bg-slate-50 flex items-center justify-center text-slate-300 hover:border-slate-400 transition-all">
-                                      <div className="w-4 h-4 rounded-sm border border-slate-200" />
-                                    </div>
-                                  )}
-                                </button>
+                                  
+                                  <button
+                                    onClick={() => handleCellClick(student, field)}
+                                    className="inline-flex items-center justify-center p-1 rounded-xl transition-all hover:bg-slate-100 focus:outline-none"
+                                    disabled={status === 'CANCELLED' as any}
+                                  >
+                                    {status === 'VERIFIED' && (
+                                      <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center border border-emerald-200">
+                                        <Check size={18} strokeWidth={3} />
+                                      </div>
+                                    )}
+                                    {status === 'SUBMITTED' && (
+                                      <div className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1 text-[10px] font-black uppercase animate-pulse">
+                                        <Clock size={12} className="text-amber-500" />
+                                        Butuh Verifikasi
+                                      </div>
+                                    )}
+                                    {status === 'REVISION_REQUIRED' && (
+                                      <div className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1 text-[10px] font-black uppercase">
+                                        <AlertTriangle size={12} className="text-rose-500" />
+                                        Revisi
+                                      </div>
+                                    )}
+                                    {status === ('CANCELLED' as any) && (
+                                      <div className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-500 border border-slate-200 flex items-center gap-1 text-[10px] font-black uppercase" title="Tugas Dibatalkan">
+                                        <AlertCircle size={12} className="text-slate-400" />
+                                        Batal
+                                      </div>
+                                    )}
+                                    {status === 'NOT_STARTED' && (
+                                      <div className="w-8 h-8 rounded-lg border border-slate-200/60 bg-slate-50 flex items-center justify-center text-slate-300 hover:border-slate-400 transition-all">
+                                        <div className="w-4 h-4 rounded-sm border border-slate-200" />
+                                      </div>
+                                    )}
+                                  </button>
+                                </div>
 
                                 {status === 'VERIFIED' && (
                                   <div className="pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-slate-900 text-white text-[11px] p-2.5 rounded-xl shadow-lg z-30 w-48 text-center font-bold leading-normal">
@@ -2178,9 +2605,13 @@ export default function LearningPowerUpTeacherPage() {
                             "text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider border",
                             batch.status === 'PUBLISHED'
                               ? "text-[#109E58] bg-[#109E58]/10 border-[#109E58]/20"
+                              : batch.status === 'CANCELLED'
+                              ? "text-rose-700 bg-rose-50 border-rose-200"
+                              : batch.status === 'ARCHIVED'
+                              ? "text-slate-500 bg-slate-50 border-slate-200"
                               : "text-amber-700 bg-amber-50 border-amber-200"
                           )}>
-                            {batch.status === 'PUBLISHED' ? 'Terbit (Published)' : 'Draft'}
+                            {batch.status === 'PUBLISHED' ? 'Terbit (Published)' : batch.status === 'CANCELLED' ? 'Dibatalkan' : batch.status === 'ARCHIVED' ? 'Arsip' : 'Draft'}
                           </span>
                           
                           <div className="flex gap-1">
@@ -2201,6 +2632,15 @@ export default function LearningPowerUpTeacherPage() {
                                   <Trash2 size={16} />
                                 </button>
                               </>
+                            )}
+                            {batch.status === 'PUBLISHED' && (
+                              <button
+                                onClick={() => handleCancelBatchClick(batch)}
+                                className="px-2.5 py-1 text-[10px] font-black text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-all"
+                                title="Batalkan Tugas Ini"
+                              >
+                                Batalkan Tugas
+                              </button>
                             )}
                           </div>
                         </div>
@@ -2228,6 +2668,23 @@ export default function LearningPowerUpTeacherPage() {
                             ))}
                           </div>
                         </div>
+
+                        {batch.status === 'CANCELLED' && (
+                          <div className="pt-2.5 border-t border-rose-100 bg-rose-50/40 p-3 rounded-2xl space-y-1">
+                            <span className="text-[10px] font-black text-rose-700 uppercase tracking-wider block">Detail Pembatalan:</span>
+                            <p className="text-xs text-rose-900 font-bold">
+                              Alasan: <span className="text-rose-700 font-semibold">{(batch as any).cancellationReason || '-'}</span>
+                            </p>
+                            {(batch as any).cancellationNote && (
+                              <p className="text-[11px] text-rose-800 italic bg-white/60 p-1.5 rounded-lg border border-rose-100/40">
+                                "{(batch as any).cancellationNote}"
+                              </p>
+                            )}
+                            <p className="text-[9px] text-gray-400 font-bold uppercase mt-1">
+                              Oleh: {(batch as any).cancelledBy || '-'} • {((batch as any).cancelledAt?.toDate ? (batch as any).cancelledAt.toDate() : new Date()).toLocaleString('id-ID')}
+                            </p>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -2814,6 +3271,130 @@ export default function LearningPowerUpTeacherPage() {
                   className="py-3 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5"
                 >
                   Ya, Batalkan Semua
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* TASK BATCH CANCELLATION DIALOG MODAL */}
+      <AnimatePresence>
+        {cancellingBatch && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50" id="task-cancellation-overlay">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[2rem] shadow-2xl max-w-lg w-full p-8 space-y-6 relative border border-slate-100"
+              id="task-cancellation-body"
+            >
+              <button 
+                onClick={() => { setCancellingBatch(null); setCancellingBatchStats(null); }}
+                className="absolute top-6 right-6 p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-700 transition-all z-10"
+              >
+                <X size={16} />
+              </button>
+
+              <div className="space-y-2">
+                <span className="px-3 py-1 bg-rose-50 text-rose-700 text-[9px] font-black uppercase tracking-widest rounded-full border border-rose-200 inline-block">
+                  Batalkan Penugasan Level-Based LPU
+                </span>
+                <h3 className="text-xl font-black text-gray-900 tracking-tight leading-snug">
+                  Batalkan Tugas {CATEGORY_CONFIG[cancellingBatch.subjectKey]?.label || cancellingBatch.subjectKey}?
+                </h3>
+                <p className="text-xs text-gray-500 font-semibold leading-relaxed">
+                  Periode: {cancellingBatch.weekLabel}
+                </p>
+              </div>
+
+              {/* Preflight Statistics */}
+              {cancellingBatchStats && (
+                <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl space-y-2.5">
+                  <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider">Statistik Distribusi Tugas Saat Ini:</h4>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="bg-white p-2.5 rounded-xl border border-slate-100 text-center">
+                      <p className="text-[10px] text-gray-400 font-bold uppercase">Total Tugas</p>
+                      <p className="text-lg font-black text-slate-800">{cancellingBatchStats.totalAssignments}</p>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-xl border border-slate-100 text-center">
+                      <p className="text-[10px] text-gray-400 font-bold uppercase">Belum Mulai</p>
+                      <p className="text-lg font-black text-slate-500">{cancellingBatchStats.notStarted}</p>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-xl border border-slate-100 text-center text-amber-600">
+                      <p className="text-[10px] text-gray-400 font-bold uppercase">Submisi/Pending</p>
+                      <p className="text-lg font-black">{cancellingBatchStats.submitted}</p>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-xl border border-slate-100 text-center text-emerald-600">
+                      <p className="text-[10px] text-gray-400 font-bold uppercase">Diverifikasi</p>
+                      <p className="text-lg font-black">{cancellingBatchStats.verified}</p>
+                    </div>
+                  </div>
+                  {cancellingBatchStats.verified > 0 && (
+                    <div className="p-2.5 bg-amber-50 text-amber-800 rounded-xl border border-amber-200/50 flex gap-2 items-start text-xs font-semibold leading-normal">
+                      <AlertTriangle size={16} className="text-amber-500 shrink-0 mt-0.5" />
+                      <p>
+                        Perhatian: Sebanyak <strong className="font-bold text-rose-700">{cancellingBatchStats.verified} siswa</strong> telah menyelesaikan dan diverifikasi untuk tugas ini. Membatalkan tugas akan membatalkan seluruh status penugasan tersebut secara aman (data riwayat tidak akan dihapus).
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Form Input */}
+              <div className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-black text-gray-700 uppercase tracking-wider block">Alasan Pembatalan <span className="text-rose-500">*</span></label>
+                  <select
+                    value={cancellationReason}
+                    onChange={(e: any) => setCancellationReason(e.target.value)}
+                    className="w-full bg-white border border-slate-200 text-xs font-semibold rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
+                  >
+                    <option value="">-- Pilih Alasan --</option>
+                    <option value="Salah kelas">Salah kelas target</option>
+                    <option value="Salah periode">Salah periode / pekan</option>
+                    <option value="Konten perlu diperbaiki">Konten tugas perlu direvisi / diperbaiki</option>
+                    <option value="Duplikat">Penugasan ganda / duplikat</option>
+                    <option value="Lainnya">Lainnya</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-black text-gray-700 uppercase tracking-wider block">Catatan Tambahan (Siswa dapat melihat catatan ini)</label>
+                  <textarea
+                    value={cancellationNote}
+                    onChange={(e) => setCancellationNote(e.target.value)}
+                    placeholder="Berikan keterangan detail mengapa tugas ini dibatalkan agar siswa mengerti..."
+                    rows={3}
+                    className="w-full bg-slate-50 border border-slate-200 text-xs font-semibold rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
+                  />
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => { setCancellingBatch(null); setCancellingBatchStats(null); }}
+                  className="py-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 font-black text-xs uppercase tracking-widest rounded-xl transition-all"
+                  disabled={isCancelling}
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancelBatchSubmit}
+                  disabled={isCancelling || !cancellationReason}
+                  className="py-3 bg-rose-600 hover:bg-rose-700 disabled:bg-slate-100 disabled:border-slate-200 disabled:text-slate-400 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5"
+                >
+                  {isCancelling ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin animate-spin-slow" />
+                      Membatalkan...
+                    </>
+                  ) : (
+                    "Ya, Batalkan Tugas"
+                  )}
                 </button>
               </div>
             </motion.div>

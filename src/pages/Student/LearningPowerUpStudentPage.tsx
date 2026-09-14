@@ -24,6 +24,7 @@ import {
 } from 'firebase/firestore';
 import { db, handleFirestoreError } from '../../lib/firebase';
 import { toast } from 'sonner';
+import { formatLearningPowerUpDate } from '../../services/learningPowerUpService';
 
 interface LearningPowerUpPackage {
   id: string; // learning_power_up_{classId}_{weekStartDate}
@@ -387,7 +388,15 @@ export default function LearningPowerUpStudentPage() {
   };
 
   // Status badges UI mapper
-  const getStatusBadge = (status: TaskProgress['status'] | undefined, endDate: string) => {
+  const getStatusBadge = (status: TaskProgress['status'] | undefined, endDate: string, isCancelled?: boolean) => {
+    if (isCancelled) {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-300">
+          <AlertCircle size={14} className="text-slate-500" />
+          Tugas Dibatalkan Guru
+        </span>
+      );
+    }
     const overdue = isOverdue(endDate) && status !== 'VERIFIED';
     switch (status) {
       case 'VERIFIED':
@@ -753,13 +762,13 @@ export default function LearningPowerUpStudentPage() {
                       </span>
                       <span className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
                         <Calendar size={14} className="text-gray-400" />
-                        Minggu, {weekEndDate ? new Date(weekEndDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : '-'}
+                        {weekEndDate ? formatLearningPowerUpDate(weekEndDate) : '-'}
                       </span>
                     </div>
 
                     {/* Status Badge */}
                     <div className="pt-1">
-                      {getStatusBadge(status, weekEndDate)}
+                      {getStatusBadge(status, weekEndDate, asg?.isCancelled)}
                     </div>
 
                     {/* Action Button */}
@@ -887,7 +896,7 @@ export default function LearningPowerUpStudentPage() {
                       <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100">
                         <span className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Batas Waktu</span>
                         <span className="text-xs font-bold text-red-600 block">
-                          Minggu, {weekEndDate ? new Date(weekEndDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : '-'}
+                          {weekEndDate ? formatLearningPowerUpDate(weekEndDate) : '-'}
                         </span>
                       </div>
                     </div>
@@ -897,87 +906,104 @@ export default function LearningPowerUpStudentPage() {
                       <div className="space-y-1">
                         <span className="text-xs font-black text-gray-400 uppercase tracking-wider block">Status Saat Ini</span>
                         <div>
-                          {getStatusBadge(status, weekEndDate)}
+                          {getStatusBadge(status, weekEndDate, asg?.isCancelled)}
                         </div>
                       </div>
 
                       {/* Actions based on status */}
                       <div className="pt-2">
-                        {/* NOT STARTED / DEFAULT / ASSIGNED */}
-                        {(status === 'NOT_STARTED') && (
-                          <button
-                            onClick={() => {
-                              if (isDiff && asg) {
-                                handleAssignmentSubmit(asg.id, false);
-                              } else {
-                                handleTaskSubmit(activeTaskDetail.field, false);
-                              }
-                            }}
-                            disabled={isSubmittingAction}
-                            className="w-full py-4 bg-[#109E58] hover:bg-[#0d854a] disabled:bg-[#109E58]/50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
-                          >
-                            {isSubmittingAction ? (
-                              <>
-                                <Loader2 size={16} className="animate-spin" />
-                                Memproses...
-                              </>
-                            ) : (
-                              <>
-                                <CheckSquare size={16} />
-                                Saya Sudah Selesai
-                              </>
+                        {isDiff && asg?.isCancelled ? (
+                          <div className="bg-slate-100 border border-slate-300 rounded-2xl p-4 text-center space-y-2">
+                            <p className="text-sm font-bold text-slate-800 flex items-center justify-center gap-1.5">
+                              <AlertCircle size={16} className="text-slate-500" />
+                              Tugas ini telah dibatalkan oleh guru.
+                            </p>
+                            {asg.cancellationReason && (
+                              <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                                Alasan: <span className="font-bold">{asg.cancellationReason}</span>
+                                {asg.cancellationNote && ` (${asg.cancellationNote})`}
+                              </p>
                             )}
-                          </button>
-                        )}
-
-                        {/* SUBMITTED */}
-                        {status === 'SUBMITTED' && (
-                          <div className="bg-amber-50/50 border border-amber-200 rounded-2xl p-4 text-center">
-                            <p className="text-sm font-bold text-amber-900">Menunggu Verifikasi Coach</p>
-                            <p className="text-xs text-amber-700 font-medium mt-1 leading-relaxed">
-                              Tugasmu sudah dikirim dan sedang diperiksa guru. Tidak ada tindakan lanjutan yang perlu kamu lakukan sekarang.
-                            </p>
                           </div>
-                        )}
-
-                        {/* REVISION_REQUIRED */}
-                        {status === 'REVISION_REQUIRED' && (
-                          <button
-                            onClick={() => {
-                              if (isDiff && asg) {
-                                handleAssignmentSubmit(asg.id, true);
-                              } else {
-                                handleTaskSubmit(activeTaskDetail.field, true);
-                              }
-                            }}
-                            disabled={isSubmittingAction}
-                            className="w-full py-4 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-500/50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-2 animate-pulse"
-                          >
-                            {isSubmittingAction ? (
-                              <>
-                                <Loader2 size={16} className="animate-spin" />
-                                Mengirim Ulang...
-                              </>
-                            ) : (
-                              <>
-                                <CornerDownLeft size={16} />
-                                Kirim Ulang Setelah Revisi
-                              </>
+                        ) : (
+                          <>
+                            {/* NOT STARTED / DEFAULT / ASSIGNED */}
+                            {(status === 'NOT_STARTED') && (
+                              <button
+                                onClick={() => {
+                                  if (isDiff && asg) {
+                                    handleAssignmentSubmit(asg.id, false);
+                                  } else {
+                                    handleTaskSubmit(activeTaskDetail.field, false);
+                                  }
+                                }}
+                                disabled={isSubmittingAction}
+                                className="w-full py-4 bg-[#109E58] hover:bg-[#0d854a] disabled:bg-[#109E58]/50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
+                              >
+                                {isSubmittingAction ? (
+                                  <>
+                                    <Loader2 size={16} className="animate-spin" />
+                                    Memproses...
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckSquare size={16} />
+                                    Saya Sudah Selesai
+                                  </>
+                                )}
+                              </button>
                             )}
-                          </button>
-                        )}
 
-                        {/* VERIFIED */}
-                        {status === 'VERIFIED' && (
-                          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center">
-                            <p className="text-sm font-bold text-emerald-900 flex items-center justify-center gap-1.5">
-                              <CheckCircle2 size={16} className="text-emerald-500" />
-                              Telah Diverifikasi Guru
-                            </p>
-                            <p className="text-xs text-emerald-700 font-medium mt-1 leading-relaxed">
-                              Luar biasa! Tugas ini telah disetujui dan ditandai selesai oleh guru. Selamat atas kerja kerasmu pekan ini!
-                            </p>
-                          </div>
+                            {/* SUBMITTED */}
+                            {status === 'SUBMITTED' && (
+                              <div className="bg-amber-50/50 border border-amber-200 rounded-2xl p-4 text-center">
+                                <p className="text-sm font-bold text-amber-900">Menunggu Verifikasi Coach</p>
+                                <p className="text-xs text-amber-700 font-medium mt-1 leading-relaxed">
+                                  Tugasmu sudah dikirim dan sedang diperiksa guru. Tidak ada tindakan lanjutan yang perlu kamu lakukan sekarang.
+                                </p>
+                              </div>
+                            )}
+
+                            {/* REVISION_REQUIRED */}
+                            {status === 'REVISION_REQUIRED' && (
+                              <button
+                                onClick={() => {
+                                  if (isDiff && asg) {
+                                    handleAssignmentSubmit(asg.id, true);
+                                  } else {
+                                    handleTaskSubmit(activeTaskDetail.field, true);
+                                  }
+                                }}
+                                disabled={isSubmittingAction}
+                                className="w-full py-4 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-500/50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-2 animate-pulse"
+                              >
+                                {isSubmittingAction ? (
+                                  <>
+                                    <Loader2 size={16} className="animate-spin" />
+                                    Mengirim Ulang...
+                                  </>
+                                ) : (
+                                  <>
+                                    <CornerDownLeft size={16} />
+                                    Kirim Ulang Setelah Revisi
+                                  </>
+                                )}
+                              </button>
+                            )}
+
+                            {/* VERIFIED */}
+                            {status === 'VERIFIED' && (
+                              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center">
+                                <p className="text-sm font-bold text-emerald-900 flex items-center justify-center gap-1.5">
+                                  <CheckCircle2 size={16} className="text-emerald-500" />
+                                  Telah Diverifikasi Guru
+                                </p>
+                                <p className="text-xs text-emerald-700 font-medium mt-1 leading-relaxed">
+                                  Luar biasa! Tugas ini telah disetujui dan ditandai selesai oleh guru. Selamat atas kerja kerasmu pekan ini!
+                                </p>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>

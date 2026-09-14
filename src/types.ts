@@ -2393,7 +2393,7 @@ export interface LearningPowerUpTaskBatch {
   levelTasks: {
     [levelKey: string]: LpuLevelTask;
   };
-  status: 'DRAFT' | 'PUBLISHED' | 'CLOSED' | 'CANCELLED';
+  status: 'DRAFT' | 'PUBLISHED' | 'CLOSED' | 'CANCELLED' | 'ARCHIVED';
   createdBy: string;
   createdByEmail: string;
   createdByName: string;
@@ -2409,7 +2409,7 @@ export interface LearningPowerUpTaskBatch {
 }
 
 export interface LpuAssignmentHistoryEntry {
-  action: 'ASSIGN' | 'SUBMIT' | 'REVISION_REQUEST' | 'VERIFY';
+  action: 'ASSIGN' | 'SUBMIT' | 'REVISION_REQUEST' | 'VERIFY' | 'CANCEL' | 'UNVERIFY';
   performedByUid: string;
   performedByName: string;
   performedByRole: string;
@@ -2434,12 +2434,21 @@ export interface LearningPowerUpAssignment {
   weekStartDate: string; // YYYY-MM-DD
   weekEndDate: string; // YYYY-MM-DD
   weekLabel: string;
-  status: 'ASSIGNED' | 'SUBMITTED' | 'REVISION_REQUIRED' | 'VERIFIED';
+  status: 'ASSIGNED' | 'SUBMITTED' | 'REVISION_REQUIRED' | 'VERIFIED' | 'CANCELLED';
+  isCancelled?: boolean;
   submittedAt?: any; // Firestore Timestamp
   verifiedAt?: any; // Firestore Timestamp
   verifiedBy?: string; // Teacher name
   verifiedByUid?: string;
+  verifiedByEmail?: string;
+  verifiedByName?: string;
+  verificationMethod?: 'INDIVIDUAL' | 'BULK' | null;
   revisionNote?: string;
+  cancellationReason?: string;
+  cancellationNote?: string;
+  cancelledAt?: any;
+  cancelledBy?: string;
+  cancelledByUid?: string;
   history: LpuAssignmentHistoryEntry[];
   updatedAt: any; // Firestore Timestamp
 }
