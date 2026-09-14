@@ -15,7 +15,8 @@ import { useAcademicYear } from '../../context/AcademicYearContext';
 import { 
   db, 
   getClasses, 
-  getActiveStudents 
+  getActiveStudents,
+  handleFirestoreError
 } from '../../lib/firebase';
 import { 
   collection, 
@@ -1498,27 +1499,37 @@ function LearningPowerUpTeacherPageContent() {
     }
 
     setIsCancelling(true);
-    try {
-      const batchRef = doc(db, 'learning_power_up_task_batches', cancellingBatch.id);
-      
-      await setDoc(batchRef, {
-        status: 'CANCELLED',
-        cancellationReason: cancellationReason,
-        cancellationNote: cancellationNote.trim(),
-        cancelledAt: serverTimestamp(),
-        cancelledBy: currentUser.displayName || currentUser.email || 'Guru',
-        cancelledByUid: currentUser.uid
-      }, { merge: true });
+    let successfulAssignmentsCount = 0;
+    let totalAssignmentsCount = 0;
 
+    try {
+      // 1. Fetch all assignments
       const q = query(
         collection(db, 'learning_power_up_assignments'),
         where('taskBatchId', '==', cancellingBatch.id)
       );
-      const snap = await getDocs(q);
       
-      if (!snap.empty) {
+      let snap;
+      try {
+        snap = await getDocs(q);
+      } catch (err) {
+        handleFirestoreError(err, 'list', 'learning_power_up_assignments');
+      }
+
+      const docsToUpdate = snap.docs.filter(docSnap => {
+        const asg = docSnap.data() as LearningPowerUpAssignment;
+        return asg.status !== 'CANCELLED' || !asg.isCancelled;
+      });
+
+      totalAssignmentsCount = docsToUpdate.length;
+
+      // 2. Process in chunks of 400 for safety and rate-limit friendliness
+      const chunkSize = 400;
+      for (let i = 0; i < docsToUpdate.length; i += chunkSize) {
+        const chunk = docsToUpdate.slice(i, i + chunkSize);
         const batchWrite = writeBatch(db);
-        snap.docs.forEach(docSnap => {
+
+        chunk.forEach(docSnap => {
           const asg = docSnap.data() as LearningPowerUpAssignment;
           const newHistoryEntry: LpuAssignmentHistoryEntry = {
             action: 'CANCEL' as any,
@@ -1536,16 +1547,68 @@ function LearningPowerUpTeacherPageContent() {
             updatedAt: serverTimestamp()
           }, { merge: true });
         });
-        await batchWrite.commit();
+
+        try {
+          await batchWrite.commit();
+          successfulAssignmentsCount += chunk.length;
+        } catch (err) {
+          console.error(`Error committing assignment chunk starting at ${i}:`, err);
+          throw err; // propagate to prevent marking batch as CANCELLED
+        }
       }
 
-      toast.success("Tugas berhasil dibatalkan.");
+      // 3. Update parent batch
+      const batchRef = doc(db, 'learning_power_up_task_batches', cancellingBatch.id);
+      try {
+        await setDoc(batchRef, {
+          status: 'CANCELLED',
+          cancellationReason: cancellationReason,
+          cancellationNote: cancellationNote.trim(),
+          cancelledAt: serverTimestamp(),
+          cancelledBy: currentUser.displayName || currentUser.email || 'Guru',
+          cancelledByUid: currentUser.uid,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+      } catch (err) {
+        handleFirestoreError(err, 'update', `learning_power_up_task_batches/${cancellingBatch.id}`);
+      }
+
+      // 4. Create one cancellation event in the activity log
+      const logId = `${cancellingBatch.id}_cancelled_${Date.now()}`;
+      try {
+        await setDoc(doc(db, 'learning_power_up_activity_logs', logId), {
+          actor: {
+            uid: currentUser.uid,
+            name: currentUser.displayName || currentUser.email || 'Guru',
+            email: currentUser.email || '',
+            role: currentUser.role
+          },
+          timestamp: serverTimestamp(),
+          reason: cancellationReason,
+          note: cancellationNote.trim(),
+          taskBatchId: cancellingBatch.id
+        });
+      } catch (err) {
+        handleFirestoreError(err, 'create', `learning_power_up_activity_logs/${logId}`);
+      }
+
+      toast.success(`Tugas berhasil dibatalkan. Riwayat siswa tetap tersimpan. (${successfulAssignmentsCount} tugas siswa diperbarui)`);
       setCancellingBatch(null);
       setCancellingBatchStats(null);
       await loadClassData();
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error cancelling batch:", err);
-      toast.error("Gagal membatalkan tugas.");
+      
+      const isPermissionError = 
+        err?.message?.toLowerCase().includes('permission') || 
+        err?.message?.toUpperCase().includes('PERMISSION_DENIED') || 
+        err?.code === 'permission-denied';
+
+      if (isPermissionError) {
+        toast.error("Pembatalan tugas gagal karena Anda tidak memiliki izin yang diperlukan. Hubungi Super Admin atau administrator Junior High.");
+      } else {
+        toast.error(`Gagal membatalkan tugas. Baru ${successfulAssignmentsCount} dari ${totalAssignmentsCount} tugas siswa yang berhasil dibatalkan. Silakan coba lagi.`);
+      }
     } finally {
       setIsCancelling(false);
     }

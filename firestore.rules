@@ -182,6 +182,11 @@ service cloud.firestore {
         get(/databases/$(database)/documents/classes/$(classId)).data.academicYear == get(/databases/$(database)/documents/systemConfig/academicYear).data.activeAcademicYear;
     }
 
+    function isParentBatchValidForCancellation(batchId) {
+      return exists(/databases/$(database)/documents/learning_power_up_task_batches/$(batchId)) &&
+        get(/databases/$(database)/documents/learning_power_up_task_batches/$(batchId)).data.status in ['PUBLISHED', 'CANCELLED'];
+    }
+
     function isValidLearningPowerUpTaskBatch(data) {
       return data.id != null && data.id != "" &&
              data.subjectKey != null && data.subjectKey != "" &&
@@ -211,7 +216,7 @@ service cloud.firestore {
              data.semester != null && (data.semester == "1" || data.semester == "2") &&
              data.weekStartDate != null && data.weekStartDate != "" &&
              data.weekEndDate != null && data.weekEndDate != "" &&
-             data.status != null && data.status in ["ASSIGNED", "SUBMITTED", "REVISION_REQUIRED", "VERIFIED"] &&
+             data.status != null && data.status in ["ASSIGNED", "SUBMITTED", "REVISION_REQUIRED", "VERIFIED", "CANCELLED"] &&
              data.history != null &&
              data.updatedAt != null;
     }
@@ -1007,15 +1012,72 @@ service cloud.firestore {
     match /learning_power_up_task_batches/{batchId} {
       allow read: if isActive() && (isAdmin() || isJuniorHighStaff() || (isStudent() && resource.data.status == "PUBLISHED"));
       allow create: if isValidLearningPowerUpTaskBatch(request.resource.data) && (isAdmin() || (isJuniorHighStaff() && (isTeacherAssignedToClass(request.resource.data.targetClassIds[0]) || userRole() in ["HEAD_UNIT", "HEAD_JUNIOR", "PRINCIPAL", "VICE_PRINCIPAL", "COORDINATOR"])));
-      allow update: if isValidLearningPowerUpTaskBatch(request.resource.data) && (isAdmin() || (isJuniorHighStaff() && ((isTeacherAssignedToClass(resource.data.targetClassIds[0]) && isTeacherAssignedToClass(request.resource.data.targetClassIds[0])) || userRole() in ["HEAD_UNIT", "HEAD_JUNIOR", "PRINCIPAL", "VICE_PRINCIPAL", "COORDINATOR"])));
+      allow update: if isValidLearningPowerUpTaskBatch(request.resource.data) && (
+        isAdmin() || (
+          isJuniorHighStaff() && (
+            (
+              isTeacherAssignedToClass(resource.data.targetClassIds[0]) && 
+              isTeacherAssignedToClass(request.resource.data.targetClassIds[0])
+            ) || 
+            userRole() in ["HEAD_UNIT", "HEAD_JUNIOR", "PRINCIPAL", "VICE_PRINCIPAL", "COORDINATOR"]
+          ) && (
+            (resource.data.status == request.resource.data.status) || (
+              resource.data.status == "PUBLISHED" && request.resource.data.status == "CANCELLED" &&
+              request.resource.data.id == resource.data.id &&
+              request.resource.data.subjectKey == resource.data.subjectKey &&
+              request.resource.data.subjectArea == resource.data.subjectArea &&
+              request.resource.data.levelTasks == resource.data.levelTasks &&
+              request.resource.data.targetClassIds == resource.data.targetClassIds &&
+              request.resource.data.weekStartDate == resource.data.weekStartDate &&
+              request.resource.data.weekEndDate == resource.data.weekEndDate &&
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'status', 'cancellationReason', 'cancellationNote', 
+                'cancelledAt', 'cancelledBy', 'cancelledByUid', 'updatedAt'
+              ])
+            )
+          ) && isJuniorHighClass(resource.data.targetClassIds[0])
+        )
+      );
       allow delete: if isAdmin() || (isJuniorHighStaff() && (isTeacherAssignedToClass(resource.data.targetClassIds[0]) || userRole() in ["HEAD_UNIT", "HEAD_JUNIOR", "PRINCIPAL", "VICE_PRINCIPAL", "COORDINATOR"]));
     }
 
     match /learning_power_up_assignments/{assignmentId} {
       allow read: if isActive() && (isAdmin() || (isJuniorHighStaff() && isTeacherAssignedToClass(resource.data.classId)) || isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId));
       allow create: if isValidLearningPowerUpAssignment(request.resource.data) && (isAdmin() || (isJuniorHighStaff() && isTeacherAssignedToClass(request.resource.data.classId)));
-      allow update: if isValidLearningPowerUpAssignment(request.resource.data) && (isAdmin() || (isJuniorHighStaff() && isTeacherAssignedToClass(resource.data.classId) && isTeacherAssignedToClass(request.resource.data.classId)) || (isOwnStudentData(resource.data.studentId) && isOwnStudentData(request.resource.data.studentId) && request.resource.data.status == "SUBMITTED" && (resource.data.status == "ASSIGNED" || resource.data.status == "REVISION_REQUIRED" || resource.data.status == "SUBMITTED")));
+      allow update: if isValidLearningPowerUpAssignment(request.resource.data) && (
+        isAdmin() || 
+        (
+          isJuniorHighStaff() && 
+          isTeacherAssignedToClass(resource.data.classId) && 
+          isTeacherAssignedToClass(request.resource.data.classId) && (
+            (resource.data.status == request.resource.data.status) || (
+              request.resource.data.status == "CANCELLED" && 
+              request.resource.data.isCancelled == true && 
+              isParentBatchValidForCancellation(resource.data.taskBatchId) &&
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'isCancelled', 'history', 'updatedAt'])
+            )
+          )
+        ) || 
+        (
+          isOwnStudentData(resource.data.studentId) && 
+          isOwnStudentData(request.resource.data.studentId) && 
+          request.resource.data.status == "SUBMITTED" && 
+          (resource.data.status == "ASSIGNED" || resource.data.status == "REVISION_REQUIRED" || resource.data.status == "SUBMITTED")
+        )
+      );
       allow delete: if isAdmin() || (isJuniorHighStaff() && isTeacherAssignedToClass(resource.data.classId));
+    }
+
+    match /learning_power_up_activity_logs/{logId} {
+      allow read: if isActive() && (isAdmin() || isJuniorHighStaff());
+      allow create: if isSignedIn() && isActive() && (isAdmin() || isJuniorHighStaff()) &&
+        request.resource.data.taskBatchId is string &&
+        request.resource.data.reason is string &&
+        request.resource.data.timestamp == request.time &&
+        request.resource.data.actor is map &&
+        request.resource.data.actor.uid == request.auth.uid &&
+        exists(/databases/$(database)/documents/learning_power_up_task_batches/$(request.resource.data.taskBatchId)) &&
+        get(/databases/$(database)/documents/learning_power_up_task_batches/$(request.resource.data.taskBatchId)).data.status == 'CANCELLED';
     }
 
     match /lxd/{lxdId} {
