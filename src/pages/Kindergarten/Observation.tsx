@@ -1109,9 +1109,11 @@ export default function Observation() {
     if (!isContextComplete) return true;
     if (isUploadingGeneral || generalUploadState === 'validating' || generalUploadState === 'preparing' || generalUploadState === 'uploading' || generalUploadState === 'saving metadata') return true;
     if (!canManageKindergartenObservation) return true;
-    if (isSessionLocked) return true;
+    if (isSessionLocked && generalPhoto) {
+      return true;
+    }
     return false;
-  }, [isContextComplete, isUploadingGeneral, generalUploadState, canManageKindergartenObservation, isSessionLocked]);
+  }, [isContextComplete, isUploadingGeneral, generalUploadState, canManageKindergartenObservation, isSessionLocked, generalPhoto]);
 
   const isStudentPhotoDisabled = React.useMemo(() => {
     return (studentId: string) => {
@@ -1119,10 +1121,13 @@ export default function Observation() {
       const state = studentUploadStates[studentId] || 'idle';
       if (uploadProgress[studentId] || state === 'validating' || state === 'preparing' || state === 'uploading' || state === 'saving metadata') return true;
       if (!canManageKindergartenObservation) return true;
-      if (isSessionLocked) return true;
+      const hasSpecificPhoto = !!(observations[studentId]?.photo);
+      if (isSessionLocked && hasSpecificPhoto) {
+        return true;
+      }
       return false;
     };
-  }, [isContextComplete, uploadProgress, studentUploadStates, canManageKindergartenObservation, isSessionLocked]);
+  }, [isContextComplete, uploadProgress, studentUploadStates, canManageKindergartenObservation, isSessionLocked, observations]);
 
   // Master status mapping for disabled buttons and informative tooltips
   const getUploadStatusAndMessage = React.useCallback((targetStudentId?: string) => {
@@ -1131,29 +1136,43 @@ export default function Observation() {
       if (uploadProgress[targetStudentId] || state === 'validating' || state === 'preparing' || state === 'uploading' || state === 'saving metadata') {
         return {
           status: 'uploading',
-          message: 'Proses unggah foto sedang berlangsung…'
+          message: 'Foto sedang diunggah.'
         };
       }
     } else {
       if (isUploadingGeneral || generalUploadState === 'validating' || generalUploadState === 'preparing' || generalUploadState === 'uploading' || generalUploadState === 'saving metadata') {
         return {
           status: 'uploading',
-          message: 'Proses unggah foto sedang berlangsung…'
+          message: 'Foto sedang diunggah.'
         };
       }
+    }
+
+    if (!selectedClassId) {
+      return {
+        status: 'incomplete',
+        message: 'Pilih kelas terlebih dahulu.'
+      };
+    }
+
+    if (!observationDate) {
+      return {
+        status: 'incomplete',
+        message: 'Pilih tanggal terlebih dahulu.'
+      };
+    }
+
+    if (!selectedActivity || (selectedActivity !== 'SPECIAL_ACTIVITY' && !selectedDomain)) {
+      return {
+        status: 'incomplete',
+        message: 'Lengkapi Sentra/Sesi dan Domain Perkembangan.'
+      };
     }
 
     if (!canManageKindergartenObservation) {
       return {
         status: 'unauthorized',
-        message: 'Anda tidak memiliki akses untuk mengunggah di kelas ini.'
-      };
-    }
-
-    if (isSessionLocked) {
-      return {
-        status: 'locked',
-        message: 'Sesi hari ini telah terkunci. Aktifkan mode edit untuk mengubah.'
+        message: 'Anda tidak memiliki akses ke kelas ini.'
       };
     }
 
@@ -1164,26 +1183,40 @@ export default function Observation() {
       };
     }
 
-    const missingFields: string[] = [];
-    if (!selectedClassId) missingFields.push('Kelas');
-    if (!observationDate) missingFields.push('Tanggal');
-    if (!selectedActivity) missingFields.push('Sentra/Sesi');
-    if (selectedActivity !== 'SPECIAL_ACTIVITY' && !selectedDomain) {
-      missingFields.push('Domain Perkembangan');
-    }
-
-    if (missingFields.length > 0) {
-      return {
-        status: 'incomplete',
-        message: `Foto belum dapat diunggah. Lengkapi terlebih dahulu: ${missingFields.join(', ')}.`
-      };
+    if (isSessionLocked) {
+      if (targetStudentId) {
+        const hasSpecificPhoto = !!(observations[targetStudentId]?.photo);
+        if (hasSpecificPhoto) {
+          return {
+            status: 'locked_exists',
+            message: 'Foto Khusus Siswa sudah tersedia. Aktifkan mode edit untuk mengganti atau menghapus foto.'
+          };
+        } else {
+          return {
+            status: 'locked_missing',
+            message: 'Foto Khusus Siswa belum diunggah. Anda tetap dapat mengunggah foto untuk melengkapi sesi ini.'
+          };
+        }
+      } else {
+        if (generalPhoto) {
+          return {
+            status: 'locked_exists',
+            message: 'Foto General sudah tersedia. Aktifkan mode edit untuk mengganti atau menghapus foto.'
+          };
+        } else {
+          return {
+            status: 'locked_missing',
+            message: 'Foto General wajib belum diunggah. Anda tetap dapat mengunggah foto untuk melengkapi sesi ini.'
+          };
+        }
+      }
     }
 
     return {
       status: 'ready',
       message: 'Foto siap diunggah.'
     };
-  }, [classes, selectedClassId, observationDate, selectedActivity, selectedDomain, canManageKindergartenObservation, isSessionLocked, generalUploadState, studentUploadStates, isUploadingGeneral, uploadProgress]);
+  }, [classes, selectedClassId, observationDate, selectedActivity, selectedDomain, canManageKindergartenObservation, isSessionLocked, generalUploadState, studentUploadStates, isUploadingGeneral, uploadProgress, generalPhoto, observations]);
 
   // Image prep constant & helper
   const MAX_ORIGINAL_SIZE_MB = 20;
@@ -4133,6 +4166,11 @@ export default function Observation() {
                       Active Fallback
                     </div>
                   </div>
+                  {isSessionLocked && (
+                    <div className="text-[10px] font-bold text-gray-500 bg-gray-50 p-2.5 rounded-xl border border-gray-100 leading-normal text-center">
+                      🔒 Foto General sudah tersedia. Aktifkan mode edit untuk mengganti atau menghapus foto.
+                    </div>
+                  )}
                   <div className="flex items-center gap-2 text-[10px] bg-emerald-50 text-emerald-800 p-2.5 rounded-xl border border-emerald-150">
                     <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
                     <span>Lolos verifikasi. Foto ini akan melengkapi arsip harian siswa secara otomatis.</span>
@@ -4258,7 +4296,7 @@ export default function Observation() {
                     <button
                       type="button"
                       onClick={() => setShowDeleteConfirm(true)}
-                      disabled={!canManageKindergartenObservation}
+                      disabled={!canManageKindergartenObservation || isGeneralPhotoDisabled}
                       className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-extrabold uppercase tracking-widest rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer border-0 disabled:opacity-50"
                       id="btn-delete-general-photo"
                     >
@@ -4730,16 +4768,16 @@ export default function Observation() {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  if (!canManageKindergartenObservation) {
-                                    toast.error('Anda tidak memiliki izin untuk mereset foto observasi.');
+                                  if (isStudentPhotoDisabled(student.id)) {
+                                    toast.error('Anda tidak memiliki izin atau sesi ini terkunci.');
                                     return;
                                   }
                                   updateStudentField(student.id, 'photo', null);
                                 }}
-                                disabled={!canManageKindergartenObservation}
+                                disabled={isStudentPhotoDisabled(student.id)}
                                 className={cn(
                                   "absolute top-1 right-1 p-1.5 bg-red-600 text-white rounded-lg hover:scale-110 opacity-0 group-hover:opacity-100 transition-all shadow-md border-0 cursor-pointer",
-                                  !canManageKindergartenObservation && "opacity-50 cursor-not-allowed pointer-events-none"
+                                  isStudentPhotoDisabled(student.id) && "opacity-50 cursor-not-allowed pointer-events-none"
                                 )}
                                 title="Reset gunakan Foto Harian"
                               >
