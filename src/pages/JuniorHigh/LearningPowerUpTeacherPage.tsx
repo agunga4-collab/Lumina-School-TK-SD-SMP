@@ -538,6 +538,18 @@ function LearningPowerUpTeacherPageContent() {
   } | null>(null);
   const [showArchivedCancelled, setShowArchivedCancelled] = React.useState(false);
 
+  // --- Deletion States ---
+  const [deletingBatch, setDeletingBatch] = React.useState<LearningPowerUpTaskBatch | null>(null);
+  const [deletingBatchStats, setDeletingBatchStats] = React.useState<{
+    totalAssignments: number;
+    notStarted: number;
+    submitted: number;
+    verified: number;
+    revision: number;
+  } | null>(null);
+  const [deleteSecondConfirmChecked, setDeleteSecondConfirmChecked] = React.useState(false);
+  const [isDeleting, setIsDeleting] = React.useState(false);
+
   // Load Classes on mount
   React.useEffect(() => {
     const loadClassesList = async () => {
@@ -1635,30 +1647,129 @@ function LearningPowerUpTeacherPageContent() {
     }
   };
 
-  const handleDeleteBatch = async (batchId: string) => {
-    if (!confirm("Apakah Anda yakin ingin menghapus draft tugas ini?")) {
-      return;
-    }
+  const canDeleteBatch = (batch: LearningPowerUpTaskBatch) => {
+    if (!currentUser || !batch) return false;
+    
+    // Super Admin and Head Junior are allowed
+    if (['SUPER_ADMIN', 'HEAD_JUNIOR'].includes(currentUser.role)) return true;
+    
+    // Active Junior High staff roles
+    const activeJuniorHighStaffRoles = [
+      'TEACHER', 'HOMEROOM_TEACHER', 'BK_MENTOR',
+      'MTSS_ACADEMIC_PJ', 'COUNSELOR', 'SECRETARY_JH'
+    ];
+    
+    return activeJuniorHighStaffRoles.includes(currentUser.role);
+  };
+
+  const handleDeleteBatchClick = async (batch: LearningPowerUpTaskBatch) => {
     setLoadingData(true);
     try {
-      await deleteDoc(doc(db, 'learning_power_up_task_batches', batchId));
-      
-      const q = query(collection(db, 'learning_power_up_assignments'), where('taskBatchId', '==', batchId));
+      const q = query(
+        collection(db, 'learning_power_up_assignments'),
+        where('taskBatchId', '==', batch.id)
+      );
       const snap = await getDocs(q);
-      if (!snap.empty) {
+      const asgs = snap.docs.map(doc => doc.data() as LearningPowerUpAssignment);
+      
+      const totalAssignments = asgs.length;
+      const notStarted = asgs.filter(a => !a.status || a.status === 'ASSIGNED').length;
+      const submitted = asgs.filter(a => (a.status as string) === 'SUBMITTED' || (a.status as string) === 'PENDING_VERIFICATION').length;
+      const verified = asgs.filter(a => (a.status as string) === 'VERIFIED' || (a.status as string) === 'COMPLETED').length;
+      const revision = asgs.filter(a => (a.status as string) === 'REVISION_REQUIRED' || (a.status as string) === 'RETURNED').length;
+
+      setDeletingBatchStats({
+        totalAssignments,
+        notStarted,
+        submitted,
+        verified,
+        revision
+      });
+      setDeletingBatch(batch);
+      setDeleteSecondConfirmChecked(false);
+    } catch (err) {
+      console.error("Error loading stats for deletion:", err);
+      toast.error("Gagal memuat statistik tugas.");
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  const handleDeleteBatchSubmit = async () => {
+    if (!deletingBatch) return;
+    
+    // Prevent double clicks
+    if (isDeleting) return;
+    setIsDeleting(true);
+    setLoadingData(true);
+
+    try {
+      const batchId = deletingBatch.id;
+      
+      // 1. Fetch all corresponding assignments for this batch
+      const qAsgs = query(
+        collection(db, 'learning_power_up_assignments'),
+        where('taskBatchId', '==', batchId)
+      );
+      const asgsSnap = await getDocs(qAsgs);
+      const asgDocs = asgsSnap.docs;
+
+      // 2. Fetch all corresponding activity logs for this batch
+      const qLogs = query(
+        collection(db, 'learning_power_up_activity_logs'),
+        where('taskBatchId', '==', batchId)
+      );
+      const logsSnap = await getDocs(qLogs);
+      const logDocs = logsSnap.docs;
+
+      // Prepare chunks of deletions
+      const allDeletes: any[] = [
+        doc(db, 'learning_power_up_task_batches', batchId),
+        ...asgDocs.map(d => d.ref),
+        ...logDocs.map(d => d.ref)
+      ];
+
+      const CHUNK_SIZE = 400;
+      let successCount = 0;
+      let failCount = 0;
+
+      for (let i = 0; i < allDeletes.length; i += CHUNK_SIZE) {
+        const chunk = allDeletes.slice(i, i + CHUNK_SIZE);
         const writeB = writeBatch(db);
-        snap.docs.forEach(docSnap => {
-          writeB.delete(docSnap.ref);
+        chunk.forEach(ref => {
+          writeB.delete(ref);
         });
-        await writeB.commit();
+        
+        try {
+          await writeB.commit();
+          successCount += chunk.length;
+        } catch (chunkErr) {
+          console.error(`Error deleting chunk starting at index ${i}:`, chunkErr);
+          failCount += chunk.length;
+        }
       }
 
-      toast.success("Draft tugas berhasil dihapus.");
+      // Check results
+      if (failCount > 0) {
+        toast.error(`Berhasil menghapus ${successCount} data, namun ${failCount} data gagal dihapus.`);
+      } else {
+        toast.success("Tugas, seluruh assignment siswa, dan riwayat log berhasil dihapus secara permanen.");
+      }
+
+      // Reset and refresh
+      setDeletingBatch(null);
+      setDeletingBatchStats(null);
+      setDeleteSecondConfirmChecked(false);
+      
+      // Refresh teacher list, tracker, and student pages
       await loadTaskBatches();
+      await loadClassData();
+      
     } catch (err) {
-      console.error("Error deleting batch:", err);
-      toast.error("Gagal menghapus draft tugas.");
+      console.error("Error running handleDeleteBatchSubmit:", err);
+      toast.error("Gagal menghapus tugas secara permanen.");
     } finally {
+      setIsDeleting(false);
       setLoadingData(false);
     }
   };
@@ -3095,7 +3206,7 @@ function LearningPowerUpTeacherPageContent() {
                             )}
                             {batch.status === 'DRAFT' && canEditBatch(batch) && (
                               <button
-                                onClick={() => handleDeleteBatch(batch.id)}
+                                onClick={() => handleDeleteBatchClick(batch)}
                                 className="p-1.5 hover:bg-rose-50 text-gray-500 hover:text-rose-600 rounded-lg transition-all"
                                 title="Hapus Draft"
                               >
@@ -3109,6 +3220,15 @@ function LearningPowerUpTeacherPageContent() {
                                 title="Batalkan Tugas Ini"
                               >
                                 Batalkan Tugas
+                              </button>
+                            )}
+                            {batch.status !== 'DRAFT' && canDeleteBatch(batch) && (
+                              <button
+                                onClick={() => handleDeleteBatchClick(batch)}
+                                className="px-2.5 py-1 text-[10px] font-black text-rose-700 bg-rose-100 hover:bg-rose-200 border border-rose-200 rounded-lg transition-all flex items-center gap-1"
+                                title="Hapus Tugas Permanen"
+                              >
+                                <Trash2 size={12} /> Hapus Tugas
                               </button>
                             )}
                           </div>
@@ -3740,6 +3860,125 @@ function LearningPowerUpTeacherPageContent() {
                   className="py-3 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5"
                 >
                   Ya, Batalkan Semua
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* TASK BATCH DELETION DIALOG MODAL */}
+      <AnimatePresence>
+        {deletingBatch && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50" id="task-deletion-overlay">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[2rem] shadow-2xl max-w-lg w-full p-8 space-y-6 relative border border-slate-100"
+              id="task-deletion-body"
+            >
+              <button 
+                onClick={() => { setDeletingBatch(null); setDeletingBatchStats(null); }}
+                className="absolute top-6 right-6 p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-700 transition-all z-10"
+              >
+                <X size={16} />
+              </button>
+
+              <div className="space-y-2">
+                <span className="px-3 py-1 bg-rose-50 text-rose-700 text-[9px] font-black uppercase tracking-widest rounded-full border border-rose-200 inline-block">
+                  Hapus Penugasan Level-Based LPU
+                </span>
+                <h3 className="text-xl font-black text-gray-900 tracking-tight leading-snug">
+                  Hapus tugas ini untuk semua siswa?
+                </h3>
+              </div>
+
+              {/* Statistics & Metadata */}
+              {deletingBatchStats && (
+                <div className="space-y-4">
+                  <div className="bg-slate-50 border border-slate-100 p-4 rounded-2xl space-y-2 text-xs font-semibold text-slate-700">
+                    <div>
+                      Subject: <strong className="font-bold text-gray-950">{CATEGORY_CONFIG[deletingBatch.subjectKey]?.label || deletingBatch.subjectKey}</strong>
+                    </div>
+                    <div>
+                      Kelas: <strong className="font-bold text-gray-950">
+                        {deletingBatch.targetClassIds.map(cid => classes.find(c => c.id === cid)?.name || cid).join(', ')}
+                      </strong>
+                    </div>
+                    <div>
+                      Periode: <strong className="font-bold text-gray-950">{deletingBatch.weekLabel}</strong>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl space-y-2.5">
+                    <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider">Statistik Tugas Saat Ini:</h4>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="bg-white p-2.5 rounded-xl border border-slate-100 text-center">
+                        <p className="text-[10px] text-gray-400 font-bold uppercase">Total Tugas</p>
+                        <p className="text-lg font-black text-slate-800">{deletingBatchStats.totalAssignments}</p>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-xl border border-slate-100 text-center">
+                        <p className="text-[10px] text-gray-400 font-bold uppercase">Belum Mulai</p>
+                        <p className="text-lg font-black text-slate-500">{deletingBatchStats.notStarted}</p>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-xl border border-slate-100 text-center text-amber-600">
+                        <p className="text-[10px] text-gray-400 font-bold uppercase">Submitted</p>
+                        <p className="text-lg font-black">{deletingBatchStats.submitted}</p>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-xl border border-slate-100 text-center text-emerald-600">
+                        <p className="text-[10px] text-gray-400 font-bold uppercase">Selesai</p>
+                        <p className="text-lg font-black">{deletingBatchStats.verified}</p>
+                      </div>
+                    </div>
+
+                    {/* Strong Warning if submitted/verified > 0 */}
+                    {(deletingBatchStats.submitted > 0 || deletingBatchStats.verified > 0) ? (
+                      <div className="p-3.5 bg-rose-50 text-rose-800 rounded-xl border border-rose-200 flex flex-col gap-3 text-xs font-semibold leading-normal">
+                        <div className="flex gap-2 items-start">
+                          <AlertTriangle size={18} className="text-rose-600 shrink-0 mt-0.5 animate-pulse" />
+                          <div>
+                            <p className="font-black text-rose-950 uppercase tracking-wide text-[10px] mb-0.5">Peringatan Keras!</p>
+                            <p>
+                              Tugas ini memiliki <strong className="font-bold text-rose-950">{deletingBatchStats.submitted} tugas diserahkan</strong> dan/atau <strong className="font-bold text-rose-950">{deletingBatchStats.verified} tugas selesai/diverifikasi</strong>. Menghapus tugas ini akan menghapus riwayat pekerjaan dan nilai siswa secara permanen dan tidak dapat dibatalkan!
+                            </p>
+                          </div>
+                        </div>
+                        
+                        <label className="flex items-start gap-2 p-2.5 bg-white rounded-xl border border-rose-200 hover:bg-rose-50/50 cursor-pointer select-none transition-all">
+                          <input 
+                            type="checkbox"
+                            checked={deleteSecondConfirmChecked}
+                            onChange={(e) => setDeleteSecondConfirmChecked(e.target.checked)}
+                            className="mt-0.5 h-4 w-4 rounded border-rose-300 text-rose-600 focus:ring-rose-500 cursor-pointer"
+                          />
+                          <span className="text-[11px] text-rose-900 font-black">
+                            Saya memahami bahwa riwayat tugas siswa akan dihapus.
+                          </span>
+                        </label>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={() => { setDeletingBatch(null); setDeletingBatchStats(null); }}
+                  className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-xs uppercase tracking-widest rounded-xl transition-all border border-slate-200 disabled:opacity-50"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeleting || ((deletingBatchStats && (deletingBatchStats.submitted > 0 || deletingBatchStats.verified > 0)) && !deleteSecondConfirmChecked)}
+                  onClick={handleDeleteBatchSubmit}
+                  className="flex-1 py-3 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  {isDeleting ? "Menghapus..." : "Hapus Tugas Permanen"}
                 </button>
               </div>
             </motion.div>
