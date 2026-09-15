@@ -142,53 +142,24 @@ export function resolveTeacherAuthorizedScope(
     return { isAuthorized: false, reason: 'Missing user profile or class data' };
   }
 
-  // Admin and management oversight roles
-  const hasOversight = [
-    'SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR'
-  ].includes(userProfile.role);
-
-  if (hasOversight) {
-    return { isAuthorized: true, reason: 'User has administrative oversight role' };
-  }
-
   // Ensure the class belongs to Junior High
   if (classData.unitId !== 'JUNIOR_HIGH') {
     return { isAuthorized: false, reason: 'Class is not in Junior High unit' };
   }
 
-  // Homeroom Teacher (Wali Kelas) check - always has full access to their class
-  const isHomeroom = classData.homeroomTeacherId === userProfile.uid ||
-    (classData.homeroomTeacherIds && classData.homeroomTeacherIds.includes(userProfile.uid)) ||
-    (classData.waliKelasIds && classData.waliKelasIds.includes(userProfile.uid)) ||
-    (classData.teacherAssignments && classData.teacherAssignments.some(a => a.userId === userProfile.uid && a.role === 'HOMEROOM_TEACHER'));
+  // Active Junior High staff roles
+  const activeJuniorHighStaffRoles = [
+    'TEACHER', 'HEAD_JUNIOR', 'BK_MENTOR',
+    'MTSS_ACADEMIC_PJ', 'SUPER_ADMIN', 'HEAD_UNIT',
+    'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR',
+    'HOMEROOM_TEACHER', 'COUNSELOR', 'SECRETARY_JH'
+  ];
 
-  if (isHomeroom) {
-    return { isAuthorized: true, reason: 'User is the homeroom teacher of this class' };
+  if (activeJuniorHighStaffRoles.includes(userProfile.role)) {
+    return { isAuthorized: true, reason: 'User has active Junior High staff/teacher role' };
   }
 
-  // Structured subject-specific assignment checks
-  const assignments = classData.teacherAssignments || [];
-  const teacherAssignment = assignments.find(a => a.userId === userProfile.uid);
-
-  if (teacherAssignment) {
-    // Standard role GPK is only authorized if explicitly assigned to the subject, or has structural assignment
-    if (teacherAssignment.subjects && Array.isArray(teacherAssignment.subjects)) {
-      if (teacherAssignment.subjects.includes(subjectKey)) {
-        return { isAuthorized: true, reason: `User is structurally assigned to teach ${subjectKey} in this class` };
-      }
-    }
-  }
-
-  // For read access ONLY: we can allow general teachers assigned to the class as a fallback
-  if (!forWrite) {
-    const isAssignedToClass = teacherAssignment !== undefined ||
-      (assignments.some(a => a.userId === userProfile.uid));
-    if (isAssignedToClass) {
-      return { isAuthorized: true, reason: 'User is assigned to this class (Read-only view access)' };
-    }
-  }
-
-  return { isAuthorized: false, reason: `User is not structurally authorized for subject ${subjectKey} in this class` };
+  return { isAuthorized: false, reason: `User role ${userProfile.role} is not authorized for Junior High LPU` };
 }
 
 /**
