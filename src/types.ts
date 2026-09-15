@@ -2406,6 +2406,7 @@ export interface LearningPowerUpTaskBatch {
   publishedByEmail?: string;
   publishedByName?: string;
   publishedAt?: any; // Firestore Timestamp
+  changeNote?: string;
 }
 
 export interface LpuAssignmentHistoryEntry {
@@ -2451,6 +2452,7 @@ export interface LearningPowerUpAssignment {
   cancelledByUid?: string;
   history: LpuAssignmentHistoryEntry[];
   updatedAt: any; // Firestore Timestamp
+  changeNote?: string;
 }
 
 

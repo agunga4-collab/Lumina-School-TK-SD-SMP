@@ -479,6 +479,9 @@ function LearningPowerUpTeacherPageContent() {
   // New-style Batch collection list
   const [taskBatches, setTaskBatches] = React.useState<LearningPowerUpTaskBatch[]>([]);
   const [editingBatchId, setEditingBatchId] = React.useState<string | null>(null);
+  const [editingBatchStatus, setEditingBatchStatus] = React.useState<string | null>(null);
+  const [editingBatchHasActivity, setEditingBatchHasActivity] = React.useState<boolean>(false);
+  const [changeNote, setChangeNote] = React.useState<string>('');
 
   // Publish confirmation modal state
   const [publishPreflight, setPublishPreflight] = React.useState<{
@@ -1417,17 +1420,219 @@ function LearningPowerUpTeacherPageContent() {
     }
   };
 
-  const handleEditBatch = (batch: LearningPowerUpTaskBatch) => {
-    setEditingBatchId(batch.id);
-    setNewSubject(batch.subjectKey);
-    setNewTargetClassIds(batch.targetClassIds);
-    setNewWeekStartDate(batch.weekStartDate);
-    setNewWeekEndDate(batch.weekEndDate);
-    setNewWeekLabel(batch.weekLabel);
-    setNewSemester(batch.semester);
-    setLevelTasks(batch.levelTasks);
-    toast.success("Data tugas berhasil dimasukkan ke form di atas. Anda dapat mengubah, menyimpan draft, atau langsung menerbitkannya.");
-    window.scrollTo({ top: 300, behavior: 'smooth' });
+  const handleEditBatch = async (batch: LearningPowerUpTaskBatch) => {
+    setLoadingData(true);
+    try {
+      let hasActivity = false;
+      if (batch.status === 'PUBLISHED') {
+        const q = query(
+          collection(db, 'learning_power_up_assignments'),
+          where('taskBatchId', '==', batch.id)
+        );
+        const snap = await getDocs(q);
+        hasActivity = snap.docs.some(docSnap => {
+          const asg = docSnap.data() as LearningPowerUpAssignment;
+          return asg.status !== 'ASSIGNED' && asg.status !== 'CANCELLED';
+        });
+      }
+      
+      setEditingBatchId(batch.id);
+      setEditingBatchStatus(batch.status);
+      setEditingBatchHasActivity(hasActivity);
+      setNewSubject(batch.subjectKey);
+      setNewTargetClassIds(batch.targetClassIds);
+      setNewWeekStartDate(batch.weekStartDate);
+      setNewWeekEndDate(batch.weekEndDate);
+      setNewWeekLabel(batch.weekLabel);
+      setNewSemester(batch.semester);
+      setLevelTasks(batch.levelTasks);
+      setChangeNote('');
+
+      toast.success(
+        batch.status === 'PUBLISHED'
+          ? (hasActivity
+              ? "Tugas Terbit dimuat. Terdeteksi aktivitas siswa: Hanya dapat mengedit judul, instruksi, batas waktu, dan label pekan. Catatan perubahan wajib diisi."
+              : "Tugas Terbit dimuat. Belum ada aktivitas siswa: Anda dapat mengedit semua field kecuali Subject.")
+          : "Data tugas berhasil dimasukkan ke form di atas. Anda dapat mengubah, menyimpan draft, atau langsung menerbitkannya."
+      );
+      window.scrollTo({ top: 300, behavior: 'smooth' });
+    } catch (err) {
+      console.error("Error loading batch for editing:", err);
+      toast.error("Gagal memuat tugas untuk diedit.");
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  const handleSavePublishedChanges = async () => {
+    if (!editingBatchId || editingBatchStatus !== 'PUBLISHED') return;
+
+    if (editingBatchHasActivity && !changeNote.trim()) {
+      toast.error("Catatan perubahan wajib diisi karena tugas ini sudah memiliki aktivitas siswa!");
+      return;
+    }
+
+    const hasSomeTask = (Object.values(levelTasks) as Array<{ title: string; instructions: string }>).some(t => t && t.title?.trim() && t.instructions?.trim());
+    if (!hasSomeTask) {
+      toast.error("Harap masukkan setidaknya satu judul dan instruksi tugas untuk level kemampuan!");
+      return;
+    }
+
+    setLoadingData(true);
+    try {
+      const originalBatch = taskBatches.find(b => b.id === editingBatchId);
+      if (!originalBatch) {
+        throw new Error("Original task batch not found");
+      }
+
+      const cleanLevelTasks: Record<string, LpuLevelTask> = {};
+      Object.entries(levelTasks).forEach(([lvl, rawTask]) => {
+        const task = rawTask as { title: string; instructions: string };
+        if (task && (task.title?.trim() || task.instructions?.trim())) {
+          cleanLevelTasks[lvl] = {
+            title: (task.title || '').trim(),
+            instructions: (task.instructions || '').trim()
+          };
+        }
+      });
+
+      const updatedBatchDoc: LearningPowerUpTaskBatch = {
+        ...originalBatch,
+        levelTasks: cleanLevelTasks,
+        weekEndDate: newWeekEndDate,
+        weekLabel: newWeekLabel || `Pekan (${formatDateShort(newWeekStartDate)} - ${formatDateShort(newWeekEndDate)})`,
+        updatedBy: currentUser.uid,
+        updatedByEmail: currentUser.email || '',
+        updatedByName: currentUser.displayName || '',
+        updatedAt: serverTimestamp(),
+      };
+
+      if (!editingBatchHasActivity) {
+        updatedBatchDoc.targetClassIds = newTargetClassIds;
+        updatedBatchDoc.weekStartDate = newWeekStartDate;
+        updatedBatchDoc.semester = newSemester;
+
+        const q = query(collection(db, 'learning_power_up_assignments'), where('taskBatchId', '==', editingBatchId));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const deleteBatch = writeBatch(db);
+          snap.docs.forEach(docSnap => {
+            deleteBatch.delete(docSnap.ref);
+          });
+          await deleteBatch.commit();
+        }
+
+        const studentDocs: any[] = [];
+        for (const classId of newTargetClassIds) {
+          const sQ = query(collection(db, 'students'), where('classId', '==', classId), where('status', '==', 'active'));
+          const sSnap = await getDocs(sQ);
+          studentDocs.push(...sSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        }
+
+        const levelsSnap = await getDocs(collection(db, 'system_lpu_levels'));
+        const levelMap: Record<string, string> = {};
+        levelsSnap.docs.forEach(d => {
+          const data = d.data();
+          if (data.studentId && data[newSubject]) {
+            levelMap[data.studentId] = data[newSubject];
+          }
+        });
+
+        const assignmentsToCreate: LearningPowerUpAssignment[] = [];
+        for (const student of studentDocs) {
+          const studentClass = classes.find(c => c.id === student.classId);
+          const level = levelMap[student.id];
+          if (level) {
+            const task = cleanLevelTasks[level];
+            if (task && task.title?.trim() && task.instructions?.trim()) {
+              const assignmentId = `assignment_${editingBatchId}_${student.id}_${newSubject}`;
+              const historyEntry: LpuAssignmentHistoryEntry = {
+                action: 'ASSIGN',
+                performedByUid: currentUser.uid,
+                performedByName: currentUser.displayName || currentUser.email || 'Guru',
+                performedByRole: currentUser.role,
+                timestamp: new Date()
+              };
+
+              assignmentsToCreate.push({
+                id: assignmentId,
+                taskBatchId: editingBatchId,
+                studentId: student.id,
+                studentNameSnapshot: student.name,
+                classId: student.classId,
+                classNameSnapshot: studentClass?.name || '',
+                subjectKey: newSubject,
+                subjectArea: LPU_SUBJECT_MAP[newSubject],
+                levelSnapshot: level,
+                taskTitle: task.title.trim(),
+                taskInstructions: task.instructions.trim(),
+                academicYearId: activeYear,
+                semester: newSemester,
+                weekStartDate: newWeekStartDate,
+                weekEndDate: newWeekEndDate,
+                weekLabel: newWeekLabel || `Pekan (${formatDateShort(newWeekStartDate)} - ${formatDateShort(newWeekEndDate)})`,
+                status: 'ASSIGNED',
+                history: [historyEntry],
+                updatedAt: serverTimestamp()
+              });
+            }
+          }
+        }
+
+        const chunkSize = 400;
+        for (let i = 0; i < assignmentsToCreate.length; i += chunkSize) {
+          const chunk = assignmentsToCreate.slice(i, i + chunkSize);
+          const writeB = writeBatch(db);
+          chunk.forEach(asg => {
+            writeB.set(doc(db, 'learning_power_up_assignments', asg.id), asg);
+          });
+          await writeB.commit();
+        }
+      } else {
+        updatedBatchDoc.changeNote = changeNote;
+
+        const q = query(collection(db, 'learning_power_up_assignments'), where('taskBatchId', '==', editingBatchId));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const updateB = writeBatch(db);
+          snap.docs.forEach(docSnap => {
+            const asg = docSnap.data() as LearningPowerUpAssignment;
+            const task = cleanLevelTasks[asg.levelSnapshot];
+            if (task) {
+              const historyEntry: LpuAssignmentHistoryEntry = {
+                action: 'ASSIGN',
+                performedByUid: currentUser.uid,
+                performedByName: currentUser.displayName || currentUser.email || 'Guru',
+                performedByRole: currentUser.role,
+                timestamp: new Date(),
+                note: `Tugas diperbarui oleh guru: "${changeNote}"`
+              };
+
+              updateB.update(docSnap.ref, {
+                taskTitle: task.title.trim(),
+                taskInstructions: task.instructions.trim(),
+                weekEndDate: newWeekEndDate,
+                weekLabel: newWeekLabel || `Pekan (${formatDateShort(newWeekStartDate)} - ${formatDateShort(newWeekEndDate)})`,
+                changeNote: changeNote,
+                history: [...(asg.history || []), historyEntry],
+                updatedAt: serverTimestamp()
+              });
+            }
+          });
+          await updateB.commit();
+        }
+      }
+
+      await setDoc(doc(db, 'learning_power_up_task_batches', editingBatchId), updatedBatchDoc);
+      toast.success("Tugas terbit berhasil diperbarui!");
+      resetNewBatchForm();
+      await loadTaskBatches();
+    } catch (err) {
+      console.error("Error saving published batch changes:", err);
+      toast.error("Gagal menyimpan perubahan tugas terbit.");
+    } finally {
+      setLoadingData(false);
+    }
   };
 
   const handleDeleteBatch = async (batchId: string) => {
@@ -1624,6 +1829,9 @@ function LearningPowerUpTeacherPageContent() {
     setLevelTasks({});
     setRosterLevels([]);
     setEditingBatchId(null);
+    setEditingBatchStatus(null);
+    setEditingBatchHasActivity(false);
+    setChangeNote('');
   };
 
 
@@ -1684,7 +1892,7 @@ function LearningPowerUpTeacherPageContent() {
     const { student, field, progress } = verifyingProgress;
     
     if (!isApproved && !verificationNote.trim()) {
-      toast.error("Catatan revisi wajib diisi jika Anda meminta perbaikan tugas!");
+      toast.error("Feedback guru wajib diisi jika Anda menandai tugas Belum Tuntas!");
       return;
     }
 
@@ -1710,7 +1918,7 @@ function LearningPowerUpTeacherPageContent() {
           performedByName: currentUser.displayName || currentUser.email || 'Guru',
           performedByRole: currentUser.role,
           timestamp: new Date(),
-          note: isApproved ? "Guru memverifikasi tugas selesai." : `Guru meminta revisi: "${verificationNote}"`
+          note: isApproved ? "Guru menandai tugas Selesai." : `Guru menandai tugas Belum Tuntas. Catatan: "${verificationNote}"`
         };
 
         const updatedHistory = existingAsg ? [...(existingAsg.history || []), newHistoryEntry] : [newHistoryEntry];
@@ -1728,7 +1936,7 @@ function LearningPowerUpTeacherPageContent() {
         };
 
         await setDoc(doc(db, 'learning_power_up_assignments', assignmentId), assignmentUpdate, { merge: true });
-        toast.success(isApproved ? "Tugas berhasil diverifikasi selesai!" : "Revisi berhasil diajukan ke siswa.");
+        toast.success(isApproved ? "Tugas berhasil ditandai Selesai!" : "Tugas berhasil ditandai Belum Tuntas dengan catatan.");
         setVerifyingProgress(null);
         await loadClassData();
         return;
@@ -1742,7 +1950,7 @@ function LearningPowerUpTeacherPageContent() {
         timestamp: nowStr,
         action: isApproved ? 'VERIFY' : 'REVISION_REQUEST',
         actorName: currentUser.displayName || currentUser.email || "Guru/Coach",
-        note: isApproved ? "Guru memverifikasi tugas selesai." : `Guru meminta revisi: "${verificationNote}"`
+        note: isApproved ? "Guru menandai tugas Selesai." : `Guru menandai tugas Belum Tuntas. Catatan: "${verificationNote}"`
       };
 
       const updatedProgress = {
@@ -1769,7 +1977,7 @@ function LearningPowerUpTeacherPageContent() {
       };
 
       await setDoc(doc(db, 'learning_power_up_progress', progressId), updatedProgress, { merge: true });
-      toast.success(isApproved ? "Tugas berhasil diverifikasi selesai!" : "Revisi berhasil diajukan ke siswa.");
+      toast.success(isApproved ? "Tugas berhasil ditandai Selesai!" : "Tugas berhasil ditandai Belum Tuntas dengan catatan.");
       
       setVerifyingProgress(null);
       await loadClassData();
@@ -2149,6 +2357,12 @@ function LearningPowerUpTeacherPageContent() {
     }
   };
 
+  const canEditBatch = (batch: LearningPowerUpTaskBatch) => {
+    if (!currentUser || !batch) return false;
+    if (['SUPER_ADMIN', 'HEAD_JUNIOR'].includes(currentUser.role)) return true;
+    return batch.createdBy === currentUser.uid;
+  };
+
   if (loadingMetadata) {
     return (
       <div className="min-h-[50vh] flex flex-col items-center justify-center gap-4">
@@ -2405,13 +2619,13 @@ function LearningPowerUpTeacherPageContent() {
                                     {status === 'SUBMITTED' && (
                                       <div className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1 text-[10px] font-black uppercase animate-pulse">
                                         <Clock size={12} className="text-amber-500" />
-                                        Butuh Verifikasi
+                                        Menunggu Verifikasi Guru
                                       </div>
                                     )}
                                     {status === 'REVISION_REQUIRED' && (
                                       <div className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1 text-[10px] font-black uppercase">
                                         <AlertTriangle size={12} className="text-rose-500" />
-                                        Revisi
+                                        Belum Tuntas
                                       </div>
                                     )}
                                     {status === ('CANCELLED' as any) && (
@@ -2521,11 +2735,12 @@ function LearningPowerUpTeacherPageContent() {
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Subject Saya</label>
                   <select
                     value={newSubject}
+                    disabled={!!editingBatchId}
                     onChange={(e) => {
                       setNewSubject(e.target.value as LpuSubjectKey);
                       setNewTargetClassIds([]); // Reset selected classes on subject change
                     }}
-                    className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold"
+                    className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold disabled:opacity-60"
                   >
                     <option value="">-- Pilih Subject --</option>
                     {allSubjects.filter(sub => {
@@ -2546,8 +2761,9 @@ function LearningPowerUpTeacherPageContent() {
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Semester</label>
                   <select
                     value={newSemester}
+                    disabled={editingBatchStatus === 'PUBLISHED' && editingBatchHasActivity}
                     onChange={(e) => setNewSemester(e.target.value as '1' | '2')}
-                    className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold"
+                    className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold disabled:opacity-60"
                   >
                     <option value="1">Semester 1</option>
                     <option value="2">Semester 2</option>
@@ -2568,13 +2784,15 @@ function LearningPowerUpTeacherPageContent() {
                             "flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-all select-none",
                             newTargetClassIds.includes(cls.id)
                               ? "bg-violet-500 border-violet-500 text-white shadow-sm"
-                              : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                              : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50",
+                            (editingBatchStatus === 'PUBLISHED' && editingBatchHasActivity) && "opacity-60 cursor-not-allowed"
                           )}
                         >
                           <input
                             type="checkbox"
                             className="hidden"
                             checked={newTargetClassIds.includes(cls.id)}
+                            disabled={editingBatchStatus === 'PUBLISHED' && editingBatchHasActivity}
                             onChange={() => {
                               if (newTargetClassIds.includes(cls.id)) {
                                 setNewTargetClassIds(prev => prev.filter(id => id !== cls.id));
@@ -2601,6 +2819,7 @@ function LearningPowerUpTeacherPageContent() {
                     type="date"
                     required
                     value={newWeekStartDate}
+                    disabled={editingBatchStatus === 'PUBLISHED' && editingBatchHasActivity}
                     onChange={(e) => {
                       const start = e.target.value;
                       setNewWeekStartDate(start);
@@ -2612,7 +2831,7 @@ function LearningPowerUpTeacherPageContent() {
                         setNewWeekLabel(`Pekan (${formatDateShort(start)} - ${formatDateShort(end)})`);
                       }
                     }}
-                    className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold"
+                    className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold disabled:opacity-60"
                   />
                 </div>
 
@@ -2773,6 +2992,25 @@ function LearningPowerUpTeacherPageContent() {
                 </div>
               )}
 
+              {editingBatchStatus === 'PUBLISHED' && editingBatchHasActivity && (
+                <div className="space-y-1.5 p-4 bg-amber-50 border border-amber-200 rounded-2xl">
+                  <label className="text-[10px] font-black text-amber-950 uppercase tracking-wider block">
+                    Catatan Perubahan (Wajib)
+                  </label>
+                  <p className="text-[11px] text-amber-800 font-medium mb-2">
+                    Siswa akan melihat catatan ini untuk mengetahui apa saja bagian tugas yang telah Anda perbarui.
+                  </p>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Contoh: Mengubah instruksi tugas langkah ke-3 dan memperpanjang batas waktu pengumpulan."
+                    value={changeNote}
+                    onChange={(e) => setChangeNote(e.target.value)}
+                    className="w-full bg-white border border-amber-300 text-xs px-4 py-3 rounded-xl focus:outline-none font-bold placeholder-amber-900/40 text-amber-950"
+                  />
+                </div>
+              )}
+
               {/* Actions for creating/editing */}
               <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
                 {editingBatchId && (
@@ -2784,24 +3022,38 @@ function LearningPowerUpTeacherPageContent() {
                     Batal Edit
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={() => handleSaveNewBatchDraft()}
-                  disabled={loadingData || !newSubject || newTargetClassIds.length === 0}
-                  className="px-5 py-3 border border-[#109E58] text-[#109E58] hover:bg-[#109E58]/5 text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center gap-2 disabled:opacity-50"
-                >
-                  {loadingData ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                  Simpan Draft
-                </button>
-                <button
-                  type="button"
-                  onClick={handlePublishPreflight}
-                  disabled={loadingData || !newSubject || newTargetClassIds.length === 0}
-                  className="px-5 py-3 bg-[#109E58] hover:bg-[#0d854a] text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center gap-2 disabled:opacity-50"
-                >
-                  <Send size={16} />
-                  Terbitkan Tugas
-                </button>
+                {editingBatchStatus === 'PUBLISHED' ? (
+                  <button
+                    type="button"
+                    onClick={handleSavePublishedChanges}
+                    disabled={loadingData || !newSubject || newTargetClassIds.length === 0}
+                    className="px-5 py-3 bg-[#109E58] hover:bg-[#0d854a] text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {loadingData ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                    Simpan Perubahan
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleSaveNewBatchDraft()}
+                      disabled={loadingData || !newSubject || newTargetClassIds.length === 0}
+                      className="px-5 py-3 border border-[#109E58] text-[#109E58] hover:bg-[#109E58]/5 text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center gap-2 disabled:opacity-50"
+                    >
+                      {loadingData ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                      Simpan Draft
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handlePublishPreflight}
+                      disabled={loadingData || !newSubject || newTargetClassIds.length === 0}
+                      className="px-5 py-3 bg-[#109E58] hover:bg-[#0d854a] text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center gap-2 disabled:opacity-50"
+                    >
+                      <Send size={16} />
+                      Terbitkan Tugas
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
@@ -2831,26 +3083,26 @@ function LearningPowerUpTeacherPageContent() {
                             {batch.status === 'PUBLISHED' ? 'Terbit (Published)' : batch.status === 'CANCELLED' ? 'Dibatalkan' : batch.status === 'ARCHIVED' ? 'Arsip' : 'Draft'}
                           </span>
                           
-                          <div className="flex gap-1">
-                            {batch.status === 'DRAFT' && (
-                              <>
-                                <button
-                                  onClick={() => handleEditBatch(batch)}
-                                  className="p-1.5 hover:bg-slate-50 text-gray-500 hover:text-[#109E58] rounded-lg transition-all"
-                                  title="Edit Draft"
-                                >
-                                  <Edit size={16} />
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteBatch(batch.id)}
-                                  className="p-1.5 hover:bg-rose-50 text-gray-500 hover:text-rose-600 rounded-lg transition-all"
-                                  title="Hapus Draft"
-                                >
-                                  <Trash2 size={16} />
-                                </button>
-                              </>
+                          <div className="flex gap-1 items-center">
+                            {(batch.status === 'DRAFT' || batch.status === 'PUBLISHED') && canEditBatch(batch) && (
+                              <button
+                                onClick={() => handleEditBatch(batch)}
+                                className="p-1.5 hover:bg-slate-50 text-gray-500 hover:text-[#109E58] rounded-lg transition-all"
+                                title={batch.status === 'PUBLISHED' ? "Edit Tugas Terbit" : "Edit Draft"}
+                              >
+                                <Edit size={16} />
+                              </button>
                             )}
-                            {batch.status === 'PUBLISHED' && (
+                            {batch.status === 'DRAFT' && canEditBatch(batch) && (
+                              <button
+                                onClick={() => handleDeleteBatch(batch.id)}
+                                className="p-1.5 hover:bg-rose-50 text-gray-500 hover:text-rose-600 rounded-lg transition-all"
+                                title="Hapus Draft"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            )}
+                            {batch.status === 'PUBLISHED' && canEditBatch(batch) && (
                               <button
                                 onClick={() => handleCancelBatchClick(batch)}
                                 className="px-2.5 py-1 text-[10px] font-black text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-all"
@@ -3058,7 +3310,7 @@ function LearningPowerUpTeacherPageContent() {
                       verifyingProgress.progress.status === 'VERIFIED' ? (
                         <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                           <CheckCircle2 size={14} className="text-emerald-500" />
-                          Terverifikasi Selesai
+                          Selesai
                         </span>
                       ) : verifyingProgress.progress.status === 'SUBMITTED' ? (
                         <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
@@ -3068,7 +3320,7 @@ function LearningPowerUpTeacherPageContent() {
                       ) : (
                         <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
                           <AlertTriangle size={14} className="text-rose-500" />
-                          Perlu Revisi
+                          Belum Tuntas
                         </span>
                       )
                     ) : (
@@ -3084,7 +3336,7 @@ function LearningPowerUpTeacherPageContent() {
                 <div className="pt-4 border-t border-slate-100 space-y-3">
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">
-                      Catatan Guru / Feedback Revisi (Wajib jika Minta Revisi)
+                      Catatan Guru / Feedback Revisi (Wajib jika Belum Tuntas)
                     </label>
                     <textarea
                       rows={3}
@@ -3102,7 +3354,7 @@ function LearningPowerUpTeacherPageContent() {
                       onClick={() => handleVerificationSave(false)}
                       className="py-3 bg-rose-50 hover:bg-rose-100 disabled:bg-rose-50/50 text-rose-700 border border-rose-200 font-black text-xs uppercase tracking-widest rounded-xl transition-all"
                     >
-                      Minta Revisi
+                      Belum Tuntas
                     </button>
                     <button
                       type="button"
@@ -3111,7 +3363,7 @@ function LearningPowerUpTeacherPageContent() {
                       className="py-3 bg-[#109E58] hover:bg-[#0d854a] disabled:bg-[#109E58]/50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5"
                     >
                       <Check size={16} strokeWidth={3} />
-                      Verifikasi Selesai
+                      Selesai
                     </button>
                   </div>
                 </div>
