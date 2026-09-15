@@ -45,6 +45,26 @@ service cloud.firestore {
       return isActive() && userRole() == 'SECRETARY_KINDY' && currentUser().unitId == 'KINDERGARTEN';
     }
 
+    function isKindergartenHeadUnit() {
+      return isActive() && userRole() == 'HEAD_UNIT' && (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL');
+    }
+
+    function isMidtermIdentityUnchanged() {
+      return incoming().studentId == existing().studentId &&
+             incoming().studentNameSnapshot == existing().studentNameSnapshot &&
+             incoming().classId == existing().classId &&
+             incoming().classNameSnapshot == existing().classNameSnapshot &&
+             incoming().academicYear == existing().academicYear &&
+             incoming().semester == existing().semester &&
+             incoming().periodKey == existing().periodKey &&
+             incoming().startDate == existing().startDate &&
+             incoming().endDate == existing().endDate &&
+             incoming().unit == existing().unit &&
+             incoming().reportType == existing().reportType &&
+             incoming().createdAt == existing().createdAt &&
+             incoming().createdBy == existing().createdBy;
+    }
+
     function isSecretaryElem() {
       return isActive() && userRole() == 'SECRETARY_ELEM' && currentUser().unitId == 'ELEMENTARY';
     }
@@ -1224,6 +1244,42 @@ service cloud.firestore {
 
     match /weekly_summary_drafts/{draftId} {
       allow read, write: if (isActive() && (isJuniorHighStaff() || isTeacher() || isSecretaryKindy() || isSecretaryElem() || isSecretaryJH())) || isAdmin();
+    }
+
+    match /midterm_summary_drafts/{draftId} {
+      allow read: if isActive() && (
+        isAdmin() ||
+        isKindergartenHeadUnit() ||
+        isSecretaryKindy() ||
+        (isTeacher() && (resource == null || isTeacherAssignedToClass(resource.data.classId)))
+      );
+      allow create: if isActive() && (
+        isAdmin() ||
+        isKindergartenHeadUnit() ||
+        isSecretaryKindy() ||
+        (isTeacher() && 
+          isTeacherAssignedToClass(incoming().classId) && 
+          isStudentInClass(incoming().studentId, incoming().classId) &&
+          incoming().unit == 'KINDERGARTEN' &&
+          incoming().reportType == 'KINDY_MIDTERM_REPORT'
+        )
+      );
+      allow update: if isActive() && (
+        isAdmin() ||
+        isKindergartenHeadUnit() ||
+        isSecretaryKindy() ||
+        (isTeacher() && 
+          isTeacherAssignedToClass(incoming().classId) && 
+          isMidtermIdentityUnchanged() &&
+          existing().status == 'DRAFT' &&
+          (incoming().status == 'DRAFT' || incoming().status == 'READY_FOR_REVIEW')
+        )
+      );
+      allow delete: if isActive() && (
+        isAdmin() ||
+        isKindergartenHeadUnit() ||
+        isSecretaryKindy()
+      );
     }
 
     match /ldssTemplates/{templateId} {

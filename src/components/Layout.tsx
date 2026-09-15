@@ -754,6 +754,7 @@ export function Layout() {
                     <>
                       <NavItem to="/kindy/weekly-summary" icon={<Sparkles size={18} />} label="Weekly Summary & AI" />
                       <NavItem to="/kindy/weekly-review" icon={<History size={18} />} label="Weekly Report (Final)" />
+                      <NavItem to="/kindy/midterm" icon={<FileSpreadsheet size={18} />} label="Midterm Report" />
                       <NavItem to="/kindy/attendance-recap" icon={<FileText size={18} />} label="Rekap Absensi (H/S/I/A)" />
                     </>
                   )}

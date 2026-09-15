@@ -21,6 +21,7 @@ export type NormalizedDhuhurEntry = {
     | "BELUM_DIISI"
     | "TIDAK_BERLAKU";
   updatedAt?: number;
+  classNameSnapshot?: string;
 };
 
 export const normalizeDhuhurStatus = (raw: unknown): NormalizedDhuhurEntry['status'] => {
@@ -39,7 +40,9 @@ export const normalizeDhuhurStatus = (raw: unknown): NormalizedDhuhurEntry['stat
   if (
     s === 'BERHALANGAN' || 
     s === 'B' || 
-    s === 'BERHALANGAN_SHALAT'
+    s === 'BERHALANGAN_SHALAT' ||
+    s === 'T' ||
+    s === 'TERLAMBAT'
   ) {
     return 'BERHALANGAN';
   }
@@ -105,7 +108,8 @@ export function normalizeDhuhurDocument(docData: any): NormalizedDhuhurEntry[] {
       academicYear: docAcademicYear,
       semester: typeof docSemester === 'number' ? docSemester : (docSemester ? parseInt(docSemester, 10) : undefined),
       status: normalizeDhuhurStatus(status),
-      updatedAt: docUpdatedAt
+      updatedAt: docUpdatedAt,
+      classNameSnapshot: docData.classNameSnapshot || undefined
     };
   };
 
@@ -239,6 +243,7 @@ export function calculateDhuhurRecap(entries: NormalizedDhuhurEntry[]) {
 export async function getDhuhurAttendanceRecords(params: {
   unit: "JUNIOR_HIGH";
   classId?: string;
+  className?: string;
   academicYear: string;
   semester?: number;
   startDate: string; // YYYY-MM-DD
@@ -247,7 +252,7 @@ export async function getDhuhurAttendanceRecords(params: {
   records: NormalizedDhuhurEntry[];
   sourceDocumentCount: number;
 }> {
-  const { classId, academicYear, semester, startDate, endDate } = params;
+  const { classId, className, academicYear, semester, startDate, endDate } = params;
 
   // Consistent normalized academicYear formats
   const targetYear = academicYear;
@@ -283,9 +288,19 @@ export async function getDhuhurAttendanceRecords(params: {
         return false;
       }
     }
-    // classId match
-    if (classId) {
-      if (entry.classId !== classId) {
+    // classId match with canonical ID or Display Name fallback
+    if (classId && classId !== '__ALL_JUNIOR_HIGH_CLASSES__') {
+      const matchId = classId.trim().toLowerCase();
+      const matchName = className ? className.trim().toLowerCase() : '';
+      
+      const entryClassId = entry.classId ? entry.classId.trim().toLowerCase() : '';
+      const entryClassName = entry.classNameSnapshot ? entry.classNameSnapshot.trim().toLowerCase() : '';
+      
+      const match = (entryClassId === matchId) || 
+                    (matchName && entryClassId === matchName) ||
+                    (entryClassName && entryClassName === matchName) ||
+                    (entryClassName && entryClassName === matchId);
+      if (!match) {
         return false;
       }
     }

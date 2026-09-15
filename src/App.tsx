@@ -70,6 +70,7 @@ import AAPAssessment from './pages/Kindergarten/AAPAssessment';
 import AAPReport from './pages/Kindergarten/AAPReport';
 import WeeklyReview from './pages/Kindergarten/WeeklyReview';
 import WeeklySummary from './pages/Kindergarten/WeeklySummary';
+import MidtermSummary from './pages/Kindergarten/MidtermSummary';
 import HeadDashboardKG from './pages/Kindergarten/HeadDashboard';
 import TeacherDashboardKG from './pages/Kindergarten/TeacherDashboard';
 import ParentViewKG from './pages/Kindergarten/ParentView';
@@ -510,6 +511,7 @@ export default function App() {
             <Route path="observation" element={<ObservationKG />} />
             <Route path="weekly-summary" element={<WeeklySummary />} />
             <Route path="weekly-review" element={<WeeklyReview />} />
+            <Route path="midterm" element={<MidtermSummary />} />
             <Route path="attendance-recap" element={<AttendanceSummaryReport />} />
           </Route>
           <Route path="child">

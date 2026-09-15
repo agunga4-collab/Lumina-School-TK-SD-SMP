@@ -830,6 +830,7 @@ export default function Attendance() {
           const { records, sourceDocumentCount } = await getDhuhurAttendanceRecords({
             unit: "JUNIOR_HIGH",
             classId: classId,
+            className: className,
             academicYear: activeAcademicYear,
             semester: parseInt(activeSemester, 10),
             startDate: startLimit,
@@ -1033,7 +1034,7 @@ export default function Attendance() {
     };
 
     loadMonthlyRecap();
-  }, [view, selectedClass, recapMonth, recapYear, recapPeriodMode, recapStartDate, recapEndDate, students.length, attendanceType]);
+  }, [view, selectedClass, recapMonth, recapYear, recapPeriodMode, recapStartDate, recapEndDate, students.length, attendanceType, activeAcademicYear, activeSemester]);
 
   const handlePrevDate = () => {
     const d = new Date(selectedDate);
@@ -2595,11 +2596,11 @@ export default function Attendance() {
 
           {activeUnit === 'JUNIOR_HIGH' && attendanceType === 'DHUHUR' ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-              <RecapCard title="Partisipasi Shalat" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 || recapStats.attendanceRate === '—' ? '—' : `${recapStats.attendanceRate}%`)} icon={<CheckCircle2 className="text-green-600" />} />
-              <RecapCard title="Shalat Berjamaah" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.hadir.toString())} icon={<CheckCircle2 className="text-emerald-500" />} />
-              <RecapCard title="Berhalangan" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.late.toString())} icon={<AlertCircle className="text-amber-500" />} />
-              <RecapCard title="Izin" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.izin.toString())} icon={<Clock className="text-blue-500" />} />
-              <RecapCard title="Tidak Mengikuti" value={loadingRecap ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.alpa.toString())} icon={<UserX className="text-red-600" />} />
+              <RecapCard title="Partisipasi Shalat" value={(loadingRecap || loading) ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 || recapStats.attendanceRate === '—' ? '—' : `${recapStats.attendanceRate}%`)} icon={<CheckCircle2 className="text-green-600" />} />
+              <RecapCard title="Shalat Berjamaah" value={(loadingRecap || loading) ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.hadir.toString())} icon={<CheckCircle2 className="text-emerald-500" />} />
+              <RecapCard title="Berhalangan" value={(loadingRecap || loading) ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.late.toString())} icon={<AlertCircle className="text-amber-500" />} />
+              <RecapCard title="Izin" value={(loadingRecap || loading) ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.izin.toString())} icon={<Clock className="text-blue-500" />} />
+              <RecapCard title="Tidak Mengikuti" value={(loadingRecap || loading) ? 'Loading...' : (recapError || Object.keys(recapData).length === 0 ? '—' : recapStats.alpa.toString())} icon={<UserX className="text-red-600" />} />
             </div>
           ) : attendanceType === 'DHUHUR' ? (
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
@@ -2694,7 +2695,7 @@ export default function Attendance() {
                       : 'Terjadi kesalahan saat memproses data kehadiran. Silakan muat ulang halaman atau coba lagi nanti.'}
                   </p>
                 </div>
-              ) : loadingRecap ? (
+              ) : (loadingRecap || loading) ? (
                 <div className="px-6 py-12 text-center text-gray-400 font-medium">
                   <RefreshCw size={24} className="animate-spin mx-auto mb-2 text-blue-500" />
                   Memuat data rekap...
@@ -2711,7 +2712,7 @@ export default function Attendance() {
                   <h4 className="font-bold text-gray-900 text-sm mb-1">Tidak Ada Data</h4>
                   <p className="text-xs text-gray-500 leading-relaxed">
                     {attendanceType === 'DHUHUR'
-                      ? 'Belum ada data Kehadiran Shalat Dhuhur pada periode ini.'
+                      ? 'Belum ada data Kehadiran Shalat Dhuhur tersimpan untuk kelas dan periode ini.'
                       : 'Tidak ditemukan catatan kehadiran untuk kelas dan periode yang Anda pilih.'}
                   </p>
                 </div>
@@ -2744,11 +2745,13 @@ export default function Attendance() {
                     {students.map((s, idx) => {
                       const stats = recapData[s.id] || { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
                       const studentTotal = attendanceType === 'DHUHUR' 
-                        ? (stats.hadir + stats.late + stats.alpa)
+                        ? (stats.hadir + stats.late + stats.izin + stats.alpa)
                         : (stats.hadir + stats.sakit + stats.izin + stats.alpa + stats.late);
                       let studentRate = '—';
                       if (studentTotal > 0) {
-                        studentRate = `${Math.round(((stats.hadir + stats.late) / studentTotal) * 100)}%`;
+                        studentRate = attendanceType === 'DHUHUR'
+                          ? `${Math.round((stats.hadir / studentTotal) * 100)}%`
+                          : `${Math.round(((stats.hadir + stats.late) / studentTotal) * 100)}%`;
                       }
 
                       return (
@@ -2828,9 +2831,22 @@ export default function Attendance() {
                               let colorClass = 'text-gray-200';
                               
                               if (attendanceType === 'DHUHUR') {
-                                if (status === 'H') { symbol = 'H'; colorClass = 'text-green-600 font-black'; }
-                                else if (status === 'T') { symbol = 'T'; colorClass = 'text-orange-600 font-black'; }
-                                else if (status === 'A') { symbol = 'A'; colorClass = 'text-red-600 font-black'; }
+                                if (status === 'H' || status === 'SALAT_BERJAMAAH' || status === 'SHALAT_BERJAMAAH') { 
+                                  symbol = 'H'; 
+                                  colorClass = 'text-emerald-600 font-black'; 
+                                } else if (status === 'T' || status === 'BERHALANGAN' || status === 'BERHALANGAN_SHALAT' || status === 'TERLAMBAT') { 
+                                  symbol = 'T'; 
+                                  colorClass = 'text-orange-500 font-black'; 
+                                } else if (status === 'I' || status === 'IZIN') { 
+                                  symbol = 'I'; 
+                                  colorClass = 'text-blue-500 font-black'; 
+                                } else if (status === 'A' || status === 'TIDAK_MENGIKUTI' || status === 'ALPA') { 
+                                  symbol = 'A'; 
+                                  colorClass = 'text-red-600 font-black'; 
+                                } else if (status === 'TIDAK_BERLAKU') {
+                                  symbol = '-';
+                                  colorClass = 'text-gray-300 font-normal';
+                                }
                               } else {
                                 if (status === 'HADIR') { symbol = 'H'; colorClass = 'text-green-600 font-black'; }
                                 else if (status === 'SAKIT') { symbol = 'S'; colorClass = 'text-blue-600 font-black'; }
