@@ -2382,6 +2382,7 @@ export interface LpuLevelTask {
 
 export interface LearningPowerUpTaskBatch {
   id: string; // Document ID
+  unit?: string; // e.g. JUNIOR_HIGH
   subjectKey: LpuSubjectKey;
   subjectArea: LpuSubjectArea;
   academicYearId: string;
@@ -2420,6 +2421,7 @@ export interface LpuAssignmentHistoryEntry {
 
 export interface LearningPowerUpAssignment {
   id: string; // Deterministic: assignment_{taskBatchId}_{studentId}_{subjectKey}
+  unit?: string; // e.g. JUNIOR_HIGH
   taskBatchId: string;
   studentId: string;
   studentNameSnapshot: string;

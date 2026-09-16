@@ -1212,6 +1212,7 @@ function LearningPowerUpTeacherPageContent() {
       const isEditing = !!editingBatchId;
       const batchDoc: LearningPowerUpTaskBatch = {
         id: batchId,
+        unit: 'JUNIOR_HIGH',
         subjectKey: newSubject,
         subjectArea: LPU_SUBJECT_MAP[newSubject],
         academicYearId: activeYear,
@@ -1339,6 +1340,7 @@ function LearningPowerUpTeacherPageContent() {
       const isEditing = !!editingBatchId;
       const batchDoc: LearningPowerUpTaskBatch = {
         id: batchId,
+        unit: 'JUNIOR_HIGH',
         subjectKey: batch.subjectKey!,
         subjectArea: batch.subjectArea!,
         academicYearId: activeYear,
@@ -1381,6 +1383,7 @@ function LearningPowerUpTeacherPageContent() {
 
             const assignmentDoc: LearningPowerUpAssignment = {
               id: assignmentId,
+              unit: 'JUNIOR_HIGH',
               taskBatchId: batchId,
               studentId: student.id,
               studentNameSnapshot: student.name,
@@ -1568,6 +1571,7 @@ function LearningPowerUpTeacherPageContent() {
 
               assignmentsToCreate.push({
                 id: assignmentId,
+                unit: 'JUNIOR_HIGH',
                 taskBatchId: editingBatchId,
                 studentId: student.id,
                 studentNameSnapshot: student.name,
@@ -1893,6 +1897,7 @@ function LearningPowerUpTeacherPageContent() {
       const logId = `${cancellingBatch.id}_cancelled_${Date.now()}`;
       try {
         await setDoc(doc(db, 'learning_power_up_activity_logs', logId), {
+          unit: 'JUNIOR_HIGH',
           actor: {
             uid: currentUser.uid,
             name: currentUser.displayName || currentUser.email || 'Guru',
