@@ -415,6 +415,20 @@ class LearningPowerUpErrorBoundary extends React.Component<any, any> {
   }
 }
 
+const normalizeYear = (val: any): string => {
+  if (!val) return '';
+  const matches = String(val).match(/\d{4}/g);
+  if (matches && matches.length >= 2) {
+    return `${matches[0]}_${matches[1]}`;
+  }
+  return String(val).toLowerCase().replace(/[^0-9]/g, '');
+};
+
+const normalizeClassName = (val: any): string => {
+  if (!val) return '';
+  return String(val).toLowerCase().replace(/[^a-z0-9]/g, '');
+};
+
 export default function LearningPowerUpTeacherPage() {
   return (
     <LearningPowerUpErrorBoundary>
@@ -555,10 +569,22 @@ function LearningPowerUpTeacherPageContent() {
     const loadClassesList = async () => {
       setLoadingMetadata(true);
       try {
-        const allClasses = await getClasses() || [];
-        const jhClasses = allClasses.filter(
-          c => c.unitId === 'JUNIOR_HIGH' && c.status !== 'archived' && c.academicYear === activeYear
+        const qClasses = query(
+          collection(db, 'classes'),
+          where('unitId', '==', 'JUNIOR_HIGH')
         );
+        const snapClasses = await getDocs(qClasses);
+        const jhClasses = snapClasses.docs
+          .map(doc => ({ id: doc.id, ...doc.data() }) as any)
+          .filter(c => {
+            const matchesYear = c.academicYear === activeYear || c.academicYearId === activeYear;
+            return c.status !== 'archived' && matchesYear;
+          });
+
+        console.log("DEBUG CLASSES: raw snapClasses docs length =", snapClasses.size);
+        console.log("DEBUG CLASSES: raw snapClasses docs details =", snapClasses.docs.map(doc => ({ id: doc.id, name: doc.data().name, academicYear: doc.data().academicYear, academicYearId: doc.data().academicYearId, status: doc.data().status })));
+        console.log("DEBUG CLASSES: activeYear =", activeYear);
+        console.log("DEBUG CLASSES: filtered jhClasses =", jhClasses.map(c => ({ id: c.id, name: c.name })));
 
         // Deduplicate classes by ID to avoid duplicates
         const seenIds = new Set<string>();
@@ -690,39 +716,69 @@ function LearningPowerUpTeacherPageContent() {
       // Query specific targets to satisfy Firestore rules (rules are not filters)
       const qBatchesTarget = query(
         collection(db, 'learning_power_up_task_batches'),
-        where('academicYearId', '==', activeYear),
         where('targetClassIds', 'array-contains', selectedClassId)
       );
       const qBatchesClassIds = query(
         collection(db, 'learning_power_up_task_batches'),
-        where('academicYearId', '==', activeYear),
         where('classIds', 'array-contains', selectedClassId)
       );
       const qBatchesClassId = query(
         collection(db, 'learning_power_up_task_batches'),
-        where('academicYearId', '==', activeYear),
         where('classId', '==', selectedClassId)
       );
 
-      const [snapTarget, snapClassIds, snapClassId] = await Promise.all([
+      const queryResults = await Promise.allSettled([
         getDocs(qBatchesTarget),
         getDocs(qBatchesClassIds),
         getDocs(qBatchesClassId)
       ]);
 
       const mergedDocsMap = new Map<string, any>();
-      [...snapTarget.docs, ...snapClassIds.docs, ...snapClassId.docs].forEach(doc => {
-        mergedDocsMap.set(doc.id, { id: doc.id, ...doc.data() });
+      queryResults.forEach((res, idx) => {
+        if (res.status === 'fulfilled') {
+          res.value.docs.forEach(doc => {
+            mergedDocsMap.set(doc.id, { id: doc.id, ...doc.data() });
+          });
+        } else {
+          console.error(`DEBUG BATCHES: query ${idx} failed in loadClassData:`, res.reason);
+        }
       });
+
       const allBatches = Array.from(mergedDocsMap.values());
 
+      // Prepare active Junior High sets
+      const activeJHClassIds = new Set(classes.map(c => c.id).filter(Boolean));
+      const activeJHClassNames = new Set(classes.map(c => normalizeClassName(c.name)).filter(Boolean));
+
+      const isLegacyBatchActiveJH = (b: any) => {
+        const cId = b.classId;
+        if (cId && activeJHClassIds.has(cId)) return true;
+
+        const cIds = b.classIds;
+        if (Array.isArray(cIds) && cIds.some(id => activeJHClassIds.has(id))) return true;
+
+        const tClassIds = b.targetClassIds;
+        if (Array.isArray(tClassIds) && tClassIds.some(id => activeJHClassIds.has(id))) return true;
+
+        const cName = b.className;
+        if (cName && activeJHClassNames.has(normalizeClassName(cName))) return true;
+
+        const cNameSnapshot = b.classNameSnapshot;
+        if (cNameSnapshot && activeJHClassNames.has(normalizeClassName(cNameSnapshot))) return true;
+
+        const tClassNames = b.targetClassNames;
+        if (Array.isArray(tClassNames) && tClassNames.some(name => activeJHClassNames.has(normalizeClassName(name)))) return true;
+
+        return false;
+      };
+
       const classLevelBatches = allBatches.filter(b => {
+        // Academic year check on client side to handle all variations
+        const bYear = b.academicYearId || b.academicYear;
+        if (normalizeYear(bYear) !== normalizeYear(activeYear)) return false;
+
         // 1. Check if the batch belongs to Junior High
-        const isJH = b.unit === 'JUNIOR_HIGH' || (!b.unit && (
-          (b.classId && b.classId.startsWith('JUNIOR_HIGH_')) ||
-          (Array.isArray(b.classIds) && b.classIds.some((cid: any) => typeof cid === 'string' && cid.startsWith('JUNIOR_HIGH_'))) ||
-          (Array.isArray(b.targetClassIds) && b.targetClassIds.some((cid: any) => typeof cid === 'string' && cid.startsWith('JUNIOR_HIGH_')))
-        ));
+        const isJH = b.unit === 'JUNIOR_HIGH' || (!b.unit && isLegacyBatchActiveJH(b));
         if (!isJH) return false;
 
         // 2. Check if the batch targets the selected class
@@ -763,17 +819,18 @@ function LearningPowerUpTeacherPageContent() {
         };
       });
 
-      // 2.5 Load legacy packages for this class & year
+      // 2.5 Load legacy packages for this class
       const qLegacyPackages = query(
         collection(db, 'learning_power_up_tasks'),
-        where('classId', '==', selectedClassId),
-        where('academicYearId', '==', activeYear)
+        where('classId', '==', selectedClassId)
       );
       const legacyPackagesSnap = await getDocs(qLegacyPackages);
-      const legacyPackages = legacyPackagesSnap.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as LearningPowerUpPackage[];
+      const legacyPackages = legacyPackagesSnap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }) as any)
+        .filter(p => {
+          const pYear = p.academicYearId || p.academicYear;
+          return normalizeYear(pYear) === normalizeYear(activeYear);
+        }) as LearningPowerUpPackage[];
 
       // Sort combined packages by start date descending
       const loadedPackages = [...virtualPackages, ...legacyPackages];
@@ -789,14 +846,15 @@ function LearningPowerUpTeacherPageContent() {
       // 3. Load level-based assignments
       const qAssignments = query(
         collection(db, 'learning_power_up_assignments'),
-        where('academicYearId', '==', activeYear),
         where('classId', '==', selectedClassId)
       );
       const assignmentsSnap = await getDocs(qAssignments);
-      const loadedAsgs = assignmentsSnap.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as LearningPowerUpAssignment[];
+      const loadedAsgs = assignmentsSnap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }) as any)
+        .filter(asg => {
+          const asgYear = asg.academicYearId || asg.academicYear;
+          return normalizeYear(asgYear) === normalizeYear(activeYear);
+        }) as LearningPowerUpAssignment[];
       setLoadedAssignments(loadedAsgs);
 
       // Map level-based assignments to virtual TaskProgress records
@@ -834,17 +892,18 @@ function LearningPowerUpTeacherPageContent() {
         } as any;
       });
 
-      // 3.5 Load legacy progress records for this class & year
+      // 3.5 Load legacy progress records for this class
       const qLegacyProgress = query(
         collection(db, 'learning_power_up_progress'),
-        where('classId', '==', selectedClassId),
-        where('academicYearId', '==', activeYear)
+        where('classId', '==', selectedClassId)
       );
       const legacyProgressSnap = await getDocs(qLegacyProgress);
-      const legacyProgresses = legacyProgressSnap.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as TaskProgress[];
+      const legacyProgresses = legacyProgressSnap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }) as any)
+        .filter(p => {
+          const pYear = p.academicYearId || p.academicYear;
+          return normalizeYear(pYear) === normalizeYear(activeYear);
+        }) as TaskProgress[];
       
       setProgresses([...virtualProgresses, ...legacyProgresses]);
 
@@ -862,82 +921,174 @@ function LearningPowerUpTeacherPageContent() {
    const loadTaskBatches = async () => {
     if (!activeYear) return;
     try {
-      const jhClassIds = classes.map(c => c.id).filter(Boolean);
+      console.log("DEBUG BATCHES: Starting loadTaskBatches with activeYear =", activeYear);
+
+      // Fetch Junior High classes self-containedly to avoid state-race conditions
+      const qClasses = query(
+        collection(db, 'classes'),
+        where('unitId', '==', 'JUNIOR_HIGH')
+      );
+      const snapClasses = await getDocs(qClasses);
+      const fetchedClasses = snapClasses.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }) as any)
+        .filter(c => {
+          const matchesYear = c.academicYear === activeYear || c.academicYearId === activeYear;
+          return c.status !== 'archived' && matchesYear;
+        });
+
+      const jhClassIds = fetchedClasses.map(c => c.id).filter(Boolean);
+      console.log("DEBUG BATCHES: fetched jhClassIds =", jhClassIds);
+
+      const yearAlternatives = [activeYear];
+      if (activeYear.includes('/')) {
+        yearAlternatives.push(activeYear.replace('/', '_'));
+      } else if (activeYear.includes('_')) {
+        yearAlternatives.push(activeYear.replace('_', '/'));
+      }
+      console.log("DEBUG BATCHES: year alternatives =", yearAlternatives);
+
       const batchesMap = new Map<string, any>();
 
-      // 1. Fetch batches where unit is 'JUNIOR_HIGH'
-      const qUnit = query(
-        collection(db, 'learning_power_up_task_batches'),
-        where('academicYearId', '==', activeYear),
-        where('unit', '==', 'JUNIOR_HIGH')
-      );
-      const snapUnit = await getDocs(qUnit);
-      snapUnit.docs.forEach(doc => {
-        batchesMap.set(doc.id, { id: doc.id, ...doc.data() });
-      });
+      // We will collect all promises to execute in parallel
+      const queryPromises: { label: string; promise: Promise<any> }[] = [];
 
-      // 2. Fetch legacy batches targeting any of our Junior High classes
+      // 1. Fetch unit == 'JUNIOR_HIGH' queries
+      for (const yearVal of yearAlternatives) {
+        queryPromises.push({
+          label: `unit=JUNIOR_HIGH academicYearId=${yearVal}`,
+          promise: getDocs(query(
+            collection(db, 'learning_power_up_task_batches'),
+            where('academicYearId', '==', yearVal),
+            where('unit', '==', 'JUNIOR_HIGH')
+          ))
+        });
+
+        queryPromises.push({
+          label: `unit=JUNIOR_HIGH academicYear=${yearVal}`,
+          promise: getDocs(query(
+            collection(db, 'learning_power_up_task_batches'),
+            where('academicYear', '==', yearVal),
+            where('unit', '==', 'JUNIOR_HIGH')
+          ))
+        });
+      }
+
+      // 2. Fetch batches by Junior High class IDs (security-safe)
       if (jhClassIds.length > 0) {
-        // Chunk jhClassIds to comply with Firestore 'in' limit of 10 items
         const chunks = [];
         for (let i = 0; i < jhClassIds.length; i += 10) {
           chunks.push(jhClassIds.slice(i, i + 10));
         }
 
         for (const chunk of chunks) {
-          const qClassId = query(
-            collection(db, 'learning_power_up_task_batches'),
-            where('academicYearId', '==', activeYear),
-            where('classId', 'in', chunk)
-          );
-          const snapClassId = await getDocs(qClassId);
-          snapClassId.docs.forEach(doc => {
-            batchesMap.set(doc.id, { id: doc.id, ...doc.data() });
+          queryPromises.push({
+            label: `classId in chunk [${chunk.join(',')}]`,
+            promise: getDocs(query(
+              collection(db, 'learning_power_up_task_batches'),
+              where('classId', 'in', chunk)
+            ))
           });
 
-          const qClassIds = query(
-            collection(db, 'learning_power_up_task_batches'),
-            where('academicYearId', '==', activeYear),
-            where('classIds', 'array-contains-any', chunk)
-          );
-          const snapClassIds = await getDocs(qClassIds);
-          snapClassIds.docs.forEach(doc => {
-            batchesMap.set(doc.id, { id: doc.id, ...doc.data() });
+          queryPromises.push({
+            label: `classIds array-contains-any chunk [${chunk.join(',')}]`,
+            promise: getDocs(query(
+              collection(db, 'learning_power_up_task_batches'),
+              where('classIds', 'array-contains-any', chunk)
+            ))
           });
 
-          const qTargetClassIds = query(
-            collection(db, 'learning_power_up_task_batches'),
-            where('academicYearId', '==', activeYear),
-            where('targetClassIds', 'array-contains-any', chunk)
-          );
-          const snapTargetClassIds = await getDocs(qTargetClassIds);
-          snapTargetClassIds.docs.forEach(doc => {
-            batchesMap.set(doc.id, { id: doc.id, ...doc.data() });
+          queryPromises.push({
+            label: `targetClassIds array-contains-any chunk [${chunk.join(',')}]`,
+            promise: getDocs(query(
+              collection(db, 'learning_power_up_task_batches'),
+              where('targetClassIds', 'array-contains-any', chunk)
+            ))
           });
         }
       }
 
-      const batches = Array.from(batchesMap.values()) as LearningPowerUpTaskBatch[];
+      const queryResults = await Promise.allSettled(queryPromises.map(qp => qp.promise));
       
+      queryResults.forEach((res, idx) => {
+        const qLabel = queryPromises[idx].label;
+        if (res.status === 'fulfilled') {
+          const snap = res.value;
+          console.log(`DEBUG BATCHES: Query "${qLabel}" succeeded. Result count =`, snap.size);
+          snap.docs.forEach((doc: any) => {
+            batchesMap.set(doc.id, { id: doc.id, ...doc.data() });
+          });
+        } else {
+          console.error(`DEBUG BATCHES: Query "${qLabel}" failed:`, res.reason);
+        }
+      });
+
+      const batches = Array.from(batchesMap.values()) as LearningPowerUpTaskBatch[];
+      const rawBatchCount = batches.length;
+      const batchIdsLoaded = batches.map(b => b.id);
+      
+      const removedDueToYear: string[] = [];
+      const removedDueToClass: string[] = [];
+
+      const activeJHClassIds = new Set(fetchedClasses.map(c => c.id).filter(Boolean));
+      const activeJHClassNames = new Set(fetchedClasses.map(c => normalizeClassName(c.name)).filter(Boolean));
+
+      const isLegacyBatchActiveJH = (b: any) => {
+        const cId = b.classId;
+        if (cId && activeJHClassIds.has(cId)) return true;
+
+        const cIds = b.classIds;
+        if (Array.isArray(cIds) && cIds.some(id => activeJHClassIds.has(id))) return true;
+
+        const tClassIds = b.targetClassIds;
+        if (Array.isArray(tClassIds) && tClassIds.some(id => activeJHClassIds.has(id))) return true;
+
+        const cName = b.className;
+        if (cName && activeJHClassNames.has(normalizeClassName(cName))) return true;
+
+        const cNameSnapshot = b.classNameSnapshot;
+        if (cNameSnapshot && activeJHClassNames.has(normalizeClassName(cNameSnapshot))) return true;
+
+        const tClassNames = b.targetClassNames;
+        if (Array.isArray(tClassNames) && tClassNames.some(name => activeJHClassNames.has(normalizeClassName(name)))) return true;
+
+        return false;
+      };
+
       const filteredBatches = batches.filter(batch => {
-        // unit === 'JUNIOR_HIGH'
+        // Year filter check using normalizeYear
+        const bYear = batch.academicYearId || (batch as any).academicYear;
+        if (normalizeYear(bYear) !== normalizeYear(activeYear)) {
+          removedDueToYear.push(batch.id);
+          return false;
+        }
+
+        // If unit is JUNIOR_HIGH, let it pass
         if (batch.unit === 'JUNIOR_HIGH') {
           return true;
         }
-        // unit is empty/missing
+
+        // If unit is empty (legacy), check if targeting any JUNIOR_HIGH class
         if (!batch.unit) {
-          const classId = (batch as any).classId;
-          const classIds = (batch as any).classIds || batch.targetClassIds;
-          
-          if (classId && typeof classId === 'string' && classId.startsWith('JUNIOR_HIGH_')) {
+          if (isLegacyBatchActiveJH(batch)) {
             return true;
           }
-          if (Array.isArray(classIds) && classIds.some(cid => typeof cid === 'string' && cid.startsWith('JUNIOR_HIGH_'))) {
-            return true;
-          }
+          removedDueToClass.push(batch.id);
+          return false;
         }
+
+        removedDueToClass.push(batch.id);
         return false;
       });
+
+      const finalRenderedBatchIds = filteredBatches.map(b => b.id);
+
+      console.log(`DEBUG BATCHES:
+- raw batch count: ${rawBatchCount}
+- batch IDs loaded: ${JSON.stringify(batchIdsLoaded)}
+- batch IDs removed due to year: ${JSON.stringify(removedDueToYear)}
+- batch IDs removed due to class: ${JSON.stringify(removedDueToClass)}
+- final rendered batch IDs: ${JSON.stringify(finalRenderedBatchIds)}
+`);
 
       filteredBatches.sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate));
       setTaskBatches(filteredBatches);

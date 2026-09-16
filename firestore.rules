@@ -473,7 +473,11 @@ service cloud.firestore {
     }
 
     match /classes/{classId} {
-      allow read: if isActive();
+      allow read: if isActive() && (
+        isAdmin() || (
+          (currentUser().unitId == 'JUNIOR_HIGH') ? (resource.data.unitId == 'JUNIOR_HIGH') : true
+        )
+      );
       allow create, delete: if isAdmin() || isMTSSAcademicManager();
       allow update: if isAdmin() || isMTSSAcademicManager() || (
         isSignedIn() &&
