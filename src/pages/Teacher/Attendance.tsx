@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   CheckCircle2, AlertCircle, Clock, UserX, Search, Filter, 
   Save, Calendar, ChevronRight, ChevronLeft, AlertTriangle, MessageSquare, 
-  Settings2, BarChart3, Bell, RefreshCw, Layers, Trash2, ExternalLink, X, Copy
+  Settings2, BarChart3, Bell, RefreshCw, Layers, Trash2, ExternalLink, X, Copy,
+  ArrowUp, ArrowDown, ArrowUpDown
 } from 'lucide-react';
 import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 
@@ -64,6 +65,7 @@ interface ExtractedRecord {
   studentId: string;
   status: string;
   note?: string;
+  schoolAttendanceStatus?: string;
 }
 
 function extractRecordsFromDoc(docData: any): ExtractedRecord[] {
@@ -77,7 +79,8 @@ function extractRecordsFromDoc(docData: any): ExtractedRecord[] {
       list.push({
         studentId: docData.studentId,
         status: status,
-        note: docData.note || docData.dhuhrPrayerStatus?.note || ""
+        note: docData.note || docData.dhuhrPrayerStatus?.note || "",
+        schoolAttendanceStatus: docData.schoolAttendanceStatus || docData.dhuhrPrayerStatus?.schoolAttendanceStatus || ""
       });
     }
   }
@@ -93,7 +96,8 @@ function extractRecordsFromDoc(docData: any): ExtractedRecord[] {
             list.push({
               studentId: item.studentId,
               status: status,
-              note: item.note || item.dhuhrPrayerStatus?.note || ""
+              note: item.note || item.dhuhrPrayerStatus?.note || "",
+              schoolAttendanceStatus: item.schoolAttendanceStatus || item.dhuhrPrayerStatus?.schoolAttendanceStatus || ""
             });
           }
         }
@@ -111,7 +115,8 @@ function extractRecordsFromDoc(docData: any): ExtractedRecord[] {
             list.push({
               studentId: val.studentId || key,
               status: status,
-              note: val.note || val.dhuhrPrayerStatus?.note || ""
+              note: val.note || val.dhuhrPrayerStatus?.note || "",
+              schoolAttendanceStatus: val.schoolAttendanceStatus || val.dhuhrPrayerStatus?.schoolAttendanceStatus || ""
             });
           }
         } else if (typeof val === 'string') {
@@ -161,6 +166,72 @@ export default function Attendance() {
   
   const [searchTerm, setSearchTerm] = React.useState('');
   const [isFiltersExpanded, setIsFiltersExpanded] = React.useState(false);
+
+  const [dhuhurSortConfig, setDhuhurSortConfig] = React.useState<{
+    key: 'name' | 'hadir' | 'late' | 'alpa' | 'rate';
+    direction: 'asc' | 'desc';
+  }>({ key: 'name', direction: 'asc' });
+
+  const sortedStudentsForRecap = React.useMemo(() => {
+    if (attendanceType !== 'DHUHUR') return students;
+
+    const studentsWithStats = students.map(s => {
+      const stats = recapData[s.id] || { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
+      const total = stats.hadir + stats.late + stats.izin + stats.alpa;
+      const rate = total > 0 ? (stats.hadir / total) * 100 : -1;
+      return {
+        student: s,
+        stats,
+        rate,
+        total
+      };
+    });
+
+    const key = dhuhurSortConfig.key;
+    const direction = dhuhurSortConfig.direction;
+
+    studentsWithStats.sort((a, b) => {
+      let comparison = 0;
+
+      if (key === 'name') {
+        comparison = (a.student.name || '').localeCompare(b.student.name || '', 'id-ID');
+      } else if (key === 'hadir') {
+        comparison = a.stats.hadir - b.stats.hadir;
+      } else if (key === 'late') {
+        comparison = a.stats.late - b.stats.late;
+      } else if (key === 'alpa') {
+        comparison = a.stats.alpa - b.stats.alpa;
+      } else if (key === 'rate') {
+        comparison = a.rate - b.rate;
+      }
+
+      if (comparison !== 0) {
+        return direction === 'asc' ? comparison : -comparison;
+      }
+
+      // Tie breaker: ALWAYS sort by student Name A-Z
+      return (a.student.name || '').localeCompare(b.student.name || '', 'id-ID');
+    });
+
+    return studentsWithStats.map(item => item.student);
+  }, [students, recapData, dhuhurSortConfig, attendanceType]);
+
+  const handleDhuhurSort = (columnKey: 'name' | 'hadir' | 'late' | 'alpa' | 'rate') => {
+    setDhuhurSortConfig(prev => {
+      if (prev.key === columnKey) {
+        return {
+          key: columnKey,
+          direction: prev.direction === 'asc' ? 'desc' : 'asc'
+        };
+      } else {
+        const defaultDirection = columnKey === 'name' ? 'asc' : 'desc';
+        return {
+          key: columnKey,
+          direction: defaultDirection
+        };
+      }
+    });
+  };
 
   const filteredStudents = React.useMemo(() => {
     if (!searchTerm.trim()) return students;
@@ -501,6 +572,7 @@ export default function Attendance() {
 
           const extractedStatusMap = new Map(extractedList.map(item => [item.studentId, item.status]));
           const extractedNotesMap = new Map(extractedList.map(item => [item.studentId, item.note || ""]));
+          const extractedSchoolStatusMap = new Map(extractedList.map(item => [item.studentId, item.schoolAttendanceStatus || ""]));
 
           if (extractedList.length > 0) {
             lastSavedFound = true;
@@ -509,9 +581,22 @@ export default function Attendance() {
           // Map students
           if (studentList.length > 0) {
             setStudents(studentList.map(s => {
-              const schoolStatus = schoolStatusMap.get(s.id) || null;
+              let schoolStatus = schoolStatusMap.get(s.id) || null;
               const shalatStatus = extractedStatusMap.get(s.id) || null; // e.g. SALAT_BERJAMAAH, BERHALANGAN, IZIN, TIDAK_MENGIKUTI
               const shalatNote = extractedNotesMap.get(s.id) || "";
+
+              if (!schoolStatus && shalatStatus === 'TIDAK_BERLAKU') {
+                schoolStatus = extractedSchoolStatusMap.get(s.id) || null;
+              }
+
+              let normalizedShalatStatus = shalatStatus;
+              if (shalatStatus === 'SALAT_BERJAMAAH' || shalatStatus === 'HADIR') {
+                normalizedShalatStatus = 'H';
+              } else if (shalatStatus === 'BERHALANGAN' || shalatStatus === 'TERLAMBAT') {
+                normalizedShalatStatus = 'T';
+              } else if (shalatStatus === 'TIDAK_MENGIKUTI' || shalatStatus === 'ALPA') {
+                normalizedShalatStatus = 'A';
+              }
 
               let finalStatus = null;
               if (activeUnit === 'JUNIOR_HIGH') {
@@ -520,10 +605,10 @@ export default function Attendance() {
                 } else if (schoolStatus && ['SAKIT', 'IZIN', 'ALPA'].includes(schoolStatus)) {
                   finalStatus = 'TIDAK_BERLAKU';
                 } else {
-                  finalStatus = shalatStatus || 'BELUM_DIISI';
+                  finalStatus = normalizedShalatStatus || 'BELUM_DIISI';
                 }
               } else {
-                finalStatus = shalatStatus || null;
+                finalStatus = normalizedShalatStatus || null;
               }
 
               return {
@@ -1067,13 +1152,16 @@ export default function Attendance() {
           const isNonPresent = ['SAKIT', 'IZIN', 'ALPA'].includes(newStatus as string);
           let updatedDhuhr = s.dhuhrPrayerStatus;
           
-          if (isNonPresent && s.dhuhrPrayerStatus && s.dhuhrPrayerStatus.status !== 'TIDAK_BERLAKU' && s.dhuhrPrayerStatus.status !== 'BELUM_DIISI') {
-            toast.warning(`Peringatan: Status Salat Zuhur siswa "${s.name}" diatur ke "Tidak berlaku" karena presensi sekolah diubah menjadi Tidak Hadir.`, {
-              duration: 5000,
-            });
+          if (isNonPresent) {
+            updatedDhuhr = {
+              ...(s.dhuhrPrayerStatus || {}),
+              status: 'TIDAK_BERLAKU',
+              updatedAt: new Date() as any
+            };
+          } else if (s.dhuhrPrayerStatus?.status === 'TIDAK_BERLAKU') {
             updatedDhuhr = {
               ...s.dhuhrPrayerStatus,
-              status: 'TIDAK_BERLAKU',
+              status: 'BELUM_DIISI',
               updatedAt: new Date() as any
             };
           }
@@ -1085,6 +1173,18 @@ export default function Attendance() {
             dhuhrPrayerStatus: updatedDhuhr
           };
         } else {
+          // DHUHUR mode
+          const isNonPresent = s.schoolStatus && ['SAKIT', 'IZIN', 'ALPA'].includes(s.schoolStatus);
+          if (isNonPresent) {
+            return {
+              ...s,
+              status: 'TIDAK_BERLAKU' as any,
+              dhuhrPrayerStatus: {
+                ...(s.dhuhrPrayerStatus || {}),
+                status: 'TIDAK_BERLAKU' as any
+              }
+            };
+          }
           return {
             ...s,
             status: newStatus as any,
@@ -1378,6 +1478,7 @@ export default function Attendance() {
 
           const dhuhrPrayerStatus = {
             status: student.status || 'BELUM_DIISI',
+            schoolAttendanceStatus: student.schoolStatus || null,
             recordedBy: isNew ? userUid : (existingDhuhr?.recordedBy || userUid),
             recordedByName: isNew ? userName : (existingDhuhr?.recordedByName || userName),
             recordedByEmail: isNew ? userEmail : (existingDhuhr?.recordedByEmail || userEmail),
@@ -1414,6 +1515,7 @@ export default function Attendance() {
             date: selectedDate,
             unit: 'JUNIOR_HIGH',
             status: student.status || 'BELUM_DIISI',
+            schoolAttendanceStatus: student.schoolStatus || null,
             note: student.note || "",
             academicYearId,
             academicYear: activeAcademicYear,
@@ -1984,7 +2086,20 @@ export default function Attendance() {
              {/* Right Column: Actions (Cek Semua Hadir & Hapus Data Hari Ini) */}
              <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto sm:justify-end lg:self-end">
                 <button 
-                  onClick={() => setStudents(students.map(s => ({ ...s, status: attendanceType === 'DHUHUR' ? 'H' : 'HADIR' })))}
+                  onClick={() => setStudents(students.map(s => {
+                    if (attendanceType === 'DHUHUR') {
+                      const isNonPresent = s.schoolStatus && ['SAKIT', 'IZIN', 'ALPA'].includes(s.schoolStatus);
+                      return {
+                        ...s,
+                        status: isNonPresent ? 'TIDAK_BERLAKU' : 'H'
+                      };
+                    } else {
+                      return {
+                        ...s,
+                        status: 'HADIR'
+                      };
+                    }
+                  }))}
                   className="px-4 py-2.5 bg-blue-50 text-blue-600 rounded-xl text-xs font-bold border border-blue-100 hover:bg-blue-100 transition-all active:scale-95 text-center h-11 sm:h-auto"
                 >
                   Cek Semua Hadir
@@ -2221,6 +2336,7 @@ export default function Attendance() {
                         attendanceType={attendanceType}
                         layout="desktop"
                         disabled={saving || deleting || !isSchoolDay}
+                        schoolStatus={student.schoolStatus}
                       />
                     </td>
                     <td className="px-6 py-4">
@@ -2722,11 +2838,71 @@ export default function Attendance() {
                     {attendanceType === 'DHUHUR' ? (
                       <tr>
                         <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center w-16">No</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Nama Siswa</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Hadir</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Terlambat</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Absen</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Kehadiran</th>
+                        <th 
+                          onClick={() => handleDhuhurSort('name')}
+                          className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest cursor-pointer select-none hover:text-blue-600 transition-colors group"
+                        >
+                          <div className="flex items-center gap-1">
+                            <span>Nama Siswa</span>
+                            {dhuhurSortConfig.key === 'name' ? (
+                              dhuhurSortConfig.direction === 'asc' ? <ArrowUp size={12} className="text-blue-600" /> : <ArrowDown size={12} className="text-blue-600" />
+                            ) : (
+                              <ArrowUpDown size={12} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            )}
+                          </div>
+                        </th>
+                        <th 
+                          onClick={() => handleDhuhurSort('hadir')}
+                          className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center cursor-pointer select-none hover:text-blue-600 transition-colors group"
+                        >
+                          <div className="flex items-center justify-center gap-1">
+                            <span>Hadir</span>
+                            {dhuhurSortConfig.key === 'hadir' ? (
+                              dhuhurSortConfig.direction === 'asc' ? <ArrowUp size={12} className="text-blue-600" /> : <ArrowDown size={12} className="text-blue-600" />
+                            ) : (
+                              <ArrowUpDown size={12} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            )}
+                          </div>
+                        </th>
+                        <th 
+                          onClick={() => handleDhuhurSort('late')}
+                          className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center cursor-pointer select-none hover:text-blue-600 transition-colors group"
+                        >
+                          <div className="flex items-center justify-center gap-1">
+                            <span>Terlambat</span>
+                            {dhuhurSortConfig.key === 'late' ? (
+                              dhuhurSortConfig.direction === 'asc' ? <ArrowUp size={12} className="text-blue-600" /> : <ArrowDown size={12} className="text-blue-600" />
+                            ) : (
+                              <ArrowUpDown size={12} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            )}
+                          </div>
+                        </th>
+                        <th 
+                          onClick={() => handleDhuhurSort('alpa')}
+                          className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center cursor-pointer select-none hover:text-blue-600 transition-colors group"
+                        >
+                          <div className="flex items-center justify-center gap-1">
+                            <span>Absen / Tidak Mengikuti</span>
+                            {dhuhurSortConfig.key === 'alpa' ? (
+                              dhuhurSortConfig.direction === 'asc' ? <ArrowUp size={12} className="text-blue-600" /> : <ArrowDown size={12} className="text-blue-600" />
+                            ) : (
+                              <ArrowUpDown size={12} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            )}
+                          </div>
+                        </th>
+                        <th 
+                          onClick={() => handleDhuhurSort('rate')}
+                          className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center cursor-pointer select-none hover:text-blue-600 transition-colors group"
+                        >
+                          <div className="flex items-center justify-center gap-1">
+                            <span>Kehadiran (%)</span>
+                            {dhuhurSortConfig.key === 'rate' ? (
+                              dhuhurSortConfig.direction === 'asc' ? <ArrowUp size={12} className="text-blue-600" /> : <ArrowDown size={12} className="text-blue-600" />
+                            ) : (
+                              <ArrowUpDown size={12} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            )}
+                          </div>
+                        </th>
                       </tr>
                     ) : (
                       <tr>
@@ -2742,7 +2918,7 @@ export default function Attendance() {
                     )}
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {students.map((s, idx) => {
+                    {sortedStudentsForRecap.map((s, idx) => {
                       const stats = recapData[s.id] || { hadir: 0, sakit: 0, izin: 0, alpa: 0, late: 0 };
                       const studentTotal = attendanceType === 'DHUHUR' 
                         ? (stats.hadir + stats.late + stats.izin + stats.alpa)

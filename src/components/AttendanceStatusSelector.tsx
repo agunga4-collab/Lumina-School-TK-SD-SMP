@@ -7,6 +7,7 @@ interface AttendanceStatusSelectorProps {
   attendanceType: 'DAILY' | 'DHUHUR';
   layout?: 'desktop' | 'mobile';
   disabled?: boolean;
+  schoolStatus?: string | null;
 }
 
 export default function AttendanceStatusSelector({
@@ -15,7 +16,23 @@ export default function AttendanceStatusSelector({
   attendanceType,
   layout = 'desktop',
   disabled = false,
+  schoolStatus = null,
 }: AttendanceStatusSelectorProps) {
+  if (attendanceType === 'DHUHUR' && schoolStatus && ['SAKIT', 'IZIN', 'ALPA'].includes(schoolStatus)) {
+    return (
+      <div className={cn(
+        "inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border",
+        schoolStatus === 'SAKIT' && "bg-blue-50 border-blue-100 text-blue-600",
+        schoolStatus === 'IZIN' && "bg-amber-50 border-amber-100 text-amber-600",
+        schoolStatus === 'ALPA' && "bg-red-50 border-red-100 text-red-600",
+        layout === 'desktop' ? 'mx-auto' : 'w-full'
+      )}>
+        <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+        Tidak Masuk Sekolah ({schoolStatus === 'SAKIT' ? 'Sakit' : schoolStatus === 'IZIN' ? 'Izin' : 'Alpa'})
+      </div>
+    );
+  }
+
   if (attendanceType === 'DHUHUR') {
     const dhuhurOptions = [
       { key: 'H', label: 'H', fullLabel: 'Hadir', colorClass: 'bg-green-600 text-white shadow-md', hoverClass: 'hover:bg-green-50 hover:text-green-500 text-gray-500' },

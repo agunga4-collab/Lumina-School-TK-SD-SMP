@@ -171,6 +171,7 @@ export default function AttendanceStudentCard({
           attendanceType={attendanceType}
           layout="mobile"
           disabled={disabled}
+          schoolStatus={student.schoolStatus}
         />
       </div>
 

@@ -21,7 +21,9 @@ import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { useAuth } from '../../context/AuthContext';
 import { useTeacherAssignedClasses } from '../../hooks/useTeacherAssignedClasses';
-import { logFirestoreRead, getKindergartenClasses, getKindergartenStudents } from '../../lib/kindergartenMetadataCache';
+import { logFirestoreRead, getKindergartenClasses, getKindergartenStudents, resolveCanonicalClassId } from '../../lib/kindergartenMetadataCache';
+import { html2canvasWithModernColors } from '../../lib/html2canvasPatch';
+import { jsPDF } from 'jspdf';
 import { useOutletContext } from 'react-router-dom';
 
 // Type definitions for compiled weekly source
@@ -80,7 +82,23 @@ export default function MidtermSummary() {
 
   const { activeYear } = useAcademicYear();
   const { currentUser } = useOutletContext<{ currentUser: any }>() || {};
-  const { profile } = useAuth();
+  const { profile, getGoogleDriveToken } = useAuth();
+
+  // Publishing & Signatory States
+  const [publishedReports, setPublishedReports] = React.useState<Record<string, any>>({});
+  const [isFetchingPublished, setIsFetchingPublished] = React.useState(false);
+  const [isPublishing, setIsPublishing] = React.useState(false);
+  const [publishStatus, setPublishStatus] = React.useState("");
+  
+  const [resolvedSignatureUrl, setResolvedSignatureUrl] = React.useState<string | null>(null);
+  const [resolvedTeacherName, setResolvedTeacherName] = React.useState<string | null>(null);
+  const [isSignatureLoading, setIsSignatureLoading] = React.useState<boolean>(false);
+
+  const [kindySignatory, setKindySignatory] = React.useState<{
+    principalName: string;
+    principalTitle: string;
+    principalSignatureUrl: string | null;
+  } | null>(null);
 
   // Role Protection
   if (profile?.role === 'kindergarten_subject_teacher') {
@@ -312,9 +330,115 @@ export default function MidtermSummary() {
     }
   }, [selectedClassId, activeYear, semester, startDateStr, endDateStr, selectedStudentId]);
 
+  const fetchPublishedReportsForClass = React.useCallback(async () => {
+    if (!selectedClassId) return;
+    setIsFetchingPublished(true);
+    try {
+      const q = query(
+        collection(db, 'published_kg_reports'),
+        where('classId', '==', selectedClassId),
+        where('academicYear', '==', activeYear || '2026/2027'),
+        where('semester', '==', semester),
+        where('reportType', '==', 'KINDY_MIDTERM_REPORT')
+      );
+      const snap = await getDocs(q);
+      logFirestoreRead('attendanceReports', snap.docs.length || 1);
+      
+      const publishedMap: Record<string, any> = {};
+      snap.docs.forEach(docSnap => {
+        const data = docSnap.data();
+        const studentId = data.studentId;
+        const existing = publishedMap[studentId];
+        if (!existing || (data.version || 1) > (existing.version || 1)) {
+          publishedMap[studentId] = {
+            ...data,
+            id: docSnap.id
+          };
+        }
+      });
+      setPublishedReports(publishedMap);
+    } catch (err) {
+      console.error('[MidtermSummary] Error fetching published reports:', err);
+    } finally {
+      setIsFetchingPublished(false);
+    }
+  }, [selectedClassId, activeYear, semester]);
+
   React.useEffect(() => {
     fetchMidtermDraftsForClass();
-  }, [fetchMidtermDraftsForClass]);
+    fetchPublishedReportsForClass();
+  }, [fetchMidtermDraftsForClass, fetchPublishedReportsForClass]);
+
+  React.useEffect(() => {
+    let active = true;
+    const fetchKindySignatory = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'reportConfig', 'KINDERGARTEN'));
+        if (snap.exists() && active) {
+          const data = snap.data();
+          setKindySignatory({
+            principalName: data.principalName || '',
+            principalTitle: data.principalTitle || 'Principal',
+            principalSignatureUrl: data.principalSignatureUrl || null
+          });
+        }
+      } catch (err) {
+        console.error("Error fetching Kindergarten signatory config:", err);
+      }
+    };
+    fetchKindySignatory();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    let active = true;
+    const currentStudentObj = students.find(s => s.id === selectedStudentId);
+    const studentClassIdRaw = currentStudentObj?.classId || selectedClassId || "";
+    const studentCanonicalClassId = resolveCanonicalClassId(studentClassIdRaw, classes) || studentClassIdRaw;
+
+    if (!studentCanonicalClassId) {
+      setResolvedSignatureUrl(null);
+      setResolvedTeacherName(null);
+      return;
+    }
+
+    async function fetchClassSignature() {
+      setIsSignatureLoading(true);
+      try {
+        const classRef = doc(db, 'classes', studentCanonicalClassId);
+        const classSnap = await getDoc(classRef);
+        logFirestoreRead('classes', 1);
+        
+        if (classSnap.exists() && active) {
+          const data = classSnap.data();
+          setResolvedSignatureUrl(data.teacherSignatureUrl || null);
+          setResolvedTeacherName(data.homeroomTeacherName || null);
+        } else if (active) {
+          const fallbackClass = classes.find(c => c.id === studentCanonicalClassId) || activeClassObj;
+          setResolvedSignatureUrl(fallbackClass?.teacherSignatureUrl || null);
+          setResolvedTeacherName(fallbackClass?.homeroomTeacherName || null);
+        }
+      } catch (err) {
+        console.error("Error fetching class signature from Firestore:", err);
+        if (active) {
+          const fallbackClass = classes.find(c => c.id === studentCanonicalClassId) || activeClassObj;
+          setResolvedSignatureUrl(fallbackClass?.teacherSignatureUrl || null);
+          setResolvedTeacherName(fallbackClass?.homeroomTeacherName || null);
+        }
+      } finally {
+        if (active) {
+          setIsSignatureLoading(false);
+        }
+      }
+    }
+
+    fetchClassSignature();
+    return () => {
+      active = false;
+    };
+  }, [selectedStudentId, selectedClassId, classes, activeClassObj, students]);
 
   // Handle local comment input edits
   const handleCommentChange = (text: string) => {
@@ -697,8 +821,325 @@ export default function MidtermSummary() {
     }
   };
 
+  const handlePublishMidterm = async () => {
+    const activeDraft = midtermDrafts[selectedStudentId];
+    if (!activeDraft) {
+      toast.error("Draft Midterm belum dibuat.");
+      return;
+    }
+
+    setIsPublishing(true);
+    setPublishStatus("Menyiapkan dokumen...");
+    const toastId = "publish-midterm";
+    toast.loading("Menyiapkan dokumen...", { id: toastId });
+
+    try {
+      // 1. Get Google Drive token
+      const token = await getGoogleDriveToken();
+      if (!token) {
+        toast.dismiss(toastId);
+        toast.error("Gagal mendapatkan akses Google Drive.");
+        setIsPublishing(false);
+        setPublishStatus("");
+        return;
+      }
+
+      // 2. Preload images & wait for layout
+      setPublishStatus("Membuat PDF...");
+      toast.loading("Membuat PDF...", { id: toastId });
+
+      if (typeof document !== 'undefined' && (document as any).fonts && (document as any).fonts.ready) {
+        await (document as any).fonts.ready;
+      }
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      });
+
+      // 3. Render page to Canvas & PDF
+      const pageElement = document.getElementById("midterm-report-page-1");
+      if (!pageElement) {
+        toast.dismiss(toastId);
+        toast.error("Elemen halaman laporan tidak ditemukan.");
+        setIsPublishing(false);
+        setPublishStatus("");
+        return;
+      }
+
+      const originalStyle = pageElement.getAttribute('style') || '';
+
+      pageElement.style.width = '794px';
+      pageElement.style.height = '1123px';
+      pageElement.style.minWidth = '794px';
+      pageElement.style.minHeight = '1123px';
+      pageElement.style.maxWidth = '794px';
+      pageElement.style.maxHeight = '1123px';
+      pageElement.style.boxSizing = 'border-box';
+
+      const canvas = await html2canvasWithModernColors(pageElement, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        windowWidth: 1200,
+        windowHeight: 1600,
+        onclone: (clonedDoc, clonedElement) => {
+          if (clonedElement) {
+            clonedElement.style.fontFamily = '"Inter", sans-serif';
+            clonedElement.style.width = '794px';
+            clonedElement.style.height = '1123px';
+            clonedElement.style.minWidth = '794px';
+            clonedElement.style.minHeight = '1123px';
+            clonedElement.style.maxWidth = '794px';
+            clonedElement.style.maxHeight = '1123px';
+            clonedElement.style.boxSizing = 'border-box';
+          }
+        }
+      });
+
+      pageElement.setAttribute('style', originalStyle);
+
+      const imgData = canvas.toDataURL('image/jpeg', 0.85);
+
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+      
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      
+      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
+      
+      const pdfBlob = pdf.output('blob');
+
+      const getBase64 = (blob: Blob): Promise<string> => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(blob);
+          reader.onload = () => {
+            const base64String = (reader.result as string).split(',')[1];
+            resolve(base64String);
+          };
+          reader.onerror = error => reject(error);
+        });
+      };
+
+      const base64Data = await getBase64(pdfBlob);
+
+      // Filename standard
+      const filename = `S${semester} - ${selectedStudentObj?.name} - ${activeClassObj?.name || 'Class'} - Midterm Report.pdf`;
+
+      setPublishStatus("Mengunggah ke Google Drive...");
+      toast.loading("Mengunggah ke Google Drive...", { id: toastId });
+
+      const boundary = 'foo_bar_boundary';
+      const delimiter = `\r\n--${boundary}\r\n`;
+      const close_delim = `\r\n--${boundary}--`;
+
+      const metadata = {
+        name: filename,
+        mimeType: 'application/pdf',
+        parents: ['1IBy2Ly_h72v3znKod3rXLLgx1IaeoGqO'],
+      };
+
+      const multipartRequestBody =
+        delimiter +
+        'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+        JSON.stringify(metadata) +
+        delimiter +
+        'Content-Type: application/pdf\r\n' +
+        'Content-Transfer-Encoding: base64\r\n\r\n' +
+        base64Data +
+        close_delim;
+
+      const driveResponse = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': `multipart/related; boundary=${boundary}`,
+          },
+          body: multipartRequestBody,
+        }
+      );
+
+      if (!driveResponse.ok) {
+        const errText = await driveResponse.text();
+        throw new Error(`Google Drive API returned status ${driveResponse.status}: ${errText}`);
+      }
+
+      const driveData = await driveResponse.json();
+      const driveFileId = driveData.id || '';
+      const driveFileUrl = driveFileId ? `https://drive.google.com/file/d/${driveFileId}/view` : '';
+
+      setPublishStatus("Menyimpan publikasi...");
+      toast.loading("Menyimpan publikasi...", { id: toastId });
+
+      // Calculate versions
+      const existingVersions = Object.values(publishedReports).filter((r: any) => {
+        return r.studentId === selectedStudentId && r.semester === semester;
+      });
+      const maxVersion = existingVersions.reduce((max, r: any) => {
+        const v = r.version || 1;
+        return v > max ? v : max;
+      }, 0);
+      const nextVersion = maxVersion > 0 ? maxVersion + 1 : 1;
+
+      const reportPayload = {
+        classId: selectedClassId,
+        className: activeClassObj?.name || 'Unknown Class',
+        academicYear: activeYear || '2026/2027',
+        studentId: selectedStudentId,
+        studentName: selectedStudentObj?.name || 'Unknown Student',
+        startDate: startDateStr,
+        endDate: endDateStr,
+        semester,
+        reportType: 'KINDY_MIDTERM_REPORT',
+        publishedAt: Date.now(),
+        driveFileId,
+        driveFileUrl,
+        version: nextVersion,
+        publishedBy: profile?.uid || 'Unknown',
+        publishedByEmail: profile?.email || 'Unknown',
+        status: 'ready_to_send',
+
+        reportSnapshot: {
+          version: nextVersion,
+          createdAt: Date.now(),
+          student: {
+            id: selectedStudentId,
+            name: selectedStudentObj?.name,
+            classId: selectedClassId,
+            className: activeClassObj?.name
+          },
+          period: {
+            startDate: startDateStr,
+            endDate: endDateStr,
+            periodLabel: formattedPeriodRangeIndo,
+            semester
+          },
+          midtermGeneralComment: activeDraft.midtermGeneralComment,
+          signatories: {
+            principal: {
+              name: kindySignatory?.principalName || '',
+              title: kindySignatory?.principalTitle || 'Principal',
+              signatureUrl: kindySignatory?.principalSignatureUrl || null
+            },
+            classTeacher: {
+              name: resolvedTeacherName || '',
+              title: 'Class Teacher',
+              signatureUrl: resolvedSignatureUrl || null
+            }
+          },
+          attendanceSummary: computedAttendance,
+          compiledWeeks: activeDraft.compiledWeeklySources || []
+        }
+      };
+
+      // Save to published_kg_reports
+      const publishedDocId = `${selectedStudentId}_S${semester}_MIDTERM_V${nextVersion}`;
+      await setDoc(doc(db, 'published_kg_reports', publishedDocId), reportPayload);
+
+      // Update source draft status to 'PUBLISHED'
+      const draftId = getMidtermDraftId(selectedStudentId);
+      await setDoc(doc(db, 'midterm_summary_drafts', draftId), { status: 'PUBLISHED' }, { merge: true });
+
+      // Update local states
+      setMidtermDrafts(prev => ({
+        ...prev,
+        [selectedStudentId]: {
+          ...prev[selectedStudentId],
+          status: 'PUBLISHED'
+        } as MidtermSummaryDraft
+      }));
+
+      await fetchPublishedReportsForClass();
+
+      toast.success(`Midterm Report berhasil dipublikasikan untuk ${selectedStudentObj?.name}! 🎉`, { id: toastId });
+    } catch (err: any) {
+      console.error("Error publishing midterm report:", err);
+      toast.error(`Gagal mempublikasikan: ${err.message}`, { id: toastId });
+    } finally {
+      setIsPublishing(false);
+      setPublishStatus("");
+    }
+  };
+
+  const handleRejectDraft = async () => {
+    if (!selectedStudentId) return;
+    const activeDraft = midtermDrafts[selectedStudentId];
+    if (!activeDraft) return;
+
+    if (!window.confirm(`Apakah Anda yakin ingin mengembalikan draf ini ke status DRAFT untuk diperbaiki oleh guru kelas?`)) {
+      return;
+    }
+
+    const draftId = getMidtermDraftId(selectedStudentId);
+    const toastId = toast.loading("Mengembalikan draf...");
+    try {
+      await setDoc(doc(db, 'midterm_summary_drafts', draftId), { status: 'DRAFT' }, { merge: true });
+      
+      setMidtermDrafts(prev => ({
+        ...prev,
+        [selectedStudentId]: {
+          ...prev[selectedStudentId],
+          status: 'DRAFT'
+        } as MidtermSummaryDraft
+      }));
+      toast.success("Draf berhasil dikembalikan ke status DRAFT.", { id: toastId });
+    } catch (err: any) {
+      console.error("Error returning draft:", err);
+      toast.error(`Gagal memproses: ${err.message}`, { id: toastId });
+    }
+  };
+
+  const handleDeletePublication = async () => {
+    if (!selectedStudentId) return;
+    const published = publishedReports[selectedStudentId];
+    if (!published) return;
+
+    if (!window.confirm(`Apakah Anda yakin ingin menghapus publikasi Midterm Report untuk ${selectedStudentObj?.name}? Status draf akan dikembalikan ke READY_FOR_REVIEW.`)) {
+      return;
+    }
+
+    const toastId = toast.loading("Menghapus publikasi...");
+    try {
+      await deleteDoc(doc(db, 'published_kg_reports', published.id));
+
+      const draftId = getMidtermDraftId(selectedStudentId);
+      await setDoc(doc(db, 'midterm_summary_drafts', draftId), { status: 'READY_FOR_REVIEW' }, { merge: true });
+
+      setMidtermDrafts(prev => ({
+        ...prev,
+        [selectedStudentId]: {
+          ...prev[selectedStudentId],
+          status: 'READY_FOR_REVIEW'
+        } as MidtermSummaryDraft
+      }));
+
+      await fetchPublishedReportsForClass();
+      toast.success("Publikasi dibatalkan dan draf dikembalikan ke READY_FOR_REVIEW.", { id: toastId });
+    } catch (err: any) {
+      console.error("Error deleting publication:", err);
+      toast.error(`Gagal menghapus: ${err.message}`, { id: toastId });
+    }
+  };
+
   // Helper to determine student roster dot status color
   const getStudentStatusBadge = (studId: string) => {
+    const published = publishedReports[studId];
+    if (published) {
+      return {
+        label: 'Terbit',
+        dotColor: 'bg-blue-500',
+        textColor: 'text-blue-700 bg-blue-50 border-blue-150'
+      };
+    }
     const draft = midtermDrafts[studId];
     if (!draft) {
       return {
@@ -722,7 +1163,40 @@ export default function MidtermSummary() {
   };
 
   const currentStudentStatus = getStudentStatusBadge(selectedStudentId);
-  const isLockedForEditing = midtermDrafts[selectedStudentId]?.status === 'READY_FOR_REVIEW' && profile?.role !== 'SUPER_ADMIN' && profile?.role !== 'HEAD_UNIT';
+  const isLockedForEditing = (midtermDrafts[selectedStudentId]?.status === 'READY_FOR_REVIEW' || midtermDrafts[selectedStudentId]?.status === 'PUBLISHED' || !!publishedReports[selectedStudentId]) && profile?.role !== 'SUPER_ADMIN' && profile?.role !== 'HEAD_UNIT';
+
+  const activeDraft = midtermDrafts[selectedStudentId];
+  const publishedReportObj = publishedReports[selectedStudentId];
+
+  const computedAttendance = React.useMemo(() => {
+    const summary = {
+      present: 0,
+      sick: 0,
+      izin: 0,
+      noNews: 0,
+      total: 0
+    };
+
+    if (activeDraft?.compiledWeeklySources) {
+      activeDraft.compiledWeeklySources.forEach(source => {
+        const matchingWeekly = weeklySources.find(w => w.id === source.weeklyDraftId);
+        const att = matchingWeekly?.attendanceSummary || {};
+        const present = (att.happy || 0) + (att.sad || 0) + (att.angry || 0) + (att.ok || 0);
+        const sick = att.sick || 0;
+        const izin = att.izin || 0;
+        const noNews = att.noNews || 0;
+
+        summary.present += present;
+        summary.sick += sick;
+        summary.izin += izin;
+        summary.noNews += noNews;
+      });
+    }
+    summary.total = summary.present + summary.sick + summary.izin + summary.noNews;
+    return summary;
+  }, [activeDraft, weeklySources]);
+
+  const isAuthorizer = profile?.role === 'SUPER_ADMIN' || profile?.role === 'HEAD_UNIT' || profile?.role === 'kindergarten_head';
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-20 px-4 font-sans">
@@ -864,7 +1338,6 @@ export default function MidtermSummary() {
           )}
         >
           3. Publish PDF
-          <span className="px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 text-[8px] font-black uppercase tracking-wider">Segera Hadir</span>
         </button>
       </div>
 
@@ -1196,18 +1669,320 @@ export default function MidtermSummary() {
             </div>
           )}
 
-          {/* TAB 3: PUBLISH PDF CONTENT (DISABLED PLACEHOLDER) */}
+          {/* TAB 3: PUBLISH PDF CONTENT */}
           {activeTab === 'publish' && (
-            <div className="bg-white p-12 border border-gray-150 rounded-3xl shadow-sm text-center max-w-2xl mx-auto space-y-4">
-              <div className="p-4 bg-emerald-50 text-emerald-600 rounded-full w-14 h-14 mx-auto flex items-center justify-center">
-                <FileSpreadsheet size={24} />
+            <div className="space-y-6 lg:col-span-9">
+              {/* Action and Control Dashboard */}
+              <div className="bg-white p-6 rounded-3xl border border-gray-150 shadow-sm space-y-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-3 border-b border-gray-100">
+                  <div>
+                    <h2 className="text-sm font-black text-gray-900 font-sans uppercase tracking-tight">
+                      Publish Workspace: {selectedStudentObj?.name || 'Pilih Siswa'}
+                    </h2>
+                    <p className="text-[11px] text-gray-400 font-medium">
+                      Status Laporan: <span className="font-extrabold text-emerald-700">{currentStudentStatus.label}</span>
+                    </p>
+                  </div>
+                  
+                  {publishedReportObj && (
+                    <div className="flex items-center gap-1.5 bg-blue-50 text-blue-700 px-3 py-1.5 rounded-xl border border-blue-150 text-[10px] font-black uppercase tracking-wider">
+                      <Check size={12} /> Terbit (v{publishedReportObj.version || 1})
+                    </div>
+                  )}
+                </div>
+
+                {/* Status-specific action buttons */}
+                <div className="flex flex-wrap gap-2.5">
+                  {/* Case 1: Already published */}
+                  {publishedReportObj ? (
+                    <>
+                      <a
+                        href={publishedReportObj.driveFileUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 shadow-md shadow-blue-600/10 cursor-pointer"
+                      >
+                        <Eye size={14} /> Buka PDF di Google Drive
+                      </a>
+                      
+                      {isAuthorizer && (
+                        <>
+                          <button
+                            onClick={handlePublishMidterm}
+                            disabled={isPublishing}
+                            className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 shadow-md cursor-pointer"
+                          >
+                            <RefreshCw size={14} className={isPublishing ? "animate-spin" : ""} />
+                            {isPublishing ? "Menerbitkan Ulang..." : "Terbitkan Ulang (vUbah)"}
+                          </button>
+
+                          <button
+                            onClick={handleDeletePublication}
+                            className="border border-red-200 hover:bg-red-50 text-red-650 font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Trash2 size={14} /> Batalkan Publikasi
+                          </button>
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    /* Case 2: Not yet published */
+                    <>
+                      {activeDraft ? (
+                        <>
+                          {isAuthorizer && activeDraft.status === 'READY_FOR_REVIEW' && (
+                            <>
+                              <button
+                                onClick={handlePublishMidterm}
+                                disabled={isPublishing}
+                                className="bg-[#109E58] hover:bg-[#0e8a4d] disabled:opacity-50 text-white font-extrabold text-xs px-4.5 py-2.5 rounded-xl flex items-center gap-1.5 shadow-md shadow-emerald-600/10 cursor-pointer"
+                              >
+                                {isPublishing ? (
+                                  <>
+                                    <Loader2 size={14} className="animate-spin" />
+                                    <span>{publishStatus || "Menyimpan..."}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle2 size={14} />
+                                    <span>Setujui & Terbitkan PDF</span>
+                                  </>
+                                )}
+                              </button>
+
+                              <button
+                                onClick={handleRejectDraft}
+                                className="border border-gray-250 hover:bg-gray-50 text-gray-700 font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <Edit3 size={14} /> Kembalikan untuk Revisi
+                              </button>
+                            </>
+                          )}
+
+                          {/* Allow switching back to Editor */}
+                          <button
+                            onClick={() => confirmNavigation('tab', 'editor')}
+                            className="border border-gray-200 hover:bg-gray-50 text-gray-600 font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Edit3 size={14} /> Edit Narasi & Komentar
+                          </button>
+                        </>
+                      ) : (
+                        <div className="text-xs text-gray-400 italic py-1">
+                          Guru harus menyelesaikan kompilasi dan komentar terlebih dahulu sebelum melakukan peninjauan.
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
-              <h2 className="text-lg font-bold text-gray-900 font-sans">Publish PDF Midterm</h2>
-              <p className="text-xs text-gray-500 font-medium leading-relaxed font-sans">
-                Fitur publish PDF Midterm akan tersedia setelah review GenCom selesai.
-              </p>
-              <div className="bg-amber-50 border border-amber-150 p-4 rounded-xl text-[11px] text-amber-900 leading-relaxed max-w-md mx-auto font-sans font-medium text-left">
-                ⚠️ <b>Petunjuk:</b> Pada tahap 1 ini, silakan selesaikan draf narasi komentar pada tab "Buat GenCom Midterm" dan ajukan untuk review ("Ajukan Review").
+
+              {/* Preview Document Paper Shell */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center px-2 text-gray-500 text-[10px] font-black uppercase tracking-wider font-sans">
+                  <span>Pratinjau Dokumen Cetak (Ukuran A4)</span>
+                  {isSignatureLoading && <span className="text-emerald-600 animate-pulse">Memuat Tanda Tangan...</span>}
+                </div>
+
+                {activeDraft ? (
+                  <div className="overflow-x-auto bg-gray-100 p-4 md:p-8 rounded-[2rem] border border-gray-200 shadow-inner flex justify-center">
+                    {/* PAGE 1 — DOKUMENTASI & EVALUASI MIDTERM */}
+                    <div className="bg-white px-8 py-6 md:px-12 md:py-8 shadow-md border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-between print:border-none print:shadow-none print:p-0 print:m-0" id="midterm-report-page-1">
+                      
+                      <div className="space-y-4">
+                        {/* School branding banner */}
+                        <div className="bg-[#109E58] py-4 px-5 text-white relative flex flex-col justify-between rounded-sm">
+                          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-white/20 pb-3 mb-3 gap-3">
+                            <div className="flex items-center gap-3">
+                              <div className="bg-white/10 p-2 rounded-lg shrink-0">
+                                <svg className="w-8 h-8 text-white" viewBox="0 0 100 100" fill="currentColor">
+                                  <path d="M50 10 C42 35 25 45 10 50 C25 55 42 65 50 90 C58 65 75 55 90 50 C75 45 58 35 50 10 Z" />
+                                  <path d="M50 25 C45 40 35 48 25 50 C35 52 45 60 50 75 C55 60 65 52 75 50 C65 48 55 40 50 25 Z" fill="#109E58" />
+                                </svg>
+                              </div>
+                              <div className="text-left leading-none">
+                                <span className="block font-sans text-base font-black tracking-widest text-white m-0">Lazuardi</span>
+                                <span className="block font-sans text-[10px] font-bold tracking-[0.25em] text-emerald-100 m-0 uppercase leading-none mt-0.5">KINDERGARTEN</span>
+                                <span className="block font-sans text-[7px] text-emerald-200 mt-0.5 uppercase tracking-wider leading-none font-semibold">Global Compassionate School</span>
+                              </div>
+                            </div>
+
+                            <div className="text-right sm:text-right w-full sm:w-auto flex flex-col items-end justify-center">
+                              <span className="block text-[10px] font-sans font-black tracking-widest text-emerald-100 uppercase mb-1">
+                                LAZUARDI GCS KINDERGARTEN
+                              </span>
+                              <h1 className="text-lg font-sans font-black tracking-wider text-white uppercase leading-none mt-1">
+                                STUDENT'S MIDTERM REPORT
+                              </h1>
+                            </div>
+                          </div>
+
+                          {/* Student Metadata Grid */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-1.5 gap-x-12 text-[10px] font-sans">
+                            <div className="space-y-1">
+                              <div className="grid grid-cols-12 leading-none">
+                                <span className="col-span-4 font-bold text-emerald-100">Student's name</span>
+                                <span className="col-span-1 text-emerald-100/70 text-center">:</span>
+                                <span className="col-span-7 font-extrabold text-white text-[11px] -mt-0.5">{selectedStudentObj?.name}</span>
+                              </div>
+                              <div className="grid grid-cols-12 leading-none">
+                                <span className="col-span-4 font-bold text-emerald-100">Class</span>
+                                <span className="col-span-1 text-emerald-100/70 text-center">:</span>
+                                <span className="col-span-7 font-bold text-white">
+                                  {activeClassObj?.name || 'Class'}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="space-y-1 sm:pl-8">
+                              <div className="grid grid-cols-12 leading-none">
+                                <span className="col-span-4 font-bold text-emerald-100">Semester</span>
+                                <span className="col-span-1 text-emerald-100/70 text-center">:</span>
+                                <span className="col-span-7 font-bold text-white">{semester} ({activeYear || '2026/2027'})</span>
+                              </div>
+                              <div className="grid grid-cols-12 leading-none">
+                                <span className="col-span-4 font-bold text-emerald-100">Date Range</span>
+                                <span className="col-span-1 text-emerald-100/70 text-center">:</span>
+                                <span className="col-span-7 font-bold text-white">{formattedPeriodRangeIndo}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Narrative Area */}
+                        <div className="space-y-2 pt-2">
+                          <h3 className="text-xs font-black text-emerald-800 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 text-center font-sans">
+                            MIDTERM GENERAL EVALUATION
+                          </h3>
+                          <div className="bg-emerald-50/10 border border-emerald-100/30 p-4 rounded-xl min-h-[180px] flex flex-col justify-between">
+                            <p className="text-[11px] text-gray-800 font-serif leading-relaxed whitespace-pre-wrap">
+                              {activeDraft?.midtermGeneralComment || "Komentar evaluasi tengah semester belum dimasukkan."}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Attendance Recap */}
+                        <div className="space-y-2 pt-2">
+                          <h3 className="text-xs font-black text-emerald-800 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 text-center font-sans">
+                            ATTENDANCE RECAP
+                          </h3>
+                          <div className="grid grid-cols-5 gap-3 pt-1">
+                            {/* Present */}
+                            <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-2.5 text-center space-y-0.5">
+                              <span className="text-[9px] font-bold text-emerald-700 uppercase tracking-wider block font-sans">Hadir</span>
+                              <span className="text-sm font-black text-emerald-900 block font-sans">{computedAttendance.present}</span>
+                              <span className="text-[8px] text-gray-400 block font-sans">Hari</span>
+                            </div>
+                            {/* Sick */}
+                            <div className="bg-amber-50/50 border border-amber-100 rounded-xl p-2.5 text-center space-y-0.5">
+                              <span className="text-[9px] font-bold text-amber-700 uppercase tracking-wider block font-sans">Sakit</span>
+                              <span className="text-sm font-black text-amber-900 block font-sans">{computedAttendance.sick}</span>
+                              <span className="text-[8px] text-gray-400 block font-sans">Hari</span>
+                            </div>
+                            {/* Izin */}
+                            <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-2.5 text-center space-y-0.5">
+                              <span className="text-[9px] font-bold text-blue-700 uppercase tracking-wider block font-sans">Izin</span>
+                              <span className="text-sm font-black text-blue-900 block font-sans">{computedAttendance.izin}</span>
+                              <span className="text-[8px] text-gray-400 block font-sans">Hari</span>
+                            </div>
+                            {/* Absent without notice */}
+                            <div className="bg-red-50/50 border border-red-100 rounded-xl p-2.5 text-center space-y-0.5">
+                              <span className="text-[9px] font-bold text-red-700 uppercase tracking-wider block font-sans">Tanpa Keterangan</span>
+                              <span className="text-sm font-black text-red-900 block font-sans">{computedAttendance.noNews}</span>
+                              <span className="text-[8px] text-gray-400 block font-sans">Hari</span>
+                            </div>
+                            {/* Total */}
+                            <div className="bg-gray-50 border border-gray-200 rounded-xl p-2.5 text-center space-y-0.5">
+                              <span className="text-[9px] font-bold text-gray-700 uppercase tracking-wider block font-sans">Total</span>
+                              <span className="text-sm font-black text-gray-900 block font-sans">{computedAttendance.total}</span>
+                              <span className="text-[8px] text-gray-400 block font-sans">Hari</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Weekly Themes Timeline */}
+                        <div className="space-y-2 pt-2">
+                          <h3 className="text-xs font-black text-emerald-800 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 text-center font-sans">
+                            COMPILED WEEKLY THEMES & TOPICS
+                          </h3>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                            {(!activeDraft?.compiledWeeklySources || activeDraft.compiledWeeklySources.length === 0) ? (
+                              <div className="col-span-2 text-center text-[10px] text-gray-400 italic py-2 font-sans">
+                                Belum ada mingguan yang dikompilasi ke dalam draf ini.
+                              </div>
+                            ) : (
+                              activeDraft.compiledWeeklySources.slice(0, 4).map((source, idx) => (
+                                <div key={idx} className="bg-gray-50/50 border border-gray-150 rounded-xl p-2.5 space-y-1">
+                                  <div className="flex justify-between items-center text-[8px] text-emerald-800 font-extrabold uppercase tracking-wider font-sans">
+                                    <span>Minggu {idx + 1} ({source.startDate})</span>
+                                    {source.theme && <span className="text-gray-500 font-black truncate max-w-[120px]">Tema: {source.theme}</span>}
+                                  </div>
+                                  <p className="text-[9.5px] text-gray-600 font-serif leading-tight line-clamp-3">
+                                    {source.generalComments || "Tanpa komentar mingguan."}
+                                  </p>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Signatures Area */}
+                      <div className="grid grid-cols-2 gap-8 pt-6 border-t border-dashed border-gray-200 text-center shrink-0">
+                        {/* Homeroom Teacher */}
+                        <div className="flex flex-col items-center justify-between h-[90px]">
+                          <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">Class Homeroom Teacher</span>
+                          <div className="h-10 flex items-center justify-center">
+                            {resolvedSignatureUrl ? (
+                              <img 
+                                src={resolvedSignatureUrl} 
+                                alt="Signature" 
+                                className="h-10 w-auto object-contain"
+                                referrerPolicy="no-referrer"
+                                crossOrigin="anonymous"
+                              />
+                            ) : (
+                              <div className="text-[9px] text-gray-300 italic font-sans">Belum bertanda tangan</div>
+                            )}
+                          </div>
+                          <span className="text-[10px] font-extrabold text-gray-800 leading-none underline font-sans">
+                            {resolvedTeacherName || "Nama Guru Kelas"}
+                          </span>
+                        </div>
+
+                        {/* Principal */}
+                        <div className="flex flex-col items-center justify-between h-[90px]">
+                          <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">
+                            {kindySignatory?.principalTitle || 'Principal'}
+                          </span>
+                          <div className="h-10 flex items-center justify-center">
+                            {kindySignatory?.principalSignatureUrl ? (
+                              <img 
+                                src={kindySignatory.principalSignatureUrl} 
+                                alt="Signature" 
+                                className="h-10 w-auto object-contain"
+                                referrerPolicy="no-referrer"
+                                crossOrigin="anonymous"
+                              />
+                            ) : (
+                              <div className="text-[9px] text-gray-300 italic font-sans">Belum bertanda tangan</div>
+                            )}
+                          </div>
+                          <span className="text-[10px] font-extrabold text-gray-800 leading-none underline font-sans">
+                            {kindySignatory?.principalName || "Nama Kepala Unit"}
+                          </span>
+                        </div>
+                      </div>
+
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-white p-12 border border-gray-150 rounded-3xl shadow-sm text-center">
+                    <p className="text-xs text-gray-400 italic font-medium font-sans">
+                      Silakan pilih siswa di daftar kiri yang memiliki draf Midterm Report untuk melihat pratinjau dokumen.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           )}

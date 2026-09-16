@@ -1260,12 +1260,12 @@ service cloud.firestore {
 
     match /published_kg_reports/{reportId} {
       allow read: if isActive() &&
-        (isJuniorHighStaff() || isTeacher() || isSecretaryKindy() || isOwnStudentData(existing().studentId));
-      allow create: if isJuniorHighStaff() || isAdmin() || isTeacher() || isSecretaryKindy();
-      allow update: if (isJuniorHighStaff() || isAdmin() || isTeacher() || isSecretaryKindy()) ||
+        (isJuniorHighStaff() || isTeacher() || isSecretaryKindy() || isKindergartenHeadUnit() || isOwnStudentData(existing().studentId));
+      allow create: if isJuniorHighStaff() || isAdmin() || isTeacher() || isSecretaryKindy() || isKindergartenHeadUnit();
+      allow update: if (isJuniorHighStaff() || isAdmin() || isTeacher() || isSecretaryKindy() || isKindergartenHeadUnit()) ||
         (isActive() && isOwnStudentData(existing().studentId) &&
          incoming().diff(existing()).affectedKeys().hasOnly(['studentViewedAt', 'lastStudentViewedAt', 'pdfOpenedAt', 'viewCount']));
-      allow delete: if isJuniorHighStaff() || isAdmin() || isTeacher() || isSecretaryKindy();
+      allow delete: if isJuniorHighStaff() || isAdmin() || isTeacher() || isSecretaryKindy() || isKindergartenHeadUnit();
     }
 
     match /published_junior_high_monthly_reports/{reportId} {
