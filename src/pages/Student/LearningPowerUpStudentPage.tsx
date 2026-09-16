@@ -261,6 +261,15 @@ class LearningPowerUpStudentErrorBoundary extends React.Component<any, any> {
   }
 }
 
+const normalizeYear = (val: any): string => {
+  if (!val) return '';
+  const matches = String(val).match(/\d{4}/g);
+  if (matches && matches.length >= 2) {
+    return `${matches[0]}_${matches[1]}`;
+  }
+  return String(val).toLowerCase().replace(/[^0-9]/g, '');
+};
+
 export default function LearningPowerUpStudentPage() {
   return (
     <LearningPowerUpStudentErrorBoundary>
@@ -394,12 +403,12 @@ function LearningPowerUpStudentPageContent() {
     if (!classData || !studentData || !activeYear) return;
     setLoadingTasks(true);
     try {
+      const normalizedActiveYear = normalizeYear(activeYear);
+
       // 1. Fetch weekly task packages
       const qPackages = query(
         collection(db, 'learning_power_up_tasks'),
-        where('academicYearId', '==', activeYear),
-        where('classId', '==', classData.id),
-        where('unit', '==', 'JUNIOR_HIGH')
+        where('classId', '==', classData.id)
       );
 
       const packagesSnap = await getDocs(qPackages);
@@ -408,41 +417,70 @@ function LearningPowerUpStudentPageContent() {
         ...d.data()
       })) as LearningPowerUpPackage[];
 
+      // Filter packages for Junior High compatibility and year match
+      const filteredPackages = loadedPackages.filter(p => {
+        const pYear = p.academicYearId || (p as any).academicYear;
+        const matchesYear = normalizeYear(pYear) === normalizedActiveYear;
+        if (!matchesYear) return false;
+
+        if (p.unit === 'JUNIOR_HIGH') return true;
+        if (!p.unit) {
+          return (p.classId && p.classId.startsWith('JUNIOR_HIGH_')) || classData.id.startsWith('JUNIOR_HIGH_');
+        }
+        return false;
+      });
+
       // Sort by start date descending
-      loadedPackages.sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate));
-      setPackages(loadedPackages);
+      filteredPackages.sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate));
+      setPackages(filteredPackages);
 
       // 2. Fetch student's progress
       const qProgress = query(
         collection(db, 'learning_power_up_progress'),
         where('studentId', '==', studentData.id),
-        where('classId', '==', classData.id),
-        where('academicYearId', '==', activeYear)
+        where('classId', '==', classData.id)
       );
       const progressSnap = await getDocs(qProgress);
       const progressMap: Record<string, TaskProgress> = {};
       progressSnap.docs.forEach(d => {
         const p = d.data() as TaskProgress;
-        progressMap[`${p.packageId}_${p.field}`] = { id: d.id, ...p };
+        const pYear = p.academicYearId || (p as any).academicYear;
+        const matchesYear = normalizeYear(pYear) === normalizedActiveYear;
+        if (matchesYear) {
+          progressMap[`${p.packageId}_${p.field}`] = { id: d.id, ...p };
+        }
       });
       setProgresses(progressMap);
 
       // 3. Fetch student's individual assignments
       const qAssignments = query(
         collection(db, 'learning_power_up_assignments'),
-        where('studentId', '==', studentData.id),
-        where('academicYearId', '==', activeYear)
+        where('studentId', '==', studentData.id)
       );
       const assignmentsSnap = await getDocs(qAssignments);
       const loadedAssignments = assignmentsSnap.docs.map(d => ({
         id: d.id,
         ...d.data()
       })) as LearningPowerUpAssignment[];
-      setAssignments(loadedAssignments);
+
+      // Filter assignments for Junior High compatibility and year match
+      const filteredAssignments = loadedAssignments.filter(asg => {
+        const asgYear = asg.academicYearId || (asg as any).academicYear;
+        const matchesYear = normalizeYear(asgYear) === normalizedActiveYear;
+        if (!matchesYear) return false;
+
+        if (asg.unit === 'JUNIOR_HIGH') return true;
+        if (!asg.unit) {
+          return (asg.classId && asg.classId.startsWith('JUNIOR_HIGH_')) || classData.id.startsWith('JUNIOR_HIGH_');
+        }
+        return false;
+      });
+
+      setAssignments(filteredAssignments);
 
       // 4. Build unified weeks
       const weekMap = new Map<string, UnifiedWeek>();
-      loadedPackages.forEach(p => {
+      filteredPackages.forEach(p => {
         weekMap.set(p.weekStartDate, {
           id: p.id,
           weekStartDate: p.weekStartDate,
@@ -450,7 +488,7 @@ function LearningPowerUpStudentPageContent() {
           weekLabel: p.weekLabel
         });
       });
-      loadedAssignments.forEach(asg => {
+      filteredAssignments.forEach(asg => {
         if (!weekMap.has(asg.weekStartDate)) {
           weekMap.set(asg.weekStartDate, {
             id: 'diff_' + asg.weekStartDate,
