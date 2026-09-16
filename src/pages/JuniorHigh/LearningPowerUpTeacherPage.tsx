@@ -687,16 +687,52 @@ function LearningPowerUpTeacherPageContent() {
       setStudents(enrichedStudents);
 
       // 2. Load level-based batches for this class & year
-      const qBatches = query(
+      // Query specific targets to satisfy Firestore rules (rules are not filters)
+      const qBatchesTarget = query(
         collection(db, 'learning_power_up_task_batches'),
         where('academicYearId', '==', activeYear),
         where('targetClassIds', 'array-contains', selectedClassId)
       );
-      const batchesSnap = await getDocs(qBatches);
-      const classLevelBatches = batchesSnap.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as LearningPowerUpTaskBatch[];
+      const qBatchesClassIds = query(
+        collection(db, 'learning_power_up_task_batches'),
+        where('academicYearId', '==', activeYear),
+        where('classIds', 'array-contains', selectedClassId)
+      );
+      const qBatchesClassId = query(
+        collection(db, 'learning_power_up_task_batches'),
+        where('academicYearId', '==', activeYear),
+        where('classId', '==', selectedClassId)
+      );
+
+      const [snapTarget, snapClassIds, snapClassId] = await Promise.all([
+        getDocs(qBatchesTarget),
+        getDocs(qBatchesClassIds),
+        getDocs(qBatchesClassId)
+      ]);
+
+      const mergedDocsMap = new Map<string, any>();
+      [...snapTarget.docs, ...snapClassIds.docs, ...snapClassId.docs].forEach(doc => {
+        mergedDocsMap.set(doc.id, { id: doc.id, ...doc.data() });
+      });
+      const allBatches = Array.from(mergedDocsMap.values());
+
+      const classLevelBatches = allBatches.filter(b => {
+        // 1. Check if the batch belongs to Junior High
+        const isJH = b.unit === 'JUNIOR_HIGH' || (!b.unit && (
+          (b.classId && b.classId.startsWith('JUNIOR_HIGH_')) ||
+          (Array.isArray(b.classIds) && b.classIds.some((cid: any) => typeof cid === 'string' && cid.startsWith('JUNIOR_HIGH_'))) ||
+          (Array.isArray(b.targetClassIds) && b.targetClassIds.some((cid: any) => typeof cid === 'string' && cid.startsWith('JUNIOR_HIGH_')))
+        ));
+        if (!isJH) return false;
+
+        // 2. Check if the batch targets the selected class
+        const targetsSelectedClass = 
+          (b.classId === selectedClassId) ||
+          (Array.isArray(b.classIds) && b.classIds.includes(selectedClassId)) ||
+          (Array.isArray(b.targetClassIds) && b.targetClassIds.includes(selectedClassId));
+
+        return targetsSelectedClass;
+      }) as LearningPowerUpTaskBatch[];
 
       const filteredClassBatches = classLevelBatches.filter(b => 
         b.status === 'PUBLISHED' || (showArchivedCancelled && (b.status === 'CANCELLED' || b.status === 'ARCHIVED'))
@@ -823,17 +859,88 @@ function LearningPowerUpTeacherPageContent() {
     }
   };
 
-  const loadTaskBatches = async () => {
+   const loadTaskBatches = async () => {
     if (!activeYear) return;
     try {
-      const q = query(
+      const jhClassIds = classes.map(c => c.id).filter(Boolean);
+      const batchesMap = new Map<string, any>();
+
+      // 1. Fetch batches where unit is 'JUNIOR_HIGH'
+      const qUnit = query(
         collection(db, 'learning_power_up_task_batches'),
-        where('academicYearId', '==', activeYear)
+        where('academicYearId', '==', activeYear),
+        where('unit', '==', 'JUNIOR_HIGH')
       );
-      const snap = await getDocs(q);
-      const batches = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as LearningPowerUpTaskBatch[];
-      batches.sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate));
-      setTaskBatches(batches);
+      const snapUnit = await getDocs(qUnit);
+      snapUnit.docs.forEach(doc => {
+        batchesMap.set(doc.id, { id: doc.id, ...doc.data() });
+      });
+
+      // 2. Fetch legacy batches targeting any of our Junior High classes
+      if (jhClassIds.length > 0) {
+        // Chunk jhClassIds to comply with Firestore 'in' limit of 10 items
+        const chunks = [];
+        for (let i = 0; i < jhClassIds.length; i += 10) {
+          chunks.push(jhClassIds.slice(i, i + 10));
+        }
+
+        for (const chunk of chunks) {
+          const qClassId = query(
+            collection(db, 'learning_power_up_task_batches'),
+            where('academicYearId', '==', activeYear),
+            where('classId', 'in', chunk)
+          );
+          const snapClassId = await getDocs(qClassId);
+          snapClassId.docs.forEach(doc => {
+            batchesMap.set(doc.id, { id: doc.id, ...doc.data() });
+          });
+
+          const qClassIds = query(
+            collection(db, 'learning_power_up_task_batches'),
+            where('academicYearId', '==', activeYear),
+            where('classIds', 'array-contains-any', chunk)
+          );
+          const snapClassIds = await getDocs(qClassIds);
+          snapClassIds.docs.forEach(doc => {
+            batchesMap.set(doc.id, { id: doc.id, ...doc.data() });
+          });
+
+          const qTargetClassIds = query(
+            collection(db, 'learning_power_up_task_batches'),
+            where('academicYearId', '==', activeYear),
+            where('targetClassIds', 'array-contains-any', chunk)
+          );
+          const snapTargetClassIds = await getDocs(qTargetClassIds);
+          snapTargetClassIds.docs.forEach(doc => {
+            batchesMap.set(doc.id, { id: doc.id, ...doc.data() });
+          });
+        }
+      }
+
+      const batches = Array.from(batchesMap.values()) as LearningPowerUpTaskBatch[];
+      
+      const filteredBatches = batches.filter(batch => {
+        // unit === 'JUNIOR_HIGH'
+        if (batch.unit === 'JUNIOR_HIGH') {
+          return true;
+        }
+        // unit is empty/missing
+        if (!batch.unit) {
+          const classId = (batch as any).classId;
+          const classIds = (batch as any).classIds || batch.targetClassIds;
+          
+          if (classId && typeof classId === 'string' && classId.startsWith('JUNIOR_HIGH_')) {
+            return true;
+          }
+          if (Array.isArray(classIds) && classIds.some(cid => typeof cid === 'string' && cid.startsWith('JUNIOR_HIGH_'))) {
+            return true;
+          }
+        }
+        return false;
+      });
+
+      filteredBatches.sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate));
+      setTaskBatches(filteredBatches);
     } catch (err) {
       console.error("Error loading task batches:", err);
     }
@@ -2017,7 +2124,7 @@ function LearningPowerUpTeacherPageContent() {
         const targetBatch = taskBatches.find(b => 
           b.weekStartDate === activePackage.weekStartDate && 
           b.subjectKey === field &&
-          b.targetClassIds.includes(selectedClassId)
+          (b.targetClassIds?.includes(selectedClassId) || (b as any).classId === selectedClassId || (b as any).classIds?.includes(selectedClassId))
         );
         if (!targetBatch) {
           toast.error("Gagal menemukan batch tugas level-based.");
@@ -2139,7 +2246,7 @@ function LearningPowerUpTeacherPageContent() {
         const targetBatch = taskBatches.find(b => 
           b.weekStartDate === activePackage.weekStartDate && 
           b.subjectKey === field &&
-          b.targetClassIds.includes(selectedClassId)
+          (b.targetClassIds?.includes(selectedClassId) || (b as any).classId === selectedClassId || (b as any).classIds?.includes(selectedClassId))
         );
         if (!targetBatch) {
           toast.error("Gagal menemukan batch tugas level-based.");
@@ -2258,7 +2365,7 @@ function LearningPowerUpTeacherPageContent() {
         const targetBatch = taskBatches.find(b => 
           b.weekStartDate === activePackage.weekStartDate && 
           b.subjectKey === field &&
-          b.targetClassIds.includes(selectedClassId)
+          (b.targetClassIds?.includes(selectedClassId) || (b as any).classId === selectedClassId || (b as any).classIds?.includes(selectedClassId))
         );
         if (!targetBatch) {
           toast.error("Gagal menemukan batch tugas level-based.");
@@ -2376,7 +2483,7 @@ function LearningPowerUpTeacherPageContent() {
         const targetBatch = taskBatches.find(b => 
           b.weekStartDate === activePackage.weekStartDate && 
           b.subjectKey === field &&
-          b.targetClassIds.includes(selectedClassId)
+          (b.targetClassIds?.includes(selectedClassId) || (b as any).classId === selectedClassId || (b as any).classIds?.includes(selectedClassId))
         );
         if (!targetBatch) {
           toast.error("Gagal menemukan batch tugas level-based.");
@@ -3243,7 +3350,7 @@ function LearningPowerUpTeacherPageContent() {
                             {CATEGORY_CONFIG[batch.subjectKey]?.label || batch.subjectKey}
                           </h4>
                           <p className="text-[10px] text-gray-500 font-bold uppercase">
-                            {batch.targetClassIds.map(cid => classes.find(c => c.id === cid)?.name || cid).join(', ')}
+                            {((batch.targetClassIds || (batch as any).classIds || [(batch as any).classId]).filter(Boolean) as string[]).map(cid => classes.find(c => c.id === cid)?.name || cid).join(', ')}
                           </p>
                           <p className="text-[10px] text-gray-400 font-bold uppercase">
                             {batch.weekLabel}
@@ -3907,7 +4014,7 @@ function LearningPowerUpTeacherPageContent() {
                     </div>
                     <div>
                       Kelas: <strong className="font-bold text-gray-950">
-                        {deletingBatch.targetClassIds.map(cid => classes.find(c => c.id === cid)?.name || cid).join(', ')}
+                        {((deletingBatch.targetClassIds || (deletingBatch as any).classIds || [(deletingBatch as any).classId]).filter(Boolean) as string[]).map(cid => classes.find(c => c.id === cid)?.name || cid).join(', ')}
                       </strong>
                     </div>
                     <div>

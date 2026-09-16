@@ -407,9 +407,18 @@ function LearningPowerUpStudentPageContent() {
         ...d.data()
       })) as LearningPowerUpPackage[];
 
+      // Filter packages for Junior High compatibility
+      const filteredPackages = loadedPackages.filter(p => {
+        if (p.unit === 'JUNIOR_HIGH') return true;
+        if (!p.unit) {
+          return (p.classId && p.classId.startsWith('JUNIOR_HIGH_')) || classData.id.startsWith('JUNIOR_HIGH_');
+        }
+        return false;
+      });
+
       // Sort by start date descending
-      loadedPackages.sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate));
-      setPackages(loadedPackages);
+      filteredPackages.sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate));
+      setPackages(filteredPackages);
 
       // 2. Fetch student's progress
       const qProgress = query(
@@ -437,11 +446,21 @@ function LearningPowerUpStudentPageContent() {
         id: d.id,
         ...d.data()
       })) as LearningPowerUpAssignment[];
-      setAssignments(loadedAssignments);
+
+      // Filter assignments for Junior High compatibility
+      const filteredAssignments = loadedAssignments.filter(asg => {
+        if (asg.unit === 'JUNIOR_HIGH') return true;
+        if (!asg.unit) {
+          return (asg.classId && asg.classId.startsWith('JUNIOR_HIGH_')) || classData.id.startsWith('JUNIOR_HIGH_');
+        }
+        return false;
+      });
+
+      setAssignments(filteredAssignments);
 
       // 4. Build unified weeks
       const weekMap = new Map<string, UnifiedWeek>();
-      loadedPackages.forEach(p => {
+      filteredPackages.forEach(p => {
         weekMap.set(p.weekStartDate, {
           id: p.id,
           weekStartDate: p.weekStartDate,
@@ -449,7 +468,7 @@ function LearningPowerUpStudentPageContent() {
           weekLabel: p.weekLabel
         });
       });
-      loadedAssignments.forEach(asg => {
+      filteredAssignments.forEach(asg => {
         if (!weekMap.has(asg.weekStartDate)) {
           weekMap.set(asg.weekStartDate, {
             id: 'diff_' + asg.weekStartDate,

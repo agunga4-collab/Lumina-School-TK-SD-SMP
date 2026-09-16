@@ -224,6 +224,16 @@ service cloud.firestore {
         get(/databases/$(database)/documents/learning_power_up_task_batches/$(batchId)).data.status in ['PUBLISHED', 'CANCELLED'];
     }
 
+    function isLpuBatchJH(data) {
+      return data.unit == 'JUNIOR_HIGH' || (
+        !('unit' in data) && (
+          (data.classId != null && isJuniorHighClassId(data.classId)) ||
+          (data.classIds != null && data.classIds.size() > 0 && isJuniorHighClassId(data.classIds[0])) ||
+          (data.targetClassIds != null && data.targetClassIds.size() > 0 && isJuniorHighClassId(data.targetClassIds[0]))
+        )
+      );
+    }
+
     function isValidLearningPowerUpTaskBatch(data) {
       return data.id != null && data.id != "" &&
              data.subjectKey != null && data.subjectKey != "" &&
@@ -1048,17 +1058,15 @@ service cloud.firestore {
 
     match /learning_power_up_task_batches/{batchId} {
       allow read: if isActive() && (
-        (isJuniorHighLPUStaff() && (resource.data.unit == 'JUNIOR_HIGH' || (!('unit' in resource.data) && isJuniorHighClassId(resource.data.targetClassIds[0])))) ||
-        (isStudent() && resource.data.status == "PUBLISHED" && (resource.data.unit == 'JUNIOR_HIGH' || (!('unit' in resource.data) && isJuniorHighClassId(resource.data.targetClassIds[0]))))
+        (isJuniorHighLPUStaff() && isLpuBatchJH(resource.data)) ||
+        (isStudent() && resource.data.status == "PUBLISHED" && isLpuBatchJH(resource.data))
       );
       allow create: if isJuniorHighLPUStaff() && request.resource.data.unit == 'JUNIOR_HIGH';
       allow update: if isJuniorHighLPUStaff() && (
-        (resource.data.unit == 'JUNIOR_HIGH' || (!('unit' in resource.data) && isJuniorHighClassId(resource.data.targetClassIds[0]))) &&
+        isLpuBatchJH(resource.data) &&
         (!('unit' in request.resource.data) || request.resource.data.unit == 'JUNIOR_HIGH')
       );
-      allow delete: if isJuniorHighLPUStaff() && (
-        resource.data.unit == 'JUNIOR_HIGH' || (!('unit' in resource.data) && isJuniorHighClassId(resource.data.targetClassIds[0]))
-      );
+      allow delete: if isJuniorHighLPUStaff() && isLpuBatchJH(resource.data);
     }
 
     match /learning_power_up_assignments/{assignmentId} {
