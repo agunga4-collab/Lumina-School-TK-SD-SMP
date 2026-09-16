@@ -731,8 +731,7 @@ function LearningPowerUpTeacherPageContent() {
       const qLegacyPackages = query(
         collection(db, 'learning_power_up_tasks'),
         where('classId', '==', selectedClassId),
-        where('academicYearId', '==', activeYear),
-        where('unit', '==', 'JUNIOR_HIGH')
+        where('academicYearId', '==', activeYear)
       );
       const legacyPackagesSnap = await getDocs(qLegacyPackages);
       const legacyPackages = legacyPackagesSnap.docs.map(doc => ({

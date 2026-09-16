@@ -398,8 +398,7 @@ function LearningPowerUpStudentPageContent() {
       const qPackages = query(
         collection(db, 'learning_power_up_tasks'),
         where('academicYearId', '==', activeYear),
-        where('classId', '==', classData.id),
-        where('unit', '==', 'JUNIOR_HIGH')
+        where('classId', '==', classData.id)
       );
 
       const packagesSnap = await getDocs(qPackages);

@@ -88,6 +88,15 @@ service cloud.firestore {
         get(/databases/$(database)/documents/classes/$(classId)).data.unitId == 'JUNIOR_HIGH';
     }
 
+    function isJuniorHighClassId(classId) {
+      return classId is string && (
+        classId.startsWith('JUNIOR_HIGH_') || (
+          exists(/databases/$(database)/documents/classes/$(classId)) &&
+          get(/databases/$(database)/documents/classes/$(classId)).data.unitId == 'JUNIOR_HIGH'
+        )
+      );
+    }
+
     function isJuniorHighLPUStaff() {
       return isActive() && userRole() in [
         'TEACHER', 'HOMEROOM_TEACHER', 'BK_MENTOR',
@@ -1024,56 +1033,74 @@ service cloud.firestore {
     }
 
     match /learning_power_up_tasks/{taskId} {
-      allow read: if isActive() && (isAdmin() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(resource.data.classId)) || isStudent() || isParent());
-      allow create: if isAdmin() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(request.resource.data.classId));
-      allow update: if isAdmin() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(request.resource.data.classId) && isActiveJuniorHighClassInActiveYear(resource.data.classId));
-      allow delete: if isAdmin() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(resource.data.classId));
+      allow read: if isActive() && (isAdmin() || (isJuniorHighStaff() && isJuniorHighClassId(resource.data.classId)) || isStudent() || isParent());
+      allow create: if isAdmin() || (isJuniorHighStaff() && isJuniorHighClassId(request.resource.data.classId));
+      allow update: if isAdmin() || (isJuniorHighStaff() && isJuniorHighClassId(request.resource.data.classId) && isJuniorHighClassId(resource.data.classId));
+      allow delete: if isAdmin() || (isJuniorHighStaff() && isJuniorHighClassId(resource.data.classId));
     }
 
     match /learning_power_up_progress/{progressId} {
-      allow read: if isActive() && (isAdmin() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(resource.data.classId)) || isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId));
-      allow create: if isAdmin() || isOwnStudentData(request.resource.data.studentId) || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(request.resource.data.classId));
-      allow update: if isAdmin() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(request.resource.data.classId) && isActiveJuniorHighClassInActiveYear(resource.data.classId)) || (isOwnStudentData(resource.data.studentId) && isOwnStudentData(request.resource.data.studentId) && request.resource.data.status == "SUBMITTED" && (resource.data.status == "NOT_STARTED" || resource.data.status == "REVISION_REQUIRED" || resource.data.status == "SUBMITTED"));
-      allow delete: if isAdmin() || (isJuniorHighStaff() && isActiveJuniorHighClassInActiveYear(resource.data.classId));
+      allow read: if isActive() && (isAdmin() || (isJuniorHighStaff() && isJuniorHighClassId(resource.data.classId)) || isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId));
+      allow create: if isAdmin() || isOwnStudentData(request.resource.data.studentId) || (isJuniorHighStaff() && isJuniorHighClassId(request.resource.data.classId));
+      allow update: if isAdmin() || (isJuniorHighStaff() && isJuniorHighClassId(request.resource.data.classId) && isJuniorHighClassId(resource.data.classId)) || (isOwnStudentData(resource.data.studentId) && isOwnStudentData(request.resource.data.studentId) && request.resource.data.status == "SUBMITTED" && (resource.data.status == "NOT_STARTED" || resource.data.status == "REVISION_REQUIRED" || resource.data.status == "SUBMITTED"));
+      allow delete: if isAdmin() || (isJuniorHighStaff() && isJuniorHighClassId(resource.data.classId));
     }
 
     match /learning_power_up_task_batches/{batchId} {
       allow read: if isActive() && (
-        (isJuniorHighLPUStaff() && resource.data.unit == 'JUNIOR_HIGH') ||
-        (isStudent() && resource.data.unit == 'JUNIOR_HIGH' && resource.data.status == "PUBLISHED")
+        (isJuniorHighLPUStaff() && (resource.data.unit == 'JUNIOR_HIGH' || (!('unit' in resource.data) && isJuniorHighClassId(resource.data.targetClassIds[0])))) ||
+        (isStudent() && resource.data.status == "PUBLISHED" && (resource.data.unit == 'JUNIOR_HIGH' || (!('unit' in resource.data) && isJuniorHighClassId(resource.data.targetClassIds[0]))))
       );
       allow create: if isJuniorHighLPUStaff() && request.resource.data.unit == 'JUNIOR_HIGH';
-      allow update: if isJuniorHighLPUStaff() &&
-        resource.data.unit == 'JUNIOR_HIGH' &&
-        request.resource.data.unit == 'JUNIOR_HIGH';
-      allow delete: if isJuniorHighLPUStaff() && resource.data.unit == 'JUNIOR_HIGH';
+      allow update: if isJuniorHighLPUStaff() && (
+        (resource.data.unit == 'JUNIOR_HIGH' || (!('unit' in resource.data) && isJuniorHighClassId(resource.data.targetClassIds[0]))) &&
+        (!('unit' in request.resource.data) || request.resource.data.unit == 'JUNIOR_HIGH')
+      );
+      allow delete: if isJuniorHighLPUStaff() && (
+        resource.data.unit == 'JUNIOR_HIGH' || (!('unit' in resource.data) && isJuniorHighClassId(resource.data.targetClassIds[0]))
+      );
     }
 
     match /learning_power_up_assignments/{assignmentId} {
       allow read: if isActive() && (
-        (isJuniorHighLPUStaff() && resource.data.unit == 'JUNIOR_HIGH') ||
-        (isOwnStudentData(resource.data.studentId) && resource.data.unit == 'JUNIOR_HIGH') ||
-        (isLinkedStudent(resource.data.studentId) && resource.data.unit == 'JUNIOR_HIGH')
+        (isJuniorHighLPUStaff() && (resource.data.unit == 'JUNIOR_HIGH' || (!('unit' in resource.data) && isJuniorHighClassId(resource.data.classId)))) ||
+        (isOwnStudentData(resource.data.studentId) && (resource.data.unit == 'JUNIOR_HIGH' || (!('unit' in resource.data) && isJuniorHighClassId(resource.data.classId)))) ||
+        (isLinkedStudent(resource.data.studentId) && (resource.data.unit == 'JUNIOR_HIGH' || (!('unit' in resource.data) && isJuniorHighClassId(resource.data.classId))))
       );
       allow create: if isJuniorHighLPUStaff() && request.resource.data.unit == 'JUNIOR_HIGH';
       allow update: if isActive() && (
-        (isJuniorHighLPUStaff() && resource.data.unit == 'JUNIOR_HIGH' && request.resource.data.unit == 'JUNIOR_HIGH') ||
+        (
+          isJuniorHighLPUStaff() &&
+          (resource.data.unit == 'JUNIOR_HIGH' || (!('unit' in resource.data) && isJuniorHighClassId(resource.data.classId))) &&
+          (!('unit' in request.resource.data) || request.resource.data.unit == 'JUNIOR_HIGH')
+        ) ||
         (
           isOwnStudentData(resource.data.studentId) &&
           isOwnStudentData(request.resource.data.studentId) &&
-          resource.data.unit == 'JUNIOR_HIGH' &&
-          request.resource.data.unit == 'JUNIOR_HIGH' &&
+          (resource.data.unit == 'JUNIOR_HIGH' || (!('unit' in resource.data) && isJuniorHighClassId(resource.data.classId))) &&
+          (!('unit' in request.resource.data) || request.resource.data.unit == 'JUNIOR_HIGH') &&
           request.resource.data.status == "SUBMITTED" &&
           (resource.data.status == "ASSIGNED" || resource.data.status == "REVISION_REQUIRED" || resource.data.status == "SUBMITTED")
         )
       );
-      allow delete: if isJuniorHighLPUStaff() && resource.data.unit == 'JUNIOR_HIGH';
+      allow delete: if isJuniorHighLPUStaff() && (
+        resource.data.unit == 'JUNIOR_HIGH' || (!('unit' in resource.data) && isJuniorHighClassId(resource.data.classId))
+      );
     }
 
     match /learning_power_up_activity_logs/{logId} {
-      allow read: if isActive() && (isJuniorHighLPUStaff() && resource.data.unit == 'JUNIOR_HIGH');
-      allow create: if isJuniorHighLPUStaff() && request.resource.data.unit == 'JUNIOR_HIGH';
-      allow delete: if isJuniorHighLPUStaff() && resource.data.unit == 'JUNIOR_HIGH';
+      allow read: if isActive() && isJuniorHighLPUStaff() && (
+        resource.data.unit == 'JUNIOR_HIGH' ||
+        !('unit' in resource.data)
+      );
+      allow create: if isJuniorHighLPUStaff() && (
+        request.resource.data.unit == 'JUNIOR_HIGH' ||
+        !('unit' in request.resource.data)
+      );
+      allow delete: if isJuniorHighLPUStaff() && (
+        resource.data.unit == 'JUNIOR_HIGH' ||
+        !('unit' in resource.data)
+      );
     }
 
     match /lxd/{lxdId} {
