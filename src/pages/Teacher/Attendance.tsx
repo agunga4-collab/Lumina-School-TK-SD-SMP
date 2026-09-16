@@ -142,6 +142,7 @@ export default function Attendance() {
   const activeAcademicYear = activeYear;
   const activeSemester = String(contextSemester) as any;
 
+  // 1. ALL USESTATE HOAKS DECLARED SEQUENTIALLY AT THE TOP
   const [view, setView] = React.useState<'INPUT' | 'RECAP' | 'ALERTS'>('INPUT');
   const [students, setStudents] = React.useState<StudentAttendance[]>([]);
   const [classes, setClasses] = React.useState<Class[]>([]);
@@ -171,6 +172,54 @@ export default function Attendance() {
     key: 'name' | 'hadir' | 'late' | 'alpa' | 'rate';
     direction: 'asc' | 'desc';
   }>({ key: 'name', direction: 'asc' });
+
+  const now = new Date();
+  const [recapMonth, setRecapMonth] = React.useState((now.getMonth() + 1).toString().padStart(2, '0'));
+  const [recapYear, setRecapYear] = React.useState(now.getFullYear().toString());
+  const [recapData, setRecapData] = React.useState<Record<string, { hadir: number, sakit: number, izin: number, alpa: number, late: number }>>({});
+  const [recapMatrix, setRecapMatrix] = React.useState<Record<string, Record<string, string>>>({});
+  const [recapViewMode, setRecapViewMode] = React.useState<'SUMMARY' | 'MATRIX'>('SUMMARY');
+  const [recapPeriodMode, setRecapPeriodMode] = React.useState<'MONTHLY' | 'RANGE'>('MONTHLY');
+  const [recapStartDate, setRecapStartDate] = React.useState<string>(() => {
+    return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-01`;
+  });
+  const [recapEndDate, setRecapEndDate] = React.useState<string>(() => {
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${lastDay.toString().padStart(2, '0')}`;
+  });
+  const [tempStartDate, setTempStartDate] = React.useState<string>(() => {
+    return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-01`;
+  });
+  const [tempEndDate, setTempEndDate] = React.useState<string>(() => {
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${lastDay.toString().padStart(2, '0')}`;
+  });
+  const [recapRangeError, setRecapRangeError] = React.useState<string>('');
+  const [recapError, setRecapError] = React.useState<'permission' | 'generic' | null>(null);
+
+  const [loadingRecap, setLoadingRecap] = React.useState(false);
+  const [fileMap, setFileMap] = React.useState<any | null>(null);
+  const [elementaryBackupJob, setElementaryBackupJob] = React.useState<any | null>(null);
+  const [attendanceType, setAttendanceType] = React.useState<'DAILY' | 'DHUHUR'>('DAILY');
+  const [refreshTrigger, setRefreshTrigger] = React.useState(0);
+  const [threshold, setThreshold] = React.useState(3);
+  const [userProfile, setUserProfile] = React.useState<any>(null); // In real app, from AuthContext
+
+  // Helper to generate dates in range (max 62 days to avoid heavy rendering)
+  const getDatesInRange = React.useCallback((startStr: string, endStr: string) => {
+    const dates: string[] = [];
+    if (!startStr || !endStr) return dates;
+    const start = new Date(startStr);
+    const end = new Date(endStr);
+    const temp = new Date(start);
+    let count = 0;
+    while (temp <= end && count < 62) {
+      dates.push(temp.toISOString().split('T')[0]);
+      temp.setDate(temp.getDate() + 1);
+      count++;
+    }
+    return dates;
+  }, []);
 
   const sortedStudentsForRecap = React.useMemo(() => {
     if (attendanceType !== 'DHUHUR') return students;
@@ -241,46 +290,6 @@ export default function Attendance() {
       (s.id || '').toLowerCase().includes(term)
     );
   }, [students, searchTerm]);
-  
-  const now = new Date();
-  const [recapMonth, setRecapMonth] = React.useState((now.getMonth() + 1).toString().padStart(2, '0'));
-  const [recapYear, setRecapYear] = React.useState(now.getFullYear().toString());
-  const [recapData, setRecapData] = React.useState<Record<string, { hadir: number, sakit: number, izin: number, alpa: number, late: number }>>({});
-  const [recapMatrix, setRecapMatrix] = React.useState<Record<string, Record<string, string>>>({});
-  const [recapViewMode, setRecapViewMode] = React.useState<'SUMMARY' | 'MATRIX'>('SUMMARY');
-  const [recapPeriodMode, setRecapPeriodMode] = React.useState<'MONTHLY' | 'RANGE'>('MONTHLY');
-  const [recapStartDate, setRecapStartDate] = React.useState<string>(() => {
-    return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-01`;
-  });
-  const [recapEndDate, setRecapEndDate] = React.useState<string>(() => {
-    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${lastDay.toString().padStart(2, '0')}`;
-  });
-  const [tempStartDate, setTempStartDate] = React.useState<string>(() => {
-    return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-01`;
-  });
-  const [tempEndDate, setTempEndDate] = React.useState<string>(() => {
-    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${lastDay.toString().padStart(2, '0')}`;
-  });
-  const [recapRangeError, setRecapRangeError] = React.useState<string>('');
-  const [recapError, setRecapError] = React.useState<'permission' | 'generic' | null>(null);
-
-  // Helper to generate dates in range (max 62 days to avoid heavy rendering)
-  const getDatesInRange = React.useCallback((startStr: string, endStr: string) => {
-    const dates: string[] = [];
-    if (!startStr || !endStr) return dates;
-    const start = new Date(startStr);
-    const end = new Date(endStr);
-    const temp = new Date(start);
-    let count = 0;
-    while (temp <= end && count < 62) {
-      dates.push(temp.toISOString().split('T')[0]);
-      temp.setDate(temp.getDate() + 1);
-      count++;
-    }
-    return dates;
-  }, []);
 
   const datesToRender = React.useMemo(() => {
     if (recapPeriodMode === 'MONTHLY') {
@@ -331,13 +340,6 @@ export default function Attendance() {
     setRecapStartDate(tempStartDate);
     setRecapEndDate(tempEndDate);
   };
-  const [loadingRecap, setLoadingRecap] = React.useState(false);
-  const [fileMap, setFileMap] = React.useState<any | null>(null);
-  const [elementaryBackupJob, setElementaryBackupJob] = React.useState<any | null>(null);
-  const [attendanceType, setAttendanceType] = React.useState<'DAILY' | 'DHUHUR'>('DAILY');
-  const [refreshTrigger, setRefreshTrigger] = React.useState(0);
-  const [threshold, setThreshold] = React.useState(3);
-  const [userProfile, setUserProfile] = React.useState<any>(null); // In real app, from AuthContext
 
   React.useEffect(() => {
     const loadFileMap = async () => {
