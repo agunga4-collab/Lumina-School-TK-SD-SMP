@@ -58,6 +58,12 @@ interface MidtermSummaryDraft {
 
   midtermGeneralComment: string;
 
+  learningGoals?: {
+    nilaiAgamaBudiPekerti: string;
+    jatiDiri: string;
+    dasarLiterasiSteam: string;
+  };
+
   status: 'DRAFT' | 'READY_FOR_REVIEW' | 'APPROVED' | 'PUBLISHED';
 
   compiledWeeklySources: CompiledWeeklySource[];
@@ -92,12 +98,14 @@ export default function MidtermSummary() {
   
   const [resolvedSignatureUrl, setResolvedSignatureUrl] = React.useState<string | null>(null);
   const [resolvedTeacherName, setResolvedTeacherName] = React.useState<string | null>(null);
+  const [resolvedTeacherNiy, setResolvedTeacherNiy] = React.useState<string>('-');
   const [isSignatureLoading, setIsSignatureLoading] = React.useState<boolean>(false);
 
   const [kindySignatory, setKindySignatory] = React.useState<{
     principalName: string;
     principalTitle: string;
     principalSignatureUrl: string | null;
+    principalNiy: string;
   } | null>(null);
 
   // Role Protection
@@ -244,12 +252,64 @@ export default function MidtermSummary() {
   }, [startDateStr, endDateStr]);
 
   // Tabs layout selection
-  // Tabs: 'kompilasi' (Kompilasi Mingguan) | 'editor' (Buat GenCom Midterm) | 'publish' (Publish PDF)
-  const [activeTab, setActiveTab] = React.useState<'kompilasi' | 'editor' | 'publish'>('kompilasi');
+  // Tabs: 'goals' (Learning Goals) | 'kompilasi' (Kompilasi Mingguan) | 'editor' (Buat GenCom Midterm) | 'publish' (Publish PDF)
+  const [activeTab, setActiveTab] = React.useState<'goals' | 'kompilasi' | 'editor' | 'publish'>('goals');
+
+  // Local goals state
+  const [localGoals, setLocalGoals] = React.useState<{
+    nilaiAgamaBudiPekerti: string;
+    jatiDiri: string;
+    dasarLiterasiSteam: string;
+  }>({
+    nilaiAgamaBudiPekerti: '',
+    jatiDiri: '',
+    dasarLiterasiSteam: '',
+  });
 
   // Firestore Draft and Weekly Source State
   const [isFetchingWeeklySources, setIsFetchingWeeklySources] = React.useState(false);
   const [weeklySources, setWeeklySources] = React.useState<any[]>([]);
+
+  const extractedLearningGoals = React.useMemo(() => {
+    const agamaGoals = new Set<string>();
+    const jatiDiriGoals = new Set<string>();
+    const literasiSteamGoals = new Set<string>();
+
+    weeklySources.forEach(src => {
+      if (src.weeklyObservationItems && Array.isArray(src.weeklyObservationItems)) {
+        src.weeklyObservationItems.forEach((item: any) => {
+          const objectiveText = item.objective || item.notes || '';
+          if (!objectiveText || objectiveText.trim() === '') return;
+
+          const domain = (item.domain || '').trim().toLowerCase();
+          
+          if (domain.includes('agama') || domain.includes('budi pekerti') || domain === 'agama_budi_pekerti') {
+            agamaGoals.add(objectiveText.trim());
+          } else if (
+            domain.includes('sosial') || 
+            domain.includes('emosional') || 
+            domain.includes('jati diri') || 
+            domain.includes('motorik') || 
+            domain.includes('fisik') ||
+            domain === 'sosial_emosional' ||
+            domain === 'fisik_motorik'
+          ) {
+            jatiDiriGoals.add(objectiveText.trim());
+          } else {
+            // Bahasa, Kognitif, Seni, STEAM
+            literasiSteamGoals.add(objectiveText.trim());
+          }
+        });
+      }
+    });
+
+    return {
+      agama: Array.from(agamaGoals),
+      jatiDiri: Array.from(jatiDiriGoals),
+      literasiSteam: Array.from(literasiSteamGoals)
+    };
+  }, [weeklySources]);
+
   const [midtermDrafts, setMidtermDrafts] = React.useState<Record<string, MidtermSummaryDraft>>({});
   const [isFetchingDrafts, setIsFetchingDrafts] = React.useState(false);
   const [isSavingDraft, setIsSavingDraft] = React.useState(false);
@@ -379,7 +439,8 @@ export default function MidtermSummary() {
           setKindySignatory({
             principalName: data.principalName || '',
             principalTitle: data.principalTitle || 'Principal',
-            principalSignatureUrl: data.principalSignatureUrl || null
+            principalSignatureUrl: data.principalSignatureUrl || null,
+            principalNiy: data.principalNIY || data.principalNiy || '-'
           });
         }
       } catch (err) {
@@ -415,10 +476,24 @@ export default function MidtermSummary() {
           const data = classSnap.data();
           setResolvedSignatureUrl(data.teacherSignatureUrl || null);
           setResolvedTeacherName(data.homeroomTeacherName || null);
+          
+          let teacherNiyVal = data.teacherNiy || data.homeroomTeacherNiy || '';
+          if (!teacherNiyVal && data.homeroomTeacherId) {
+            try {
+              const userSnap = await getDoc(doc(db, 'users', data.homeroomTeacherId));
+              if (userSnap.exists()) {
+                teacherNiyVal = userSnap.data().niy || '';
+              }
+            } catch (e) {
+              console.error("Error fetching teacher NIY:", e);
+            }
+          }
+          setResolvedTeacherNiy(teacherNiyVal || '-');
         } else if (active) {
           const fallbackClass = classes.find(c => c.id === studentCanonicalClassId) || activeClassObj;
           setResolvedSignatureUrl(fallbackClass?.teacherSignatureUrl || null);
           setResolvedTeacherName(fallbackClass?.homeroomTeacherName || null);
+          setResolvedTeacherNiy(fallbackClass?.teacherNiy || fallbackClass?.homeroomTeacherNiy || '-');
         }
       } catch (err) {
         console.error("Error fetching class signature from Firestore:", err);
@@ -426,6 +501,7 @@ export default function MidtermSummary() {
           const fallbackClass = classes.find(c => c.id === studentCanonicalClassId) || activeClassObj;
           setResolvedSignatureUrl(fallbackClass?.teacherSignatureUrl || null);
           setResolvedTeacherName(fallbackClass?.homeroomTeacherName || null);
+          setResolvedTeacherNiy(fallbackClass?.teacherNiy || fallbackClass?.homeroomTeacherNiy || '-');
         }
       } finally {
         if (active) {
@@ -440,13 +516,59 @@ export default function MidtermSummary() {
     };
   }, [selectedStudentId, selectedClassId, classes, activeClassObj, students]);
 
+  const checkHasUnsavedChanges = (
+    comment: string,
+    goals: { nilaiAgamaBudiPekerti: string; jatiDiri: string; dasarLiterasiSteam: string }
+  ) => {
+    const activeDraft = midtermDrafts[selectedStudentId];
+    const originalComment = activeDraft?.midtermGeneralComment || '';
+    const originalAgama = activeDraft?.learningGoals?.nilaiAgamaBudiPekerti || '';
+    const originalJati = activeDraft?.learningGoals?.jatiDiri || '';
+    const originalSteam = activeDraft?.learningGoals?.dasarLiterasiSteam || '';
+
+    const isChanged = 
+      comment !== originalComment ||
+      goals.nilaiAgamaBudiPekerti !== originalAgama ||
+      goals.jatiDiri !== originalJati ||
+      goals.dasarLiterasiSteam !== originalSteam;
+
+    setHasUnsavedChanges(isChanged);
+  };
+
   // Handle local comment input edits
   const handleCommentChange = (text: string) => {
     setLocalComment(text);
-    const activeDraft = midtermDrafts[selectedStudentId];
-    const originalText = activeDraft?.midtermGeneralComment || '';
-    setHasUnsavedChanges(text !== originalText);
+    checkHasUnsavedChanges(text, localGoals);
   };
+
+  // Handle local goals changes
+  const handleGoalChange = (field: 'nilaiAgamaBudiPekerti' | 'jatiDiri' | 'dasarLiterasiSteam', value: string) => {
+    const updatedGoals = { ...localGoals, [field]: value };
+    setLocalGoals(updatedGoals);
+    checkHasUnsavedChanges(localComment, updatedGoals);
+  };
+
+  // Synchronize local editors when selectedStudentId or midtermDrafts changes
+  React.useEffect(() => {
+    if (selectedStudentId) {
+      const activeDraft = midtermDrafts[selectedStudentId];
+      setLocalComment(activeDraft?.midtermGeneralComment || '');
+      setLocalGoals({
+        nilaiAgamaBudiPekerti: activeDraft?.learningGoals?.nilaiAgamaBudiPekerti || '',
+        jatiDiri: activeDraft?.learningGoals?.jatiDiri || '',
+        dasarLiterasiSteam: activeDraft?.learningGoals?.dasarLiterasiSteam || '',
+      });
+      setHasUnsavedChanges(false);
+    } else {
+      setLocalComment('');
+      setLocalGoals({
+        nilaiAgamaBudiPekerti: '',
+        jatiDiri: '',
+        dasarLiterasiSteam: '',
+      });
+      setHasUnsavedChanges(false);
+    }
+  }, [selectedStudentId, midtermDrafts]);
 
   // Browser reload/navigation warning
   React.useEffect(() => {
@@ -671,6 +793,11 @@ export default function MidtermSummary() {
       endDate: endDateStr,
       periodLabel: formattedPeriodRangeIndo,
       midtermGeneralComment: localComment,
+      learningGoals: {
+        nilaiAgamaBudiPekerti: localGoals.nilaiAgamaBudiPekerti,
+        jatiDiri: localGoals.jatiDiri,
+        dasarLiterasiSteam: localGoals.dasarLiterasiSteam
+      },
       status: 'DRAFT',
       compiledWeeklySources: activeDraft?.compiledWeeklySources || [],
       updatedAt: Date.now(),
@@ -709,8 +836,8 @@ export default function MidtermSummary() {
   // Submit for Review Action (Status changes to READY_FOR_REVIEW)
   const handleSubmitForReview = async () => {
     if (!selectedStudentObj || !activeClassObj) return;
-    if (!localComment.trim()) {
-      toast.error('Komentar Midterm tidak boleh kosong untuk diajukan review.');
+    if (!localComment.trim() || !localGoals.nilaiAgamaBudiPekerti.trim() || !localGoals.jatiDiri.trim() || !localGoals.dasarLiterasiSteam.trim()) {
+      toast.error('Draf hanya dapat diajukan jika seluruh 3 Learning Goals dan General Comments telah terisi.');
       return;
     }
     
@@ -732,6 +859,11 @@ export default function MidtermSummary() {
       endDate: endDateStr,
       periodLabel: formattedPeriodRangeIndo,
       midtermGeneralComment: localComment,
+      learningGoals: {
+        nilaiAgamaBudiPekerti: localGoals.nilaiAgamaBudiPekerti,
+        jatiDiri: localGoals.jatiDiri,
+        dasarLiterasiSteam: localGoals.dasarLiterasiSteam
+      },
       status: 'READY_FOR_REVIEW',
       compiledWeeklySources: activeDraft?.compiledWeeklySources || [],
       updatedAt: Date.now(),
@@ -859,9 +991,69 @@ export default function MidtermSummary() {
         });
       });
 
-      // 3. Render page to Canvas & PDF
-      const pageElement = document.getElementById("midterm-report-page-1");
-      if (!pageElement) {
+      // 3. Render pages to Canvas & PDF
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+
+      const pageIds = ["midterm-report-page-1", "midterm-report-page-2"];
+      if (document.getElementById("midterm-report-page-3")) {
+        pageIds.push("midterm-report-page-3");
+      }
+
+      let renderedAny = false;
+
+      for (let i = 0; i < pageIds.length; i++) {
+        const elId = pageIds[i];
+        const el = document.getElementById(elId);
+        if (!el) continue;
+
+        if (renderedAny) {
+          pdf.addPage();
+        }
+        renderedAny = true;
+
+        const originalStyle = el.getAttribute('style') || '';
+
+        el.style.width = '794px';
+        el.style.height = '1123px';
+        el.style.minWidth = '794px';
+        el.style.minHeight = '1123px';
+        el.style.maxWidth = '794px';
+        el.style.maxHeight = '1123px';
+        el.style.boxSizing = 'border-box';
+
+        const canvas = await html2canvasWithModernColors(el, {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          windowWidth: 1200,
+          windowHeight: 1600,
+          onclone: (clonedDoc, clonedElement) => {
+            if (clonedElement) {
+              clonedElement.style.fontFamily = '"Inter", sans-serif';
+              clonedElement.style.width = '794px';
+              clonedElement.style.height = '1123px';
+              clonedElement.style.minWidth = '794px';
+              clonedElement.style.minHeight = '1123px';
+              clonedElement.style.maxWidth = '794px';
+              clonedElement.style.maxHeight = '1123px';
+              clonedElement.style.boxSizing = 'border-box';
+            }
+          }
+        });
+
+        el.setAttribute('style', originalStyle);
+
+        const imgData = canvas.toDataURL('image/jpeg', 0.85);
+        pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
+      }
+
+      if (!renderedAny) {
         toast.dismiss(toastId);
         toast.error("Elemen halaman laporan tidak ditemukan.");
         setIsPublishing(false);
@@ -869,51 +1061,6 @@ export default function MidtermSummary() {
         return;
       }
 
-      const originalStyle = pageElement.getAttribute('style') || '';
-
-      pageElement.style.width = '794px';
-      pageElement.style.height = '1123px';
-      pageElement.style.minWidth = '794px';
-      pageElement.style.minHeight = '1123px';
-      pageElement.style.maxWidth = '794px';
-      pageElement.style.maxHeight = '1123px';
-      pageElement.style.boxSizing = 'border-box';
-
-      const canvas = await html2canvasWithModernColors(pageElement, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        windowWidth: 1200,
-        windowHeight: 1600,
-        onclone: (clonedDoc, clonedElement) => {
-          if (clonedElement) {
-            clonedElement.style.fontFamily = '"Inter", sans-serif';
-            clonedElement.style.width = '794px';
-            clonedElement.style.height = '1123px';
-            clonedElement.style.minWidth = '794px';
-            clonedElement.style.minHeight = '1123px';
-            clonedElement.style.maxWidth = '794px';
-            clonedElement.style.maxHeight = '1123px';
-            clonedElement.style.boxSizing = 'border-box';
-          }
-        }
-      });
-
-      pageElement.setAttribute('style', originalStyle);
-
-      const imgData = canvas.toDataURL('image/jpeg', 0.85);
-
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'mm',
-        format: 'a4'
-      });
-      
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      
-      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
-      
       const pdfBlob = pdf.output('blob');
 
       const getBase64 = (blob: Blob): Promise<string> => {
@@ -1024,6 +1171,11 @@ export default function MidtermSummary() {
             semester
           },
           midtermGeneralComment: activeDraft.midtermGeneralComment,
+          learningGoals: {
+            nilaiAgamaBudiPekerti: activeDraft.learningGoals?.nilaiAgamaBudiPekerti || '',
+            jatiDiri: activeDraft.learningGoals?.jatiDiri || '',
+            dasarLiterasiSteam: activeDraft.learningGoals?.dasarLiterasiSteam || ''
+          },
           signatories: {
             principal: {
               name: kindySignatory?.principalName || '',
@@ -1227,6 +1379,42 @@ export default function MidtermSummary() {
     return summary;
   }, [activeDraft, weeklySources]);
 
+  // Getters for PDF rendering
+  const getAgamaGoalText = () => {
+    if (publishedReportObj?.reportSnapshot?.learningGoals?.nilaiAgamaBudiPekerti !== undefined) {
+      return publishedReportObj.reportSnapshot.learningGoals.nilaiAgamaBudiPekerti;
+    }
+    return activeDraft?.learningGoals?.nilaiAgamaBudiPekerti || '';
+  };
+
+  const getJatiDiriGoalText = () => {
+    if (publishedReportObj?.reportSnapshot?.learningGoals?.jatiDiri !== undefined) {
+      return publishedReportObj.reportSnapshot.learningGoals.jatiDiri;
+    }
+    return activeDraft?.learningGoals?.jatiDiri || '';
+  };
+
+  const getSteamGoalText = () => {
+    if (publishedReportObj?.reportSnapshot?.learningGoals?.dasarLiterasiSteam !== undefined) {
+      return publishedReportObj.reportSnapshot.learningGoals.dasarLiterasiSteam;
+    }
+    return activeDraft?.learningGoals?.dasarLiterasiSteam || '';
+  };
+
+  const getGeneralCommentText = () => {
+    if (publishedReportObj?.reportSnapshot?.midtermGeneralComment !== undefined) {
+      return publishedReportObj.reportSnapshot.midtermGeneralComment;
+    }
+    return activeDraft?.midtermGeneralComment || '';
+  };
+
+  const getAttendance = () => {
+    if (publishedReportObj?.reportSnapshot?.attendanceSummary) {
+      return publishedReportObj.reportSnapshot.attendanceSummary;
+    }
+    return computedAttendance;
+  };
+
   const isAuthorizer = profile?.role === 'SUPER_ADMIN' || profile?.role === 'HEAD_UNIT' || profile?.role === 'kindergarten_head';
 
   return (
@@ -1336,39 +1524,50 @@ export default function MidtermSummary() {
       </div>
 
       {/* INTERNAL WORKFLOW TAB NAVIGATION */}
-      <div className="flex border-b border-gray-250 shrink-0 gap-1.5">
+      <div className="flex border-b border-gray-250 shrink-0 gap-1.5 overflow-x-auto">
+        <button
+          onClick={() => confirmNavigation('tab', 'goals')}
+          className={cn(
+            "px-5 py-3 text-xs font-black transition-all cursor-pointer border-b-2 -mb-[2px] tracking-tight whitespace-nowrap",
+            activeTab === 'goals'
+              ? "border-[#109E58] text-[#109E58]"
+              : "border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200"
+          )}
+        >
+          1. Learning Goals
+        </button>
         <button
           onClick={() => confirmNavigation('tab', 'kompilasi')}
           className={cn(
-            "px-5 py-3 text-xs font-black transition-all cursor-pointer border-b-2 -mb-[2px] tracking-tight",
+            "px-5 py-3 text-xs font-black transition-all cursor-pointer border-b-2 -mb-[2px] tracking-tight whitespace-nowrap",
             activeTab === 'kompilasi'
               ? "border-[#109E58] text-[#109E58]"
               : "border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200"
           )}
         >
-          1. Kompilasi Mingguan
+          2. Kompilasi Mingguan
         </button>
         <button
           onClick={() => confirmNavigation('tab', 'editor')}
           className={cn(
-            "px-5 py-3 text-xs font-black transition-all cursor-pointer border-b-2 -mb-[2px] tracking-tight",
+            "px-5 py-3 text-xs font-black transition-all cursor-pointer border-b-2 -mb-[2px] tracking-tight whitespace-nowrap",
             activeTab === 'editor'
               ? "border-[#109E58] text-[#109E58]"
               : "border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200"
           )}
         >
-          2. Buat GenCom Midterm
+          3. Buat GenCom Midterm
         </button>
         <button
           onClick={() => confirmNavigation('tab', 'publish')}
           className={cn(
-            "px-5 py-3 text-xs font-black transition-all cursor-pointer border-b-2 -mb-[2px] tracking-tight flex items-center gap-1.5",
+            "px-5 py-3 text-xs font-black transition-all cursor-pointer border-b-2 -mb-[2px] tracking-tight flex items-center gap-1.5 whitespace-nowrap",
             activeTab === 'publish'
               ? "border-[#109E58] text-[#109E58]"
               : "border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200"
           )}
         >
-          3. Publish PDF
+          4. Publish PDF
         </button>
       </div>
 
@@ -1470,6 +1669,222 @@ export default function MidtermSummary() {
               </button>
             </div>
           </div>
+
+          {/* TAB 0: LEARNING GOALS CONTENT */}
+          {activeTab === 'goals' && (
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+              
+              {/* LEFT HALF: READ-ONLY WEEKLY GOALS REFERENCE */}
+              <div className="md:col-span-5 space-y-4">
+                <div className="bg-gray-50 border border-gray-150 p-4 rounded-2xl h-full flex flex-col min-h-[400px]">
+                  <div className="flex justify-between items-center pb-2.5 border-b border-gray-200 mb-4 shrink-0">
+                    <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-wider flex items-center gap-1.5 font-sans">
+                      <BookOpen size={12} />
+                      Referensi Target Mingguan (Weekly Goals)
+                    </h3>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto space-y-4 max-h-[600px] pr-1">
+                    {/* Category 1: Agama */}
+                    <div className="space-y-2">
+                      <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block bg-emerald-50 px-2 py-1 rounded">
+                        Nilai Agama & Budi Pekerti
+                      </span>
+                      {extractedLearningGoals.agama.length === 0 ? (
+                        <p className="text-[11px] text-gray-400 italic pl-2 font-sans">Tidak ada target mingguan.</p>
+                      ) : (
+                        <div className="space-y-1.5 pl-1">
+                          {extractedLearningGoals.agama.map((goal, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => {
+                                if (isLockedForEditing) return;
+                                const currentText = localGoals.nilaiAgamaBudiPekerti;
+                                const separator = currentText ? '\n' : '';
+                                handleGoalChange('nilaiAgamaBudiPekerti', currentText + separator + goal);
+                              }}
+                              className="w-full text-left bg-white hover:bg-emerald-50/40 border border-gray-150 rounded-lg p-2.5 text-xs text-gray-750 leading-relaxed transition-all cursor-pointer flex items-start gap-1.5 font-sans"
+                              title="Klik untuk menyalin ke input"
+                              disabled={isLockedForEditing}
+                            >
+                              <span className="text-emerald-500 font-bold shrink-0">+</span>
+                              <span className="flex-1">{goal}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Category 2: Jati Diri */}
+                    <div className="space-y-2">
+                      <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block bg-emerald-50 px-2 py-1 rounded">
+                        Jati Diri
+                      </span>
+                      {extractedLearningGoals.jatiDiri.length === 0 ? (
+                        <p className="text-[11px] text-gray-400 italic pl-2 font-sans">Tidak ada target mingguan.</p>
+                      ) : (
+                        <div className="space-y-1.5 pl-1">
+                          {extractedLearningGoals.jatiDiri.map((goal, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => {
+                                if (isLockedForEditing) return;
+                                const currentText = localGoals.jatiDiri;
+                                const separator = currentText ? '\n' : '';
+                                handleGoalChange('jatiDiri', currentText + separator + goal);
+                              }}
+                              className="w-full text-left bg-white hover:bg-emerald-50/40 border border-gray-150 rounded-lg p-2.5 text-xs text-gray-750 leading-relaxed transition-all cursor-pointer flex items-start gap-1.5 font-sans"
+                              title="Klik untuk menyalin ke input"
+                              disabled={isLockedForEditing}
+                            >
+                              <span className="text-emerald-500 font-bold shrink-0">+</span>
+                              <span className="flex-1">{goal}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Category 3: Literasi & STEAM */}
+                    <div className="space-y-2">
+                      <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block bg-emerald-50 px-2 py-1 rounded">
+                        Dasar-dasar Literasi & STEAM
+                      </span>
+                      {extractedLearningGoals.literasiSteam.length === 0 ? (
+                        <p className="text-[11px] text-gray-400 italic pl-2 font-sans">Tidak ada target mingguan.</p>
+                      ) : (
+                        <div className="space-y-1.5 pl-1">
+                          {extractedLearningGoals.literasiSteam.map((goal, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => {
+                                if (isLockedForEditing) return;
+                                const currentText = localGoals.dasarLiterasiSteam;
+                                const separator = currentText ? '\n' : '';
+                                handleGoalChange('dasarLiterasiSteam', currentText + separator + goal);
+                              }}
+                              className="w-full text-left bg-white hover:bg-emerald-50/40 border border-gray-150 rounded-lg p-2.5 text-xs text-gray-750 leading-relaxed transition-all cursor-pointer flex items-start gap-1.5 font-sans"
+                              title="Klik untuk menyalin ke input"
+                              disabled={isLockedForEditing}
+                            >
+                              <span className="text-emerald-500 font-bold shrink-0">+</span>
+                              <span className="flex-1">{goal}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* RIGHT HALF: PRIMARY EDITABLE LEARNING GOALS textareas */}
+              <div className="md:col-span-7 space-y-4">
+                <div className="bg-white border border-gray-150 p-5 rounded-2xl shadow-sm space-y-5">
+                  <div className="pb-2.5 border-b border-gray-100 flex justify-between items-center">
+                    <div className="space-y-0.5">
+                      <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider font-sans">Midterm Learning Goals</h3>
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn("inline-block w-2 h-2 rounded-full", currentStudentStatus.dotColor)} />
+                        <span className="text-[10px] text-gray-500 font-bold font-sans">Status: {currentStudentStatus.label}</span>
+                      </div>
+                    </div>
+                    {isLockedForEditing && (
+                      <span className="flex items-center gap-1 text-[10px] bg-amber-50 text-amber-700 font-black border border-amber-200 rounded px-2 py-0.5 font-sans">
+                        <ShieldAlert size={10} />
+                        Draf Dikunci
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Agama & Budi Pekerti Field */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block font-sans">
+                      Nilai Agama & Budi Pekerti
+                    </label>
+                    <textarea
+                      value={localGoals.nilaiAgamaBudiPekerti}
+                      onChange={(e) => handleGoalChange('nilaiAgamaBudiPekerti', e.target.value)}
+                      disabled={isLockedForEditing || isSavingDraft}
+                      placeholder={isLockedForEditing ? "Draf dikunci karena sudah diajukan untuk review." : "Tulis atau pilih tujuan pembelajaran Nilai Agama & Budi Pekerti..."}
+                      className={cn(
+                        "w-full min-h-[90px] border border-gray-200 rounded-xl p-3 text-xs font-serif leading-relaxed outline-none focus:border-[#109E58] focus:ring-1 focus:ring-[#109E58]/35 focus:ring-offset-0 transition-all resize-y text-gray-800 bg-white",
+                        isLockedForEditing && "bg-gray-50 text-gray-500 border-gray-100 cursor-not-allowed"
+                      )}
+                    />
+                  </div>
+
+                  {/* Jati Diri Field */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block font-sans">
+                      Jati Diri
+                    </label>
+                    <textarea
+                      value={localGoals.jatiDiri}
+                      onChange={(e) => handleGoalChange('jatiDiri', e.target.value)}
+                      disabled={isLockedForEditing || isSavingDraft}
+                      placeholder={isLockedForEditing ? "Draf dikunci karena sudah diajukan untuk review." : "Tulis atau pilih tujuan pembelajaran Jati Diri..."}
+                      className={cn(
+                        "w-full min-h-[90px] border border-gray-200 rounded-xl p-3 text-xs font-serif leading-relaxed outline-none focus:border-[#109E58] focus:ring-1 focus:ring-[#109E58]/35 focus:ring-offset-0 transition-all resize-y text-gray-800 bg-white",
+                        isLockedForEditing && "bg-gray-50 text-gray-500 border-gray-100 cursor-not-allowed"
+                      )}
+                    />
+                  </div>
+
+                  {/* STEAM Field */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block font-sans">
+                      Dasar-dasar Literasi & STEAM
+                    </label>
+                    <textarea
+                      value={localGoals.dasarLiterasiSteam}
+                      onChange={(e) => handleGoalChange('dasarLiterasiSteam', e.target.value)}
+                      disabled={isLockedForEditing || isSavingDraft}
+                      placeholder={isLockedForEditing ? "Draf dikunci karena sudah diajukan untuk review." : "Tulis atau pilih tujuan pembelajaran Dasar-dasar Literasi & STEAM..."}
+                      className={cn(
+                        "w-full min-h-[90px] border border-gray-200 rounded-xl p-3 text-xs font-serif leading-relaxed outline-none focus:border-[#109E58] focus:ring-1 focus:ring-[#109E58]/35 focus:ring-offset-0 transition-all resize-y text-gray-800 bg-white",
+                        isLockedForEditing && "bg-gray-50 text-gray-500 border-gray-100 cursor-not-allowed"
+                      )}
+                    />
+                  </div>
+
+                  {/* Save draft button */}
+                  <div className="flex justify-between items-center pt-2.5 border-t border-gray-100 gap-3">
+                    <div className="text-[10px] text-gray-400 font-bold font-sans">
+                      {hasUnsavedChanges && !isLockedForEditing && (
+                        <span className="text-amber-600 flex items-center gap-1">
+                          <AlertCircle size={10} />
+                          Belum disimpan
+                        </span>
+                      )}
+                      {!hasUnsavedChanges && !isLockedForEditing && (
+                        <span className="text-gray-400 flex items-center gap-1">
+                          <Check size={10} />
+                          Teks tersimpan
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleSaveDraft}
+                        disabled={isSavingDraft || isLockedForEditing || !hasUnsavedChanges}
+                        className="flex items-center gap-1.5 border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 font-extrabold text-xs px-4 py-2.5 rounded-xl cursor-pointer transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <Save size={12} />
+                        Simpan Draft
+                      </button>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+
+            </div>
+          )}
 
           {/* TAB 1: KOMPILASI MINGGUAN CONTENT */}
           {activeTab === 'kompilasi' && (
@@ -1855,8 +2270,9 @@ export default function MidtermSummary() {
                 </div>
 
                 {activeDraft ? (
-                  <div className="overflow-x-auto bg-gray-100 p-4 md:p-8 rounded-[2rem] border border-gray-200 shadow-inner flex justify-center">
-                    {/* PAGE 1 — DOKUMENTASI & EVALUASI MIDTERM */}
+                  <div className="overflow-x-auto bg-gray-100 p-4 md:p-8 rounded-[2rem] border border-gray-200 shadow-inner flex flex-col items-center gap-8">
+                    
+                    {/* PAGE 1 — IDENTITY, ATTENDANCE & LEARNING GOALS */}
                     <div className="bg-white px-8 py-6 md:px-12 md:py-8 shadow-md border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-between print:border-none print:shadow-none print:p-0 print:m-0" id="midterm-report-page-1">
                       
                       <div className="space-y-4">
@@ -1881,170 +2297,275 @@ export default function MidtermSummary() {
                               <span className="block text-[10px] font-sans font-black tracking-widest text-emerald-100 uppercase mb-1">
                                 LAZUARDI GCS KINDERGARTEN
                               </span>
-                              <h1 className="text-lg font-sans font-black tracking-wider text-white uppercase leading-none mt-1">
-                                STUDENT'S MIDTERM REPORT
+                              <h1 className="text-xs font-sans font-black tracking-wider text-white uppercase leading-none mt-1 text-right">
+                                LAPORAN PERKEMBANGAN TENGAH SEMESTER PESERTA DIDIK
                               </h1>
+                              <h2 className="text-[10px] font-sans font-bold tracking-widest text-emerald-100 uppercase mt-0.5 text-right">
+                                PRA-TK/TK LAZUARDI GCS
+                              </h2>
                             </div>
                           </div>
 
                           {/* Student Metadata Grid */}
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-1.5 gap-x-12 text-[10px] font-sans">
+                          <div className="grid grid-cols-2 gap-x-8 text-[10px] font-sans">
                             <div className="space-y-1">
                               <div className="grid grid-cols-12 leading-none">
-                                <span className="col-span-4 font-bold text-emerald-100">Student's name</span>
+                                <span className="col-span-4 font-bold text-emerald-100">Student Name</span>
                                 <span className="col-span-1 text-emerald-100/70 text-center">:</span>
-                                <span className="col-span-7 font-extrabold text-white text-[11px] -mt-0.5">{selectedStudentObj?.name}</span>
+                                <span className="col-span-7 font-extrabold text-white text-[11px] -mt-0.5">{selectedStudentObj?.name || '-'}</span>
                               </div>
                               <div className="grid grid-cols-12 leading-none">
-                                <span className="col-span-4 font-bold text-emerald-100">Class</span>
+                                <span className="col-span-4 font-bold text-emerald-100">Student ID</span>
+                                <span className="col-span-1 text-emerald-100/70 text-center">:</span>
+                                <span className="col-span-7 font-bold text-white">{selectedStudentObj?.studentId || selectedStudentObj?.id || '-'}</span>
+                              </div>
+                              <div className="grid grid-cols-12 leading-none">
+                                <span className="col-span-4 font-bold text-emerald-100">Height</span>
                                 <span className="col-span-1 text-emerald-100/70 text-center">:</span>
                                 <span className="col-span-7 font-bold text-white">
-                                  {activeClassObj?.name || 'Class'}
+                                  {selectedStudentObj?.height ? `${selectedStudentObj.height} cm` : '-'}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-12 leading-none">
+                                <span className="col-span-4 font-bold text-emerald-100">Weight</span>
+                                <span className="col-span-1 text-emerald-100/70 text-center">:</span>
+                                <span className="col-span-7 font-bold text-white">
+                                  {selectedStudentObj?.weight ? `${selectedStudentObj.weight} kg` : '-'}
                                 </span>
                               </div>
                             </div>
 
-                            <div className="space-y-1 sm:pl-8">
+                            <div className="space-y-1 sm:pl-4">
+                              <div className="grid grid-cols-12 leading-none">
+                                <span className="col-span-4 font-bold text-emerald-100">Teachers</span>
+                                <span className="col-span-1 text-emerald-100/70 text-center">:</span>
+                                <span className="col-span-7 font-bold text-white">{resolvedTeacherName || '-'}</span>
+                              </div>
+                              <div className="grid grid-cols-12 leading-none">
+                                <span className="col-span-4 font-bold text-emerald-100">Group</span>
+                                <span className="col-span-1 text-emerald-100/70 text-center">:</span>
+                                <span className="col-span-7 font-bold text-white">{activeClassObj?.name || '-'}</span>
+                              </div>
                               <div className="grid grid-cols-12 leading-none">
                                 <span className="col-span-4 font-bold text-emerald-100">Semester</span>
                                 <span className="col-span-1 text-emerald-100/70 text-center">:</span>
-                                <span className="col-span-7 font-bold text-white">{semester} ({activeYear || '2026/2027'})</span>
+                                <span className="col-span-7 font-bold text-white">{semester === 1 ? '1 (Ganjil)' : '2 (Genap)'}</span>
                               </div>
                               <div className="grid grid-cols-12 leading-none">
-                                <span className="col-span-4 font-bold text-emerald-100">Date Range</span>
+                                <span className="col-span-4 font-bold text-emerald-100">Academic Year</span>
                                 <span className="col-span-1 text-emerald-100/70 text-center">:</span>
-                                <span className="col-span-7 font-bold text-white">{formattedPeriodRangeIndo}</span>
+                                <span className="col-span-7 font-bold text-white">{activeYear || '-'}</span>
                               </div>
                             </div>
                           </div>
                         </div>
 
-                        {/* Narrative Area */}
-                        <div className="space-y-2 pt-2">
-                          <h3 className="text-xs font-black text-emerald-800 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 text-center font-sans">
-                            MIDTERM GENERAL EVALUATION
-                          </h3>
-                          <div className="bg-emerald-50/10 border border-emerald-100/30 p-4 rounded-xl min-h-[180px] flex flex-col justify-between">
-                            <p className="text-[11px] text-gray-800 font-serif leading-relaxed whitespace-pre-wrap">
-                              {activeDraft?.midtermGeneralComment || "Komentar evaluasi tengah semester belum dimasukkan."}
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Attendance Recap */}
-                        <div className="space-y-2 pt-2">
-                          <h3 className="text-xs font-black text-emerald-800 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 text-center font-sans">
-                            ATTENDANCE RECAP
-                          </h3>
-                          <div className="grid grid-cols-5 gap-3 pt-1">
-                            {/* Present */}
-                            <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-2.5 text-center space-y-0.5">
-                              <span className="text-[9px] font-bold text-emerald-700 uppercase tracking-wider block font-sans">Hadir</span>
-                              <span className="text-sm font-black text-emerald-900 block font-sans">{computedAttendance.present}</span>
-                              <span className="text-[8px] text-gray-400 block font-sans">Hari</span>
-                            </div>
-                            {/* Sick */}
-                            <div className="bg-amber-50/50 border border-amber-100 rounded-xl p-2.5 text-center space-y-0.5">
+                        {/* Attendance Summary */}
+                        <div className="border border-gray-200 rounded-lg p-3 bg-gray-50/50">
+                          <h4 className="text-[10px] font-black text-emerald-800 uppercase tracking-widest mb-2 font-sans">
+                            Kehadiran (Attendance Summary)
+                          </h4>
+                          <div className="grid grid-cols-3 gap-4 text-center">
+                            <div className="bg-white border border-gray-150 rounded p-1.5">
                               <span className="text-[9px] font-bold text-amber-700 uppercase tracking-wider block font-sans">Sakit</span>
-                              <span className="text-sm font-black text-amber-900 block font-sans">{computedAttendance.sick}</span>
+                              <span className="text-sm font-black text-amber-900 block font-sans">{getAttendance().sick}</span>
                               <span className="text-[8px] text-gray-400 block font-sans">Hari</span>
                             </div>
-                            {/* Izin */}
-                            <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-2.5 text-center space-y-0.5">
+                            <div className="bg-white border border-gray-150 rounded p-1.5">
                               <span className="text-[9px] font-bold text-blue-700 uppercase tracking-wider block font-sans">Izin</span>
-                              <span className="text-sm font-black text-blue-900 block font-sans">{computedAttendance.izin}</span>
+                              <span className="text-sm font-black text-blue-900 block font-sans">{getAttendance().izin}</span>
                               <span className="text-[8px] text-gray-400 block font-sans">Hari</span>
                             </div>
-                            {/* Absent without notice */}
-                            <div className="bg-red-50/50 border border-red-100 rounded-xl p-2.5 text-center space-y-0.5">
+                            <div className="bg-white border border-gray-150 rounded p-1.5">
                               <span className="text-[9px] font-bold text-red-700 uppercase tracking-wider block font-sans">Tanpa Keterangan</span>
-                              <span className="text-sm font-black text-red-900 block font-sans">{computedAttendance.noNews}</span>
-                              <span className="text-[8px] text-gray-400 block font-sans">Hari</span>
-                            </div>
-                            {/* Total */}
-                            <div className="bg-gray-50 border border-gray-200 rounded-xl p-2.5 text-center space-y-0.5">
-                              <span className="text-[9px] font-bold text-gray-700 uppercase tracking-wider block font-sans">Total</span>
-                              <span className="text-sm font-black text-gray-900 block font-sans">{computedAttendance.total}</span>
+                              <span className="text-sm font-black text-red-900 block font-sans">{getAttendance().noNews}</span>
                               <span className="text-[8px] text-gray-400 block font-sans">Hari</span>
                             </div>
                           </div>
                         </div>
 
-                        {/* Weekly Themes Timeline */}
-                        <div className="space-y-2 pt-2">
-                          <h3 className="text-xs font-black text-emerald-800 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 text-center font-sans">
-                            COMPILED WEEKLY THEMES & TOPICS
-                          </h3>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                            {(!activeDraft?.compiledWeeklySources || activeDraft.compiledWeeklySources.length === 0) ? (
-                              <div className="col-span-2 text-center text-[10px] text-gray-400 italic py-2 font-sans">
-                                Belum ada mingguan yang dikompilasi ke dalam draf ini.
+                        {/* Semester Learning Goals */}
+                        <div className="space-y-2">
+                          <h4 className="text-[11px] font-black text-emerald-800 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 text-center font-sans">
+                            {semester === 1 || semester === '1' ? '1st' : '2nd'} Semester Learning Goals
+                          </h4>
+                          <div className="grid grid-cols-3 gap-3">
+                            {/* Column 1: Nilai Agama & Budi Pekerti */}
+                            <div className="border border-emerald-100 rounded-lg p-3 bg-emerald-50/10 flex flex-col h-[610px]">
+                              <span className="text-[9px] font-black text-emerald-800 block text-center border-b border-emerald-100 pb-1.5 mb-2 font-sans">
+                                Nilai Agama & Budi Pekerti
+                              </span>
+                              <div className="overflow-y-auto flex-1 pr-1 custom-scrollbar text-[9.5px] text-gray-700 leading-relaxed space-y-1.5 font-serif whitespace-pre-wrap">
+                                {getAgamaGoalText() ? (
+                                  getAgamaGoalText()
+                                ) : (
+                                  <p className="text-gray-400 italic text-center pt-12">Belum diisi.</p>
+                                )}
                               </div>
-                            ) : (
-                              activeDraft.compiledWeeklySources.slice(0, 4).map((source, idx) => (
-                                <div key={idx} className="bg-gray-50/50 border border-gray-150 rounded-xl p-2.5 space-y-1">
-                                  <div className="flex justify-between items-center text-[8px] text-emerald-800 font-extrabold uppercase tracking-wider font-sans">
-                                    <span>Minggu {idx + 1} ({source.startDate})</span>
-                                    {source.theme && <span className="text-gray-500 font-black truncate max-w-[120px]">Tema: {source.theme}</span>}
-                                  </div>
-                                  <p className="text-[9.5px] text-gray-600 font-serif leading-tight line-clamp-3">
-                                    {source.generalComments || "Tanpa komentar mingguan."}
-                                  </p>
-                                </div>
-                              ))
-                            )}
+                            </div>
+
+                            {/* Column 2: Jati Diri */}
+                            <div className="border border-emerald-100 rounded-lg p-3 bg-emerald-50/10 flex flex-col h-[610px]">
+                              <span className="text-[9px] font-black text-emerald-800 block text-center border-b border-emerald-100 pb-1.5 mb-2 font-sans">
+                                Jati Diri
+                              </span>
+                              <div className="overflow-y-auto flex-1 pr-1 custom-scrollbar text-[9.5px] text-gray-700 leading-relaxed space-y-1.5 font-serif whitespace-pre-wrap">
+                                {getJatiDiriGoalText() ? (
+                                  getJatiDiriGoalText()
+                                ) : (
+                                  <p className="text-gray-400 italic text-center pt-12">Belum diisi.</p>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Column 3: Dasar-dasar Literasi & STEAM */}
+                            <div className="border border-emerald-100 rounded-lg p-3 bg-emerald-50/10 flex flex-col h-[610px]">
+                              <span className="text-[9px] font-black text-emerald-800 block text-center border-b border-emerald-100 pb-1.5 mb-2 font-sans">
+                                Dasar-dasar Literasi & STEAM
+                              </span>
+                              <div className="overflow-y-auto flex-1 pr-1 custom-scrollbar text-[9.5px] text-gray-700 leading-relaxed space-y-1.5 font-serif whitespace-pre-wrap">
+                                {getSteamGoalText() ? (
+                                  getSteamGoalText()
+                                ) : (
+                                  <p className="text-gray-400 italic text-center pt-12">Belum diisi.</p>
+                                )}
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
 
-                      {/* Signatures Area */}
-                      <div className="grid grid-cols-2 gap-8 pt-6 border-t border-dashed border-gray-200 text-center shrink-0">
-                        {/* Homeroom Teacher */}
-                        <div className="flex flex-col items-center justify-between h-[90px]">
-                          <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">Class Homeroom Teacher</span>
-                          <div className="h-10 flex items-center justify-center">
-                            {resolvedSignatureUrl ? (
-                              <img 
-                                src={resolvedSignatureUrl} 
-                                alt="Signature" 
-                                className="h-10 w-auto object-contain"
-                                referrerPolicy="no-referrer"
-                                crossOrigin="anonymous"
-                              />
-                            ) : (
-                              <div className="text-[9px] text-gray-300 italic font-sans">Belum bertanda tangan</div>
-                            )}
-                          </div>
-                          <span className="text-[10px] font-extrabold text-gray-800 leading-none underline font-sans">
-                            {resolvedTeacherName || "Nama Guru Kelas"}
-                          </span>
-                        </div>
-
-                        {/* Principal */}
-                        <div className="flex flex-col items-center justify-between h-[90px]">
-                          <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">
-                            {kindySignatory?.principalTitle || 'Principal'}
-                          </span>
-                          <div className="h-10 flex items-center justify-center">
-                            {kindySignatory?.principalSignatureUrl ? (
-                              <img 
-                                src={kindySignatory.principalSignatureUrl} 
-                                alt="Signature" 
-                                className="h-10 w-auto object-contain"
-                                referrerPolicy="no-referrer"
-                                crossOrigin="anonymous"
-                              />
-                            ) : (
-                              <div className="text-[9px] text-gray-300 italic font-sans">Belum bertanda tangan</div>
-                            )}
-                          </div>
-                          <span className="text-[10px] font-extrabold text-gray-800 leading-none underline font-sans">
-                            {kindySignatory?.principalName || "Nama Kepala Unit"}
-                          </span>
-                        </div>
+                      <div className="flex justify-between items-center text-[8px] text-gray-400 font-sans mt-4">
+                        <span>Lazuardi GCS Kindergarten</span>
+                        <span>Halaman 1 dari 2</span>
                       </div>
-
                     </div>
+
+                     {/* PAGE 2 — COMMENTS, ATTENDANCE TABLE & SIGNATURES */}
+                     <div className="bg-white px-8 py-6 md:px-12 md:py-8 shadow-md border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-between print:border-none print:shadow-none print:p-0 print:m-0" id="midterm-report-page-2">
+                       
+                       <div className="space-y-4 flex-1 flex flex-col justify-between">
+                         <div>
+                           {/* Section: General Comments */}
+                           <div className="space-y-2">
+                             <h3 className="text-xs font-black text-emerald-800 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 text-center font-sans">
+                               General Comments (Catatan Umum)
+                             </h3>
+                             <div className="bg-emerald-50/10 border border-emerald-100 p-4 rounded-xl h-[480px] overflow-y-auto">
+                               <p className="text-[11px] text-gray-800 font-serif leading-relaxed whitespace-pre-wrap">
+                                 {getGeneralCommentText() || "Komentar evaluasi tengah semester belum dimasukkan."}
+                               </p>
+                             </div>
+                           </div>
+
+                           {/* Section: Catatan Ketidakhadiran */}
+                           <div className="space-y-1.5 mt-6">
+                             <h4 className="text-[10px] font-black text-emerald-800 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-0.5 font-sans">
+                               Catatan Ketidakhadiran
+                             </h4>
+                             <table className="w-full border-collapse text-left text-[9.5px] font-sans">
+                               <thead>
+                                 <tr className="bg-emerald-50 text-emerald-800 border border-emerald-100">
+                                   <th className="p-1.5 font-black border border-emerald-100 text-center w-12 font-sans">No</th>
+                                   <th className="p-1.5 font-black border border-emerald-100 font-sans">Alasan</th>
+                                   <th className="p-1.5 font-black border border-emerald-100 text-center w-24 font-sans">Jumlah</th>
+                                   <th className="p-1.5 font-black border border-emerald-100 font-sans">Keterangan</th>
+                                 </tr>
+                               </thead>
+                               <tbody>
+                                 <tr className="border border-gray-150">
+                                   <td className="p-1.5 text-center border border-gray-150 font-sans">1</td>
+                                   <td className="p-1.5 border border-gray-150 font-medium font-sans">Sakit</td>
+                                   <td className="p-1.5 text-center border border-gray-150 font-extrabold font-sans">{getAttendance().sick} Hari</td>
+                                   <td className="p-1.5 border border-gray-150 text-gray-400 font-sans">-</td>
+                                 </tr>
+                                 <tr className="border border-gray-150">
+                                   <td className="p-1.5 text-center border border-gray-150 font-sans">2</td>
+                                   <td className="p-1.5 border border-gray-150 font-medium font-sans">Izin</td>
+                                   <td className="p-1.5 text-center border border-gray-150 font-extrabold font-sans">{getAttendance().izin} Hari</td>
+                                   <td className="p-1.5 border border-gray-150 text-gray-400 font-sans">-</td>
+                                 </tr>
+                                 <tr className="border border-gray-150">
+                                   <td className="p-1.5 text-center border border-gray-150 font-sans">3</td>
+                                   <td className="p-1.5 border border-gray-150 font-medium font-sans">Tanpa Keterangan</td>
+                                   <td className="p-1.5 text-center border border-gray-150 font-extrabold font-sans">{getAttendance().noNews} Hari</td>
+                                   <td className="p-1.5 border border-gray-150 text-gray-400 font-sans">-</td>
+                                 </tr>
+                                 <tr className="border border-emerald-100 bg-emerald-50/20">
+                                   <td className="p-1.5 text-center border border-emerald-100 font-extrabold font-sans" colSpan={2}>Total Ketidakhadiran</td>
+                                   <td className="p-1.5 text-center border border-emerald-100 font-black text-emerald-800 font-sans">{getAttendance().sick + getAttendance().izin + getAttendance().noNews} Hari</td>
+                                   <td className="p-1.5 border border-emerald-100 text-gray-400 font-sans">-</td>
+                                 </tr>
+                               </tbody>
+                             </table>
+                           </div>
+                         </div>
+
+                         {/* Signatures Area */}
+                         <div className="grid grid-cols-2 gap-8 pt-6 border-t border-dashed border-gray-200 text-center shrink-0 mt-8">
+                           {/* Homeroom Teacher */}
+                           <div className="flex flex-col items-center justify-between h-[100px]">
+                             <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">Guru Kelas</span>
+                             <div className="h-12 flex items-center justify-center">
+                               {resolvedSignatureUrl ? (
+                                 <img 
+                                   src={resolvedSignatureUrl} 
+                                   alt="Signature" 
+                                   className="h-10 w-auto object-contain"
+                                   referrerPolicy="no-referrer"
+                                   crossOrigin="anonymous"
+                                 />
+                               ) : (
+                                 <div className="text-[9px] text-gray-300 italic font-sans">Belum bertanda tangan</div>
+                               )}
+                             </div>
+                             <div className="text-center font-sans leading-none">
+                               <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
+                                 {resolvedTeacherName || "Nama Guru Kelas"}
+                               </span>
+                               <span className="text-[8px] text-gray-400 block mt-1 font-sans">
+                                 NIY: {resolvedTeacherNiy || '-'}
+                               </span>
+                             </div>
+                           </div>
+
+                           {/* Principal */}
+                           <div className="flex flex-col items-center justify-between h-[100px]">
+                             <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">
+                               Kepala Pra-TK/TK Lazuardi GCS
+                             </span>
+                             <div className="h-12 flex items-center justify-center">
+                               {kindySignatory?.principalSignatureUrl ? (
+                                 <img 
+                                   src={kindySignatory.principalSignatureUrl} 
+                                   alt="Signature" 
+                                   className="h-10 w-auto object-contain"
+                                   referrerPolicy="no-referrer"
+                                   crossOrigin="anonymous"
+                                 />
+                               ) : (
+                                 <div className="text-[9px] text-gray-300 italic font-sans">Belum bertanda tangan</div>
+                               )}
+                             </div>
+                             <div className="text-center font-sans leading-none">
+                               <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
+                                 {kindySignatory?.principalName || "Nama Kepala Unit"}
+                               </span>
+                               <span className="text-[8px] text-gray-400 block mt-1 font-sans">
+                                 NIY: {kindySignatory?.principalNiy || '-'}
+                               </span>
+                             </div>
+                           </div>
+                         </div>
+                       </div>
+
+                       {/* Footer */}
+                       <div className="flex justify-between items-center text-[8px] text-gray-400 font-sans mt-4 pt-2 border-t border-gray-100">
+                         <span>Dicetak tanggal: {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+                         <span>Halaman 2 dari 2</span>
+                       </div>
+                     </div>
+
                   </div>
                 ) : (
                   <div className="bg-white p-12 border border-gray-150 rounded-3xl shadow-sm text-center">
