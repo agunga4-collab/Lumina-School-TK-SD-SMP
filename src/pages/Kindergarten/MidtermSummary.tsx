@@ -58,7 +58,7 @@ interface MidtermSummaryDraft {
 
   midtermGeneralComment: string;
 
-  status: 'DRAFT' | 'READY_FOR_REVIEW';
+  status: 'DRAFT' | 'READY_FOR_REVIEW' | 'APPROVED' | 'PUBLISHED';
 
   compiledWeeklySources: CompiledWeeklySource[];
 
@@ -1098,35 +1098,47 @@ export default function MidtermSummary() {
     }
   };
 
-  const handleDeletePublication = async () => {
+  const handleApproveDraft = async () => {
     if (!selectedStudentId) return;
-    const published = publishedReports[selectedStudentId];
-    if (!published) return;
+    const activeDraft = midtermDrafts[selectedStudentId];
+    if (!activeDraft) return;
 
-    if (!window.confirm(`Apakah Anda yakin ingin menghapus publikasi Midterm Report untuk ${selectedStudentObj?.name}? Status draf akan dikembalikan ke READY_FOR_REVIEW.`)) {
+    if (!isAuthorizer) {
+      toast.error("Hanya Kepala TK atau Super Admin yang dapat menyetujui draf.");
       return;
     }
 
-    const toastId = toast.loading("Menghapus publikasi...");
+    if (profile?.email === activeDraft.createdBy) {
+      toast.error("Guru yang membuat draf ini tidak dapat menyetujui draf miliknya sendiri.");
+      return;
+    }
+
+    if (!window.confirm(`Apakah Anda yakin ingin menyetujui draf Midterm Report untuk ${selectedStudentObj?.name}?`)) {
+      return;
+    }
+
+    const draftId = getMidtermDraftId(selectedStudentId);
+    const toastId = toast.loading("Menyetujui draf...");
     try {
-      await deleteDoc(doc(db, 'published_kg_reports', published.id));
-
-      const draftId = getMidtermDraftId(selectedStudentId);
-      await setDoc(doc(db, 'midterm_summary_drafts', draftId), { status: 'READY_FOR_REVIEW' }, { merge: true });
-
+      await setDoc(doc(db, 'midterm_summary_drafts', draftId), { 
+        status: 'APPROVED',
+        approvedAt: Date.now(),
+        approvedBy: profile?.email || 'System'
+      }, { merge: true });
+      
       setMidtermDrafts(prev => ({
         ...prev,
         [selectedStudentId]: {
           ...prev[selectedStudentId],
-          status: 'READY_FOR_REVIEW'
+          status: 'APPROVED',
+          approvedAt: Date.now(),
+          approvedBy: profile?.email || 'System'
         } as MidtermSummaryDraft
       }));
-
-      await fetchPublishedReportsForClass();
-      toast.success("Publikasi dibatalkan dan draf dikembalikan ke READY_FOR_REVIEW.", { id: toastId });
+      toast.success("Draf berhasil disetujui! Status kini APPROVED. Guru atau Admin sekarang dapat menerbitkan PDF.", { id: toastId });
     } catch (err: any) {
-      console.error("Error deleting publication:", err);
-      toast.error(`Gagal menghapus: ${err.message}`, { id: toastId });
+      console.error("Error approving draft:", err);
+      toast.error(`Gagal menyetujui draf: ${err.message}`, { id: toastId });
     }
   };
 
@@ -1148,6 +1160,20 @@ export default function MidtermSummary() {
         textColor: 'text-gray-500 bg-gray-50 border-gray-150'
       };
     }
+    if (draft.status === 'PUBLISHED') {
+      return {
+        label: 'Terbit',
+        dotColor: 'bg-blue-500',
+        textColor: 'text-blue-700 bg-blue-50 border-blue-150'
+      };
+    }
+    if (draft.status === 'APPROVED') {
+      return {
+        label: 'Disetujui',
+        dotColor: 'bg-purple-500',
+        textColor: 'text-purple-700 bg-purple-50 border-purple-150'
+      };
+    }
     if (draft.status === 'READY_FOR_REVIEW') {
       return {
         label: 'Siap ditinjau',
@@ -1163,7 +1189,12 @@ export default function MidtermSummary() {
   };
 
   const currentStudentStatus = getStudentStatusBadge(selectedStudentId);
-  const isLockedForEditing = (midtermDrafts[selectedStudentId]?.status === 'READY_FOR_REVIEW' || midtermDrafts[selectedStudentId]?.status === 'PUBLISHED' || !!publishedReports[selectedStudentId]) && profile?.role !== 'SUPER_ADMIN' && profile?.role !== 'HEAD_UNIT';
+  const isLockedForEditing = (
+    midtermDrafts[selectedStudentId]?.status === 'READY_FOR_REVIEW' || 
+    midtermDrafts[selectedStudentId]?.status === 'APPROVED' || 
+    midtermDrafts[selectedStudentId]?.status === 'PUBLISHED' || 
+    !!publishedReports[selectedStudentId]
+  ) && profile?.role !== 'SUPER_ADMIN' && profile?.role !== 'HEAD_UNIT' && profile?.role !== 'kindergarten_head';
 
   const activeDraft = midtermDrafts[selectedStudentId];
   const publishedReportObj = publishedReports[selectedStudentId];
@@ -1706,23 +1737,14 @@ export default function MidtermSummary() {
                       </a>
                       
                       {isAuthorizer && (
-                        <>
-                          <button
-                            onClick={handlePublishMidterm}
-                            disabled={isPublishing}
-                            className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 shadow-md cursor-pointer"
-                          >
-                            <RefreshCw size={14} className={isPublishing ? "animate-spin" : ""} />
-                            {isPublishing ? "Menerbitkan Ulang..." : "Terbitkan Ulang (vUbah)"}
-                          </button>
-
-                          <button
-                            onClick={handleDeletePublication}
-                            className="border border-red-200 hover:bg-red-50 text-red-650 font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <Trash2 size={14} /> Batalkan Publikasi
-                          </button>
-                        </>
+                        <button
+                          onClick={handlePublishMidterm}
+                          disabled={isPublishing}
+                          className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 shadow-md cursor-pointer"
+                        >
+                          <RefreshCw size={14} className={isPublishing ? "animate-spin" : ""} />
+                          {isPublishing ? "Menerbitkan Ulang..." : "Terbitkan Ulang (vUbah)"}
+                        </button>
                       )}
                     </>
                   ) : (
@@ -1730,7 +1752,44 @@ export default function MidtermSummary() {
                     <>
                       {activeDraft ? (
                         <>
-                          {isAuthorizer && activeDraft.status === 'READY_FOR_REVIEW' && (
+                          {/* If status is READY_FOR_REVIEW */}
+                          {activeDraft.status === 'READY_FOR_REVIEW' && (
+                            <>
+                              {isAuthorizer ? (
+                                <>
+                                  {profile?.email === activeDraft.createdBy ? (
+                                    <div className="text-xs text-amber-700 bg-amber-50 px-3 py-2.5 rounded-xl border border-amber-150 font-semibold flex items-center gap-1.5">
+                                      <Clock size={14} /> Anda adalah pembuat draf ini. Sesuai aturan, Anda tidak dapat menyetujui draf buatan sendiri.
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <button
+                                        onClick={handleApproveDraft}
+                                        className="bg-[#109E58] hover:bg-[#0e8a4d] text-white font-extrabold text-xs px-4.5 py-2.5 rounded-xl flex items-center gap-1.5 shadow-md shadow-emerald-600/10 cursor-pointer"
+                                      >
+                                        <CheckCircle2 size={14} />
+                                        <span>Setujui Draf (APPROVED)</span>
+                                      </button>
+
+                                      <button
+                                        onClick={handleRejectDraft}
+                                        className="border border-gray-250 hover:bg-gray-50 text-gray-700 font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 cursor-pointer"
+                                      >
+                                        <Edit3 size={14} /> Kembalikan untuk Revisi
+                                      </button>
+                                    </>
+                                  )}
+                                </>
+                              ) : (
+                                <div className="text-xs text-amber-700 bg-amber-50 px-3 py-2.5 rounded-xl border border-amber-150 font-semibold flex items-center gap-1.5">
+                                  <Clock size={14} /> Menunggu Peninjauan Kepala TK / Admin (Status: READY_FOR_REVIEW)
+                                </div>
+                              )}
+                            </>
+                          )}
+
+                          {/* If status is APPROVED */}
+                          {activeDraft.status === 'APPROVED' && (
                             <>
                               <button
                                 onClick={handlePublishMidterm}
@@ -1740,32 +1799,43 @@ export default function MidtermSummary() {
                                 {isPublishing ? (
                                   <>
                                     <Loader2 size={14} className="animate-spin" />
-                                    <span>{publishStatus || "Menyimpan..."}</span>
+                                    <span>{publishStatus || "Menerbitkan..."}</span>
                                   </>
                                 ) : (
                                   <>
                                     <CheckCircle2 size={14} />
-                                    <span>Setujui & Terbitkan PDF</span>
+                                    <span>Terbitkan PDF</span>
                                   </>
                                 )}
                               </button>
 
-                              <button
-                                onClick={handleRejectDraft}
-                                className="border border-gray-250 hover:bg-gray-50 text-gray-700 font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 cursor-pointer"
-                              >
-                                <Edit3 size={14} /> Kembalikan untuk Revisi
-                              </button>
+                              {isAuthorizer && (
+                                <button
+                                  onClick={handleRejectDraft}
+                                  className="border border-gray-250 hover:bg-gray-50 text-gray-700 font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 cursor-pointer"
+                                >
+                                  <Edit3 size={14} /> Kembalikan ke DRAFT
+                                </button>
+                              )}
                             </>
                           )}
 
-                          {/* Allow switching back to Editor */}
-                          <button
-                            onClick={() => confirmNavigation('tab', 'editor')}
-                            className="border border-gray-200 hover:bg-gray-50 text-gray-600 font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <Edit3 size={14} /> Edit Narasi & Komentar
-                          </button>
+                          {/* If status is DRAFT */}
+                          {activeDraft.status === 'DRAFT' && (
+                            <div className="text-xs text-amber-700 bg-amber-50 px-3 py-2.5 rounded-xl border border-amber-150 font-semibold flex items-center gap-1.5">
+                              Draf sedang dikerjakan oleh guru. Silakan selesaikan di tab "Buat GenCom Midterm" lalu klik "Ajukan Review ke Admin".
+                            </div>
+                          )}
+
+                          {/* Allow switching back to Editor if not published */}
+                          {activeDraft.status !== 'PUBLISHED' && (
+                            <button
+                              onClick={() => confirmNavigation('tab', 'editor')}
+                              className="border border-gray-200 hover:bg-gray-50 text-gray-600 font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 cursor-pointer ml-auto"
+                            >
+                              <Edit3 size={14} /> Edit Narasi & Komentar
+                            </button>
+                          )}
                         </>
                       ) : (
                         <div className="text-xs text-gray-400 italic py-1">

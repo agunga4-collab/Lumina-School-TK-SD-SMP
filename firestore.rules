@@ -1323,8 +1323,10 @@ service cloud.firestore {
         (isTeacher() && 
           isTeacherAssignedToClass(incoming().classId) && 
           isMidtermIdentityUnchanged() &&
-          existing().status == 'DRAFT' &&
-          (incoming().status == 'DRAFT' || incoming().status == 'READY_FOR_REVIEW')
+          (
+            (existing().status == 'DRAFT' && (incoming().status == 'DRAFT' || incoming().status == 'READY_FOR_REVIEW')) ||
+            (existing().status == 'APPROVED' && incoming().status == 'PUBLISHED')
+          )
         )
       );
       allow delete: if isActive() && (
