@@ -605,7 +605,7 @@ export default function Attendance() {
                 if (!schoolDayVal) {
                   finalStatus = 'TIDAK_BERLAKU';
                 } else if (schoolStatus && ['SAKIT', 'IZIN', 'ALPA'].includes(schoolStatus)) {
-                  finalStatus = 'TIDAK_BERLAKU';
+                  finalStatus = 'A';
                 } else {
                   finalStatus = normalizedShalatStatus || 'BELUM_DIISI';
                 }
@@ -942,7 +942,11 @@ export default function Attendance() {
           records.forEach(entry => {
             const sId = entry.studentId;
             const date = entry.date;
-            const status = entry.status;
+            let status = entry.status;
+
+            if (entry.schoolAttendanceStatus && ['SAKIT', 'IZIN', 'ALPA'].includes(entry.schoolAttendanceStatus)) {
+              status = 'TIDAK_MENGIKUTI';
+            }
 
             const isInRoster = students.some(st => st.id === sId);
             if (!isInRoster) return;
@@ -1157,10 +1161,10 @@ export default function Attendance() {
           if (isNonPresent) {
             updatedDhuhr = {
               ...(s.dhuhrPrayerStatus || {}),
-              status: 'TIDAK_BERLAKU',
+              status: 'TIDAK_MENGIKUTI',
               updatedAt: new Date() as any
             };
-          } else if (s.dhuhrPrayerStatus?.status === 'TIDAK_BERLAKU') {
+          } else if (s.dhuhrPrayerStatus?.status === 'TIDAK_MENGIKUTI' || s.dhuhrPrayerStatus?.status === 'TIDAK_BERLAKU') {
             updatedDhuhr = {
               ...s.dhuhrPrayerStatus,
               status: 'BELUM_DIISI',
@@ -1180,10 +1184,10 @@ export default function Attendance() {
           if (isNonPresent) {
             return {
               ...s,
-              status: 'TIDAK_BERLAKU' as any,
+              status: 'A' as any,
               dhuhrPrayerStatus: {
                 ...(s.dhuhrPrayerStatus || {}),
-                status: 'TIDAK_BERLAKU' as any
+                status: 'TIDAK_MENGIKUTI' as any
               }
             };
           }
@@ -1192,7 +1196,7 @@ export default function Attendance() {
             status: newStatus as any,
             dhuhrPrayerStatus: {
               ...(s.dhuhrPrayerStatus || {}),
-              status: newStatus as any
+              status: newStatus === 'H' ? 'SALAT_BERJAMAAH' : (newStatus === 'T' ? 'BERHALANGAN' : (newStatus === 'A' ? 'TIDAK_MENGIKUTI' : (newStatus as any)))
             }
           };
         }
@@ -2093,7 +2097,7 @@ export default function Attendance() {
                       const isNonPresent = s.schoolStatus && ['SAKIT', 'IZIN', 'ALPA'].includes(s.schoolStatus);
                       return {
                         ...s,
-                        status: isNonPresent ? 'TIDAK_BERLAKU' : 'H'
+                        status: isNonPresent ? 'A' : 'H'
                       };
                     } else {
                       return {

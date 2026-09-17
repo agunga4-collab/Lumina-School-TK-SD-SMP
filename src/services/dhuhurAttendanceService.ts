@@ -20,6 +20,7 @@ export type NormalizedDhuhurEntry = {
     | "TIDAK_MENGIKUTI"
     | "BELUM_DIISI"
     | "TIDAK_BERLAKU";
+  schoolAttendanceStatus?: string | null;
   updatedAt?: number;
   classNameSnapshot?: string;
 };
@@ -92,13 +93,15 @@ export function normalizeDhuhurDocument(docData: any): NormalizedDhuhurEntry[] {
   const docAcademicYear = docData.academicYear || docData.academicYearId || "";
   const docSemester = docData.semester;
   const docUpdatedAt = docData.updatedAt?.toMillis?.() || docData.recordedAt?.toMillis?.() || docData.updatedAt || docData.recordedAt || docData.lastSyncedAt || Date.now();
+  const docSchoolAttendanceStatus = docData.schoolAttendanceStatus || null;
 
   const buildEntry = (
     studentId: string, 
     name: string | undefined, 
     status: string, 
     customClassId?: string, 
-    customDate?: string
+    customDate?: string,
+    schoolAttendanceStatus?: string | null
   ): NormalizedDhuhurEntry => {
     return {
       studentId,
@@ -108,6 +111,7 @@ export function normalizeDhuhurDocument(docData: any): NormalizedDhuhurEntry[] {
       academicYear: docAcademicYear,
       semester: typeof docSemester === 'number' ? docSemester : (docSemester ? parseInt(docSemester, 10) : undefined),
       status: normalizeDhuhurStatus(status),
+      schoolAttendanceStatus: schoolAttendanceStatus !== undefined ? schoolAttendanceStatus : docSchoolAttendanceStatus,
       updatedAt: docUpdatedAt,
       classNameSnapshot: docData.classNameSnapshot || undefined
     };
@@ -117,7 +121,7 @@ export function normalizeDhuhurDocument(docData: any): NormalizedDhuhurEntry[] {
   if (docData.studentId) {
     const status = docData.status || docData.dhuhrPrayerStatus?.status || docData.dhuhrPrayerStatus;
     if (status) {
-      entries.push(buildEntry(docData.studentId, docData.studentNameSnapshot || docData.studentName, status));
+      entries.push(buildEntry(docData.studentId, docData.studentNameSnapshot || docData.studentName, status, undefined, undefined, docData.schoolAttendanceStatus || null));
     }
   }
 
@@ -135,7 +139,8 @@ export function normalizeDhuhurDocument(docData: any): NormalizedDhuhurEntry[] {
               item.studentName || item.name || item.studentNameSnapshot,
               status,
               item.classId,
-              item.date
+              item.date,
+              item.schoolAttendanceStatus || item.schoolStatus || null
             ));
           }
         }
@@ -156,11 +161,12 @@ export function normalizeDhuhurDocument(docData: any): NormalizedDhuhurEntry[] {
               val.studentName || val.name || val.studentNameSnapshot,
               status,
               val.classId,
-              val.date
+              val.date,
+              val.schoolAttendanceStatus || val.schoolStatus || null
             ));
           }
         } else if (typeof val === 'string') {
-          entries.push(buildEntry(key, undefined, val));
+          entries.push(buildEntry(key, undefined, val, undefined, undefined, null));
         }
       });
     }
@@ -203,7 +209,12 @@ export function calculateDhuhurRecap(entries: NormalizedDhuhurEntry[]) {
   let tidakBerlaku = 0;
 
   entries.forEach(entry => {
-    switch (entry.status) {
+    let status = entry.status;
+    if (entry.schoolAttendanceStatus && ['SAKIT', 'IZIN', 'ALPA'].includes(String(entry.schoolAttendanceStatus).toUpperCase())) {
+      status = 'TIDAK_MENGIKUTI';
+    }
+
+    switch (status) {
       case 'SALAT_BERJAMAAH':
         salatBerjamaah++;
         totalRecorded++;

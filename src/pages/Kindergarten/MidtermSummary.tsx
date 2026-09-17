@@ -1131,10 +1131,13 @@ export default function MidtermSummary() {
       const existingVersions = Object.values(publishedReports).filter((r: any) => {
         return r.studentId === selectedStudentId && r.semester === semester;
       });
-      const maxVersion = existingVersions.reduce((max, r: any) => {
+      let maxVersion = 0;
+      for (const r of (existingVersions as any[])) {
         const v = r.version || 1;
-        return v > max ? v : max;
-      }, 0);
+        if (v > maxVersion) {
+          maxVersion = v;
+        }
+      }
       const nextVersion = maxVersion > 0 ? maxVersion + 1 : 1;
 
       const reportPayload = {
