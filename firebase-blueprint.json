@@ -1032,6 +1032,26 @@
         "completedAt": { "type": ["object", "null"] }
       },
       "required": ["id", "studentId", "classId", "academicYear", "issueType", "incidentIds", "interventionPlan", "status", "createdBy", "createdAt"]
+    },
+    "KindyMidtermClassLearningGoals": {
+      "title": "KindyMidtermClassLearningGoals",
+      "description": "Class-wide learning goals for Kindergarten Midterm reports.",
+      "type": "object",
+      "properties": {
+        "classId": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "semester": { "type": "string" },
+        "midtermPeriodKey": { "type": "string" },
+        "nilaiAgamaBudiPekerti": { "type": "string" },
+        "jatiDiri": { "type": "string" },
+        "dasarLiterasiSteam": { "type": "string" },
+        "status": { "type": "string", "enum": ["DRAFT", "READY"] },
+        "createdAt": { "type": "number" },
+        "createdBy": { "type": "string" },
+        "updatedAt": { "type": "number" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["classId", "academicYear", "semester", "midtermPeriodKey", "status", "createdAt", "createdBy", "updatedAt", "updatedBy"]
     }
   },
   "firestore": {
@@ -1277,6 +1297,10 @@
     "teacherSupportInterventions/{interventionId}": {
       "schema": "TeacherSupportIntervention",
       "description": "Teacher support interventions for chronic lateness or minor violations in Junior High."
+    },
+    "kindy_midterm_class_learning_goals/{documentId}": {
+      "schema": "KindyMidtermClassLearningGoals",
+      "description": "Class-wide learning goals for Kindergarten Midterm reports."
     }
   }
 }
