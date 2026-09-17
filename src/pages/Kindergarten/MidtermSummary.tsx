@@ -252,11 +252,15 @@ export default function MidtermSummary() {
   }, [startDateStr, endDateStr]);
 
   // Tabs layout selection
-  // Tabs: 'goals' (Learning Goals) | 'kompilasi' (Kompilasi Mingguan) | 'editor' (Buat GenCom Midterm) | 'publish' (Publish PDF)
-  const [activeTab, setActiveTab] = React.useState<'goals' | 'kompilasi' | 'editor' | 'publish'>('goals');
+  // Tabs: 'kompilasi' (Kompilasi Mingguan) | 'editor' (Buat GenCom Midterm) | 'publish' (Publish PDF)
+  const [activeTab, setActiveTab] = React.useState<'kompilasi' | 'editor' | 'publish'>('editor');
 
-  // Local goals state
-  const [localGoals, setLocalGoals] = React.useState<{
+  // Class-level Learning Goals state
+  const [classLearningGoals, setClassLearningGoals] = React.useState<any | null>(null);
+  const [isFetchingClassGoals, setIsFetchingClassGoals] = React.useState(false);
+  const [isSavingClassGoals, setIsSavingClassGoals] = React.useState(false);
+
+  const [classGoalsInput, setClassGoalsInput] = React.useState<{
     nilaiAgamaBudiPekerti: string;
     jatiDiri: string;
     dasarLiterasiSteam: string;
@@ -265,6 +269,9 @@ export default function MidtermSummary() {
     jatiDiri: '',
     dasarLiterasiSteam: '',
   });
+
+  const [classGoalsStatus, setClassGoalsStatus] = React.useState<'DRAFT' | 'READY'>('DRAFT');
+  const [hasUnsavedClassGoals, setHasUnsavedClassGoals] = React.useState(false);
 
   // Firestore Draft and Weekly Source State
   const [isFetchingWeeklySources, setIsFetchingWeeklySources] = React.useState(false);
@@ -350,6 +357,112 @@ export default function MidtermSummary() {
     const periodKey = `${startDateStr}_${endDateStr}`;
     return `${studId}_${normalizedYear}_S${semester}_MIDTERM_${periodKey}`;
   }, [normalizedYear, semester, startDateStr, endDateStr]);
+
+  // Calculate Deterministic Class Learning Goals Doc ID
+  const getClassGoalsDocId = React.useCallback(() => {
+    if (!selectedClassId) return '';
+    const periodKey = `${startDateStr}_${endDateStr}`;
+    return `${selectedClassId}_${normalizedYear}_S${semester}_${periodKey}`;
+  }, [selectedClassId, normalizedYear, semester, startDateStr, endDateStr]);
+
+  const fetchClassLearningGoals = React.useCallback(async () => {
+    const docId = getClassGoalsDocId();
+    if (!docId) {
+      setClassLearningGoals(null);
+      setClassGoalsInput({
+        nilaiAgamaBudiPekerti: '',
+        jatiDiri: '',
+        dasarLiterasiSteam: ''
+      });
+      setClassGoalsStatus('DRAFT');
+      setHasUnsavedClassGoals(false);
+      return;
+    }
+    setIsFetchingClassGoals(true);
+    try {
+      const docRef = doc(db, 'kindy_midterm_class_learning_goals', docId);
+      const snap = await getDoc(docRef);
+      logFirestoreRead('attendanceReports', 1);
+      if (snap.exists()) {
+        const data = snap.data();
+        setClassLearningGoals(data);
+        setClassGoalsInput({
+          nilaiAgamaBudiPekerti: data.nilaiAgamaBudiPekerti || '',
+          jatiDiri: data.jatiDiri || '',
+          dasarLiterasiSteam: data.dasarLiterasiSteam || ''
+        });
+        setClassGoalsStatus(data.status || 'DRAFT');
+      } else {
+        setClassLearningGoals(null);
+        setClassGoalsInput({
+          nilaiAgamaBudiPekerti: '',
+          jatiDiri: '',
+          dasarLiterasiSteam: '',
+        });
+        setClassGoalsStatus('DRAFT');
+      }
+      setHasUnsavedClassGoals(false);
+    } catch (err) {
+      console.error('Error fetching class learning goals:', err);
+    } finally {
+      setIsFetchingClassGoals(false);
+    }
+  }, [getClassGoalsDocId]);
+
+  const handleSaveClassLearningGoals = async () => {
+    const docId = getClassGoalsDocId();
+    if (!docId || !selectedClassId || !activeClassObj) {
+      toast.error('Kelas atau rentang tanggal belum valid.');
+      return;
+    }
+
+    const isAllGoalsFilled = 
+      classGoalsInput.nilaiAgamaBudiPekerti.trim().length > 0 &&
+      classGoalsInput.jatiDiri.trim().length > 0 &&
+      classGoalsInput.dasarLiterasiSteam.trim().length > 0;
+
+    const finalStatus = isAllGoalsFilled ? 'READY' : 'DRAFT';
+
+    const payload = {
+      classId: selectedClassId,
+      academicYear: activeYear || '2026/2027',
+      semester,
+      midtermPeriodKey: `${startDateStr}_${endDateStr}`,
+      nilaiAgamaBudiPekerti: classGoalsInput.nilaiAgamaBudiPekerti,
+      jatiDiri: classGoalsInput.jatiDiri,
+      dasarLiterasiSteam: classGoalsInput.dasarLiterasiSteam,
+      status: finalStatus,
+      updatedAt: Date.now(),
+      updatedBy: profile?.email || 'System'
+    } as any;
+
+    if (!classLearningGoals) {
+      payload.createdAt = Date.now();
+      payload.createdBy = profile?.email || 'System';
+    } else {
+      payload.createdAt = classLearningGoals.createdAt || Date.now();
+      payload.createdBy = classLearningGoals.createdBy || profile?.email || 'System';
+    }
+
+    setIsSavingClassGoals(true);
+    const toastId = toast.loading('Menyimpan Learning Goals Kelas...');
+    try {
+      await setDoc(doc(db, 'kindy_midterm_class_learning_goals', docId), payload);
+      setClassLearningGoals(payload);
+      setClassGoalsStatus(finalStatus);
+      setHasUnsavedClassGoals(false);
+      toast.success('Learning Goals Kelas berhasil disimpan! ✨', { id: toastId });
+    } catch (err) {
+      console.error('Error saving class learning goals:', err);
+      toast.error('Gagal menyimpan Learning Goals Kelas.', { id: toastId });
+    } finally {
+      setIsSavingClassGoals(false);
+    }
+  };
+
+  React.useEffect(() => {
+    fetchClassLearningGoals();
+  }, [fetchClassLearningGoals]);
 
   // Load all midterm drafts for the selected class to map the status dots of students
   const fetchMidtermDraftsForClass = React.useCallback(async () => {
@@ -517,20 +630,12 @@ export default function MidtermSummary() {
   }, [selectedStudentId, selectedClassId, classes, activeClassObj, students]);
 
   const checkHasUnsavedChanges = (
-    comment: string,
-    goals: { nilaiAgamaBudiPekerti: string; jatiDiri: string; dasarLiterasiSteam: string }
+    comment: string
   ) => {
     const activeDraft = midtermDrafts[selectedStudentId];
     const originalComment = activeDraft?.midtermGeneralComment || '';
-    const originalAgama = activeDraft?.learningGoals?.nilaiAgamaBudiPekerti || '';
-    const originalJati = activeDraft?.learningGoals?.jatiDiri || '';
-    const originalSteam = activeDraft?.learningGoals?.dasarLiterasiSteam || '';
 
-    const isChanged = 
-      comment !== originalComment ||
-      goals.nilaiAgamaBudiPekerti !== originalAgama ||
-      goals.jatiDiri !== originalJati ||
-      goals.dasarLiterasiSteam !== originalSteam;
+    const isChanged = comment !== originalComment;
 
     setHasUnsavedChanges(isChanged);
   };
@@ -538,14 +643,14 @@ export default function MidtermSummary() {
   // Handle local comment input edits
   const handleCommentChange = (text: string) => {
     setLocalComment(text);
-    checkHasUnsavedChanges(text, localGoals);
+    checkHasUnsavedChanges(text);
   };
 
-  // Handle local goals changes
-  const handleGoalChange = (field: 'nilaiAgamaBudiPekerti' | 'jatiDiri' | 'dasarLiterasiSteam', value: string) => {
-    const updatedGoals = { ...localGoals, [field]: value };
-    setLocalGoals(updatedGoals);
-    checkHasUnsavedChanges(localComment, updatedGoals);
+  // Handle class goals changes
+  const handleClassGoalChange = (field: 'nilaiAgamaBudiPekerti' | 'jatiDiri' | 'dasarLiterasiSteam', value: string) => {
+    const updated = { ...classGoalsInput, [field]: value };
+    setClassGoalsInput(updated);
+    setHasUnsavedClassGoals(true);
   };
 
   // Synchronize local editors when selectedStudentId or midtermDrafts changes
@@ -553,19 +658,9 @@ export default function MidtermSummary() {
     if (selectedStudentId) {
       const activeDraft = midtermDrafts[selectedStudentId];
       setLocalComment(activeDraft?.midtermGeneralComment || '');
-      setLocalGoals({
-        nilaiAgamaBudiPekerti: activeDraft?.learningGoals?.nilaiAgamaBudiPekerti || '',
-        jatiDiri: activeDraft?.learningGoals?.jatiDiri || '',
-        dasarLiterasiSteam: activeDraft?.learningGoals?.dasarLiterasiSteam || '',
-      });
       setHasUnsavedChanges(false);
     } else {
       setLocalComment('');
-      setLocalGoals({
-        nilaiAgamaBudiPekerti: '',
-        jatiDiri: '',
-        dasarLiterasiSteam: '',
-      });
       setHasUnsavedChanges(false);
     }
   }, [selectedStudentId, midtermDrafts]);
@@ -573,7 +668,7 @@ export default function MidtermSummary() {
   // Browser reload/navigation warning
   React.useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (hasUnsavedChanges) {
+      if (hasUnsavedChanges || hasUnsavedClassGoals) {
         e.preventDefault();
         e.returnValue = 'Anda memiliki perubahan yang belum disimpan. Apakah Anda yakin ingin membuang perubahan ini?';
         return e.returnValue;
@@ -583,7 +678,7 @@ export default function MidtermSummary() {
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [hasUnsavedChanges]);
+  }, [hasUnsavedChanges, hasUnsavedClassGoals]);
 
   // Navigation intercepts with warnings
   const confirmNavigation = (
@@ -598,7 +693,7 @@ export default function MidtermSummary() {
         return;
       }
     }
-    if (hasUnsavedChanges) {
+    if (hasUnsavedChanges || hasUnsavedClassGoals) {
       setPendingSelection({ type, targetValue });
     } else {
       executeNavigation(type, targetValue);
@@ -610,6 +705,7 @@ export default function MidtermSummary() {
     targetValue: string
   ) => {
     setHasUnsavedChanges(false);
+    setHasUnsavedClassGoals(false);
     if (type === 'student') {
       setSelectedStudentId(targetValue);
       const activeDraft = midtermDrafts[targetValue];
@@ -793,11 +889,6 @@ export default function MidtermSummary() {
       endDate: endDateStr,
       periodLabel: formattedPeriodRangeIndo,
       midtermGeneralComment: localComment,
-      learningGoals: {
-        nilaiAgamaBudiPekerti: localGoals.nilaiAgamaBudiPekerti,
-        jatiDiri: localGoals.jatiDiri,
-        dasarLiterasiSteam: localGoals.dasarLiterasiSteam
-      },
       status: 'DRAFT',
       compiledWeeklySources: activeDraft?.compiledWeeklySources || [],
       updatedAt: Date.now(),
@@ -836,8 +927,19 @@ export default function MidtermSummary() {
   // Submit for Review Action (Status changes to READY_FOR_REVIEW)
   const handleSubmitForReview = async () => {
     if (!selectedStudentObj || !activeClassObj) return;
-    if (!localComment.trim() || !localGoals.nilaiAgamaBudiPekerti.trim() || !localGoals.jatiDiri.trim() || !localGoals.dasarLiterasiSteam.trim()) {
-      toast.error('Draf hanya dapat diajukan jika seluruh 3 Learning Goals dan General Comments telah terisi.');
+    
+    const isAllGoalsFilled = 
+      classGoalsInput.nilaiAgamaBudiPekerti.trim().length > 0 &&
+      classGoalsInput.jatiDiri.trim().length > 0 &&
+      classGoalsInput.dasarLiterasiSteam.trim().length > 0;
+
+    if (!isAllGoalsFilled) {
+      toast.error('Draf hanya dapat diajukan jika seluruh 3 Learning Goals Kelas telah terisi!');
+      return;
+    }
+
+    if (!localComment.trim()) {
+      toast.error('Draf hanya dapat diajukan jika General Comments siswa telah terisi.');
       return;
     }
     
@@ -859,11 +961,6 @@ export default function MidtermSummary() {
       endDate: endDateStr,
       periodLabel: formattedPeriodRangeIndo,
       midtermGeneralComment: localComment,
-      learningGoals: {
-        nilaiAgamaBudiPekerti: localGoals.nilaiAgamaBudiPekerti,
-        jatiDiri: localGoals.jatiDiri,
-        dasarLiterasiSteam: localGoals.dasarLiterasiSteam
-      },
       status: 'READY_FOR_REVIEW',
       compiledWeeklySources: activeDraft?.compiledWeeklySources || [],
       updatedAt: Date.now(),
@@ -1175,9 +1272,9 @@ export default function MidtermSummary() {
           },
           midtermGeneralComment: activeDraft.midtermGeneralComment,
           learningGoals: {
-            nilaiAgamaBudiPekerti: activeDraft.learningGoals?.nilaiAgamaBudiPekerti || '',
-            jatiDiri: activeDraft.learningGoals?.jatiDiri || '',
-            dasarLiterasiSteam: activeDraft.learningGoals?.dasarLiterasiSteam || ''
+            nilaiAgamaBudiPekerti: classGoalsInput.nilaiAgamaBudiPekerti || classLearningGoals?.nilaiAgamaBudiPekerti || '',
+            jatiDiri: classGoalsInput.jatiDiri || classLearningGoals?.jatiDiri || '',
+            dasarLiterasiSteam: classGoalsInput.dasarLiterasiSteam || classLearningGoals?.dasarLiterasiSteam || ''
           },
           signatories: {
             principal: {
@@ -1387,21 +1484,21 @@ export default function MidtermSummary() {
     if (publishedReportObj?.reportSnapshot?.learningGoals?.nilaiAgamaBudiPekerti !== undefined) {
       return publishedReportObj.reportSnapshot.learningGoals.nilaiAgamaBudiPekerti;
     }
-    return activeDraft?.learningGoals?.nilaiAgamaBudiPekerti || '';
+    return classGoalsInput.nilaiAgamaBudiPekerti || classLearningGoals?.nilaiAgamaBudiPekerti || '';
   };
 
   const getJatiDiriGoalText = () => {
     if (publishedReportObj?.reportSnapshot?.learningGoals?.jatiDiri !== undefined) {
       return publishedReportObj.reportSnapshot.learningGoals.jatiDiri;
     }
-    return activeDraft?.learningGoals?.jatiDiri || '';
+    return classGoalsInput.jatiDiri || classLearningGoals?.jatiDiri || '';
   };
 
   const getSteamGoalText = () => {
     if (publishedReportObj?.reportSnapshot?.learningGoals?.dasarLiterasiSteam !== undefined) {
       return publishedReportObj.reportSnapshot.learningGoals.dasarLiterasiSteam;
     }
-    return activeDraft?.learningGoals?.dasarLiterasiSteam || '';
+    return classGoalsInput.dasarLiterasiSteam || classLearningGoals?.dasarLiterasiSteam || '';
   };
 
   const getGeneralCommentText = () => {
@@ -1526,18 +1623,209 @@ export default function MidtermSummary() {
 
       </div>
 
+      {/* PANEL LEARNING GOALS KELAS */}
+      <div className="bg-white p-6 rounded-[2rem] border border-gray-150 shadow-sm space-y-6">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center pb-3 border-b border-gray-100 gap-3">
+          <div className="space-y-0.5">
+            <h2 className="text-sm font-black text-gray-900 font-sans uppercase tracking-tight flex items-center gap-2">
+              <BookOpen size={16} className="text-[#109E58]" />
+              Learning Goals Kelas: {activeClassObj?.name || 'Pilih Kelas'}
+            </h2>
+            <p className="text-[11px] text-gray-500 font-medium">
+              Target pembelajaran tengah semester yang berlaku untuk seluruh siswa di kelas ini.
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-3 shrink-0">
+            {hasUnsavedClassGoals && (
+              <span className="flex items-center gap-1 text-[10px] bg-amber-50 text-amber-700 font-bold border border-amber-200 rounded-lg px-2 py-1 font-sans animate-pulse">
+                <AlertCircle size={10} />
+                Belum Disimpan
+              </span>
+            )}
+            {!hasUnsavedClassGoals && classLearningGoals && (
+              <span className="flex items-center gap-1 text-[10px] bg-emerald-50 text-[#109E58] font-bold border border-emerald-200 rounded-lg px-2 py-1 font-sans">
+                <Check size={10} />
+                Tersimpan ({classGoalsStatus})
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          
+          {/* LEFT COLUMN: WEEKLY GOALS REFERENCE */}
+          <div className="lg:col-span-4 bg-gray-50 border border-gray-150 p-4 rounded-2xl flex flex-col max-h-[350px] overflow-y-auto">
+            <div className="flex items-center gap-1.5 pb-2 border-b border-gray-200 mb-3">
+              <ClipboardList size={12} className="text-gray-500" />
+              <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-wider font-sans">
+                Referensi Target Mingguan Kelas
+              </h3>
+            </div>
+            
+            <div className="space-y-4 pr-1">
+              {/* Category 1: Agama */}
+              <div className="space-y-2">
+                <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block bg-emerald-50 px-2 py-1 rounded">
+                  Nilai Agama & Budi Pekerti
+                </span>
+                {extractedLearningGoals.agama.length === 0 ? (
+                  <p className="text-[11px] text-gray-400 italic pl-2 font-sans">Tidak ada target mingguan.</p>
+                ) : (
+                  <div className="space-y-1.5 pl-1">
+                    {extractedLearningGoals.agama.map((goal, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          const currentText = classGoalsInput.nilaiAgamaBudiPekerti;
+                          const separator = currentText ? '\n' : '';
+                          handleClassGoalChange('nilaiAgamaBudiPekerti', currentText + separator + goal);
+                        }}
+                        className="w-full text-left bg-white hover:bg-emerald-50/40 border border-gray-150 rounded-lg p-2 text-xs text-gray-750 leading-relaxed transition-all cursor-pointer flex items-start gap-1.5 font-sans"
+                        title="Klik untuk menyalin"
+                      >
+                        <span className="text-emerald-500 font-bold shrink-0">+</span>
+                        <span className="flex-1">{goal}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Category 2: Jati Diri */}
+              <div className="space-y-2">
+                <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block bg-emerald-50 px-2 py-1 rounded">
+                  Jati Diri
+                </span>
+                {extractedLearningGoals.jatiDiri.length === 0 ? (
+                  <p className="text-[11px] text-gray-400 italic pl-2 font-sans">Tidak ada target mingguan.</p>
+                ) : (
+                  <div className="space-y-1.5 pl-1">
+                    {extractedLearningGoals.jatiDiri.map((goal, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          const currentText = classGoalsInput.jatiDiri;
+                          const separator = currentText ? '\n' : '';
+                          handleClassGoalChange('jatiDiri', currentText + separator + goal);
+                        }}
+                        className="w-full text-left bg-white hover:bg-emerald-50/40 border border-gray-150 rounded-lg p-2 text-xs text-gray-750 leading-relaxed transition-all cursor-pointer flex items-start gap-1.5 font-sans"
+                        title="Klik untuk menyalin"
+                      >
+                        <span className="text-emerald-500 font-bold shrink-0">+</span>
+                        <span className="flex-1">{goal}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Category 3: Literasi & STEAM */}
+              <div className="space-y-2">
+                <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block bg-emerald-50 px-2 py-1 rounded">
+                  Dasar-dasar Literasi & STEAM
+                </span>
+                {extractedLearningGoals.literasiSteam.length === 0 ? (
+                  <p className="text-[11px] text-gray-400 italic pl-2 font-sans">Tidak ada target mingguan.</p>
+                ) : (
+                  <div className="space-y-1.5 pl-1">
+                    {extractedLearningGoals.literasiSteam.map((goal, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          const currentText = classGoalsInput.dasarLiterasiSteam;
+                          const separator = currentText ? '\n' : '';
+                          handleClassGoalChange('dasarLiterasiSteam', currentText + separator + goal);
+                        }}
+                        className="w-full text-left bg-white hover:bg-emerald-50/40 border border-gray-150 rounded-lg p-2 text-xs text-gray-750 leading-relaxed transition-all cursor-pointer flex items-start gap-1.5 font-sans"
+                        title="Klik untuk menyalin"
+                      >
+                        <span className="text-emerald-500 font-bold shrink-0">+</span>
+                        <span className="flex-1">{goal}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* RIGHT COLUMN: THREE TEXT AREAS AND BUTTON */}
+          <div className="lg:col-span-8 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Nilai Agama & Budi Pekerti */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block font-sans">
+                  Nilai Agama & Budi Pekerti
+                </label>
+                <textarea
+                  value={classGoalsInput.nilaiAgamaBudiPekerti}
+                  onChange={(e) => handleClassGoalChange('nilaiAgamaBudiPekerti', e.target.value)}
+                  disabled={isSavingClassGoals}
+                  placeholder="Tulis target pembelajaran Nilai Agama & Budi Pekerti..."
+                  className="w-full min-h-[140px] border border-gray-200 rounded-xl p-3 text-xs font-serif leading-relaxed outline-none focus:border-[#109E58] focus:ring-1 focus:ring-[#109E58]/35 focus:ring-offset-0 transition-all resize-y text-gray-800 bg-white"
+                />
+              </div>
+
+              {/* Jati Diri */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block font-sans">
+                  Jati Diri
+                </label>
+                <textarea
+                  value={classGoalsInput.jatiDiri}
+                  onChange={(e) => handleClassGoalChange('jatiDiri', e.target.value)}
+                  disabled={isSavingClassGoals}
+                  placeholder="Tulis target pembelajaran Jati Diri..."
+                  className="w-full min-h-[140px] border border-gray-200 rounded-xl p-3 text-xs font-serif leading-relaxed outline-none focus:border-[#109E58] focus:ring-1 focus:ring-[#109E58]/35 focus:ring-offset-0 transition-all resize-y text-gray-800 bg-white"
+                />
+              </div>
+
+              {/* Dasar-dasar Literasi & STEAM */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block font-sans">
+                  Dasar-dasar Literasi & STEAM
+                </label>
+                <textarea
+                  value={classGoalsInput.dasarLiterasiSteam}
+                  onChange={(e) => handleClassGoalChange('dasarLiterasiSteam', e.target.value)}
+                  disabled={isSavingClassGoals}
+                  placeholder="Tulis target pembelajaran Dasar-dasar Literasi & STEAM..."
+                  className="w-full min-h-[140px] border border-gray-200 rounded-xl p-3 text-xs font-serif leading-relaxed outline-none focus:border-[#109E58] focus:ring-1 focus:ring-[#109E58]/35 focus:ring-offset-0 transition-all resize-y text-gray-800 bg-white"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-gray-100">
+              <button
+                onClick={() => handleSaveClassLearningGoals()}
+                disabled={isSavingClassGoals || !hasUnsavedClassGoals}
+                className="flex items-center gap-1.5 bg-[#109E58] hover:bg-emerald-700 disabled:opacity-40 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl cursor-pointer transition-all shadow-md shadow-[#109E58]/10 disabled:cursor-not-allowed"
+              >
+                {isSavingClassGoals ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                Simpan Learning Goals Kelas
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
       {/* INTERNAL WORKFLOW TAB NAVIGATION */}
       <div className="flex border-b border-gray-250 shrink-0 gap-1.5 overflow-x-auto">
         <button
-          onClick={() => confirmNavigation('tab', 'goals')}
+          onClick={() => confirmNavigation('tab', 'editor')}
           className={cn(
             "px-5 py-3 text-xs font-black transition-all cursor-pointer border-b-2 -mb-[2px] tracking-tight whitespace-nowrap",
-            activeTab === 'goals'
+            activeTab === 'editor'
               ? "border-[#109E58] text-[#109E58]"
               : "border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200"
           )}
         >
-          1. Learning Goals
+          1. Buat GenCom Midterm
         </button>
         <button
           onClick={() => confirmNavigation('tab', 'kompilasi')}
@@ -1551,17 +1839,6 @@ export default function MidtermSummary() {
           2. Kompilasi Mingguan
         </button>
         <button
-          onClick={() => confirmNavigation('tab', 'editor')}
-          className={cn(
-            "px-5 py-3 text-xs font-black transition-all cursor-pointer border-b-2 -mb-[2px] tracking-tight whitespace-nowrap",
-            activeTab === 'editor'
-              ? "border-[#109E58] text-[#109E58]"
-              : "border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200"
-          )}
-        >
-          3. Buat GenCom Midterm
-        </button>
-        <button
           onClick={() => confirmNavigation('tab', 'publish')}
           className={cn(
             "px-5 py-3 text-xs font-black transition-all cursor-pointer border-b-2 -mb-[2px] tracking-tight flex items-center gap-1.5 whitespace-nowrap",
@@ -1570,7 +1847,7 @@ export default function MidtermSummary() {
               : "border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200"
           )}
         >
-          4. Publish PDF
+          3. Publish PDF
         </button>
       </div>
 
@@ -1673,223 +1950,7 @@ export default function MidtermSummary() {
             </div>
           </div>
 
-          {/* TAB 0: LEARNING GOALS CONTENT */}
-          {activeTab === 'goals' && (
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-              
-              {/* LEFT HALF: READ-ONLY WEEKLY GOALS REFERENCE */}
-              <div className="md:col-span-5 space-y-4">
-                <div className="bg-gray-50 border border-gray-150 p-4 rounded-2xl h-full flex flex-col min-h-[400px]">
-                  <div className="flex justify-between items-center pb-2.5 border-b border-gray-200 mb-4 shrink-0">
-                    <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-wider flex items-center gap-1.5 font-sans">
-                      <BookOpen size={12} />
-                      Referensi Target Mingguan (Weekly Goals)
-                    </h3>
-                  </div>
-
-                  <div className="flex-1 overflow-y-auto space-y-4 max-h-[600px] pr-1">
-                    {/* Category 1: Agama */}
-                    <div className="space-y-2">
-                      <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block bg-emerald-50 px-2 py-1 rounded">
-                        Nilai Agama & Budi Pekerti
-                      </span>
-                      {extractedLearningGoals.agama.length === 0 ? (
-                        <p className="text-[11px] text-gray-400 italic pl-2 font-sans">Tidak ada target mingguan.</p>
-                      ) : (
-                        <div className="space-y-1.5 pl-1">
-                          {extractedLearningGoals.agama.map((goal, idx) => (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => {
-                                if (isLockedForEditing) return;
-                                const currentText = localGoals.nilaiAgamaBudiPekerti;
-                                const separator = currentText ? '\n' : '';
-                                handleGoalChange('nilaiAgamaBudiPekerti', currentText + separator + goal);
-                              }}
-                              className="w-full text-left bg-white hover:bg-emerald-50/40 border border-gray-150 rounded-lg p-2.5 text-xs text-gray-750 leading-relaxed transition-all cursor-pointer flex items-start gap-1.5 font-sans"
-                              title="Klik untuk menyalin ke input"
-                              disabled={isLockedForEditing}
-                            >
-                              <span className="text-emerald-500 font-bold shrink-0">+</span>
-                              <span className="flex-1">{goal}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Category 2: Jati Diri */}
-                    <div className="space-y-2">
-                      <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block bg-emerald-50 px-2 py-1 rounded">
-                        Jati Diri
-                      </span>
-                      {extractedLearningGoals.jatiDiri.length === 0 ? (
-                        <p className="text-[11px] text-gray-400 italic pl-2 font-sans">Tidak ada target mingguan.</p>
-                      ) : (
-                        <div className="space-y-1.5 pl-1">
-                          {extractedLearningGoals.jatiDiri.map((goal, idx) => (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => {
-                                if (isLockedForEditing) return;
-                                const currentText = localGoals.jatiDiri;
-                                const separator = currentText ? '\n' : '';
-                                handleGoalChange('jatiDiri', currentText + separator + goal);
-                              }}
-                              className="w-full text-left bg-white hover:bg-emerald-50/40 border border-gray-150 rounded-lg p-2.5 text-xs text-gray-750 leading-relaxed transition-all cursor-pointer flex items-start gap-1.5 font-sans"
-                              title="Klik untuk menyalin ke input"
-                              disabled={isLockedForEditing}
-                            >
-                              <span className="text-emerald-500 font-bold shrink-0">+</span>
-                              <span className="flex-1">{goal}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Category 3: Literasi & STEAM */}
-                    <div className="space-y-2">
-                      <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block bg-emerald-50 px-2 py-1 rounded">
-                        Dasar-dasar Literasi & STEAM
-                      </span>
-                      {extractedLearningGoals.literasiSteam.length === 0 ? (
-                        <p className="text-[11px] text-gray-400 italic pl-2 font-sans">Tidak ada target mingguan.</p>
-                      ) : (
-                        <div className="space-y-1.5 pl-1">
-                          {extractedLearningGoals.literasiSteam.map((goal, idx) => (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => {
-                                if (isLockedForEditing) return;
-                                const currentText = localGoals.dasarLiterasiSteam;
-                                const separator = currentText ? '\n' : '';
-                                handleGoalChange('dasarLiterasiSteam', currentText + separator + goal);
-                              }}
-                              className="w-full text-left bg-white hover:bg-emerald-50/40 border border-gray-150 rounded-lg p-2.5 text-xs text-gray-750 leading-relaxed transition-all cursor-pointer flex items-start gap-1.5 font-sans"
-                              title="Klik untuk menyalin ke input"
-                              disabled={isLockedForEditing}
-                            >
-                              <span className="text-emerald-500 font-bold shrink-0">+</span>
-                              <span className="flex-1">{goal}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* RIGHT HALF: PRIMARY EDITABLE LEARNING GOALS textareas */}
-              <div className="md:col-span-7 space-y-4">
-                <div className="bg-white border border-gray-150 p-5 rounded-2xl shadow-sm space-y-5">
-                  <div className="pb-2.5 border-b border-gray-100 flex justify-between items-center">
-                    <div className="space-y-0.5">
-                      <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider font-sans">Midterm Learning Goals</h3>
-                      <div className="flex items-center gap-1.5">
-                        <span className={cn("inline-block w-2 h-2 rounded-full", currentStudentStatus.dotColor)} />
-                        <span className="text-[10px] text-gray-500 font-bold font-sans">Status: {currentStudentStatus.label}</span>
-                      </div>
-                    </div>
-                    {isLockedForEditing && (
-                      <span className="flex items-center gap-1 text-[10px] bg-amber-50 text-amber-700 font-black border border-amber-200 rounded px-2 py-0.5 font-sans">
-                        <ShieldAlert size={10} />
-                        Draf Dikunci
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Agama & Budi Pekerti Field */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block font-sans">
-                      Nilai Agama & Budi Pekerti
-                    </label>
-                    <textarea
-                      value={localGoals.nilaiAgamaBudiPekerti}
-                      onChange={(e) => handleGoalChange('nilaiAgamaBudiPekerti', e.target.value)}
-                      disabled={isLockedForEditing || isSavingDraft}
-                      placeholder={isLockedForEditing ? "Draf dikunci karena sudah diajukan untuk review." : "Tulis atau pilih tujuan pembelajaran Nilai Agama & Budi Pekerti..."}
-                      className={cn(
-                        "w-full min-h-[90px] border border-gray-200 rounded-xl p-3 text-xs font-serif leading-relaxed outline-none focus:border-[#109E58] focus:ring-1 focus:ring-[#109E58]/35 focus:ring-offset-0 transition-all resize-y text-gray-800 bg-white",
-                        isLockedForEditing && "bg-gray-50 text-gray-500 border-gray-100 cursor-not-allowed"
-                      )}
-                    />
-                  </div>
-
-                  {/* Jati Diri Field */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block font-sans">
-                      Jati Diri
-                    </label>
-                    <textarea
-                      value={localGoals.jatiDiri}
-                      onChange={(e) => handleGoalChange('jatiDiri', e.target.value)}
-                      disabled={isLockedForEditing || isSavingDraft}
-                      placeholder={isLockedForEditing ? "Draf dikunci karena sudah diajukan untuk review." : "Tulis atau pilih tujuan pembelajaran Jati Diri..."}
-                      className={cn(
-                        "w-full min-h-[90px] border border-gray-200 rounded-xl p-3 text-xs font-serif leading-relaxed outline-none focus:border-[#109E58] focus:ring-1 focus:ring-[#109E58]/35 focus:ring-offset-0 transition-all resize-y text-gray-800 bg-white",
-                        isLockedForEditing && "bg-gray-50 text-gray-500 border-gray-100 cursor-not-allowed"
-                      )}
-                    />
-                  </div>
-
-                  {/* STEAM Field */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block font-sans">
-                      Dasar-dasar Literasi & STEAM
-                    </label>
-                    <textarea
-                      value={localGoals.dasarLiterasiSteam}
-                      onChange={(e) => handleGoalChange('dasarLiterasiSteam', e.target.value)}
-                      disabled={isLockedForEditing || isSavingDraft}
-                      placeholder={isLockedForEditing ? "Draf dikunci karena sudah diajukan untuk review." : "Tulis atau pilih tujuan pembelajaran Dasar-dasar Literasi & STEAM..."}
-                      className={cn(
-                        "w-full min-h-[90px] border border-gray-200 rounded-xl p-3 text-xs font-serif leading-relaxed outline-none focus:border-[#109E58] focus:ring-1 focus:ring-[#109E58]/35 focus:ring-offset-0 transition-all resize-y text-gray-800 bg-white",
-                        isLockedForEditing && "bg-gray-50 text-gray-500 border-gray-100 cursor-not-allowed"
-                      )}
-                    />
-                  </div>
-
-                  {/* Save draft button */}
-                  <div className="flex justify-between items-center pt-2.5 border-t border-gray-100 gap-3">
-                    <div className="text-[10px] text-gray-400 font-bold font-sans">
-                      {hasUnsavedChanges && !isLockedForEditing && (
-                        <span className="text-amber-600 flex items-center gap-1">
-                          <AlertCircle size={10} />
-                          Belum disimpan
-                        </span>
-                      )}
-                      {!hasUnsavedChanges && !isLockedForEditing && (
-                        <span className="text-gray-400 flex items-center gap-1">
-                          <Check size={10} />
-                          Teks tersimpan
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex gap-2">
-                      <button
-                        onClick={handleSaveDraft}
-                        disabled={isSavingDraft || isLockedForEditing || !hasUnsavedChanges}
-                        className="flex items-center gap-1.5 border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 font-extrabold text-xs px-4 py-2.5 rounded-xl cursor-pointer transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        <Save size={12} />
-                        Simpan Draft
-                      </button>
-                    </div>
-                  </div>
-
-                </div>
-              </div>
-
-            </div>
-          )}
-
-          {/* TAB 1: KOMPILASI MINGGUAN CONTENT */}
+           {/* TAB 1: KOMPILASI MINGGUAN CONTENT */}
           {activeTab === 'kompilasi' && (
             <div className="space-y-6">
               
@@ -2027,6 +2088,50 @@ export default function MidtermSummary() {
 
               {/* RIGHT HALF: PRIMARY TEXT AREA RICH EDITOR WORKSPACE */}
               <div className="md:col-span-7 space-y-4">
+                
+                {/* READ-ONLY REFERENSI LEARNING GOALS KELAS */}
+                <div className="bg-emerald-50/40 border border-emerald-150 p-5 rounded-2xl space-y-3.5 shadow-sm">
+                  <div className="flex justify-between items-center pb-2 border-b border-emerald-100/60">
+                    <div>
+                      <h4 className="text-xs font-black text-emerald-900 uppercase tracking-tight flex items-center gap-1.5">
+                        <BookOpen size={13} className="text-[#109E58]" />
+                        Learning Goals Kelas
+                      </h4>
+                      <p className="text-[10px] text-gray-500 font-medium">Berlaku untuk seluruh siswa di kelas ini.</p>
+                    </div>
+                    {classLearningGoals ? (
+                      <span className="text-[9px] font-black text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded font-sans uppercase">
+                        {classGoalsStatus}
+                      </span>
+                    ) : (
+                      <span className="text-[9px] font-black text-amber-700 bg-amber-50 px-2 py-0.5 rounded font-sans uppercase">
+                        Belum Diisi
+                      </span>
+                    )}
+                  </div>
+                  
+                  {!classLearningGoals ? (
+                    <div className="p-4 text-center bg-white border border-gray-150 rounded-xl text-xs text-gray-400 italic font-sans">
+                      Learning Goals kelas belum diisi.
+                    </div>
+                  ) : (
+                    <div className="space-y-3 bg-white border border-gray-150 p-4 rounded-xl text-xs text-gray-750 leading-relaxed font-serif">
+                      <div className="space-y-1">
+                        <span className="text-[9px] font-black text-emerald-800 uppercase tracking-wider block font-sans">Nilai Agama & Budi Pekerti:</span>
+                        <p className="whitespace-pre-wrap pl-2 border-l-2 border-emerald-100">{classLearningGoals.nilaiAgamaBudiPekerti || <span className="text-gray-400 italic font-sans text-[11px]">Belum diisi</span>}</p>
+                      </div>
+                      <div className="space-y-2 pt-1 border-t border-gray-50">
+                        <span className="text-[9px] font-black text-emerald-800 uppercase tracking-wider block font-sans">Jati Diri:</span>
+                        <p className="whitespace-pre-wrap pl-2 border-l-2 border-emerald-100">{classLearningGoals.jatiDiri || <span className="text-gray-400 italic font-sans text-[11px]">Belum diisi</span>}</p>
+                      </div>
+                      <div className="space-y-2 pt-1 border-t border-gray-50">
+                        <span className="text-[9px] font-black text-emerald-800 uppercase tracking-wider block font-sans">Dasar-dasar Literasi & STEAM:</span>
+                        <p className="whitespace-pre-wrap pl-2 border-l-2 border-emerald-100">{classLearningGoals.dasarLiterasiSteam || <span className="text-gray-400 italic font-sans text-[11px]">Belum diisi</span>}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="bg-white border border-gray-150 p-5 rounded-2xl shadow-sm space-y-4">
                   
                   <div className="flex justify-between items-center pb-2.5 border-b border-gray-100 flex-wrap gap-2">
