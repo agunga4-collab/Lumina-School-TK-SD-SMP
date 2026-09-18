@@ -2236,11 +2236,30 @@ function LearningPowerUpTeacherPageContent() {
   // Handle spreadsheet cell click -> opens Verification Modal or Unverification Dialog
   const handleCellClick = (student: Student, field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi') => {
     if (!activePackage) return;
-    const taskDescription = activePackage.tasks[field] || '';
+    const isLevelBased = activePackage.id.startsWith('level_week_');
+    
+    let taskDescription = activePackage.tasks[field] || '';
     if (!taskDescription.trim()) {
       toast.error(`Tidak ada tugas untuk bidang ${CATEGORY_CONFIG[field].label} pada periode ini.`);
       return;
     }
+
+    // Resolve specific task title and instructions if level-based
+    let resolvedTaskTitle = `Tugas Penguatan ${CATEGORY_CONFIG[field].label}`;
+    if (isLevelBased) {
+      const asg = loadedAssignments.find(a => 
+        a.studentId === student.id && 
+        `level_week_${a.weekStartDate}` === activePackage.id && 
+        a.subjectKey === field
+      );
+      if (asg) {
+        taskDescription = asg.taskInstructions || '';
+        resolvedTaskTitle = asg.taskTitle || resolvedTaskTitle;
+      } else {
+        taskDescription = "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.";
+      }
+    }
+
     const progress = findProgress(student.id, activePackage.id, field);
     
     // Check if task is already VERIFIED -> trigger cancellation dialog
@@ -2255,7 +2274,7 @@ function LearningPowerUpTeacherPageContent() {
       return;
     }
 
-    setVerifyingProgress({ student, field, taskDescription, progress });
+    setVerifyingProgress({ student, field, taskDescription, progress, taskTitle: resolvedTaskTitle } as any);
     setVerificationNote(progress?.revisionNote || '');
   };
 
@@ -2296,7 +2315,7 @@ function LearningPowerUpTeacherPageContent() {
 
         const updatedHistory = existingAsg ? [...(existingAsg.history || []), newHistoryEntry] : [newHistoryEntry];
 
-        const assignmentUpdate = {
+        const assignmentUpdate: any = {
           status: isApproved ? 'VERIFIED' : 'REVISION_REQUIRED',
           verifiedAt: isApproved ? serverTimestamp() : null,
           verifiedBy: isApproved ? (currentUser.displayName || currentUser.email || "Guru") : null,
@@ -2307,6 +2326,33 @@ function LearningPowerUpTeacherPageContent() {
           history: updatedHistory,
           updatedAt: serverTimestamp()
         };
+
+        // If the assignment does not exist in Firestore (student had no level set during batch creation),
+        // we create a complete new assignment document using a non-level fallback
+        if (!existingAsg) {
+          const defaultTaskTitle = `Tugas Penguatan ${CATEGORY_CONFIG[field].label}`;
+          const defaultInstructions = "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.";
+
+          assignmentUpdate.id = assignmentId;
+          assignmentUpdate.unit = 'JUNIOR_HIGH';
+          assignmentUpdate.taskBatchId = targetBatch.id;
+          assignmentUpdate.studentId = student.id;
+          assignmentUpdate.studentNameSnapshot = student.name;
+          assignmentUpdate.classId = selectedClassId;
+          assignmentUpdate.classNameSnapshot = classes.find(c => c.id === selectedClassId)?.name || '';
+          assignmentUpdate.subjectKey = field;
+          assignmentUpdate.subjectArea = targetBatch.subjectArea || LPU_SUBJECT_MAP[field] || '';
+          assignmentUpdate.levelSnapshot = null;
+          assignmentUpdate.taskTitle = defaultTaskTitle;
+          assignmentUpdate.taskInstructions = defaultInstructions;
+          assignmentUpdate.academicYearId = activeYear;
+          assignmentUpdate.semester = activePackage.semester || '1';
+          assignmentUpdate.weekStartDate = activePackage.weekStartDate;
+          assignmentUpdate.weekEndDate = activePackage.weekEndDate;
+          assignmentUpdate.weekLabel = activePackage.weekLabel || '';
+          assignmentUpdate.createdAt = serverTimestamp();
+          assignmentUpdate.createdBy = currentUser.uid;
+        }
 
         await setDoc(doc(db, 'learning_power_up_assignments', assignmentId), assignmentUpdate, { merge: true });
         toast.success(isApproved ? "Tugas berhasil ditandai Selesai!" : "Tugas berhasil ditandai Belum Tuntas dengan catatan.");
@@ -2410,7 +2456,6 @@ function LearningPowerUpTeacherPageContent() {
         for (const student of students) {
           const assignmentId = generateDeterministicAssignmentId(targetBatch.id, student.id, field);
           const existingAsg = loadedAssignments.find(a => a.id === assignmentId);
-          if (!existingAsg) continue;
 
           const newHistoryEntry: LpuAssignmentHistoryEntry = {
             action: 'VERIFY',
@@ -2421,8 +2466,8 @@ function LearningPowerUpTeacherPageContent() {
             note: "Verifikasi massal oleh guru."
           };
 
-          const updatedHistory = [...(existingAsg.history || []), newHistoryEntry];
-          const assignmentUpdate = {
+          const updatedHistory = existingAsg ? [...(existingAsg.history || []), newHistoryEntry] : [newHistoryEntry];
+          const assignmentUpdate: any = {
             status: 'VERIFIED',
             verifiedAt: serverTimestamp(),
             verifiedBy: currentUser.displayName || currentUser.email || "Guru",
@@ -2432,6 +2477,31 @@ function LearningPowerUpTeacherPageContent() {
             history: updatedHistory,
             updatedAt: serverTimestamp()
           };
+
+          if (!existingAsg) {
+            const defaultTaskTitle = `Tugas Penguatan ${CATEGORY_CONFIG[field].label}`;
+            const defaultInstructions = "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.";
+
+            assignmentUpdate.id = assignmentId;
+            assignmentUpdate.unit = 'JUNIOR_HIGH';
+            assignmentUpdate.taskBatchId = targetBatch.id;
+            assignmentUpdate.studentId = student.id;
+            assignmentUpdate.studentNameSnapshot = student.name;
+            assignmentUpdate.classId = selectedClassId;
+            assignmentUpdate.classNameSnapshot = classes.find(c => c.id === selectedClassId)?.name || '';
+            assignmentUpdate.subjectKey = field;
+            assignmentUpdate.subjectArea = targetBatch.subjectArea || LPU_SUBJECT_MAP[field] || '';
+            assignmentUpdate.levelSnapshot = null;
+            assignmentUpdate.taskTitle = defaultTaskTitle;
+            assignmentUpdate.taskInstructions = defaultInstructions;
+            assignmentUpdate.academicYearId = activeYear;
+            assignmentUpdate.semester = activePackage.semester || '1';
+            assignmentUpdate.weekStartDate = activePackage.weekStartDate;
+            assignmentUpdate.weekEndDate = activePackage.weekEndDate;
+            assignmentUpdate.weekLabel = activePackage.weekLabel || '';
+            assignmentUpdate.createdAt = serverTimestamp();
+            assignmentUpdate.createdBy = currentUser.uid;
+          }
 
           batch.set(doc(db, 'learning_power_up_assignments', assignmentId), assignmentUpdate, { merge: true });
         }
@@ -2539,7 +2609,7 @@ function LearningPowerUpTeacherPageContent() {
 
         const updatedHistory = existingAsg ? [...(existingAsg.history || []), newHistoryEntry] : [newHistoryEntry];
 
-        const assignmentUpdate = {
+        const assignmentUpdate: any = {
           status: 'ASSIGNED',
           verifiedAt: null,
           verifiedBy: null,
@@ -2549,6 +2619,32 @@ function LearningPowerUpTeacherPageContent() {
           history: updatedHistory,
           updatedAt: serverTimestamp()
         };
+
+        // Fallback fields in case the assignment does not exist in Firestore
+        if (!existingAsg) {
+          const defaultTaskTitle = `Tugas Penguatan ${CATEGORY_CONFIG[field].label}`;
+          const defaultInstructions = "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.";
+
+          assignmentUpdate.id = assignmentId;
+          assignmentUpdate.unit = 'JUNIOR_HIGH';
+          assignmentUpdate.taskBatchId = targetBatch.id;
+          assignmentUpdate.studentId = student.id;
+          assignmentUpdate.studentNameSnapshot = student.name;
+          assignmentUpdate.classId = selectedClassId;
+          assignmentUpdate.classNameSnapshot = classes.find(c => c.id === selectedClassId)?.name || '';
+          assignmentUpdate.subjectKey = field;
+          assignmentUpdate.subjectArea = targetBatch.subjectArea || LPU_SUBJECT_MAP[field] || '';
+          assignmentUpdate.levelSnapshot = null;
+          assignmentUpdate.taskTitle = defaultTaskTitle;
+          assignmentUpdate.taskInstructions = defaultInstructions;
+          assignmentUpdate.academicYearId = activeYear;
+          assignmentUpdate.semester = activePackage.semester || '1';
+          assignmentUpdate.weekStartDate = activePackage.weekStartDate;
+          assignmentUpdate.weekEndDate = activePackage.weekEndDate;
+          assignmentUpdate.weekLabel = activePackage.weekLabel || '';
+          assignmentUpdate.createdAt = serverTimestamp();
+          assignmentUpdate.createdBy = currentUser.uid;
+        }
 
         await setDoc(doc(db, 'learning_power_up_assignments', assignmentId), assignmentUpdate, { merge: true });
         toast.success(`Berhasil membatalkan verifikasi tugas ${CATEGORY_CONFIG[field].label} untuk ${student.name}!`);
@@ -2973,11 +3069,15 @@ function LearningPowerUpTeacherPageContent() {
                                 className="py-4 px-6 text-center align-middle relative group"
                               >
                                 <div className="flex flex-col items-center gap-1.5 justify-center">
-                                  {levelSnapshot && (
+                                  {levelSnapshot ? (
                                     <span className="text-[9px] font-extrabold text-violet-700 bg-violet-50 border border-violet-100 px-1.5 py-0.5 rounded-md uppercase tracking-wider block">
                                       {levelSnapshot}
                                     </span>
-                                  )}
+                                  ) : isLevelBased ? (
+                                    <span className="text-[9px] font-extrabold text-slate-500 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded-md uppercase tracking-wider block">
+                                      Level belum ditetapkan
+                                    </span>
+                                  ) : null}
                                   
                                   <button
                                     onClick={() => handleCellClick(student, field)}
@@ -3677,7 +3777,7 @@ function LearningPowerUpTeacherPageContent() {
                     </span>
                   </div>
                   <h4 className="font-bold text-sm text-gray-900 leading-snug">
-                    Tugas Penguatan {CATEGORY_CONFIG[verifyingProgress.field].label}
+                    {(verifyingProgress as any).taskTitle || `Tugas Penguatan ${CATEGORY_CONFIG[verifyingProgress.field].label}`}
                   </h4>
                   <p className="text-xs font-medium text-gray-500 italic max-h-24 overflow-y-auto leading-relaxed border-t border-slate-200/50 pt-2 mt-1">
                     "{verifyingProgress.taskDescription}"
