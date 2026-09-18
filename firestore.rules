@@ -1300,6 +1300,38 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /jh_midterm_master_goals/{goalId} {
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin() || isTeacher());
+      allow write: if isActive() && (isJuniorHighStaff() || isAdmin() || isTeacher());
+    }
+
+    match /jh_midterm_student_data/{dataId} {
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin() || isTeacher());
+      allow write: if isActive() && (isJuniorHighStaff() || isAdmin() || isTeacher());
+    }
+
+    match /jh_midterm_published_reports/{reportId} {
+      allow read: if isActive() && (
+        isJuniorHighStaff() ||
+        isAdmin() ||
+        isTeacher() ||
+        isOwnStudentData(resource.data.studentId) ||
+        isLinkedStudent(resource.data.studentId)
+      );
+      allow create: if isActive() && (
+        isAdmin() ||
+        isJuniorHighStaff() ||
+        isTeacher()
+      );
+      allow update: if isActive() && (
+        (isLinkedStudent(resource.data.studentId) && 
+         incoming().diff(existing()).affectedKeys().hasOnly(['isOpened', 'firstOpenedAt', 'lastOpenedAt', 'openCount'])) ||
+        isAdmin() ||
+        isJuniorHighStaff()
+      );
+      allow delete: if isAdmin();
+    }
+
     match /archived_kg_reports/{reportId} {
       allow read: if isActive() && (isJuniorHighStaff() || isTeacher() || isSecretaryKindy() || isAdmin());
       allow create: if isActive() && (isJuniorHighStaff() || isTeacher() || isSecretaryKindy() || isAdmin());

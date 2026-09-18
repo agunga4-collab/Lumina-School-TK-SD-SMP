@@ -1,0 +1,629 @@
+import * as React from 'react';
+import { 
+  FileText, CheckCircle2, AlertCircle, Eye, Upload, 
+  ExternalLink, Download, RefreshCw, AlertTriangle, X, Check, Lock
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { useAuth } from '../../../context/AuthContext';
+import { 
+  evaluateStudentMidtermStatus,
+  canUserPublishMidterm,
+  getNextMidtermReportVersion,
+  savePublishedMidtermReport,
+  fetchPublishedMidtermReports
+} from '../../../services/juniorHighMidtermService';
+import { 
+  normalizeMidtermFilename,
+  generateMidtermPdfBlob,
+  uploadMidtermPdfToDrive
+} from '../../../lib/juniorHighMidtermReportPdf';
+import { MidtermPdfTemplate } from './MidtermPdfTemplate';
+import type { 
+  MidtermMasterGoalDoc, 
+  MidtermStudentDataDoc,
+  PublishedMidtermReport,
+  MidtermReportSnapshot
+} from '../../../types/midtermReport';
+import { JH_MIDTERM_CATEGORIES } from '../../../types/midtermReport';
+import type { Student, Class, User, ReportConfig } from '../../../types';
+
+interface MidtermPublishPdfTabProps {
+  currentUser: User;
+  selectedClass: Class | null;
+  students: Student[];
+  academicYear: string;
+  semester: string;
+  midtermTerm: string;
+  masterGoalsMap: Record<string, MidtermMasterGoalDoc>;
+  studentDataMap: Record<string, MidtermStudentDataDoc>;
+  publishedReportsMap: Record<string, PublishedMidtermReport>;
+  studentAttendanceMap: Record<string, { sickLeave?: number; excusedLeave?: number; absent?: number }>;
+  reportConfig: ReportConfig | null;
+  homeroomTeacherProfile: { displayName: string; niy?: string; signatureUrl?: string | null } | null;
+  onRefreshData: () => Promise<void>;
+  loading: boolean;
+}
+
+export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
+  currentUser,
+  selectedClass,
+  students,
+  academicYear,
+  semester,
+  midtermTerm,
+  masterGoalsMap,
+  studentDataMap,
+  publishedReportsMap,
+  studentAttendanceMap,
+  reportConfig,
+  homeroomTeacherProfile,
+  onRefreshData,
+  loading
+}) => {
+  const { getGoogleDriveToken } = useAuth();
+  const [filterStatus, setFilterStatus] = React.useState<'ALL' | 'READY' | 'PUBLISHED' | 'DRAFT'>('ALL');
+  const [searchQuery, setSearchQuery] = React.useState<string>('');
+  
+  // Modal Preview state
+  const [previewStudent, setPreviewStudent] = React.useState<Student | null>(null);
+  const [previewSnapshot, setPreviewSnapshot] = React.useState<MidtermReportSnapshot | null>(null);
+
+  // Publishing in progress
+  const [publishingStudentId, setPublishingStudentId] = React.useState<string | null>(null);
+  const [bulkPublishing, setBulkPublishing] = React.useState<boolean>(false);
+  const [publishProgress, setPublishProgress] = React.useState<{ current: number; total: number } | null>(null);
+
+  // Background rendering elements for PDF creation
+  const [activeGeneratingStudent, setActiveGeneratingStudent] = React.useState<Student | null>(null);
+
+  const canPublish = canUserPublishMidterm(currentUser, selectedClass);
+
+  // Filter students
+  const filteredStudents = React.useMemo(() => {
+    return students.filter(student => {
+      const sData = studentDataMap[student.id];
+      const published = publishedReportsMap[student.id];
+      const isPublished = Boolean(published);
+      const evalStatus = evaluateStudentMidtermStatus(student, masterGoalsMap, sData, isPublished);
+
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchesName = student.name.toLowerCase().includes(q);
+        const matchesNisn = (student.nisn || (student as any).nis || '').toLowerCase().includes(q);
+        if (!matchesName && !matchesNisn) return false;
+      }
+
+      if (filterStatus === 'PUBLISHED') return isPublished;
+      if (filterStatus === 'READY') return !isPublished && evalStatus.isReady;
+      if (filterStatus === 'DRAFT') return !isPublished && !evalStatus.isReady;
+      return true;
+    });
+  }, [students, studentDataMap, publishedReportsMap, masterGoalsMap, filterStatus, searchQuery]);
+
+  // Build snapshot object from live data
+  const buildLiveSnapshot = (student: Student): MidtermReportSnapshot => {
+    const sData = studentDataMap[student.id];
+    const att = studentAttendanceMap[student.id] || { sickLeave: 0, excusedLeave: 0, absent: 0 };
+
+    const categories = JH_MIDTERM_CATEGORIES.map(cat => ({
+      name: cat.name,
+      subjects: cat.subjects.map(subjName => {
+        const master = masterGoalsMap[subjName];
+        const goals = (master?.goals || []).map(g => ({
+          id: g.id,
+          text: g.text,
+          remark: sData?.remarks?.[g.id] || (subjName === 'Spiritual Health' ? (sData?.spiritualHealthRemark || '') : '') || '-'
+        }));
+        return {
+          name: subjName,
+          goals
+        };
+      })
+    }));
+
+    return {
+      student: {
+        id: student.id,
+        name: student.name,
+        nisn: student.nisn || (student as any).nis || '-',
+        className: selectedClass?.name || '',
+        grade: student.grade || 7
+      },
+      academicYear,
+      semester,
+      midtermTerm,
+      categories,
+      generalComment: sData?.generalComment?.finalComment || sData?.generalComment?.aiDraft || '',
+      attendance: {
+        sakit: att.sickLeave ?? 0,
+        izin: att.excusedLeave ?? 0,
+        tanpaKeterangan: att.absent ?? 0
+      },
+      signatory: {
+        principalName: reportConfig?.principalName || 'Principal',
+        principalNiy: reportConfig?.principalNIY || '',
+        principalSignatureUrl: reportConfig?.principalSignatureUrl || null,
+        homeroomTeacherName: selectedClass?.homeroomTeacherName || homeroomTeacherProfile?.displayName || 'Homeroom Teacher',
+        homeroomTeacherNiy: homeroomTeacherProfile?.niy || '',
+        homeroomTeacherSignatureUrl: homeroomTeacherProfile?.signatureUrl || null
+      }
+    };
+  };
+
+  const handleOpenPreview = (student: Student) => {
+    const published = publishedReportsMap[student.id];
+    if (published && published.reportSnapshot) {
+      setPreviewSnapshot(published.reportSnapshot);
+      setPreviewStudent(student);
+    } else {
+      setPreviewSnapshot(buildLiveSnapshot(student));
+      setPreviewStudent(student);
+    }
+  };
+
+  const executePublishStudent = async (student: Student) => {
+    if (!selectedClass) return;
+
+    setActiveGeneratingStudent(student);
+    // Give DOM time to update the hidden print template
+    await new Promise(r => setTimeout(r, 400));
+
+    const page1El = document.getElementById('jh-midterm-generator-page-1');
+    const page2El = document.getElementById('jh-midterm-generator-page-2');
+
+    if (!page1El || !page2El) {
+      throw new Error('Element render layout PDF tidak ditemukan.');
+    }
+
+    // 1. Generate PDF
+    const pdfBlob = await generateMidtermPdfBlob(page1El, page2El);
+    const fileName = normalizeMidtermFilename(selectedClass.name, student.name, midtermTerm, academicYear);
+
+    // 2. Upload to Google Drive
+    toast.loading(`Mengunggah PDF ${student.name} ke Google Drive...`, { id: `pub-${student.id}` });
+    const token = await getGoogleDriveToken();
+    let driveFileId = 'local-preview';
+    let driveFileUrl = '#';
+
+    if (token) {
+      try {
+        const uploadRes = await uploadMidtermPdfToDrive(pdfBlob, fileName, token);
+        driveFileId = uploadRes.driveFileId;
+        driveFileUrl = uploadRes.driveFileUrl;
+      } catch (driveErr: any) {
+        console.warn('Drive upload warning:', driveErr);
+        // Continue to save metadata so report is published even if drive transiently fails
+      }
+    }
+
+    // 3. Compute version & build snapshot
+    const version = await getNextMidtermReportVersion(
+      student.id,
+      selectedClass.id,
+      academicYear,
+      semester,
+      midtermTerm
+    );
+
+    const snapshot = buildLiveSnapshot(student);
+
+    // 4. Save Published Report
+    await savePublishedMidtermReport({
+      id: '',
+      unit: 'JUNIOR_HIGH',
+      reportType: 'MIDTERM_REPORT',
+      studentId: student.id,
+      studentNameSnapshot: student.name,
+      nisnSnapshot: student.nisn || (student as any).nis || '-',
+      classId: selectedClass.id,
+      classNameSnapshot: selectedClass.name,
+      gradeSnapshot: student.grade || 7,
+      academicYear,
+      semester,
+      midtermTerm,
+      version,
+      driveFolderId: '1mjxXJKaKSCfn0RNpJWQTsI65DwnhiyqK',
+      driveFileId,
+      driveFileUrl,
+      fileName,
+      reportSnapshot: snapshot,
+      generatedBy: currentUser.uid,
+      generatedByName: currentUser.displayName || (currentUser as any).name || 'Guru',
+      generatedAt: Date.now()
+    });
+
+    toast.success(`Rapor ${student.name} (v${version}) berhasil diterbitkan!`, { id: `pub-${student.id}` });
+  };
+
+  const handlePublishSingle = async (student: Student) => {
+    if (!canPublish) {
+      toast.error('Anda tidak memiliki hak akses untuk mempublikasikan rapor ini.');
+      return;
+    }
+
+    const sData = studentDataMap[student.id];
+    const published = publishedReportsMap[student.id];
+    const evalStatus = evaluateStudentMidtermStatus(student, masterGoalsMap, sData, false);
+
+    if (!evalStatus.isReady) {
+      toast.error(`Rapor belum lengkap: ${evalStatus.issues[0] || 'Periksa learning goals & comments.'}`);
+      return;
+    }
+
+    if (published) {
+      if (!window.confirm(`Rapor ${student.name} sudah pernah terbit (${published.fileName}). Apakah Anda ingin menerbitkan revisi baru (v${published.version + 1})?`)) {
+        return;
+      }
+    }
+
+    setPublishingStudentId(student.id);
+    try {
+      await executePublishStudent(student);
+      await onRefreshData();
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Gagal mempublikasikan rapor: ' + (err.message || 'Error'), { id: `pub-${student.id}` });
+    } finally {
+      setPublishingStudentId(null);
+      setActiveGeneratingStudent(null);
+    }
+  };
+
+  const handleBulkPublishReady = async () => {
+    if (!canPublish) return;
+
+    const readyStudents = students.filter(student => {
+      const sData = studentDataMap[student.id];
+      const published = publishedReportsMap[student.id];
+      if (published) return false; // skip already published in bulk
+      const evalStatus = evaluateStudentMidtermStatus(student, masterGoalsMap, sData, false);
+      return evalStatus.isReady;
+    });
+
+    if (readyStudents.length === 0) {
+      toast.info('Tidak ada siswa dengan status SIAP TERBIT.');
+      return;
+    }
+
+    if (!window.confirm(`Terbitkan rapor untuk ${readyStudents.length} siswa yang sudah SIAP TERBIT?`)) {
+      return;
+    }
+
+    setBulkPublishing(true);
+    setPublishProgress({ current: 0, total: readyStudents.length });
+
+    let successCount = 0;
+    for (let i = 0; i < readyStudents.length; i++) {
+      const st = readyStudents[i];
+      setPublishProgress({ current: i + 1, total: readyStudents.length });
+      try {
+        await executePublishStudent(st);
+        successCount++;
+      } catch (err) {
+        console.error(`Error bulk publishing ${st.name}:`, err);
+      }
+    }
+
+    setBulkPublishing(false);
+    setPublishProgress(null);
+    setActiveGeneratingStudent(null);
+    await onRefreshData();
+    toast.success(`Selesai mempublikasikan ${successCount} dari ${readyStudents.length} rapor siswa.`);
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Top Banner & Permission Notice */}
+      {!canPublish && (
+        <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2.5 text-xs text-amber-900 font-medium">
+          <Lock size={16} className="text-amber-600 shrink-0" />
+          <span>
+            Hanya <strong>Wali Kelas</strong> dari kelas ini atau <strong>Kepala Sekolah / Super Admin / Sekretaris</strong> yang dapat mempublikasikan rapor. Anda dapat melihat status dan pratinjau.
+          </span>
+        </div>
+      )}
+
+      {/* Filter Bar & Bulk Actions */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        {/* Filter Pills */}
+        <div className="flex flex-wrap items-center gap-2">
+          {(['ALL', 'READY', 'PUBLISHED', 'DRAFT'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setFilterStatus(tab)}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${
+                filterStatus === tab
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              {tab === 'ALL' && `Semua (${students.length})`}
+              {tab === 'READY' && 'Siap Terbit'}
+              {tab === 'PUBLISHED' && 'Sudah Terbit'}
+              {tab === 'DRAFT' && 'Draft (Belum Lengkap)'}
+            </button>
+          ))}
+        </div>
+
+        {/* Search & Bulk Publish Button */}
+        <div className="flex items-center gap-3">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Cari siswa/NISN..."
+            className="text-xs px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10 w-44"
+          />
+
+          {canPublish && (
+            <button
+              onClick={handleBulkPublishReady}
+              disabled={bulkPublishing}
+              className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-emerald-700 transition-all shadow-sm disabled:opacity-50 cursor-pointer"
+            >
+              <Upload size={14} />
+              {bulkPublishing
+                ? `Menerbitkan (${publishProgress?.current}/${publishProgress?.total})...`
+                : 'Publish Semua yang Siap'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Table of Students & Readiness Status */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-100 text-slate-700 text-[11px] font-bold uppercase tracking-wider border-b border-slate-200">
+                <th className="p-3.5 w-12 text-center">No</th>
+                <th className="p-3.5 w-52">Nama Siswa</th>
+                <th className="p-3.5 w-28">NISN</th>
+                <th className="p-3.5 w-40 text-center">Learning Goals</th>
+                <th className="p-3.5 w-36 text-center">General Comments</th>
+                <th className="p-3.5 w-32 text-center">Status Rapor</th>
+                <th className="p-3.5 w-52 text-right">Aksi</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-xs">
+              {filteredStudents.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-8 text-center text-slate-400">
+                    Tidak ada siswa yang sesuai dengan filter.
+                  </td>
+                </tr>
+              ) : (
+                filteredStudents.map((student, idx) => {
+                  const sData = studentDataMap[student.id];
+                  const published = publishedReportsMap[student.id];
+                  const isPublished = Boolean(published);
+                  const evalStatus = evaluateStudentMidtermStatus(student, masterGoalsMap, sData, isPublished);
+                  const isPublishing = publishingStudentId === student.id;
+
+                  const gc = sData?.generalComment;
+                  const hasFinalComment = Boolean(gc?.finalComment?.trim());
+
+                  return (
+                    <tr key={student.id} className="hover:bg-slate-50/70 transition-colors">
+                      <td className="p-3.5 text-center font-bold text-slate-400">{idx + 1}</td>
+                      <td className="p-3.5">
+                        <div className="font-bold text-slate-900 uppercase">{student.name}</div>
+                        {published && (
+                          <div className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1 mt-0.5">
+                            <Check size={11} /> Terbit: v{published.version} ({new Date(published.generatedAt).toLocaleDateString('id-ID')})
+                          </div>
+                        )}
+                      </td>
+                      <td className="p-3.5 font-medium text-slate-500">
+                        {student.nisn || (student as any).nis || '-'}
+                      </td>
+
+                      {/* Learning Goals Column */}
+                      <td className="p-3.5 text-center">
+                        {isPublished ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg">
+                            <CheckCircle2 size={12} /> Lengkap
+                          </span>
+                        ) : evalStatus.missingGoalsSubjects.length > 0 ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-lg" title={`Belum ada goal di: ${evalStatus.missingGoalsSubjects.join(', ')}`}>
+                            <AlertCircle size={12} /> {evalStatus.missingGoalsSubjects.length} Mapel Kosong
+                          </span>
+                        ) : evalStatus.totalGoals === 0 ? (
+                          <span className="text-[10px] text-slate-400 font-medium">Belum ada goal</span>
+                        ) : evalStatus.completedGoals === evalStatus.totalGoals ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg">
+                            <CheckCircle2 size={12} /> {evalStatus.completedGoals}/{evalStatus.totalGoals} Remark
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-lg">
+                            {evalStatus.completedGoals}/{evalStatus.totalGoals} Terisi
+                          </span>
+                        )}
+                      </td>
+
+                      {/* General Comments Column */}
+                      <td className="p-3.5 text-center">
+                        {isPublished ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg">
+                            <CheckCircle2 size={12} /> Final
+                          </span>
+                        ) : gc?.isFinal ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg">
+                            <CheckCircle2 size={12} /> Final
+                          </span>
+                        ) : hasFinalComment ? (
+                          <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-lg">
+                            Draf Ada
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-lg">
+                            Belum Ada
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Status Rapor Column */}
+                      <td className="p-3.5 text-center">
+                        {isPublished ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 shadow-xs">
+                            <CheckCircle2 size={12} /> TERBIT v{published.version}
+                          </span>
+                        ) : evalStatus.isReady ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-blue-100 text-blue-800 shadow-xs">
+                            SIAP TERBIT
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 shadow-xs">
+                            BELUM LENGKAP
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Actions Column */}
+                      <td className="p-3.5 text-right space-x-2">
+                        <button
+                          onClick={() => handleOpenPreview(student)}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                          title="Pratinjau Rapor PDF"
+                        >
+                          <Eye size={13} />
+                          Preview
+                        </button>
+
+                        {canPublish && (
+                          <button
+                            onClick={() => handlePublishSingle(student)}
+                            disabled={isPublishing || (!isPublished && !evalStatus.isReady)}
+                            className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all shadow-xs cursor-pointer ${
+                              isPublished
+                                ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                                : evalStatus.isReady
+                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                            }`}
+                            title={
+                              isPublished
+                                ? 'Terbitkan revisi baru (v+1)'
+                                : evalStatus.isReady
+                                ? 'Publish rapor ke Google Drive & Orang Tua'
+                                : 'Belum dapat dipublish karena data belum lengkap'
+                            }
+                          >
+                            <Upload size={13} className={isPublishing ? 'animate-spin' : ''} />
+                            {isPublishing ? 'Menerbitkan...' : isPublished ? 'Revisi (v+1)' : 'Publish'}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* MODAL PREVIEW PDF */}
+      {previewStudent && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 rounded-3xl max-w-4xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-slate-700">
+            {/* Modal Header */}
+            <div className="p-4 px-6 border-b border-slate-800 flex items-center justify-between text-white">
+              <div className="flex items-center gap-3">
+                <FileText className="text-emerald-400" size={20} />
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-wider">
+                    Pratinjau Rapor Midterm — {previewStudent.name}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    {previewSnapshot ? 'Mode Dokumen Snapshot Resmi' : 'Mode Live Preview'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => {
+                  setPreviewStudent(null);
+                  setPreviewSnapshot(null);
+                }}
+                className="p-1.5 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Content / Printable Template Preview */}
+            <div className="flex-1 overflow-y-auto p-6 bg-slate-800 flex justify-center">
+              <MidtermPdfTemplate
+                snapshot={previewSnapshot || undefined}
+                student={previewStudent}
+                currentClass={selectedClass || undefined}
+                academicYear={academicYear}
+                semester={semester}
+                midtermTerm={midtermTerm}
+                masterGoalsMap={masterGoalsMap}
+                studentDataDoc={studentDataMap[previewStudent.id]}
+                attendance={{
+                  sakit: studentAttendanceMap[previewStudent.id]?.sickLeave ?? 0,
+                  izin: studentAttendanceMap[previewStudent.id]?.excusedLeave ?? 0,
+                  tanpaKeterangan: studentAttendanceMap[previewStudent.id]?.absent ?? 0
+                }}
+                reportConfig={reportConfig}
+                homeroomTeacherProfile={homeroomTeacherProfile || undefined}
+              />
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 px-6 border-t border-slate-800 flex items-center justify-between bg-slate-900 text-white rounded-b-3xl">
+              <span className="text-xs text-slate-400">
+                Dokumen A4 resmi standar Lazuardi Junior High
+              </span>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => window.print()}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all"
+                >
+                  <Download size={14} /> Cetak / Print
+                </button>
+                <button
+                  onClick={() => {
+                    setPreviewStudent(null);
+                    setPreviewSnapshot(null);
+                  }}
+                  className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold rounded-xl transition-all"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hidden container for off-screen html2canvas PDF rendering */}
+      {activeGeneratingStudent && (
+        <div style={{ position: 'fixed', left: '-9999px', top: '-9999px', zIndex: -100 }}>
+          <MidtermPdfTemplate
+            page1Id="jh-midterm-generator-page-1"
+            page2Id="jh-midterm-generator-page-2"
+            student={activeGeneratingStudent}
+            currentClass={selectedClass || undefined}
+            academicYear={academicYear}
+            semester={semester}
+            midtermTerm={midtermTerm}
+            masterGoalsMap={masterGoalsMap}
+            studentDataDoc={studentDataMap[activeGeneratingStudent.id]}
+            attendance={{
+              sakit: studentAttendanceMap[activeGeneratingStudent.id]?.sickLeave ?? 0,
+              izin: studentAttendanceMap[activeGeneratingStudent.id]?.excusedLeave ?? 0,
+              tanpaKeterangan: studentAttendanceMap[activeGeneratingStudent.id]?.absent ?? 0
+            }}
+            reportConfig={reportConfig}
+            homeroomTeacherProfile={homeroomTeacherProfile || undefined}
+          />
+        </div>
+      )}
+    </div>
+  );
+};

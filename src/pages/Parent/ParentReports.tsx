@@ -4,7 +4,7 @@ import {
   FileText, Download, Eye,
   Calendar, Award, ChevronLeft,
   Loader2, CheckCircle2,
-  Heart
+  Heart, ExternalLink
 } from 'lucide-react';
 import { useOutletContext, Link, useSearchParams } from 'react-router-dom';
 import {
@@ -13,6 +13,8 @@ import {
   Student,
   ParentReportView
 } from '../../types';
+import type { PublishedMidtermReport } from '../../types/midtermReport';
+import { recordMidtermReportOpen } from '../../services/juniorHighMidtermService';
 import {
   getStudentById,
   getParentReportViews,
@@ -128,7 +130,8 @@ export default function ParentReports() {
   const [loading, setLoading] = React.useState(true);
 
   const [weeklyReports, setWeeklyReports] = React.useState<WeeklyReport[]>([]);
-  const [activeTab, setActiveTab] = React.useState<'ACADEMIC' | 'WEEKLY'>('ACADEMIC');
+  const [midtermReports, setMidtermReports] = React.useState<PublishedMidtermReport[]>([]);
+  const [activeTab, setActiveTab] = React.useState<'ACADEMIC' | 'WEEKLY' | 'MIDTERM'>('ACADEMIC');
 
   React.useEffect(() => {
     const fetchData = async () => {
@@ -234,6 +237,29 @@ export default function ParentReports() {
           setWeeklyReports([]);
           setActiveTab('ACADEMIC');
         }
+
+        // Fetch Junior High published midterm reports
+        try {
+          const midtermSnap = await getDocs(
+            query(
+              collection(db, 'jh_midterm_published_reports'),
+              where('studentId', 'in', studentIdsToSearch.slice(0, 10))
+            )
+          );
+          const mList: PublishedMidtermReport[] = [];
+          midtermSnap.docs.forEach(docSnap => {
+            mList.push({ id: docSnap.id, ...docSnap.data() } as PublishedMidtermReport);
+          });
+          // Keep highest version per midterm term/semester
+          mList.sort((a, b) => (b.generatedAt || 0) - (a.generatedAt || 0));
+          setMidtermReports(mList);
+          if (studentData.unitId === 'JUNIOR_HIGH' && mList.length > 0 && filteredReports.length === 0) {
+            setActiveTab('MIDTERM');
+          }
+        } catch (mErr) {
+          console.warn("Failed to query Midterm reports for parent:", mErr);
+          setMidtermReports([]);
+        }
       } catch (err) {
         console.error(err);
         setReports([]);
@@ -254,6 +280,15 @@ export default function ParentReports() {
       } catch (err) {
         console.error('Error marking as viewed:', err);
       }
+    }
+  };
+
+  const handleOpenMidtermReport = async (rep: PublishedMidtermReport) => {
+    try {
+      await recordMidtermReportOpen(rep.id, currentUser?.email || 'parent', rep.studentId);
+      setMidtermReports(prev => prev.map(m => m.id === rep.id ? { ...m, isOpened: true, openCount: (m.openCount || 0) + 1 } : m));
+    } catch (err) {
+      console.warn('Error recording midterm report open:', err);
     }
   };
 
@@ -313,9 +348,45 @@ export default function ParentReports() {
         >
           Rapor Akhir Semester & Academic
         </button>
+
+        {weeklyReports.length > 0 && (
+          <button
+            id="tab-btn-weekly"
+            onClick={() => setActiveTab('WEEKLY')}
+            className={cn(
+              'px-4 py-2 font-bold uppercase text-[11px] tracking-wider transition-all border-b-2 -mb-[2px] text-left sm:text-center cursor-pointer flex items-center gap-1.5',
+              activeTab === 'WEEKLY'
+                ? 'border-emerald-600 text-emerald-600'
+                : 'border-transparent text-gray-400 hover:text-gray-600'
+            )}
+          >
+            Laporan Mingguan
+            <span className="px-1.5 py-0.2 rounded-full text-[9px] bg-emerald-100 text-emerald-800 font-black">
+              {weeklyReports.length}
+            </span>
+          </button>
+        )}
+
+        {midtermReports.length > 0 && (
+          <button
+            id="tab-btn-midterm"
+            onClick={() => setActiveTab('MIDTERM')}
+            className={cn(
+              'px-4 py-2 font-bold uppercase text-[11px] tracking-wider transition-all border-b-2 -mb-[2px] text-left sm:text-center cursor-pointer flex items-center gap-1.5',
+              activeTab === 'MIDTERM'
+                ? 'border-emerald-600 text-emerald-600'
+                : 'border-transparent text-gray-400 hover:text-gray-600'
+            )}
+          >
+            Midterm Report
+            <span className="px-1.5 py-0.2 rounded-full text-[9px] bg-emerald-100 text-emerald-800 font-black">
+              {midtermReports.length}
+            </span>
+          </button>
+        )}
       </div>
 
-      {activeTab === 'ACADEMIC' ? (
+      {activeTab === 'ACADEMIC' && (
         reports.length === 0 ? (
           <div className="bg-gray-50 border border-dashed border-gray-200 p-10 rounded-2xl text-center space-y-3">
             <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center mx-auto">
@@ -423,7 +494,9 @@ export default function ParentReports() {
             })}
           </div>
         )
-      ) : (
+      )}
+
+      {activeTab === 'WEEKLY' && (
         weeklyReports.length === 0 ? (
           <div className="bg-gray-50 border border-dashed border-gray-200 p-10 rounded-2xl text-center space-y-3">
             <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center mx-auto">
@@ -502,6 +575,74 @@ export default function ParentReports() {
                       </a>
                     )}
                   </div>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )
+      )}
+
+      {activeTab === 'MIDTERM' && (
+        midtermReports.length === 0 ? (
+          <div className="bg-gray-50 border border-dashed border-gray-200 p-10 rounded-2xl text-center space-y-3">
+            <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center mx-auto">
+              <FileText className="text-gray-300" size={24} />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-sm font-extrabold text-gray-900 uppercase tracking-tight">Belum Ada Midterm Report</h3>
+              <p className="text-xs text-gray-400 font-bold max-w-xs mx-auto leading-relaxed">
+                Rapor midterm untuk ananda belum diterbitkan oleh pihak sekolah.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {midtermReports.map((rep) => (
+              <motion.div
+                key={rep.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-white rounded-2xl p-5 border border-gray-200 shadow-sm hover:border-emerald-300 hover:shadow-md transition-all space-y-4"
+              >
+                <div className="flex justify-between items-start">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <FileText size={20} />
+                  </div>
+                  <div className="text-right">
+                    <span className="px-2.5 py-1 bg-slate-900 text-white rounded-lg text-[8px] font-black uppercase tracking-widest">
+                      v{rep.version}
+                    </span>
+                    <p className="text-[9px] font-bold text-gray-400 mt-1">
+                      {new Date(rep.generatedAt).toLocaleDateString('id-ID')}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <h3 className="text-sm font-black uppercase text-gray-900 tracking-tight">
+                    Midterm {rep.midtermTerm} — Semester {rep.semester}
+                  </h3>
+                  <p className="text-xs text-gray-500 font-medium">
+                    Tahun Ajaran {rep.academicYear} • {rep.classNameSnapshot}
+                  </p>
+                </div>
+
+                <div className="pt-2 border-t border-gray-100">
+                  {rep.driveFileUrl && rep.driveFileUrl !== '#' ? (
+                    <a
+                      href={rep.driveFileUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => handleOpenMidtermReport(rep)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-sm"
+                    >
+                      <ExternalLink size={14} /> Buka Rapor PDF
+                    </a>
+                  ) : (
+                    <div className="text-center text-xs text-gray-400 font-medium py-2">
+                      File sedang diproses
+                    </div>
+                  )}
                 </div>
               </motion.div>
             ))}

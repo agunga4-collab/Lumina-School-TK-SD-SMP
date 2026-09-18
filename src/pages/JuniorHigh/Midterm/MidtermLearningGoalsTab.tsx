@@ -1,0 +1,534 @@
+import * as React from 'react';
+import { 
+  Plus, Trash2, Edit2, Check, AlertCircle, Save, 
+  Layers, CheckCircle2, ChevronRight, BookOpen
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { 
+  JH_MIDTERM_CATEGORIES, 
+  type MidtermMasterGoalDoc, 
+  type MidtermStudentDataDoc,
+  type MidtermGoalItem
+} from '../../../types/midtermReport';
+import { 
+  MIDTERM_REMARKS_CONFIG, 
+  SPIRITUAL_HEALTH_OPTIONS,
+  canUserEditMidtermGoals,
+  saveMidtermMasterGoal,
+  saveMidtermStudentRemark
+} from '../../../services/juniorHighMidtermService';
+import type { Student, Class, User } from '../../../types';
+
+interface MidtermLearningGoalsTabProps {
+  currentUser: User;
+  selectedClass: Class | null;
+  students: Student[];
+  academicYear: string;
+  semester: string;
+  midtermTerm: string;
+  masterGoalsMap: Record<string, MidtermMasterGoalDoc>;
+  studentDataMap: Record<string, MidtermStudentDataDoc>;
+  onRefreshData: () => Promise<void>;
+  loading: boolean;
+}
+
+export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = ({
+  currentUser,
+  selectedClass,
+  students,
+  academicYear,
+  semester,
+  midtermTerm,
+  masterGoalsMap,
+  studentDataMap,
+  onRefreshData,
+  loading
+}) => {
+  const [selectedCategoryIndex, setSelectedCategoryIndex] = React.useState<number>(0);
+  const [selectedSubject, setSelectedSubject] = React.useState<string>('Bahasa Indonesia');
+  
+  // Master Goal editing state
+  const [isAddingGoal, setIsAddingGoal] = React.useState<boolean>(false);
+  const [newGoalText, setNewGoalText] = React.useState<string>('');
+  const [editingGoalId, setEditingGoalId] = React.useState<string | null>(null);
+  const [editingGoalText, setEditingGoalText] = React.useState<string>('');
+  const [savingMaster, setSavingMaster] = React.useState<boolean>(false);
+
+  // Remarks saving state
+  const [savingRemarkKey, setSavingRemarkKey] = React.useState<string | null>(null);
+
+  const currentCategory = JH_MIDTERM_CATEGORIES[selectedCategoryIndex];
+
+  // Auto sync selected subject when category changes
+  React.useEffect(() => {
+    if (currentCategory && !currentCategory.subjects.includes(selectedSubject)) {
+      setSelectedSubject(currentCategory.subjects[0]);
+    }
+  }, [selectedCategoryIndex, currentCategory, selectedSubject]);
+
+  const canEdit = canUserEditMidtermGoals(currentUser, selectedClass, selectedSubject);
+  const currentMasterGoalDoc = masterGoalsMap[selectedSubject];
+  const goals: MidtermGoalItem[] = currentMasterGoalDoc?.goals || [];
+
+  const handleAddGoal = async () => {
+    if (!newGoalText.trim() || !selectedClass) return;
+    setSavingMaster(true);
+    try {
+      const newGoal: MidtermGoalItem = {
+        id: `goal_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        text: newGoalText.trim(),
+        order: goals.length + 1
+      };
+
+      const updatedGoals = [...goals, newGoal];
+      await saveMidtermMasterGoal({
+        classId: selectedClass.id,
+        className: selectedClass.name,
+        academicYear,
+        semester,
+        midtermTerm,
+        category: currentCategory.name,
+        subjectKey: selectedSubject,
+        goals: updatedGoals,
+        updatedBy: currentUser.uid,
+        updatedByName: currentUser.displayName || (currentUser as any).name || 'Guru'
+      });
+
+      setNewGoalText('');
+      setIsAddingGoal(false);
+      await onRefreshData();
+      toast.success(`Learning goal untuk ${selectedSubject} berhasil ditambahkan.`);
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Gagal menambahkan learning goal: ' + (err.message || 'Error'));
+    } finally {
+      setSavingMaster(false);
+    }
+  };
+
+  const handleUpdateGoal = async (goalId: string) => {
+    if (!editingGoalText.trim() || !selectedClass) return;
+    setSavingMaster(true);
+    try {
+      const updatedGoals = goals.map(g => 
+        g.id === goalId ? { ...g, text: editingGoalText.trim() } : g
+      );
+
+      await saveMidtermMasterGoal({
+        classId: selectedClass.id,
+        className: selectedClass.name,
+        academicYear,
+        semester,
+        midtermTerm,
+        category: currentCategory.name,
+        subjectKey: selectedSubject,
+        goals: updatedGoals,
+        updatedBy: currentUser.uid,
+        updatedByName: currentUser.displayName || (currentUser as any).name || 'Guru'
+      });
+
+      setEditingGoalId(null);
+      setEditingGoalText('');
+      await onRefreshData();
+      toast.success('Learning goal berhasil diperbarui.');
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Gagal memperbarui learning goal: ' + (err.message || 'Error'));
+    } finally {
+      setSavingMaster(false);
+    }
+  };
+
+  const handleDeleteGoal = async (goalId: string) => {
+    if (!selectedClass) return;
+    if (!window.confirm('Yakin ingin menghapus learning goal ini? Remark siswa yang terkait akan dinonaktifkan.')) {
+      return;
+    }
+    setSavingMaster(true);
+    try {
+      const updatedGoals = goals.filter(g => g.id !== goalId).map((g, idx) => ({ ...g, order: idx + 1 }));
+      await saveMidtermMasterGoal({
+        classId: selectedClass.id,
+        className: selectedClass.name,
+        academicYear,
+        semester,
+        midtermTerm,
+        category: currentCategory.name,
+        subjectKey: selectedSubject,
+        goals: updatedGoals,
+        updatedBy: currentUser.uid,
+        updatedByName: currentUser.displayName || (currentUser as any).name || 'Guru'
+      });
+
+      await onRefreshData();
+      toast.success('Learning goal berhasil dihapus.');
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Gagal menghapus learning goal: ' + (err.message || 'Error'));
+    } finally {
+      setSavingMaster(false);
+    }
+  };
+
+  const handleRemarkChange = async (student: Student, goalId: string, remarkValue: string) => {
+    if (!selectedClass || !canEdit) return;
+    const remarkKey = `${student.id}_${goalId}`;
+    setSavingRemarkKey(remarkKey);
+    try {
+      const isSpiritual = selectedSubject === 'Spiritual Health';
+      await saveMidtermStudentRemark(
+        student.id,
+        student.name,
+        selectedClass.id,
+        academicYear,
+        semester,
+        midtermTerm,
+        goalId,
+        remarkValue,
+        currentUser.uid,
+        isSpiritual
+      );
+      await onRefreshData();
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Gagal menyimpan remark: ' + (err.message || 'Error'));
+    } finally {
+      setSavingRemarkKey(null);
+    }
+  };
+
+  const isSpiritualHealth = selectedSubject === 'Spiritual Health';
+
+  return (
+    <div className="space-y-6">
+      {/* Category Tabs */}
+      <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
+        {JH_MIDTERM_CATEGORIES.map((cat, idx) => {
+          const isActive = idx === selectedCategoryIndex;
+          return (
+            <button
+              key={cat.id}
+              onClick={() => setSelectedCategoryIndex(idx)}
+              className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 ${
+                isActive
+                  ? 'bg-slate-900 text-white shadow-sm ring-2 ring-slate-900/10'
+                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+              }`}
+            >
+              <Layers size={14} className={isActive ? 'text-emerald-400' : 'text-slate-400'} />
+              {cat.name}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Subject Pills within Category */}
+      <div className="flex flex-wrap items-center gap-2 bg-slate-50 p-3 rounded-2xl border border-slate-200">
+        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mr-1">
+          Mata Pelajaran:
+        </span>
+        {currentCategory.subjects.map(subj => {
+          const isCurrent = subj === selectedSubject;
+          const master = masterGoalsMap[subj];
+          const count = master?.goals?.length || 0;
+          return (
+            <button
+              key={subj}
+              onClick={() => setSelectedSubject(subj)}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                isCurrent
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'bg-white text-slate-700 hover:bg-slate-200 border border-slate-200'
+              }`}
+            >
+              <span>{subj}</span>
+              <span
+                className={`px-1.5 py-0.5 rounded-md text-[10px] font-black ${
+                  isCurrent ? 'bg-emerald-700 text-white' : count > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                }`}
+              >
+                {count} Goal{count !== 1 ? 's' : ''}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Master Learning Goals Management Card */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <BookOpen className="text-emerald-600" size={18} />
+              <h3 className="text-base font-extrabold text-slate-900 uppercase">
+                Learning Goals: {selectedSubject}
+              </h3>
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Definisikan learning goals untuk {selectedClass?.name || 'kelas'} pada semester {semester}, Midterm {midtermTerm}.
+            </p>
+          </div>
+
+          {canEdit && !isAddingGoal && (
+            <button
+              onClick={() => {
+                setIsAddingGoal(true);
+                setNewGoalText('');
+              }}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-slate-800 transition-all cursor-pointer shadow-sm"
+            >
+              <Plus size={14} />
+              Tambah Goal
+            </button>
+          )}
+        </div>
+
+        {/* Learning Goals List */}
+        {goals.length === 0 ? (
+          <div className="p-8 border border-dashed border-amber-300 rounded-xl bg-amber-50/50 text-center space-y-2">
+            <AlertCircle className="mx-auto text-amber-600" size={24} />
+            <div className="text-xs font-bold text-amber-900 uppercase">
+              Belum Ada Learning Goal untuk {selectedSubject}
+            </div>
+            <p className="text-xs text-amber-700 max-w-md mx-auto">
+              Silakan tambahkan minimal 1 learning goal untuk mata pelajaran ini agar dapat menginput remark siswa dan memenuhi syarat publikasi rapor.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {goals.map((g, idx) => (
+              <div
+                key={g.id}
+                className="flex items-start justify-between gap-3 p-3.5 bg-slate-50 border border-slate-200 rounded-xl hover:bg-slate-100/70 transition-colors"
+              >
+                <div className="flex items-start gap-3 flex-1">
+                  <span className="w-6 h-6 rounded-lg bg-slate-200 text-slate-800 flex items-center justify-center text-xs font-black shrink-0 mt-0.5">
+                    {idx + 1}
+                  </span>
+
+                  {editingGoalId === g.id ? (
+                    <div className="flex-1 space-y-2">
+                      <textarea
+                        value={editingGoalText}
+                        onChange={(e) => setEditingGoalText(e.target.value)}
+                        rows={2}
+                        className="w-full text-xs p-2.5 bg-white border border-emerald-500 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                        placeholder="Ketik learning goal..."
+                      />
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleUpdateGoal(g.id)}
+                          disabled={savingMaster}
+                          className="px-3 py-1 bg-emerald-600 text-white rounded-lg text-xs font-bold flex items-center gap-1 hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          <Check size={12} /> Simpan
+                        </button>
+                        <button
+                          onClick={() => setEditingGoalId(null)}
+                          className="px-3 py-1 bg-slate-200 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-300"
+                        >
+                          Batal
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-xs font-medium text-slate-900 leading-relaxed pt-0.5">
+                      {g.text}
+                    </div>
+                  )}
+                </div>
+
+                {canEdit && editingGoalId !== g.id && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => {
+                        setEditingGoalId(g.id);
+                        setEditingGoalText(g.text);
+                      }}
+                      className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-white rounded-lg transition-colors"
+                      title="Edit Goal"
+                    >
+                      <Edit2 size={14} />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteGoal(g.id)}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-white rounded-lg transition-colors"
+                      title="Hapus Goal"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Add Goal Input Area */}
+        {isAddingGoal && (
+          <div className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-xl space-y-3">
+            <label className="block text-xs font-bold text-emerald-950 uppercase tracking-wider">
+              Learning Goal Baru
+            </label>
+            <textarea
+              value={newGoalText}
+              onChange={(e) => setNewGoalText(e.target.value)}
+              rows={2}
+              placeholder={`Ketik learning goal untuk ${selectedSubject}...`}
+              className="w-full text-xs p-3 bg-white border border-emerald-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+            />
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleAddGoal}
+                disabled={savingMaster || !newGoalText.trim()}
+                className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-emerald-700 transition-all disabled:opacity-50"
+              >
+                <Save size={13} />
+                {savingMaster ? 'Menyimpan...' : 'Simpan Goal'}
+              </button>
+              <button
+                onClick={() => {
+                  setIsAddingGoal(false);
+                  setNewGoalText('');
+                }}
+                className="px-3.5 py-2 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-300 transition-all"
+              >
+                Batal
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Student Remarks Table Card */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div>
+            <h3 className="text-base font-extrabold text-slate-900 uppercase">
+              Input Remark Siswa: {selectedSubject}
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {isSpiritualHealth 
+                ? 'Pilih evaluasi Spiritual Health: Sangat Baik, Baik, atau Cukup.'
+                : 'Pilih status ketercapaian: A (Achieved), D (Developing), B (Beginning).'}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs font-bold">
+            {!isSpiritualHealth && (
+              <div className="flex items-center gap-3 bg-slate-100 px-3 py-1.5 rounded-xl text-slate-700 text-[11px]">
+                <span><strong className="text-emerald-700">A</strong>: Achieved</span>
+                <span><strong className="text-amber-700">D</strong>: Developing</span>
+                <span><strong className="text-rose-700">B</strong>: Beginning</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {goals.length === 0 ? (
+          <div className="p-6 text-center text-xs text-slate-400 font-medium">
+            Tambahkan minimal 1 learning goal di atas sebelum menginput remark siswa.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[700px]">
+              <thead>
+                <tr className="bg-slate-100 text-slate-700 text-[11px] font-bold uppercase tracking-wider border-b border-slate-200">
+                  <th className="p-3 w-12 text-center">No</th>
+                  <th className="p-3 w-48">Nama Siswa</th>
+                  <th className="p-3 w-28">NISN</th>
+                  {goals.map((g, idx) => (
+                    <th key={g.id} className="p-3 text-center">
+                      <div className="line-clamp-1 max-w-[200px]" title={g.text}>
+                        Goal {idx + 1}: {g.text}
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-xs">
+                {students.map((student, sIdx) => {
+                  const sData = studentDataMap[student.id];
+                  const remarks = sData?.remarks || {};
+
+                  return (
+                    <tr key={student.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="p-3 text-center font-bold text-slate-400">{sIdx + 1}</td>
+                      <td className="p-3 font-bold text-slate-900 uppercase">
+                        {student.name}
+                      </td>
+                      <td className="p-3 font-medium text-slate-500">
+                        {student.nisn || (student as any).nis || '-'}
+                      </td>
+
+                      {goals.map((g) => {
+                        const currentVal = remarks[g.id] || (isSpiritualHealth ? sData?.spiritualHealthRemark : '') || '';
+                        const isSavingThis = savingRemarkKey === `${student.id}_${g.id}`;
+
+                        return (
+                          <td key={g.id} className="p-3 text-center align-middle">
+                            {isSpiritualHealth ? (
+                              /* Spiritual Health Select or Chips */
+                              <div className="flex items-center justify-center gap-1">
+                                {SPIRITUAL_HEALTH_OPTIONS.map((opt) => {
+                                  const isSelected = currentVal.toLowerCase() === opt.toLowerCase();
+                                  return (
+                                    <button
+                                      key={opt}
+                                      disabled={!canEdit || isSavingThis}
+                                      onClick={() => handleRemarkChange(student, g.id, opt)}
+                                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                                        isSelected
+                                          ? 'bg-emerald-600 text-white shadow-sm'
+                                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                      } ${!canEdit ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                    >
+                                      {opt}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              /* Standard Subject Remark A / D / B */
+                              <div className="flex items-center justify-center gap-1.5">
+                                {MIDTERM_REMARKS_CONFIG.map((rem) => {
+                                  const isSelected = currentVal === rem.code;
+                                  const colorActive =
+                                    rem.code === 'A'
+                                      ? 'bg-emerald-600 text-white'
+                                      : rem.code === 'D'
+                                      ? 'bg-amber-500 text-white'
+                                      : 'bg-rose-600 text-white';
+
+                                  return (
+                                    <button
+                                      key={rem.code}
+                                      disabled={!canEdit || isSavingThis}
+                                      onClick={() => handleRemarkChange(student, g.id, rem.code)}
+                                      title={`${rem.label} - ${rem.description}`}
+                                      className={`w-7 h-7 rounded-lg text-xs font-black uppercase transition-all cursor-pointer ${
+                                        isSelected
+                                          ? `${colorActive} shadow-sm scale-105 ring-2 ring-slate-900/10`
+                                          : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                                      } ${!canEdit ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                    >
+                                      {rem.code}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
