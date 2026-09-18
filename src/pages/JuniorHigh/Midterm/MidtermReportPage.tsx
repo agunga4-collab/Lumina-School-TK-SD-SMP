@@ -11,7 +11,8 @@ import { useJHReportAttendance } from '../../../hooks/useJHReportAttendance';
 import { 
   fetchMidtermMasterGoals, 
   fetchMidtermStudentData, 
-  fetchPublishedMidtermReports 
+  fetchPublishedMidtermReports,
+  normalizeMidtermStudentData
 } from '../../../services/juniorHighMidtermService';
 import { MidtermLearningGoalsTab } from './MidtermLearningGoalsTab';
 import { MidtermGeneralCommentsTab } from './MidtermGeneralCommentsTab';
@@ -147,10 +148,23 @@ export default function MidtermReportPage() {
         return a.name.localeCompare(b.name);
       });
 
+      const fullStudentDataMap: Record<string, MidtermStudentDataDoc> = {};
+      sortedStudents.forEach(student => {
+        const existing = sData[student.id];
+        fullStudentDataMap[student.id] = existing || normalizeMidtermStudentData(null, {
+          studentId: student.id,
+          studentName: student.name,
+          classId: selectedClassId,
+          academicYear: selectedYear,
+          semester: selectedSemester,
+          midtermTerm: selectedTerm
+        });
+      });
+
       setStudents(sortedStudents);
       setReportConfig(config);
       setMasterGoalsMap(goals);
-      setStudentDataMap(sData);
+      setStudentDataMap(fullStudentDataMap);
       setPublishedReports(published);
 
       // Load homeroom teacher profile if available

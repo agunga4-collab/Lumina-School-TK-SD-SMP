@@ -352,11 +352,15 @@ export async function fetchMidtermStudentData(
     const map: Record<string, MidtermStudentDataDoc> = {};
 
     snapshot.forEach(docSnap => {
-      const data = docSnap.data() as MidtermStudentDataDoc;
-      map[data.studentId] = {
-        ...data,
-        id: docSnap.id,
-      };
+      const data = docSnap.data();
+      map[data.studentId] = normalizeMidtermStudentData(data, {
+        studentId: data.studentId,
+        studentName: data.studentName || 'Siswa',
+        classId,
+        academicYear,
+        semester,
+        midtermTerm
+      });
     });
 
     return map;
@@ -775,3 +779,105 @@ export async function recordParentMidtermReportOpen(
 
 export const recordMidtermReportOpen = (reportId: string, parentEmail: string, studentId: string = '') =>
   recordParentMidtermReportOpen(reportId, parentEmail, studentId || 'unknown');
+
+/**
+ * Normalizes raw Firestore document data for Midterm student record.
+ * Ensures all nested objects and arrays are safely initialized to avoid runtime crashes.
+ */
+export function normalizeMidtermStudentData(
+  raw: any, 
+  context: { 
+    studentId: string; 
+    classId: string; 
+    academicYear: string; 
+    semester: string; 
+    midtermTerm: string; 
+    studentName: string;
+  }
+): MidtermStudentDataDoc {
+  const remarks = raw?.remarks && typeof raw.remarks === 'object' ? raw.remarks : {};
+  const spiritualRemark = typeof raw?.spiritualHealthRemark === 'string' 
+    ? raw.spiritualHealthRemark 
+    : '';
+
+  // Safe comment builder / general comments object
+  const rawGC = raw?.generalComment;
+  const generalComment: MidtermGeneralCommentData = {
+    studentName: typeof rawGC?.studentName === 'string' ? rawGC.studentName : context.studentName,
+    nickname: typeof rawGC?.nickname === 'string' ? rawGC.nickname : '',
+    gender: (rawGC?.gender === 'FEMALE' || rawGC?.gender === 'P') ? 'FEMALE' : 'MALE',
+    strengths: Array.isArray(rawGC?.strengths) ? rawGC.strengths : [],
+    achievements: Array.isArray(rawGC?.achievements) ? rawGC.achievements : [],
+    needsImprovement: Array.isArray(rawGC?.needsImprovement) ? rawGC.needsImprovement : [],
+    manualNotes: typeof rawGC?.manualNotes === 'string' ? rawGC.manualNotes : '',
+    aiDraft: typeof rawGC?.aiDraft === 'string' ? rawGC.aiDraft : '',
+    finalComment: typeof rawGC?.finalComment === 'string' ? rawGC.finalComment : '',
+    isFinal: Boolean(rawGC?.isFinal)
+  };
+
+  const commentBuilder = {
+    strengths: Array.isArray(raw?.commentBuilder?.strengths) 
+      ? raw.commentBuilder.strengths 
+      : (Array.isArray(rawGC?.strengths) ? rawGC.strengths : []),
+    achievements: Array.isArray(raw?.commentBuilder?.achievements) 
+      ? raw.commentBuilder.achievements 
+      : (Array.isArray(rawGC?.achievements) ? rawGC.achievements : []),
+    needsImprovement: Array.isArray(raw?.commentBuilder?.needsImprovement) 
+      ? raw.commentBuilder.needsImprovement 
+      : (Array.isArray(rawGC?.needsImprovement) ? rawGC.needsImprovement : []),
+    manualNotes: typeof raw?.commentBuilder?.manualNotes === 'string' 
+      ? raw.commentBuilder.manualNotes 
+      : (typeof rawGC?.manualNotes === 'string' ? rawGC.manualNotes : ''),
+    aiDraftText: typeof raw?.commentBuilder?.aiDraftText === 'string' 
+      ? raw.commentBuilder.aiDraftText 
+      : (typeof rawGC?.aiDraft === 'string' ? rawGC.aiDraft : '')
+  };
+
+  const attendance = {
+    sakit: Number(raw?.attendance?.sakit ?? 0),
+    izin: Number(raw?.attendance?.izin ?? 0),
+    tanpaKeterangan: Number(raw?.attendance?.tanpaKeterangan ?? 0)
+  };
+
+  const status: MidtermReportStatus = (raw?.status === 'PUBLISHED' || raw?.status === 'READY_TO_PUBLISH' || raw?.status === 'DRAFT')
+    ? raw.status
+    : 'DRAFT';
+
+  return {
+    id: raw?.id ?? getStudentDataDocId(context.studentId, context.classId, context.academicYear, context.semester, context.midtermTerm),
+    studentId: raw?.studentId ?? context.studentId,
+    studentName: raw?.studentName ?? context.studentName,
+    classId: raw?.classId ?? context.classId,
+    academicYear: raw?.academicYear ?? context.academicYear,
+    semester: String(raw?.semester ?? context.semester),
+    midtermTerm: String(raw?.midtermTerm ?? context.midtermTerm),
+    remarks,
+    spiritualHealthRemark: spiritualRemark,
+    generalComment,
+    commentBuilder,
+    attendance,
+    status,
+    updatedAt: Number(raw?.updatedAt ?? Date.now()),
+    updatedBy: typeof raw?.updatedBy === 'string' ? raw.updatedBy : ''
+  };
+}
+
+/**
+ * Utility to get a normalized draft document for a student when no Firestore record exists.
+ */
+export function getDraftMidtermStudentData(
+  student: Student,
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string
+): MidtermStudentDataDoc {
+  return normalizeMidtermStudentData(null, {
+    studentId: student.id,
+    studentName: student.name,
+    classId,
+    academicYear,
+    semester,
+    midtermTerm
+  });
+}

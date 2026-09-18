@@ -97,6 +97,18 @@ export interface MidtermStudentDataDoc {
   status: MidtermReportStatus;
   updatedAt: number;
   updatedBy?: string;
+  commentBuilder?: {
+    strengths: string[];
+    achievements: string[];
+    needsImprovement: string[];
+    manualNotes: string;
+    aiDraftText: string;
+  };
+  attendance?: {
+    sakit: number;
+    izin: number;
+    tanpaKeterangan: number;
+  };
 }
 
 export interface MidtermSnapshotGoal {

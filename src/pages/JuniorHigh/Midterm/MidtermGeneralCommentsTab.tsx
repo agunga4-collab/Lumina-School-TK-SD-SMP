@@ -80,9 +80,10 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
     const sData = studentDataMap[selectedStudent.id];
     const gc = sData?.generalComment;
 
+    const sName = selectedStudent.name || '';
     const detectedGender = (selectedStudent.gender === 'P' || selectedStudent.gender === 'FEMALE') ? 'FEMALE' : 'MALE';
 
-    setNickname(gc?.nickname || (selectedStudent.nickname as any) || selectedStudent.name.split(' ')[0] || '');
+    setNickname(gc?.nickname || (selectedStudent.nickname as any) || sName.split(' ')[0] || '');
     setGender(gc?.gender || detectedGender);
     setSelectedStrengths(gc?.strengths || []);
     setSelectedAchievements(gc?.achievements || []);
