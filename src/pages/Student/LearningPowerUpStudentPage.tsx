@@ -574,18 +574,24 @@ function LearningPowerUpStudentPageContent() {
 
   // Summary counts for current selected week
   const totalWeekTasks = activeFields.length;
-  const verifiedCount = activeUnifiedWeek ? activeFields.filter(field => {
-    // Individual assignment has priority
+
+  const completedCount = activeUnifiedWeek ? activeFields.filter(field => {
     const asg = assignments.find(a => a.weekStartDate === activeUnifiedWeek.weekStartDate && a.subjectKey === field);
-    if (asg) {
-      return asg.status === 'VERIFIED';
-    }
+    if (asg) return asg.status === 'VERIFIED';
     const legPack = packages.find(p => p.weekStartDate === activeUnifiedWeek.weekStartDate);
-    if (legPack) {
-      return progresses[`${legPack.id}_${field}`]?.status === 'VERIFIED';
-    }
+    if (legPack) return progresses[`${legPack.id}_${field}`]?.status === 'VERIFIED';
     return false;
   }).length : 0;
+
+  const notCompletedCount = activeUnifiedWeek ? activeFields.filter(field => {
+    const asg = assignments.find(a => a.weekStartDate === activeUnifiedWeek.weekStartDate && a.subjectKey === field);
+    if (asg) return asg.status === 'REVISION_REQUIRED';
+    const legPack = packages.find(p => p.weekStartDate === activeUnifiedWeek.weekStartDate);
+    if (legPack) return progresses[`${legPack.id}_${field}`]?.status === 'REVISION_REQUIRED';
+    return false;
+  }).length : 0;
+
+  const awaitingCount = Math.max(0, totalWeekTasks - completedCount - notCompletedCount);
 
   // Overdue status check helper
   const isOverdue = (endDate: string) => {
@@ -603,44 +609,35 @@ function LearningPowerUpStudentPageContent() {
         </span>
       );
     }
-    const overdue = isOverdue(endDate) && status !== 'VERIFIED';
-    switch (status) {
-      case 'VERIFIED':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-            <CheckCircle2 size={14} className="text-emerald-500" />
-            Selesai & Terverifikasi
-          </span>
-        );
-      case 'SUBMITTED':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
-            <Clock size={14} className="text-amber-500 animate-pulse" />
-            Menunggu Verifikasi Guru
-          </span>
-        );
-      case 'REVISION_REQUIRED':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
-            <AlertTriangle size={14} className="text-rose-500" />
-            Perlu Revisi
-          </span>
-        );
-      default:
-        if (overdue) {
-          return (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-red-100 text-red-700 border border-red-200 animate-pulse">
-              <AlertCircle size={14} className="text-red-500" />
-              Terlambat (Belum Selesai)
-            </span>
-          );
-        }
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-slate-50 text-slate-500 border border-slate-200">
-            <CheckSquare size={14} className="text-slate-400" />
-            Belum Dikerjakan
-          </span>
-        );
+
+    if (status === 'VERIFIED') {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+          <CheckCircle2 size={14} className="text-emerald-500" />
+          Selesai & Terverifikasi
+        </span>
+      );
+    } else if (status === 'REVISION_REQUIRED') {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
+          <AlertCircle size={14} className="text-rose-500" />
+          Belum Tuntas
+        </span>
+      );
+    } else if (isOverdue(endDate)) {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200">
+          <Clock size={14} className="text-slate-500" />
+          Sedang dalam pengecekan oleh Guru
+        </span>
+      );
+    } else {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-slate-50 text-slate-500 border border-slate-200">
+          <Clock size={14} className="text-slate-400" />
+          Menunggu verifikasi Guru
+        </span>
+      );
     }
   };
 
@@ -658,7 +655,7 @@ function LearningPowerUpStudentPageContent() {
         timestamp: nowStr,
         action: isRevision ? 'RESUBMIT' : 'SUBMIT',
         actorName: studentData.name,
-        note: isRevision ? "Siswa mengirim ulang tugas setelah revisi." : "Siswa menandai tugas selesai."
+        note: "Siswa menandai tugas selesai."
       };
 
       const updatedProgress = {
@@ -679,7 +676,7 @@ function LearningPowerUpStudentPageContent() {
       };
 
       await setDoc(doc(db, 'learning_power_up_progress', progressId), updatedProgress, { merge: true });
-      toast.success(isRevision ? "Tugas berhasil dikirim ulang!" : "Tugas berhasil ditandai selesai.");
+      toast.success("Tugas berhasil ditandai selesai.");
       
       // Reload lists
       await loadTasksAndProgress();
@@ -706,7 +703,7 @@ function LearningPowerUpStudentPageContent() {
         performedByName: studentData.name,
         performedByRole: 'STUDENT',
         timestamp: now,
-        note: isRevision ? "Siswa mengirim ulang tugas setelah revisi." : "Siswa menandai tugas selesai."
+        note: "Siswa menandai tugas selesai."
       };
 
       const docRef = doc(db, 'learning_power_up_assignments', asg.id);
@@ -719,7 +716,7 @@ function LearningPowerUpStudentPageContent() {
       };
 
       await setDoc(docRef, updatedFields, { merge: true });
-      toast.success(isRevision ? "Tugas berhasil dikirim ulang!" : "Tugas berhasil ditandai selesai.");
+      toast.success("Tugas berhasil ditandai selesai.");
       
       // Update activeTaskDetail to reflect the newly submitted assignment in the modal
       if (activeTaskDetail && activeTaskDetail.assignment?.id === asg.id) {
@@ -817,22 +814,33 @@ function LearningPowerUpStudentPageContent() {
         </div>
 
         {/* Progress summary widget */}
-        <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 md:w-80 space-y-3">
+        <div className="bg-slate-50 border border-slate-100 rounded-[1.5rem] p-6 md:w-[26rem] space-y-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-black text-gray-500 uppercase tracking-widest">Progres Pekan Ini</span>
-            <span className="text-sm font-black text-slate-700 bg-white px-2.5 py-1 rounded-lg border border-slate-200/60">
-              {verifiedCount} dari {totalWeekTasks} Selesai
+            <span className="text-sm font-black text-[#109E58] bg-white px-2.5 py-1 rounded-lg border border-[#109E58]/20">
+              {completedCount} / {totalWeekTasks} Selesai
             </span>
           </div>
           <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
             <div 
               className="bg-[#109E58] h-full rounded-full transition-all duration-500" 
-              style={{ width: `${totalWeekTasks > 0 ? (verifiedCount / totalWeekTasks) * 100 : 0}%` }}
+              style={{ width: `${totalWeekTasks > 0 ? (completedCount / totalWeekTasks) * 100 : 0}%` }}
             />
           </div>
-          <p className="text-[11px] text-gray-400 font-bold leading-none">
-            *Otoritas verifikasi final ada pada Guru / Coach kelasmu.
-          </p>
+          <div className="grid grid-cols-3 gap-2.5 pt-1 text-center text-[10px] font-black uppercase tracking-wider">
+            <div className="bg-emerald-50 text-emerald-800 p-2.5 rounded-xl border border-emerald-100 flex flex-col justify-center items-center">
+              <span className="text-sm font-extrabold mb-0.5">{completedCount}</span>
+              <span className="text-[9px] leading-none text-emerald-600 font-bold">Selesai</span>
+            </div>
+            <div className="bg-rose-50 text-rose-800 p-2.5 rounded-xl border border-rose-100 flex flex-col justify-center items-center">
+              <span className="text-sm font-extrabold mb-0.5">{notCompletedCount}</span>
+              <span className="text-[9px] leading-none text-rose-600 font-bold">Belum Tuntas</span>
+            </div>
+            <div className="bg-amber-50 text-amber-800 p-2.5 rounded-xl border border-amber-100 flex flex-col justify-center items-center">
+              <span className="text-sm font-extrabold mb-0.5">{awaitingCount}</span>
+              <span className="text-[9px] leading-none text-amber-600 font-bold">Menunggu</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -910,16 +918,10 @@ function LearningPowerUpStudentPageContent() {
                   key={field}
                   className={cn(
                     "bg-white border border-slate-100 rounded-[2rem] p-6 shadow-sm transition-all duration-300 flex flex-col justify-between space-y-6 relative overflow-hidden",
-                    cfg.cardBorder,
-                    overdue && "border-red-200 bg-red-50/10 shadow-sm shadow-red-50"
+                    cfg.cardBorder
                   )}
                   id={`task-card-${field}`}
                 >
-                  {overdue && (
-                    <div className="absolute top-0 right-0 bg-red-500 text-white font-black text-[9px] uppercase tracking-widest px-3 py-1 rounded-bl-xl shadow-sm">
-                      Terlambat
-                    </div>
-                  )}
 
                   <div className="space-y-4">
                     {/* Category Icon and Label */}
@@ -1133,14 +1135,14 @@ function LearningPowerUpStudentPageContent() {
                           </div>
                         ) : (
                           <>
-                            {/* NOT STARTED / DEFAULT / ASSIGNED */}
-                            {(status === 'NOT_STARTED') && (
+                            {/* NOT STARTED / DEFAULT / ASSIGNED / REVISION_REQUIRED */}
+                            {(status === 'NOT_STARTED' || status === 'REVISION_REQUIRED') && (
                               <button
                                 onClick={() => {
                                   if (isDiff && asg) {
-                                    handleAssignmentSubmit(asg.id, false);
+                                    handleAssignmentSubmit(asg.id, status === 'REVISION_REQUIRED');
                                   } else {
-                                    handleTaskSubmit(activeTaskDetail.field, false);
+                                    handleTaskSubmit(activeTaskDetail.field, status === 'REVISION_REQUIRED');
                                   }
                                 }}
                                 disabled={isSubmittingAction}
@@ -1170,33 +1172,6 @@ function LearningPowerUpStudentPageContent() {
                               </div>
                             )}
 
-                            {/* REVISION_REQUIRED */}
-                            {status === 'REVISION_REQUIRED' && (
-                              <button
-                                onClick={() => {
-                                  if (isDiff && asg) {
-                                    handleAssignmentSubmit(asg.id, true);
-                                  } else {
-                                    handleTaskSubmit(activeTaskDetail.field, true);
-                                  }
-                                }}
-                                disabled={isSubmittingAction}
-                                className="w-full py-4 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-500/50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-2 animate-pulse"
-                              >
-                                {isSubmittingAction ? (
-                                  <>
-                                    <Loader2 size={16} className="animate-spin" />
-                                    Mengirim Ulang...
-                                  </>
-                                ) : (
-                                  <>
-                                    <CornerDownLeft size={16} />
-                                    Kirim Ulang Setelah Revisi
-                                  </>
-                                )}
-                              </button>
-                            )}
-
                             {/* VERIFIED */}
                             {status === 'VERIFIED' && (
                               <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center">
@@ -1222,13 +1197,13 @@ function LearningPowerUpStudentPageContent() {
                         KOTAK KANAN — STATUS & CATATAN GURU
                       </span>
                       <h3 className="text-lg font-black text-gray-900">Riwayat & Catatan Guru</h3>
-                      <p className="text-xs font-semibold text-gray-400">Linimasa riwayat pengajuan dan catatan revisi.</p>
+                      <p className="text-xs font-semibold text-gray-400">Linimasa riwayat pengajuan dan catatan guru.</p>
                     </div>
 
                     {/* Coach notes if exist */}
                     {revisionNote && (
                       <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 space-y-2">
-                        <span className="text-[10px] font-black text-rose-700 uppercase tracking-wider block">Catatan Revisi dari Guru:</span>
+                        <span className="text-[10px] font-black text-rose-700 uppercase tracking-wider block">Catatan dari Guru:</span>
                         <p className="text-xs font-bold text-rose-900 leading-relaxed bg-white p-3 rounded-xl border border-rose-100 shadow-sm">
                           "{revisionNote}"
                         </p>
@@ -1271,8 +1246,8 @@ function LearningPowerUpStudentPageContent() {
                                   <p className="font-bold text-gray-800 text-xs">
                                     {action === 'ASSIGN' && "Tugas ditugaskan oleh guru."}
                                     {action === 'SUBMIT' && "Mengirim tugas untuk diperiksa."}
-                                    {action === 'RESUBMIT' && "Mengirim ulang tugas setelah revisi."}
-                                    {action === 'REVISION_REQUEST' && "Guru meminta revisi tugas."}
+                                    {action === 'RESUBMIT' && "Mengirim ulang tugas."}
+                                    {action === 'REVISION_REQUEST' && "Guru menandai tugas Belum Tuntas."}
                                     {action === 'VERIFY' && "Guru menyetujui & memverifikasi tugas selesai."}
                                   </p>
                                   {h.note && (
