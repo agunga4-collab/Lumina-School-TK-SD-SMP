@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Component } from 'react';
 import { 
   FileText, Calendar, Users, Layers, Sparkles, 
   Upload, FileCheck2, RefreshCw, AlertCircle, CheckCircle2 
@@ -25,12 +26,14 @@ import type {
 } from '../../../types/midtermReport';
 import type { Class, Student, ReportConfig, User } from '../../../types';
 
-class MidtermErrorBoundary extends React.Component<
-  { children: React.ReactNode; isSuperAdmin: boolean },
-  { hasError: boolean; error: Error | null; errorInfo: React.ErrorInfo | null }
-> {
-  constructor(props: { children: React.ReactNode; isSuperAdmin: boolean }) {
+class MidtermErrorBoundary extends Component<any, any> {
+  props: any;
+  state: any;
+  setState: any;
+
+  constructor(props: any) {
     super(props);
+    this.props = props;
     this.state = { hasError: false, error: null, errorInfo: null };
   }
 

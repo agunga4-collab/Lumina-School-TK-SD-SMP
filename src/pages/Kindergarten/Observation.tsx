@@ -1109,11 +1109,11 @@ export default function Observation() {
     if (!isContextComplete) return true;
     if (isUploadingGeneral || generalUploadState === 'validating' || generalUploadState === 'preparing' || generalUploadState === 'uploading' || generalUploadState === 'saving metadata') return true;
     if (!canManageKindergartenObservation) return true;
-    if (isSessionLocked && generalPhoto) {
+    if (isSessionLocked && !isEditingSession && generalPhoto) {
       return true;
     }
     return false;
-  }, [isContextComplete, isUploadingGeneral, generalUploadState, canManageKindergartenObservation, isSessionLocked, generalPhoto]);
+  }, [isContextComplete, isUploadingGeneral, generalUploadState, canManageKindergartenObservation, isSessionLocked, isEditingSession, generalPhoto]);
 
   const isStudentPhotoDisabled = React.useMemo(() => {
     return (studentId: string) => {
@@ -2924,6 +2924,24 @@ export default function Observation() {
     }
   };
 
+  const deletePhotoFromGDrive = async (photoUrlToDelete: string) => {
+    if (!photoUrlToDelete) return;
+    try {
+      const res = await fetch('/api/observations/delete-photo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ photoUrl: photoUrlToDelete })
+      });
+      if (!res.ok) {
+        console.error("Failed to delete photo from Google Drive:", await res.text());
+      } else {
+        console.log("Successfully deleted old photo from Google Drive:", photoUrlToDelete);
+      }
+    } catch (err) {
+      console.error("Error deleting old photo from Google Drive:", err);
+    }
+  };
+
   // Real uploader for general activity photo
   const performGeneralUpload = async (file: File) => {
     if (!canManageKindergartenObservation) {
@@ -2940,6 +2958,9 @@ export default function Observation() {
     const className = activeClassObj ? activeClassObj.name : 'General';
     const academicYear = activeYear || 'Unknown';
     const targetDate = observationDate;
+
+    // Keep track of the old photo url
+    const oldPhotoUrl = generalPhoto;
 
     // Generate client-side correlationId for idempotency
     const correlationId = `lpu_${selectedClassId}_general_${observationDate}_${file.name.replace(/[^a-zA-Z0-9]/g, '')}_${file.size}`;
@@ -2985,6 +3006,47 @@ export default function Observation() {
       setGeneralUploadState('success');
       setLastFailedGeneralFile(null); // Clear retry state
       toast.success('Foto Kegiatan Utama berhasil disinkronisasi ke Google Drive! ✨', { id: toastId });
+
+      // If session is already created and locked, immediately update reference on Firestore and delete old file if safe
+      if (isSessionLocked) {
+        try {
+          const activeSentra = selectedActivity || "general";
+          const activeDomain = selectedActivity === 'SPECIAL_ACTIVITY' ? 'none' : (selectedDomain || 'general');
+          const docId = currentDocId || `${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
+          const docRef = doc(db, 'observations', docId);
+
+          await setDoc(docRef, {
+            photoUrl: previewUrl,
+            generalPhotoUrl: previewUrl,
+            generalPhoto: previewUrl,
+            generalPhotoDeleted: false,
+            updatedAt: Date.now()
+          }, { merge: true });
+
+          // Also clean up local storage caches (both class-scoped and old unscoped)
+          const comboKeyDateSpecific = `kg_obs_hist_${selectedClassId}_${activeSentra}_${activeDomain}_${targetDate}`;
+          const saved = localStorage.getItem(comboKeyDateSpecific);
+          if (saved) {
+            try {
+              const parsed = JSON.parse(saved);
+              parsed.generalPhoto = previewUrl;
+              parsed.generalPhotoUrl = previewUrl;
+              parsed.generalPhotoDeleted = false;
+              localStorage.setItem(comboKeyDateSpecific, JSON.stringify(parsed));
+            } catch (e) {
+              console.error(e);
+            }
+          }
+
+          // If there was an old photo, delete it safely
+          if (oldPhotoUrl && oldPhotoUrl !== previewUrl) {
+            await deletePhotoFromGDrive(oldPhotoUrl);
+          }
+        } catch (dbErr) {
+          console.error("Failed to update photo reference in Firestore:", dbErr);
+          toast.error("Gagal menyinkronkan referensi foto ke database.");
+        }
+      }
     } catch (err: any) {
       console.error('[UploadGeneral] Failed:', err);
       setGeneralUploadState('error');
@@ -3634,6 +3696,8 @@ export default function Observation() {
       return;
     }
 
+    const oldPhotoUrl = generalPhoto;
+
     setGeneralPhoto(null);
     toast.info('Foto General dikosongkan. Menghapus referensi foto dari Firestore...');
 
@@ -3734,6 +3798,11 @@ export default function Observation() {
       // Trigger refetch of recap data so UI is instantly updated
       if (activeTab === 'recap') {
         loadRecapData();
+      }
+
+      // If there was an old photo on GDrive, call the backend to delete it
+      if (oldPhotoUrl) {
+        await deletePhotoFromGDrive(oldPhotoUrl);
       }
 
       toast.success('Foto General berhasil dihapus dari sistem & Firestore! 🗑️');
@@ -4166,11 +4235,29 @@ export default function Observation() {
                       Active Fallback
                     </div>
                   </div>
-                  {isSessionLocked && (
-                    <div className="text-[10px] font-bold text-gray-500 bg-gray-50 p-2.5 rounded-xl border border-gray-100 leading-normal text-center">
-                      🔒 Foto General sudah tersedia. Aktifkan mode edit untuk mengganti atau menghapus foto.
+                  {isSessionLocked && !isEditingSession ? (
+                    <div className="text-[10px] font-bold text-gray-500 bg-gray-50 p-3 rounded-xl border border-gray-100 leading-normal text-center flex flex-col items-center gap-2">
+                      <span>🔒 Foto General sudah tersedia. Aktifkan mode edit untuk mengganti atau menghapus foto.</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsEditingSession(true);
+                          toast.success("Mode Edit Sesi aktif. Anda sekarang dapat mengganti atau menghapus Foto General.");
+                        }}
+                        className="py-1.5 px-3 bg-amber-500 hover:bg-amber-650 text-gray-950 text-[10px] font-black uppercase tracking-widest rounded-lg flex items-center gap-1 cursor-pointer transition border-0"
+                        id="btn-activate-edit-general"
+                      >
+                        <Edit size={12} /> Aktifkan Mode Edit
+                      </button>
                     </div>
-                  )}
+                  ) : isSessionLocked && isEditingSession ? (
+                    <div className="text-[10px] font-bold text-amber-850 bg-amber-50 p-3 rounded-xl border border-amber-150 leading-normal text-center flex flex-col items-center gap-1">
+                      <span className="flex items-center gap-1 font-extrabold uppercase text-[9px] tracking-wider text-amber-700">
+                        <Sparkles size={11} className="animate-pulse" /> Mode Edit Sesi Aktif
+                      </span>
+                      <span>Arahkan kursor pada foto untuk mengganti via File/Kamera, atau hapus dengan tombol di bawah.</span>
+                    </div>
+                  ) : null}
                   <div className="flex items-center gap-2 text-[10px] bg-emerald-50 text-emerald-800 p-2.5 rounded-xl border border-emerald-150">
                     <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
                     <span>Lolos verifikasi. Foto ini akan melengkapi arsip harian siswa secara otomatis.</span>

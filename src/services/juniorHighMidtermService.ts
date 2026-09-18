@@ -308,7 +308,7 @@ export async function fetchMidtermMasterGoals(
  * Save master goal document
  */
 export async function saveMidtermMasterGoal(
-  goalDoc: Omit<MidtermMasterGoalDoc, 'updatedAt'>
+  goalDoc: Omit<MidtermMasterGoalDoc, 'id' | 'updatedAt'> & { id?: string }
 ): Promise<void> {
   const docId = getMasterGoalDocId(
     goalDoc.classId, 

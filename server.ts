@@ -465,6 +465,65 @@ app.post("/api/observations/upload-photo", async (req, res) => {
   }
 });
 
+// API: Delete Kindergarten Observation Photo from Google Drive & Firestore metadata
+app.post("/api/observations/delete-photo", async (req, res) => {
+  try {
+    const { photoUrl } = req.body;
+    if (!photoUrl) {
+      return res.status(400).json({ error: "Missing photoUrl to delete" });
+    }
+
+    let fileId = "";
+    const match = photoUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    if (match) {
+      fileId = match[1];
+    } else {
+      fileId = photoUrl;
+    }
+
+    if (!fileId || fileId.length < 10) {
+      return res.status(400).json({ error: "Invalid photo URL format. Could not extract file ID." });
+    }
+
+    console.log(`[PhotoDelete] Request to delete file with ID: ${fileId} from URL: ${photoUrl}`);
+
+    // 1. Delete from Google Drive
+    try {
+      await drive.files.delete({
+        fileId: fileId,
+        supportsAllDrives: true
+      });
+      console.log(`[PhotoDelete] Successfully deleted file ${fileId} from Google Drive.`);
+    } catch (driveErr: any) {
+      if (driveErr.status === 404 || driveErr.code === 404) {
+        console.warn(`[PhotoDelete] File ${fileId} was not found on Google Drive. It may have been already deleted.`);
+      } else {
+        console.error(`[PhotoDelete] Google Drive deletion failed for ${fileId}:`, driveErr);
+      }
+    }
+
+    // 2. Delete from Firestore kg_observation_photos
+    try {
+      await adminDb.collection("kg_observation_photos").doc(fileId).delete();
+      console.log(`[PhotoDelete] Successfully deleted metadata for ${fileId} from Firestore.`);
+    } catch (firestoreErr: any) {
+      console.error(`[PhotoDelete] Firestore metadata deletion failed for ${fileId}:`, firestoreErr);
+    }
+
+    return res.json({
+      success: true,
+      message: "Photo successfully deleted from Google Drive and Firestore metadata."
+    });
+
+  } catch (error: any) {
+    console.error("[PhotoDelete] Critical failures occurred:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Gagal menghapus foto dari storage. Silakan coba lagi."
+    });
+  }
+});
+
 // API: Verify Folder Access
 app.post("/api/attendance/verify-folder", async (req, res) => {
   try {
