@@ -19,6 +19,12 @@ import {
 } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import StudentLiteracyHistoryDrawer from './StudentLiteracyHistoryDrawer';
+import {
+  normalizeMengajiLevel,
+  normalizeNumerasiLevel,
+  formatMengajiDisplay,
+  formatNumerasiDisplay
+} from '../../../utils/litnumLevelNormalizer';
 
 interface Props {
   schoolYear: string;
@@ -220,14 +226,22 @@ export default function JuniorHighLiteracyOverview({ schoolYear, period }: Props
                         </span>
                       </td>
                       <td className="py-3.5 px-4 font-mono font-bold text-slate-800">
-                        {area === 'MENGAJI' && (rec as any).level ? `Level: ${(rec as any).level}` : ''}
+                        {area === 'MENGAJI' && ((rec as any).mengajiLevel || (rec as any).level) 
+                          ? `Level: ${formatMengajiDisplay(normalizeMengajiLevel((rec as any).mengajiLevel || (rec as any).level) || ((rec as any).mengajiLevel || (rec as any).level))}` 
+                          : ''}
                         {area === 'BAHASA_INDONESIA' && (rec as any).readingLevel ? `Level: ${(rec as any).readingLevel}` : ''}
                         {area === 'ENGLISH_READING' && (rec as any).readingLevel ? `Level: ${(rec as any).readingLevel}` : ''}
-                        {area === 'NUMERACY' && (rec as any).mathLevel ? `Level: ${(rec as any).mathLevel}` : ''}
+                        {area === 'NUMERACY' && ((rec as any).numerasiLevel || (rec as any).mathLevel) 
+                          ? `Level: ${formatNumerasiDisplay(normalizeNumerasiLevel((rec as any).numerasiLevel || (rec as any).mathLevel) || ((rec as any).numerasiLevel || (rec as any).mathLevel))}` 
+                          : ''}
                       </td>
                       <td className="py-3.5 px-4 text-center">
                         <span className="font-mono text-slate-900 font-bold">
-                          {area === 'MENGAJI' ? `Tgt: ${(rec as any).targetLevel || '-'}` : ''}
+                          {area === 'MENGAJI' 
+                            ? `Tgt: ${((rec as any).mengajiTarget || (rec as any).targetLevel) 
+                                ? formatMengajiDisplay(normalizeMengajiLevel((rec as any).mengajiTarget || (rec as any).targetLevel) || ((rec as any).mengajiTarget || (rec as any).targetLevel)) 
+                                : '-'}` 
+                            : ''}
                           {area === 'BAHASA_INDONESIA' ? `${(rec as any).readingComprehension || 0}%` : ''}
                           {area === 'ENGLISH_READING' ? `${(rec as any).wpm || 0} WPM (Comp: ${(rec as any).comprehension || 0}%)` : ''}
                           {area === 'NUMERACY' ? `${(rec as any).accuracy || 0}% Accuracy` : ''}

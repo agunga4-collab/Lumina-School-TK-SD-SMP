@@ -25,22 +25,79 @@ import {
   parseGradeFromClassName,
   isOralReadingFluencyRiskApplicable
 } from '../config/oralReadingFluencyRiskThresholds';
+import {
+  normalizeMengajiLevel,
+  normalizeNumerasiLevel,
+  formatMengajiDisplay,
+  formatNumerasiDisplay
+} from '../utils/litnumLevelNormalizer';
 
 const COLLECTION = 'junior_high_literacy_numeracy_records';
 
 /**
- * Sanitizes record to replace undefined values with null to prevent Firestore save errors.
+ * Sanitizes record for Firestore merge, guaranteeing existing non-empty values
+ * are never overwritten with null or empty string.
  */
-function sanitizeRecord(record: any): any {
+function sanitizeRecordForMerge(record: any): any {
   const cleaned: any = {};
   for (const [key, value] of Object.entries(record)) {
-    if (value === undefined) {
-      cleaned[key] = null;
-    } else {
+    if (value !== undefined && value !== null && value !== '') {
       cleaned[key] = value;
     }
   }
+  // Guarantee essential identifying metadata is always retained
+  if (record.studentId) cleaned.studentId = record.studentId;
+  if (record.schoolYear) cleaned.schoolYear = record.schoolYear;
+  if (record.sessionKey) cleaned.sessionKey = record.sessionKey;
+  if (record.subjectArea) cleaned.subjectArea = record.subjectArea;
+  cleaned.unit = record.unit || 'JUNIOR_HIGH';
+  if (record.id) cleaned.id = record.id;
+  if (record.studentName) cleaned.studentName = record.studentName;
+  if (record.classId) cleaned.classId = record.classId;
+  if (record.gradeLevel !== undefined && record.gradeLevel !== null) cleaned.gradeLevel = record.gradeLevel;
+  if (record.sessionLabel) cleaned.sessionLabel = record.sessionLabel;
+  if (record.updatedBy) cleaned.updatedBy = record.updatedBy;
+  if (record.updatedAt) cleaned.updatedAt = record.updatedAt;
   return cleaned;
+}
+
+/**
+ * Prepares record with canonical values and backward-compatible fields before save.
+ */
+function prepareRecordForSave(record: any): any {
+  const enriched = { ...record };
+  enriched.unit = 'JUNIOR_HIGH';
+
+  if (enriched.subjectArea === 'MENGAJI') {
+    const rawLevel = enriched.mengajiLevel || enriched.level;
+    const normLevel = normalizeMengajiLevel(rawLevel);
+    if (normLevel) {
+      enriched.mengajiLevel = normLevel;
+      enriched.level = formatMengajiDisplay(normLevel);
+    }
+    const rawTarget = enriched.mengajiTarget || enriched.targetLevel;
+    const normTarget = normalizeMengajiLevel(rawTarget);
+    if (normTarget) {
+      enriched.mengajiTarget = normTarget;
+      enriched.targetLevel = formatMengajiDisplay(normTarget);
+    }
+  } else if (enriched.subjectArea === 'NUMERACY') {
+    const rawLevel = enriched.numerasiLevel || enriched.mathLevel;
+    const normLevel = normalizeNumerasiLevel(rawLevel);
+    if (normLevel) {
+      enriched.numerasiLevel = normLevel;
+      enriched.mathLevel = formatNumerasiDisplay(normLevel);
+    }
+    const rawTarget = enriched.numerasiTarget || enriched.targetLevel || enriched.mathTargetLevel;
+    const normTarget = normalizeNumerasiLevel(rawTarget);
+    if (normTarget) {
+      enriched.numerasiTarget = normTarget;
+      enriched.targetLevel = formatNumerasiDisplay(normTarget);
+      enriched.mathTargetLevel = formatNumerasiDisplay(normTarget);
+    }
+  }
+
+  return enriched;
 }
 
 /**
@@ -141,12 +198,47 @@ async function enrichOrfRisk(enriched: any): Promise<void> {
 }
 
 /**
- * Computes ORF risk level on-read for historical records if conditions are met.
+ * Computes ORF risk level on-read for historical records and normalizes Mengaji & Numeracy levels.
  */
 function enrichOnRead(record: any): any {
   if (!record) return record;
   const isJh = record.unit === 'JUNIOR_HIGH' || record.unit === 'JUNIORHIGH';
   const isReading = record.subjectArea === 'ENGLISH_READING' || record.area === 'ENGLISH_READING';
+  const isMengaji = record.subjectArea === 'MENGAJI' || record.area === 'MENGAJI';
+  const isNumeracy = record.subjectArea === 'NUMERACY' || record.area === 'NUMERACY';
+
+  // Normalize and bidirectional sync Mengaji
+  if (isMengaji) {
+    const rawLevel = record.mengajiLevel || record.level;
+    const normLevel = normalizeMengajiLevel(rawLevel);
+    if (normLevel) {
+      record.mengajiLevel = normLevel;
+      if (!record.level) record.level = formatMengajiDisplay(normLevel);
+    }
+    const rawTarget = record.mengajiTarget || record.targetLevel;
+    const normTarget = normalizeMengajiLevel(rawTarget);
+    if (normTarget) {
+      record.mengajiTarget = normTarget;
+      if (!record.targetLevel) record.targetLevel = formatMengajiDisplay(normTarget);
+    }
+  }
+
+  // Normalize and bidirectional sync Numerasi
+  if (isNumeracy) {
+    const rawLevel = record.numerasiLevel || record.mathLevel;
+    const normLevel = normalizeNumerasiLevel(rawLevel);
+    if (normLevel) {
+      record.numerasiLevel = normLevel;
+      if (!record.mathLevel) record.mathLevel = formatNumerasiDisplay(normLevel);
+    }
+    const rawTarget = record.numerasiTarget || record.targetLevel || record.mathTargetLevel;
+    const normTarget = normalizeNumerasiLevel(rawTarget);
+    if (normTarget) {
+      record.numerasiTarget = normTarget;
+      if (!record.targetLevel) record.targetLevel = formatNumerasiDisplay(normTarget);
+      if (!record.mathTargetLevel) record.mathTargetLevel = formatNumerasiDisplay(normTarget);
+    }
+  }
 
   if (isJh && isReading) {
     if (record.riskLevel !== undefined && record.riskLevel !== null) {
@@ -185,7 +277,8 @@ export const juniorHighLiteracyService = {
    */
   async saveProgressRecord(record: Omit<JuniorHighProgressRecord, 'updatedAt'> & { id?: string }): Promise<string> {
     try {
-      const enriched = { ...record } as any;
+      const prepared = prepareRecordForSave(record);
+      const enriched = { ...prepared } as any;
 
       // Ensure standard keys
       enriched.unit = 'JUNIOR_HIGH';
@@ -216,7 +309,7 @@ export const juniorHighLiteracyService = {
       enriched.updatedAt = serverTimestamp();
 
       const docRef = doc(db, COLLECTION, docId);
-      await setDoc(docRef, sanitizeRecord(enriched), { merge: true });
+      await setDoc(docRef, sanitizeRecordForMerge(enriched), { merge: true });
       return docId;
     } catch (error) {
       return handleFirestoreError(error, 'write', COLLECTION);
@@ -255,7 +348,7 @@ export const juniorHighLiteracyService = {
 
       merged.updatedAt = serverTimestamp();
 
-      await updateDoc(docRef, sanitizeRecord(merged));
+      await updateDoc(docRef, sanitizeRecordForMerge(merged));
     } catch (error) {
       return handleFirestoreError(error, 'update', `${COLLECTION}/${id}`);
     }
@@ -336,7 +429,8 @@ export const juniorHighLiteracyService = {
       const batch = writeBatch(db);
 
       for (const record of records) {
-        const enriched = { ...record } as any;
+        const prepared = prepareRecordForSave(record);
+        const enriched = { ...prepared } as any;
 
         enriched.unit = 'JUNIOR_HIGH';
 
@@ -365,7 +459,7 @@ export const juniorHighLiteracyService = {
         enriched.updatedAt = serverTimestamp();
 
         const docRef = doc(db, COLLECTION, docId);
-        batch.set(docRef, sanitizeRecord(enriched), { merge: true });
+        batch.set(docRef, sanitizeRecordForMerge(enriched), { merge: true });
       }
 
       await batch.commit();

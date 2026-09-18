@@ -33,6 +33,14 @@ import {
   getAreaLabel, 
   getPeriodLabel 
 } from '../../constants/juniorHighLiteracyBenchmarks';
+import {
+  CANONICAL_MENGAJI_OPTIONS,
+  CANONICAL_NUMERASI_OPTIONS,
+  normalizeMengajiLevel,
+  normalizeNumerasiLevel,
+  formatMengajiDisplay,
+  formatNumerasiDisplay
+} from '../../utils/litnumLevelNormalizer';
 
 // Selection lists in theme palette for SMP
 export interface JuniorHighAreaConfig {
@@ -494,6 +502,27 @@ export default function JuniorHighLiteracyNumeracy() {
           updated.riskGrade = null;
           updated.riskCalculatedAt = null;
         }
+      } else if (selectedArea === 'MENGAJI') {
+        if (field === 'mengajiLevel' || field === 'level') {
+          const norm = normalizeMengajiLevel(value);
+          updated.mengajiLevel = norm || value;
+          updated.level = norm ? formatMengajiDisplay(norm) : value;
+        } else if (field === 'mengajiTarget' || field === 'targetLevel') {
+          const norm = normalizeMengajiLevel(value);
+          updated.mengajiTarget = norm || value;
+          updated.targetLevel = norm ? formatMengajiDisplay(norm) : value;
+        }
+      } else if (selectedArea === 'NUMERACY') {
+        if (field === 'numerasiLevel' || field === 'mathLevel') {
+          const norm = normalizeNumerasiLevel(value);
+          updated.numerasiLevel = norm || value;
+          updated.mathLevel = norm ? formatNumerasiDisplay(norm) : value;
+        } else if (field === 'numerasiTarget' || field === 'targetLevel' || field === 'mathTargetLevel') {
+          const norm = normalizeNumerasiLevel(value);
+          updated.numerasiTarget = norm || value;
+          updated.mathTargetLevel = norm ? formatNumerasiDisplay(norm) : value;
+          updated.targetLevel = norm ? formatNumerasiDisplay(norm) : value;
+        }
       }
 
       return {
@@ -570,10 +599,32 @@ export default function JuniorHighLiteracyNumeracy() {
         ? Math.min(100, Math.max(0, Number(rec.comprehension)))
         : '';
     } else if (selectedArea === 'MENGAJI') {
-      rec.level = rec.level || '';
-      rec.targetLevel = rec.targetLevel || '';
+      const rawLevel = rec.mengajiLevel || rec.level;
+      const normLevel = normalizeMengajiLevel(rawLevel);
+      if (normLevel) {
+        rec.mengajiLevel = normLevel;
+        rec.level = formatMengajiDisplay(normLevel);
+      }
+      const rawTarget = rec.mengajiTarget || rec.targetLevel;
+      const normTarget = normalizeMengajiLevel(rawTarget);
+      if (normTarget) {
+        rec.mengajiTarget = normTarget;
+        rec.targetLevel = formatMengajiDisplay(normTarget);
+      }
     } else if (selectedArea === 'NUMERACY') {
-      rec.mathLevel = rec.mathLevel || '';
+      const rawLevel = rec.numerasiLevel || rec.mathLevel;
+      const normLevel = normalizeNumerasiLevel(rawLevel);
+      if (normLevel) {
+        rec.numerasiLevel = normLevel;
+        rec.mathLevel = formatNumerasiDisplay(normLevel);
+      }
+      const rawTarget = rec.numerasiTarget || rec.targetLevel || rec.mathTargetLevel;
+      const normTarget = normalizeNumerasiLevel(rawTarget);
+      if (normTarget) {
+        rec.numerasiTarget = normTarget;
+        rec.targetLevel = formatNumerasiDisplay(normTarget);
+        rec.mathTargetLevel = formatNumerasiDisplay(normTarget);
+      }
       rec.accuracy = rec.accuracy !== '' && rec.accuracy !== undefined && rec.accuracy !== null
         ? Math.min(100, Math.max(0, Number(rec.accuracy)))
         : '';
@@ -1080,25 +1131,25 @@ export default function JuniorHighLiteracyNumeracy() {
                             <>
                               <td className="py-3 px-4 text-center">
                                 <select
-                                  value={record.level || ''}
-                                  onChange={e => handleCellChange(st.id, 'level', e.target.value)}
+                                  value={normalizeMengajiLevel(record.mengajiLevel || record.level) || ''}
+                                  onChange={e => handleCellChange(st.id, 'mengajiLevel', e.target.value)}
                                   className={cn("w-40 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold cursor-pointer text-xs focus:outline-none focus:ring-1 focus:bg-white", activeConfig.focusRing)}
                                 >
                                   <option value="">-- Pilih Level --</option>
-                                  {MENGAJI_LEVELS.map(lvl => (
-                                    <option key={lvl} value={lvl}>{lvl}</option>
+                                  {CANONICAL_MENGAJI_OPTIONS.map(opt => (
+                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
                                   ))}
                                 </select>
                               </td>
                               <td className="py-3 px-4 text-center">
                                 <select
-                                  value={record.targetLevel || ''}
-                                  onChange={e => handleCellChange(st.id, 'targetLevel', e.target.value)}
+                                  value={normalizeMengajiLevel(record.mengajiTarget || record.targetLevel) || ''}
+                                  onChange={e => handleCellChange(st.id, 'mengajiTarget', e.target.value)}
                                   className={cn("w-40 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold cursor-pointer text-xs focus:outline-none focus:ring-1 focus:bg-white", activeConfig.focusRing)}
                                 >
                                   <option value="">-- Pilih Target --</option>
-                                  {MENGAJI_LEVELS.map(lvl => (
-                                    <option key={lvl} value={lvl}>{lvl}</option>
+                                  {CANONICAL_MENGAJI_OPTIONS.map(opt => (
+                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
                                   ))}
                                 </select>
                               </td>
@@ -1110,13 +1161,13 @@ export default function JuniorHighLiteracyNumeracy() {
                             <>
                               <td className="py-3 px-4 text-center">
                                 <select
-                                  value={record.mathLevel || ''}
-                                  onChange={e => handleCellChange(st.id, 'mathLevel', e.target.value)}
+                                  value={normalizeNumerasiLevel(record.numerasiLevel || record.mathLevel) || ''}
+                                  onChange={e => handleCellChange(st.id, 'numerasiLevel', e.target.value)}
                                   className={cn("w-44 bg-slate-50/60 border border-slate-200 rounded-lg px-2 py-1 font-bold cursor-pointer text-xs focus:outline-none focus:ring-1 focus:bg-white", activeConfig.focusRing)}
                                 >
                                   <option value="">-- Pilih Level Math --</option>
-                                  {NUMERACY_LEVELS.map(lvl => (
-                                    <option key={lvl} value={lvl}>{lvl}</option>
+                                  {CANONICAL_NUMERASI_OPTIONS.map(opt => (
+                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
                                   ))}
                                 </select>
                               </td>

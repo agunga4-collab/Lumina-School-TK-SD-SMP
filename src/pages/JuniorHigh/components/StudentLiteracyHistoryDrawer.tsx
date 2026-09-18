@@ -14,6 +14,12 @@ import {
   getAreaLabel, 
   getPeriodLabel
 } from '../../../constants/juniorHighLiteracyBenchmarks';
+import {
+  normalizeMengajiLevel,
+  normalizeNumerasiLevel,
+  formatMengajiDisplay,
+  formatNumerasiDisplay
+} from '../../../utils/litnumLevelNormalizer';
 
 interface Props {
   studentId: string;
@@ -227,14 +233,18 @@ export default function StudentLiteracyHistoryDrawer({
                                     <div className="bg-white p-2.5 rounded-xl border border-slate-100">
                                       <p className="text-[9px] text-slate-400 uppercase font-black">Mengaji Level</p>
                                       <span className="text-sm font-black text-slate-800 block mt-0.5">
-                                        {record.level || '-'}
+                                        {(record.mengajiLevel || record.level)
+                                          ? formatMengajiDisplay(normalizeMengajiLevel(record.mengajiLevel || record.level) || (record.mengajiLevel || record.level))
+                                          : '-'}
                                       </span>
                                     </div>
 
                                     <div className="bg-white p-2.5 rounded-xl border border-slate-100">
                                       <p className="text-[9px] text-slate-400 uppercase font-black">Target Level</p>
                                       <span className="text-sm font-black text-slate-800 block mt-0.5">
-                                        {record.targetLevel || '-'}
+                                        {(record.mengajiTarget || record.targetLevel)
+                                          ? formatMengajiDisplay(normalizeMengajiLevel(record.mengajiTarget || record.targetLevel) || (record.mengajiTarget || record.targetLevel))
+                                          : '-'}
                                       </span>
                                     </div>
                                   </div>
@@ -245,7 +255,9 @@ export default function StudentLiteracyHistoryDrawer({
                                     <div className="bg-white p-2.5 rounded-xl border border-slate-100">
                                       <p className="text-[9px] text-slate-400 uppercase font-black">Math Level</p>
                                       <span className="text-sm font-black text-slate-800 block mt-0.5 max-w-full truncate">
-                                        {record.mathLevel || '-'}
+                                        {(record.numerasiLevel || record.mathLevel)
+                                          ? formatNumerasiDisplay(normalizeNumerasiLevel(record.numerasiLevel || record.mathLevel) || (record.numerasiLevel || record.mathLevel))
+                                          : '-'}
                                       </span>
                                     </div>
 

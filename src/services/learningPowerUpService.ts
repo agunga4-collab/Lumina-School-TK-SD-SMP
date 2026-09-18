@@ -37,10 +37,17 @@ const SESSION_PRIORITY: Record<string, number> = {
   'SEMESTER_2_END': 5
 };
 
+import {
+  normalizeMengajiLevel,
+  normalizeNumerasiLevel,
+  formatMengajiDisplay,
+  formatNumerasiDisplay
+} from '../utils/litnumLevelNormalizer';
+
 /**
  * 1. Resolves a student’s active subject level from the read-only junior_high_literacy_numeracy_records collection.
- * Treats junior_high_literacy_numeracy_records as read-only.
- * Fallback to default levels if no record exists.
+ * Treats junior_high_literacy_numeracy_records as the single source of truth (SSOT).
+ * Returns empty string ('') if no record exists so that UI can render "Level belum ditetapkan".
  */
 export async function resolveStudentActiveSubjectLevel(
   studentId: string,
@@ -68,19 +75,8 @@ export async function resolveStudentActiveSubjectLevel(
 
     const snap = await getDocs(q);
     if (snap.empty) {
-      // Return default initial levels based on the subject if no records exist
-      switch (subjectKey) {
-        case 'bahasaIndonesia':
-          return 'Perlu Pendampingan Intensif';
-        case 'english':
-          return 'IR+';
-        case 'mengaji':
-          return 'Iqra 1';
-        case 'numerasi':
-          return 'Trailhead';
-        default:
-          return '';
-      }
+      // Return empty string if no record exists - DO NOT use hardcoded dummy level
+      return '';
     }
 
     // Sort documents by session weight if multiple are found and no specific session was requested
@@ -95,34 +91,28 @@ export async function resolveStudentActiveSubjectLevel(
 
     const activeRecord = docs[0];
 
-    // Extract level depending on subjectArea
+    // Extract level depending on subjectArea using canonical normalizers
     switch (subjectKey) {
       case 'bahasaIndonesia':
-        return activeRecord.readingLevel || 'Perlu Pendampingan Intensif';
+        return activeRecord.readingLevel || '';
       case 'english':
-        return activeRecord.readingLevel || 'IR+';
-      case 'mengaji':
-        return activeRecord.level || 'Iqra 1';
-      case 'numerasi':
-        return activeRecord.mathLevel || 'Trailhead';
+        return activeRecord.readingLevel || '';
+      case 'mengaji': {
+        const raw = activeRecord.mengajiLevel || activeRecord.level;
+        const norm = normalizeMengajiLevel(raw);
+        return norm ? formatMengajiDisplay(norm) : (raw || '');
+      }
+      case 'numerasi': {
+        const raw = activeRecord.numerasiLevel || activeRecord.mathLevel;
+        const norm = normalizeNumerasiLevel(raw);
+        return norm ? formatNumerasiDisplay(norm) : (raw || '');
+      }
       default:
         return '';
     }
   } catch (error) {
-    console.error('Error resolving student active subject level:', error);
-    // Safe fallbacks on error
-    switch (subjectKey) {
-      case 'bahasaIndonesia':
-        return 'Perlu Pendampingan Intensif';
-      case 'english':
-        return 'IR+';
-      case 'mengaji':
-        return 'Iqra 1';
-      case 'numerasi':
-        return 'Trailhead';
-      default:
-        return '';
-    }
+    console.error('Error resolving student active subject level from Litnum:', error);
+    return '';
   }
 }
 

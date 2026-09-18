@@ -40,6 +40,12 @@ import {
   LPU_SUBJECT_MAP
 } from '../../services/learningPowerUpService';
 import {
+  normalizeMengajiLevel,
+  normalizeNumerasiLevel,
+  formatMengajiDisplay,
+  formatNumerasiDisplay
+} from '../../utils/litnumLevelNormalizer';
+import {
   LearningPowerUpTaskBatch,
   LearningPowerUpAssignment,
   LpuSubjectKey,
@@ -539,6 +545,7 @@ function LearningPowerUpTeacherPageContent() {
 
   // --- New-Style LPU Assignment and Cancellation States ---
   const [loadedAssignments, setLoadedAssignments] = React.useState<LearningPowerUpAssignment[]>([]);
+  const [litnumRecordsByStudentId, setLitnumRecordsByStudentId] = React.useState<Record<string, Partial<Record<LpuSubjectKey, string>>>>({});
   const [cancellingBatch, setCancellingBatch] = React.useState<LearningPowerUpTaskBatch | null>(null);
   const [cancellationReason, setCancellationReason] = React.useState<'Salah kelas' | 'Salah periode' | 'Konten perlu diperbaiki' | 'Duplikat' | 'Lainnya' | ''>('');
   const [cancellationNote, setCancellationNote] = React.useState('');
@@ -627,6 +634,7 @@ function LearningPowerUpTeacherPageContent() {
     setStudents([]);
     setPackages([]);
     setProgresses([]);
+    setLitnumRecordsByStudentId({});
     
     setLoadingData(true);
     try {
@@ -907,6 +915,61 @@ function LearningPowerUpTeacherPageContent() {
       
       setProgresses([...virtualProgresses, ...legacyProgresses]);
 
+      // Load canonical Litnum records for this class & year
+      const litnumMap: Record<string, Partial<Record<LpuSubjectKey, string>>> = {};
+      try {
+        const qLitnum = query(
+          collection(db, 'junior_high_literacy_numeracy_records'),
+          where('schoolYear', '==', activeYear)
+        );
+        const litnumSnap = await getDocs(qLitnum);
+        const SESSION_PRIORITY_ORDER: Record<string, number> = {
+          'SEMESTER_1_START': 1,
+          'FALL_ASSESSMENT_2': 2,
+          'SPRING_ASSESSMENT_3': 3,
+          'SEMESTER_2_START': 4,
+          'SEMESTER_2_END': 5
+        };
+        litnumSnap.forEach(docSnap => {
+          const data = docSnap.data();
+          const stId = data.studentId;
+          if (!stId) return;
+          if (!litnumMap[stId]) litnumMap[stId] = {};
+
+          const area = data.subjectArea;
+          let subjKey: LpuSubjectKey | null = null;
+          let lvlStr = '';
+
+          if (area === 'BAHASA_INDONESIA') {
+            subjKey = 'bahasaIndonesia';
+            lvlStr = data.readingLevel || '';
+          } else if (area === 'ENGLISH_READING') {
+            subjKey = 'english';
+            lvlStr = data.readingLevel || '';
+          } else if (area === 'MENGAJI') {
+            subjKey = 'mengaji';
+            const norm = normalizeMengajiLevel(data.mengajiLevel || data.level);
+            lvlStr = norm ? formatMengajiDisplay(norm) : (data.level || '');
+          } else if (area === 'NUMERACY') {
+            subjKey = 'numerasi';
+            const norm = normalizeNumerasiLevel(data.numerasiLevel || data.mathLevel);
+            lvlStr = norm ? formatNumerasiDisplay(norm) : (data.mathLevel || '');
+          }
+
+          if (subjKey && lvlStr) {
+            const prevPriority = (litnumMap[stId] as any)?.[`_${subjKey}_priority`] || 0;
+            const currentPriority = SESSION_PRIORITY_ORDER[data.sessionKey] || 0;
+            if (currentPriority >= prevPriority) {
+              litnumMap[stId][subjKey] = lvlStr;
+              (litnumMap[stId] as any)[`_${subjKey}_priority`] = currentPriority;
+            }
+          }
+        });
+      } catch (litErr) {
+        console.warn("Could not load litnum records in tracker:", litErr);
+      }
+      setLitnumRecordsByStudentId(litnumMap);
+
       // Load new task batches as well
       await loadTaskBatches();
 
@@ -1165,10 +1228,16 @@ function LearningPowerUpTeacherPageContent() {
               return record.readingLevel || '';
             case 'english':
               return record.readingLevel || '';
-            case 'mengaji':
-              return record.level || '';
-            case 'numerasi':
-              return record.mathLevel || '';
+            case 'mengaji': {
+              const raw = record.mengajiLevel || record.level;
+              const norm = normalizeMengajiLevel(raw);
+              return norm ? formatMengajiDisplay(norm) : (raw || '');
+            }
+            case 'numerasi': {
+              const raw = record.numerasiLevel || record.mathLevel;
+              const norm = normalizeNumerasiLevel(raw);
+              return norm ? formatNumerasiDisplay(norm) : (raw || '');
+            }
             default:
               return '';
           }
@@ -2246,6 +2315,7 @@ function LearningPowerUpTeacherPageContent() {
 
     // Resolve specific task title and instructions if level-based
     let resolvedTaskTitle = `Tugas Penguatan ${CATEGORY_CONFIG[field].label}`;
+    let resolvedLevel = litnumRecordsByStudentId[student.id]?.[field] || '';
     if (isLevelBased) {
       const asg = loadedAssignments.find(a => 
         a.studentId === student.id && 
@@ -2255,6 +2325,11 @@ function LearningPowerUpTeacherPageContent() {
       if (asg) {
         taskDescription = asg.taskInstructions || '';
         resolvedTaskTitle = asg.taskTitle || resolvedTaskTitle;
+        if (asg.levelSnapshot) {
+          const normM = normalizeMengajiLevel(asg.levelSnapshot);
+          const normN = normalizeNumerasiLevel(asg.levelSnapshot);
+          resolvedLevel = normM ? formatMengajiDisplay(normM) : normN ? formatNumerasiDisplay(normN) : asg.levelSnapshot;
+        }
       } else {
         taskDescription = "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.";
       }
@@ -2274,7 +2349,7 @@ function LearningPowerUpTeacherPageContent() {
       return;
     }
 
-    setVerifyingProgress({ student, field, taskDescription, progress, taskTitle: resolvedTaskTitle } as any);
+    setVerifyingProgress({ student, field, taskDescription, progress, taskTitle: resolvedTaskTitle, level: resolvedLevel } as any);
     setVerificationNote(progress?.revisionNote || '');
   };
 
@@ -3061,7 +3136,14 @@ function LearningPowerUpTeacherPageContent() {
                               `level_week_${a.weekStartDate}` === selectedWeek && 
                               a.subjectKey === field
                             ) : null;
-                            const levelSnapshot = asg ? asg.levelSnapshot : null;
+                            const canonicalLitnumLevel = litnumRecordsByStudentId[student.id]?.[field];
+                            let rawLvl = asg?.levelSnapshot || canonicalLitnumLevel;
+                            let displayLevel = '';
+                            if (rawLvl) {
+                              const normM = normalizeMengajiLevel(rawLvl);
+                              const normN = normalizeNumerasiLevel(rawLvl);
+                              displayLevel = normM ? formatMengajiDisplay(normM) : normN ? formatNumerasiDisplay(normN) : rawLvl;
+                            }
 
                             return (
                               <td 
@@ -3069,9 +3151,9 @@ function LearningPowerUpTeacherPageContent() {
                                 className="py-4 px-6 text-center align-middle relative group"
                               >
                                 <div className="flex flex-col items-center gap-1.5 justify-center">
-                                  {levelSnapshot ? (
+                                  {displayLevel ? (
                                     <span className="text-[9px] font-extrabold text-violet-700 bg-violet-50 border border-violet-100 px-1.5 py-0.5 rounded-md uppercase tracking-wider block">
-                                      {levelSnapshot}
+                                      {displayLevel}
                                     </span>
                                   ) : isLevelBased ? (
                                     <span className="text-[9px] font-extrabold text-slate-500 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded-md uppercase tracking-wider block">
@@ -3770,11 +3852,20 @@ function LearningPowerUpTeacherPageContent() {
 
                 {/* Task Details */}
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Kategori:</span>
                     <span className="text-xs font-black text-slate-700 bg-white border px-2 py-0.5 rounded-md">
                       {CATEGORY_CONFIG[verifyingProgress.field].label}
                     </span>
+                    {(verifyingProgress as any).level ? (
+                      <span className="text-xs font-black text-violet-700 bg-violet-50 border border-violet-100 px-2 py-0.5 rounded-md uppercase">
+                        Level: {(verifyingProgress as any).level}
+                      </span>
+                    ) : (
+                      <span className="text-xs font-black text-slate-500 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-md uppercase">
+                        Level belum ditetapkan
+                      </span>
+                    )}
                   </div>
                   <h4 className="font-bold text-sm text-gray-900 leading-snug">
                     {(verifyingProgress as any).taskTitle || `Tugas Penguatan ${CATEGORY_CONFIG[verifyingProgress.field].label}`}

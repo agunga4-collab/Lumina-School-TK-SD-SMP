@@ -51,14 +51,19 @@ export interface EnglishReadingProgress extends JuniorHighProgressBase {
 
 export interface MengajiProgress extends JuniorHighProgressBase {
   subjectArea: 'MENGAJI';
-  level: 'Iqra 1' | 'Iqra 2' | 'Iqra 3' | 'Iqra 4' | 'Iqra 5' | 'Iqra 6' | 'Juz Amma' | 'Alquran' | '';
-  targetLevel: 'Iqra 1' | 'Iqra 2' | 'Iqra 3' | 'Iqra 4' | 'Iqra 5' | 'Iqra 6' | 'Juz Amma' | 'Alquran' | '';
+  level: 'Iqra 1' | 'Iqra 2' | 'Iqra 3' | 'Iqra 4' | 'Iqra 5' | 'Iqra 6' | 'Juz Amma' | 'Alquran' | string;
+  targetLevel: 'Iqra 1' | 'Iqra 2' | 'Iqra 3' | 'Iqra 4' | 'Iqra 5' | 'Iqra 6' | 'Juz Amma' | 'Alquran' | string;
+  mengajiLevel?: string;
+  mengajiTarget?: string;
 }
 
 export interface NumeracyProgress extends JuniorHighProgressBase {
   subjectArea: 'NUMERACY';
-  mathLevel: 'Trailhead' | 'Ascent' | 'Ridge' | 'Summit' | '';
+  mathLevel: 'Trailhead' | 'Ascent' | 'Ridge' | 'Summit' | string;
   accuracy: number | '';
+  numerasiLevel?: string;
+  numerasiTarget?: string;
+  mathTargetLevel?: string;
 }
 
 export type JuniorHighProgressRecord =
