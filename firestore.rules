@@ -144,9 +144,7 @@ service cloud.firestore {
     }
 
     function isJHConferenceStaff() {
-      return isActive() && userRole() in [
-        'SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'BK_MENTOR', 'SECRETARY_JH'
-      ];
+      return isActive() && isJuniorHighStaff();
     }
 
     function isMTSSAcademicManager() {
@@ -482,15 +480,15 @@ service cloud.firestore {
       && data.keys().size() == 12
       && data.classId is string && data.classId.size() <= 128
       && data.academicYear is string && data.academicYear.size() <= 32
-      && data.semester is string && data.semester.size() <= 32
+      && (data.semester is int || data.semester is float) && data.semester in [1, 2]
       && data.midtermPeriodKey is string && data.midtermPeriodKey.size() <= 128
       && data.nilaiAgamaBudiPekerti is string && data.nilaiAgamaBudiPekerti.size() <= 50000
       && data.jatiDiri is string && data.jatiDiri.size() <= 50000
       && data.dasarLiterasiSteam is string && data.dasarLiterasiSteam.size() <= 50000
       && data.status is string && data.status in ['DRAFT', 'READY']
-      && data.createdAt is int
+      && (data.createdAt is int || data.createdAt is float) && data.createdAt > 0
       && data.createdBy is string && data.createdBy.size() <= 256
-      && data.updatedAt is int
+      && (data.updatedAt is int || data.updatedAt is float) && data.updatedAt > 0
       && data.updatedBy is string && data.updatedBy.size() <= 256;
     }
 
@@ -539,13 +537,7 @@ service cloud.firestore {
     }
 
     match /classes/{classId} {
-      allow read: if isActive() && (
-        isAdmin() ||
-        isClassAssignedToUser(resource.data) ||
-        (
-          (currentUser().unitId == 'JUNIOR_HIGH') ? (resource.data.unitId == 'JUNIOR_HIGH') : true
-        )
-      );
+      allow read: if isActive();
       allow create, delete: if isAdmin() || isMTSSAcademicManager();
       allow update: if isAdmin() || isMTSSAcademicManager() || (
         isSignedIn() &&
@@ -1362,17 +1354,21 @@ service cloud.firestore {
         isAdmin() ||
         isKindergartenHeadUnit() ||
         isSecretaryKindy() ||
-        (isTeacher() && isTeacherAssignedToClass(resource.data.classId))
+        (isTeacher() && (isTeacherAssignedToClass(resource.data.classId) || (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL')))
       );
       allow create: if isActive() && (
         isAdmin() ||
         isKindergartenHeadUnit() ||
-        (isTeacher() && isTeacherAssignedToClass(incoming().classId))
+        (isTeacher() && (isTeacherAssignedToClass(incoming().classId) || (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL')))
       ) && isValidClassLearningGoals(incoming());
       allow update: if isActive() && (
         isAdmin() ||
         isKindergartenHeadUnit() ||
-        (isTeacher() && isTeacherAssignedToClass(existing().classId) && isTeacherAssignedToClass(incoming().classId))
+        (isTeacher() && (
+          isTeacherAssignedToClass(existing().classId) || (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL')
+        ) && (
+          isTeacherAssignedToClass(incoming().classId) || (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL')
+        ))
       ) && isValidClassLearningGoals(incoming()) && (
         incoming().classId == existing().classId &&
         incoming().academicYear == existing().academicYear &&
