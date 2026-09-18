@@ -81,19 +81,30 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
   // Category 4: UNIT ACTIVITY
   const getCategoryData = (catId: string, fallbackName: string) => {
     if (snapshot) {
-      const found = snapshot.categories.find(c => c.name.toUpperCase() === fallbackName.toUpperCase());
-      return found?.subjects || [];
+      const categories = Array.isArray(snapshot.categories) ? snapshot.categories : [];
+      const found = categories.find(c => c && typeof c.name === 'string' && c.name.toUpperCase() === fallbackName.toUpperCase());
+      const rawSubjects = found && Array.isArray(found.subjects) ? found.subjects : [];
+      return rawSubjects.map(s => ({
+        name: s && typeof s.name === 'string' ? s.name : '',
+        goals: s && Array.isArray(s.goals) ? s.goals.map((g: any) => ({
+          id: g?.id || '',
+          text: g?.text || '',
+          remark: g?.remark || '-'
+        })) : []
+      }));
     }
 
     const config = JH_MIDTERM_CATEGORIES.find(c => c.id === catId);
     if (!config) return [];
 
-    return config.subjects.map(subjName => {
-      const master = masterGoalsMap[subjName];
-      const goals = (master?.goals || []).map(g => ({
-        id: g.id,
-        text: g.text,
-        remark: studentDataDoc?.remarks?.[g.id] || (subjName === 'Spiritual Health' ? (studentDataDoc?.spiritualHealthRemark || '') : '') || '-'
+    const subjectsList = Array.isArray(config.subjects) ? config.subjects : [];
+    return subjectsList.map(subjName => {
+      const master = masterGoalsMap && typeof masterGoalsMap === 'object' ? masterGoalsMap[subjName] : undefined;
+      const rawGoals = master && Array.isArray(master.goals) ? master.goals : [];
+      const goals = rawGoals.map(g => ({
+        id: g?.id || '',
+        text: g?.text || '',
+        remark: (studentDataDoc?.remarks?.[g?.id] || (subjName === 'Spiritual Health' ? (studentDataDoc?.spiritualHealthRemark || '') : '') || '-')
       }));
       return {
         name: subjName,

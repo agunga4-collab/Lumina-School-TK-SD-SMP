@@ -50,19 +50,22 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
   // Map published report by studentId (highest version)
   const publishedMap = React.useMemo(() => {
     const map: Record<string, PublishedMidtermReport> = {};
-    for (const rep of publishedReports) {
-      if (!map[rep.studentId] || rep.version > map[rep.studentId].version) {
-        map[rep.studentId] = rep;
+    const list = Array.isArray(publishedReports) ? publishedReports : [];
+    for (const rep of list) {
+      if (rep && rep.studentId) {
+        if (!map[rep.studentId] || rep.version > map[rep.studentId].version) {
+          map[rep.studentId] = rep;
+        }
       }
     }
     return map;
   }, [publishedReports]);
 
   // Compute stats
-  const totalStudents = students.length;
-  const publishedStudentsCount = students.filter(s => Boolean(publishedMap[s.id])).length;
-  const openedStudentsCount = students.filter(s => {
-    const rep = publishedMap[s.id];
+  const totalStudents = Array.isArray(students) ? students.length : 0;
+  const publishedStudentsCount = (Array.isArray(students) ? students : []).filter(s => s && Boolean(publishedMap[s.id])).length;
+  const openedStudentsCount = (Array.isArray(students) ? students : []).filter(s => {
+    const rep = s ? publishedMap[s.id] : undefined;
     return rep && rep.isOpened;
   }).length;
   const openRatePercent = publishedStudentsCount > 0 ? Math.round((openedStudentsCount / publishedStudentsCount) * 100) : 0;

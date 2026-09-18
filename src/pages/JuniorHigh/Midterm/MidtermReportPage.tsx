@@ -25,6 +25,75 @@ import type {
 } from '../../../types/midtermReport';
 import type { Class, Student, ReportConfig, User } from '../../../types';
 
+class MidtermErrorBoundary extends React.Component<
+  { children: React.ReactNode; isSuperAdmin: boolean },
+  { hasError: boolean; error: Error | null; errorInfo: React.ErrorInfo | null }
+> {
+  constructor(props: { children: React.ReactNode; isSuperAdmin: boolean }) {
+    super(props);
+    this.state = { hasError: false, error: null, errorInfo: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    this.setState({ errorInfo });
+    console.error("Midterm Modul Error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-8 max-w-2xl mx-auto my-12 bg-white rounded-3xl border border-red-200 shadow-sm text-center space-y-6">
+          <div className="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-xs">
+            <svg className="w-8 h-8 fill-none stroke-current" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-lg font-black text-slate-900 uppercase tracking-tight">
+              Midterm Report mengalami kendala saat memuat data.
+            </h2>
+            <p className="text-xs text-slate-500 font-medium">
+              Beberapa konfigurasi data atau sinkronisasi dokumen terhambat. Silakan lakukan muat ulang.
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row justify-center gap-3">
+            <button 
+              onClick={() => window.location.reload()}
+              className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-2xl transition-all uppercase tracking-wider cursor-pointer"
+            >
+              Muat Ulang
+            </button>
+            {this.props.isSuperAdmin && (
+              <button 
+                onClick={() => {
+                  const info = `Error: ${this.state.error?.message}\nStack: ${this.state.error?.stack}\nComponent Stack: ${this.state.errorInfo?.componentStack}`;
+                  navigator.clipboard.writeText(info);
+                  alert("Detail diagnosik berhasil disalin!");
+                }}
+                className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-2xl transition-all uppercase tracking-wider border border-slate-200 cursor-pointer"
+              >
+                Salin Detail Diagnostik
+              </button>
+            )}
+          </div>
+          {this.props.isSuperAdmin && this.state.error && (
+            <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200 text-left overflow-auto max-h-48 text-[10px] font-mono text-slate-600">
+              <div className="font-bold text-red-600 mb-1">Developer Stacktrace:</div>
+              {this.state.error.message}
+              <pre className="mt-2 text-[9px] leading-tight whitespace-pre">{this.state.error.stack}</pre>
+            </div>
+          )}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function MidtermReportPage() {
   const { currentUser, profile } = useAuth();
   const effectiveUser = (currentUser || profile) as User;
@@ -196,16 +265,20 @@ export default function MidtermReportPage() {
 
   const publishedMap = React.useMemo(() => {
     const map: Record<string, PublishedMidtermReport> = {};
-    for (const rep of publishedReports) {
-      if (!map[rep.studentId] || rep.version > map[rep.studentId].version) {
-        map[rep.studentId] = rep;
+    const list = Array.isArray(publishedReports) ? publishedReports : [];
+    for (const rep of list) {
+      if (rep && rep.studentId) {
+        if (!map[rep.studentId] || rep.version > map[rep.studentId].version) {
+          map[rep.studentId] = rep;
+        }
       }
     }
     return map;
   }, [publishedReports]);
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
+    <MidtermErrorBoundary isSuperAdmin={profile?.role === 'super_admin'}>
+      <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
       {/* Top Header Banner */}
       <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
@@ -440,5 +513,6 @@ export default function MidtermReportPage() {
         </>
       )}
     </div>
+    </MidtermErrorBoundary>
   );
 }
