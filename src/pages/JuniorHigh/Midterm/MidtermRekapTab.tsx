@@ -38,6 +38,10 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
   loading,
   onRefreshData
 }) => {
+  const safeStudents = Array.isArray(students) ? students.filter(Boolean) : [];
+  const safePublishedReports = Array.isArray(publishedReports) ? publishedReports.filter(Boolean) : [];
+  const safeClasses = Array.isArray(classes) ? classes.filter(Boolean) : [];
+
   const [filterPublishStatus, setFilterPublishStatus] = React.useState<'ALL' | 'PUBLISHED' | 'UNPUBLISHED'>('ALL');
   const [filterOpenStatus, setFilterOpenStatus] = React.useState<'ALL' | 'OPENED' | 'UNOPENED'>('ALL');
   const [searchQuery, setSearchQuery] = React.useState<string>('');
@@ -50,29 +54,30 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
   // Map published report by studentId (highest version)
   const publishedMap = React.useMemo(() => {
     const map: Record<string, PublishedMidtermReport> = {};
-    const list = Array.isArray(publishedReports) ? publishedReports : [];
-    for (const rep of list) {
+    for (const rep of safePublishedReports) {
       if (rep && rep.studentId) {
-        if (!map[rep.studentId] || rep.version > map[rep.studentId].version) {
+        if (!map[rep.studentId] || (rep.version ?? 0) > (map[rep.studentId].version ?? 0)) {
           map[rep.studentId] = rep;
         }
       }
     }
     return map;
-  }, [publishedReports]);
+  }, [safePublishedReports]);
 
   // Compute stats
-  const totalStudents = Array.isArray(students) ? students.length : 0;
-  const publishedStudentsCount = (Array.isArray(students) ? students : []).filter(s => s && Boolean(publishedMap[s.id])).length;
-  const openedStudentsCount = (Array.isArray(students) ? students : []).filter(s => {
-    const rep = s ? publishedMap[s.id] : undefined;
-    return rep && rep.isOpened;
+  const totalStudents = safeStudents.length;
+  const publishedStudentsCount = safeStudents.filter(s => s && s.id && Boolean(publishedMap[s.id])).length;
+  const openedStudentsCount = safeStudents.filter(s => {
+    if (!s || !s.id) return false;
+    const rep = publishedMap[s.id];
+    return Boolean(rep && rep.isOpened);
   }).length;
   const openRatePercent = publishedStudentsCount > 0 ? Math.round((openedStudentsCount / publishedStudentsCount) * 100) : 0;
 
   // Filter student rows
   const filteredRows = React.useMemo(() => {
-    return students.filter(student => {
+    return safeStudents.filter(student => {
+      if (!student || !student.id) return false;
       const rep = publishedMap[student.id];
       const isPublished = Boolean(rep);
       const isOpened = Boolean(rep?.isOpened);
@@ -80,8 +85,9 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
       // Search query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const matchesName = student.name.toLowerCase().includes(q);
-        const matchesNisn = (student.nisn || (student as any).nis || '').toLowerCase().includes(q);
+        const studentName = typeof student.name === 'string' ? student.name : '';
+        const matchesName = studentName.toLowerCase().includes(q);
+        const matchesNisn = String(student.nisn || (student as any).nis || '').toLowerCase().includes(q);
         if (!matchesName && !matchesNisn) return false;
       }
 
@@ -95,7 +101,7 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
 
       return true;
     });
-  }, [students, publishedMap, searchQuery, filterPublishStatus, filterOpenStatus]);
+  }, [safeStudents, publishedMap, searchQuery, filterPublishStatus, filterOpenStatus]);
 
   const handleCopyLink = (rep: PublishedMidtermReport) => {
     const url = rep.driveFileUrl || window.location.href;
@@ -176,7 +182,7 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
               onChange={(e) => onSelectClassId(e.target.value)}
               className="text-xs font-bold px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10"
             >
-              {classes.map(c => (
+              {safeClasses.map(c => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>

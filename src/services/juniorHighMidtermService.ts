@@ -472,9 +472,9 @@ export async function saveMidtermStudentGeneralComment(
  * Calculate completeness and status for a student report
  */
 export function evaluateStudentMidtermStatus(
-  student: Student,
-  masterGoalsMap: Record<string, MidtermMasterGoalDoc>,
-  studentDataDoc: MidtermStudentDataDoc | undefined,
+  student: Student | null | undefined,
+  masterGoalsMap: Record<string, MidtermMasterGoalDoc> | null | undefined,
+  studentDataDoc: MidtermStudentDataDoc | undefined | null,
   isPublishedAlready: boolean
 ): {
   status: MidtermReportStatus;
@@ -502,30 +502,38 @@ export function evaluateStudentMidtermStatus(
   let totalGoals = 0;
   let completedGoals = 0;
 
-  const remarks = studentDataDoc?.remarks || {};
+  const safeMasterGoals = masterGoalsMap && typeof masterGoalsMap === 'object' ? masterGoalsMap : {};
+  const remarks = (studentDataDoc?.remarks && typeof studentDataDoc.remarks === 'object') ? studentDataDoc.remarks : {};
 
   // Check all subjects across all categories
-  for (const cat of JH_MIDTERM_CATEGORIES) {
-    for (const subj of cat.subjects) {
-      const masterGoal = masterGoalsMap[subj];
-      if (!masterGoal || !masterGoal.goals || masterGoal.goals.length === 0) {
+  const categories = Array.isArray(JH_MIDTERM_CATEGORIES) ? JH_MIDTERM_CATEGORIES : [];
+  for (const cat of categories) {
+    const subjects = Array.isArray(cat?.subjects) ? cat.subjects : [];
+    for (const subj of subjects) {
+      if (!subj) continue;
+      const masterGoal = safeMasterGoals[subj];
+      const goals = Array.isArray(masterGoal?.goals) ? masterGoal.goals : [];
+      if (!masterGoal || goals.length === 0) {
         missingGoalsSubjects.push(subj);
         issues.push(`Learning Goals untuk ${subj} belum diisi.`);
       } else {
-        for (const g of masterGoal.goals) {
+        for (const g of goals) {
+          if (!g) continue;
           totalGoals++;
           const rem = remarks[g.id];
-          if (rem && rem.trim()) {
+          if (typeof rem === 'string' && rem.trim().length > 0) {
             completedGoals++;
           } else {
-            issues.push(`Remark untuk "${g.text.slice(0, 30)}..." (${subj}) belum diisi.`);
+            const goalText = typeof g.text === 'string' ? g.text : '';
+            issues.push(`Remark untuk "${goalText.slice(0, 30)}..." (${subj}) belum diisi.`);
           }
         }
       }
     }
   }
 
-  const finalComment = studentDataDoc?.generalComment?.finalComment?.trim() || '';
+  const rawComment = studentDataDoc?.generalComment?.finalComment;
+  const finalComment = typeof rawComment === 'string' ? rawComment.trim() : '';
   const hasFinalComment = Boolean(finalComment);
   if (!hasFinalComment) {
     issues.push('General Comments belum diisi atau belum difinalisasi.');

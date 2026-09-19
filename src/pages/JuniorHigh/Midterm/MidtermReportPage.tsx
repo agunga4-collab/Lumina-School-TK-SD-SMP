@@ -97,13 +97,21 @@ class MidtermErrorBoundary extends Component<any, any> {
   }
 }
 
-export default function MidtermReportPage() {
+function MidtermReportPageContent() {
   const { currentUser, profile } = useAuth();
   const effectiveUser = (currentUser || profile) as User;
-  const { academicYears, activeAcademicYear } = useAcademicYear();
+  const { activeYear } = useAcademicYear();
+
+  const availableYears = React.useMemo(() => {
+    const defaults = ['2024/2025', '2025/2026', '2026/2027'];
+    if (activeYear && !defaults.includes(activeYear)) {
+      return [...defaults, activeYear].sort();
+    }
+    return defaults;
+  }, [activeYear]);
 
   // Primary Context Filters
-  const [selectedYear, setSelectedYear] = React.useState<string>(activeAcademicYear?.name || '2025/2026');
+  const [selectedYear, setSelectedYear] = React.useState<string>(activeYear || '2025/2026');
   const [selectedSemester, setSelectedSemester] = React.useState<string>('1');
   const [selectedTerm, setSelectedTerm] = React.useState<string>('1');
   const [activeTab, setActiveTab] = React.useState<'GOALS' | 'COMMENTS' | 'PUBLISH' | 'REKAP'>('GOALS');
@@ -124,12 +132,12 @@ export default function MidtermReportPage() {
   const [publishedReports, setPublishedReports] = React.useState<PublishedMidtermReport[]>([]);
   const [loadingData, setLoadingData] = React.useState<boolean>(false);
 
-  // Sync active academic year on mount
+  // Sync active academic year on change
   React.useEffect(() => {
-    if (activeAcademicYear?.name) {
-      setSelectedYear(activeAcademicYear.name);
+    if (activeYear) {
+      setSelectedYear(activeYear);
     }
-  }, [activeAcademicYear]);
+  }, [activeYear]);
 
   // Load Junior High Classes
   React.useEffect(() => {
@@ -146,24 +154,28 @@ export default function MidtermReportPage() {
         ]);
 
         const activeClassKeys = new Set<string>();
-        enrollmentsSnap.docs.forEach(d => {
-          const e = d.data();
-          if (e.classId) activeClassKeys.add(e.classId);
-        });
+        if (enrollmentsSnap && Array.isArray(enrollmentsSnap.docs)) {
+          enrollmentsSnap.docs.forEach(d => {
+            const e = d.data();
+            if (e && e.classId) activeClassKeys.add(e.classId);
+          });
+        }
 
-        const jhClasses = (all || []).filter(c => {
+        const rawClasses = Array.isArray(all) ? all : [];
+        const jhClasses = rawClasses.filter(c => {
+          if (!c) return false;
           const isJH = c.unitId === 'JUNIOR_HIGH';
           const isActiveYear = c.academicYear === selectedYear;
           const isNotArchived = c.status !== 'archived';
           if (!isJH || !isActiveYear || !isNotArchived) return false;
 
-          return activeClassKeys.has(c.id) || activeClassKeys.has(c.name) || ((c as any).classId && activeClassKeys.has((c as any).classId));
+          return activeClassKeys.has(c.id) || activeClassKeys.has(c.name) || Boolean((c as any).classId && activeClassKeys.has((c as any).classId));
         });
 
         setClassesList(jhClasses);
         if (jhClasses.length > 0) {
           // If previous selection is valid keep it, else select first
-          if (!jhClasses.some(c => c.id === selectedClassId)) {
+          if (!jhClasses.some(c => c && c.id === selectedClassId)) {
             setSelectedClassId(jhClasses[0].id);
           }
         } else {
@@ -178,10 +190,12 @@ export default function MidtermReportPage() {
     fetchJHClasses();
   }, [selectedYear]);
 
-  const selectedClass = classesList.find(c => c.id === selectedClassId) || null;
+  const safeClassesList = Array.isArray(classesList) ? classesList.filter(Boolean) : [];
+  const selectedClass = safeClassesList.find(c => c.id === selectedClassId) || null;
 
   // Read-only attendance resolution
-  const activeStudentIds = React.useMemo(() => students.map(s => s.id), [students]);
+  const safeStudents = Array.isArray(students) ? students.filter(Boolean) : [];
+  const activeStudentIds = React.useMemo(() => safeStudents.map(s => s?.id).filter((id): id is string => Boolean(id)), [safeStudents]);
   const now = new Date();
   const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
@@ -213,19 +227,24 @@ export default function MidtermReportPage() {
         })
       ]);
 
-      const sortedStudents = (studentList || []).sort((a, b) => {
+      const rawStudentList = Array.isArray(studentList) ? studentList.filter(Boolean) : [];
+      const sortedStudents = rawStudentList.sort((a, b) => {
         const numA = a.attendanceNumber ?? (a as any).noAbsen ?? 999;
         const numB = b.attendanceNumber ?? (b as any).noAbsen ?? 999;
         if (numA !== numB) return numA - numB;
-        return a.name.localeCompare(b.name);
+        const nameA = typeof a.name === 'string' ? a.name : '';
+        const nameB = typeof b.name === 'string' ? b.name : '';
+        return nameA.localeCompare(nameB);
       });
 
+      const safeSData = sData && typeof sData === 'object' ? sData : {};
       const fullStudentDataMap: Record<string, MidtermStudentDataDoc> = {};
       sortedStudents.forEach(student => {
-        const existing = sData[student.id];
+        if (!student || !student.id) return;
+        const existing = safeSData[student.id];
         fullStudentDataMap[student.id] = existing || normalizeMidtermStudentData(null, {
           studentId: student.id,
-          studentName: student.name,
+          studentName: student.name || 'Siswa',
           classId: selectedClassId,
           academicYear: selectedYear,
           semester: selectedSemester,
@@ -234,10 +253,10 @@ export default function MidtermReportPage() {
       });
 
       setStudents(sortedStudents);
-      setReportConfig(config);
-      setMasterGoalsMap(goals);
+      setReportConfig(config || null);
+      setMasterGoalsMap(goals && typeof goals === 'object' ? goals : {});
       setStudentDataMap(fullStudentDataMap);
-      setPublishedReports(published);
+      setPublishedReports(Array.isArray(published) ? published.filter(Boolean) : []);
 
       // Load homeroom teacher profile if available
       if (selectedClass?.homeroomTeacherId) {
@@ -246,9 +265,9 @@ export default function MidtermReportPage() {
           if (uSnap.exists()) {
             const uData = uSnap.data();
             setHomeroomTeacherProfile({
-              displayName: uData.displayName || uData.name || selectedClass.homeroomTeacherName || 'Homeroom Teacher',
-              niy: uData.niy,
-              signatureUrl: uData.signatureUrl
+              displayName: uData?.displayName || uData?.name || selectedClass.homeroomTeacherName || 'Homeroom Teacher',
+              niy: uData?.niy,
+              signatureUrl: uData?.signatureUrl
             });
           }
         } catch (e) {
@@ -266,22 +285,24 @@ export default function MidtermReportPage() {
     loadClassData();
   }, [loadClassData]);
 
+  const safePublishedReports = Array.isArray(publishedReports) ? publishedReports.filter(Boolean) : [];
   const publishedMap = React.useMemo(() => {
     const map: Record<string, PublishedMidtermReport> = {};
-    const list = Array.isArray(publishedReports) ? publishedReports : [];
-    for (const rep of list) {
+    for (const rep of safePublishedReports) {
       if (rep && rep.studentId) {
-        if (!map[rep.studentId] || rep.version > map[rep.studentId].version) {
+        if (!map[rep.studentId] || (rep.version ?? 0) > (map[rep.studentId].version ?? 0)) {
           map[rep.studentId] = rep;
         }
       }
     }
     return map;
-  }, [publishedReports]);
+  }, [safePublishedReports]);
+
+  const safeMasterGoalsMap = masterGoalsMap && typeof masterGoalsMap === 'object' ? masterGoalsMap : {};
+  const safeStudentDataMap = studentDataMap && typeof studentDataMap === 'object' ? studentDataMap : {};
 
   return (
-    <MidtermErrorBoundary isSuperAdmin={profile?.role === 'super_admin'}>
-      <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
       {/* Top Header Banner */}
       <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
@@ -312,16 +333,9 @@ export default function MidtermReportPage() {
               onChange={(e) => setSelectedYear(e.target.value)}
               className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10"
             >
-              {academicYears.length > 0 ? (
-                academicYears.map(y => (
-                  <option key={y.id} value={y.name}>{y.name}</option>
-                ))
-              ) : (
-                <>
-                  <option value="2025/2026">2025/2026</option>
-                  <option value="2026/2027">2026/2027</option>
-                </>
-              )}
+              {availableYears.map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
             </select>
           </div>
 
@@ -363,10 +377,10 @@ export default function MidtermReportPage() {
             <select
               value={selectedClassId}
               onChange={(e) => setSelectedClassId(e.target.value)}
-              disabled={loadingClasses || classesList.length === 0}
+              disabled={loadingClasses || safeClassesList.length === 0}
               className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10 min-w-[140px]"
             >
-              {classesList.map(c => (
+              {safeClassesList.map(c => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
@@ -377,7 +391,7 @@ export default function MidtermReportPage() {
             <button
               onClick={() => loadClassData()}
               disabled={loadingData}
-              className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-all disabled:opacity-50 mt-auto"
+              className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-all disabled:opacity-50 mt-auto cursor-pointer"
               title="Refresh Data"
             >
               <RefreshCw size={15} className={loadingData ? 'animate-spin' : ''} />
@@ -438,7 +452,7 @@ export default function MidtermReportPage() {
       </div>
 
       {/* Main Tab Content */}
-      {classesList.length === 0 && !loadingClasses ? (
+      {safeClassesList.length === 0 && !loadingClasses ? (
         <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center space-y-3 shadow-xs">
           <AlertCircle size={32} className="mx-auto text-amber-500" />
           <h3 className="text-base font-bold text-slate-900 uppercase">
@@ -454,12 +468,12 @@ export default function MidtermReportPage() {
             <MidtermLearningGoalsTab
               currentUser={effectiveUser}
               selectedClass={selectedClass}
-              students={students}
+              students={safeStudents}
               academicYear={selectedYear}
               semester={selectedSemester}
               midtermTerm={selectedTerm}
-              masterGoalsMap={masterGoalsMap}
-              studentDataMap={studentDataMap}
+              masterGoalsMap={safeMasterGoalsMap}
+              studentDataMap={safeStudentDataMap}
               onRefreshData={loadClassData}
               loading={loadingData}
             />
@@ -469,11 +483,11 @@ export default function MidtermReportPage() {
             <MidtermGeneralCommentsTab
               currentUser={effectiveUser}
               selectedClass={selectedClass}
-              students={students}
+              students={safeStudents}
               academicYear={selectedYear}
               semester={selectedSemester}
               midtermTerm={selectedTerm}
-              studentDataMap={studentDataMap}
+              studentDataMap={safeStudentDataMap}
               onRefreshData={loadClassData}
               loading={loadingData}
             />
@@ -483,14 +497,14 @@ export default function MidtermReportPage() {
             <MidtermPublishPdfTab
               currentUser={effectiveUser}
               selectedClass={selectedClass}
-              students={students}
+              students={safeStudents}
               academicYear={selectedYear}
               semester={selectedSemester}
               midtermTerm={selectedTerm}
-              masterGoalsMap={masterGoalsMap}
-              studentDataMap={studentDataMap}
+              masterGoalsMap={safeMasterGoalsMap}
+              studentDataMap={safeStudentDataMap}
               publishedReportsMap={publishedMap}
-              studentAttendanceMap={studentAttendanceMap}
+              studentAttendanceMap={studentAttendanceMap || {}}
               reportConfig={reportConfig}
               homeroomTeacherProfile={homeroomTeacherProfile}
               onRefreshData={loadClassData}
@@ -501,14 +515,14 @@ export default function MidtermReportPage() {
           {activeTab === 'REKAP' && (
             <MidtermRekapTab
               currentUser={effectiveUser}
-              classes={classesList}
+              classes={safeClassesList}
               selectedClassId={selectedClassId}
               onSelectClassId={(id) => setSelectedClassId(id)}
-              students={students}
+              students={safeStudents}
               academicYear={selectedYear}
               semester={selectedSemester}
               midtermTerm={selectedTerm}
-              publishedReports={publishedReports}
+              publishedReports={safePublishedReports}
               loading={loadingData}
               onRefreshData={loadClassData}
             />
@@ -516,6 +530,16 @@ export default function MidtermReportPage() {
         </>
       )}
     </div>
+  );
+}
+
+export default function MidtermReportPage() {
+  const { profile } = useAuth();
+  const isSuperAdmin = profile?.role === 'super_admin' || profile?.role === 'SUPER_ADMIN';
+
+  return (
+    <MidtermErrorBoundary isSuperAdmin={isSuperAdmin}>
+      <MidtermReportPageContent />
     </MidtermErrorBoundary>
   );
 }

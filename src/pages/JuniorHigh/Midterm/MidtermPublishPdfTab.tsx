@@ -76,20 +76,28 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
   // Background rendering elements for PDF creation
   const [activeGeneratingStudent, setActiveGeneratingStudent] = React.useState<Student | null>(null);
 
+  const safeStudents = Array.isArray(students) ? students.filter(Boolean) : [];
+  const safeStudentDataMap = studentDataMap && typeof studentDataMap === 'object' ? studentDataMap : {};
+  const safePublishedReportsMap = publishedReportsMap && typeof publishedReportsMap === 'object' ? publishedReportsMap : {};
+  const safeMasterGoalsMap = masterGoalsMap && typeof masterGoalsMap === 'object' ? masterGoalsMap : {};
+  const safeStudentAttendanceMap = studentAttendanceMap && typeof studentAttendanceMap === 'object' ? studentAttendanceMap : {};
+
   const canPublish = canUserPublishMidterm(currentUser, selectedClass);
 
   // Filter students
   const filteredStudents = React.useMemo(() => {
-    return students.filter(student => {
-      const sData = studentDataMap[student.id];
-      const published = publishedReportsMap[student.id];
+    return safeStudents.filter(student => {
+      if (!student || !student.id) return false;
+      const sData = safeStudentDataMap[student.id];
+      const published = safePublishedReportsMap[student.id];
       const isPublished = Boolean(published);
-      const evalStatus = evaluateStudentMidtermStatus(student, masterGoalsMap, sData, isPublished);
+      const evalStatus = evaluateStudentMidtermStatus(student, safeMasterGoalsMap, sData, isPublished);
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const matchesName = student.name.toLowerCase().includes(q);
-        const matchesNisn = (student.nisn || (student as any).nis || '').toLowerCase().includes(q);
+        const studentName = typeof student.name === 'string' ? student.name : '';
+        const matchesName = studentName.toLowerCase().includes(q);
+        const matchesNisn = String(student.nisn || (student as any).nis || '').toLowerCase().includes(q);
         if (!matchesName && !matchesNisn) return false;
       }
 
@@ -98,18 +106,21 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
       if (filterStatus === 'DRAFT') return !isPublished && !evalStatus.isReady;
       return true;
     });
-  }, [students, studentDataMap, publishedReportsMap, masterGoalsMap, filterStatus, searchQuery]);
+  }, [safeStudents, safeStudentDataMap, safePublishedReportsMap, safeMasterGoalsMap, filterStatus, searchQuery]);
 
   // Build snapshot object from live data
   const buildLiveSnapshot = (student: Student): MidtermReportSnapshot => {
-    const sData = studentDataMap[student.id];
-    const att = studentAttendanceMap[student.id] || { sickLeave: 0, excusedLeave: 0, absent: 0 };
+    if (!student) throw new Error('Data siswa tidak valid.');
+    const sData = safeStudentDataMap[student.id];
+    const att = safeStudentAttendanceMap[student.id] || { sickLeave: 0, excusedLeave: 0, absent: 0 };
+    const categoriesList = Array.isArray(JH_MIDTERM_CATEGORIES) ? JH_MIDTERM_CATEGORIES : [];
 
-    const categories = JH_MIDTERM_CATEGORIES.map(cat => ({
+    const categories = categoriesList.map(cat => ({
       name: cat.name,
-      subjects: cat.subjects.map(subjName => {
-        const master = masterGoalsMap[subjName];
-        const goals = (master?.goals || []).map(g => ({
+      subjects: (Array.isArray(cat?.subjects) ? cat.subjects : []).map(subjName => {
+        const master = safeMasterGoalsMap[subjName];
+        const rawGoals = Array.isArray(master?.goals) ? master.goals : [];
+        const goals = rawGoals.map(g => ({
           id: g.id,
           text: g.text,
           remark: sData?.remarks?.[g.id] || (subjName === 'Spiritual Health' ? (sData?.spiritualHealthRemark || '') : '') || '-'
@@ -124,7 +135,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
     return {
       student: {
         id: student.id,
-        name: student.name,
+        name: student.name || 'Siswa',
         nisn: student.nisn || (student as any).nis || '-',
         className: selectedClass?.name || '',
         grade: student.grade || 7
@@ -272,11 +283,12 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
   const handleBulkPublishReady = async () => {
     if (!canPublish) return;
 
-    const readyStudents = students.filter(student => {
-      const sData = studentDataMap[student.id];
-      const published = publishedReportsMap[student.id];
+    const readyStudents = safeStudents.filter(student => {
+      if (!student || !student.id) return false;
+      const sData = safeStudentDataMap[student.id];
+      const published = safePublishedReportsMap[student.id];
       if (published) return false; // skip already published in bulk
-      const evalStatus = evaluateStudentMidtermStatus(student, masterGoalsMap, sData, false);
+      const evalStatus = evaluateStudentMidtermStatus(student, safeMasterGoalsMap, sData, false);
       return evalStatus.isReady;
     });
 
@@ -337,7 +349,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
-              {tab === 'ALL' && `Semua (${students.length})`}
+              {tab === 'ALL' && `Semua (${safeStudents.length})`}
               {tab === 'READY' && 'Siap Terbit'}
               {tab === 'PUBLISHED' && 'Sudah Terbit'}
               {tab === 'DRAFT' && 'Draft (Belum Lengkap)'}
@@ -424,19 +436,19 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
                           <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg">
                             <CheckCircle2 size={12} /> Lengkap
                           </span>
-                        ) : evalStatus.missingGoalsSubjects.length > 0 ? (
+                        ) : (Array.isArray(evalStatus?.missingGoalsSubjects) && evalStatus.missingGoalsSubjects.length > 0) ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-lg" title={`Belum ada goal di: ${evalStatus.missingGoalsSubjects.join(', ')}`}>
                             <AlertCircle size={12} /> {evalStatus.missingGoalsSubjects.length} Mapel Kosong
                           </span>
-                        ) : evalStatus.totalGoals === 0 ? (
+                        ) : (evalStatus?.totalGoals ?? 0) === 0 ? (
                           <span className="text-[10px] text-slate-400 font-medium">Belum ada goal</span>
-                        ) : evalStatus.completedGoals === evalStatus.totalGoals ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg">
-                            <CheckCircle2 size={12} /> {evalStatus.completedGoals}/{evalStatus.totalGoals} Remark
+                        ) : evalStatus?.completedGoals === evalStatus?.totalGoals ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg">
+                            <CheckCircle2 size={12} /> {evalStatus?.completedGoals ?? 0}/{evalStatus?.totalGoals ?? 0} Remark
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-lg">
-                            {evalStatus.completedGoals}/{evalStatus.totalGoals} Terisi
+                            {evalStatus?.completedGoals ?? 0}/{evalStatus?.totalGoals ?? 0} Terisi
                           </span>
                         )}
                       </td>

@@ -44,6 +44,11 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
   onRefreshData,
   loading
 }) => {
+  const safeStudents = Array.isArray(students) ? students.filter(Boolean) : [];
+  const safeMasterGoalsMap = masterGoalsMap && typeof masterGoalsMap === 'object' ? masterGoalsMap : {};
+  const safeStudentDataMap = studentDataMap && typeof studentDataMap === 'object' ? studentDataMap : {};
+  const categoriesList = Array.isArray(JH_MIDTERM_CATEGORIES) ? JH_MIDTERM_CATEGORIES : [];
+
   const [selectedCategoryIndex, setSelectedCategoryIndex] = React.useState<number>(0);
   const [selectedSubject, setSelectedSubject] = React.useState<string>('Bahasa Indonesia');
   
@@ -57,18 +62,19 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
   // Remarks saving state
   const [savingRemarkKey, setSavingRemarkKey] = React.useState<string | null>(null);
 
-  const currentCategory = JH_MIDTERM_CATEGORIES[selectedCategoryIndex];
+  const currentCategory = categoriesList[selectedCategoryIndex] || categoriesList[0];
+  const currentCategorySubjects = Array.isArray(currentCategory?.subjects) ? currentCategory.subjects : [];
 
   // Auto sync selected subject when category changes
   React.useEffect(() => {
-    if (currentCategory && !currentCategory.subjects.includes(selectedSubject)) {
-      setSelectedSubject(currentCategory.subjects[0]);
+    if (currentCategorySubjects.length > 0 && !currentCategorySubjects.includes(selectedSubject)) {
+      setSelectedSubject(currentCategorySubjects[0]);
     }
-  }, [selectedCategoryIndex, currentCategory, selectedSubject]);
+  }, [selectedCategoryIndex, currentCategory, selectedSubject, currentCategorySubjects]);
 
   const canEdit = canUserEditMidtermGoals(currentUser, selectedClass, selectedSubject);
-  const currentMasterGoalDoc = masterGoalsMap[selectedSubject];
-  const goals: MidtermGoalItem[] = currentMasterGoalDoc?.goals || [];
+  const currentMasterGoalDoc = safeMasterGoalsMap[selectedSubject];
+  const goals: MidtermGoalItem[] = Array.isArray(currentMasterGoalDoc?.goals) ? currentMasterGoalDoc.goals.filter(Boolean) : [];
 
   const handleAddGoal = async () => {
     if (!newGoalText.trim() || !selectedClass) return;
@@ -227,10 +233,10 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
         <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mr-1">
           Mata Pelajaran:
         </span>
-        {currentCategory.subjects.map(subj => {
+        {currentCategorySubjects.map(subj => {
           const isCurrent = subj === selectedSubject;
-          const master = masterGoalsMap[subj];
-          const count = master?.goals?.length || 0;
+          const master = safeMasterGoalsMap[subj];
+          const count = Array.isArray(master?.goals) ? master.goals.length : 0;
           return (
             <button
               key={subj}
@@ -447,21 +453,23 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
-                {students.map((student, sIdx) => {
-                  const sData = studentDataMap[student.id];
-                  const remarks = sData?.remarks || {};
+                {safeStudents.map((student, sIdx) => {
+                  if (!student) return null;
+                  const sData = safeStudentDataMap[student.id];
+                  const remarks = (sData?.remarks && typeof sData.remarks === 'object') ? sData.remarks : {};
 
                   return (
                     <tr key={student.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="p-3 text-center font-bold text-slate-400">{sIdx + 1}</td>
                       <td className="p-3 font-bold text-slate-900 uppercase">
-                        {student.name}
+                        {student.name || '-'}
                       </td>
                       <td className="p-3 font-medium text-slate-500">
                         {student.nisn || (student as any).nis || '-'}
                       </td>
 
                       {goals.map((g) => {
+                        if (!g) return null;
                         const currentVal = remarks[g.id] || (isSpiritualHealth ? sData?.spiritualHealthRemark : '') || '';
                         const isSavingThis = savingRemarkKey === `${student.id}_${g.id}`;
 

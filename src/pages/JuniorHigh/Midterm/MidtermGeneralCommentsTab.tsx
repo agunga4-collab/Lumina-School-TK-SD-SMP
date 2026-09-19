@@ -42,7 +42,10 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
   onRefreshData,
   loading
 }) => {
-  const [selectedStudentId, setSelectedStudentId] = React.useState<string>(students[0]?.id || '');
+  const safeStudents = Array.isArray(students) ? students.filter(Boolean) : [];
+  const safeStudentDataMap = studentDataMap && typeof studentDataMap === 'object' ? studentDataMap : {};
+
+  const [selectedStudentId, setSelectedStudentId] = React.useState<string>(safeStudents[0]?.id || '');
   
   // Active editing state for current selected student
   const [nickname, setNickname] = React.useState<string>('');
@@ -67,17 +70,17 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
 
   // Auto-select first student if none selected
   React.useEffect(() => {
-    if ((!selectedStudentId || !students.some(s => s.id === selectedStudentId)) && students.length > 0) {
-      setSelectedStudentId(students[0].id);
+    if ((!selectedStudentId || !safeStudents.some(s => s && s.id === selectedStudentId)) && safeStudents.length > 0) {
+      setSelectedStudentId(safeStudents[0].id);
     }
-  }, [students, selectedStudentId]);
+  }, [safeStudents, selectedStudentId]);
 
-  const selectedStudent = students.find(s => s.id === selectedStudentId) || students[0];
+  const selectedStudent = safeStudents.find(s => s && s.id === selectedStudentId) || safeStudents[0] || null;
 
   // Sync form when student changes or studentDataMap updates
   React.useEffect(() => {
     if (!selectedStudent) return;
-    const sData = studentDataMap[selectedStudent.id];
+    const sData = safeStudentDataMap[selectedStudent.id];
     const gc = sData?.generalComment;
 
     const sName = selectedStudent.name || '';
@@ -85,14 +88,14 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
 
     setNickname(gc?.nickname || (selectedStudent.nickname as any) || sName.split(' ')[0] || '');
     setGender(gc?.gender || detectedGender);
-    setSelectedStrengths(gc?.strengths || []);
-    setSelectedAchievements(gc?.achievements || []);
-    setSelectedNeedsImprovement(gc?.needsImprovement || []);
+    setSelectedStrengths(Array.isArray(gc?.strengths) ? gc.strengths : []);
+    setSelectedAchievements(Array.isArray(gc?.achievements) ? gc.achievements : []);
+    setSelectedNeedsImprovement(Array.isArray(gc?.needsImprovement) ? gc.needsImprovement : []);
     setManualNotes(gc?.manualNotes || '');
     setAiDraft(gc?.aiDraft || '');
     setFinalComment(gc?.finalComment || gc?.aiDraft || '');
     setIsFinal(Boolean(gc?.isFinal));
-  }, [selectedStudent?.id, studentDataMap]);
+  }, [selectedStudent?.id, safeStudentDataMap]);
 
   // Helper to toggle bank items
   const toggleItem = (list: string[], setList: (v: string[]) => void, item: string) => {
@@ -222,7 +225,7 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
         <div className="lg:col-span-4 bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-3">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
-              Daftar Siswa ({students.length})
+              Daftar Siswa ({safeStudents.length})
             </h3>
             <span className="text-[11px] text-slate-500 font-medium">
               Pilih siswa
@@ -230,8 +233,9 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
           </div>
 
           <div className="space-y-1.5 max-h-[620px] overflow-y-auto pr-1">
-            {students.map((student, idx) => {
-              const sData = studentDataMap[student.id];
+            {safeStudents.map((student, idx) => {
+              if (!student) return null;
+              const sData = safeStudentDataMap[student.id];
               const gc = sData?.generalComment;
               const hasFinal = Boolean(gc?.finalComment?.trim());
               const isMarkedFinal = Boolean(gc?.isFinal);
