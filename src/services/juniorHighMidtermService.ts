@@ -1,4 +1,3 @@
-import { GoogleGenAI } from '@google/genai';
 import { 
   collection, 
   doc, 
@@ -61,54 +60,6 @@ export const NEEDS_IMPROVEMENT_BANK = [
   'seek timely clarification and guidance from teachers when encountering challenging concepts',
   'strengthen consistency in completing tasks within designated deadlines'
 ];
-
-const AI_SYSTEM_PROMPT = `You are an academic progress-report writing assistant for Lazuardi GCS Junior High.
-
-Write a general comment strictly from the teacher-provided inputs only.
-Never invent, infer, exaggerate, or add facts that are not explicitly present.
-
-Output rules:
-1. Write in English only.
-2. Produce exactly one paragraph.
-3. Maximum 120 words.
-4. Use simple, clear, professional, parent-friendly language.
-5. Use third-person point of view.
-6. Use the student's nickname when provided; otherwise use the student's name.
-7. Use pronouns accurately:
-   - MALE: he, him, his
-   - FEMALE: she, her, hers
-8. Start with positive strengths or developmental progress.
-9. Mention achievements only when they are supplied.
-10. State development needs constructively.
-11. When an improvement item exists, use:
-    "He is suggested to ..."
-    or
-    "She is suggested to ..."
-12. Do not use the word "however".
-13. Do not mention grades, scores, subjects, diagnoses, incidents, or attendance
-    unless explicitly supplied in the teacher input.
-14. End with an encouraging expectation for the remainder of the semester.
-15. Return only the paragraph. Do not add a title, quotation marks, bullets,
-    explanations, or labels.`;
-
-const AI_POLISH_SYSTEM_PROMPT = `You are an academic progress-report editing assistant for Lazuardi GCS Junior High.
-
-Your task is to refine and polish the teacher's comment draft strictly for grammar, clarity, professional tone, and flow.
-Do not invent, add, or infer any new facts, subjects, scores, or achievements not in the input.
-
-Output rules:
-1. Write in English only.
-2. Produce exactly one paragraph.
-3. Maximum 120 words.
-4. Use simple, clear, professional, parent-friendly language.
-5. Use third-person point of view.
-6. Use pronouns accurately:
-   - MALE: he, him, his
-   - FEMALE: she, her, hers
-7. Do not use the word "however".
-8. When an improvement suggestion exists, ensure it uses:
-   "He is suggested to ..." or "She is suggested to ..."
-9. Return only the revised paragraph. Do not add titles, quotes, bullets, or explanations.`;
 
 /**
  * Checks if user is homeroom teacher of this class
@@ -554,7 +505,7 @@ export function evaluateStudentMidtermStatus(
 }
 
 /**
- * Generates General Comment draft using Gemini API
+ * Generates General Comment draft using the secure server-side AI endpoint
  */
 export async function generateMidtermGeneralCommentAI(params: {
   studentName: string;
@@ -565,70 +516,78 @@ export async function generateMidtermGeneralCommentAI(params: {
   needsImprovement: string[];
   manualNotes?: string;
 }): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY environment variable is not configured.');
+  const { auth } = await import('../lib/firebase');
+  const idToken = await auth.currentUser?.getIdToken();
+  if (!idToken) {
+    throw new Error('Sesi login telah berakhir. Silakan refresh halaman.');
   }
 
-  const ai = new GoogleGenAI({ apiKey });
-
-  const promptInput = `Teacher Inputs:
-- Student Name: ${params.studentName}
-- Nickname: ${params.nickname || params.studentName}
-- Gender: ${params.gender}
-- Strengths / Developmental Progress:
-${params.strengths.length > 0 ? params.strengths.map(s => `  * ${s}`).join('\n') : '  * Shows positive engagement and enthusiasm for learning'}
-- Achievements:
-${params.achievements.length > 0 ? params.achievements.map(a => `  * ${a}`).join('\n') : '  * (None provided)'}
-- Needs Improvement:
-${params.needsImprovement.length > 0 ? params.needsImprovement.map(n => `  * ${n}`).join('\n') : '  * (None provided)'}
-- Additional Teacher Notes:
-  ${params.manualNotes?.trim() || '(None)'}`;
-
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash',
-    contents: promptInput,
-    config: {
-      systemInstruction: AI_SYSTEM_PROMPT,
-      temperature: 0.3,
+  const response = await fetch('/api/junior-high/midterm/generate-general-comment', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`,
     },
+    body: JSON.stringify({
+      studentName: params.studentName,
+      nickname: params.nickname,
+      gender: params.gender,
+      strengths: params.strengths,
+      achievements: params.achievements,
+      needsImprovement: params.needsImprovement,
+      manualNotes: params.manualNotes,
+    }),
   });
 
-  return response.text?.trim() || '';
+  const resJson = await response.json();
+  if (!response.ok) {
+    throw new Error(resJson.error || 'AI belum dapat digunakan. Silakan coba lagi atau isi komentar secara manual.');
+  }
+
+  return resJson.text || '';
 }
 
 /**
- * Polishes teacher comment draft strictly fixing grammar and tone without inventing facts
+ * Polishes teacher comment draft using the secure server-side AI endpoint
  */
 export async function refineMidtermGeneralCommentAI(params: {
-  draftText: string;
+  draftText?: string;
+  originalComment?: string;
   gender: 'MALE' | 'FEMALE';
   studentName?: string;
+  nickname?: string;
 }): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY environment variable is not configured.');
+  const { auth } = await import('../lib/firebase');
+  const idToken = await auth.currentUser?.getIdToken();
+  if (!idToken) {
+    throw new Error('Sesi login telah berakhir. Silakan refresh halaman.');
   }
 
-  const ai = new GoogleGenAI({ apiKey });
+  const originalComment = (params.originalComment || params.draftText || '').trim();
+  if (!originalComment) {
+    throw new Error('Teks komentar tidak boleh kosong.');
+  }
 
-  const promptInput = `Teacher Draft to Polish:
-"""
-${params.draftText}
-"""
-Student Gender: ${params.gender}
-Student Name: ${params.studentName || ''}`;
-
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash',
-    contents: promptInput,
-    config: {
-      systemInstruction: AI_POLISH_SYSTEM_PROMPT,
-      temperature: 0.2,
+  const response = await fetch('/api/junior-high/midterm/refine-general-comment', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`,
     },
+    body: JSON.stringify({
+      studentName: params.studentName,
+      nickname: params.nickname,
+      gender: params.gender,
+      originalComment,
+    }),
   });
 
-  return response.text?.trim() || '';
+  const resJson = await response.json();
+  if (!response.ok) {
+    throw new Error(resJson.error || 'AI belum dapat digunakan. Silakan coba lagi atau isi komentar secara manual.');
+  }
+
+  return resJson.refinedText || resJson.text || '';
 }
 
 /**

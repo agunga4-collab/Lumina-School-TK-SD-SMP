@@ -5217,7 +5217,80 @@ export async function getPrompt(key: string, variables?: Record<string, string>)
   const defaultTemplates: Record<string, string> = {
     kindergarten_weekly_report: "Buat sebuah laporan narasi mingguan untuk seorang siswa yang berada di {{ageGroupStageString}}. Gunakan 6 developmental stages (Nilai Agama dan Budi Pekerti, Sosial-Emosional, Bahasa, Kognitif, Fisik-Motorik, Seni) sebagai hal yang menjadi fokus dalam laporan. Mulai dengan 'Minggu ini,' atau '{{nickName}} ...'. Gunakan EYD dengan benar. Jika ada domain atau sentra yang berulang, penjelasan digabung saja dan tidak berulang. Jangan gunakan tanda seru. Buat dalam 1 paragraf utuh/tidak terpisah.\n\nPENTING: HANYA berikan teks komentar utama saja. JANGAN gunakan pengantar seperti 'Berikut komentar...', 'Tentu, ini draf...', dll. JANGAN bungkus dalam tanda kutip. JANGAN gunakan format markdown seperti tebal atau miring.\n\nBerikut data observasi mingguan siswa:\n{{observationSummary}}",
     kindergarten_sel_report: "Saya ingin membuat komentar mingguan untuk laporan perkembangan Sosial Emosional siswa {{ageGroupStageString}}. Berikut adalah data kehadiran dan emosi siswa dalam 1 minggu terakhir:\nHappy: {{happy}}, Sad: {{sad}}, Angry: {{angry}}, OK: {{ok}}, No News: {{noNews}}, Sick: {{sick}}, Izin: {{izin}}, Early Leave: {{earlyLeave}}\nBuatkan saya satu paragraf komentar dalam bahasa Indonesia yang singkat dan positif, cocok untuk laporan mingguan. Komentar harus sesuai dengan tahapan perkembangan sosial emosional anak usia yang sesuai, menggambarkan kemampuan anak mengenali dan mengekspresikan emosi, serta bagaimana ia merespons dukungan orang dewasa.\nGunakan bahasa yang hangat untuk ananda bernama: {{nickName}}\n\nPENTING: HANYA berikan teks komentar utama saja. JANGAN gunakan pengantar seperti 'Berikut komentar...', 'Tentu, ini draf...', dll. JANGAN bungkus dalam tanda kutip. JANGAN gunakan format markdown seperti tebal atau miring.",
-    kindergarten_general_comment: "Buat sebuah laporan komentar umum (General Comments) mingguan dalam bahasa Indonesia yang hangat, profesional, dan kondusif untuk siswa yang berada di {{ageGroupStageString}} bernama {{nickName}} (Nama Lengkap: {{studentName}}).\n\nSintesiskan data observasi mingguan dan data kehadiran/sosial-emosional siswa berikut:\n\n=== DATA OBSERVASI ===\n{{observationSummary}}\n\n=== DATA KEHADIRAN & EMOSI ===\nHappy: {{happy}}, Sad: {{sad}}, Angry: {{angry}}, OK: {{ok}}, No News: {{noNews}}, Sick: {{sick}}, Izin: {{izin}}, Early Leave: {{earlyLeave}}\n\n=== ATURAN PEMBUATAN ===\n1. Komentar harus berupa satu paragraf naratif utuh/tidak terpisah yang hangat, konstruktif, dan ramah terhadap orang tua. Jangan pisahkan menjadi dua bagian/seksi.\n2. JANGAN sertakan label internal mentah seperti MB/BSH/BSB atau BB secara literal, melainkan deskripsikan perkembangannya secara mengalir (misal: 'mulai berkembang dengan baik', 'berkembang sesuai harapan', dll).\n3. JANGAN mengarang atau memformulasikan observasi yang absen atau tidak ada dalam input data di atas.\n4. Jika data observasi atau kehadiran minim, tangani secara bijak dan tetap berikan apresiasi positif atas kehadiran atau hal-hal mendasar tanpa membingkai perkembangan normal anak sebagai defisit.\n5. Hindari penggunaan tanda seru (!). Gunakan EYD dengan benar.\n6. HANYA berikan draf komentar utama saja. JANGAN gunakan pengantar atau penutup seperti 'Berikut komentar...', 'Tentu saja...', dll. JANGAN gunakan tanda kutip di awal dan akhir draf."
+    kindergarten_general_comment: "Buat sebuah laporan komentar umum (General Comments) mingguan dalam bahasa Indonesia yang hangat, profesional, dan kondusif untuk siswa yang berada di {{ageGroupStageString}} bernama {{nickName}} (Nama Lengkap: {{studentName}}).\n\nSintesiskan data observasi mingguan dan data kehadiran/sosial-emosional siswa berikut:\n\n=== DATA OBSERVASI ===\n{{observationSummary}}\n\n=== DATA KEHADIRAN & EMOSI ===\nHappy: {{happy}}, Sad: {{sad}}, Angry: {{angry}}, OK: {{ok}}, No News: {{noNews}}, Sick: {{sick}}, Izin: {{izin}}, Early Leave: {{earlyLeave}}\n\n=== ATURAN PEMBUATAN ===\n1. Komentar harus berupa satu paragraf naratif utuh/tidak terpisah yang hangat, konstruktif, dan ramah terhadap orang tua. Jangan pisahkan menjadi dua bagian/seksi.\n2. JANGAN sertakan label internal mentah seperti MB/BSH/BSB atau BB secara literal, melainkan deskripsikan perkembangannya secara mengalir (misal: 'mulai berkembang dengan baik', 'berkembang sesuai harapan', dll).\n3. JANGAN mengarang atau memformulasikan observasi yang absen atau tidak ada dalam input data di atas.\n4. Jika data observasi atau kehadiran minim, tangani secara bijak dan tetap berikan apresiasi positif atas kehadiran atau hal-hal mendasar tanpa membingkai perkembangan normal anak sebagai defisit.\n5. Hindari penggunaan tanda seru (!). Gunakan EYD dengan benar.\n6. HANYA berikan draf komentar utama saja. JANGAN gunakan pengantar atau penutup seperti 'Berikut komentar...', 'Tentu saja...', dll. JANGAN gunakan tanda kutip di awal dan akhir draf.",
+    junior_high_midterm_general_comment: `You are an academic progress-report writing assistant for Lazuardi GCS Junior High.
+
+Write one General Comment for a student's Midterm Report based strictly and only
+on the teacher-provided information below.
+
+Student name: {{studentName}}
+Preferred name or nickname: {{nickname}}
+Gender: {{gender}}
+
+Strengths and developmental progress:
+{{strengths}}
+
+Achievements:
+{{achievements}}
+
+Areas for improvement:
+{{needsImprovement}}
+
+Additional teacher notes:
+{{manualNotes}}
+
+Output rules:
+1. Write in English only.
+2. Return exactly one paragraph only.
+3. Maximum 120 words.
+4. Use simple, clear, professional, parent-friendly language.
+5. Use third-person point of view.
+6. Use the nickname when available; otherwise use the student name.
+7. Use pronouns accurately:
+   - Male: he, him, his.
+   - Female: she, her, hers.
+8. Begin with positive strengths or developmental progress.
+9. Mention achievements only if they are provided.
+10. State development needs constructively and positively.
+11. If an area for improvement is provided, use exactly one appropriate phrase:
+    - “He is suggested to ...”
+    - “She is suggested to ...”
+12. Never use the word “however”.
+13. Never invent, infer, exaggerate, or add facts, achievements, behavior,
+    grades, scores, subject names, diagnoses, incidents, or attendance records
+    that were not explicitly supplied by the teacher.
+14. End with a warm and encouraging expectation for the remainder of the semester.
+15. Do not add a title, bullet, markdown, quotation marks, explanation, or label.
+Return only the final paragraph.`,
+    junior_high_midterm_refine_comment: `You are an academic progress-report editor for Lazuardi GCS Junior High.
+
+Edit the teacher-written Midterm General Comment below for grammar, clarity,
+professional tone, coherence, and parent-friendly English only.
+
+Student name: {{studentName}}
+Preferred name or nickname: {{nickname}}
+Gender: {{gender}}
+
+Teacher-written comment:
+{{originalComment}}
+
+Output rules:
+1. Write in English only.
+2. Return exactly one paragraph only.
+3. Maximum 120 words.
+4. Preserve all facts, meaning, achievements, concerns, and intentions written
+   by the teacher.
+5. Do not invent, infer, remove, exaggerate, or add facts.
+6. Use third-person point of view.
+7. Use the nickname when available; otherwise use the student name.
+8. Use pronouns accurately:
+   - Male: he, him, his.
+   - Female: she, her, hers.
+9. Use simple, clear, professional, parent-friendly language.
+10. Never use the word “however”.
+11. If a suggestion is already present, preserve it in constructive wording.
+12. Do not add a title, bullet, markdown, quotation marks, explanation, or label.
+Return only the refined paragraph.`
   };
 
   try {
@@ -5227,13 +5300,17 @@ export async function getPrompt(key: string, variables?: Record<string, string>)
     if (db) {
       const snap = await db.collection("promptTemplates")
         .where("key", "==", key)
-        .where("isActive", "==", true)
         .limit(1)
         .get();
 
       if (!snap.empty) {
         const doc = snap.docs[0];
         const templateData = doc.data();
+        if (templateData.isActive === false) {
+          const err = new Error("PROMPT_INACTIVE");
+          (err as any).code = "PROMPT_INACTIVE";
+          throw err;
+        }
         rawPromptText = templateData.prompt || "";
       }
     }
@@ -5247,6 +5324,9 @@ export async function getPrompt(key: string, variables?: Record<string, string>)
     }
     return rawPromptText;
   } catch (error: any) {
+    if (error.code === "PROMPT_INACTIVE") {
+      throw error;
+    }
     console.error(`[getPrompt] Error fetching prompt key "${key}":`, error);
     const rawPromptText = defaultTemplates[key] || `[Prompt belum diisi. Silakan edit melalui Prompt Manager.]`;
     if (variables) {
@@ -5254,6 +5334,90 @@ export async function getPrompt(key: string, variables?: Record<string, string>)
     }
     return rawPromptText;
   }
+}
+
+// Helper: Specific sanitizer for Junior High Midterm comments
+export function sanitizeJuniorHighComment(rawText: string): string {
+  if (!rawText) return "";
+  let text = sanitizeAiComment(rawText);
+
+  // Ensure exactly one paragraph (collapse line breaks into spaces)
+  text = text.replace(/\r?\n+/g, " ").trim();
+
+  // Enforce rule: never use the word "however"
+  text = text.replace(/\bHowever,\s*/gi, "Furthermore, ");
+  text = text.replace(/\bhowever,\s*/gi, "furthermore, ");
+  text = text.replace(/\bHowever\b/gi, "Furthermore");
+  text = text.replace(/\bhowever\b/gi, "furthermore");
+
+  // Enforce maximum 120 words rule
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length > 120) {
+    const sliced = words.slice(0, 120).join(" ");
+    const lastPunctuation = Math.max(
+      sliced.lastIndexOf("."),
+      sliced.lastIndexOf("!"),
+      sliced.lastIndexOf("?")
+    );
+    if (lastPunctuation > 40) {
+      text = sliced.substring(0, lastPunctuation + 1);
+    } else {
+      text = sliced + ".";
+    }
+  }
+
+  return text.trim();
+}
+
+// Helper: Call Gemini AI server-side using @google/genai SDK with fallback to OpenAI-compatible REST endpoint
+export async function callGeminiAi(promptText: string, temperature = 0.3): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
+  if (!apiKey || apiKey.trim() === "") {
+    throw new Error("GEMINI_API_KEY is not configured on the server.");
+  }
+
+  // 1. Primary: Official @google/genai SDK with gemini-2.5-flash
+  try {
+    const { GoogleGenAI } = await import("@google/genai");
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: promptText,
+      config: {
+        temperature,
+      },
+    });
+    const text = response.text?.trim() || "";
+    if (text) return text;
+  } catch (sdkError: any) {
+    console.warn("[callGeminiAi] @google/genai direct call failed, attempting fallback:", sdkError.message);
+  }
+
+  // 2. Secondary fallback: REST chat/completions (OpenAI-compatible)
+  let BASE_URL = process.env.VITE_AI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai";
+  let MODEL = process.env.VITE_AI_MODEL || "gemini-2.5-flash";
+  if (apiKey.startsWith("AIza") && (BASE_URL.includes("koboillm.com") || !BASE_URL)) {
+    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
+    MODEL = "gemini-2.5-flash";
+  }
+
+  const aiResponse = await axios.post(
+    `${BASE_URL}/chat/completions`,
+    {
+      model: MODEL,
+      messages: [{ role: "user", content: promptText }],
+      temperature,
+    },
+    {
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      timeout: 30000,
+    }
+  );
+
+  return aiResponse.data?.choices?.[0]?.message?.content || "";
 }
 
 // Helper: Seed initial prompt templates if missing
@@ -5265,11 +5429,6 @@ async function seedPromptTemplates() {
       return;
     }
     const collectionRef = db.collection("promptTemplates");
-    const snap = await collectionRef.limit(1).get();
-    if (!snap.empty) {
-      console.log("[PromptTemplatesSeed] Prompt templates already exist, skipping seed.");
-      return;
-    }
 
     const initialTemplates = [
       {
@@ -5297,16 +5456,129 @@ async function seedPromptTemplates() {
         createdAt: Date.now(),
         updatedAt: Date.now(),
         updatedBy: "system@lumina.id"
+      },
+      {
+        key: "junior_high_midterm_general_comment",
+        name: "Midterm General Comment - Junior High",
+        unit: "JUNIOR_HIGH",
+        category: "report",
+        prompt: `You are an academic progress-report writing assistant for Lazuardi GCS Junior High.
+
+Write one General Comment for a student's Midterm Report based strictly and only
+on the teacher-provided information below.
+
+Student name: {{studentName}}
+Preferred name or nickname: {{nickname}}
+Gender: {{gender}}
+
+Strengths and developmental progress:
+{{strengths}}
+
+Achievements:
+{{achievements}}
+
+Areas for improvement:
+{{needsImprovement}}
+
+Additional teacher notes:
+{{manualNotes}}
+
+Output rules:
+1. Write in English only.
+2. Return exactly one paragraph only.
+3. Maximum 120 words.
+4. Use simple, clear, professional, parent-friendly language.
+5. Use third-person point of view.
+6. Use the nickname when available; otherwise use the student name.
+7. Use pronouns accurately:
+   - Male: he, him, his.
+   - Female: she, her, hers.
+8. Begin with positive strengths or developmental progress.
+9. Mention achievements only if they are provided.
+10. State development needs constructively and positively.
+11. If an area for improvement is provided, use exactly one appropriate phrase:
+    - “He is suggested to ...”
+    - “She is suggested to ...”
+12. Never use the word “however”.
+13. Never invent, infer, exaggerate, or add facts, achievements, behavior,
+    grades, scores, subject names, diagnoses, incidents, or attendance records
+    that were not explicitly supplied by the teacher.
+14. End with a warm and encouraging expectation for the remainder of the semester.
+15. Do not add a title, bullet, markdown, quotation marks, explanation, or label.
+Return only the final paragraph.`,
+        variables: [
+          "studentName",
+          "nickname",
+          "gender",
+          "strengths",
+          "achievements",
+          "needsImprovement",
+          "manualNotes"
+        ],
+        description: "Prompt template untuk generate draft General Comment Rapor Midterm SMP Lazuardi GCS berdasarkan observasi capaian & area pengembangan.",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        updatedBy: "system@lumina.id"
+      },
+      {
+        key: "junior_high_midterm_refine_comment",
+        name: "Refine Midterm General Comment - Junior High",
+        unit: "JUNIOR_HIGH",
+        category: "report",
+        prompt: `You are an academic progress-report editor for Lazuardi GCS Junior High.
+
+Edit the teacher-written Midterm General Comment below for grammar, clarity,
+professional tone, coherence, and parent-friendly English only.
+
+Student name: {{studentName}}
+Preferred name or nickname: {{nickname}}
+Gender: {{gender}}
+
+Teacher-written comment:
+{{originalComment}}
+
+Output rules:
+1. Write in English only.
+2. Return exactly one paragraph only.
+3. Maximum 120 words.
+4. Preserve all facts, meaning, achievements, concerns, and intentions written
+   by the teacher.
+5. Do not invent, infer, remove, exaggerate, or add facts.
+6. Use third-person point of view.
+7. Use the nickname when available; otherwise use the student name.
+8. Use pronouns accurately:
+   - Male: he, him, his.
+   - Female: she, her, hers.
+9. Use simple, clear, professional, parent-friendly language.
+10. Never use the word “however”.
+11. If a suggestion is already present, preserve it in constructive wording.
+12. Do not add a title, bullet, markdown, quotation marks, explanation, or label.
+Return only the refined paragraph.`,
+        variables: [
+          "studentName",
+          "nickname",
+          "gender",
+          "originalComment"
+        ],
+        description: "Prompt template untuk merapikan komentar rapor Midterm SMP (grammar, tone profesional, parent-friendly English).",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        updatedBy: "system@lumina.id"
       }
     ];
 
     for (const template of initialTemplates) {
-      const docRef = collectionRef.doc();
-      await docRef.set({
-        id: docRef.id,
-        ...template
-      });
-      console.log(`[PromptTemplatesSeed] Seeding default template: ${template.key}`);
+      const existingSnap = await collectionRef.where("key", "==", template.key).limit(1).get();
+      if (existingSnap.empty) {
+        const docRef = collectionRef.doc();
+        await docRef.set({
+          id: docRef.id,
+          ...template
+        });
+        console.log(`[PromptTemplatesSeed] Seeding default template: ${template.key}`);
+      }
     }
   } catch (error: any) {
     console.error("[PromptTemplatesSeed] Dynamic prompt template seeding failed:", error);
@@ -5369,34 +5641,7 @@ app.post("/api/test-prompt", async (req, res) => {
     // Substitute variable placeholders
     finalPromptText = replacePromptVariables(finalPromptText, variables || {});
 
-    const API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
-    let detectedKeyName = "";
-    if (process.env.GEMINI_API_KEY) {
-      detectedKeyName = "GEMINI_API_KEY";
-    } else if (process.env.VITE_GEMINI_API_KEY) {
-      detectedKeyName = "VITE_GEMINI_API_KEY";
-    }
-
-    if (!API_KEY || API_KEY.trim() === "") {
-      return res.status(500).json({ error: "AI API key is not configured on the server." });
-    }
-
-    const BASE_URL = process.env.VITE_AI_BASE_URL || "https://api.koboillm.com/v1";
-    const MODEL = process.env.VITE_AI_MODEL || "gemini/gemini-2.5-flash-lite";
-
-    const aiResponse = await axios.post(`${BASE_URL}/chat/completions`, {
-      model: MODEL,
-      messages: [{ role: "user", content: finalPromptText }],
-      temperature: 0.7
-    }, {
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${API_KEY}`,
-      },
-      timeout: 30000
-    });
-
-    const textResult = aiResponse.data?.choices?.[0]?.message?.content || "";
+    const textResult = await callGeminiAi(finalPromptText, 0.7);
 
     res.json({
       success: true,
@@ -5406,6 +5651,192 @@ app.post("/api/test-prompt", async (req, res) => {
   } catch (error: any) {
     console.error("[TestPromptError] Error resolving prompt run:", error);
     res.status(500).json({ error: error.message || "Unknown server error." });
+  }
+});
+
+// ==========================================
+// Junior High Midterm AI Endpoints
+// ==========================================
+
+// POST /api/junior-high/midterm/generate-general-comment
+app.post("/api/junior-high/midterm/generate-general-comment", async (req, res) => {
+  try {
+    // 1. Validate Auth Token
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    
+    let decodedToken;
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    const db = getAdminDb();
+    if (!db) {
+      return res.status(500).json({ error: "Firestore is not online." });
+    }
+
+    // 2. Validate Junior High Staff Authorization
+    const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+    if (!userDoc.exists) {
+      return res.status(403).json({ error: "Access denied. User profile not found." });
+    }
+    const userData = userDoc.data() || {};
+    const userRole = userData.role || null;
+
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
+    const isJuniorHigh = userData.unitId === 'JUNIOR_HIGH' || 
+      (Array.isArray(userData.assignedUnits) && userData.assignedUnits.includes('JUNIOR_HIGH')) ||
+      userData.unit === 'JUNIOR_HIGH' || 
+      userData.unit === 'SMP';
+    
+    const hasValidRole = isSuperAdmin || ['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'SECRETARY_JH', 'TEACHER', 'teacher', 'admin', 'BK_MENTOR', 'MTSS_PJ'].includes(userRole || "");
+    const isAuthorized = isSuperAdmin || (hasValidRole && isJuniorHigh);
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: "Access denied. Active Junior High role/unit required." });
+    }
+
+    // 3. Validate Payload
+    const { studentName, nickname, gender, strengths, achievements, needsImprovement, manualNotes } = req.body;
+    if (!studentName || typeof studentName !== 'string' || !studentName.trim()) {
+      return res.status(400).json({ error: "Nama siswa wajib diisi." });
+    }
+
+    const formattedGender = gender === 'FEMALE' ? 'Female' : 'Male';
+    const formattedStrengths = Array.isArray(strengths) && strengths.length > 0 
+      ? strengths.map(s => `- ${s}`).join("\n")
+      : "- Demonstrates positive engagement and active participation in learning.";
+    const formattedAchievements = Array.isArray(achievements) && achievements.length > 0 
+      ? achievements.map(a => `- ${a}`).join("\n")
+      : "(None provided)";
+    const formattedNeedsImprovement = Array.isArray(needsImprovement) && needsImprovement.length > 0 
+      ? needsImprovement.map(n => `- ${n}`).join("\n")
+      : "(None provided)";
+    const formattedManualNotes = manualNotes && typeof manualNotes === 'string' && manualNotes.trim() 
+      ? manualNotes.trim() 
+      : "(None provided)";
+
+    // 4. Resolve Prompt Template
+    let prompt = "";
+    try {
+      prompt = await getPrompt("junior_high_midterm_general_comment", {
+        studentName: studentName.trim(),
+        nickname: (nickname && typeof nickname === 'string' && nickname.trim()) || studentName.trim(),
+        gender: formattedGender,
+        strengths: formattedStrengths,
+        achievements: formattedAchievements,
+        needsImprovement: formattedNeedsImprovement,
+        manualNotes: formattedManualNotes
+      });
+    } catch (promptErr: any) {
+      if (promptErr.code === "PROMPT_INACTIVE") {
+        return res.status(400).json({
+          error: "Template AI Midterm Junior High belum aktif. Hubungi Super Admin."
+        });
+      }
+      throw promptErr;
+    }
+
+    // 5. Call Server-Side AI
+    const rawResult = await callGeminiAi(prompt, 0.3);
+    const sanitizedText = sanitizeJuniorHighComment(rawResult);
+
+    res.json({ text: sanitizedText, refinedText: sanitizedText });
+  } catch (error: any) {
+    console.error("[JuniorHighMidtermAI:generate] Server error:", error);
+    res.status(500).json({
+      error: "AI belum dapat digunakan. Silakan coba lagi atau isi komentar secara manual."
+    });
+  }
+});
+
+// POST /api/junior-high/midterm/refine-general-comment
+app.post("/api/junior-high/midterm/refine-general-comment", async (req, res) => {
+  try {
+    // 1. Validate Auth Token
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    
+    let decodedToken;
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    const db = getAdminDb();
+    if (!db) {
+      return res.status(500).json({ error: "Firestore is not online." });
+    }
+
+    // 2. Validate Junior High Staff Authorization
+    const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+    if (!userDoc.exists) {
+      return res.status(403).json({ error: "Access denied. User profile not found." });
+    }
+    const userData = userDoc.data() || {};
+    const userRole = userData.role || null;
+
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
+    const isJuniorHigh = userData.unitId === 'JUNIOR_HIGH' || 
+      (Array.isArray(userData.assignedUnits) && userData.assignedUnits.includes('JUNIOR_HIGH')) ||
+      userData.unit === 'JUNIOR_HIGH' || 
+      userData.unit === 'SMP';
+    
+    const hasValidRole = isSuperAdmin || ['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'SECRETARY_JH', 'TEACHER', 'teacher', 'admin', 'BK_MENTOR', 'MTSS_PJ'].includes(userRole || "");
+    const isAuthorized = isSuperAdmin || (hasValidRole && isJuniorHigh);
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: "Access denied. Active Junior High role/unit required." });
+    }
+
+    // 3. Validate Payload
+    const { studentName, nickname, gender, originalComment, draftText } = req.body;
+    const commentToRefine = (originalComment || draftText || "").trim();
+    if (!commentToRefine) {
+      return res.status(400).json({ error: "Teks komentar yang ingin dirapikan tidak boleh kosong." });
+    }
+
+    const formattedGender = gender === 'FEMALE' ? 'Female' : 'Male';
+
+    // 4. Resolve Prompt Template
+    let prompt = "";
+    try {
+      prompt = await getPrompt("junior_high_midterm_refine_comment", {
+        studentName: (studentName && typeof studentName === 'string' ? studentName.trim() : "") || "Student",
+        nickname: (nickname && typeof nickname === 'string' && nickname.trim()) || (studentName && typeof studentName === 'string' ? studentName.trim() : "Student"),
+        gender: formattedGender,
+        originalComment: commentToRefine
+      });
+    } catch (promptErr: any) {
+      if (promptErr.code === "PROMPT_INACTIVE") {
+        return res.status(400).json({
+          error: "Template AI Midterm Junior High belum aktif. Hubungi Super Admin."
+        });
+      }
+      throw promptErr;
+    }
+
+    // 5. Call Server-Side AI
+    const rawResult = await callGeminiAi(prompt, 0.2);
+    const sanitizedText = sanitizeJuniorHighComment(rawResult);
+
+    res.json({ text: sanitizedText, refinedText: sanitizedText });
+  } catch (error: any) {
+    console.error("[JuniorHighMidtermAI:refine] Server error:", error);
+    res.status(500).json({
+      error: "AI belum dapat digunakan. Silakan coba lagi atau isi komentar secara manual."
+    });
   }
 });
 

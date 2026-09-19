@@ -134,7 +134,7 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
       toast.success('Draf komentar berhasil di-generate oleh AI.');
     } catch (err: any) {
       console.error(err);
-      toast.error('Gagal generate AI: ' + (err.message || 'Error'));
+      toast.error(err.message || 'Gagal generate AI.');
     } finally {
       setGeneratingAI(false);
     }
@@ -148,16 +148,18 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
     setPolishingAI(true);
     try {
       const polished = await refineMidtermGeneralCommentAI({
+        originalComment: finalComment,
         draftText: finalComment,
         gender,
-        studentName: selectedStudent?.name
+        studentName: selectedStudent?.name,
+        nickname: nickname.trim() || undefined,
       });
 
       setFinalComment(polished);
       toast.success('Komentar berhasil dirapikan oleh AI.');
     } catch (err: any) {
       console.error(err);
-      toast.error('Gagal merapikan dengan AI: ' + (err.message || 'Error'));
+      toast.error(err.message || 'Gagal merapikan dengan AI.');
     } finally {
       setPolishingAI(false);
     }
