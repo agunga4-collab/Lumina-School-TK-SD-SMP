@@ -15,7 +15,8 @@ import type {
   MidtermStudentDataDoc, 
   PublishedMidtermReport,
   MidtermGeneralCommentData,
-  MidtermReportStatus
+  MidtermReportStatus,
+  MidtermClassCommentsConfig
 } from '../types/midtermReport';
 import { JH_MIDTERM_CATEGORIES } from '../types/midtermReport';
 import type { User, Class, Student } from '../types';
@@ -847,4 +848,52 @@ export function getDraftMidtermStudentData(
     semester,
     midtermTerm
   });
+}
+
+/**
+ * Save custom category configurations for a class context
+ */
+export async function saveMidtermClassCommentsConfig(
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  configData: Partial<MidtermClassCommentsConfig>,
+  userUid: string
+): Promise<void> {
+  const normYear = normalizeAcademicYear(academicYear);
+  const docId = `${classId}_${normYear}_${semester}_${midtermTerm}`;
+  const ref = doc(db, 'jh_midterm_class_comments_config', docId);
+
+  const payload = {
+    classId,
+    academicYear,
+    semester: String(semester),
+    midtermTerm: String(midtermTerm),
+    ...configData,
+    updatedAt: Date.now(),
+    updatedBy: userUid
+  };
+
+  await setDoc(ref, payload, { merge: true });
+}
+
+/**
+ * Load custom category configurations for a class context
+ */
+export async function getMidtermClassCommentsConfig(
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string
+): Promise<MidtermClassCommentsConfig | null> {
+  const normYear = normalizeAcademicYear(academicYear);
+  const docId = `${classId}_${normYear}_${semester}_${midtermTerm}`;
+  const ref = doc(db, 'jh_midterm_class_comments_config', docId);
+
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    return null;
+  }
+  return snap.data() as MidtermClassCommentsConfig;
 }

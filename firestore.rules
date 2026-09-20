@@ -1310,6 +1310,11 @@ service cloud.firestore {
       allow write: if isActive() && (isJuniorHighStaff() || isAdmin() || isTeacher());
     }
 
+    match /jh_midterm_class_comments_config/{configId} {
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin() || isTeacher());
+      allow write: if isActive() && (isJuniorHighStaff() || isAdmin() || isTeacher());
+    }
+
     match /jh_midterm_published_reports/{reportId} {
       allow read: if isActive() && (
         isJuniorHighStaff() ||

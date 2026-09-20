@@ -11,7 +11,9 @@ import {
   canUserEditMidtermGeneralComments,
   saveMidtermStudentGeneralComment,
   generateMidtermGeneralCommentAI,
-  refineMidtermGeneralCommentAI
+  refineMidtermGeneralCommentAI,
+  getMidtermClassCommentsConfig,
+  saveMidtermClassCommentsConfig
 } from '../../../services/juniorHighMidtermService';
 import type { 
   MidtermStudentDataDoc, 
@@ -61,12 +63,150 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
   const [finalComment, setFinalComment] = React.useState<string>('');
   const [isFinal, setIsFinal] = React.useState<boolean>(false);
 
+  // Class-level custom comment configuration states
+  const [customStrengths, setCustomStrengths] = React.useState<string[]>([]);
+  const [customAchievements, setCustomAchievements] = React.useState<string[]>([]);
+  const [customNeedsImprovement, setCustomNeedsImprovement] = React.useState<string[]>([]);
+  const [strengthsEnabled, setStrengthsEnabled] = React.useState<boolean>(true);
+  const [achievementsEnabled, setAchievementsEnabled] = React.useState<boolean>(true);
+  const [needsImprovementEnabled, setNeedsImprovementEnabled] = React.useState<boolean>(true);
+  const [loadingConfig, setLoadingConfig] = React.useState<boolean>(false);
+
   // Loading flags
   const [generatingAI, setGeneratingAI] = React.useState<boolean>(false);
   const [polishingAI, setPolishingAI] = React.useState<boolean>(false);
   const [saving, setSaving] = React.useState<boolean>(false);
 
   const canEdit = canUserEditMidtermGeneralComments(currentUser, selectedClass);
+
+  // Load custom configs for this class context
+  React.useEffect(() => {
+    if (!selectedClass) return;
+
+    const loadConfig = async () => {
+      setLoadingConfig(true);
+      try {
+        const config = await getMidtermClassCommentsConfig(
+          selectedClass.id,
+          academicYear,
+          semester,
+          midtermTerm
+        );
+
+        if (config) {
+          setCustomStrengths(Array.isArray(config.customStrengths) ? config.customStrengths : []);
+          setCustomAchievements(Array.isArray(config.customAchievements) ? config.customAchievements : []);
+          setCustomNeedsImprovement(Array.isArray(config.customNeedsImprovement) ? config.customNeedsImprovement : []);
+          setStrengthsEnabled(config.strengthsEnabled !== false);
+          setAchievementsEnabled(config.achievementsEnabled !== false);
+          setNeedsImprovementEnabled(config.needsImprovementEnabled !== false);
+        } else {
+          setCustomStrengths([]);
+          setCustomAchievements([]);
+          setCustomNeedsImprovement([]);
+          setStrengthsEnabled(true);
+          setAchievementsEnabled(true);
+          setNeedsImprovementEnabled(true);
+        }
+      } catch (err) {
+        console.error('Error loading class comments config:', err);
+      } finally {
+        setLoadingConfig(false);
+      }
+    };
+
+    loadConfig();
+  }, [selectedClass?.id, academicYear, semester, midtermTerm]);
+
+  // Helper to merge banks and avoid case-insensitive/trimmed duplicates
+  const mergeBanks = (defaultBank: string[], customBank: string[]) => {
+    const merged = [...defaultBank];
+    const lowercaseDefaults = defaultBank.map(item => item.trim().toLowerCase());
+
+    if (Array.isArray(customBank)) {
+      customBank.forEach(item => {
+        const trimmed = item.trim();
+        if (trimmed && !lowercaseDefaults.includes(trimmed.toLowerCase())) {
+          merged.push(trimmed);
+        }
+      });
+    }
+
+    return merged;
+  };
+
+  const combinedStrengths = mergeBanks(STRENGTH_PROGRESS_BANK, customStrengths);
+  const combinedAchievements = mergeBanks(ACHIEVEMENT_BANK, customAchievements);
+  const combinedNeedsImprovement = mergeBanks(NEEDS_IMPROVEMENT_BANK, customNeedsImprovement);
+
+  // Handle adding custom items
+  const handleAddCustomItem = async (
+    category: 'STRENGTH' | 'ACHIEVEMENT' | 'NEED',
+    itemText: string,
+    setCustomInput: (v: string) => void,
+    selectedList: string[],
+    setSelectedList: (v: string[]) => void
+  ) => {
+    const trimmed = itemText.trim();
+    if (!trimmed || !selectedClass) return;
+
+    let existingCombined: string[] = [];
+    let currentCustom: string[] = [];
+    if (category === 'STRENGTH') {
+      existingCombined = combinedStrengths;
+      currentCustom = customStrengths;
+    } else if (category === 'ACHIEVEMENT') {
+      existingCombined = combinedAchievements;
+      currentCustom = customAchievements;
+    } else {
+      existingCombined = combinedNeedsImprovement;
+      currentCustom = customNeedsImprovement;
+    }
+
+    const lowerTrimmed = trimmed.toLowerCase();
+    const isDuplicate = existingCombined.some(item => item.trim().toLowerCase() === lowerTrimmed);
+
+    if (isDuplicate) {
+      toast.error('Item tersebut sudah ada di daftar.');
+      return;
+    }
+
+    const updatedCustom = [...currentCustom, trimmed];
+    
+    try {
+      const fieldToUpdate = 
+        category === 'STRENGTH' ? { customStrengths: updatedCustom } :
+        category === 'ACHIEVEMENT' ? { customAchievements: updatedCustom } :
+        { customNeedsImprovement: updatedCustom };
+
+      await saveMidtermClassCommentsConfig(
+        selectedClass.id,
+        academicYear,
+        semester,
+        midtermTerm,
+        fieldToUpdate,
+        currentUser.uid
+      );
+
+      if (category === 'STRENGTH') {
+        setCustomStrengths(updatedCustom);
+      } else if (category === 'ACHIEVEMENT') {
+        setCustomAchievements(updatedCustom);
+      } else {
+        setCustomNeedsImprovement(updatedCustom);
+      }
+
+      if (!selectedList.includes(trimmed)) {
+        setSelectedList([...selectedList, trimmed]);
+      }
+
+      setCustomInput('');
+      toast.success('Custom item berhasil ditambahkan ke kelas ini.');
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Gagal menyimpan custom item: ' + (err.message || 'Error'));
+    }
+  };
 
   // Auto-select first student if none selected
   React.useEffect(() => {
@@ -120,9 +260,9 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
         studentName: selectedStudent.name,
         nickname: nickname.trim() || undefined,
         gender,
-        strengths: selectedStrengths,
-        achievements: selectedAchievements,
-        needsImprovement: selectedNeedsImprovement,
+        strengths: strengthsEnabled ? selectedStrengths : [],
+        achievements: achievementsEnabled ? selectedAchievements : [],
+        needsImprovement: needsImprovementEnabled ? selectedNeedsImprovement : [],
         manualNotes: manualNotes.trim() || undefined
       });
 
@@ -370,184 +510,319 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
           <div className="space-y-4">
             {/* 1. Strength / Progress */}
             <div className="space-y-2">
-              <label className="block text-xs font-black text-slate-900 uppercase tracking-wider flex items-center justify-between">
-                <span>1. Strength / Developmental Progress</span>
-                <span className="text-[11px] font-semibold text-slate-500">
-                  {selectedStrengths.length} dipilih
+              <div className="flex items-center justify-between pb-1">
+                <span className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                  1. Strength / Developmental Progress
                 </span>
-              </label>
-              <div className="flex flex-wrap gap-1.5">
-                {STRENGTH_PROGRESS_BANK.map((item) => {
-                  const isChecked = selectedStrengths.includes(item);
-                  return (
-                    <button
-                      key={item}
-                      type="button"
-                      disabled={!canEdit}
-                      onClick={() => toggleItem(selectedStrengths, setSelectedStrengths, item)}
-                      className={`text-[11px] font-medium px-2.5 py-1.5 rounded-lg border transition-all text-left ${
-                        isChecked
-                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
-                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      {isChecked ? '✓ ' : '+ '} {item}
-                    </button>
-                  );
-                })}
-              </div>
-              {canEdit && (
-                <div className="flex items-center gap-2 pt-1">
-                  <input
-                    type="text"
-                    value={customStrength}
-                    onChange={(e) => setCustomStrength(e.target.value)}
-                    placeholder="+ Tambah custom strength/progress..."
-                    className="flex-1 text-xs p-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && customStrength.trim()) {
-                        e.preventDefault();
-                        setSelectedStrengths([...selectedStrengths, customStrength.trim()]);
-                        setCustomStrength('');
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    disabled={!customStrength.trim()}
-                    onClick={() => {
-                      if (customStrength.trim()) {
-                        setSelectedStrengths([...selectedStrengths, customStrength.trim()]);
-                        setCustomStrength('');
-                      }
-                    }}
-                    className="px-3 py-2 bg-slate-200 text-slate-700 text-xs font-bold rounded-lg hover:bg-slate-300 disabled:opacity-50"
-                  >
-                    Tambah
-                  </button>
+                
+                <div className="flex items-center gap-4">
+                  {strengthsEnabled && (
+                    <span className="text-[11px] font-semibold text-slate-500">
+                      {selectedStrengths.length} dipilih
+                    </span>
+                  )}
+                  {canEdit ? (
+                    <label className="inline-flex items-center cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={strengthsEnabled}
+                        onChange={async (e) => {
+                          const val = e.target.checked;
+                          setStrengthsEnabled(val);
+                          try {
+                            await saveMidtermClassCommentsConfig(
+                              selectedClass!.id,
+                              academicYear,
+                              semester,
+                              midtermTerm,
+                              { strengthsEnabled: val },
+                              currentUser.uid
+                            );
+                            toast.success(`Kategori Strength berhasil di-${val ? 'aktifkan' : 'nonaktifkan'} untuk kelas ini.`);
+                          } catch (err: any) {
+                            console.error(err);
+                            toast.error('Gagal menyimpan status toggle: ' + err.message);
+                          }
+                        }}
+                        className="sr-only peer"
+                      />
+                      <div className="relative w-7 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-600"></div>
+                      <span className="ms-1.5 text-[10px] font-bold text-slate-500 uppercase">
+                        {strengthsEnabled ? 'Aktif' : 'Nonaktif'}
+                      </span>
+                    </label>
+                  ) : (
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${strengthsEnabled ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}`}>
+                      {strengthsEnabled ? 'AKTIF' : 'NONAKTIF'}
+                    </span>
+                  )}
                 </div>
+              </div>
+
+              {!strengthsEnabled ? (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500 italic">
+                  Kategori disembunyikan untuk kelas ini.
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-1.5">
+                    {combinedStrengths.map((item) => {
+                      const isChecked = selectedStrengths.includes(item);
+                      return (
+                        <button
+                          key={item}
+                          type="button"
+                          disabled={!canEdit}
+                          onClick={() => toggleItem(selectedStrengths, setSelectedStrengths, item)}
+                          className={`text-[11px] font-medium px-2.5 py-1.5 rounded-lg border transition-all text-left ${
+                            isChecked
+                              ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {isChecked ? '✓ ' : '+ '} {item}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {canEdit && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <input
+                        type="text"
+                        value={customStrength}
+                        onChange={(e) => setCustomStrength(e.target.value)}
+                        placeholder="+ Tambah custom strength/progress..."
+                        className="flex-1 text-xs p-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddCustomItem('STRENGTH', customStrength, setCustomStrength, selectedStrengths, setSelectedStrengths);
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        disabled={!customStrength.trim()}
+                        onClick={() => handleAddCustomItem('STRENGTH', customStrength, setCustomStrength, selectedStrengths, setSelectedStrengths)}
+                        className="px-3 py-2 bg-slate-200 text-slate-700 text-xs font-bold rounded-lg hover:bg-slate-300 disabled:opacity-50"
+                      >
+                        Tambah
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
             {/* 2. Achievement */}
             <div className="space-y-2">
-              <label className="block text-xs font-black text-slate-900 uppercase tracking-wider flex items-center justify-between">
-                <span>2. Achievement (Prestasi / Pencapaian Tertentu)</span>
-                <span className="text-[11px] font-semibold text-slate-500">
-                  {selectedAchievements.length} dipilih
+              <div className="flex items-center justify-between pb-1">
+                <span className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                  2. Achievement (Prestasi / Pencapaian Tertentu)
                 </span>
-              </label>
-              <div className="flex flex-wrap gap-1.5">
-                {ACHIEVEMENT_BANK.map((item) => {
-                  const isChecked = selectedAchievements.includes(item);
-                  return (
-                    <button
-                      key={item}
-                      type="button"
-                      disabled={!canEdit}
-                      onClick={() => toggleItem(selectedAchievements, setSelectedAchievements, item)}
-                      className={`text-[11px] font-medium px-2.5 py-1.5 rounded-lg border transition-all text-left ${
-                        isChecked
-                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      {isChecked ? '✓ ' : '+ '} {item}
-                    </button>
-                  );
-                })}
-              </div>
-              {canEdit && (
-                <div className="flex items-center gap-2 pt-1">
-                  <input
-                    type="text"
-                    value={customAchievement}
-                    onChange={(e) => setCustomAchievement(e.target.value)}
-                    placeholder="+ Tambah custom achievement..."
-                    className="flex-1 text-xs p-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && customAchievement.trim()) {
-                        e.preventDefault();
-                        setSelectedAchievements([...selectedAchievements, customAchievement.trim()]);
-                        setCustomAchievement('');
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    disabled={!customAchievement.trim()}
-                    onClick={() => {
-                      if (customAchievement.trim()) {
-                        setSelectedAchievements([...selectedAchievements, customAchievement.trim()]);
-                        setCustomAchievement('');
-                      }
-                    }}
-                    className="px-3 py-2 bg-slate-200 text-slate-700 text-xs font-bold rounded-lg hover:bg-slate-300 disabled:opacity-50"
-                  >
-                    Tambah
-                  </button>
+                
+                <div className="flex items-center gap-4">
+                  {achievementsEnabled && (
+                    <span className="text-[11px] font-semibold text-slate-500">
+                      {selectedAchievements.length} dipilih
+                    </span>
+                  )}
+                  {canEdit ? (
+                    <label className="inline-flex items-center cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={achievementsEnabled}
+                        onChange={async (e) => {
+                          const val = e.target.checked;
+                          setAchievementsEnabled(val);
+                          try {
+                            await saveMidtermClassCommentsConfig(
+                              selectedClass!.id,
+                              academicYear,
+                              semester,
+                              midtermTerm,
+                              { achievementsEnabled: val },
+                              currentUser.uid
+                            );
+                            toast.success(`Kategori Achievement berhasil di-${val ? 'aktifkan' : 'nonaktifkan'} untuk kelas ini.`);
+                          } catch (err: any) {
+                            console.error(err);
+                            toast.error('Gagal menyimpan status toggle: ' + err.message);
+                          }
+                        }}
+                        className="sr-only peer"
+                      />
+                      <div className="relative w-7 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-600"></div>
+                      <span className="ms-1.5 text-[10px] font-bold text-slate-500 uppercase">
+                        {achievementsEnabled ? 'Aktif' : 'Nonaktif'}
+                      </span>
+                    </label>
+                  ) : (
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${achievementsEnabled ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}`}>
+                      {achievementsEnabled ? 'AKTIF' : 'NONAKTIF'}
+                    </span>
+                  )}
                 </div>
+              </div>
+
+              {!achievementsEnabled ? (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500 italic">
+                  Kategori disembunyikan untuk kelas ini.
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-1.5">
+                    {combinedAchievements.map((item) => {
+                      const isChecked = selectedAchievements.includes(item);
+                      return (
+                        <button
+                          key={item}
+                          type="button"
+                          disabled={!canEdit}
+                          onClick={() => toggleItem(selectedAchievements, setSelectedAchievements, item)}
+                          className={`text-[11px] font-medium px-2.5 py-1.5 rounded-lg border transition-all text-left ${
+                            isChecked
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {isChecked ? '✓ ' : '+ '} {item}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {canEdit && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <input
+                        type="text"
+                        value={customAchievement}
+                        onChange={(e) => setCustomAchievement(e.target.value)}
+                        placeholder="+ Tambah custom achievement..."
+                        className="flex-1 text-xs p-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddCustomItem('ACHIEVEMENT', customAchievement, setCustomAchievement, selectedAchievements, setSelectedAchievements);
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        disabled={!customAchievement.trim()}
+                        onClick={() => handleAddCustomItem('ACHIEVEMENT', customAchievement, setCustomAchievement, selectedAchievements, setSelectedAchievements)}
+                        className="px-3 py-2 bg-slate-200 text-slate-700 text-xs font-bold rounded-lg hover:bg-slate-300 disabled:opacity-50"
+                      >
+                        Tambah
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
             {/* 3. Needs Improvement */}
             <div className="space-y-2">
-              <label className="block text-xs font-black text-slate-900 uppercase tracking-wider flex items-center justify-between">
-                <span>3. Needs Improvement (Area Pengembangan)</span>
-                <span className="text-[11px] font-semibold text-slate-500">
-                  {selectedNeedsImprovement.length} dipilih
+              <div className="flex items-center justify-between pb-1">
+                <span className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                  3. Needs Improvement (Area Pengembangan)
                 </span>
-              </label>
-              <div className="flex flex-wrap gap-1.5">
-                {NEEDS_IMPROVEMENT_BANK.map((item) => {
-                  const isChecked = selectedNeedsImprovement.includes(item);
-                  return (
-                    <button
-                      key={item}
-                      type="button"
-                      disabled={!canEdit}
-                      onClick={() => toggleItem(selectedNeedsImprovement, setSelectedNeedsImprovement, item)}
-                      className={`text-[11px] font-medium px-2.5 py-1.5 rounded-lg border transition-all text-left ${
-                        isChecked
-                          ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
-                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      {isChecked ? '✓ ' : '+ '} {item}
-                    </button>
-                  );
-                })}
-              </div>
-              {canEdit && (
-                <div className="flex items-center gap-2 pt-1">
-                  <input
-                    type="text"
-                    value={customNeed}
-                    onChange={(e) => setCustomNeed(e.target.value)}
-                    placeholder="+ Tambah custom improvement..."
-                    className="flex-1 text-xs p-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && customNeed.trim()) {
-                        e.preventDefault();
-                        setSelectedNeedsImprovement([...selectedNeedsImprovement, customNeed.trim()]);
-                        setCustomNeed('');
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    disabled={!customNeed.trim()}
-                    onClick={() => {
-                      if (customNeed.trim()) {
-                        setSelectedNeedsImprovement([...selectedNeedsImprovement, customNeed.trim()]);
-                        setCustomNeed('');
-                      }
-                    }}
-                    className="px-3 py-2 bg-slate-200 text-slate-700 text-xs font-bold rounded-lg hover:bg-slate-300 disabled:opacity-50"
-                  >
-                    Tambah
-                  </button>
+                
+                <div className="flex items-center gap-4">
+                  {needsImprovementEnabled && (
+                    <span className="text-[11px] font-semibold text-slate-500">
+                      {selectedNeedsImprovement.length} dipilih
+                    </span>
+                  )}
+                  {canEdit ? (
+                    <label className="inline-flex items-center cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={needsImprovementEnabled}
+                        onChange={async (e) => {
+                          const val = e.target.checked;
+                          setNeedsImprovementEnabled(val);
+                          try {
+                            await saveMidtermClassCommentsConfig(
+                              selectedClass!.id,
+                              academicYear,
+                              semester,
+                              midtermTerm,
+                              { needsImprovementEnabled: val },
+                              currentUser.uid
+                            );
+                            toast.success(`Kategori Needs Improvement berhasil di-${val ? 'aktifkan' : 'nonaktifkan'} untuk kelas ini.`);
+                          } catch (err: any) {
+                            console.error(err);
+                            toast.error('Gagal menyimpan status toggle: ' + err.message);
+                          }
+                        }}
+                        className="sr-only peer"
+                      />
+                      <div className="relative w-7 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-600"></div>
+                      <span className="ms-1.5 text-[10px] font-bold text-slate-500 uppercase">
+                        {needsImprovementEnabled ? 'Aktif' : 'Nonaktif'}
+                      </span>
+                    </label>
+                  ) : (
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${needsImprovementEnabled ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}`}>
+                      {needsImprovementEnabled ? 'AKTIF' : 'NONAKTIF'}
+                    </span>
+                  )}
                 </div>
+              </div>
+
+              {!needsImprovementEnabled ? (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500 italic">
+                  Kategori disembunyikan untuk kelas ini.
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-1.5">
+                    {combinedNeedsImprovement.map((item) => {
+                      const isChecked = selectedNeedsImprovement.includes(item);
+                      return (
+                        <button
+                          key={item}
+                          type="button"
+                          disabled={!canEdit}
+                          onClick={() => toggleItem(selectedNeedsImprovement, setSelectedNeedsImprovement, item)}
+                          className={`text-[11px] font-medium px-2.5 py-1.5 rounded-lg border transition-all text-left ${
+                            isChecked
+                              ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
+                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {isChecked ? '✓ ' : '+ '} {item}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {canEdit && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <input
+                        type="text"
+                        value={customNeed}
+                        onChange={(e) => setCustomNeed(e.target.value)}
+                        placeholder="+ Tambah custom improvement..."
+                        className="flex-1 text-xs p-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddCustomItem('NEED', customNeed, setCustomNeed, selectedNeedsImprovement, setSelectedNeedsImprovement);
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        disabled={!customNeed.trim()}
+                        onClick={() => handleAddCustomItem('NEED', customNeed, setCustomNeed, selectedNeedsImprovement, setSelectedNeedsImprovement)}
+                        className="px-3 py-2 bg-slate-200 text-slate-700 text-xs font-bold rounded-lg hover:bg-slate-300 disabled:opacity-50"
+                      >
+                        Tambah
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 

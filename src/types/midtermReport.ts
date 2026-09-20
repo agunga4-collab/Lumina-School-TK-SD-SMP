@@ -199,3 +199,19 @@ export interface PublishedMidtermReport {
   createdAt: number;
   updatedAt: number;
 }
+
+export interface MidtermClassCommentsConfig {
+  id: string; // `${classId}_${academicYearNormalized}_${semester}_${midtermTerm}`
+  classId: string;
+  academicYear: string;
+  semester: string;
+  midtermTerm: string;
+  customStrengths: string[];
+  customAchievements: string[];
+  customNeedsImprovement: string[];
+  strengthsEnabled: boolean;
+  achievementsEnabled: boolean;
+  needsImprovementEnabled: boolean;
+  updatedAt: number;
+  updatedBy: string;
+}
