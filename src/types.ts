@@ -1001,6 +1001,11 @@ export interface ReportConfig {
     "Physical Fitness": string[];
   };
   spiritualHealthLGId: string;
+  principalName?: string;
+  principalTitle?: string;
+  principalNIY?: string;
+  principalSignatureUrl?: string | null;
+  principalSignatureStoragePath?: string | null;
 }
 
 export interface StudentReport {

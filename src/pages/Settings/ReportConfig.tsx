@@ -46,7 +46,18 @@ export default function ReportConfigPage() {
         ]);
 
         if (configSnap) {
-          setConfig(configSnap);
+          if (activeUnit === 'JUNIOR_HIGH') {
+            setConfig({
+              principalName: '',
+              principalTitle: 'Principal',
+              principalNIY: '',
+              principalSignatureUrl: null,
+              principalSignatureStoragePath: null,
+              ...configSnap
+            } as any);
+          } else {
+            setConfig(configSnap);
+          }
         } else {
           // Default config
           if (activeUnit === 'KINDERGARTEN') {
@@ -54,6 +65,25 @@ export default function ReportConfigPage() {
               unitId: 'KINDERGARTEN',
               principalName: '',
               principalTitle: 'Principal',
+              principalSignatureUrl: null,
+              principalSignatureStoragePath: null
+            } as any);
+          } else if (activeUnit === 'JUNIOR_HIGH') {
+            setConfig({
+              unitId: 'JUNIOR_HIGH',
+              subjectOrder: [],
+              studentProfileMapping: {
+                "Spiritual Health": [],
+                "Islamic Awareness": [],
+                "Thinking, Research and Academic Abilities": [],
+                "Arts Proficiency": [],
+                "Range of Interests Talents and Dispositions": [],
+                "Physical Fitness": []
+              },
+              spiritualHealthLGId: '',
+              principalName: '',
+              principalTitle: 'Principal',
+              principalNIY: '',
               principalSignatureUrl: null,
               principalSignatureStoragePath: null
             } as any);
@@ -292,6 +322,11 @@ export default function ReportConfigPage() {
                   <a href="#section-homeroom" className="block p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all flex items-center gap-3">
                      <Layers size={16} /> Wali Kelas
                   </a>
+                  {activeUnit === 'JUNIOR_HIGH' && (
+                    <a href="#section-jh-signatory" className="block p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all flex items-center gap-3">
+                       <Users size={16} /> JH Signatory
+                    </a>
+                  )}
                 </>
               )}
            </nav>
@@ -533,6 +568,112 @@ export default function ReportConfigPage() {
                  </div>
                  <p className="text-sm font-bold text-gray-400 uppercase tracking-widest">Fitur Homeroom Assignment & SE Period sedang dalam tahap rilis.</p>
               </section>
+
+              {activeUnit === 'JUNIOR_HIGH' && (
+                <section id="section-jh-signatory" className="space-y-8 scroll-mt-32">
+                   <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center text-white">
+                         <Users size={24} />
+                      </div>
+                      <div>
+                         <h2 className="text-2xl font-black uppercase italic tracking-tighter">Junior High Midterm Report Signatory</h2>
+                         <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Atur nama, jabatan, NIY, dan tanda tangan digital Principal Junior High.</p>
+                      </div>
+                   </div>
+
+                   <div className="bg-white p-10 rounded-[3rem] border border-gray-100 shadow-sm space-y-8">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                         <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase tracking-wider text-gray-400 font-sans block">Principal Name</label>
+                            <input 
+                               type="text"
+                               value={(config as any)?.principalName || ''}
+                               onChange={(e) => setConfig(prev => prev ? ({ ...prev, principalName: e.target.value } as any) : null)}
+                               placeholder="Masukkan nama kepala sekolah/Principal..."
+                               className="w-full p-4 bg-gray-50 rounded-2xl border-none font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 font-sans text-sm"
+                            />
+                         </div>
+
+                         <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase tracking-wider text-gray-400 font-sans block">Principal Title</label>
+                            <input 
+                               type="text"
+                               value={(config as any)?.principalTitle || 'Principal'}
+                               onChange={(e) => setConfig(prev => prev ? ({ ...prev, principalTitle: e.target.value } as any) : null)}
+                               placeholder="Principal"
+                               className="w-full p-4 bg-gray-50 rounded-2xl border-none font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 font-sans text-sm"
+                            />
+                         </div>
+
+                         <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase tracking-wider text-gray-400 font-sans block">Principal NIY</label>
+                            <input 
+                               type="text"
+                               value={(config as any)?.principalNIY || ''}
+                               onChange={(e) => setConfig(prev => prev ? ({ ...prev, principalNIY: e.target.value } as any) : null)}
+                               placeholder="Masukkan NIY..."
+                               className="w-full p-4 bg-gray-50 rounded-2xl border-none font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 font-sans text-sm"
+                            />
+                         </div>
+                      </div>
+
+                      <div className="space-y-4 pt-4 border-t border-gray-50">
+                         <label className="text-[10px] font-black uppercase tracking-wider text-gray-400 font-sans block">Principal Signature</label>
+                         <div className="flex flex-col md:flex-row items-center gap-6 p-6 bg-gray-50 rounded-3xl border border-dashed border-gray-200">
+                            <div className="w-40 h-28 bg-white rounded-2xl border border-gray-150 flex items-center justify-center overflow-hidden shrink-0 relative">
+                               {uploading ? (
+                                  <Loader2 className="animate-spin text-blue-600" size={24} />
+                               ) : (config as any)?.principalSignatureUrl ? (
+                                  <img 
+                                     src={(config as any).principalSignatureUrl} 
+                                     alt="Principal Signature Preview" 
+                                     className="w-full h-full object-contain p-2"
+                                  />
+                               ) : (
+                                  <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider text-center px-4">Tanda Tangan Belum Ada</span>
+                               )}
+                            </div>
+
+                            <div className="space-y-4 flex-1">
+                               <div className="flex flex-wrap gap-2">
+                                  <input 
+                                     type="file"
+                                     accept="image/png, image/jpeg, image/jpg"
+                                     id="principal-sig-upload-jh"
+                                     className="hidden"
+                                     onChange={handleSignatureUpload}
+                                     disabled={uploading}
+                                  />
+                                  <label
+                                     htmlFor="principal-sig-upload-jh"
+                                     className={cn(
+                                        "px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-sm shadow-blue-100 cursor-pointer flex items-center gap-1.5",
+                                        uploading && "opacity-50 pointer-events-none"
+                                     )}
+                                  >
+                                     {(config as any)?.principalSignatureUrl ? "Replace" : "Upload Signature"}
+                                  </label>
+
+                                  {(config as any)?.principalSignatureUrl && (
+                                     <button
+                                        type="button"
+                                        onClick={handleSignatureRemove}
+                                        disabled={uploading}
+                                        className="px-4 py-2.5 border border-red-200 hover:bg-red-50 text-red-600 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer disabled:opacity-50"
+                                     >
+                                        Remove
+                                     </button>
+                                  )}
+                               </div>
+                               <p className="text-[10px] text-gray-400 leading-normal font-sans">
+                                  Recommended: PNG with transparent background. Max 2MB.
+                               </p>
+                            </div>
+                         </div>
+                      </div>
+                   </div>
+                </section>
+              )}
             </>
           )}
         </div>

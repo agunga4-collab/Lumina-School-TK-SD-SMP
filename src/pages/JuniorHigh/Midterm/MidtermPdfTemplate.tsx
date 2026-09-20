@@ -74,6 +74,21 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
     ? snapshot.signatory.homeroomTeacherSignatureUrl 
     : (homeroomTeacherProfile?.signatureUrl || null);
 
+  const getEffDate = () => {
+    const months = [
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December"
+    ];
+    let d = new Date();
+    if (snapshot && (snapshot as any).publishedAt) {
+      d = new Date((snapshot as any).publishedAt);
+    } else if (snapshot && (snapshot as any).createdAt) {
+      d = new Date((snapshot as any).createdAt);
+    }
+    return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+  };
+  const formattedDate = getEffDate();
+
   // Derive categories and subject rows
   // Category 1: SPIRITUAL HEALTH
   // Category 2: LEARNING JOURNEY
@@ -330,54 +345,65 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
 
           {/* Signatory Block */}
           <div className="mt-2 pt-2 border-t border-black">
-            <div className="text-[11px] font-bold text-black mb-3">
-              Acknowledged by,
+            <div className="text-[10.5px] text-black text-left mb-2">
+              Depok, {formattedDate}
             </div>
 
-            <div className="grid grid-cols-3 gap-6 text-center text-[10.5px]">
-              {/* Principal */}
-              <div className="flex flex-col justify-between h-[110px] items-center">
-                <span className="font-bold text-black">Principal,</span>
-                <div className="h-[45px] flex items-center justify-center">
+            <div className="grid grid-cols-3 gap-6 text-[10.5px]">
+              {/* Principal Column */}
+              <div className="flex flex-col text-left items-start">
+                <div className="text-[10.5px] font-bold text-black min-h-[16px] mb-1">
+                  Acknowledged by,
+                </div>
+                <div className="font-bold text-black mb-2">Principal,</div>
+                <div className="h-[50px] flex items-center justify-start">
                   {effPrincipalSignatureUrl ? (
                     <img 
                       src={effPrincipalSignatureUrl} 
                       alt="Principal Signature" 
-                      className="h-10 w-auto object-contain"
+                      className="h-12 w-auto object-contain"
                       crossOrigin="anonymous"
                     />
-                  ) : null}
+                  ) : (
+                    <div className="h-12" />
+                  )}
                 </div>
-                <div>
-                  <div className="font-bold text-black underline">{effPrincipalName}</div>
-                  {effPrincipalNiy && <div className="text-[9px] text-slate-600">NIY: {effPrincipalNiy}</div>}
+                <div className="mt-2">
+                  <div className="font-bold text-black underline">{effPrincipalName || '-'}</div>
+                  <div className="text-[9px] text-slate-600">NIY: {effPrincipalNiy || '-'}</div>
                 </div>
               </div>
 
-              {/* Homeroom Teacher */}
-              <div className="flex flex-col justify-between h-[110px] items-center">
-                <span className="font-bold text-black">Homeroom Teacher,</span>
-                <div className="h-[45px] flex items-center justify-center">
+              {/* Homeroom Teacher Column */}
+              <div className="flex flex-col text-center items-center">
+                <div className="min-h-[16px] mb-1" /> {/* Spacer alignment with "Acknowledged by," */}
+                <div className="font-bold text-black mb-2">Homeroom Teacher,</div>
+                <div className="h-[50px] flex items-center justify-center">
                   {effHomeroomSignatureUrl ? (
                     <img 
                       src={effHomeroomSignatureUrl} 
                       alt="Homeroom Teacher Signature" 
-                      className="h-10 w-auto object-contain"
+                      className="h-12 w-auto object-contain"
                       crossOrigin="anonymous"
                     />
-                  ) : null}
+                  ) : (
+                    <div className="h-12" />
+                  )}
                 </div>
-                <div>
-                  <div className="font-bold text-black underline">{effHomeroomName}</div>
-                  {effHomeroomNiy && <div className="text-[9px] text-slate-600">NIY: {effHomeroomNiy}</div>}
+                <div className="mt-2">
+                  <div className="font-bold text-black underline">{effHomeroomName || '-'}</div>
+                  <div className="text-[9px] text-slate-600">NIY: {effHomeroomNiy || '-'}</div>
                 </div>
               </div>
 
-              {/* Parent */}
-              <div className="flex flex-col justify-between h-[110px] items-center">
-                <span className="font-bold text-black">Parent,</span>
-                <div className="h-[45px] flex items-center justify-center" />
-                <div>
+              {/* Parent Column */}
+              <div className="flex flex-col text-center items-center">
+                <div className="min-h-[16px] mb-1" /> {/* Spacer alignment with "Acknowledged by," */}
+                <div className="font-bold text-black mb-2">Parent,</div>
+                <div className="h-[50px] flex items-center justify-center">
+                  <div className="h-12" />
+                </div>
+                <div className="mt-2">
                   <div className="font-bold text-black underline">( ............................................ )</div>
                   <div className="text-[9px] text-slate-600">Signature & Name</div>
                 </div>
