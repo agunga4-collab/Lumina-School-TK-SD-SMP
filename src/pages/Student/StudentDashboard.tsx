@@ -201,6 +201,17 @@ export default function StudentDashboard() {
     );
   }
 
+  if (unit === 'ELEMENTARY') {
+    return (
+      <ElementaryStudentDashboard 
+        currentUser={currentUser} 
+        studentData={studentData} 
+        classData={classData}
+        activeYear={activeYear} 
+      />
+    );
+  }
+
   // ----------------------------------------------------
   // ELEMENTARY & JUNIOR HIGH DASHBOARD (GENERAL)
   // ----------------------------------------------------
@@ -414,6 +425,65 @@ function KindergartenStudentDashboard({
               Belum ada rapor yang diterbitkan
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ElementaryStudentDashboard({
+  currentUser,
+  studentData,
+  classData,
+  activeYear
+}: {
+  currentUser: AppUser;
+  studentData: Student | null;
+  classData: any | null;
+  activeYear: string | null;
+}) {
+  const studentName = studentData?.name || currentUser.displayName || '-';
+  const nis = studentData?.nis || studentData?.id || currentUser.luminaId || '-';
+  const className = classData?.name || '-';
+  const academicYear = activeYear || '-';
+
+  return (
+    <div className="max-w-3xl mx-auto space-y-12 py-12 animate-in fade-in duration-500">
+      {/* Welcome & Preparation Announcement */}
+      <div className="bg-white border border-gray-100 p-12 rounded-[2.5rem] shadow-sm relative overflow-hidden flex flex-col md:flex-row justify-between items-start md:items-center gap-8">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl -mr-20 -mt-20" />
+        
+        <div className="space-y-4 relative">
+          <h1 className="text-4xl font-black text-gray-900 tracking-tight leading-none">
+            Halo, <span className="text-blue-600">{studentName}! 👋</span>
+          </h1>
+          <div className="space-y-1">
+            <p className="text-base font-bold text-gray-700">
+              Selamat datang di Portal Siswa Lazuardi Elementary.
+            </p>
+            <p className="text-sm text-gray-400 font-medium">
+              Fitur portal siswa sedang dipersiapkan.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Student Profile Card */}
+      <div className="bg-white border border-gray-100 p-10 rounded-[2.5rem] shadow-sm space-y-6">
+        <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Identitas Siswa</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="p-6 bg-gray-50 rounded-2xl space-y-1">
+            <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">NIS</span>
+            <p className="text-lg font-bold text-gray-800">{nis}</p>
+          </div>
+          <div className="p-6 bg-gray-50 rounded-2xl space-y-1">
+            <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">Kelas</span>
+            <p className="text-lg font-bold text-gray-800">{className}</p>
+          </div>
+          <div className="p-6 bg-gray-50 rounded-2xl space-y-1">
+            <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">Tahun Ajaran</span>
+            <p className="text-lg font-bold text-gray-800">{academicYear}</p>
+          </div>
         </div>
       </div>
     </div>

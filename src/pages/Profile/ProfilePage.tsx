@@ -4,7 +4,7 @@ import {
   Save, Loader2, Key, PenTool, Hash
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, query, collection, where, getDocs } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { cn } from '../../lib/utils';
 
@@ -16,6 +16,71 @@ export default function ProfilePage() {
   // States for editable fields
   const [niy, setNiy] = React.useState(profile?.niy || '');
   const [signatureUrl, setSignatureUrl] = React.useState(profile?.signatureUrl || '');
+
+  // Elementary Student States
+  const [studentData, setStudentData] = React.useState<any | null>(null);
+  const [classData, setClassData] = React.useState<any | null>(null);
+  const [loadingStudent, setLoadingStudent] = React.useState(false);
+
+  React.useEffect(() => {
+    const fetchStudentAndClass = async () => {
+      if (profile?.role === 'STUDENT' && profile?.unitId === 'ELEMENTARY') {
+        setLoadingStudent(true);
+        try {
+          const studentId = profile.luminaId;
+          if (studentId) {
+            // Fetch student doc
+            const studentDocRef = doc(db, 'students', studentId.trim());
+            const studentDocSnap = await getDoc(studentDocRef);
+            let sData: any = null;
+            if (studentDocSnap.exists()) {
+              sData = { id: studentDocSnap.id, ...studentDocSnap.data() };
+            }
+
+            // Fetch active enrollment to get classId
+            let classId = sData?.classId;
+            if (profile.academicYear) {
+              const qEnroll = query(
+                collection(db, 'enrollments'),
+                where('studentId', '==', studentId.trim()),
+                where('academicYear', '==', profile.academicYear)
+              );
+              const qEnrollSnap = await getDocs(qEnroll);
+              if (!qEnrollSnap.empty) {
+                const enrollData = qEnrollSnap.docs[0].data();
+                classId = enrollData.classId;
+              }
+            }
+
+            if (classId) {
+              const classDocRef = doc(db, 'classes', classId);
+              const classDocSnap = await getDoc(classDocRef);
+              if (classDocSnap.exists()) {
+                setClassData(classDocSnap.data());
+              } else {
+                const qClass = query(
+                  collection(db, 'classes'),
+                  where('name', '==', classId)
+                );
+                const qClassSnap = await getDocs(qClass);
+                if (!qClassSnap.empty) {
+                  setClassData(qClassSnap.docs[0].data());
+                }
+              }
+            }
+
+            setStudentData(sData);
+          }
+        } catch (err) {
+          console.error("Error fetching student profile detail for Elementary:", err);
+        } finally {
+          setLoadingStudent(false);
+        }
+      }
+    };
+
+    fetchStudentAndClass();
+  }, [profile]);
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,6 +108,62 @@ export default function ProfilePage() {
   };
 
   if (!profile) return null;
+
+  if (profile.role === 'STUDENT' && profile.unitId === 'ELEMENTARY') {
+    const studentName = studentData?.name || profile.displayName || '-';
+    const nis = studentData?.nis || studentData?.id || profile.luminaId || '-';
+    const nisn = studentData?.nisn || '-';
+    const className = classData?.name || '-';
+
+    return (
+      <div className="max-w-3xl mx-auto space-y-8 animate-in fade-in duration-700 pb-20">
+        <div className="space-y-2">
+          <h1 className="text-4xl font-black tracking-tighter italic uppercase text-gray-900 leading-none">
+            My <span className="text-blue-600">Profile</span>
+          </h1>
+          <p className="text-gray-500 font-medium">
+            Data profil pribadi siswa Lazuardi Elementary.
+          </p>
+        </div>
+
+        {loadingStudent ? (
+          <div className="bg-white p-16 rounded-[2rem] border border-gray-100 flex flex-col items-center justify-center gap-4">
+            <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+            <p className="text-xs font-black text-gray-400 uppercase tracking-widest">Memuat Profil Siswa...</p>
+          </div>
+        ) : (
+          <div className="bg-white p-10 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-8">
+            <div className="flex items-center gap-3">
+              <div className="w-1.5 h-8 bg-blue-600 rounded-full" />
+              <h2 className="text-xl font-black text-gray-900 tracking-tight">Informasi Siswa</h2>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="p-6 bg-gray-50 rounded-2xl space-y-1">
+                <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">Nama</span>
+                <p className="text-lg font-bold text-gray-800">{studentName}</p>
+              </div>
+
+              <div className="p-6 bg-gray-50 rounded-2xl space-y-1">
+                <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">Kelas</span>
+                <p className="text-lg font-bold text-gray-800">{className}</p>
+              </div>
+
+              <div className="p-6 bg-gray-50 rounded-2xl space-y-1">
+                <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">NIS (Nomor Induk Siswa)</span>
+                <p className="text-lg font-bold text-gray-800">{nis}</p>
+              </div>
+
+              <div className="p-6 bg-gray-50 rounded-2xl space-y-1">
+                <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">NISN</span>
+                <p className="text-lg font-bold text-gray-800">{nisn}</p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-20">

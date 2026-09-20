@@ -678,6 +678,11 @@ export function Layout() {
                     <>
                       <NavItem to="/student/reports" icon={<FileText size={18} />} label="Rapor Saya" />
                     </>
+                  ) : currentUnit === 'ELEMENTARY' ? (
+                    <>
+                      <NavItem to="/student/dashboard" icon={<Home size={18} />} label="Dashboard Siswa" />
+                      <NavItem to="/student/reports" icon={<FileText size={18} />} label="Rapor Saya" />
+                    </>
                   ) : (
                     <>
                       <NavItem to="/student/dashboard" icon={<Home size={18} />} label="Dashboard Siswa" />

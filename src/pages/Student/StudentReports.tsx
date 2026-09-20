@@ -235,6 +235,80 @@ export default function StudentReports() {
     );
   }
 
+  if (studentData?.unitId === 'ELEMENTARY') {
+    return (
+      <div className="max-w-5xl mx-auto space-y-12 pb-20 animate-in fade-in duration-700">
+        <div className="space-y-4">
+          <Link to="/student/dashboard" className="group flex items-center gap-1 text-xs font-black uppercase tracking-widest text-gray-400 hover:text-blue-600 transition-colors">
+            <ChevronLeft size={14} className="group-hover:-translate-x-1 transition-transform" /> Dashboard
+          </Link>
+          <h1 className="text-5xl font-black tracking-tighter italic uppercase text-gray-900 leading-none">
+            Rapor <span className="text-blue-600">Saya</span>
+          </h1>
+          <p className="text-gray-400 font-bold max-w-lg">
+            Daftar hasil belajarmu yang sudah diterbitkan sekolah.
+          </p>
+        </div>
+
+        {reports.length === 0 ? (
+          <div className="bg-gray-50 border-2 border-dashed border-gray-200 p-20 rounded-[3rem] text-center space-y-4">
+            <div className="w-20 h-20 bg-gray-100 rounded-[2rem] flex items-center justify-center mx-auto">
+              <FileText className="text-gray-300" size={40} />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-xl font-black text-gray-900 uppercase italic tracking-tighter">Belum ada rapor yang tersedia.</h3>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+              {reports.map((report, idx) => (
+                <motion.div
+                  key={report.id}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: idx * 0.1 }}
+                  className="group bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm hover:shadow-2xl hover:shadow-blue-100 hover:border-blue-100 transition-all flex flex-col justify-between aspect-square"
+                >
+                  <div className="space-y-6">
+                    <div className="flex justify-between items-start">
+                      <div className="w-14 h-14 bg-blue-50 rounded-[1.5rem] flex items-center justify-center group-hover:bg-blue-600 group-hover:-rotate-6 transition-all duration-500">
+                        <FileText className="text-blue-600 group-hover:text-white" size={28} />
+                      </div>
+                      <div className="px-4 py-2 bg-gray-950 text-white rounded-2xl text-[9px] font-black uppercase tracking-widest">
+                        {report.type.replace('_', ' ')}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <h3 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900 group-hover:text-blue-600 transition-colors leading-tight">
+                        {report.period}
+                      </h3>
+                      <div className="flex items-center gap-3 text-xs font-bold text-gray-400">
+                        <span className="flex items-center gap-1"><Calendar size={12} /> Sem {report.semester}</span>
+                        <span className="w-1 h-1 bg-gray-300 rounded-full" />
+                        <span>{report.academicYear}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <Link 
+                      to={`/academic/rapor/${report.id}?view=student`} 
+                      className="w-full flex items-center justify-center gap-2 py-4 bg-gray-100 text-gray-900 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-blue-600 hover:text-white transition-all transform active:scale-95"
+                    >
+                      <Eye size={14} /> Lihat Detail
+                    </Link>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-5xl mx-auto space-y-12 pb-20 animate-in fade-in duration-700">
       <div className="space-y-4">
