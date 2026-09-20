@@ -13,11 +13,13 @@ import {
   generateMidtermGeneralCommentAI,
   refineMidtermGeneralCommentAI,
   getMidtermClassCommentsConfig,
-  saveMidtermClassCommentsConfig
+  saveMidtermClassCommentsConfig,
+  submitMidtermGeneralCommentForReview
 } from '../../../services/juniorHighMidtermService';
 import type { 
   MidtermStudentDataDoc, 
-  MidtermGeneralCommentData 
+  MidtermGeneralCommentData,
+  MidtermGenComReviewStatus
 } from '../../../types/midtermReport';
 import type { Student, Class, User } from '../../../types';
 
@@ -78,6 +80,11 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
   const [saving, setSaving] = React.useState<boolean>(false);
 
   const canEdit = canUserEditMidtermGeneralComments(currentUser, selectedClass);
+  const [submittingForReview, setSubmittingForReview] = React.useState<boolean>(false);
+
+  const studentData = selectedStudent ? safeStudentDataMap[selectedStudent.id] : null;
+  const currentReviewStatus: MidtermGenComReviewStatus = studentData?.generalCommentReviewStatus || 'DRAFT';
+  const isEditorLocked = !canEdit || currentReviewStatus === 'SUBMITTED_FOR_REVIEW' || currentReviewStatus === 'APPROVED';
 
   // Load custom configs for this class context
   React.useEffect(() => {
@@ -330,7 +337,9 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
         semester,
         midtermTerm,
         payload,
-        currentUser.uid
+        currentUser.uid,
+        currentUser.displayName || currentUser.name || 'Guru',
+        currentUser.role || 'Homeroom Teacher'
       );
 
       if (markFinal) {
@@ -344,6 +353,64 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
       toast.error('Gagal menyimpan komentar: ' + (err.message || 'Error'));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSubmitForReview = async () => {
+    if (!selectedStudent || !selectedClass) return;
+    
+    const confirmSubmit = window.confirm('Apakah Anda yakin ingin mengajukan General Comments ini untuk direview oleh Kepala Sekolah? Setelah diajukan, komentar akan terkunci.');
+    if (!confirmSubmit) return;
+
+    setSubmittingForReview(true);
+    try {
+      // First save the current form values as a draft to make sure they are up-to-date!
+      const payload: MidtermGeneralCommentData = {
+        studentName: selectedStudent.name,
+        nickname: nickname.trim(),
+        gender,
+        strengths: selectedStrengths,
+        achievements: selectedAchievements,
+        needsImprovement: selectedNeedsImprovement,
+        manualNotes: manualNotes.trim(),
+        aiDraft: aiDraft.trim(),
+        finalComment: finalComment.trim(),
+        isFinal: true, // Auto mark final when submitting
+      };
+
+      await saveMidtermStudentGeneralComment(
+        selectedStudent.id,
+        selectedStudent.name,
+        selectedClass.id,
+        academicYear,
+        semester,
+        midtermTerm,
+        payload,
+        currentUser.uid,
+        currentUser.displayName || currentUser.name || 'Guru',
+        currentUser.role || 'Homeroom Teacher'
+      );
+
+      // Now call submit function
+      await submitMidtermGeneralCommentForReview(
+        selectedStudent.id,
+        selectedClass.id,
+        academicYear,
+        semester,
+        midtermTerm,
+        currentUser.uid,
+        currentUser.displayName || currentUser.name || 'Guru',
+        currentUser.role || 'Homeroom Teacher',
+        finalComment.trim()
+      );
+
+      await onRefreshData();
+      toast.success('General Comments berhasil diajukan untuk review.');
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Gagal mengajukan review: ' + (err.message || 'Error'));
+    } finally {
+      setSubmittingForReview(false);
     }
   };
 
@@ -410,19 +477,34 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
                   </div>
 
                   <div className="shrink-0">
-                    {isMarkedFinal ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-emerald-100 text-emerald-800">
-                        <Check size={10} /> Final
-                      </span>
-                    ) : hasFinal ? (
-                      <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-blue-100 text-blue-800">
-                        Draft
-                      </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-slate-200 text-slate-600">
-                        Kosong
-                      </span>
-                    )}
+                    {(() => {
+                      const reviewStatus: MidtermGenComReviewStatus = sData?.generalCommentReviewStatus || 'DRAFT';
+                      if (reviewStatus === 'APPROVED') {
+                        return (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-emerald-100 text-emerald-800">
+                            <Check size={10} /> Disetujui
+                          </span>
+                        );
+                      } else if (reviewStatus === 'SUBMITTED_FOR_REVIEW') {
+                        return (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-amber-100 text-amber-800 animate-pulse">
+                            Review
+                          </span>
+                        );
+                      } else if (reviewStatus === 'REVISION_REQUESTED') {
+                        return (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-rose-100 text-rose-800">
+                            Revisi
+                          </span>
+                        );
+                      } else {
+                        return (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-slate-200 text-slate-600">
+                            {hasFinal ? 'Draft' : 'Kosong'}
+                          </span>
+                        );
+                      }
+                    })()}
                   </div>
                 </button>
               );
@@ -447,17 +529,75 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
             </div>
 
             <div className="flex items-center gap-2">
-              {isFinal ? (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-black uppercase tracking-wider bg-emerald-100 text-emerald-800">
-                  <CheckCircle2 size={14} /> Status: FINAL
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-black uppercase tracking-wider bg-amber-100 text-amber-800">
-                  <AlertCircle size={14} /> Status: DRAFT
-                </span>
-              )}
+              {(() => {
+                if (currentReviewStatus === 'APPROVED') {
+                  return (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-black uppercase tracking-wider bg-emerald-100 text-emerald-800">
+                      <CheckCircle2 size={14} /> DISETUJUI
+                    </span>
+                  );
+                } else if (currentReviewStatus === 'SUBMITTED_FOR_REVIEW') {
+                  return (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-black uppercase tracking-wider bg-amber-100 text-amber-800 animate-pulse">
+                      <Clock size={14} /> MENUNGGU REVIEW KEPALA SEKOLAH
+                    </span>
+                  );
+                } else if (currentReviewStatus === 'REVISION_REQUESTED') {
+                  return (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-black uppercase tracking-wider bg-rose-100 text-rose-800">
+                      <AlertCircle size={14} /> PERLU REVISI
+                    </span>
+                  );
+                } else {
+                  return (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-black uppercase tracking-wider bg-slate-100 text-slate-600">
+                      <AlertCircle size={14} /> DRAFT
+                    </span>
+                  );
+                }
+              })()}
             </div>
           </div>
+
+          {/* Conditional Review/Status Banners */}
+          {currentReviewStatus === 'SUBMITTED_FOR_REVIEW' && (
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col gap-1 text-xs text-amber-900 font-medium leading-normal">
+              <div className="flex items-center gap-2 font-bold">
+                <Clock size={16} className="text-amber-600 shrink-0" />
+                <span>Menunggu Review Kepala Sekolah</span>
+              </div>
+              <p className="text-[10px] text-slate-500 mt-1">
+                Komentar diajukan pada {studentData?.submittedForReviewAt ? new Date(studentData.submittedForReviewAt).toLocaleString('id-ID') : '-'} oleh {studentData?.submittedForReviewByName || 'Guru'}. Seluruh editor terkunci selama proses review.
+              </p>
+            </div>
+          )}
+
+          {currentReviewStatus === 'REVISION_REQUESTED' && (
+            <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex flex-col gap-1.5 text-xs text-rose-900 leading-normal">
+              <div className="flex items-center gap-2 font-black uppercase text-rose-700 tracking-tight">
+                <AlertCircle size={16} className="text-rose-600 shrink-0" />
+                <span>Perlu Revisi dari Kepala Sekolah</span>
+              </div>
+              <div className="bg-white border border-rose-100 rounded-xl p-3 text-xs font-semibold text-rose-800 italic">
+                "{studentData?.revisionFeedback || 'Silakan revisi bagian narasi komentar.'}"
+              </div>
+              <p className="text-[10px] text-slate-400 font-bold mt-1">
+                Diminta oleh: {studentData?.revisionRequestedByName || 'Kepala Sekolah'} | Tanggal: {studentData?.revisionRequestedAt ? new Date(studentData.revisionRequestedAt).toLocaleString('id-ID') : '-'}
+              </p>
+            </div>
+          )}
+
+          {currentReviewStatus === 'APPROVED' && (
+            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex flex-col gap-1 text-xs text-emerald-900 font-medium leading-normal">
+              <div className="flex items-center gap-2 font-black uppercase text-emerald-700 tracking-tight">
+                <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                <span>Disetujui oleh Kepala Sekolah</span>
+              </div>
+              <p className="text-[10px] text-slate-500 mt-1">
+                Disetujui oleh: {studentData?.approvedByName || 'Kepala Sekolah'} | Tanggal: {studentData?.approvedAt ? new Date(studentData.approvedAt).toLocaleString('id-ID') : '-'}
+              </p>
+            </div>
+          )}
 
           {/* Student Profile Inputs: Nickname & Gender */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
@@ -467,7 +607,7 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
               </label>
               <input
                 type="text"
-                disabled={!canEdit}
+                disabled={isEditorLocked}
                 value={nickname}
                 onChange={(e) => setNickname(e.target.value)}
                 placeholder="Contoh: Budi / Sarah"
@@ -484,7 +624,7 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
                   <input
                     type="radio"
                     name="gender"
-                    disabled={!canEdit}
+                    disabled={isEditorLocked}
                     checked={gender === 'MALE'}
                     onChange={() => setGender('MALE')}
                     className="text-slate-900 focus:ring-slate-900"
@@ -495,7 +635,7 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
                   <input
                     type="radio"
                     name="gender"
-                    disabled={!canEdit}
+                    disabled={isEditorLocked}
                     checked={gender === 'FEMALE'}
                     onChange={() => setGender('FEMALE')}
                     className="text-slate-900 focus:ring-slate-900"
@@ -832,7 +972,7 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
                 Catatan Tambahan Guru (Opsional)
               </label>
               <textarea
-                disabled={!canEdit}
+                disabled={isEditorLocked}
                 value={manualNotes}
                 onChange={(e) => setManualNotes(e.target.value)}
                 rows={2}
@@ -843,12 +983,12 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
           </div>
 
           {/* AI Generator Action Button */}
-          {canEdit && (
+          {canEdit && !isEditorLocked && (
             <div className="pt-2">
               <button
                 type="button"
                 onClick={handleGenerateAI}
-                disabled={generatingAI}
+                disabled={generatingAI || isEditorLocked}
                 className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 shadow-sm hover:from-emerald-700 hover:to-teal-700 transition-all disabled:opacity-50 cursor-pointer"
               >
                 <Sparkles size={16} className={generatingAI ? 'animate-spin' : ''} />
@@ -864,12 +1004,14 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
                 <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">
                   Draf AI Terakhir
                 </span>
-                <button
-                  onClick={() => setFinalComment(aiDraft)}
-                  className="text-[11px] text-emerald-600 font-bold hover:underline"
-                >
-                  Salin ke Final Comment
-                </button>
+                {!isEditorLocked && (
+                  <button
+                    onClick={() => setFinalComment(aiDraft)}
+                    className="text-[11px] text-emerald-600 font-bold hover:underline"
+                  >
+                    Salin ke Final Comment
+                  </button>
+                )}
               </div>
               <p className="text-xs text-slate-700 italic leading-relaxed">
                 "{aiDraft}"
@@ -893,11 +1035,11 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
                   {wordCount} / 120 kata {isWordCountExceeded && '(Melebihi batas maksimal 120 kata!)'}
                 </span>
 
-                {canEdit && (
+                {canEdit && !isEditorLocked && (
                   <button
                     type="button"
                     onClick={handlePolishAI}
-                    disabled={polishingAI || !finalComment.trim()}
+                    disabled={polishingAI || !finalComment.trim() || isEditorLocked}
                     className="inline-flex items-center gap-1.5 px-3 py-1 bg-teal-50 text-teal-700 border border-teal-200 rounded-lg text-xs font-bold hover:bg-teal-100 transition-all disabled:opacity-50 cursor-pointer"
                   >
                     <Wand2 size={13} className={polishingAI ? 'animate-spin' : ''} />
@@ -908,7 +1050,7 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
             </div>
 
             <textarea
-              disabled={!canEdit}
+              disabled={isEditorLocked}
               value={finalComment}
               onChange={(e) => setFinalComment(e.target.value)}
               rows={4}
@@ -917,39 +1059,83 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
             />
           </div>
 
-          {/* Action Footer: Mark as Final & Save */}
+          {/* Action Footer: State-based workflow buttons */}
           {canEdit && (
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-100">
-              <label className="flex items-center gap-2 text-xs font-bold text-slate-800 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={isFinal}
-                  onChange={(e) => setIsFinal(e.target.checked)}
-                  className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                />
-                <span>Tandai komentar sebagai FINAL</span>
-              </label>
+              <div className="text-slate-500 text-xs font-semibold">
+                Status: <span className="font-bold text-slate-800">{currentReviewStatus.replace(/_/g, ' ')}</span>
+              </div>
 
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleSave(false)}
-                  disabled={saving}
-                  className="px-4 py-2 bg-slate-100 text-slate-800 hover:bg-slate-200 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
-                >
-                  <Save size={13} />
-                  {saving ? 'Menyimpan...' : 'Simpan Draf'}
-                </button>
+                {currentReviewStatus === 'DRAFT' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleSave(false)}
+                      disabled={saving}
+                      className="px-4 py-2 bg-slate-100 text-slate-800 hover:bg-slate-200 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
+                    >
+                      <Save size={13} />
+                      {saving ? 'Menyimpan...' : 'Simpan Draf'}
+                    </button>
 
-                <button
-                  type="button"
-                  onClick={() => handleSave(true)}
-                  disabled={saving || !finalComment.trim() || isWordCountExceeded}
-                  className="px-4 py-2 bg-emerald-600 text-white hover:bg-emerald-700 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-50 cursor-pointer"
-                >
-                  <CheckCircle2 size={14} />
-                  {saving ? 'Memproses...' : 'Simpan & Finalisasi'}
-                </button>
+                    <button
+                      type="button"
+                      onClick={handleSubmitForReview}
+                      disabled={saving || submittingForReview || !finalComment.trim() || isWordCountExceeded}
+                      className="px-4 py-2 bg-emerald-600 text-white hover:bg-emerald-700 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-50 cursor-pointer"
+                    >
+                      <CheckCircle2 size={14} />
+                      {submittingForReview ? 'Mengajukan...' : 'Ajukan untuk Review'}
+                    </button>
+                  </>
+                )}
+
+                {currentReviewStatus === 'SUBMITTED_FOR_REVIEW' && (
+                  <button
+                    type="button"
+                    disabled
+                    className="px-4 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all"
+                  >
+                    <Clock size={13} />
+                    Menunggu Review Kepala Sekolah
+                  </button>
+                )}
+
+                {currentReviewStatus === 'REVISION_REQUESTED' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleSave(false)}
+                      disabled={saving}
+                      className="px-4 py-2 bg-slate-100 text-slate-800 hover:bg-slate-200 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
+                    >
+                      <Save size={13} />
+                      {saving ? 'Menyimpan...' : 'Simpan Draf Revisi'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleSubmitForReview}
+                      disabled={saving || submittingForReview || !finalComment.trim() || isWordCountExceeded}
+                      className="px-4 py-2 bg-rose-600 text-white hover:bg-rose-700 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-50 cursor-pointer"
+                    >
+                      <CheckCircle2 size={14} />
+                      {submittingForReview ? 'Mengajukan Ulang...' : 'Ajukan Ulang untuk Review'}
+                    </button>
+                  </>
+                )}
+
+                {currentReviewStatus === 'APPROVED' && (
+                  <button
+                    type="button"
+                    disabled
+                    className="px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all"
+                  >
+                    <CheckCircle2 size={13} />
+                    Disetujui - Terkunci
+                  </button>
+                )}
               </div>
             </div>
           )}

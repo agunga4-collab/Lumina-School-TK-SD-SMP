@@ -1307,7 +1307,37 @@ service cloud.firestore {
 
     match /jh_midterm_student_data/{dataId} {
       allow read: if isActive() && (isJuniorHighStaff() || isAdmin() || isTeacher());
-      allow write: if isActive() && (isJuniorHighStaff() || isAdmin() || isTeacher());
+      
+      allow create: if isActive() && (
+        isAdmin() ||
+        (isJuniorHighStaff() && isTeacherAssignedToClass(request.resource.data.classId))
+      );
+
+      allow update: if isActive() && (
+        isAdmin() ||
+        
+        (isJuniorHighStaff() && isTeacherAssignedToClass(resource.data.classId) && (
+          ((resource.data.generalCommentReviewStatus == 'DRAFT' || resource.data.generalCommentReviewStatus == 'REVISION_REQUESTED' || !('generalCommentReviewStatus' in resource.data)) &&
+           request.resource.data.generalCommentReviewStatus in ['DRAFT', 'SUBMITTED_FOR_REVIEW'] &&
+           !('revisionFeedback' in request.resource.data && request.resource.data.revisionFeedback != resource.data.revisionFeedback)) ||
+          
+          ((resource.data.generalCommentReviewStatus == 'SUBMITTED_FOR_REVIEW' || resource.data.generalCommentReviewStatus == 'APPROVED') &&
+           request.resource.data.generalComment == resource.data.generalComment &&
+           request.resource.data.commentBuilder == resource.data.commentBuilder &&
+           request.resource.data.generalCommentReviewStatus == resource.data.generalCommentReviewStatus)
+        )) ||
+
+        ((userRole() in ['PRINCIPAL', 'SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR'] || isAdmin()) &&
+         resource.data.generalCommentReviewStatus == 'SUBMITTED_FOR_REVIEW' &&
+         request.resource.data.generalCommentReviewStatus in ['APPROVED', 'REVISION_REQUESTED'] &&
+         request.resource.data.generalComment == resource.data.generalComment &&
+         request.resource.data.commentBuilder == resource.data.commentBuilder &&
+         resource.data.updatedBy != request.auth.uid &&
+         !(exists(/databases/$(database)/documents/classes/$(resource.data.classId)) && get(/databases/$(database)/documents/classes/$(resource.data.classId)).data.homeroomTeacherId == request.auth.uid)
+        )
+      );
+
+      allow delete: if isAdmin();
     }
 
     match /jh_midterm_class_comments_config/{configId} {

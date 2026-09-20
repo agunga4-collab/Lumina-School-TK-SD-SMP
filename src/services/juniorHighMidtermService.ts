@@ -16,7 +16,9 @@ import type {
   PublishedMidtermReport,
   MidtermGeneralCommentData,
   MidtermReportStatus,
-  MidtermClassCommentsConfig
+  MidtermClassCommentsConfig,
+  MidtermReviewHistoryEntry,
+  MidtermGenComReviewStatus
 } from '../types/midtermReport';
 import { JH_MIDTERM_CATEGORIES } from '../types/midtermReport';
 import type { User, Class, Student } from '../types';
@@ -388,13 +390,32 @@ export async function saveMidtermStudentGeneralComment(
   semester: string,
   midtermTerm: string,
   commentData: MidtermGeneralCommentData,
-  userUid: string
+  userUid: string,
+  actorName?: string,
+  actorRole?: string
 ): Promise<void> {
   const docId = getStudentDataDocId(studentId, classId, academicYear, semester, midtermTerm);
   const ref = doc(db, 'jh_midterm_student_data', docId);
 
   const existingSnap = await getDoc(ref);
   const existingData = existingSnap.exists() ? (existingSnap.data() as MidtermStudentDataDoc) : null;
+
+  let reviewStatus = existingData?.generalCommentReviewStatus || 'DRAFT';
+  const history = Array.isArray(existingData?.reviewHistory) ? [...existingData.reviewHistory] : [];
+
+  if (reviewStatus === 'REVISION_REQUESTED') {
+    reviewStatus = 'DRAFT';
+    history.push({
+      action: 'DRAFT_SAVED',
+      actorId: userUid,
+      actorName: actorName || 'Guru',
+      actorRole: actorRole || 'Homeroom Teacher',
+      timestamp: Date.now(),
+      commentSnapshot: commentData.finalComment || ''
+    });
+  } else if (!existingData?.generalCommentReviewStatus) {
+    reviewStatus = 'DRAFT';
+  }
 
   const payload: Partial<MidtermStudentDataDoc> = {
     studentId,
@@ -408,6 +429,8 @@ export async function saveMidtermStudentGeneralComment(
       updatedAt: Date.now(),
       updatedBy: userUid
     },
+    generalCommentReviewStatus: reviewStatus,
+    reviewHistory: history,
     updatedAt: Date.now(),
     updatedBy: userUid
   };
@@ -811,6 +834,13 @@ export function normalizeMidtermStudentData(
     ? raw.status
     : 'DRAFT';
 
+  const reviewStatus: any = (raw?.generalCommentReviewStatus === 'APPROVED' || 
+    raw?.generalCommentReviewStatus === 'SUBMITTED_FOR_REVIEW' || 
+    raw?.generalCommentReviewStatus === 'REVISION_REQUESTED' || 
+    raw?.generalCommentReviewStatus === 'DRAFT')
+    ? raw.generalCommentReviewStatus
+    : 'DRAFT';
+
   return {
     id: raw?.id ?? getStudentDataDocId(context.studentId, context.classId, context.academicYear, context.semester, context.midtermTerm),
     studentId: raw?.studentId ?? context.studentId,
@@ -825,6 +855,19 @@ export function normalizeMidtermStudentData(
     commentBuilder,
     attendance,
     status,
+    generalCommentReviewStatus: reviewStatus,
+    submittedForReviewAt: raw?.submittedForReviewAt ? Number(raw.submittedForReviewAt) : undefined,
+    submittedForReviewBy: typeof raw?.submittedForReviewBy === 'string' ? raw.submittedForReviewBy : undefined,
+    submittedForReviewByName: typeof raw?.submittedForReviewByName === 'string' ? raw.submittedForReviewByName : undefined,
+    approvedAt: raw?.approvedAt ? Number(raw.approvedAt) : undefined,
+    approvedBy: typeof raw?.approvedBy === 'string' ? raw.approvedBy : undefined,
+    approvedByName: typeof raw?.approvedByName === 'string' ? raw.approvedByName : undefined,
+    revisionRequestedAt: raw?.revisionRequestedAt ? Number(raw.revisionRequestedAt) : undefined,
+    revisionRequestedBy: typeof raw?.revisionRequestedBy === 'string' ? raw.revisionRequestedBy : undefined,
+    revisionRequestedByName: typeof raw?.revisionRequestedByName === 'string' ? raw.revisionRequestedByName : undefined,
+    revisionFeedback: typeof raw?.revisionFeedback === 'string' ? raw.revisionFeedback : undefined,
+    reviewVersion: raw?.reviewVersion ? Number(raw.reviewVersion) : undefined,
+    reviewHistory: Array.isArray(raw?.reviewHistory) ? raw.reviewHistory : [],
     updatedAt: Number(raw?.updatedAt ?? Date.now()),
     updatedBy: typeof raw?.updatedBy === 'string' ? raw.updatedBy : ''
   };
@@ -896,4 +939,144 @@ export async function getMidtermClassCommentsConfig(
     return null;
   }
   return snap.data() as MidtermClassCommentsConfig;
+}
+
+/**
+ * Submit General Comments for review
+ */
+export async function submitMidtermGeneralCommentForReview(
+  studentId: string,
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  userUid: string,
+  userName: string,
+  userRole: string,
+  commentSnapshot: string
+): Promise<void> {
+  const docId = getStudentDataDocId(studentId, classId, academicYear, semester, midtermTerm);
+  const ref = doc(db, 'jh_midterm_student_data', docId);
+
+  const snap = await getDoc(ref);
+  const existing = snap.exists() ? (snap.data() as MidtermStudentDataDoc) : null;
+  
+  const history = Array.isArray(existing?.reviewHistory) ? [...existing.reviewHistory] : [];
+  const previousStatus = existing?.generalCommentReviewStatus || 'DRAFT';
+  const action = previousStatus === 'REVISION_REQUESTED' ? 'RESUBMITTED_FOR_REVIEW' : 'SUBMITTED_FOR_REVIEW';
+
+  const entry: MidtermReviewHistoryEntry = {
+    action,
+    actorId: userUid,
+    actorName: userName,
+    actorRole: userRole,
+    timestamp: Date.now(),
+    commentSnapshot
+  };
+  history.push(entry);
+
+  const currentVersion = Number(existing?.reviewVersion ?? 0);
+  const nextVersion = action === 'SUBMITTED_FOR_REVIEW' ? currentVersion + 1 : currentVersion;
+
+  await setDoc(ref, {
+    generalCommentReviewStatus: 'SUBMITTED_FOR_REVIEW',
+    submittedForReviewAt: Date.now(),
+    submittedForReviewBy: userUid,
+    submittedForReviewByName: userName,
+    reviewVersion: nextVersion,
+    reviewHistory: history,
+    updatedAt: Date.now(),
+    updatedBy: userUid
+  }, { merge: true });
+}
+
+/**
+ * Approve General Comments
+ */
+export async function approveMidtermGeneralComment(
+  studentId: string,
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  userUid: string,
+  userName: string,
+  userRole: string,
+  commentSnapshot: string
+): Promise<void> {
+  const docId = getStudentDataDocId(studentId, classId, academicYear, semester, midtermTerm);
+  const ref = doc(db, 'jh_midterm_student_data', docId);
+
+  const snap = await getDoc(ref);
+  const existing = snap.exists() ? (snap.data() as MidtermStudentDataDoc) : null;
+
+  const history = Array.isArray(existing?.reviewHistory) ? [...existing.reviewHistory] : [];
+  const entry: MidtermReviewHistoryEntry = {
+    action: 'APPROVED',
+    actorId: userUid,
+    actorName: userName,
+    actorRole: userRole,
+    timestamp: Date.now(),
+    commentSnapshot
+  };
+  history.push(entry);
+
+  await setDoc(ref, {
+    generalCommentReviewStatus: 'APPROVED',
+    approvedAt: Date.now(),
+    approvedBy: userUid,
+    approvedByName: userName,
+    reviewHistory: history,
+    updatedAt: Date.now(),
+    updatedBy: userUid
+  }, { merge: true });
+}
+
+/**
+ * Request Revision for General Comments
+ */
+export async function requestRevisionMidtermGeneralComment(
+  studentId: string,
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  userUid: string,
+  userName: string,
+  userRole: string,
+  feedback: string,
+  commentSnapshot: string
+): Promise<void> {
+  if (!feedback || !feedback.trim()) {
+    throw new Error('Feedback revisi wajib diisi.');
+  }
+
+  const docId = getStudentDataDocId(studentId, classId, academicYear, semester, midtermTerm);
+  const ref = doc(db, 'jh_midterm_student_data', docId);
+
+  const snap = await getDoc(ref);
+  const existing = snap.exists() ? (snap.data() as MidtermStudentDataDoc) : null;
+
+  const history = Array.isArray(existing?.reviewHistory) ? [...existing.reviewHistory] : [];
+  const entry: MidtermReviewHistoryEntry = {
+    action: 'REVISION_REQUESTED',
+    actorId: userUid,
+    actorName: userName,
+    actorRole: userRole,
+    timestamp: Date.now(),
+    feedback,
+    commentSnapshot
+  };
+  history.push(entry);
+
+  await setDoc(ref, {
+    generalCommentReviewStatus: 'REVISION_REQUESTED',
+    revisionRequestedAt: Date.now(),
+    revisionRequestedBy: userUid,
+    revisionRequestedByName: userName,
+    revisionFeedback: feedback,
+    reviewHistory: history,
+    updatedAt: Date.now(),
+    updatedBy: userUid
+  }, { merge: true });
 }

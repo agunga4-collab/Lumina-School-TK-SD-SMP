@@ -17,6 +17,7 @@ import {
 } from '../../../services/juniorHighMidtermService';
 import { MidtermLearningGoalsTab } from './MidtermLearningGoalsTab';
 import { MidtermGeneralCommentsTab } from './MidtermGeneralCommentsTab';
+import { ReviewApprovalGenComTab } from './ReviewApprovalGenComTab';
 import { MidtermPublishPdfTab } from './MidtermPublishPdfTab';
 import { MidtermRekapTab } from './MidtermRekapTab';
 import type { 
@@ -114,7 +115,7 @@ function MidtermReportPageContent() {
   const [selectedYear, setSelectedYear] = React.useState<string>(activeYear || '2025/2026');
   const [selectedSemester, setSelectedSemester] = React.useState<string>('1');
   const [selectedTerm, setSelectedTerm] = React.useState<string>('1');
-  const [activeTab, setActiveTab] = React.useState<'GOALS' | 'COMMENTS' | 'PUBLISH' | 'REKAP'>('GOALS');
+  const [activeTab, setActiveTab] = React.useState<'GOALS' | 'COMMENTS' | 'REVIEW' | 'PUBLISH' | 'REKAP'>('GOALS');
 
   // Classes & Selection
   const [classesList, setClassesList] = React.useState<Class[]>([]);
@@ -400,7 +401,7 @@ function MidtermReportPageContent() {
         </div>
       </div>
 
-      {/* Navigation Tabs (4 main tabs) */}
+      {/* Navigation Tabs (5 main tabs) */}
       <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-2">
         <button
           onClick={() => setActiveTab('GOALS')}
@@ -427,6 +428,18 @@ function MidtermReportPageContent() {
         </button>
 
         <button
+          onClick={() => setActiveTab('REVIEW')}
+          className={`px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'REVIEW'
+              ? 'bg-slate-900 text-white shadow-sm'
+              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+          }`}
+        >
+          <FileCheck2 size={15} className={activeTab === 'REVIEW' ? 'text-emerald-400' : 'text-slate-400'} />
+          3. Review & Approval GenCom
+        </button>
+
+        <button
           onClick={() => setActiveTab('PUBLISH')}
           className={`px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
             activeTab === 'PUBLISH'
@@ -435,7 +448,7 @@ function MidtermReportPageContent() {
           }`}
         >
           <Upload size={15} className={activeTab === 'PUBLISH' ? 'text-emerald-400' : 'text-slate-400'} />
-          3. Publish PDF
+          4. Publish PDF
         </button>
 
         <button
@@ -446,8 +459,8 @@ function MidtermReportPageContent() {
               : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
           }`}
         >
-          <FileCheck2 size={15} className={activeTab === 'REKAP' ? 'text-emerald-400' : 'text-slate-400'} />
-          4. Rekap Publikasi & Open Tracking
+          <Users size={15} className={activeTab === 'REKAP' ? 'text-emerald-400' : 'text-slate-400'} />
+          5. Rekap Publikasi & Open Tracking
         </button>
       </div>
 
@@ -481,6 +494,20 @@ function MidtermReportPageContent() {
 
           {activeTab === 'COMMENTS' && (
             <MidtermGeneralCommentsTab
+              currentUser={effectiveUser}
+              selectedClass={selectedClass}
+              students={safeStudents}
+              academicYear={selectedYear}
+              semester={selectedSemester}
+              midtermTerm={selectedTerm}
+              studentDataMap={safeStudentDataMap}
+              onRefreshData={loadClassData}
+              loading={loadingData}
+            />
+          )}
+
+          {activeTab === 'REVIEW' && (
+            <ReviewApprovalGenComTab
               currentUser={effectiveUser}
               selectedClass={selectedClass}
               students={safeStudents}

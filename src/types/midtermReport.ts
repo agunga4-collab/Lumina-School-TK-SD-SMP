@@ -83,6 +83,18 @@ export interface MidtermGeneralCommentData {
   updatedBy?: string;
 }
 
+export type MidtermGenComReviewStatus = 'DRAFT' | 'SUBMITTED_FOR_REVIEW' | 'REVISION_REQUESTED' | 'APPROVED';
+
+export interface MidtermReviewHistoryEntry {
+  action: 'DRAFT_SAVED' | 'SUBMITTED_FOR_REVIEW' | 'REVISION_REQUESTED' | 'RESUBMITTED_FOR_REVIEW' | 'APPROVED';
+  actorId: string;
+  actorName: string;
+  actorRole: string;
+  timestamp: number;
+  feedback?: string;
+  commentSnapshot?: string;
+}
+
 export interface MidtermStudentDataDoc {
   id: string; // `${studentId}_${classId}_${academicYearNormalized}_${semester}_${term}`
   studentId: string;
@@ -95,6 +107,22 @@ export interface MidtermStudentDataDoc {
   spiritualHealthRemark?: string;
   generalComment: MidtermGeneralCommentData;
   status: MidtermReportStatus;
+  
+  // General Comment Review Status and Metadata
+  generalCommentReviewStatus?: MidtermGenComReviewStatus;
+  submittedForReviewAt?: number;
+  submittedForReviewBy?: string;
+  submittedForReviewByName?: string;
+  approvedAt?: number;
+  approvedBy?: string;
+  approvedByName?: string;
+  revisionRequestedAt?: number;
+  revisionRequestedBy?: string;
+  revisionRequestedByName?: string;
+  revisionFeedback?: string;
+  reviewVersion?: number;
+  reviewHistory?: MidtermReviewHistoryEntry[];
+
   updatedAt: number;
   updatedBy?: string;
   commentBuilder?: {
