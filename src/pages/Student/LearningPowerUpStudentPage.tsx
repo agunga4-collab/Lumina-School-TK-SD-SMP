@@ -25,6 +25,12 @@ import {
 import { db, handleFirestoreError } from '../../lib/firebase';
 import { toast } from 'sonner';
 import { formatLearningPowerUpDate } from '../../services/learningPowerUpService';
+import {
+  normalizeMengajiLevel,
+  normalizeNumerasiLevel,
+  formatMengajiDisplay,
+  formatNumerasiDisplay
+} from '../../utils/litnumLevelNormalizer';
 
 interface LearningPowerUpPackage {
   id: string; // learning_power_up_{classId}_{weekStartDate}
@@ -305,6 +311,8 @@ function LearningPowerUpStudentPageContent() {
   const [weeks, setWeeks] = React.useState<UnifiedWeek[]>([]);
   const [selectedWeek, setSelectedWeek] = React.useState<string>('');
   const [loadingTasks, setLoadingTasks] = React.useState(false);
+  const [taskBatches, setTaskBatches] = React.useState<any[]>([]);
+  const [resolvedLevels, setResolvedLevels] = React.useState<Record<string, string>>({});
 
   // Detail popup states
   const [activeTaskDetail, setActiveTaskDetail] = React.useState<{
@@ -478,6 +486,96 @@ function LearningPowerUpStudentPageContent() {
 
       setAssignments(filteredAssignments);
 
+      // 3b. Fetch level-based task batches (new style)
+      const qBatches = query(
+        collection(db, 'learning_power_up_task_batches')
+      );
+      const batchesSnap = await getDocs(qBatches);
+      const loadedBatches = batchesSnap.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      })) as any[];
+
+      // Filter batches for this class, academic year, and PUBLISHED status
+      const activeBatches = loadedBatches.filter(b => {
+        const bYear = b.academicYearId || b.academicYear;
+        const matchesYear = normalizeYear(bYear) === normalizedActiveYear;
+        if (!matchesYear) return false;
+
+        const matchesClass = b.classId === classData.id || 
+          (Array.isArray(b.targetClassIds) && b.targetClassIds.includes(classData.id)) ||
+          (Array.isArray(b.classIds) && b.classIds.includes(classData.id));
+        if (!matchesClass) return false;
+
+        return b.status === 'PUBLISHED';
+      });
+      setTaskBatches(activeBatches);
+
+      // 3c. Fetch student's literacy & numeracy records to resolve current levels
+      const qRecords = query(
+        collection(db, 'junior_high_literacy_numeracy_records'),
+        where('studentId', '==', studentData.id),
+        where('schoolYear', '==', activeYear)
+      );
+      const recordsSnap = await getDocs(qRecords);
+      const studentRecords: any[] = [];
+      recordsSnap.forEach(d => {
+        studentRecords.push({ id: d.id, ...d.data() });
+      });
+
+      const SESSION_PRIORITY: Record<string, number> = {
+        'SEMESTER_1_START': 1,
+        'SEMESTER_1_END': 2,
+        'SPRING_ASSESSMENT_3': 3,
+        'SEMESTER_2_START': 4,
+        'SEMESTER_2_END': 5
+      };
+
+      const recordsByArea: Record<string, any> = {};
+      studentRecords.forEach(data => {
+        const area = data.subjectArea;
+        if (!area) return;
+        const existing = recordsByArea[area];
+        if (!existing) {
+          recordsByArea[area] = data;
+        } else {
+          const priorityA = SESSION_PRIORITY[data.sessionKey] || 0;
+          const priorityB = SESSION_PRIORITY[existing.sessionKey] || 0;
+          if (priorityA > priorityB) {
+            recordsByArea[area] = data;
+          }
+        }
+      });
+
+      const getLevelFromRecord = (record: any, subj: string): string => {
+        if (!record) return '';
+        switch (subj) {
+          case 'bahasaIndonesia':
+            return record.readingLevel || '';
+          case 'english':
+            return record.readingLevel || '';
+          case 'mengaji': {
+            const raw = record.mengajiLevel || record.level;
+            const norm = normalizeMengajiLevel(raw);
+            return norm ? formatMengajiDisplay(norm) : (raw || '');
+          }
+          case 'numerasi': {
+            const raw = record.numerasiLevel || record.mathLevel;
+            const norm = normalizeNumerasiLevel(raw);
+            return norm ? formatNumerasiDisplay(norm) : (raw || '');
+          }
+          default:
+            return '';
+        }
+      };
+
+      const resolvedLvs: Record<string, string> = {};
+      resolvedLvs['bahasaIndonesia'] = getLevelFromRecord(recordsByArea['BAHASA_INDONESIA'], 'bahasaIndonesia');
+      resolvedLvs['english'] = getLevelFromRecord(recordsByArea['ENGLISH_READING'], 'english');
+      resolvedLvs['mengaji'] = getLevelFromRecord(recordsByArea['MENGAJI'], 'mengaji');
+      resolvedLvs['numerasi'] = getLevelFromRecord(recordsByArea['NUMERACY'], 'numerasi');
+      setResolvedLevels(resolvedLvs);
+
       // 4. Build unified weeks
       const weekMap = new Map<string, UnifiedWeek>();
       filteredPackages.forEach(p => {
@@ -487,6 +585,16 @@ function LearningPowerUpStudentPageContent() {
           weekEndDate: p.weekEndDate,
           weekLabel: p.weekLabel
         });
+      });
+      activeBatches.forEach(b => {
+        if (!weekMap.has(b.weekStartDate)) {
+          weekMap.set(b.weekStartDate, {
+            id: 'level_week_' + b.weekStartDate,
+            weekStartDate: b.weekStartDate,
+            weekEndDate: b.weekEndDate,
+            weekLabel: b.weekLabel
+          });
+        }
       });
       filteredAssignments.forEach(asg => {
         if (!weekMap.has(asg.weekStartDate)) {
@@ -562,12 +670,17 @@ function LearningPowerUpStudentPageContent() {
   const activePackage = activeUnifiedWeek ? packages.find(p => p.weekStartDate === activeUnifiedWeek.weekStartDate) : null;
   
   // Extract active fields of the current selected week. 
-  // A field is active if there is an individual assignment OR a legacy package task with text.
+  // A field is active if there is an individual assignment OR an active level-based task batch OR a legacy package task with text.
   const activeFields = activeUnifiedWeek ? (['bahasaIndonesia', 'english', 'mengaji', 'numerasi'] as const).filter(field => {
-    // Has individual assignment?
+    // 1. Has individual assignment?
     const hasAsg = assignments.some(asg => asg.weekStartDate === activeUnifiedWeek.weekStartDate && asg.subjectKey === field);
     if (hasAsg) return true;
-    // Or has legacy package task?
+
+    // 2. Has active published batch for this field?
+    const hasBatch = taskBatches.some(b => b.weekStartDate === activeUnifiedWeek.weekStartDate && b.subjectKey === field);
+    if (hasBatch) return true;
+
+    // 3. Or has legacy package task?
     const legPack = packages.find(p => p.weekStartDate === activeUnifiedWeek.weekStartDate);
     return !!(legPack && legPack.tasks[field] && legPack.tasks[field]?.trim());
   }) : [];
@@ -689,9 +802,7 @@ function LearningPowerUpStudentPageContent() {
   };
 
   // Submit differentiated assignment completion action handler
-  const handleAssignmentSubmit = async (assignmentId: string, isRevision: boolean) => {
-    const asg = assignments.find(a => a.id === assignmentId);
-    if (!asg) return;
+  const handleAssignmentSubmit = async (asg: LearningPowerUpAssignment, isRevision: boolean) => {
     setIsSubmittingAction(true);
     try {
       const currentHistory = asg.history || [];
@@ -709,6 +820,7 @@ function LearningPowerUpStudentPageContent() {
       const docRef = doc(db, 'learning_power_up_assignments', asg.id);
       
       const updatedFields = {
+        ...asg,
         status: 'SUBMITTED',
         submittedAt: serverTimestamp(),
         history: [...currentHistory, newHistoryItem],
@@ -885,7 +997,41 @@ function LearningPowerUpStudentPageContent() {
               const IconComp = cfg.icon;
 
               // Check if there's a differentiated assignment for this week & subject
-              const asg = assignments.find(a => a.weekStartDate === activeUnifiedWeek.weekStartDate && a.subjectKey === field);
+              let asg = assignments.find(a => a.weekStartDate === activeUnifiedWeek.weekStartDate && a.subjectKey === field);
+              
+              if (!asg) {
+                // Synthesize from published task batches if available
+                const batch = taskBatches.find(b => b.weekStartDate === activeUnifiedWeek.weekStartDate && b.subjectKey === field);
+                if (batch) {
+                  const level = resolvedLevels[field] || '';
+                  const task = level ? batch.levelTasks?.[level] : null;
+                  const taskTitle = task?.title?.trim() || `Tugas Penguatan ${cfg.label}`;
+                  const taskInstructions = task?.instructions?.trim() || 'Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.';
+                  
+                  asg = {
+                    id: `virtual_asg_${batch.id}_${studentData.id}_${field}`,
+                    unit: 'JUNIOR_HIGH',
+                    taskBatchId: batch.id,
+                    studentId: studentData.id,
+                    studentNameSnapshot: studentData.name,
+                    classId: classData.id,
+                    classNameSnapshot: classData.name || '',
+                    subjectKey: field,
+                    subjectArea: batch.subjectArea,
+                    levelSnapshot: level || null,
+                    taskTitle,
+                    taskInstructions,
+                    academicYearId: activeYear,
+                    semester: batch.semester || '1',
+                    weekStartDate: batch.weekStartDate,
+                    weekEndDate: batch.weekEndDate,
+                    weekLabel: batch.weekLabel,
+                    status: 'ASSIGNED',
+                    history: [],
+                    updatedAt: null
+                  } as any;
+                }
+              }
               
               let status: 'NOT_STARTED' | 'SUBMITTED' | 'REVISION_REQUIRED' | 'VERIFIED' = 'NOT_STARTED';
               let overdue: boolean = false;
@@ -947,7 +1093,7 @@ function LearningPowerUpStudentPageContent() {
                         </h3>
                         {isDifferentiated && asg && (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-[#109E58]/10 text-[#109E58] border border-[#109E58]/20 shrink-0">
-                            Level {asg.levelSnapshot}
+                            Level {asg.levelSnapshot || 'belum ditetapkan'}
                           </span>
                         )}
                       </div>
@@ -1081,7 +1227,7 @@ function LearningPowerUpStudentPageContent() {
                         </h3>
                         {isDiff && asg && (
                           <span className="px-3 py-1 bg-indigo-100 text-indigo-700 text-[11px] font-black uppercase tracking-wider rounded-xl border border-indigo-200 inline-block">
-                            Level {asg.levelSnapshot}
+                            Level {asg.levelSnapshot || 'belum ditetapkan'}
                           </span>
                         )}
                       </div>
@@ -1140,7 +1286,7 @@ function LearningPowerUpStudentPageContent() {
                               <button
                                 onClick={() => {
                                   if (isDiff && asg) {
-                                    handleAssignmentSubmit(asg.id, status === 'REVISION_REQUIRED');
+                                    handleAssignmentSubmit(asg, status === 'REVISION_REQUIRED');
                                   } else {
                                     handleTaskSubmit(activeTaskDetail.field, status === 'REVISION_REQUIRED');
                                   }
