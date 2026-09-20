@@ -20,8 +20,8 @@ export function getDashboardRoute(profile: User | null, activeUnit: UnitType | n
     return '/';
   }
 
-  // Junior High and Kindergarten student goes to student dashboard
-  if (profile.role === 'STUDENT' && (activeUnit === 'JUNIOR_HIGH' || activeUnit === 'KINDERGARTEN')) {
+  // Junior High, Kindergarten, and Elementary students go to student dashboard
+  if (profile.role === 'STUDENT' && (activeUnit === 'JUNIOR_HIGH' || activeUnit === 'KINDERGARTEN' || activeUnit === 'ELEMENTARY')) {
     return '/student/dashboard';
   }
 

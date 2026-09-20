@@ -444,45 +444,103 @@ function ElementaryStudentDashboard({
 }) {
   const studentName = studentData?.name || currentUser.displayName || '-';
   const nis = studentData?.nis || studentData?.id || currentUser.luminaId || '-';
+  const nisn = studentData?.nisn || '-';
   const className = classData?.name || '-';
   const academicYear = activeYear || '-';
 
   return (
-    <div className="max-w-3xl mx-auto space-y-12 py-12 animate-in fade-in duration-500">
-      {/* Welcome & Preparation Announcement */}
-      <div className="bg-white border border-gray-100 p-12 rounded-[2.5rem] shadow-sm relative overflow-hidden flex flex-col md:flex-row justify-between items-start md:items-center gap-8">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl -mr-20 -mt-20" />
-        
-        <div className="space-y-4 relative">
-          <h1 className="text-4xl font-black text-gray-900 tracking-tight leading-none">
-            Halo, <span className="text-blue-600">{studentName}! 👋</span>
-          </h1>
-          <div className="space-y-1">
-            <p className="text-base font-bold text-gray-700">
-              Selamat datang di Portal Siswa Lazuardi Elementary.
-            </p>
-            <p className="text-sm text-gray-400 font-medium">
-              Fitur portal siswa sedang dipersiapkan.
-            </p>
-          </div>
-        </div>
+    <div className="max-w-4xl mx-auto space-y-12 py-12 animate-in fade-in duration-500">
+      {/* Welcome & Greeting */}
+      <div className="space-y-4">
+        <h1 className="text-4xl font-black text-gray-900 tracking-tight leading-none">
+          Halo, <span className="text-blue-600">{studentName}! 👋</span>
+        </h1>
+        <p className="text-lg font-medium text-gray-600">
+          Selamat datang di Portal Siswa Lazuardi Elementary.
+        </p>
       </div>
 
-      {/* Student Profile Card */}
+      {/* Two Main Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        {/* Card: Informasi Sekolah (Segera Hadir / Read-only Placeholder) */}
+        <div className="bg-white border border-gray-100 p-8 rounded-[2.5rem] shadow-sm flex flex-col justify-between group relative overflow-hidden h-[300px]">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-gray-100 rounded-full blur-2xl -mr-10 -mt-10 group-hover:scale-110 transition-transform duration-500" />
+          
+          <div className="space-y-4 relative">
+            <div className="w-14 h-14 bg-gray-100 rounded-[1.5rem] flex items-center justify-center text-gray-400">
+              <BookOpen size={28} />
+            </div>
+            
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <h3 className="text-2xl font-black text-gray-900 tracking-tight">
+                  Informasi Sekolah
+                </h3>
+                <span className="px-2.5 py-1 bg-gray-100 text-gray-500 rounded-lg text-[9px] font-black uppercase tracking-wider">
+                  Segera Hadir
+                </span>
+              </div>
+              <p className="text-sm font-semibold text-gray-400">
+                Informasi sekolah akan tersedia di sini.
+              </p>
+            </div>
+          </div>
+          
+          <div className="pt-6 relative">
+            <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest bg-gray-50 px-4 py-3 rounded-xl border border-gray-100 text-center">
+              Selalu Update dengan Berita Terbaru
+            </div>
+          </div>
+        </div>
+
+        {/* Card: Rapor Saya (Active Card leading to Rapor Saya page) */}
+        <Link 
+          to="/student/reports" 
+          className="bg-white border border-gray-100 p-8 rounded-[2.5rem] shadow-sm hover:shadow-xl hover:border-blue-200 transition-all flex flex-col justify-between group relative overflow-hidden h-[300px]"
+        >
+          <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-2xl -mr-10 -mt-10 group-hover:scale-110 transition-transform duration-500" />
+          
+          <div className="space-y-4 relative">
+            <div className="w-14 h-14 bg-blue-50 rounded-[1.5rem] flex items-center justify-center text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-all duration-300">
+              <FileText size={28} />
+            </div>
+            
+            <div className="space-y-2">
+              <h3 className="text-2xl font-black text-gray-900 tracking-tight group-hover:text-blue-600 transition-colors">
+                Rapor Saya
+              </h3>
+              <p className="text-sm font-semibold text-gray-500 group-hover:text-gray-600 transition-colors">
+                Lihat hasil belajarmu yang telah diterbitkan oleh sekolah.
+              </p>
+            </div>
+          </div>
+          
+          <div className="pt-6 relative flex items-center justify-between text-blue-600 font-black text-[10px] uppercase tracking-widest">
+            <span>Buka Rapor Saya</span>
+            <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
+          </div>
+        </Link>
+      </div>
+
+      {/* Student Real Identity Section (Data real siswa read-only) */}
       <div className="bg-white border border-gray-100 p-10 rounded-[2.5rem] shadow-sm space-y-6">
         <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Identitas Siswa</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <div className="p-6 bg-gray-50 rounded-2xl space-y-1">
-            <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">NIS</span>
-            <p className="text-lg font-bold text-gray-800">{nis}</p>
+            <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">Nama</span>
+            <p className="text-sm font-bold text-gray-800 truncate">{studentName}</p>
           </div>
           <div className="p-6 bg-gray-50 rounded-2xl space-y-1">
             <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">Kelas</span>
-            <p className="text-lg font-bold text-gray-800">{className}</p>
+            <p className="text-sm font-bold text-gray-800">{className}</p>
           </div>
           <div className="p-6 bg-gray-50 rounded-2xl space-y-1">
-            <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">Tahun Ajaran</span>
-            <p className="text-lg font-bold text-gray-800">{academicYear}</p>
+            <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">NIS</span>
+            <p className="text-sm font-bold text-gray-800">{nis}</p>
+          </div>
+          <div className="p-6 bg-gray-50 rounded-2xl space-y-1">
+            <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">NISN</span>
+            <p className="text-sm font-bold text-gray-800">{nisn}</p>
           </div>
         </div>
       </div>
