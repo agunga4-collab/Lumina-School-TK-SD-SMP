@@ -82,10 +82,6 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
   const canEdit = canUserEditMidtermGeneralComments(currentUser, selectedClass);
   const [submittingForReview, setSubmittingForReview] = React.useState<boolean>(false);
 
-  const studentData = selectedStudent ? safeStudentDataMap[selectedStudent.id] : null;
-  const currentReviewStatus: MidtermGenComReviewStatus = studentData?.generalCommentReviewStatus || 'DRAFT';
-  const isEditorLocked = !canEdit || currentReviewStatus === 'SUBMITTED_FOR_REVIEW' || currentReviewStatus === 'APPROVED';
-
   // Load custom configs for this class context
   React.useEffect(() => {
     if (!selectedClass) return;
@@ -223,6 +219,10 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
   }, [safeStudents, selectedStudentId]);
 
   const selectedStudent = safeStudents.find(s => s && s.id === selectedStudentId) || safeStudents[0] || null;
+
+  const studentData = selectedStudent ? safeStudentDataMap[selectedStudent.id] : null;
+  const currentReviewStatus: MidtermGenComReviewStatus = studentData?.generalCommentReviewStatus || 'DRAFT';
+  const isEditorLocked = !canEdit || currentReviewStatus === 'SUBMITTED_FOR_REVIEW' || currentReviewStatus === 'APPROVED';
 
   // Sync form when student changes or studentDataMap updates
   React.useEffect(() => {
