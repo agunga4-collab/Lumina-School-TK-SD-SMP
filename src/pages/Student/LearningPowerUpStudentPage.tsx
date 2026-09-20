@@ -488,7 +488,9 @@ function LearningPowerUpStudentPageContent() {
 
       // 3b. Fetch level-based task batches (new style)
       const qBatches = query(
-        collection(db, 'learning_power_up_task_batches')
+        collection(db, 'learning_power_up_task_batches'),
+        where('status', '==', 'PUBLISHED'),
+        where('targetClassIds', 'array-contains', classData.id)
       );
       const batchesSnap = await getDocs(qBatches);
       const loadedBatches = batchesSnap.docs.map(d => ({

@@ -681,8 +681,11 @@ service cloud.firestore {
     }
 
     match /junior_high_literacy_numeracy_records/{recordId} {
-      allow read: if isActive() && isJuniorHighStaff();
-      allow read: if isActive() && isLinkedStudent(existing().studentId);
+      allow read: if isActive() && (
+        isJuniorHighStaff() ||
+        isOwnStudentData(resource.data.studentId) ||
+        isLinkedStudent(resource.data.studentId)
+      );
       allow write: if isJuniorHighStaff();
     }
 
@@ -1110,7 +1113,7 @@ service cloud.firestore {
       allow read: if isActive() && (
         isAdmin() ||
         isJuniorHighStaff() ||
-        isStudent() ||
+        (isStudent() && resource.data.classId == studentClassId()) ||
         isParent()
       );
       allow create: if isAdmin() || isJuniorHighStaff();
@@ -1122,8 +1125,8 @@ service cloud.firestore {
       allow read: if isActive() && (
         isAdmin() ||
         isJuniorHighStaff() ||
-        isStudent() ||
-        isParent()
+        isOwnStudentData(resource.data.studentId) ||
+        isLinkedStudent(resource.data.studentId)
       );
       allow create: if isAdmin() || isOwnStudentData(request.resource.data.studentId) || isJuniorHighStaff();
       allow update: if isAdmin() || isJuniorHighStaff() || (
@@ -1138,8 +1141,8 @@ service cloud.firestore {
       allow read: if isActive() && (
         isAdmin() ||
         isJuniorHighLPUStaff() ||
-        isStudent() ||
-        isParent()
+        isStudentAllowedBatchGet(resource.data) ||
+        (isParent() && resource.data.status == "PUBLISHED")
       );
       allow create: if isJuniorHighLPUStaff() || isAdmin();
       allow update: if isJuniorHighLPUStaff() || isAdmin();
@@ -1150,10 +1153,14 @@ service cloud.firestore {
       allow read: if isActive() && (
         isAdmin() ||
         isJuniorHighLPUStaff() ||
-        isStudent() ||
-        isParent()
+        isOwnStudentData(resource.data.studentId) ||
+        isLinkedStudent(resource.data.studentId)
       );
-      allow create: if isJuniorHighLPUStaff() || isAdmin();
+      allow create: if isJuniorHighLPUStaff() || isAdmin() || (
+        isActive() &&
+        isOwnStudentData(incoming().studentId) &&
+        isValidLearningPowerUpAssignment(incoming())
+      );
       allow update: if isActive() && (
         isAdmin() ||
         isJuniorHighLPUStaff() ||
