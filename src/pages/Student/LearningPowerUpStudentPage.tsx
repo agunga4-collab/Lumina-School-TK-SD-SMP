@@ -23,6 +23,12 @@ import {
   serverTimestamp 
 } from 'firebase/firestore';
 import { db, handleFirestoreError } from '../../lib/firebase';
+import {
+  normalizeMengajiLevel,
+  normalizeNumerasiLevel,
+  formatMengajiDisplay,
+  formatNumerasiDisplay
+} from '../../utils/litnumLevelNormalizer';
 import { toast } from 'sonner';
 import { formatLearningPowerUpDate } from '../../services/learningPowerUpService';
 
@@ -285,7 +291,7 @@ function LearningPowerUpStudentPageContent() {
     return <Navigate to="/" replace />;
   }
 
-  const { activeYear } = useAcademicYear();
+  const { activeYear, activeSemester } = useAcademicYear();
   const [studentData, setStudentData] = React.useState<Student | null>(null);
   const [classData, setClassData] = React.useState<any | null>(null);
   const [loading, setLoading] = React.useState(true);
@@ -405,34 +411,180 @@ function LearningPowerUpStudentPageContent() {
     try {
       const normalizedActiveYear = normalizeYear(activeYear);
 
-      // 1. Fetch weekly task packages
-      const qPackages = query(
-        collection(db, 'learning_power_up_tasks'),
-        where('classId', '==', classData.id)
+      // 1. Fetch weekly task batches
+      const qBatches = query(
+        collection(db, 'learning_power_up_task_batches'),
+        where('status', '==', 'PUBLISHED'),
+        where('academicYearId', '==', activeYear),
+        where('semester', '==', String(activeSemester))
       );
-
-      const packagesSnap = await getDocs(qPackages);
-      const loadedPackages = packagesSnap.docs.map(d => ({
+      const batchesSnap = await getDocs(qBatches);
+      const loadedBatches = batchesSnap.docs.map(d => ({
         id: d.id,
         ...d.data()
-      })) as LearningPowerUpPackage[];
+      })) as any[];
 
-      // Filter packages for Junior High compatibility and year match
-      const filteredPackages = loadedPackages.filter(p => {
-        const pYear = p.academicYearId || (p as any).academicYear;
-        const matchesYear = normalizeYear(pYear) === normalizedActiveYear;
-        if (!matchesYear) return false;
-
-        if (p.unit === 'JUNIOR_HIGH') return true;
-        if (!p.unit) {
-          return (p.classId && p.classId.startsWith('JUNIOR_HIGH_')) || classData.id.startsWith('JUNIOR_HIGH_');
-        }
-        return false;
+      // Filter: targetClassIds contains student.classId
+      const filteredBatches = loadedBatches.filter(b => {
+        return b.targetClassIds && b.targetClassIds.includes(classData.id);
       });
 
+      // 1.5 Fetch student level records
+      const qLevels = query(
+        collection(db, 'junior_high_literacy_numeracy_records'),
+        where('studentId', '==', studentData.id),
+        where('schoolYear', '==', activeYear)
+      );
+      const levelsSnap = await getDocs(qLevels);
+
+      const SESSION_PRIORITY_ORDER: Record<string, number> = {
+        'SEMESTER_1_START': 1,
+        'FALL_ASSESSMENT_2': 2,
+        'SPRING_ASSESSMENT_3': 3,
+        'SEMESTER_2_START': 4,
+        'SEMESTER_2_END': 5
+      };
+
+      const resolvedLevels: Record<string, string> = {
+        bahasaIndonesia: '',
+        english: '',
+        mengaji: '',
+        numerasi: ''
+      };
+
+      const levelPriorities: Record<string, number> = {
+        bahasaIndonesia: -1,
+        english: -1,
+        mengaji: -1,
+        numerasi: -1
+      };
+
+      levelsSnap.docs.forEach(docSnap => {
+        const data = docSnap.data();
+        const area = data.subjectArea || data.area;
+        const sessionKey = data.sessionKey || data.period;
+        if (!area || !sessionKey) return;
+
+        let subjKey: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi' | null = null;
+        let lvlStr = '';
+
+        if (area === 'BAHASA_INDONESIA') {
+          subjKey = 'bahasaIndonesia';
+          lvlStr = data.readingLevel || '';
+        } else if (area === 'ENGLISH_READING') {
+          subjKey = 'english';
+          lvlStr = data.readingLevel || '';
+        } else if (area === 'MENGAJI') {
+          subjKey = 'mengaji';
+          const norm = normalizeMengajiLevel(data.mengajiLevel || data.level);
+          lvlStr = norm ? formatMengajiDisplay(norm) : (data.level || '');
+        } else if (area === 'NUMERACY') {
+          subjKey = 'numerasi';
+          const norm = normalizeNumerasiLevel(data.numerasiLevel || data.mathLevel);
+          lvlStr = norm ? formatNumerasiDisplay(norm) : (data.mathLevel || '');
+        }
+
+        if (subjKey && lvlStr) {
+          const prevPriority = levelPriorities[subjKey];
+          const currentPriority = SESSION_PRIORITY_ORDER[sessionKey] || 0;
+          if (currentPriority >= prevPriority) {
+            resolvedLevels[subjKey] = lvlStr;
+            levelPriorities[subjKey] = currentPriority;
+          }
+        }
+      });
+
+      // Group filteredBatches by weekStartDate to build virtual packages
+      const packagesMap = new Map<string, LearningPowerUpPackage>();
+      
+      const findMatchingLevelTask = (levelTasks: any, studentLevel: string | undefined | null) => {
+        if (!levelTasks || !studentLevel) return null;
+        const sLevelTrimmed = studentLevel.trim();
+        const sLevelLower = sLevelTrimmed.toLowerCase();
+        
+        if (levelTasks[sLevelTrimmed]) {
+          return { level: sLevelTrimmed, task: levelTasks[sLevelTrimmed] };
+        }
+
+        const exactKey = Object.keys(levelTasks).find(k => k.trim() === sLevelTrimmed);
+        if (exactKey) {
+          return { level: exactKey, task: levelTasks[exactKey] };
+        }
+
+        const ciKey = Object.keys(levelTasks).find(k => k.trim().toLowerCase() === sLevelLower);
+        if (ciKey) {
+          return { level: ciKey, task: levelTasks[ciKey] };
+        }
+
+        return null;
+      };
+
+      const getBatchTaskForStudent = (batch: any, field: string, studentLevel: string) => {
+        if (!batch || !batch.levelTasks) return null;
+        
+        const match = findMatchingLevelTask(batch.levelTasks, studentLevel);
+        if (match) {
+          return {
+            title: match.task.title || `Tugas ${CATEGORY_CONFIG[field as keyof typeof CATEGORY_CONFIG]?.label || field}`,
+            instructions: match.task.instructions || '',
+            level: match.level,
+            isLevelNotSet: false
+          };
+        }
+        
+        return {
+          title: field === 'english' ? 'Tugas English' : `Tugas ${CATEGORY_CONFIG[field as keyof typeof CATEGORY_CONFIG]?.label || field}`,
+          instructions: field === 'english' 
+            ? 'Level kemampuan English Anda belum ditentukan di sistem untuk periode ini. Silakan koordinasi dengan Guru/Coach untuk menetapkan level Anda agar tugas dapat ditampilkan.'
+            : 'Level kemampuan Anda belum ditentukan di sistem untuk periode ini. Silakan koordinasi dengan Guru/Coach untuk menetapkan level Anda agar tugas dapat ditampilkan.',
+          level: 'Level belum ditetapkan',
+          isLevelNotSet: true
+        };
+      };
+
+      filteredBatches.forEach(batch => {
+        const weekStart = batch.weekStartDate;
+        if (!packagesMap.has(weekStart)) {
+          packagesMap.set(weekStart, {
+            id: `level_week_${weekStart}`,
+            unit: 'JUNIOR_HIGH',
+            academicYearId: batch.academicYearId,
+            classId: classData.id,
+            weekStartDate: batch.weekStartDate,
+            weekEndDate: batch.weekEndDate,
+            weekLabel: batch.weekLabel || `Pekan (${batch.weekStartDate})`,
+            tasks: {
+              bahasaIndonesia: null,
+              english: null,
+              mengaji: null,
+              numerasi: null
+            },
+            copiedFromWeekId: null,
+            createdBy: batch.createdBy || '',
+            createdAt: batch.createdAt || null,
+            updatedAt: batch.updatedAt || null
+          } as any);
+        }
+
+        const pkg = packagesMap.get(weekStart)!;
+        const field = batch.subjectKey as 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi';
+        if (field) {
+          const studentLvl = resolvedLevels[field] || '';
+          const resolvedTask = getBatchTaskForStudent(batch, field, studentLvl);
+          if (resolvedTask) {
+            pkg.tasks[field] = resolvedTask.instructions;
+            if (!(pkg as any)._tasks) (pkg as any)._tasks = {};
+            (pkg as any)._tasks[field] = resolvedTask;
+          }
+          if (!(pkg as any)._batches) (pkg as any)._batches = {};
+          (pkg as any)._batches[field] = batch;
+        }
+      });
+
+      const virtualPackages = Array.from(packagesMap.values());
       // Sort by start date descending
-      filteredPackages.sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate));
-      setPackages(filteredPackages);
+      virtualPackages.sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate));
+      setPackages(virtualPackages);
 
       // 2. Fetch student's progress
       const qProgress = query(
@@ -480,7 +632,7 @@ function LearningPowerUpStudentPageContent() {
 
       // 4. Build unified weeks
       const weekMap = new Map<string, UnifiedWeek>();
-      filteredPackages.forEach(p => {
+      virtualPackages.forEach(p => {
         weekMap.set(p.weekStartDate, {
           id: p.id,
           weekStartDate: p.weekStartDate,
@@ -491,7 +643,7 @@ function LearningPowerUpStudentPageContent() {
       filteredAssignments.forEach(asg => {
         if (!weekMap.has(asg.weekStartDate)) {
           weekMap.set(asg.weekStartDate, {
-            id: 'diff_' + asg.weekStartDate,
+            id: 'level_week_' + asg.weekStartDate,
             weekStartDate: asg.weekStartDate,
             weekEndDate: asg.weekEndDate,
             weekLabel: asg.weekLabel
@@ -508,7 +660,7 @@ function LearningPowerUpStudentPageContent() {
     } catch (err: any) {
       console.error("Error loading learning power-up packages/progress/assignments:", err);
       toast.error("Gagal memuat tugas mingguan.");
-      handleFirestoreError(err, 'list', 'learning_power_up_tasks');
+      handleFirestoreError(err, 'list', 'learning_power_up_task_batches');
     } finally {
       setLoadingTasks(false);
     }
@@ -894,6 +1046,8 @@ function LearningPowerUpStudentPageContent() {
               let isDifferentiated = false;
               let weekLabel = activeUnifiedWeek.weekLabel;
               let weekEndDate = activeUnifiedWeek.weekEndDate;
+              let resolvedLevel = '';
+              let isLevelNotSet = false;
 
               if (asg) {
                 status = asg.status === 'ASSIGNED' ? 'NOT_STARTED' : asg.status;
@@ -901,14 +1055,25 @@ function LearningPowerUpStudentPageContent() {
                 taskDescription = asg.taskInstructions;
                 title = asg.taskTitle;
                 isDifferentiated = true;
+                resolvedLevel = asg.levelSnapshot || '';
                 weekLabel = asg.weekLabel;
                 weekEndDate = asg.weekEndDate;
               } else if (activePackage) {
                 const progress = progresses[`${activePackage.id}_${field}`];
                 status = progress?.status || 'NOT_STARTED';
                 overdue = isOverdue(activePackage.weekEndDate) && status !== 'VERIFIED';
-                taskDescription = activePackage.tasks[field] || '';
-                title = `Tugas ${cfg.label}`;
+                
+                const virtualTask = (activePackage as any)._tasks?.[field];
+                if (virtualTask) {
+                  taskDescription = virtualTask.instructions;
+                  title = virtualTask.title;
+                  resolvedLevel = virtualTask.level;
+                  isLevelNotSet = virtualTask.isLevelNotSet;
+                } else {
+                  taskDescription = activePackage.tasks[field] || '';
+                  title = `Tugas ${cfg.label}`;
+                }
+                
                 weekLabel = activePackage.weekLabel;
                 weekEndDate = activePackage.weekEndDate;
               }
@@ -945,9 +1110,14 @@ function LearningPowerUpStudentPageContent() {
                         <h3 className="text-md font-bold text-gray-900 tracking-tight line-clamp-2">
                           {title}
                         </h3>
-                        {isDifferentiated && asg && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-[#109E58]/10 text-[#109E58] border border-[#109E58]/20 shrink-0">
-                            Level {asg.levelSnapshot}
+                        {resolvedLevel && (
+                          <span className={cn(
+                            "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold shrink-0 border",
+                            isLevelNotSet 
+                              ? "bg-rose-50 text-rose-600 border-rose-200" 
+                              : "bg-indigo-50 text-indigo-700 border-indigo-200"
+                          )}>
+                            {resolvedLevel.startsWith('Level') ? resolvedLevel : `Level ${resolvedLevel}`}
                           </span>
                         )}
                       </div>
@@ -984,8 +1154,10 @@ function LearningPowerUpStudentPageContent() {
                       onClick={() => setActiveTaskDetail({ 
                         field, 
                         taskDescription, 
-                        isDifferentiated: isDifferentiated, 
-                        assignment: asg 
+                        isDifferentiated: isDifferentiated || !!resolvedLevel, 
+                        assignment: asg,
+                        resolvedLevel,
+                        isLevelNotSet
                       })}
                       className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 mt-2"
                     >
@@ -1019,15 +1191,21 @@ function LearningPowerUpStudentPageContent() {
             const isDiff = activeTaskDetail.isDifferentiated;
             const asg = activeTaskDetail.assignment;
             const cfg = CATEGORY_CONFIG[activeTaskDetail.field];
+            const resolvedLevel = activeTaskDetail.resolvedLevel || (asg ? asg.levelSnapshot : '');
+            const isLevelNotSet = activeTaskDetail.isLevelNotSet;
             
-            const rawStatus = isDiff && asg ? asg.status : (activePackage ? (progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.status || 'NOT_STARTED') : 'NOT_STARTED');
+            const rawStatus = asg ? asg.status : (activePackage ? (progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.status || 'NOT_STARTED') : 'NOT_STARTED');
             const status: "NOT_STARTED" | "SUBMITTED" | "REVISION_REQUIRED" | "VERIFIED" = rawStatus === 'ASSIGNED' ? 'NOT_STARTED' : rawStatus;
-            const revisionNote = isDiff && asg ? asg.revisionNote : (activePackage ? progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.revisionNote : undefined);
-            const history = isDiff && asg ? asg.history : (activePackage ? (progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.history || []) : []);
+            const revisionNote = asg ? asg.revisionNote : (activePackage ? progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.revisionNote : undefined);
+            const history = asg ? asg.history : (activePackage ? (progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.history || []) : []);
             
-            const weekLabel = isDiff && asg ? asg.weekLabel : (activeUnifiedWeek?.weekLabel || '');
-            const weekEndDate = isDiff && asg ? asg.weekEndDate : (activeUnifiedWeek?.weekEndDate || '');
-            const title = isDiff && asg ? asg.taskTitle : `Tugas Penguatan ${cfg?.label}`;
+            const weekLabel = asg ? asg.weekLabel : (activeUnifiedWeek?.weekLabel || '');
+            const weekEndDate = asg ? asg.weekEndDate : (activeUnifiedWeek?.weekEndDate || '');
+            const title = asg 
+              ? asg.taskTitle 
+              : (activePackage && (activePackage as any)._tasks?.[activeTaskDetail.field]?.title 
+                  ? (activePackage as any)._tasks[activeTaskDetail.field].title 
+                  : `Tugas Penguatan ${cfg?.label}`);
             
             const getFormattedTime = (ts: any) => {
               if (!ts) return '';
@@ -1079,9 +1257,14 @@ function LearningPowerUpStudentPageContent() {
                         <h3 className="text-2xl font-black text-gray-900 tracking-tight">
                           {title}
                         </h3>
-                        {isDiff && asg && (
-                          <span className="px-3 py-1 bg-indigo-100 text-indigo-700 text-[11px] font-black uppercase tracking-wider rounded-xl border border-indigo-200 inline-block">
-                            Level {asg.levelSnapshot}
+                        {resolvedLevel && (
+                          <span className={cn(
+                            "px-3 py-1 text-[11px] font-black uppercase tracking-wider rounded-xl border inline-block",
+                            isLevelNotSet
+                              ? "bg-rose-50 text-rose-600 border-rose-200"
+                              : "bg-indigo-100 text-indigo-700 border-indigo-200"
+                          )}>
+                            {resolvedLevel.startsWith('Level') ? resolvedLevel : `Level ${resolvedLevel}`}
                           </span>
                         )}
                       </div>
@@ -1120,7 +1303,7 @@ function LearningPowerUpStudentPageContent() {
 
                       {/* Actions based on status */}
                       <div className="pt-2">
-                        {isDiff && asg?.isCancelled ? (
+                        {asg?.isCancelled ? (
                           <div className="bg-slate-100 border border-slate-300 rounded-2xl p-4 text-center space-y-2">
                             <p className="text-sm font-bold text-slate-800 flex items-center justify-center gap-1.5">
                               <AlertCircle size={16} className="text-slate-500" />
@@ -1139,14 +1322,14 @@ function LearningPowerUpStudentPageContent() {
                             {(status === 'NOT_STARTED' || status === 'REVISION_REQUIRED') && (
                               <button
                                 onClick={() => {
-                                  if (isDiff && asg) {
+                                  if (asg) {
                                     handleAssignmentSubmit(asg.id, status === 'REVISION_REQUIRED');
                                   } else {
                                     handleTaskSubmit(activeTaskDetail.field, status === 'REVISION_REQUIRED');
                                   }
                                 }}
-                                disabled={isSubmittingAction}
-                                className="w-full py-4 bg-[#109E58] hover:bg-[#0d854a] disabled:bg-[#109E58]/50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
+                                disabled={isSubmittingAction || isLevelNotSet}
+                                className="w-full py-4 bg-[#109E58] hover:bg-[#0d854a] disabled:bg-slate-300 disabled:text-gray-400 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
                               >
                                 {isSubmittingAction ? (
                                   <>
@@ -1156,7 +1339,7 @@ function LearningPowerUpStudentPageContent() {
                                 ) : (
                                   <>
                                     <CheckSquare size={16} />
-                                    Saya Sudah Selesai
+                                    {isLevelNotSet ? 'Level Belum Ditetapkan' : 'Saya Sudah Selesai'}
                                   </>
                                 )}
                               </button>
