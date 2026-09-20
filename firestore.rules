@@ -272,8 +272,6 @@ service cloud.firestore {
     function isStudentAllowedBatchGet(data) {
       return data.status == "PUBLISHED" && (
         data.unit == 'JUNIOR_HIGH' || isLpuBatchJHGet(data)
-      ) && (
-        data.targetClassIds != null && (studentClassId() in data.targetClassIds)
       );
     }
 
@@ -1113,7 +1111,7 @@ service cloud.firestore {
       allow read: if isActive() && (
         isAdmin() ||
         isJuniorHighStaff() ||
-        (isStudent() && resource.data.classId == studentClassId()) ||
+        isStudent() ||
         isParent()
       );
       allow create: if isAdmin() || isJuniorHighStaff();
