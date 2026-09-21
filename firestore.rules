@@ -1735,5 +1735,49 @@ service cloud.firestore {
         )
       );
     }
+
+    match /incidentReports/{reportId} {
+      allow read: if isActive() && (
+        isAdmin() ||
+        (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) ||
+        (isTeacher() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) ||
+        isJuniorHighStaff()
+      );
+
+      allow create: if isActive() && (
+        isAdmin() ||
+        (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) ||
+        (isTeacher() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) ||
+        isJuniorHighStaff()
+      ) && incoming().unit == 'JUNIOR_HIGH';
+
+      allow update: if isActive() && (
+        isAdmin() ||
+        (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) ||
+        (
+          (isTeacher() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) &&
+          existing().status == 'DRAFT' &&
+          incoming().unit == 'JUNIOR_HIGH'
+        ) ||
+        (
+          isJuniorHighStaff() &&
+          existing().status == 'DRAFT' &&
+          incoming().unit == 'JUNIOR_HIGH'
+        )
+      );
+
+      allow delete: if isActive() && (
+        isAdmin() ||
+        (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) ||
+        (
+          (isTeacher() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) &&
+          existing().status == 'DRAFT'
+        ) ||
+        (
+          isJuniorHighStaff() &&
+          existing().status == 'DRAFT'
+        )
+      );
+    }
   }
 }

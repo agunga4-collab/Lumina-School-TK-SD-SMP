@@ -44,6 +44,11 @@ interface StudentOption {
   className: string;
 }
 
+interface ClassOption {
+  id: string;
+  name: string;
+}
+
 export function IncidentReportPage() {
   const { currentUser } = useAuth();
 
@@ -64,6 +69,7 @@ export function IncidentReportPage() {
 
   // Data states
   const [reports, setReports] = React.useState<IncidentReport[]>([]);
+  const [classes, setClasses] = React.useState<ClassOption[]>([]);
   const [students, setStudents] = React.useState<StudentOption[]>([]);
   const [loading, setLoading] = React.useState<boolean>(true);
   const [searchQuery, setSearchQuery] = React.useState<string>('');
@@ -87,10 +93,10 @@ export function IncidentReportPage() {
 
   // Form Fields State
   const [formData, setFormData] = React.useState({
-    studentId: '',
-    studentNameSnapshot: '',
     classId: '',
     classNameSnapshot: '',
+    studentId: '',
+    studentNameSnapshot: '',
     incidentDate: new Date().toISOString().split('T')[0],
     incidentTime: '',
     witnessesOrAdultsPresent: '',
@@ -117,6 +123,15 @@ export function IncidentReportPage() {
         c.unit === 'JUNIOR_HIGH' || 
         ['7', '8', '9', 'Grade 7', 'Grade 8', 'Grade 9', 'SMP'].some(g => String(c.grade || c.name || '').includes(g))
       );
+
+      const classOptionList: ClassOption[] = jhClasses.map((c: any) => ({
+        id: c.id,
+        name: c.name || c.className || `Kelas ${c.grade || ''}`
+      }));
+
+      // Sort classes naturally
+      classOptionList.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      setClasses(classOptionList);
 
       const jhClassIds = new Set(jhClasses.map((c: any) => c.id));
       const jhClassNames = new Set(jhClasses.map((c: any) => c.name));
@@ -159,14 +174,9 @@ export function IncidentReportPage() {
     loadData();
   }, [loadData]);
 
-  // Filtered Reports List
+  // Filtered Reports List (All Junior High staff can see ALL Junior High reports)
   const filteredReports = React.useMemo(() => {
     return reports.filter(r => {
-      // Access filter: Teachers see reports they created; Head Unit / Admin see all
-      if (!isHeadUnit && !isSuperAdmin && r.teacherId !== currentUser?.uid) {
-        return false;
-      }
-
       // Status tab filter
       if (statusFilter !== 'ALL' && r.status !== statusFilter) {
         return false;
@@ -184,7 +194,7 @@ export function IncidentReportPage() {
 
       return true;
     });
-  }, [reports, statusFilter, searchQuery, isHeadUnit, isSuperAdmin, currentUser]);
+  }, [reports, statusFilter, searchQuery]);
 
   // Open Form for Creating New Report
   const handleOpenNewForm = () => {
@@ -230,6 +240,40 @@ export function IncidentReportPage() {
     setIsFormOpen(true);
   };
 
+  // Class selection handler
+  const handleSelectClass = (classId: string) => {
+    const selectedClass = classes.find(c => c.id === classId);
+    if (selectedClass) {
+      setFormData(prev => ({
+        ...prev,
+        classId: selectedClass.id,
+        classNameSnapshot: selectedClass.name,
+        // Reset student selection when class changes
+        studentId: '',
+        studentNameSnapshot: '',
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        classId: '',
+        classNameSnapshot: '',
+        studentId: '',
+        studentNameSnapshot: '',
+      }));
+    }
+  };
+
+  // Student options filtered by selected class
+  const availableStudents = React.useMemo(() => {
+    if (!formData.classId && !formData.classNameSnapshot) {
+      return [];
+    }
+    return students.filter(s => 
+      (formData.classId && s.classId === formData.classId) || 
+      (formData.classNameSnapshot && s.className === formData.classNameSnapshot)
+    );
+  }, [students, formData.classId, formData.classNameSnapshot]);
+
   // Student selection handler
   const handleSelectStudent = (studentId: string) => {
     const selected = students.find(s => s.id === studentId);
@@ -238,16 +282,14 @@ export function IncidentReportPage() {
         ...prev,
         studentId: selected.id,
         studentNameSnapshot: selected.name,
-        classId: selected.classId,
-        classNameSnapshot: selected.className,
+        classId: selected.classId || prev.classId,
+        classNameSnapshot: selected.className || prev.classNameSnapshot,
       }));
     } else {
       setFormData(prev => ({
         ...prev,
         studentId: '',
         studentNameSnapshot: '',
-        classId: '',
-        classNameSnapshot: '',
       }));
     }
   };
@@ -255,6 +297,10 @@ export function IncidentReportPage() {
   // Save Report (as Draft or Direct Submission)
   const handleSaveReport = async (submitForApproval: boolean = false) => {
     // Validations
+    if (!formData.classId) {
+      toast.error('Silakan pilih kelas terlebih dahulu');
+      return;
+    }
     if (!formData.studentId) {
       toast.error('Silakan pilih nama siswa');
       return;
@@ -634,38 +680,32 @@ export function IncidentReportPage() {
                           {/* DRAFT ACTIONS */}
                           {report.status === 'DRAFT' && (
                             <>
-                              {isOwner && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenEditForm(report)}
-                                  className="p-1.5 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all cursor-pointer"
-                                  title="Edit Draft"
-                                >
-                                  <Edit3 size={15} />
-                                </button>
-                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditForm(report)}
+                                className="p-1.5 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all cursor-pointer"
+                                title="Edit Draft"
+                              >
+                                <Edit3 size={15} />
+                              </button>
 
-                              {isOwner && (
-                                <button
-                                  type="button"
-                                  onClick={() => setConfirmSubmitReport(report)}
-                                  className="p-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-100/60 rounded-xl transition-all cursor-pointer"
-                                  title="Kirim untuk Approval"
-                                >
-                                  <Send size={15} />
-                                </button>
-                              )}
+                              <button
+                                type="button"
+                                onClick={() => setConfirmSubmitReport(report)}
+                                className="p-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-100/60 rounded-xl transition-all cursor-pointer"
+                                title="Kirim untuk Approval"
+                              >
+                                <Send size={15} />
+                              </button>
 
-                              {isOwner && (
-                                <button
-                                  type="button"
-                                  onClick={() => setConfirmDeleteReport(report)}
-                                  className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-all cursor-pointer"
-                                  title="Hapus Draft"
-                                >
-                                  <Trash2 size={15} />
-                                </button>
-                              )}
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteReport(report)}
+                                className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-all cursor-pointer"
+                                title="Hapus Draft"
+                              >
+                                <Trash2 size={15} />
+                              </button>
                             </>
                           )}
 
@@ -761,37 +801,77 @@ export function IncidentReportPage() {
             {/* Form Body */}
             <div className="p-6 sm:p-8 space-y-6 max-h-[75vh] overflow-y-auto text-xs font-sans">
               
-              {/* Field 1: Name (Student Selector) */}
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
-                  1. Name (Nama Siswa) <span className="text-rose-500">*</span>
-                </label>
-                <select
-                  value={formData.studentId}
-                  onChange={e => handleSelectStudent(e.target.value)}
-                  className="w-full p-3.5 bg-gray-50 hover:bg-gray-100/60 focus:bg-white border border-gray-250 focus:border-blue-500 rounded-2xl font-bold text-gray-800 outline-none transition-all font-sans"
-                >
-                  <option value="">-- Pilih Siswa Junior High --</option>
-                  {students.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.className})
-                    </option>
-                  ))}
-                </select>
-                {formData.studentNameSnapshot && (
-                  <p className="text-[11px] text-blue-600 font-bold pl-1">
-                    Siswa terpilih: <span className="underline">{formData.studentNameSnapshot}</span> — Kelas: <span className="underline">{formData.classNameSnapshot}</span>
-                  </p>
-                )}
-              </div>
-
-              {/* Field 2 & Field 4 Grid: Date/Time & Place */}
+              {/* Field 1 & 2 Grid: Class and Student */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 
-                {/* Field 2: Day/date of incident */}
+                {/* Field 1: Class (Kelas) */}
                 <div className="space-y-1.5">
                   <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
-                    2. Day / Date of Incident <span className="text-rose-500">*</span>
+                    1. Class (Kelas) <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    value={formData.classId}
+                    onChange={e => handleSelectClass(e.target.value)}
+                    className="w-full p-3.5 bg-gray-50 hover:bg-gray-100/60 focus:bg-white border border-gray-250 focus:border-blue-500 rounded-2xl font-bold text-gray-800 outline-none transition-all font-sans"
+                  >
+                    <option value="">-- Pilih Kelas Junior High --</option>
+                    {classes.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Field 2: Name (Nama Siswa) */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
+                    2. Name (Nama Siswa) <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    value={formData.studentId}
+                    disabled={!formData.classId && !formData.classNameSnapshot}
+                    onChange={e => handleSelectStudent(e.target.value)}
+                    className="w-full p-3.5 bg-gray-50 hover:bg-gray-100/60 focus:bg-white border border-gray-250 focus:border-blue-500 rounded-2xl font-bold text-gray-800 outline-none transition-all font-sans disabled:opacity-50 disabled:bg-gray-100"
+                  >
+                    {!formData.classId && !formData.classNameSnapshot ? (
+                      <option value="">-- Pilih Kelas Terlebih Dahulu --</option>
+                    ) : availableStudents.length === 0 ? (
+                      <option value="">-- Tidak Ada Siswa di Kelas Ini --</option>
+                    ) : (
+                      <>
+                        <option value="">-- Pilih Siswa --</option>
+                        {availableStudents.map(s => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </>
+                    )}
+                  </select>
+                </div>
+
+              </div>
+
+              {/* Selection Summary Badge */}
+              {formData.studentNameSnapshot && (
+                <div className="p-3 bg-blue-50/70 border border-blue-200/60 rounded-2xl text-[11px] text-blue-800 font-bold flex items-center justify-between">
+                  <span>
+                    Siswa Terpilih: <span className="underline font-black">{formData.studentNameSnapshot}</span>
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-900 font-black">
+                    Kelas: {formData.classNameSnapshot}
+                  </span>
+                </div>
+              )}
+
+              {/* Field 3 & 4 Grid: Date/Time & Place */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                
+                {/* Field 3: Day / Date of Incident */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
+                    3. Day / Date of Incident <span className="text-rose-500">*</span>
                   </label>
                   <div className="flex gap-2">
                     <input
@@ -810,7 +890,7 @@ export function IncidentReportPage() {
                   </div>
                 </div>
 
-                {/* Field 4: Place incident occurred */}
+                {/* Field 4: Place Incident Occurred */}
                 <div className="space-y-1.5">
                   <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
                     4. Place Incident Occurred <span className="text-rose-500">*</span>
@@ -826,10 +906,10 @@ export function IncidentReportPage() {
 
               </div>
 
-              {/* Field 3: Name of witness/Adults present */}
+              {/* Field 5: Name of Witness / Adults Present */}
               <div className="space-y-1.5">
                 <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
-                  3. Name of Witness / Adults Present (Opsional)
+                  5. Name of Witness / Adults Present (Opsional)
                 </label>
                 <input
                   type="text"
@@ -840,10 +920,10 @@ export function IncidentReportPage() {
                 />
               </div>
 
-              {/* Field 5: Description of incident */}
+              {/* Field 6: Description of the Incident */}
               <div className="space-y-1.5">
                 <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
-                  5. Description of the Incident <span className="text-rose-500">*</span>
+                  6. Description of the Incident <span className="text-rose-500">*</span>
                 </label>
                 <textarea
                   rows={4}
@@ -857,10 +937,10 @@ export function IncidentReportPage() {
                 </p>
               </div>
 
-              {/* Field 6: Action / treatment taken */}
+              {/* Field 7: Action / Treatment Taken */}
               <div className="space-y-1.5">
                 <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
-                  6. Action / Treatment Taken <span className="text-rose-500">*</span>
+                  7. Action / Treatment Taken <span className="text-rose-500">*</span>
                 </label>
                 <textarea
                   rows={3}
@@ -871,10 +951,10 @@ export function IncidentReportPage() {
                 />
               </div>
 
-              {/* Field 7: Condition of child following incident */}
+              {/* Field 8: Condition of the Child Following the Incident */}
               <div className="space-y-1.5">
                 <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
-                  7. Condition of the Child Following the Incident <span className="text-rose-500">*</span>
+                  8. Condition of the Child Following the Incident <span className="text-rose-500">*</span>
                 </label>
                 <textarea
                   rows={3}
@@ -885,10 +965,10 @@ export function IncidentReportPage() {
                 />
               </div>
 
-              {/* Field 8: Suggestion for next treatment */}
+              {/* Field 9: Suggestion for Next Treatment */}
               <div className="space-y-1.5">
                 <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
-                  8. Suggestion for Next Treatment <span className="text-rose-500">*</span>
+                  9. Suggestion for Next Treatment <span className="text-rose-500">*</span>
                 </label>
                 <textarea
                   rows={3}
@@ -899,19 +979,19 @@ export function IncidentReportPage() {
                 />
               </div>
 
-              {/* Info Signatories Row */}
+              {/* Field 10 & 11 Grid: Teacher & Principal */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
                 <div className="space-y-0.5">
-                  <span className="text-[10px] font-black uppercase text-blue-600 tracking-wider block">9. Teacher</span>
+                  <span className="text-[10px] font-black uppercase text-blue-600 tracking-wider block">10. Teacher (Guru Pembuat)</span>
                   <p className="font-extrabold text-gray-800">
-                    {currentUser?.displayName || currentUser?.email || 'Guru Junior High'}
+                    {editingReport ? editingReport.teacherName : (currentUser?.displayName || currentUser?.email || 'Guru Junior High')}
                   </p>
                   <p className="text-[10px] text-gray-400">Pembuat laporan ini</p>
                 </div>
                 <div className="space-y-0.5">
-                  <span className="text-[10px] font-black uppercase text-blue-600 tracking-wider block">10. Principal / Kepala Unit</span>
+                  <span className="text-[10px] font-black uppercase text-blue-600 tracking-wider block">11. Principal / Kepala Unit</span>
                   <p className="font-extrabold text-gray-500 italic">
-                    Otomatis terisi saat diapprove Kepala Unit
+                    {editingReport?.approvedByName ? editingReport.approvedByName : 'Otomatis terisi saat diapprove Kepala Unit'}
                   </p>
                   <p className="text-[10px] text-gray-400">Approver laporan</p>
                 </div>
