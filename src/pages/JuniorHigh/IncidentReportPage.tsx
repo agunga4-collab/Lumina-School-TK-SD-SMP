@@ -92,6 +92,14 @@ export function IncidentReportPage() {
     principalSignatureUrl: string | null;
   } | null>(null);
 
+  // UI state for Modals
+  const [isFormOpen, setIsFormOpen] = React.useState<boolean>(false);
+  const [editingReport, setEditingReport] = React.useState<IncidentReport | null>(null);
+  const [viewingReport, setViewingReport] = React.useState<IncidentReport | null>(null);
+  const [confirmApproveReport, setConfirmApproveReport] = React.useState<IncidentReport | null>(null);
+  const [confirmSubmitReport, setConfirmSubmitReport] = React.useState<IncidentReport | null>(null);
+  const [confirmDeleteReport, setConfirmDeleteReport] = React.useState<IncidentReport | null>(null);
+
   // Homeroom Teacher info for selected class
   const [homeroomTeacherInfo, setHomeroomTeacherInfo] = React.useState<{
     name: string;
@@ -118,14 +126,6 @@ export function IncidentReportPage() {
       isCancelled = true;
     };
   }, [viewingReport]);
-
-  // UI state for Modals
-  const [isFormOpen, setIsFormOpen] = React.useState<boolean>(false);
-  const [editingReport, setEditingReport] = React.useState<IncidentReport | null>(null);
-  const [viewingReport, setViewingReport] = React.useState<IncidentReport | null>(null);
-  const [confirmApproveReport, setConfirmApproveReport] = React.useState<IncidentReport | null>(null);
-  const [confirmSubmitReport, setConfirmSubmitReport] = React.useState<IncidentReport | null>(null);
-  const [confirmDeleteReport, setConfirmDeleteReport] = React.useState<IncidentReport | null>(null);
 
   // Submitting states
   const [isSaving, setIsSaving] = React.useState<boolean>(false);
