@@ -1739,51 +1739,33 @@ service cloud.firestore {
     match /incidentReports/{reportId} {
       allow read: if isActive() && (
         isAdmin() ||
-        userRole() in ['PRINCIPAL', 'HEAD_UNIT', 'HEAD_JUNIOR', 'SUPER_ADMIN', 'VICE_PRINCIPAL'] ||
-        (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) ||
-        (isTeacher() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) ||
-        isJuniorHighStaff()
+        isJuniorHighStaff() ||
+        userRole() in ['PRINCIPAL', 'HEAD_UNIT', 'HEAD_JUNIOR', 'SUPER_ADMIN', 'VICE_PRINCIPAL', 'ADMIN', 'TEACHER', 'HOMEROOM_TEACHER']
       );
 
       allow create: if isActive() && (
         isAdmin() ||
-        userRole() in ['PRINCIPAL', 'HEAD_UNIT', 'HEAD_JUNIOR', 'SUPER_ADMIN', 'VICE_PRINCIPAL'] ||
-        (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) ||
-        (isTeacher() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) ||
-        isJuniorHighStaff()
-      ) && incoming().unit == 'JUNIOR_HIGH';
+        isJuniorHighStaff() ||
+        userRole() in ['PRINCIPAL', 'HEAD_UNIT', 'HEAD_JUNIOR', 'SUPER_ADMIN', 'VICE_PRINCIPAL', 'ADMIN', 'TEACHER', 'HOMEROOM_TEACHER']
+      );
 
       allow update: if isActive() && (
         isAdmin() ||
+        userRole() in ['PRINCIPAL', 'HEAD_UNIT', 'HEAD_JUNIOR', 'SUPER_ADMIN', 'VICE_PRINCIPAL', 'ADMIN'] ||
+        currentUser().role in ['HEAD_UNIT', 'PRINCIPAL', 'HEAD_JUNIOR', 'SUPER_ADMIN', 'VICE_PRINCIPAL', 'ADMIN'] ||
         (
-          userRole() in ['PRINCIPAL', 'HEAD_UNIT', 'HEAD_JUNIOR', 'SUPER_ADMIN', 'VICE_PRINCIPAL'] &&
-          (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL' || !('unitId' in currentUser())) &&
-          incoming().unit == 'JUNIOR_HIGH'
-        ) ||
-        (
-          (isTeacher() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) &&
+          (isTeacher() || isJuniorHighStaff()) &&
           existing().status == 'DRAFT' &&
-          incoming().unit == 'JUNIOR_HIGH' &&
-          incoming().status in ['DRAFT', 'MENUNGGU_APPROVAL']
-        ) ||
-        (
-          isJuniorHighStaff() &&
-          existing().status == 'DRAFT' &&
-          incoming().unit == 'JUNIOR_HIGH' &&
           incoming().status in ['DRAFT', 'MENUNGGU_APPROVAL']
         )
       );
 
       allow delete: if isActive() && (
         isAdmin() ||
-        userRole() in ['PRINCIPAL', 'HEAD_UNIT', 'HEAD_JUNIOR', 'SUPER_ADMIN', 'VICE_PRINCIPAL'] ||
-        (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) ||
+        userRole() in ['PRINCIPAL', 'HEAD_UNIT', 'HEAD_JUNIOR', 'SUPER_ADMIN', 'VICE_PRINCIPAL', 'ADMIN'] ||
+        currentUser().role in ['HEAD_UNIT', 'PRINCIPAL', 'HEAD_JUNIOR', 'SUPER_ADMIN', 'VICE_PRINCIPAL', 'ADMIN'] ||
         (
-          (isTeacher() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) &&
-          existing().status == 'DRAFT'
-        ) ||
-        (
-          isJuniorHighStaff() &&
+          (isTeacher() || isJuniorHighStaff()) &&
           existing().status == 'DRAFT'
         )
       );

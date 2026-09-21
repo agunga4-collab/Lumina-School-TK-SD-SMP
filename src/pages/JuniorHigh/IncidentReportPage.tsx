@@ -60,13 +60,14 @@ export function IncidentReportPage() {
   // Permissions check
   const isHeadUnit = React.useMemo(() => {
     if (!currentUser) return false;
-    const role = currentUser.role || '';
+    const role = (currentUser.role || '').toUpperCase();
     return [
       'SUPER_ADMIN', 
       'HEAD_UNIT', 
       'HEAD_JUNIOR', 
       'PRINCIPAL', 
-      'VICE_PRINCIPAL'
+      'VICE_PRINCIPAL',
+      'ADMIN'
     ].includes(role);
   }, [currentUser]);
 
@@ -497,13 +498,13 @@ export function IncidentReportPage() {
     }
   };
 
-  // Approve Incident Report (Head Unit)
+  // Approve Incident Report (Head Unit / Principal)
   const handleApproveReport = async () => {
     if (!confirmApproveReport?.id || !currentUser) return;
 
-    // Security check: teacher cannot approve their own report unless Super Admin
-    if (confirmApproveReport.teacherId === currentUser.uid && !isSuperAdmin) {
-      toast.error('Guru tidak dapat menyetujui Incident Report miliknya sendiri');
+    // Security check: regular teacher cannot approve reports
+    if (!isHeadUnit) {
+      toast.error('Hanya Kepala Unit / Principal Junior High yang dapat menyetujui Incident Report');
       return;
     }
 
@@ -512,7 +513,7 @@ export function IncidentReportPage() {
       await approveJHIncidentReport(
         confirmApproveReport.id,
         currentUser.uid,
-        currentUser.displayName || currentUser.email || 'Kepala Unit Junior High'
+        currentUser.displayName || currentUser.name || currentUser.email || 'Kepala Unit Junior High'
       );
       toast.success('Incident Report berhasil disetujui (APPROVED)');
       setConfirmApproveReport(null);

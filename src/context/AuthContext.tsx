@@ -12,6 +12,7 @@ import { User as AppUser } from '../types';
 interface AuthContextType {
   user: User | null;
   profile: AppUser | null;
+  currentUser: AppUser | null;
   loading: boolean;
   error: string | null;
   signInWithGoogle: () => Promise<void>;
@@ -127,6 +128,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     <AuthContext.Provider value={{ 
       user, 
       profile, 
+      currentUser: profile,
       loading, 
       error, 
       signInWithGoogle, 
