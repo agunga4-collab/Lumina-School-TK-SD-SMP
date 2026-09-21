@@ -4,7 +4,7 @@ import {
   Map as MapIcon, Smile, Camera, History, Heart, CheckSquare, BookOpen, 
   Eye, Clock, ShieldAlert, ShieldCheck, ClipboardList, ClipboardCheck, Target, Mail, RefreshCw, FileSpreadsheet,
   Baby, TrendingUp, Folder, BarChart3, FileText, Sparkles, Settings, GraduationCap, User, Users,
-  Menu, X, Presentation, MessageSquare, Compass, Calendar, Link, FileCheck
+  Menu, X, Presentation, MessageSquare, Compass, Calendar, Link, FileCheck, AlertTriangle, FileWarning
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, Navigate, useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -30,12 +30,21 @@ export function Layout() {
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const isMonthlyReportRoute = location.pathname.startsWith('/junior-high/monthly-');
   const [monthlyReportOpen, setMonthlyReportOpen] = React.useState(isMonthlyReportRoute);
+  
+  const isDailyNotesRoute = location.pathname.includes('/junior-high/incident-report');
+  const [dailyNotesOpen, setDailyNotesOpen] = React.useState(isDailyNotesRoute);
 
   React.useEffect(() => {
     if (isMonthlyReportRoute) {
       setMonthlyReportOpen(true);
     }
   }, [isMonthlyReportRoute]);
+
+  React.useEffect(() => {
+    if (isDailyNotesRoute) {
+      setDailyNotesOpen(true);
+    }
+  }, [isDailyNotesRoute]);
 
   const [pendingLXDCount, setPendingLXDCount] = React.useState(0);
   const [resolvedStudentName, setResolvedStudentName] = React.useState<string>("");
@@ -853,6 +862,30 @@ export function Layout() {
                       
                       <NavItem to="/junior-high/midterm" icon={<FileCheck size={18} />} label="Midterm Report" />
                       <NavItem to="/junior-high/aap" icon={<FileSpreadsheet size={18} />} label="Asesmen Awal Pembelajaran" />
+
+                      {/* Daily Notes Dropdown */}
+                      <button
+                        onClick={() => setDailyNotesOpen(!dailyNotesOpen)}
+                        className={cn(
+                          "w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 group text-gray-500 hover:bg-gray-50 hover:text-gray-900",
+                          isDailyNotesRoute && "text-blue-600 bg-blue-50/50"
+                        )}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="transition-transform group-hover:scale-110 duration-200">
+                            <FileWarning size={18} />
+                          </span>
+                          <span>Daily Notes</span>
+                        </div>
+                        <span className="text-gray-400 font-bold">
+                          {dailyNotesOpen ? "˅" : "›"}
+                        </span>
+                      </button>
+                      {dailyNotesOpen && (
+                        <div className="pl-4 space-y-1">
+                          <NavItem to="/junior-high/incident-report" icon={<AlertTriangle size={16} />} label="Incident Report" />
+                        </div>
+                      )}
                     </>
                   )}
                   <NavItem to="/junior-high/behavior/mtss/overview" icon={<ShieldAlert size={18} />} label="MTSS Behavior" />

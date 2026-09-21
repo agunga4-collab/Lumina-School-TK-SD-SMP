@@ -1,0 +1,1403 @@
+import * as React from 'react';
+import { 
+  AlertTriangle, 
+  CheckCircle2, 
+  Clock, 
+  Download, 
+  Edit3, 
+  Eye, 
+  FileText, 
+  Plus, 
+  Search, 
+  Send, 
+  ShieldCheck, 
+  Trash2, 
+  User, 
+  X,
+  Loader2,
+  Calendar,
+  MapPin,
+  FileCheck
+} from 'lucide-react';
+import { collection, getDocs, query, where } from 'firebase/firestore';
+import { db } from '../../lib/firebase';
+import { useAuth } from '../../context/AuthContext';
+import { cn } from '../../lib/utils';
+import { toast } from 'sonner';
+import { IncidentReport, IncidentReportStatus } from '../../types/incidentReport';
+import { 
+  getJHIncidentReports, 
+  createJHIncidentReport, 
+  updateJHIncidentReport, 
+  deleteJHIncidentReport, 
+  submitJHIncidentReport, 
+  approveJHIncidentReport 
+} from '../../services/incidentReportService';
+import { LuminaLogo } from '../../components/LuminaLogo';
+import { jsPDF } from 'jspdf';
+import { html2canvasWithModernColors } from '../../lib/html2canvasPatch';
+
+interface StudentOption {
+  id: string;
+  name: string;
+  classId: string;
+  className: string;
+}
+
+export function IncidentReportPage() {
+  const { currentUser } = useAuth();
+
+  // Permissions check
+  const isHeadUnit = React.useMemo(() => {
+    if (!currentUser) return false;
+    const role = currentUser.role || '';
+    return [
+      'SUPER_ADMIN', 
+      'HEAD_UNIT', 
+      'HEAD_JUNIOR', 
+      'PRINCIPAL', 
+      'VICE_PRINCIPAL'
+    ].includes(role);
+  }, [currentUser]);
+
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+
+  // Data states
+  const [reports, setReports] = React.useState<IncidentReport[]>([]);
+  const [students, setStudents] = React.useState<StudentOption[]>([]);
+  const [loading, setLoading] = React.useState<boolean>(true);
+  const [searchQuery, setSearchQuery] = React.useState<string>('');
+  const [statusFilter, setStatusFilter] = React.useState<IncidentReportStatus | 'ALL'>('ALL');
+
+  // UI state for Modals
+  const [isFormOpen, setIsFormOpen] = React.useState<boolean>(false);
+  const [editingReport, setEditingReport] = React.useState<IncidentReport | null>(null);
+  const [viewingReport, setViewingReport] = React.useState<IncidentReport | null>(null);
+  const [confirmApproveReport, setConfirmApproveReport] = React.useState<IncidentReport | null>(null);
+  const [confirmSubmitReport, setConfirmSubmitReport] = React.useState<IncidentReport | null>(null);
+  const [confirmDeleteReport, setConfirmDeleteReport] = React.useState<IncidentReport | null>(null);
+
+  // Submitting states
+  const [isSaving, setIsSaving] = React.useState<boolean>(false);
+  const [isApproving, setIsApproving] = React.useState<boolean>(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = React.useState<boolean>(false);
+
+  // Hidden PDF Printable Ref
+  const pdfPrintRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Form Fields State
+  const [formData, setFormData] = React.useState({
+    studentId: '',
+    studentNameSnapshot: '',
+    classId: '',
+    classNameSnapshot: '',
+    incidentDate: new Date().toISOString().split('T')[0],
+    incidentTime: '',
+    witnessesOrAdultsPresent: '',
+    incidentPlace: '',
+    incidentDescription: '',
+    actionTreatmentTaken: '',
+    childConditionFollowingIncident: '',
+    suggestionNextTreatment: '',
+  });
+
+  // Load Initial Data (Incident Reports & Students)
+  const loadData = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      // 1. Fetch Junior High Incident Reports
+      const allReports = await getJHIncidentReports();
+      setReports(allReports);
+
+      // 2. Fetch Junior High Students and Classes
+      const classesSnap = await getDocs(collection(db, 'classes'));
+      const rawClasses = classesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const jhClasses = rawClasses.filter((c: any) => 
+        c.unitId === 'JUNIOR_HIGH' || 
+        c.unit === 'JUNIOR_HIGH' || 
+        ['7', '8', '9', 'Grade 7', 'Grade 8', 'Grade 9', 'SMP'].some(g => String(c.grade || c.name || '').includes(g))
+      );
+
+      const jhClassIds = new Set(jhClasses.map((c: any) => c.id));
+      const jhClassNames = new Set(jhClasses.map((c: any) => c.name));
+
+      const studentsSnap = await getDocs(collection(db, 'students'));
+      const rawStudents = studentsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      const studentList: StudentOption[] = [];
+      rawStudents.forEach((s: any) => {
+        const isJHStudent = 
+          s.unit === 'JUNIOR_HIGH' || 
+          s.unitId === 'JUNIOR_HIGH' || 
+          (s.classId && jhClassIds.has(s.classId)) || 
+          (s.className && jhClassNames.has(s.className));
+
+        if (isJHStudent && s.status !== 'inactive') {
+          // Find matched class name
+          const matchedClass = jhClasses.find((c: any) => c.id === s.classId || c.name === s.className);
+          studentList.push({
+            id: s.id,
+            name: s.name || s.fullName || 'Siswa Tanpa Nama',
+            classId: s.classId || matchedClass?.id || '',
+            className: s.className || matchedClass?.name || 'Kelas JH'
+          });
+        }
+      });
+
+      // Sort students alphabetically
+      studentList.sort((a, b) => a.name.localeCompare(b.name));
+      setStudents(studentList);
+    } catch (err) {
+      console.error('Error loading incident reports data:', err);
+      toast.error('Gagal memuat data Incident Report');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Filtered Reports List
+  const filteredReports = React.useMemo(() => {
+    return reports.filter(r => {
+      // Access filter: Teachers see reports they created; Head Unit / Admin see all
+      if (!isHeadUnit && !isSuperAdmin && r.teacherId !== currentUser?.uid) {
+        return false;
+      }
+
+      // Status tab filter
+      if (statusFilter !== 'ALL' && r.status !== statusFilter) {
+        return false;
+      }
+
+      // Text Search Query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const studentName = (r.studentNameSnapshot || '').toLowerCase();
+        const className = (r.classNameSnapshot || '').toLowerCase();
+        const place = (r.incidentPlace || '').toLowerCase();
+        const teacher = (r.teacherName || '').toLowerCase();
+        return studentName.includes(q) || className.includes(q) || place.includes(q) || teacher.includes(q);
+      }
+
+      return true;
+    });
+  }, [reports, statusFilter, searchQuery, isHeadUnit, isSuperAdmin, currentUser]);
+
+  // Open Form for Creating New Report
+  const handleOpenNewForm = () => {
+    setEditingReport(null);
+    setFormData({
+      studentId: '',
+      studentNameSnapshot: '',
+      classId: '',
+      classNameSnapshot: '',
+      incidentDate: new Date().toISOString().split('T')[0],
+      incidentTime: '',
+      witnessesOrAdultsPresent: '',
+      incidentPlace: '',
+      incidentDescription: '',
+      actionTreatmentTaken: '',
+      childConditionFollowingIncident: '',
+      suggestionNextTreatment: '',
+    });
+    setIsFormOpen(true);
+  };
+
+  // Open Form for Editing Draft Report
+  const handleOpenEditForm = (report: IncidentReport) => {
+    if (report.status !== 'DRAFT') {
+      toast.error('Laporan tidak dapat diedit karena sudah dikirim atau disetujui');
+      return;
+    }
+    setEditingReport(report);
+    setFormData({
+      studentId: report.studentId || '',
+      studentNameSnapshot: report.studentNameSnapshot || '',
+      classId: report.classId || '',
+      classNameSnapshot: report.classNameSnapshot || '',
+      incidentDate: report.incidentDate || new Date().toISOString().split('T')[0],
+      incidentTime: report.incidentTime || '',
+      witnessesOrAdultsPresent: report.witnessesOrAdultsPresent || '',
+      incidentPlace: report.incidentPlace || '',
+      incidentDescription: report.incidentDescription || '',
+      actionTreatmentTaken: report.actionTreatmentTaken || '',
+      childConditionFollowingIncident: report.childConditionFollowingIncident || '',
+      suggestionNextTreatment: report.suggestionNextTreatment || '',
+    });
+    setIsFormOpen(true);
+  };
+
+  // Student selection handler
+  const handleSelectStudent = (studentId: string) => {
+    const selected = students.find(s => s.id === studentId);
+    if (selected) {
+      setFormData(prev => ({
+        ...prev,
+        studentId: selected.id,
+        studentNameSnapshot: selected.name,
+        classId: selected.classId,
+        classNameSnapshot: selected.className,
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        studentId: '',
+        studentNameSnapshot: '',
+        classId: '',
+        classNameSnapshot: '',
+      }));
+    }
+  };
+
+  // Save Report (as Draft or Direct Submission)
+  const handleSaveReport = async (submitForApproval: boolean = false) => {
+    // Validations
+    if (!formData.studentId) {
+      toast.error('Silakan pilih nama siswa');
+      return;
+    }
+    if (!formData.incidentDate) {
+      toast.error('Silakan isi tanggal kejadian');
+      return;
+    }
+    if (!formData.incidentPlace.trim()) {
+      toast.error('Silakan isi lokasi kejadian');
+      return;
+    }
+    if (!formData.incidentDescription.trim()) {
+      toast.error('Silakan isi deskripsi kejadian');
+      return;
+    }
+    if (!formData.actionTreatmentTaken.trim()) {
+      toast.error('Silakan isi tindakan/penanganan yang diberikan');
+      return;
+    }
+    if (!formData.childConditionFollowingIncident.trim()) {
+      toast.error('Silakan isi kondisi anak setelah kejadian');
+      return;
+    }
+    if (!formData.suggestionNextTreatment.trim()) {
+      toast.error('Silakan isi saran penanganan selanjutnya');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const reportPayload: Omit<IncidentReport, 'id'> = {
+        unit: 'JUNIOR_HIGH',
+        status: submitForApproval ? 'MENUNGGU_APPROVAL' : 'DRAFT',
+        studentId: formData.studentId,
+        studentNameSnapshot: formData.studentNameSnapshot,
+        classId: formData.classId,
+        classNameSnapshot: formData.classNameSnapshot,
+        incidentDate: formData.incidentDate,
+        incidentTime: formData.incidentTime || '',
+        witnessesOrAdultsPresent: formData.witnessesOrAdultsPresent || '',
+        incidentPlace: formData.incidentPlace.trim(),
+        incidentDescription: formData.incidentDescription.trim(),
+        actionTreatmentTaken: formData.actionTreatmentTaken.trim(),
+        childConditionFollowingIncident: formData.childConditionFollowingIncident.trim(),
+        suggestionNextTreatment: formData.suggestionNextTreatment.trim(),
+        teacherId: currentUser?.uid || 'GURU_JH',
+        teacherName: currentUser?.displayName || currentUser?.email || 'Guru Junior High',
+        teacherSignatureUrl: currentUser?.signatureUrl || null,
+        createdAt: editingReport?.createdAt || Date.now(),
+        updatedAt: Date.now(),
+        submittedAt: submitForApproval ? Date.now() : editingReport?.submittedAt,
+      };
+
+      if (editingReport?.id) {
+        await updateJHIncidentReport(editingReport.id, reportPayload);
+        toast.success(submitForApproval ? 'Incident Report dikirim untuk approval!' : 'Draft Incident Report berhasil diperbarui');
+      } else {
+        await createJHIncidentReport(reportPayload);
+        toast.success(submitForApproval ? 'Incident Report berhasil dibuat dan dikirim untuk approval!' : 'Draft Incident Report berhasil disimpan');
+      }
+
+      setIsFormOpen(false);
+      loadData();
+    } catch (err) {
+      console.error('Error saving incident report:', err);
+      toast.error('Gagal menyimpan Incident Report');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Delete Draft Report
+  const handleDeleteReport = async () => {
+    if (!confirmDeleteReport?.id) return;
+    setIsSaving(true);
+    try {
+      await deleteJHIncidentReport(confirmDeleteReport.id);
+      toast.success('Draft Incident Report berhasil dihapus');
+      setConfirmDeleteReport(null);
+      loadData();
+    } catch (err) {
+      console.error('Error deleting report:', err);
+      toast.error('Gagal menghapus Incident Report');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Submit Draft to Approval
+  const handleSubmitForApproval = async () => {
+    if (!confirmSubmitReport?.id) return;
+    setIsSaving(true);
+    try {
+      await submitJHIncidentReport(confirmSubmitReport.id);
+      toast.success('Incident Report berhasil dikirim untuk approval');
+      setConfirmSubmitReport(null);
+      loadData();
+    } catch (err) {
+      console.error('Error submitting report:', err);
+      toast.error('Gagal mengirim Incident Report');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Approve Incident Report (Head Unit)
+  const handleApproveReport = async () => {
+    if (!confirmApproveReport?.id || !currentUser) return;
+
+    // Security check: teacher cannot approve their own report unless Super Admin
+    if (confirmApproveReport.teacherId === currentUser.uid && !isSuperAdmin) {
+      toast.error('Guru tidak dapat menyetujui Incident Report miliknya sendiri');
+      return;
+    }
+
+    setIsApproving(true);
+    try {
+      await approveJHIncidentReport(
+        confirmApproveReport.id,
+        currentUser.uid,
+        currentUser.displayName || currentUser.email || 'Kepala Unit Junior High'
+      );
+      toast.success('Incident Report berhasil disetujui (APPROVED)');
+      setConfirmApproveReport(null);
+      setViewingReport(null);
+      loadData();
+    } catch (err) {
+      console.error('Error approving report:', err);
+      toast.error('Gagal menyetujui Incident Report');
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  // Download PDF Handler
+  const handleDownloadPdf = async (report: IncidentReport) => {
+    if (report.status !== 'APPROVED') {
+      toast.error('PDF resmi hanya dapat diunduh jika status report adalah APPROVED');
+      return;
+    }
+
+    setViewingReport(report);
+    setIsDownloadingPdf(true);
+
+    try {
+      // Wait for React to render the printable DOM element
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      if (!pdfPrintRef.current) {
+        throw new Error('Element PDF tidak ditemukan');
+      }
+
+      const canvas = await html2canvasWithModernColors(pdfPrintRef.current, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        windowWidth: 794,
+      });
+
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4',
+      });
+
+      const imgWidth = 210; // A4 width in mm
+      const pageHeight = 297; // A4 height in mm
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth, Math.min(imgHeight, pageHeight));
+
+      const cleanStudentName = (report.studentNameSnapshot || 'Siswa').replace(/\s+/g, '_');
+      const cleanDate = (report.incidentDate || 'Tanggal').replace(/\-/g, '');
+      const fileName = `Incident_Report_${cleanStudentName}_${cleanDate}.pdf`;
+
+      pdf.save(fileName);
+      toast.success('PDF Incident Report berhasil diunduh');
+    } catch (err) {
+      console.error('Error generating PDF:', err);
+      toast.error('Gagal mengunduh PDF Incident Report');
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6 pb-12 font-sans">
+      
+      {/* Header Banner */}
+      <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-slate-800 text-white p-6 sm:p-8 rounded-[2.5rem] shadow-xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-96 h-96 bg-white/5 rounded-full blur-3xl pointer-events-none" />
+        
+        <div className="flex flex-wrap items-center justify-between gap-4 relative z-10">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest bg-blue-500/30 text-blue-100 border border-blue-400/30">
+                Daily Notes • Junior High
+              </span>
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-black italic tracking-tight font-sans">
+              Incident Report Form
+            </h1>
+            <p className="text-xs text-blue-100/80 font-medium max-w-xl leading-relaxed">
+              Pencatatan resmi kejadian khusus/insiden siswa Lazuardi Junior High.
+              Dibuat oleh guru, diverifikasi oleh Kepala Unit, dan dapat diunduh sebagai dokumen PDF resmi.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleOpenNewForm}
+            className="flex items-center gap-2 bg-white text-blue-900 hover:bg-blue-50 font-black text-xs px-5 py-3 rounded-2xl shadow-lg transition-all cursor-pointer border border-blue-100"
+          >
+            <Plus size={16} />
+            <span>Buat Incident Report</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Filter & Search Toolbar */}
+      <div className="bg-white p-4 sm:p-5 rounded-3xl border border-gray-150 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+        
+        {/* Status Filter Tabs */}
+        <div className="flex flex-wrap items-center gap-1.5 bg-gray-100/70 p-1.5 rounded-2xl border border-gray-200">
+          {[
+            { id: 'ALL', label: 'Semua' },
+            { id: 'DRAFT', label: 'Draft' },
+            { id: 'MENUNGGU_APPROVAL', label: 'Menunggu Approval' },
+            { id: 'APPROVED', label: 'Approved' },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setStatusFilter(tab.id as any)}
+              className={cn(
+                "px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer font-sans",
+                statusFilter === tab.id
+                  ? "bg-white text-blue-700 shadow-xs border border-gray-200/80 font-black"
+                  : "text-gray-500 hover:text-gray-800 hover:bg-white/50"
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Text Search Box */}
+        <div className="relative w-full md:w-72">
+          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Cari nama siswa, kelas, lokasi..."
+            className="w-full bg-gray-50 hover:bg-white focus:bg-white border border-gray-200 focus:border-blue-500 rounded-2xl pl-10 pr-4 py-2 text-xs font-bold text-gray-750 outline-none transition-all placeholder:text-gray-400 font-sans"
+          />
+        </div>
+      </div>
+
+      {/* Reports Table List */}
+      <div className="bg-white rounded-3xl border border-gray-150 shadow-sm overflow-hidden">
+        {loading ? (
+          <div className="py-16 text-center space-y-3">
+            <Loader2 size={28} className="animate-spin text-blue-600 mx-auto" />
+            <p className="text-xs font-bold text-gray-400 font-sans">Memuat Incident Report...</p>
+          </div>
+        ) : filteredReports.length === 0 ? (
+          <div className="py-16 text-center space-y-3 px-4">
+            <div className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex items-center justify-center mx-auto">
+              <FileText size={24} />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-sm font-black text-gray-700 font-sans">Belum Ada Incident Report</h3>
+              <p className="text-xs text-gray-400 font-medium max-w-sm mx-auto font-sans leading-relaxed">
+                {statusFilter !== 'ALL' 
+                  ? `Tidak ada laporan dengan status ${statusFilter}.`
+                  : 'Belum ada catat insiden yang dibuat. Klik tombol "Buat Incident Report" untuk memulai.'}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-gray-50/80 border-b border-gray-150 text-[10px] font-black uppercase tracking-wider text-gray-400 font-sans">
+                  <th className="py-3.5 px-4 font-bold">Tanggal Kejadian</th>
+                  <th className="py-3.5 px-4 font-bold">Nama Siswa</th>
+                  <th className="py-3.5 px-4 font-bold">Kelas</th>
+                  <th className="py-3.5 px-4 font-bold">Lokasi</th>
+                  <th className="py-3.5 px-4 font-bold">Dibuat Oleh</th>
+                  <th className="py-3.5 px-4 font-bold">Status</th>
+                  <th className="py-3.5 px-4 font-bold">Terakhir Diperbarui</th>
+                  <th className="py-3.5 px-4 font-bold text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 text-xs font-sans text-gray-700">
+                {filteredReports.map(report => {
+                  const isOwner = report.teacherId === currentUser?.uid;
+
+                  return (
+                    <tr key={report.id} className="hover:bg-blue-50/20 transition-colors">
+                      {/* Tanggal Kejadian */}
+                      <td className="py-4 px-4 font-bold text-gray-800 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <Calendar size={13} className="text-gray-400 shrink-0" />
+                          <span>{report.incidentDate}</span>
+                          {report.incidentTime && (
+                            <span className="text-[10px] text-gray-400 font-mono bg-gray-100 px-1.5 py-0.5 rounded-md">
+                              {report.incidentTime}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Nama Siswa */}
+                      <td className="py-4 px-4 font-black text-gray-900">
+                        {report.studentNameSnapshot}
+                      </td>
+
+                      {/* Kelas */}
+                      <td className="py-4 px-4 font-bold text-gray-600">
+                        <span className="px-2 py-0.5 rounded-md bg-gray-100 text-[11px]">
+                          {report.classNameSnapshot}
+                        </span>
+                      </td>
+
+                      {/* Lokasi */}
+                      <td className="py-4 px-4 font-medium text-gray-600 max-w-[160px] truncate">
+                        <div className="flex items-center gap-1">
+                          <MapPin size={12} className="text-gray-400 shrink-0" />
+                          <span className="truncate">{report.incidentPlace}</span>
+                        </div>
+                      </td>
+
+                      {/* Dibuat Oleh */}
+                      <td className="py-4 px-4 font-medium text-gray-600">
+                        {report.teacherName}
+                      </td>
+
+                      {/* Status Badge */}
+                      <td className="py-4 px-4 whitespace-nowrap">
+                        {report.status === 'DRAFT' && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
+                            <Clock size={11} />
+                            Draft
+                          </span>
+                        )}
+                        {report.status === 'MENUNGGU_APPROVAL' && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
+                            <Send size={11} />
+                            Menunggu Approval
+                          </span>
+                        )}
+                        {report.status === 'APPROVED' && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <CheckCircle2 size={11} />
+                            Approved
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Terakhir Diperbarui */}
+                      <td className="py-4 px-4 text-gray-400 text-[11px] font-mono whitespace-nowrap">
+                        {new Date(report.updatedAt).toLocaleString('id-ID', {
+                          day: '2-digit',
+                          month: 'short',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </td>
+
+                      {/* Aksi */}
+                      <td className="py-4 px-4 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          
+                          {/* DRAFT ACTIONS */}
+                          {report.status === 'DRAFT' && (
+                            <>
+                              {isOwner && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditForm(report)}
+                                  className="p-1.5 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all cursor-pointer"
+                                  title="Edit Draft"
+                                >
+                                  <Edit3 size={15} />
+                                </button>
+                              )}
+
+                              {isOwner && (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmSubmitReport(report)}
+                                  className="p-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-100/60 rounded-xl transition-all cursor-pointer"
+                                  title="Kirim untuk Approval"
+                                >
+                                  <Send size={15} />
+                                </button>
+                              )}
+
+                              {isOwner && (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteReport(report)}
+                                  className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-all cursor-pointer"
+                                  title="Hapus Draft"
+                                >
+                                  <Trash2 size={15} />
+                                </button>
+                              )}
+                            </>
+                          )}
+
+                          {/* MENUNGGU APPROVAL ACTIONS */}
+                          {report.status === 'MENUNGGU_APPROVAL' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setViewingReport(report)}
+                                className="flex items-center gap-1 text-xs font-black text-gray-600 hover:text-blue-600 bg-gray-100 hover:bg-blue-50 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer"
+                              >
+                                <Eye size={14} />
+                                <span>Lihat</span>
+                              </button>
+
+                              {(isHeadUnit || isSuperAdmin) && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setViewingReport(report);
+                                    setConfirmApproveReport(report);
+                                  }}
+                                  className="flex items-center gap-1 text-xs font-black text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-xl transition-all cursor-pointer shadow-xs"
+                                >
+                                  <ShieldCheck size={14} />
+                                  <span>Approve</span>
+                                </button>
+                              )}
+                            </>
+                          )}
+
+                          {/* APPROVED ACTIONS */}
+                          {report.status === 'APPROVED' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setViewingReport(report)}
+                                className="p-1.5 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all cursor-pointer"
+                                title="Lihat Detail"
+                              >
+                                <Eye size={15} />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDownloadPdf(report)}
+                                className="flex items-center gap-1 text-xs font-black text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+                                title="Download PDF Resmi"
+                              >
+                                <Download size={14} />
+                                <span>Download PDF</span>
+                              </button>
+                            </>
+                          )}
+
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ========================================================= */}
+      {/* MODAL 1: CREATE / EDIT INCIDENT REPORT FORM */}
+      {/* ========================================================= */}
+      {isFormOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-3xl rounded-[2.5rem] shadow-2xl border border-gray-100 overflow-hidden my-8 animate-in fade-in zoom-in-95 duration-200">
+            
+            {/* Form Header */}
+            <div className="bg-gradient-to-r from-blue-700 to-indigo-800 text-white p-6 sm:p-7 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-widest text-blue-200 block">
+                  LAZUARDI JUNIOR HIGH
+                </span>
+                <h2 className="text-xl font-black italic font-sans">
+                  {editingReport ? 'Edit Incident Report' : 'Incident Report Form'}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsFormOpen(false)}
+                className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-all cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Form Body */}
+            <div className="p-6 sm:p-8 space-y-6 max-h-[75vh] overflow-y-auto text-xs font-sans">
+              
+              {/* Field 1: Name (Student Selector) */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
+                  1. Name (Nama Siswa) <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={formData.studentId}
+                  onChange={e => handleSelectStudent(e.target.value)}
+                  className="w-full p-3.5 bg-gray-50 hover:bg-gray-100/60 focus:bg-white border border-gray-250 focus:border-blue-500 rounded-2xl font-bold text-gray-800 outline-none transition-all font-sans"
+                >
+                  <option value="">-- Pilih Siswa Junior High --</option>
+                  {students.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.className})
+                    </option>
+                  ))}
+                </select>
+                {formData.studentNameSnapshot && (
+                  <p className="text-[11px] text-blue-600 font-bold pl-1">
+                    Siswa terpilih: <span className="underline">{formData.studentNameSnapshot}</span> — Kelas: <span className="underline">{formData.classNameSnapshot}</span>
+                  </p>
+                )}
+              </div>
+
+              {/* Field 2 & Field 4 Grid: Date/Time & Place */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                
+                {/* Field 2: Day/date of incident */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
+                    2. Day / Date of Incident <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="date"
+                      value={formData.incidentDate}
+                      onChange={e => setFormData(prev => ({ ...prev, incidentDate: e.target.value }))}
+                      className="w-full p-3 bg-gray-50 border border-gray-250 focus:border-blue-500 rounded-2xl font-bold text-gray-800 outline-none font-sans"
+                    />
+                    <input
+                      type="time"
+                      value={formData.incidentTime}
+                      onChange={e => setFormData(prev => ({ ...prev, incidentTime: e.target.value }))}
+                      placeholder="Jam"
+                      className="w-28 p-3 bg-gray-50 border border-gray-250 focus:border-blue-500 rounded-2xl font-bold text-gray-800 outline-none font-sans"
+                    />
+                  </div>
+                </div>
+
+                {/* Field 4: Place incident occurred */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
+                    4. Place Incident Occurred <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.incidentPlace}
+                    onChange={e => setFormData(prev => ({ ...prev, incidentPlace: e.target.value }))}
+                    placeholder="Contoh: Lapangan Basket, Kelas 8A, Kantin..."
+                    className="w-full p-3.5 bg-gray-50 border border-gray-250 focus:border-blue-500 rounded-2xl font-bold text-gray-800 outline-none font-sans"
+                  />
+                </div>
+
+              </div>
+
+              {/* Field 3: Name of witness/Adults present */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
+                  3. Name of Witness / Adults Present (Opsional)
+                </label>
+                <input
+                  type="text"
+                  value={formData.witnessesOrAdultsPresent}
+                  onChange={e => setFormData(prev => ({ ...prev, witnessesOrAdultsPresent: e.target.value }))}
+                  placeholder="Tuliskan nama saksi atau guru/orang dewasa yang berada di lokasi..."
+                  className="w-full p-3.5 bg-gray-50 border border-gray-250 focus:border-blue-500 rounded-2xl font-bold text-gray-800 outline-none font-sans"
+                />
+              </div>
+
+              {/* Field 5: Description of incident */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
+                  5. Description of the Incident <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  rows={4}
+                  value={formData.incidentDescription}
+                  onChange={e => setFormData(prev => ({ ...prev, incidentDescription: e.target.value }))}
+                  placeholder="Tuliskan deskripsi kronologi insiden..."
+                  className="w-full p-3.5 bg-gray-50 border border-gray-250 focus:border-blue-500 rounded-2xl font-medium text-gray-800 outline-none font-sans leading-relaxed"
+                />
+                <p className="text-[10px] text-gray-400 italic font-sans">
+                  Helper text: Tuliskan kronologi secara faktual, jelas, dan objektif.
+                </p>
+              </div>
+
+              {/* Field 6: Action / treatment taken */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
+                  6. Action / Treatment Taken <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  rows={3}
+                  value={formData.actionTreatmentTaken}
+                  onChange={e => setFormData(prev => ({ ...prev, actionTreatmentTaken: e.target.value }))}
+                  placeholder="Tindakan atau penanganan pertama yang langsung dilakukan..."
+                  className="w-full p-3.5 bg-gray-50 border border-gray-250 focus:border-blue-500 rounded-2xl font-medium text-gray-800 outline-none font-sans leading-relaxed"
+                />
+              </div>
+
+              {/* Field 7: Condition of child following incident */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
+                  7. Condition of the Child Following the Incident <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  rows={3}
+                  value={formData.childConditionFollowingIncident}
+                  onChange={e => setFormData(prev => ({ ...prev, childConditionFollowingIncident: e.target.value }))}
+                  placeholder="Kondisi fisik, emosional, atau medis anak setelah tindakan..."
+                  className="w-full p-3.5 bg-gray-50 border border-gray-250 focus:border-blue-500 rounded-2xl font-medium text-gray-800 outline-none font-sans leading-relaxed"
+                />
+              </div>
+
+              {/* Field 8: Suggestion for next treatment */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-black uppercase tracking-wider text-gray-600 block">
+                  8. Suggestion for Next Treatment <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  rows={3}
+                  value={formData.suggestionNextTreatment}
+                  onChange={e => setFormData(prev => ({ ...prev, suggestionNextTreatment: e.target.value }))}
+                  placeholder="Saran tidak lanjut, konseling, pemantauan, atau tindak lanjut dengan wali murid..."
+                  className="w-full p-3.5 bg-gray-50 border border-gray-250 focus:border-blue-500 rounded-2xl font-medium text-gray-800 outline-none font-sans leading-relaxed"
+                />
+              </div>
+
+              {/* Info Signatories Row */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
+                <div className="space-y-0.5">
+                  <span className="text-[10px] font-black uppercase text-blue-600 tracking-wider block">9. Teacher</span>
+                  <p className="font-extrabold text-gray-800">
+                    {currentUser?.displayName || currentUser?.email || 'Guru Junior High'}
+                  </p>
+                  <p className="text-[10px] text-gray-400">Pembuat laporan ini</p>
+                </div>
+                <div className="space-y-0.5">
+                  <span className="text-[10px] font-black uppercase text-blue-600 tracking-wider block">10. Principal / Kepala Unit</span>
+                  <p className="font-extrabold text-gray-500 italic">
+                    Otomatis terisi saat diapprove Kepala Unit
+                  </p>
+                  <p className="text-[10px] text-gray-400">Approver laporan</p>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Form Footer Action Buttons */}
+            <div className="p-6 bg-gray-50 border-t border-gray-150 flex flex-wrap items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setIsFormOpen(false)}
+                className="px-5 py-2.5 rounded-xl border border-gray-300 text-gray-700 font-extrabold text-xs hover:bg-gray-100 cursor-pointer"
+              >
+                Batal
+              </button>
+
+              <button
+                type="button"
+                disabled={isSaving}
+                onClick={() => handleSaveReport(false)}
+                className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-extrabold text-xs cursor-pointer disabled:opacity-50"
+              >
+                {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Clock size={14} />}
+                <span>Simpan Draft</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isSaving}
+                onClick={() => handleSaveReport(true)}
+                className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-md cursor-pointer disabled:opacity-50"
+              >
+                {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                <span>Kirim untuk Approval</span>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 2: VIEW REPORT DETAILS & HEAD UNIT APPROVAL */}
+      {/* ========================================================= */}
+      {viewingReport && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-3xl rounded-[2.5rem] shadow-2xl border border-gray-100 overflow-hidden my-8 animate-in fade-in zoom-in-95 duration-200">
+            
+            {/* Detail Header */}
+            <div className="bg-slate-900 text-white p-6 sm:p-7 flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">
+                    LAZUARDI JUNIOR HIGH
+                  </span>
+                  <span className={cn(
+                    "px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border",
+                    viewingReport.status === 'APPROVED' ? "bg-emerald-500/20 text-emerald-300 border-emerald-400/30" : "bg-blue-500/20 text-blue-300 border-blue-400/30"
+                  )}>
+                    {viewingReport.status}
+                  </span>
+                </div>
+                <h2 className="text-xl font-black italic font-sans mt-0.5">
+                  Incident Report Detail
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingReport(null)}
+                className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-all cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Read-Only Form Fields */}
+            <div className="p-6 sm:p-8 space-y-6 max-h-[75vh] overflow-y-auto text-xs font-sans">
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 bg-gray-50 rounded-2xl border border-gray-200">
+                <div>
+                  <span className="text-[10px] font-black uppercase text-gray-400 block">Siswa</span>
+                  <p className="text-sm font-black text-gray-900">{viewingReport.studentNameSnapshot}</p>
+                  <p className="text-xs text-gray-500 font-bold">Kelas: {viewingReport.classNameSnapshot}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase text-gray-400 block">Waktu & Tempat Incident</span>
+                  <p className="text-sm font-black text-gray-900">
+                    {viewingReport.incidentDate} {viewingReport.incidentTime ? `(${viewingReport.incidentTime})` : ''}
+                  </p>
+                  <p className="text-xs text-gray-600 font-medium">Lokasi: {viewingReport.incidentPlace}</p>
+                </div>
+              </div>
+
+              {viewingReport.witnessesOrAdultsPresent && (
+                <div className="space-y-1">
+                  <span className="text-[10px] font-black uppercase text-gray-400 block">Name of Witness / Adults Present</span>
+                  <p className="p-3 bg-gray-50 rounded-xl font-bold text-gray-800">{viewingReport.witnessesOrAdultsPresent}</p>
+                </div>
+              )}
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-black uppercase text-gray-400 block">Description of the Incident</span>
+                <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 text-gray-800 leading-relaxed font-medium whitespace-pre-wrap">
+                  {viewingReport.incidentDescription}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-black uppercase text-gray-400 block">Action / Treatment Taken</span>
+                <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 text-gray-800 leading-relaxed font-medium whitespace-pre-wrap">
+                  {viewingReport.actionTreatmentTaken}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-black uppercase text-gray-400 block">Condition of the Child Following the Incident</span>
+                <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 text-gray-800 leading-relaxed font-medium whitespace-pre-wrap">
+                  {viewingReport.childConditionFollowingIncident}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-black uppercase text-gray-400 block">Suggestion for Next Treatment</span>
+                <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 text-gray-800 leading-relaxed font-medium whitespace-pre-wrap">
+                  {viewingReport.suggestionNextTreatment}
+                </div>
+              </div>
+
+              {/* Signatures & Approvals View */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-gray-200">
+                <div className="p-4 bg-blue-50/40 rounded-2xl border border-blue-100 space-y-2">
+                  <span className="text-[10px] font-black uppercase text-blue-600 block">Teacher</span>
+                  <p className="font-extrabold text-gray-900">{viewingReport.teacherName}</p>
+                  {viewingReport.teacherSignatureUrl ? (
+                    <img src={viewingReport.teacherSignatureUrl} alt="Teacher Signature" className="h-12 object-contain" />
+                  ) : (
+                    <p className="text-[11px] text-gray-400 italic">Nama Guru (Tanpa Tanda Tangan)</p>
+                  )}
+                  <p className="text-[10px] text-gray-400">
+                    Dibuat pada: {new Date(viewingReport.createdAt).toLocaleString('id-ID')}
+                  </p>
+                </div>
+
+                <div className="p-4 bg-purple-50/40 rounded-2xl border border-purple-100 space-y-2">
+                  <span className="text-[10px] font-black uppercase text-purple-600 block">Principal / Kepala Unit</span>
+                  {viewingReport.status === 'APPROVED' ? (
+                    <>
+                      <p className="font-extrabold text-gray-900">{viewingReport.approvedByName || 'Kepala Unit'}</p>
+                      {viewingReport.principalSignatureUrl ? (
+                        <img src={viewingReport.principalSignatureUrl} alt="Principal Signature" className="h-12 object-contain" />
+                      ) : (
+                        <p className="text-[11px] text-gray-400 italic">Nama Kepala Unit</p>
+                      )}
+                      <p className="text-[10px] text-gray-400">
+                        Approved: {viewingReport.approvedAt ? new Date(viewingReport.approvedAt).toLocaleString('id-ID') : '-'}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-xs text-amber-700 font-bold italic pt-2">
+                      Belum Di-approve (Menunggu Persetujuan Kepala Unit)
+                    </p>
+                  )}
+                </div>
+              </div>
+
+            </div>
+
+            {/* Modal Footer Actions */}
+            <div className="p-6 bg-gray-50 border-t border-gray-150 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setViewingReport(null)}
+                className="px-5 py-2.5 rounded-xl border border-gray-300 text-gray-700 font-extrabold text-xs hover:bg-gray-100 cursor-pointer"
+              >
+                Tutup
+              </button>
+
+              <div className="flex items-center gap-2">
+                {/* APPROVAL BUTTON FOR HEAD UNIT */}
+                {viewingReport.status === 'MENUNGGU_APPROVAL' && (isHeadUnit || isSuperAdmin) && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmApproveReport(viewingReport)}
+                    className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-md cursor-pointer"
+                  >
+                    <ShieldCheck size={16} />
+                    <span>Approve Incident Report</span>
+                  </button>
+                )}
+
+                {/* DOWNLOAD PDF BUTTON */}
+                {viewingReport.status === 'APPROVED' && (
+                  <button
+                    type="button"
+                    disabled={isDownloadingPdf}
+                    onClick={() => handleDownloadPdf(viewingReport)}
+                    className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-md cursor-pointer disabled:opacity-50"
+                  >
+                    {isDownloadingPdf ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                    <span>Download PDF Resmi</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* CONFIRMATION MODAL: APPROVE INCIDENT REPORT */}
+      {/* ========================================================= */}
+      {confirmApproveReport && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
+                <ShieldCheck size={20} />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-gray-900 font-sans">Konfirmasi Approval</h3>
+                <p className="text-xs text-gray-400 font-bold">Lazuardi Junior High</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-700 font-medium leading-relaxed font-sans bg-blue-50/50 p-4 rounded-2xl border border-blue-100">
+              Setujui Incident Report ini? Setelah disetujui, laporan akan dikunci dan PDF resmi dapat diunduh.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmApproveReport(null)}
+                className="px-4 py-2 rounded-xl text-xs font-extrabold text-gray-600 hover:bg-gray-100 cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={isApproving}
+                onClick={handleApproveReport}
+                className="flex items-center gap-1 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black shadow-md cursor-pointer disabled:opacity-50"
+              >
+                {isApproving ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                <span>Setujui (Approve)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* CONFIRMATION MODAL: SUBMIT FOR APPROVAL */}
+      {/* ========================================================= */}
+      {confirmSubmitReport && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
+                <Send size={20} />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-gray-900 font-sans">Kirim untuk Approval</h3>
+                <p className="text-xs text-gray-400 font-bold">Siswa: {confirmSubmitReport.studentNameSnapshot}</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-700 font-medium leading-relaxed font-sans">
+              Kirim laporan ini ke Kepala Unit? Setelah dikirim, Anda tidak dapat mengedit isi laporan kecuali dikembalikan oleh Kepala Unit.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmSubmitReport(null)}
+                className="px-4 py-2 rounded-xl text-xs font-extrabold text-gray-600 hover:bg-gray-100 cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={isSaving}
+                onClick={handleSubmitForApproval}
+                className="flex items-center gap-1 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black shadow-md cursor-pointer disabled:opacity-50"
+              >
+                {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                <span>Ya, Kirim</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* CONFIRMATION MODAL: DELETE DRAFT */}
+      {/* ========================================================= */}
+      {confirmDeleteReport && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+                <Trash2 size={20} />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-gray-900 font-sans">Hapus Draft</h3>
+                <p className="text-xs text-gray-400 font-bold">Siswa: {confirmDeleteReport.studentNameSnapshot}</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-700 font-medium leading-relaxed font-sans">
+              Apakah Anda yakin ingin menghapus draft Incident Report ini? Tindakan ini tidak dapat dibatalkan.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteReport(null)}
+                className="px-4 py-2 rounded-xl text-xs font-extrabold text-gray-600 hover:bg-gray-100 cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={isSaving}
+                onClick={handleDeleteReport}
+                className="flex items-center gap-1 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-md cursor-pointer disabled:opacity-50"
+              >
+                {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                <span>Hapus</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* HIDDEN PRINTABLE DOM TEMPLATE FOR A4 PDF GENERATION */}
+      {/* ========================================================= */}
+      {viewingReport && (
+        <div className="fixed left-[-9999px] top-[-9999px] pointer-events-none">
+          <div
+            ref={pdfPrintRef}
+            className="w-[794px] min-h-[1123px] bg-white p-10 font-sans text-gray-900 space-y-6 border border-gray-200"
+            style={{ width: '794px', boxSizing: 'border-box' }}
+          >
+            {/* Template Header */}
+            <div className="border-b-2 border-slate-900 pb-5 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <LuminaLogo size="lg" />
+                <div className="space-y-0.5">
+                  <h1 className="text-xl font-black italic tracking-tight text-slate-900 uppercase">
+                    LAZUARDI JUNIOR HIGH
+                  </h1>
+                  <h2 className="text-base font-extrabold text-blue-700 uppercase tracking-wider">
+                    Incident Report Form
+                  </h2>
+                  <p className="text-[10px] text-gray-500 font-medium">
+                    Official Student Incident Documentation • Confidential Record
+                  </p>
+                </div>
+              </div>
+              <div className="text-right space-y-1">
+                <span className="inline-block px-3 py-1 bg-emerald-100 text-emerald-800 rounded-lg text-[10px] font-black uppercase tracking-wider">
+                  APPROVED
+                </span>
+                <p className="text-[10px] font-bold text-gray-400">Ref: IR-JH-{viewingReport.id?.slice(0, 6).toUpperCase()}</p>
+              </div>
+            </div>
+
+            {/* 2-Column Incident Form Grid */}
+            <div className="border border-slate-300 rounded-xl overflow-hidden divide-y divide-slate-300 text-xs">
+              
+              {/* Row 1: Name | Day/date of incident */}
+              <div className="grid grid-cols-2 divide-x divide-slate-300 bg-gray-50/50">
+                <div className="p-3.5 space-y-1">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 block">Name</span>
+                  <p className="text-sm font-black text-slate-900">{viewingReport.studentNameSnapshot}</p>
+                  <p className="text-[11px] text-slate-600 font-bold">Class: {viewingReport.classNameSnapshot}</p>
+                </div>
+                <div className="p-3.5 space-y-1">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 block">Day / Date of the Incident</span>
+                  <p className="text-sm font-black text-slate-900">
+                    {viewingReport.incidentDate} {viewingReport.incidentTime ? `(${viewingReport.incidentTime})` : ''}
+                  </p>
+                </div>
+              </div>
+
+              {/* Row 2: Witness | Place */}
+              <div className="grid grid-cols-2 divide-x divide-slate-300">
+                <div className="p-3.5 space-y-1">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 block">Name of Witness / Adults Present</span>
+                  <p className="font-bold text-slate-800">
+                    {viewingReport.witnessesOrAdultsPresent || '-'}
+                  </p>
+                </div>
+                <div className="p-3.5 space-y-1">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 block">Place Incident Occurred</span>
+                  <p className="font-bold text-slate-900">{viewingReport.incidentPlace}</p>
+                </div>
+              </div>
+
+              {/* Row 3: Description | Action taken */}
+              <div className="grid grid-cols-2 divide-x divide-slate-300">
+                <div className="p-3.5 space-y-1.5">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 block">Description of the Incident</span>
+                  <p className="text-slate-800 leading-relaxed font-normal whitespace-pre-wrap">
+                    {viewingReport.incidentDescription}
+                  </p>
+                </div>
+                <div className="p-3.5 space-y-1.5">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 block">Action / Treatment Taken</span>
+                  <p className="text-slate-800 leading-relaxed font-normal whitespace-pre-wrap">
+                    {viewingReport.actionTreatmentTaken}
+                  </p>
+                </div>
+              </div>
+
+              {/* Row 4: Condition | Suggestion */}
+              <div className="grid grid-cols-2 divide-x divide-slate-300">
+                <div className="p-3.5 space-y-1.5">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 block">Condition of Child Following Incident</span>
+                  <p className="text-slate-800 leading-relaxed font-normal whitespace-pre-wrap">
+                    {viewingReport.childConditionFollowingIncident}
+                  </p>
+                </div>
+                <div className="p-3.5 space-y-1.5">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 block">Suggestion for Next Treatment</span>
+                  <p className="text-slate-800 leading-relaxed font-normal whitespace-pre-wrap">
+                    {viewingReport.suggestionNextTreatment}
+                  </p>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Bottom Signatures Section */}
+            <div className="grid grid-cols-2 gap-8 pt-8 border-t border-slate-200 text-xs">
+              
+              {/* Teacher Signature Box */}
+              <div className="text-center space-y-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">Teacher</span>
+                <div className="h-20 flex items-center justify-center">
+                  {viewingReport.teacherSignatureUrl ? (
+                    <img src={viewingReport.teacherSignatureUrl} alt="Teacher Signature" className="max-h-16 object-contain" />
+                  ) : (
+                    <div className="text-gray-300 text-[10px] italic">Digital Record</div>
+                  )}
+                </div>
+                <div className="border-t border-slate-400 pt-1">
+                  <p className="font-extrabold text-slate-900">{viewingReport.teacherName}</p>
+                  <p className="text-[10px] text-gray-500">
+                    Date: {new Date(viewingReport.submittedAt || viewingReport.createdAt).toLocaleDateString('id-ID')}
+                  </p>
+                </div>
+              </div>
+
+              {/* Principal / Kepala Unit Signature Box */}
+              <div className="text-center space-y-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">Principal / Kepala Unit</span>
+                <div className="h-20 flex items-center justify-center">
+                  {viewingReport.principalSignatureUrl ? (
+                    <img src={viewingReport.principalSignatureUrl} alt="Principal Signature" className="max-h-16 object-contain" />
+                  ) : (
+                    <div className="text-gray-300 text-[10px] italic">Digital Record</div>
+                  )}
+                </div>
+                <div className="border-t border-slate-400 pt-1">
+                  <p className="font-extrabold text-slate-900">{viewingReport.approvedByName || 'Kepala Unit Junior High'}</p>
+                  <p className="text-[10px] text-gray-500">
+                    Approved: {viewingReport.approvedAt ? new Date(viewingReport.approvedAt).toLocaleDateString('id-ID') : '-'}
+                  </p>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Confidentiality Footer */}
+            <div className="pt-6 text-center text-[9px] text-gray-400 border-t border-gray-100">
+              Lazuardi Junior High • Incident Report Document • Confidential internal record for school leadership and parents.
+            </div>
+
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
