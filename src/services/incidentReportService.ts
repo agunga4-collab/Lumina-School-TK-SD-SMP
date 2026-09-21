@@ -163,23 +163,36 @@ export async function getHomeroomTeacherForClass(
   try {
     let classData: any = null;
 
+    // 1. Try fetching class by classId directly
     if (classId) {
-      const classDoc = await getDoc(doc(db, 'classes', classId));
-      if (classDoc.exists()) {
-        classData = classDoc.data();
+      try {
+        const classDoc = await getDoc(doc(db, 'classes', classId));
+        if (classDoc.exists()) {
+          classData = classDoc.data();
+        }
+      } catch (err) {
+        console.warn('Error fetching class by classId:', err);
       }
     }
 
-    // Fallback: If classDoc not found by ID, query classes by name
-    if (!classData && classNameSnapshot) {
-      const q = query(
-        collection(db, 'classes'),
-        where('unitId', '==', 'JUNIOR_HIGH'),
-        where('name', '==', classNameSnapshot)
-      );
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        classData = snap.docs[0].data();
+    // 2. Fallback: Search all classes if classData not found or missing signature
+    if ((!classData || !classData.teacherSignatureUrl) && (classNameSnapshot || classId)) {
+      try {
+        const classesSnap = await getDocs(collection(db, 'classes'));
+        const targetSearch = (classNameSnapshot || classId).trim().toLowerCase();
+
+        const matchedDoc = classesSnap.docs.find(d => {
+          const cData = d.data();
+          const docId = d.id.toLowerCase();
+          const cName = (cData.name || cData.className || '').trim().toLowerCase();
+          return docId === targetSearch || cName === targetSearch;
+        });
+
+        if (matchedDoc) {
+          classData = matchedDoc.data();
+        }
+      } catch (err) {
+        console.warn('Error querying classes fallback:', err);
       }
     }
 
@@ -187,40 +200,35 @@ export async function getHomeroomTeacherForClass(
       return { name: '', signatureUrl: null };
     }
 
-    let homeroomTeacherId = classData.homeroomTeacherId || null;
     let homeroomTeacherName = classData.homeroomTeacherName || '';
-    let signatureUrl = classData.teacherSignatureUrl || null;
+    const homeroomTeacherId = classData.homeroomTeacherId || null;
 
-    // Check teacherAssignments array if homeroomTeacherId is not directly set
-    if (!homeroomTeacherId && Array.isArray(classData.teacherAssignments)) {
+    // Fallback for homeroom teacher name from assignments if needed
+    if (!homeroomTeacherName && Array.isArray(classData.teacherAssignments)) {
       const htAssignment = classData.teacherAssignments.find(
         (ta: any) => ta.role === 'HOMEROOM_TEACHER' || ta.isPrimary
       );
       if (htAssignment) {
-        homeroomTeacherId = htAssignment.userId || null;
-        if (!homeroomTeacherName) {
-          homeroomTeacherName = htAssignment.displayName || htAssignment.email || '';
-        }
+        homeroomTeacherName = htAssignment.displayName || htAssignment.name || htAssignment.email || '';
       }
     }
 
-    // If homeroomTeacherId exists, fetch user profile for updated name & signature
-    if (homeroomTeacherId) {
+    // If homeroomTeacherName is still empty, get display name ONLY from user doc (NEVER signature!)
+    if (!homeroomTeacherName && homeroomTeacherId) {
       try {
         const userDoc = await getDoc(doc(db, 'users', homeroomTeacherId));
         if (userDoc.exists()) {
           const uData = userDoc.data();
-          if (uData.displayName || uData.name) {
-            homeroomTeacherName = uData.displayName || uData.name;
-          }
-          if (uData.signatureUrl) {
-            signatureUrl = uData.signatureUrl;
-          }
+          homeroomTeacherName = uData.displayName || uData.name || '';
         }
       } catch (e) {
-        console.warn('Error fetching homeroom teacher user doc:', e);
+        console.warn('Error fetching user doc for homeroom teacher name:', e);
       }
     }
+
+    // Get signature URL directly from class data (Manajemen Kelas -> Data Kelas -> Edit Kelas -> Tanda Tangan Digital Guru)
+    // NEVER fetch or override with user profile signature.
+    const signatureUrl = classData.teacherSignatureUrl || classData.signatureUrl || null;
 
     return {
       name: (homeroomTeacherName || '').trim(),
