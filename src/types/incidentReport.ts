@@ -10,6 +10,7 @@ export interface IncidentReport {
   studentNameSnapshot: string;
   classId: string;
   classNameSnapshot: string;
+  academicYearId?: string;
   
   // Incident Details
   incidentDate: string; // YYYY-MM-DD

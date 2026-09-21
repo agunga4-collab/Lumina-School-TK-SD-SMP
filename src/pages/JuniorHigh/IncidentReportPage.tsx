@@ -19,9 +19,10 @@ import {
   MapPin,
   FileCheck
 } from 'lucide-react';
-import { collection, getDocs, query, where } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { collection, doc, getDoc, getDocs, query, where, documentId } from 'firebase/firestore';
+import { db, getActiveStudents } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
+import { useAcademicYear } from '../../context/AcademicYearContext';
 import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
 import { IncidentReport, IncidentReportStatus } from '../../types/incidentReport';
@@ -47,10 +48,12 @@ interface StudentOption {
 interface ClassOption {
   id: string;
   name: string;
+  academicYear?: string;
 }
 
 export function IncidentReportPage() {
   const { currentUser } = useAuth();
+  const { activeYear } = useAcademicYear();
 
   // Permissions check
   const isHeadUnit = React.useMemo(() => {
@@ -70,7 +73,8 @@ export function IncidentReportPage() {
   // Data states
   const [reports, setReports] = React.useState<IncidentReport[]>([]);
   const [classes, setClasses] = React.useState<ClassOption[]>([]);
-  const [students, setStudents] = React.useState<StudentOption[]>([]);
+  const [availableStudents, setAvailableStudents] = React.useState<StudentOption[]>([]);
+  const [loadingStudents, setLoadingStudents] = React.useState<boolean>(false);
   const [loading, setLoading] = React.useState<boolean>(true);
   const [searchQuery, setSearchQuery] = React.useState<string>('');
   const [statusFilter, setStatusFilter] = React.useState<IncidentReportStatus | 'ALL'>('ALL');
@@ -97,6 +101,7 @@ export function IncidentReportPage() {
     classNameSnapshot: '',
     studentId: '',
     studentNameSnapshot: '',
+    academicYearId: activeYear || '2026/2027',
     incidentDate: new Date().toISOString().split('T')[0],
     incidentTime: '',
     witnessesOrAdultsPresent: '',
@@ -107,7 +112,102 @@ export function IncidentReportPage() {
     suggestionNextTreatment: '',
   });
 
-  // Load Initial Data (Incident Reports & Students)
+  // Load students for a specific class in the active academic year
+  const loadStudentsForClass = React.useCallback(async (targetClassId: string, yr: string) => {
+    if (!targetClassId || !yr) {
+      setAvailableStudents([]);
+      return;
+    }
+
+    setLoadingStudents(true);
+    try {
+      // 1. Primary roster fetch: getActiveStudents from firebase lib
+      const activeStudents = await getActiveStudents(targetClassId, yr);
+
+      if (activeStudents && activeStudents.length > 0) {
+        const studentList: StudentOption[] = activeStudents.map(s => ({
+          id: s.id,
+          name: s.name || (s as any).fullName || 'Siswa Tanpa Nama',
+          classId: targetClassId,
+          className: (s as any).className || ''
+        }));
+        studentList.sort((a, b) => a.name.localeCompare(b.name));
+        setAvailableStudents(studentList);
+        setLoadingStudents(false);
+        return;
+      }
+
+      // 2. Fallback enrollment query if getActiveStudents returned empty list
+      let classKeys = [targetClassId];
+      const targetClass = classes.find(c => c.id === targetClassId);
+      if (targetClass?.name && !classKeys.includes(targetClass.name)) {
+        classKeys.push(targetClass.name);
+      }
+
+      const enrollSnap = await getDocs(
+        query(
+          collection(db, 'enrollments'),
+          where('academicYear', '==', yr)
+        )
+      );
+
+      const matchedEnrollments = enrollSnap.docs
+        .map(d => d.data())
+        .filter((e: any) => classKeys.includes(e.classId) || classKeys.includes(e.className));
+
+      const studentIds = Array.from(new Set(matchedEnrollments.map((e: any) => e.studentId).filter(Boolean)));
+
+      if (studentIds.length > 0) {
+        const fetchedStudents: StudentOption[] = [];
+        const chunks = [];
+        for (let i = 0; i < studentIds.length; i += 10) {
+          chunks.push(studentIds.slice(i, i + 10));
+        }
+
+        for (const chunk of chunks) {
+          const sq = query(collection(db, 'students'), where(documentId(), 'in', chunk));
+          const sSnap = await getDocs(sq);
+          sSnap.docs.forEach(doc => {
+            const data = doc.data();
+            fetchedStudents.push({
+              id: doc.id,
+              name: data.name || data.fullName || 'Siswa Tanpa Nama',
+              classId: targetClassId,
+              className: targetClass?.name || ''
+            });
+          });
+        }
+
+        if (fetchedStudents.length < studentIds.length) {
+          const invSnap = await getDocs(query(collection(db, 'role_invites'), where('role', '==', 'STUDENT')));
+          invSnap.docs.forEach(doc => {
+            const data = doc.data();
+            const sid = data.luminaId || doc.id;
+            if (studentIds.includes(sid) && !fetchedStudents.some(s => s.id === sid)) {
+              fetchedStudents.push({
+                id: sid,
+                name: data.name || data.fullName || 'Siswa Tanpa Nama',
+                classId: targetClassId,
+                className: targetClass?.name || ''
+              });
+            }
+          });
+        }
+
+        fetchedStudents.sort((a, b) => a.name.localeCompare(b.name));
+        setAvailableStudents(fetchedStudents);
+      } else {
+        setAvailableStudents([]);
+      }
+    } catch (err) {
+      console.error('Error loading class roster:', err);
+      setAvailableStudents([]);
+    } finally {
+      setLoadingStudents(false);
+    }
+  }, [classes]);
+
+  // Load Initial Data (Incident Reports & Active Junior High Classes)
   const loadData = React.useCallback(async () => {
     setLoading(true);
     try {
@@ -115,60 +215,33 @@ export function IncidentReportPage() {
       const allReports = await getJHIncidentReports();
       setReports(allReports);
 
-      // 2. Fetch Junior High Students and Classes
+      // 2. Fetch Junior High Classes for ACTIVE academic year ONLY
       const classesSnap = await getDocs(collection(db, 'classes'));
       const rawClasses = classesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const jhClasses = rawClasses.filter((c: any) => 
-        c.unitId === 'JUNIOR_HIGH' || 
-        c.unit === 'JUNIOR_HIGH' || 
-        ['7', '8', '9', 'Grade 7', 'Grade 8', 'Grade 9', 'SMP'].some(g => String(c.grade || c.name || '').includes(g))
-      );
+
+      const jhClasses = rawClasses.filter((c: any) => {
+        const isJH = c.unitId === 'JUNIOR_HIGH' || c.unit === 'JUNIOR_HIGH';
+        const isActiveYear = c.academicYear === activeYear;
+        const isNotArchived = c.status !== 'archived' && c.status !== 'inactive';
+        return isJH && isActiveYear && isNotArchived;
+      });
 
       const classOptionList: ClassOption[] = jhClasses.map((c: any) => ({
         id: c.id,
-        name: c.name || c.className || `Kelas ${c.grade || ''}`
+        name: c.name || c.className || `Kelas ${c.grade || ''}`,
+        academicYear: c.academicYear
       }));
 
       // Sort classes naturally
       classOptionList.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
       setClasses(classOptionList);
-
-      const jhClassIds = new Set(jhClasses.map((c: any) => c.id));
-      const jhClassNames = new Set(jhClasses.map((c: any) => c.name));
-
-      const studentsSnap = await getDocs(collection(db, 'students'));
-      const rawStudents = studentsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-      const studentList: StudentOption[] = [];
-      rawStudents.forEach((s: any) => {
-        const isJHStudent = 
-          s.unit === 'JUNIOR_HIGH' || 
-          s.unitId === 'JUNIOR_HIGH' || 
-          (s.classId && jhClassIds.has(s.classId)) || 
-          (s.className && jhClassNames.has(s.className));
-
-        if (isJHStudent && s.status !== 'inactive') {
-          // Find matched class name
-          const matchedClass = jhClasses.find((c: any) => c.id === s.classId || c.name === s.className);
-          studentList.push({
-            id: s.id,
-            name: s.name || s.fullName || 'Siswa Tanpa Nama',
-            classId: s.classId || matchedClass?.id || '',
-            className: s.className || matchedClass?.name || 'Kelas JH'
-          });
-        }
-      });
-
-      // Sort students alphabetically
-      studentList.sort((a, b) => a.name.localeCompare(b.name));
-      setStudents(studentList);
     } catch (err) {
       console.error('Error loading incident reports data:', err);
       toast.error('Gagal memuat data Incident Report');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeYear]);
 
   React.useEffect(() => {
     loadData();
@@ -204,6 +277,7 @@ export function IncidentReportPage() {
       studentNameSnapshot: '',
       classId: '',
       classNameSnapshot: '',
+      academicYearId: activeYear,
       incidentDate: new Date().toISOString().split('T')[0],
       incidentTime: '',
       witnessesOrAdultsPresent: '',
@@ -213,6 +287,7 @@ export function IncidentReportPage() {
       childConditionFollowingIncident: '',
       suggestionNextTreatment: '',
     });
+    setAvailableStudents([]);
     setIsFormOpen(true);
   };
 
@@ -223,11 +298,13 @@ export function IncidentReportPage() {
       return;
     }
     setEditingReport(report);
+    const reportYear = report.academicYearId || activeYear;
     setFormData({
       studentId: report.studentId || '',
       studentNameSnapshot: report.studentNameSnapshot || '',
       classId: report.classId || '',
       classNameSnapshot: report.classNameSnapshot || '',
+      academicYearId: reportYear,
       incidentDate: report.incidentDate || new Date().toISOString().split('T')[0],
       incidentTime: report.incidentTime || '',
       witnessesOrAdultsPresent: report.witnessesOrAdultsPresent || '',
@@ -237,6 +314,11 @@ export function IncidentReportPage() {
       childConditionFollowingIncident: report.childConditionFollowingIncident || '',
       suggestionNextTreatment: report.suggestionNextTreatment || '',
     });
+    if (report.classId) {
+      loadStudentsForClass(report.classId, reportYear);
+    } else {
+      setAvailableStudents([]);
+    }
     setIsFormOpen(true);
   };
 
@@ -248,10 +330,11 @@ export function IncidentReportPage() {
         ...prev,
         classId: selectedClass.id,
         classNameSnapshot: selectedClass.name,
-        // Reset student selection when class changes
         studentId: '',
         studentNameSnapshot: '',
+        academicYearId: activeYear
       }));
+      loadStudentsForClass(selectedClass.id, activeYear);
     } else {
       setFormData(prev => ({
         ...prev,
@@ -259,31 +342,20 @@ export function IncidentReportPage() {
         classNameSnapshot: '',
         studentId: '',
         studentNameSnapshot: '',
+        academicYearId: activeYear
       }));
+      setAvailableStudents([]);
     }
   };
 
-  // Student options filtered by selected class
-  const availableStudents = React.useMemo(() => {
-    if (!formData.classId && !formData.classNameSnapshot) {
-      return [];
-    }
-    return students.filter(s => 
-      (formData.classId && s.classId === formData.classId) || 
-      (formData.classNameSnapshot && s.className === formData.classNameSnapshot)
-    );
-  }, [students, formData.classId, formData.classNameSnapshot]);
-
   // Student selection handler
   const handleSelectStudent = (studentId: string) => {
-    const selected = students.find(s => s.id === studentId);
+    const selected = availableStudents.find(s => s.id === studentId);
     if (selected) {
       setFormData(prev => ({
         ...prev,
         studentId: selected.id,
         studentNameSnapshot: selected.name,
-        classId: selected.classId || prev.classId,
-        classNameSnapshot: selected.className || prev.classNameSnapshot,
       }));
     } else {
       setFormData(prev => ({
@@ -339,6 +411,7 @@ export function IncidentReportPage() {
         studentNameSnapshot: formData.studentNameSnapshot,
         classId: formData.classId,
         classNameSnapshot: formData.classNameSnapshot,
+        academicYearId: formData.academicYearId || activeYear,
         incidentDate: formData.incidentDate,
         incidentTime: formData.incidentTime || '',
         witnessesOrAdultsPresent: formData.witnessesOrAdultsPresent || '',
@@ -830,17 +903,19 @@ export function IncidentReportPage() {
                   </label>
                   <select
                     value={formData.studentId}
-                    disabled={!formData.classId && !formData.classNameSnapshot}
+                    disabled={(!formData.classId && !formData.classNameSnapshot) || loadingStudents}
                     onChange={e => handleSelectStudent(e.target.value)}
                     className="w-full p-3.5 bg-gray-50 hover:bg-gray-100/60 focus:bg-white border border-gray-250 focus:border-blue-500 rounded-2xl font-bold text-gray-800 outline-none transition-all font-sans disabled:opacity-50 disabled:bg-gray-100"
                   >
                     {!formData.classId && !formData.classNameSnapshot ? (
                       <option value="">-- Pilih Kelas Terlebih Dahulu --</option>
+                    ) : loadingStudents ? (
+                      <option value="">-- Memuat Daftar Siswa... --</option>
                     ) : availableStudents.length === 0 ? (
-                      <option value="">-- Tidak Ada Siswa di Kelas Ini --</option>
+                      <option value="">-- Tidak Ada Siswa Aktif di Kelas Ini --</option>
                     ) : (
                       <>
-                        <option value="">-- Pilih Siswa --</option>
+                        <option value="">-- Pilih Siswa ({availableStudents.length} Siswa) --</option>
                         {availableStudents.map(s => (
                           <option key={s.id} value={s.id}>
                             {s.name}
