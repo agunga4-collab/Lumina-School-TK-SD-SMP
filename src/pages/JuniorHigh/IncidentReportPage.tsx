@@ -32,7 +32,9 @@ import {
   updateJHIncidentReport, 
   deleteJHIncidentReport, 
   submitJHIncidentReport, 
-  approveJHIncidentReport 
+  approveJHIncidentReport,
+  getJHLogoUrl,
+  getJHSignatoryConfig
 } from '../../services/incidentReportService';
 import { LuminaLogo } from '../../components/LuminaLogo';
 import { jsPDF } from 'jspdf';
@@ -78,6 +80,15 @@ export function IncidentReportPage() {
   const [loading, setLoading] = React.useState<boolean>(true);
   const [searchQuery, setSearchQuery] = React.useState<string>('');
   const [statusFilter, setStatusFilter] = React.useState<IncidentReportStatus | 'ALL'>('ALL');
+
+  // School Config states (Logo & JH Signatory)
+  const [jhLogoUrl, setJhLogoUrl] = React.useState<string | null>(null);
+  const [jhSignatory, setJhSignatory] = React.useState<{
+    principalName: string;
+    principalTitle: string;
+    principalNIY?: string;
+    principalSignatureUrl: string | null;
+  } | null>(null);
 
   // UI state for Modals
   const [isFormOpen, setIsFormOpen] = React.useState<boolean>(false);
@@ -207,13 +218,19 @@ export function IncidentReportPage() {
     }
   }, [classes]);
 
-  // Load Initial Data (Incident Reports & Active Junior High Classes)
+  // Load Initial Data (Incident Reports, Logo, Signatory, & Active Junior High Classes)
   const loadData = React.useCallback(async () => {
     setLoading(true);
     try {
-      // 1. Fetch Junior High Incident Reports
-      const allReports = await getJHIncidentReports();
+      // 1. Fetch Junior High Incident Reports, JH Logo, and JH Signatory Config
+      const [allReports, fetchedLogo, fetchedSignatory] = await Promise.all([
+        getJHIncidentReports(),
+        getJHLogoUrl(),
+        getJHSignatoryConfig()
+      ]);
       setReports(allReports);
+      setJhLogoUrl(fetchedLogo);
+      setJhSignatory(fetchedSignatory);
 
       // 2. Fetch Junior High Classes for ACTIVE academic year ONLY
       const classesSnap = await getDocs(collection(db, 'classes'));
@@ -513,6 +530,20 @@ export function IncidentReportPage() {
   const handleDownloadPdf = async (report: IncidentReport) => {
     if (report.status !== 'APPROVED') {
       toast.error('PDF resmi hanya dapat diunduh jika status report adalah APPROVED');
+      return;
+    }
+
+    // Verify presence of logo and principal signature
+    const logoToUse = jhLogoUrl;
+    const signatureToUse = report.principalSignatureUrl || jhSignatory?.principalSignatureUrl;
+
+    if (!logoToUse) {
+      toast.error('Gagal mengunduh PDF: Logo Junior High belum diatur di Lumina Admin → Logo.');
+      return;
+    }
+
+    if (!signatureToUse) {
+      toast.error('Gagal mengunduh PDF: Tanda tangan Principal belum diatur di Settings → Report Config → JH Signatory.');
       return;
     }
 
@@ -1416,7 +1447,11 @@ export function IncidentReportPage() {
             {/* Template Header */}
             <div className="border-b-2 border-slate-900 pb-5 flex items-center justify-between gap-4">
               <div className="flex items-center gap-4">
-                <LuminaLogo size="lg" />
+                {jhLogoUrl ? (
+                  <img src={jhLogoUrl} alt="Lumina Junior High School Logo" className="h-16 max-w-[220px] object-contain" />
+                ) : (
+                  <LuminaLogo size="lg" />
+                )}
                 <div className="space-y-0.5">
                   <h1 className="text-xl font-black italic tracking-tight text-slate-900 uppercase">
                     LAZUARDI JUNIOR HIGH
@@ -1526,18 +1561,31 @@ export function IncidentReportPage() {
 
               {/* Principal / Kepala Unit Signature Box */}
               <div className="text-center space-y-2">
-                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">Principal / Kepala Unit</span>
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
+                  {viewingReport.principalTitle || jhSignatory?.principalTitle || 'Principal'}
+                </span>
                 <div className="h-20 flex items-center justify-center">
-                  {viewingReport.principalSignatureUrl ? (
-                    <img src={viewingReport.principalSignatureUrl} alt="Principal Signature" className="max-h-16 object-contain" />
+                  {(viewingReport.principalSignatureUrl || jhSignatory?.principalSignatureUrl) ? (
+                    <img 
+                      src={viewingReport.principalSignatureUrl || jhSignatory?.principalSignatureUrl!} 
+                      alt="Principal Signature" 
+                      className="max-h-16 object-contain" 
+                    />
                   ) : (
                     <div className="text-gray-300 text-[10px] italic">Digital Record</div>
                   )}
                 </div>
                 <div className="border-t border-slate-400 pt-1">
-                  <p className="font-extrabold text-slate-900">{viewingReport.approvedByName || 'Kepala Unit Junior High'}</p>
+                  <p className="font-extrabold text-slate-900">
+                    {viewingReport.approvedByName || jhSignatory?.principalName || 'Kepala Unit Junior High'}
+                  </p>
+                  {(viewingReport.principalNIY || jhSignatory?.principalNIY) && (
+                    <p className="text-[10px] text-gray-500 font-mono">
+                      NIY: {viewingReport.principalNIY || jhSignatory?.principalNIY}
+                    </p>
+                  )}
                   <p className="text-[10px] text-gray-500">
-                    Approved: {viewingReport.approvedAt ? new Date(viewingReport.approvedAt).toLocaleDateString('id-ID') : '-'}
+                    Approved: {viewingReport.approvedAt ? new Date(viewingReport.approvedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : '-'}
                   </p>
                 </div>
               </div>

@@ -54,20 +54,101 @@ export async function getUserSignatureUrl(userId: string): Promise<string | null
       return userDoc.data().signatureUrl;
     }
     
-    // Check reportConfigs fallback for Junior High Principal
-    const jhConfigDoc = await getDoc(doc(db, 'reportConfigs', 'JUNIOR_HIGH_MIDTERM'));
+    // Check reportConfig fallback for Junior High Principal
+    const jhConfigDoc = await getDoc(doc(db, 'reportConfig', 'JUNIOR_HIGH'));
     if (jhConfigDoc.exists() && jhConfigDoc.data().principalSignatureUrl) {
       return jhConfigDoc.data().principalSignatureUrl;
     }
 
-    const jhGeneralDoc = await getDoc(doc(db, 'reportConfigs', 'JUNIOR_HIGH'));
-    if (jhGeneralDoc.exists() && jhGeneralDoc.data().principalSignatureUrl) {
-      return jhGeneralDoc.data().principalSignatureUrl;
+    const jhMidtermDoc = await getDoc(doc(db, 'reportConfigs', 'JUNIOR_HIGH_MIDTERM'));
+    if (jhMidtermDoc.exists() && jhMidtermDoc.data().principalSignatureUrl) {
+      return jhMidtermDoc.data().principalSignatureUrl;
     }
 
     return null;
   } catch (err) {
     console.error('Error fetching user signature:', err);
+    return null;
+  }
+}
+
+/**
+ * Fetch Junior High Signatory Config from Report Config (JH Signatory)
+ */
+export async function getJHSignatoryConfig(): Promise<{
+  principalName: string;
+  principalTitle: string;
+  principalNIY?: string;
+  principalSignatureUrl: string | null;
+}> {
+  try {
+    const jhGeneralDoc = await getDoc(doc(db, 'reportConfig', 'JUNIOR_HIGH'));
+    if (jhGeneralDoc.exists()) {
+      const data = jhGeneralDoc.data();
+      if (data.principalSignatureUrl || data.principalName) {
+        return {
+          principalName: data.principalName || '',
+          principalTitle: data.principalTitle || 'Principal',
+          principalNIY: data.principalNIY || '',
+          principalSignatureUrl: data.principalSignatureUrl || null,
+        };
+      }
+    }
+
+    const jhMidtermDoc = await getDoc(doc(db, 'reportConfigs', 'JUNIOR_HIGH_MIDTERM'));
+    if (jhMidtermDoc.exists()) {
+      const data = jhMidtermDoc.data();
+      return {
+        principalName: data.principalName || '',
+        principalTitle: data.principalTitle || 'Principal',
+        principalNIY: data.principalNIY || '',
+        principalSignatureUrl: data.principalSignatureUrl || null,
+      };
+    }
+
+    return {
+      principalName: '',
+      principalTitle: 'Principal',
+      principalNIY: '',
+      principalSignatureUrl: null,
+    };
+  } catch (err) {
+    console.error('Error fetching JH Signatory Config:', err);
+    return {
+      principalName: '',
+      principalTitle: 'Principal',
+      principalNIY: '',
+      principalSignatureUrl: null,
+    };
+  }
+}
+
+/**
+ * Fetch Junior High official logo from Lumina Admin -> Logo (settings/logos)
+ */
+export async function getJHLogoUrl(): Promise<string | null> {
+  try {
+    const logoDoc = await getDoc(doc(db, 'settings', 'logos'));
+    if (logoDoc.exists()) {
+      const data = logoDoc.data();
+      const jhLogo = data?.JUNIOR_HIGH?.rectangular || data?.JUNIOR_HIGH?.square || null;
+      if (jhLogo) return jhLogo;
+    }
+
+    const local = typeof window !== 'undefined' ? localStorage.getItem('lumina_school_logos') : null;
+    if (local) {
+      try {
+        const parsed = JSON.parse(local);
+        const jhLogo = parsed?.JUNIOR_HIGH?.rectangular || parsed?.JUNIOR_HIGH?.square || null;
+        if (jhLogo) return jhLogo;
+      } catch (e) {
+        // ignore JSON parse error
+      }
+    }
+
+    return null;
+  } catch (err) {
+    console.error('Error fetching JH Logo:', err);
     return null;
   }
 }
@@ -144,23 +225,40 @@ export async function submitJHIncidentReport(id: string): Promise<void> {
 }
 
 /**
- * Approve Incident Report (Head Unit)
+ * Approve Incident Report (Head Unit / Principal)
  */
 export async function approveJHIncidentReport(
   id: string, 
   approverUid: string, 
-  approverName: string
+  approverFallbackName: string
 ): Promise<void> {
   try {
-    const principalSignatureUrl = await getUserSignatureUrl(approverUid);
+    const signatory = await getJHSignatoryConfig();
     const ref = doc(db, COLLECTION_NAME, id);
+
+    let finalPrincipalName = signatory.principalName.trim();
+    if (!finalPrincipalName && approverUid) {
+      const uDoc = await getDoc(doc(db, 'users', approverUid));
+      if (uDoc.exists()) {
+        finalPrincipalName = uDoc.data().name || uDoc.data().displayName || approverFallbackName;
+      } else {
+        finalPrincipalName = approverFallbackName;
+      }
+    }
+
+    let finalSignatureUrl = signatory.principalSignatureUrl;
+    if (!finalSignatureUrl && approverUid) {
+      finalSignatureUrl = await getUserSignatureUrl(approverUid);
+    }
     
     await updateDoc(ref, {
       status: 'APPROVED',
       approvedBy: approverUid,
-      approvedByName: approverName,
+      approvedByName: finalPrincipalName || 'Kepala Unit Junior High',
       approvedAt: Date.now(),
-      principalSignatureUrl: principalSignatureUrl || null,
+      principalTitle: signatory.principalTitle || 'Principal',
+      principalSignatureUrl: finalSignatureUrl || null,
+      principalNIY: signatory.principalNIY || '',
       updatedAt: Date.now(),
     });
   } catch (err) {
