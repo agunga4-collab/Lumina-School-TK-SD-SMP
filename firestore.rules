@@ -1404,7 +1404,7 @@ service cloud.firestore {
           isTeacherAssignedToClass(incoming().classId) && 
           isMidtermIdentityUnchanged() &&
           (
-            (existing().status == 'DRAFT' && (incoming().status == 'DRAFT' || incoming().status == 'READY_FOR_REVIEW')) ||
+            (existing().status in ['DRAFT', 'READY_FOR_REVIEW', 'PERLU_REVISI', 'APPROVED'] && incoming().status in ['DRAFT', 'READY_FOR_REVIEW']) ||
             (existing().status == 'APPROVED' && incoming().status == 'PUBLISHED')
           )
         )
@@ -1414,6 +1414,22 @@ service cloud.firestore {
         isKindergartenHeadUnit() ||
         isSecretaryKindy()
       );
+    }
+
+    match /midterm_summary_history/{logId} {
+      allow read: if isActive() && (
+        isAdmin() ||
+        isKindergartenHeadUnit() ||
+        isSecretaryKindy() ||
+        (isTeacher() && (resource == null || isTeacherAssignedToClass(resource.data.classId)))
+      );
+      allow create: if isActive() && (
+        isAdmin() ||
+        isKindergartenHeadUnit() ||
+        isSecretaryKindy() ||
+        (isTeacher() && isTeacherAssignedToClass(incoming().classId))
+      );
+      allow update, delete: if false;
     }
 
     match /kindy_midterm_class_learning_goals/{documentId} {

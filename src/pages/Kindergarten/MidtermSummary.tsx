@@ -4,7 +4,7 @@ import {
   Sparkles, Loader2, Save, Smile, Meh, Frown, Angry, AlertCircle, CheckCircle2,
   Calendar, Edit3, BookOpen, Clock, Heart, ShieldAlert, ArrowRight, Eye, RefreshCw, 
   ChevronDown, ChevronUp, Check, Trash2, ClipboardList, ChevronLeft, ChevronRight,
-  FileSpreadsheet, Send, FileText, HelpCircle
+  FileSpreadsheet, Send, FileText, HelpCircle, CheckSquare, XSquare, History
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
@@ -64,7 +64,9 @@ interface MidtermSummaryDraft {
     dasarLiterasiSteam: string;
   };
 
-  status: 'DRAFT' | 'READY_FOR_REVIEW' | 'APPROVED' | 'PUBLISHED';
+  status: 'DRAFT' | 'READY_FOR_REVIEW' | 'PERLU_REVISI' | 'APPROVED' | 'PUBLISHED';
+
+  reviewNote?: string;
 
   compiledWeeklySources: CompiledWeeklySource[];
 
@@ -78,6 +80,24 @@ interface MidtermSummaryDraft {
 
   submittedForReviewAt?: number | null;
   submittedForReviewBy?: string | null;
+}
+
+interface MidtermSummaryHistoryLog {
+  id?: string;
+  studentId: string;
+  classId: string;
+  academicYear: string;
+  semester: number;
+  periodKey: string;
+  version: number;
+  action: 'CREATED' | 'EDITED' | 'SUBMITTED_FOR_REVIEW' | 'RETURNED_FOR_REVISION' | 'APPROVED' | 'PUBLISHED';
+  narrativeBefore: string;
+  narrativeAfter: string;
+  actorEmail: string;
+  actorName: string;
+  actorRole: string;
+  timestamp: number;
+  reviewNote?: string;
 }
 
 export default function MidtermSummary() {
@@ -252,8 +272,14 @@ export default function MidtermSummary() {
   }, [startDateStr, endDateStr]);
 
   // Tabs layout selection
-  // Tabs: 'kompilasi' (Kompilasi Mingguan) | 'editor' (Buat GenCom Midterm) | 'publish' (Publish PDF)
-  const [activeTab, setActiveTab] = React.useState<'kompilasi' | 'editor' | 'publish'>('editor');
+  // Tabs: 'kompilasi' (Kompilasi Mingguan) | 'editor' (Buat GenCom Midterm) | 'review' (Review & ACC GenCom) | 'publish' (Publish PDF)
+  const [activeTab, setActiveTab] = React.useState<'kompilasi' | 'editor' | 'review' | 'publish'>('kompilasi');
+
+  // Review & Audit States
+  const [reviewNotes, setReviewNotes] = React.useState<Record<string, string>>({});
+  const [selectedAuditStudent, setSelectedAuditStudent] = React.useState<any | null>(null);
+  const [auditLogs, setAuditLogs] = React.useState<any[]>([]);
+  const [isFetchingAuditLogs, setIsFetchingAuditLogs] = React.useState(false);
 
   // Class-level Learning Goals state
   const [classLearningGoals, setClassLearningGoals] = React.useState<any | null>(null);
@@ -481,14 +507,17 @@ export default function MidtermSummary() {
       logFirestoreRead('attendanceReports', snap.docs.length || 1);
       
       const draftsMap: Record<string, MidtermSummaryDraft> = {};
+      const notesMap: Record<string, string> = {};
       snap.docs.forEach(docSnap => {
         const data = docSnap.data() as MidtermSummaryDraft;
         draftsMap[data.studentId] = {
           ...data,
           id: docSnap.id
         };
+        notesMap[data.studentId] = data.reviewNote || '';
       });
       setMidtermDrafts(draftsMap);
+      setReviewNotes(notesMap);
 
       // Initialize local editor comment if the active student has a draft
       if (selectedStudentId) {
@@ -502,6 +531,74 @@ export default function MidtermSummary() {
       setIsFetchingDrafts(false);
     }
   }, [selectedClassId, activeYear, semester, startDateStr, endDateStr, selectedStudentId]);
+
+  const saveAuditHistory = async (
+    studentId: string,
+    action: 'CREATED' | 'EDITED' | 'SUBMITTED_FOR_REVIEW' | 'RETURNED_FOR_REVISION' | 'APPROVED' | 'PUBLISHED',
+    narrativeBefore: string,
+    narrativeAfter: string,
+    note?: string
+  ) => {
+    try {
+      const q = query(
+        collection(db, 'midterm_summary_history'),
+        where('studentId', '==', studentId),
+        where('semester', '==', semester),
+        where('periodKey', '==', `${startDateStr}_${endDateStr}`)
+      );
+      const snap = await getDocs(q);
+      let maxVersion = 0;
+      snap.docs.forEach(docSnap => {
+        const v = docSnap.data().version || 0;
+        if (v > maxVersion) maxVersion = v;
+      });
+      const nextVersion = maxVersion + 1;
+
+      const historyPayload: MidtermSummaryHistoryLog = {
+        studentId,
+        classId: selectedClassId,
+        academicYear: activeYear || '2026/2027',
+        semester,
+        periodKey: `${startDateStr}_${endDateStr}`,
+        version: nextVersion,
+        action,
+        narrativeBefore,
+        narrativeAfter,
+        actorEmail: profile?.email || 'system',
+        actorName: profile?.displayName || profile?.name || 'System User',
+        actorRole: profile?.role || 'TEACHER',
+        timestamp: Date.now(),
+        reviewNote: note || ''
+      };
+
+      const docRef = doc(collection(db, 'midterm_summary_history'));
+      await setDoc(docRef, historyPayload);
+    } catch (err) {
+      console.error('[MidtermSummary] Failed to save audit history:', err);
+    }
+  };
+
+  const fetchAuditLogsForStudent = async (studentId: string) => {
+    setIsFetchingAuditLogs(true);
+    try {
+      const q = query(
+        collection(db, 'midterm_summary_history'),
+        where('studentId', '==', studentId),
+        where('semester', '==', semester),
+        where('periodKey', '==', `${startDateStr}_${endDateStr}`)
+      );
+      const snap = await getDocs(q);
+      const logs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Sort logs by version descending (most recent first)
+      logs.sort((a: any, b: any) => b.version - a.version);
+      setAuditLogs(logs);
+    } catch (err) {
+      console.error('[MidtermSummary] Error fetching audit logs:', err);
+      toast.error('Gagal mengambil riwayat audit.');
+    } finally {
+      setIsFetchingAuditLogs(false);
+    }
+  };
 
   const fetchPublishedReportsForClass = React.useCallback(async () => {
     if (!selectedClassId) return;
@@ -664,6 +761,13 @@ export default function MidtermSummary() {
       setHasUnsavedChanges(false);
     }
   }, [selectedStudentId, midtermDrafts]);
+
+  // Load audit logs automatically when student or tab changes to review
+  React.useEffect(() => {
+    if (selectedStudentId && activeTab === 'review') {
+      fetchAuditLogsForStudent(selectedStudentId);
+    }
+  }, [selectedStudentId, activeTab]);
 
   // Browser reload/navigation warning
   React.useEffect(() => {
@@ -857,6 +961,15 @@ export default function MidtermSummary() {
         }
       }));
 
+      // Log in audit history
+      await saveAuditHistory(
+        selectedStudentId,
+        activeDraft ? 'EDITED' : 'CREATED',
+        activeDraft?.midtermGeneralComment || '',
+        midtermComment,
+        'Draf disimpan melalui kompilasi mingguan.'
+      );
+
       toast.success('Kompilasi mingguan berhasil disimpan! Mengalihkan ke tab Editor...', { id: toastId });
       setActiveTab('editor');
     } catch (err) {
@@ -867,13 +980,20 @@ export default function MidtermSummary() {
     }
   };
 
-  // Save Draft Action (Status remains DRAFT)
+  // Save Draft Action (Status remains unchanged unless previously APPROVED, which resets to READY_FOR_REVIEW)
   const handleSaveDraft = async () => {
     if (!selectedStudentObj || !activeClassObj) return;
     setIsSavingDraft(true);
     
     const draftId = getMidtermDraftId(selectedStudentId);
     const activeDraft = midtermDrafts[selectedStudentId];
+    const currentStatus = activeDraft?.status || 'DRAFT';
+    let newStatus = currentStatus;
+    const wasApproved = currentStatus === 'APPROVED';
+
+    if (wasApproved) {
+      newStatus = 'READY_FOR_REVIEW';
+    }
 
     const payload: Partial<MidtermSummaryDraft> = {
       unit: 'KINDERGARTEN',
@@ -889,7 +1009,7 @@ export default function MidtermSummary() {
       endDate: endDateStr,
       periodLabel: formattedPeriodRangeIndo,
       midtermGeneralComment: localComment,
-      status: 'DRAFT',
+      status: newStatus,
       compiledWeeklySources: activeDraft?.compiledWeeklySources || [],
       updatedAt: Date.now(),
       updatedBy: profile?.email || 'System'
@@ -914,8 +1034,21 @@ export default function MidtermSummary() {
         } as MidtermSummaryDraft
       }));
 
+      // Log in audit history
+      await saveAuditHistory(
+        selectedStudentId,
+        wasApproved ? 'SUBMITTED_FOR_REVIEW' : 'EDITED',
+        activeDraft?.midtermGeneralComment || '',
+        localComment,
+        wasApproved ? 'Otomatis diajukan kembali karena narasi diubah setelah ACC.' : 'Draf disimpan oleh guru.'
+      );
+
       setHasUnsavedChanges(false);
-      toast.success('Draf berhasil disimpan! ✨', { id: toastId });
+      if (wasApproved) {
+        toast.warning('Narasi telah diubah setelah ACC dan otomatis diajukan kembali untuk review.', { id: toastId, duration: 6000 });
+      } else {
+        toast.success('Draf berhasil disimpan! ✨', { id: toastId });
+      }
     } catch (err) {
       console.error('[MidtermSummary] Save error:', err);
       toast.error('Gagal menyimpan draf.', { id: toastId });
@@ -988,8 +1121,17 @@ export default function MidtermSummary() {
         } as MidtermSummaryDraft
       }));
 
+      // Log in audit history
+      await saveAuditHistory(
+        selectedStudentId,
+        'SUBMITTED_FOR_REVIEW',
+        activeDraft?.midtermGeneralComment || '',
+        localComment,
+        'Diajukan untuk review oleh guru.'
+      );
+
       setHasUnsavedChanges(false);
-      toast.success('Review berhasil diajukan dan draf dikunci! 🚀', { id: toastId });
+      toast.success('Review berhasil diajukan! 🚀', { id: toastId });
     } catch (err) {
       console.error('[MidtermSummary] Submit error:', err);
       toast.error('Gagal mengajukan review.', { id: toastId });
@@ -1310,6 +1452,15 @@ export default function MidtermSummary() {
         } as MidtermSummaryDraft
       }));
 
+      // Log in audit history
+      await saveAuditHistory(
+        selectedStudentId,
+        'PUBLISHED',
+        activeDraft.midtermGeneralComment || '',
+        activeDraft.midtermGeneralComment || '',
+        `Laporan Midterm dipublikasikan (v${nextVersion}).`
+      );
+
       await fetchPublishedReportsForClass();
 
       toast.success(`Midterm Report berhasil dipublikasikan untuk ${selectedStudentObj?.name}! 🎉`, { id: toastId });
@@ -1322,38 +1473,12 @@ export default function MidtermSummary() {
     }
   };
 
-  const handleRejectDraft = async () => {
-    if (!selectedStudentId) return;
-    const activeDraft = midtermDrafts[selectedStudentId];
-    if (!activeDraft) return;
-
-    if (!window.confirm(`Apakah Anda yakin ingin mengembalikan draf ini ke status DRAFT untuk diperbaiki oleh guru kelas?`)) {
+  const handleApproveStudentDraft = async (studentId: string, note: string) => {
+    const activeDraft = midtermDrafts[studentId];
+    if (!activeDraft) {
+      toast.error("Draft Midterm belum dibuat untuk siswa ini.");
       return;
     }
-
-    const draftId = getMidtermDraftId(selectedStudentId);
-    const toastId = toast.loading("Mengembalikan draf...");
-    try {
-      await setDoc(doc(db, 'midterm_summary_drafts', draftId), { status: 'DRAFT' }, { merge: true });
-      
-      setMidtermDrafts(prev => ({
-        ...prev,
-        [selectedStudentId]: {
-          ...prev[selectedStudentId],
-          status: 'DRAFT'
-        } as MidtermSummaryDraft
-      }));
-      toast.success("Draf berhasil dikembalikan ke status DRAFT.", { id: toastId });
-    } catch (err: any) {
-      console.error("Error returning draft:", err);
-      toast.error(`Gagal memproses: ${err.message}`, { id: toastId });
-    }
-  };
-
-  const handleApproveDraft = async () => {
-    if (!selectedStudentId) return;
-    const activeDraft = midtermDrafts[selectedStudentId];
-    if (!activeDraft) return;
 
     if (!isAuthorizer) {
       toast.error("Hanya Kepala TK atau Super Admin yang dapat menyetujui draf.");
@@ -1365,33 +1490,118 @@ export default function MidtermSummary() {
       return;
     }
 
-    if (!window.confirm(`Apakah Anda yakin ingin menyetujui draf Midterm Report untuk ${selectedStudentObj?.name}?`)) {
+    const studObj = classStudents.find(s => s.id === studentId);
+
+    if (!window.confirm(`Apakah Anda yakin ingin menyetujui (ACC) draf Midterm Report untuk ${studObj?.name || 'siswa ini'}?`)) {
       return;
     }
 
-    const draftId = getMidtermDraftId(selectedStudentId);
+    const draftId = getMidtermDraftId(studentId);
     const toastId = toast.loading("Menyetujui draf...");
     try {
       await setDoc(doc(db, 'midterm_summary_drafts', draftId), { 
         status: 'APPROVED',
         approvedAt: Date.now(),
-        approvedBy: profile?.email || 'System'
+        approvedBy: profile?.email || 'System',
+        reviewNote: note || ''
       }, { merge: true });
       
       setMidtermDrafts(prev => ({
         ...prev,
-        [selectedStudentId]: {
-          ...prev[selectedStudentId],
+        [studentId]: {
+          ...prev[studentId],
           status: 'APPROVED',
           approvedAt: Date.now(),
-          approvedBy: profile?.email || 'System'
+          approvedBy: profile?.email || 'System',
+          reviewNote: note || ''
         } as MidtermSummaryDraft
       }));
-      toast.success("Draf berhasil disetujui! Status kini APPROVED. Guru atau Admin sekarang dapat menerbitkan PDF.", { id: toastId });
+
+      // Log in audit history
+      await saveAuditHistory(
+        studentId,
+        'APPROVED',
+        activeDraft.midtermGeneralComment || '',
+        activeDraft.midtermGeneralComment || '',
+        note || 'Disetujui oleh reviewer.'
+      );
+
+      toast.success("Draf berhasil disetujui! Status kini APPROVED.", { id: toastId });
     } catch (err: any) {
       console.error("Error approving draft:", err);
       toast.error(`Gagal menyetujui draf: ${err.message}`, { id: toastId });
     }
+  };
+
+  const handleRejectStudentDraft = async (studentId: string, note: string) => {
+    const activeDraft = midtermDrafts[studentId];
+    if (!activeDraft) {
+      toast.error("Draft Midterm belum dibuat untuk siswa ini.");
+      return;
+    }
+
+    if (!isAuthorizer) {
+      toast.error("Hanya Kepala TK atau Super Admin yang dapat menolak draf.");
+      return;
+    }
+
+    if (!note.trim()) {
+      toast.error("Wajib menyertakan Catatan Proofreading sebelum mengembalikan untuk revisi.");
+      return;
+    }
+
+    const studObj = classStudents.find(s => s.id === studentId);
+
+    if (!window.confirm(`Apakah Anda yakin ingin mengembalikan draf ${studObj?.name || 'siswa ini'} untuk revisi?`)) {
+      return;
+    }
+
+    const draftId = getMidtermDraftId(studentId);
+    const toastId = toast.loading("Mengembalikan draf...");
+    try {
+      await setDoc(doc(db, 'midterm_summary_drafts', draftId), { 
+        status: 'PERLU_REVISI',
+        reviewNote: note
+      }, { merge: true });
+      
+      setMidtermDrafts(prev => ({
+        ...prev,
+        [studentId]: {
+          ...prev[studentId],
+          status: 'PERLU_REVISI',
+          reviewNote: note
+        } as MidtermSummaryDraft
+      }));
+
+      // Log in audit history
+      await saveAuditHistory(
+        studentId,
+        'RETURNED_FOR_REVISION',
+        activeDraft.midtermGeneralComment || '',
+        activeDraft.midtermGeneralComment || '',
+        note
+      );
+
+      toast.success("Draf berhasil dikembalikan dengan status PERLU_REVISI.", { id: toastId });
+    } catch (err: any) {
+      console.error("Error returning draft:", err);
+      toast.error(`Gagal mengembalikan draf: ${err.message}`, { id: toastId });
+    }
+  };
+
+  const handleRejectDraft = async () => {
+    if (!selectedStudentId) return;
+    const note = window.prompt("Wajib menyertakan Catatan Proofreading sebelum mengembalikan untuk revisi:") || "";
+    if (!note.trim()) {
+      toast.error("Catatan revisi tidak boleh kosong.");
+      return;
+    }
+    await handleRejectStudentDraft(selectedStudentId, note);
+  };
+
+  const handleApproveDraft = async () => {
+    if (!selectedStudentId) return;
+    await handleApproveStudentDraft(selectedStudentId, "");
   };
 
   // Helper to determine student roster dot status color
@@ -1399,7 +1609,7 @@ export default function MidtermSummary() {
     const published = publishedReports[studId];
     if (published) {
       return {
-        label: 'Terbit',
+        label: 'Published',
         dotColor: 'bg-blue-500',
         textColor: 'text-blue-700 bg-blue-50 border-blue-150'
       };
@@ -1414,23 +1624,30 @@ export default function MidtermSummary() {
     }
     if (draft.status === 'PUBLISHED') {
       return {
-        label: 'Terbit',
+        label: 'Published',
         dotColor: 'bg-blue-500',
         textColor: 'text-blue-700 bg-blue-50 border-blue-150'
       };
     }
     if (draft.status === 'APPROVED') {
       return {
-        label: 'Disetujui',
+        label: 'ACC',
         dotColor: 'bg-purple-500',
         textColor: 'text-purple-700 bg-purple-50 border-purple-150'
       };
     }
     if (draft.status === 'READY_FOR_REVIEW') {
       return {
-        label: 'Siap ditinjau',
+        label: 'Menunggu Review',
         dotColor: 'bg-emerald-500 animate-pulse',
         textColor: 'text-emerald-700 bg-emerald-50 border-emerald-150'
+      };
+    }
+    if (draft.status === 'PERLU_REVISI') {
+      return {
+        label: 'Perlu Revisi',
+        dotColor: 'bg-rose-500',
+        textColor: 'text-rose-700 bg-rose-50 border-rose-150'
       };
     }
     return {
@@ -1440,10 +1657,22 @@ export default function MidtermSummary() {
     };
   };
 
+  const getCompilationStatus = (studId: string) => {
+    const draft = midtermDrafts[studId];
+    if (!draft || !draft.compiledWeeklySources || draft.compiledWeeklySources.length === 0) {
+      return {
+        label: 'Belum ada kompilasi',
+        color: 'text-amber-700 bg-amber-50/70 border-amber-200'
+      };
+    }
+    return {
+      label: 'Kompilasi Tersedia',
+      color: 'text-emerald-700 bg-emerald-50/70 border-emerald-200'
+    };
+  };
+
   const currentStudentStatus = getStudentStatusBadge(selectedStudentId);
   const isLockedForEditing = (
-    midtermDrafts[selectedStudentId]?.status === 'READY_FOR_REVIEW' || 
-    midtermDrafts[selectedStudentId]?.status === 'APPROVED' || 
     midtermDrafts[selectedStudentId]?.status === 'PUBLISHED' || 
     !!publishedReports[selectedStudentId]
   ) && profile?.role !== 'SUPER_ADMIN' && profile?.role !== 'HEAD_UNIT' && profile?.role !== 'kindergarten_head';
@@ -1817,17 +2046,6 @@ export default function MidtermSummary() {
       {/* INTERNAL WORKFLOW TAB NAVIGATION */}
       <div className="flex border-b border-gray-250 shrink-0 gap-1.5 overflow-x-auto">
         <button
-          onClick={() => confirmNavigation('tab', 'editor')}
-          className={cn(
-            "px-5 py-3 text-xs font-black transition-all cursor-pointer border-b-2 -mb-[2px] tracking-tight whitespace-nowrap",
-            activeTab === 'editor'
-              ? "border-[#109E58] text-[#109E58]"
-              : "border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200"
-          )}
-        >
-          1. Buat GenCom Midterm
-        </button>
-        <button
           onClick={() => confirmNavigation('tab', 'kompilasi')}
           className={cn(
             "px-5 py-3 text-xs font-black transition-all cursor-pointer border-b-2 -mb-[2px] tracking-tight whitespace-nowrap",
@@ -1836,7 +2054,29 @@ export default function MidtermSummary() {
               : "border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200"
           )}
         >
-          2. Kompilasi Mingguan
+          1. Kompilasi Mingguan
+        </button>
+        <button
+          onClick={() => confirmNavigation('tab', 'editor')}
+          className={cn(
+            "px-5 py-3 text-xs font-black transition-all cursor-pointer border-b-2 -mb-[2px] tracking-tight whitespace-nowrap",
+            activeTab === 'editor'
+              ? "border-[#109E58] text-[#109E58]"
+              : "border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200"
+          )}
+        >
+          2. Buat & Edit GenCom
+        </button>
+        <button
+          onClick={() => confirmNavigation('tab', 'review')}
+          className={cn(
+            "px-5 py-3 text-xs font-black transition-all cursor-pointer border-b-2 -mb-[2px] tracking-tight whitespace-nowrap",
+            activeTab === 'review'
+              ? "border-[#109E58] text-[#109E58]"
+              : "border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200"
+          )}
+        >
+          3. Review & ACC GenCom
         </button>
         <button
           onClick={() => confirmNavigation('tab', 'publish')}
@@ -1847,7 +2087,7 @@ export default function MidtermSummary() {
               : "border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200"
           )}
         >
-          3. Publish PDF
+          4. Publish PDF
         </button>
       </div>
 
@@ -1893,9 +2133,14 @@ export default function MidtermSummary() {
                         )}>
                           {stud.name}
                         </p>
-                        <p className="text-[10px] text-gray-400 font-medium">
-                          No. Absen: {stud.attendanceNumber || stud.noAbsen || '-'}
+                        <p className="text-[10px] text-gray-400 font-medium flex items-center gap-1.5">
+                          <span>No. Absen: {stud.attendanceNumber || stud.noAbsen || '-'}</span>
                         </p>
+                        <div className="pt-0.5">
+                          <span className={cn("px-1.5 py-0.5 rounded text-[8px] font-black tracking-tight border", getCompilationStatus(stud.id).color)}>
+                            {getCompilationStatus(stud.id).label}
+                          </span>
+                        </div>
                       </div>
                       
                       {/* Status indicator dot */}
@@ -2223,6 +2468,271 @@ export default function MidtermSummary() {
             </div>
           )}
 
+          {/* TAB 3: REVIEW & ACC GENCOM CONTENT */}
+          {activeTab === 'review' && (
+            <div className="space-y-6 lg:col-span-9">
+              
+              <div className="bg-gradient-to-r from-purple-500/5 to-indigo-500/5 p-6 rounded-3xl border border-purple-500/10 space-y-4">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-purple-100 rounded-xl text-purple-700 mt-0.5">
+                    <CheckSquare size={18} />
+                  </div>
+                  <div className="space-y-1 flex-1">
+                    <h2 className="text-sm font-black text-purple-900 font-sans">Review & ACC General Comments Midterm</h2>
+                    <p className="text-xs text-gray-500 font-medium leading-relaxed font-sans">
+                      Tinjau hasil penyusunan draf General Comments Midterm untuk siswa <b>{selectedStudentObj?.name || 'Pilih Siswa'}</b>.
+                      Kepala Sekolah atau Reviewer berwenang memberikan persetujuan (ACC) atau mengembalikan draf disertai catatan proofreading untuk direvisi oleh guru kelas.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Class Review Summary Metrics Bar */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-2 border-t border-purple-100/60 text-xs">
+                  <div className="bg-white/80 p-2.5 rounded-2xl border border-purple-100 text-center">
+                    <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">Total Siswa</span>
+                    <span className="text-sm font-black text-gray-800">{classStudents.length}</span>
+                  </div>
+                  <div className="bg-amber-50/70 p-2.5 rounded-2xl border border-amber-150 text-center">
+                    <span className="text-[9px] font-black text-amber-700 uppercase tracking-wider block">Draft</span>
+                    <span className="text-sm font-black text-amber-800">
+                      {classStudents.filter(s => !midtermDrafts[s.id] || midtermDrafts[s.id]?.status === 'DRAFT').length}
+                    </span>
+                  </div>
+                  <div className="bg-emerald-50/70 p-2.5 rounded-2xl border border-emerald-150 text-center">
+                    <span className="text-[9px] font-black text-emerald-700 uppercase tracking-wider block">Menunggu Review</span>
+                    <span className="text-sm font-black text-emerald-800">
+                      {classStudents.filter(s => midtermDrafts[s.id]?.status === 'READY_FOR_REVIEW').length}
+                    </span>
+                  </div>
+                  <div className="bg-rose-50/70 p-2.5 rounded-2xl border border-rose-150 text-center">
+                    <span className="text-[9px] font-black text-rose-700 uppercase tracking-wider block">Perlu Revisi</span>
+                    <span className="text-sm font-black text-rose-800">
+                      {classStudents.filter(s => midtermDrafts[s.id]?.status === 'PERLU_REVISI').length}
+                    </span>
+                  </div>
+                  <div className="bg-purple-50/70 p-2.5 rounded-2xl border border-purple-150 text-center">
+                    <span className="text-[9px] font-black text-purple-700 uppercase tracking-wider block">ACC</span>
+                    <span className="text-sm font-black text-purple-800">
+                      {classStudents.filter(s => midtermDrafts[s.id]?.status === 'APPROVED').length}
+                    </span>
+                  </div>
+                  <div className="bg-blue-50/70 p-2.5 rounded-2xl border border-blue-150 text-center">
+                    <span className="text-[9px] font-black text-blue-700 uppercase tracking-wider block">Published</span>
+                    <span className="text-sm font-black text-blue-800">
+                      {classStudents.filter(s => midtermDrafts[s.id]?.status === 'PUBLISHED' || publishedReports[s.id]).length}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {!activeDraft ? (
+                <div className="bg-white p-8 rounded-3xl border border-gray-150 text-center space-y-3">
+                  <div className="w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center mx-auto text-gray-400">
+                    <FileText size={20} />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-xs font-black text-gray-700 font-sans uppercase">Belum Ada Draf</h3>
+                    <p className="text-xs text-gray-400 max-w-sm mx-auto font-sans leading-relaxed">
+                      Siswa ini belum memiliki draf General Comments Midterm. Guru kelas harus menyusun draf terlebih dahulu di tab <b>Buat & Edit GenCom</b>.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  
+                  {/* Status, Author, and Narrative Display */}
+                  <div className="bg-white p-6 rounded-3xl border border-gray-150 shadow-sm space-y-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-gray-100">
+                      <div className="space-y-1">
+                        <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">Status Saat Ini</span>
+                        <div className="flex items-center gap-2">
+                          <span className={cn("px-2.5 py-1 rounded-full text-xs font-black border", currentStudentStatus.textColor)}>
+                            {currentStudentStatus.label}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="text-right space-y-1 text-xs text-gray-400 font-sans">
+                        <p>Dibuat oleh: <span className="font-bold text-gray-700">{activeDraft.createdBy || 'Guru'}</span></p>
+                        <p>Terakhir diperbarui: <span className="font-bold text-gray-700">{new Date(activeDraft.updatedAt).toLocaleString('id-ID')}</span></p>
+                      </div>
+                    </div>
+
+                    {/* General Comment Text Display */}
+                    <div className="space-y-2">
+                      <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Isi General Comments Midterm</span>
+                      <div className="bg-gray-50/50 border border-gray-150 rounded-2xl p-4 text-xs text-gray-750 font-sans leading-relaxed whitespace-pre-wrap max-h-[350px] overflow-y-auto">
+                        {activeDraft.midtermGeneralComment || <span className="italic text-gray-400">(Belum terisi)</span>}
+                      </div>
+                    </div>
+
+                    {/* Proofreading Action Form for Reviewer */}
+                    <div className="space-y-4 pt-3 border-t border-gray-100">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
+                          Catatan Proofreading / Revisi {isAuthorizer && <span className="text-rose-500">* (Wajib jika menolak/revisi)</span>}
+                        </label>
+                        <textarea
+                          rows={3}
+                          value={reviewNotes[selectedStudentId] || ''}
+                          onChange={(e) => setReviewNotes(prev => ({ ...prev, [selectedStudentId]: e.target.value }))}
+                          disabled={!isAuthorizer}
+                          placeholder={
+                            isAuthorizer
+                              ? "Berikan arahan perbaikan yang spesifik jika Anda meminta revisi, atau catatan pujian/tambahan sebelum menyetujui draf..."
+                              : "Hanya Kepala TK atau Super Admin yang dapat mengisi catatan review ini."
+                          }
+                          className="w-full bg-white hover:bg-gray-50/30 focus:bg-white border border-gray-250 focus:border-purple-500 rounded-2xl p-3.5 text-xs text-gray-800 leading-relaxed outline-none transition-all placeholder:text-gray-300 font-sans focus:ring-2 focus:ring-purple-100"
+                        />
+                      </div>
+
+                      {isAuthorizer ? (
+                        <div className="flex items-center justify-end gap-3 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleRejectStudentDraft(selectedStudentId, reviewNotes[selectedStudentId] || '')}
+                            disabled={!reviewNotes[selectedStudentId]?.trim()}
+                            className="flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100/75 text-rose-700 font-extrabold text-xs px-4.5 py-2.5 rounded-xl border border-rose-150 cursor-pointer transition-all disabled:opacity-45 disabled:cursor-not-allowed"
+                          >
+                            <XSquare size={12} />
+                            Kembalikan untuk Revisi
+                          </button>
+                          
+                          <button
+                            type="button"
+                            onClick={() => handleApproveStudentDraft(selectedStudentId, reviewNotes[selectedStudentId] || '')}
+                            className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs px-4.5 py-2.5 rounded-xl border border-purple-500 cursor-pointer transition-all shadow-md shadow-purple-600/10"
+                          >
+                            <CheckSquare size={12} />
+                            ACC & Setujui Draf
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="bg-amber-50/40 border border-amber-150 rounded-xl p-3 text-xs text-amber-700 font-sans leading-relaxed">
+                          Anda masuk sebagai Guru Kelas. Anda tidak memiliki hak akses untuk menyetujui atau menolak draf Midterm ini. Silakan tunggu peninjauan dari Kepala TK atau Super Admin.
+                        </div>
+                      )}
+                    </div>
+
+                  </div>
+
+                  {/* Historical logs for selected student */}
+                  {selectedStudentId && (
+                    <div className="pt-2">
+                      <div className="bg-white p-6 rounded-3xl border border-gray-150 shadow-sm space-y-4">
+                        <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+                          <div className="flex items-center gap-2">
+                            <History size={16} className="text-gray-500" />
+                            <h3 className="text-xs font-black text-gray-800 uppercase tracking-tight font-sans">
+                              Audit Trail: Riwayat Perubahan & Review
+                            </h3>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => fetchAuditLogsForStudent(selectedStudentId)}
+                            className="text-[10px] font-black text-emerald-600 hover:text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100 transition-all cursor-pointer"
+                          >
+                            Refresh Riwayat
+                          </button>
+                        </div>
+
+                        {isFetchingAuditLogs ? (
+                          <div className="py-8 text-center text-xs text-gray-400 italic">
+                            Mengambil riwayat audit...
+                          </div>
+                        ) : auditLogs.length === 0 ? (
+                          <div className="py-8 text-center text-xs text-gray-400 italic">
+                            Belum ada riwayat aktivitas yang tercatat untuk siswa ini.
+                          </div>
+                        ) : (
+                          <div className="space-y-4 max-h-[300px] overflow-y-auto pr-1">
+                            {auditLogs.map((log: any, idx) => {
+                              let actionBadgeColor = "bg-gray-100 text-gray-650";
+                              let actionLabel = log.action;
+                              if (log.action === 'CREATED') {
+                                actionBadgeColor = "bg-blue-50 text-blue-750 border-blue-150";
+                                actionLabel = "Draf Dibuat";
+                              } else if (log.action === 'EDITED') {
+                                actionBadgeColor = "bg-amber-50 text-amber-700 border-amber-150";
+                                actionLabel = "Draf Diperbarui";
+                              } else if (log.action === 'SUBMITTED_FOR_REVIEW') {
+                                actionBadgeColor = "bg-emerald-50 text-emerald-700 border-emerald-150";
+                                actionLabel = "Diajukan Review";
+                              } else if (log.action === 'RETURNED_FOR_REVISION') {
+                                actionBadgeColor = "bg-rose-50 text-rose-750 border-rose-150";
+                                actionLabel = "Perlu Revisi";
+                              } else if (log.action === 'APPROVED') {
+                                actionBadgeColor = "bg-purple-50 text-purple-750 border-purple-150";
+                                actionLabel = "Disetujui (ACC)";
+                              } else if (log.action === 'PUBLISHED') {
+                                actionBadgeColor = "bg-teal-50 text-teal-700 border-teal-150";
+                                actionLabel = "Diterbitkan";
+                              }
+
+                              return (
+                                <div key={log.id || idx} className="border border-gray-100 rounded-xl p-3.5 space-y-2.5 bg-gray-50/40 text-xs">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[10px] font-black text-gray-400 font-mono">
+                                        v{log.version}
+                                      </span>
+                                      <span className={cn("px-2 py-0.5 rounded-full text-[9px] font-black tracking-wider uppercase border", actionBadgeColor)}>
+                                        {actionLabel}
+                                      </span>
+                                    </div>
+                                    <span className="text-[10px] text-gray-400 font-mono">
+                                      {new Date(log.timestamp).toLocaleString('id-ID')}
+                                    </span>
+                                  </div>
+
+                                  <div className="text-gray-500 space-y-0.5">
+                                    <p>Oleh: <span className="font-extrabold text-gray-700">{log.actorName}</span> ({log.actorEmail})</p>
+                                    <p>Peran: <span className="font-bold text-gray-650">{log.actorRole}</span></p>
+                                  </div>
+
+                                  {log.reviewNote && (
+                                    <div className="bg-rose-50/50 border border-rose-100 rounded-lg p-2.5 text-xs text-rose-850">
+                                      <p className="font-black text-[10px] uppercase tracking-wide text-rose-800 mb-0.5">Catatan Reviewer:</p>
+                                      <p className="font-medium whitespace-pre-wrap">{log.reviewNote}</p>
+                                    </div>
+                                  )}
+
+                                  {log.narrativeAfter && log.narrativeAfter !== log.narrativeBefore && (
+                                    <details className="cursor-pointer group">
+                                      <summary className="text-[10px] font-black text-emerald-600 hover:text-emerald-700 select-none outline-none">
+                                        Lihat Perubahan Narasi
+                                      </summary>
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2 pt-2 border-t border-gray-150 text-[11px] leading-relaxed">
+                                        <div className="space-y-1">
+                                          <span className="text-[9px] font-black uppercase text-gray-400 tracking-wider">Sebelumnya</span>
+                                          <div className="bg-white border border-gray-150 rounded-lg p-2 text-gray-400 max-h-[100px] overflow-y-auto whitespace-pre-wrap font-sans">
+                                            {log.narrativeBefore || <span className="italic">(Kosong)</span>}
+                                          </div>
+                                        </div>
+                                        <div className="space-y-1">
+                                          <span className="text-[9px] font-black uppercase text-[#109E58] tracking-wider">Sesudahnya</span>
+                                          <div className="bg-emerald-50/20 border border-emerald-100 rounded-lg p-2 text-gray-750 max-h-[100px] overflow-y-auto whitespace-pre-wrap font-sans">
+                                            {log.narrativeAfter}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </details>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+              )}
+
+            </div>
+          )}
+
           {/* TAB 3: PUBLISH PDF CONTENT */}
           {activeTab === 'publish' && (
             <div className="space-y-6 lg:col-span-9">
@@ -2343,10 +2853,19 @@ export default function MidtermSummary() {
                             </>
                           )}
 
+                          {/* If status is PERLU_REVISI */}
+                          {activeDraft.status === 'PERLU_REVISI' && (
+                            <div className="text-xs text-rose-700 bg-rose-50 px-3 py-2.5 rounded-xl border border-rose-150 font-semibold flex items-center gap-1.5 flex-1">
+                              <AlertCircle size={14} className="shrink-0" />
+                              <span>Draf dikembalikan oleh Reviewer untuk direvisi. Silakan perbaiki di tab "Buat & Edit GenCom" sesuai catatan revisi.</span>
+                            </div>
+                          )}
+
                           {/* If status is DRAFT */}
                           {activeDraft.status === 'DRAFT' && (
-                            <div className="text-xs text-amber-700 bg-amber-50 px-3 py-2.5 rounded-xl border border-amber-150 font-semibold flex items-center gap-1.5">
-                              Draf sedang dikerjakan oleh guru. Silakan selesaikan di tab "Buat GenCom Midterm" lalu klik "Ajukan Review ke Admin".
+                            <div className="text-xs text-amber-700 bg-amber-50 px-3 py-2.5 rounded-xl border border-amber-150 font-semibold flex items-center gap-1.5 flex-1">
+                              <Clock size={14} className="shrink-0" />
+                              <span>Draf sedang dikerjakan oleh guru. Silakan selesaikan di tab "Buat & Edit GenCom" lalu klik "Ajukan Review".</span>
                             </div>
                           )}
 
