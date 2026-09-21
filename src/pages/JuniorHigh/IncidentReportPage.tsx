@@ -34,7 +34,8 @@ import {
   submitJHIncidentReport, 
   approveJHIncidentReport,
   getJHLogoUrl,
-  getJHSignatoryConfig
+  getJHSignatoryConfig,
+  getHomeroomTeacherForClass
 } from '../../services/incidentReportService';
 import { LuminaLogo } from '../../components/LuminaLogo';
 import { jsPDF } from 'jspdf';
@@ -90,6 +91,33 @@ export function IncidentReportPage() {
     principalNIY?: string;
     principalSignatureUrl: string | null;
   } | null>(null);
+
+  // Homeroom Teacher info for selected class
+  const [homeroomTeacherInfo, setHomeroomTeacherInfo] = React.useState<{
+    name: string;
+    signatureUrl: string | null;
+  } | null>(null);
+
+  // Load Homeroom Teacher info when viewing a report
+  React.useEffect(() => {
+    if (!viewingReport) {
+      setHomeroomTeacherInfo(null);
+      return;
+    }
+
+    let isCancelled = false;
+    const loadHT = async () => {
+      const info = await getHomeroomTeacherForClass(viewingReport.classId, viewingReport.classNameSnapshot);
+      if (!isCancelled) {
+        setHomeroomTeacherInfo(info);
+      }
+    };
+
+    loadHT();
+    return () => {
+      isCancelled = true;
+    };
+  }, [viewingReport]);
 
   // UI state for Modals
   const [isFormOpen, setIsFormOpen] = React.useState<boolean>(false);
@@ -552,8 +580,11 @@ export function IncidentReportPage() {
     setIsDownloadingPdf(true);
 
     try {
+      const htInfo = await getHomeroomTeacherForClass(report.classId, report.classNameSnapshot);
+      setHomeroomTeacherInfo(htInfo);
+
       // Wait for React to render the printable DOM element
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await new Promise(resolve => setTimeout(resolve, 350));
 
       if (!pdfPrintRef.current) {
         throw new Error('Element PDF tidak ditemukan');
@@ -592,6 +623,13 @@ export function IncidentReportPage() {
       setIsDownloadingPdf(false);
     }
   };
+
+  const teacherDisplayName = 
+    homeroomTeacherInfo?.name || 
+    (viewingReport?.teacherName && viewingReport.teacherName !== 'Guru Junior High' ? viewingReport.teacherName : '') || 
+    'Wali Kelas';
+
+  const teacherSignature = homeroomTeacherInfo?.signatureUrl || null;
 
   return (
     <div className="space-y-6 pb-12 font-sans">
@@ -1153,7 +1191,7 @@ export function IncidentReportPage() {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">
-                    LAZUARDI JUNIOR HIGH
+                    LAZUARDI GCS JUNIOR HIGH
                   </span>
                   <span className={cn(
                     "px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border",
@@ -1231,12 +1269,12 @@ export function IncidentReportPage() {
               {/* Signatures & Approvals View */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-gray-200">
                 <div className="p-4 bg-blue-50/40 rounded-2xl border border-blue-100 space-y-2">
-                  <span className="text-[10px] font-black uppercase text-blue-600 block">Teacher</span>
-                  <p className="font-extrabold text-gray-900">{viewingReport.teacherName}</p>
-                  {viewingReport.teacherSignatureUrl ? (
-                    <img src={viewingReport.teacherSignatureUrl} alt="Teacher Signature" className="h-12 object-contain" />
+                  <span className="text-[10px] font-black uppercase text-blue-600 block">Wali Kelas / Guru Kelas</span>
+                  <p className="font-extrabold text-gray-900">{teacherDisplayName}</p>
+                  {teacherSignature ? (
+                    <img src={teacherSignature} alt="Teacher Signature" className="h-12 object-contain" />
                   ) : (
-                    <p className="text-[11px] text-gray-400 italic">Nama Guru (Tanpa Tanda Tangan)</p>
+                    <p className="text-[11px] text-gray-400 italic">Nama Wali Kelas (Tanpa Tanda Tangan)</p>
                   )}
                   <p className="text-[10px] text-gray-400">
                     Dibuat pada: {new Date(viewingReport.createdAt).toLocaleString('id-ID')}
@@ -1449,13 +1487,13 @@ export function IncidentReportPage() {
             <div className="border-b-2 border-slate-900 pb-5 flex items-center justify-between gap-4">
               <div className="flex items-center gap-4">
                 {jhLogoUrl ? (
-                  <img src={jhLogoUrl} alt="Lumina Junior High School Logo" className="h-16 max-w-[220px] object-contain" />
+                  <img src={jhLogoUrl} alt="Lazuardi GCS Junior High School Logo" className="h-16 max-w-[220px] object-contain" />
                 ) : (
                   <LuminaLogo size="lg" />
                 )}
                 <div className="space-y-0.5">
                   <h1 className="text-xl font-black italic tracking-tight text-slate-900 uppercase">
-                    LAZUARDI JUNIOR HIGH
+                    LAZUARDI GCS JUNIOR HIGH
                   </h1>
                   <h2 className="text-base font-extrabold text-blue-700 uppercase tracking-wider">
                     Incident Report Form
@@ -1469,7 +1507,6 @@ export function IncidentReportPage() {
                 <span className="inline-block px-3 py-1 bg-emerald-100 text-emerald-800 rounded-lg text-[10px] font-black uppercase tracking-wider">
                   APPROVED
                 </span>
-                <p className="text-[10px] font-bold text-gray-400">Ref: IR-JH-{viewingReport.id?.slice(0, 6).toUpperCase()}</p>
               </div>
             </div>
 
@@ -1546,14 +1583,12 @@ export function IncidentReportPage() {
               <div className="text-center space-y-2">
                 <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">Teacher</span>
                 <div className="h-20 flex items-center justify-center">
-                  {viewingReport.teacherSignatureUrl ? (
-                    <img src={viewingReport.teacherSignatureUrl} alt="Teacher Signature" className="max-h-16 object-contain" />
-                  ) : (
-                    <div className="text-gray-300 text-[10px] italic">Digital Record</div>
-                  )}
+                  {teacherSignature ? (
+                    <img src={teacherSignature} alt="Teacher Signature" className="max-h-16 object-contain" />
+                  ) : null}
                 </div>
                 <div className="border-t border-slate-400 pt-1">
-                  <p className="font-extrabold text-slate-900">{viewingReport.teacherName}</p>
+                  <p className="font-extrabold text-slate-900">{teacherDisplayName}</p>
                   <p className="text-[10px] text-gray-500">
                     Date: {new Date(viewingReport.submittedAt || viewingReport.createdAt).toLocaleDateString('id-ID')}
                   </p>
@@ -1572,19 +1607,12 @@ export function IncidentReportPage() {
                       alt="Principal Signature" 
                       className="max-h-16 object-contain" 
                     />
-                  ) : (
-                    <div className="text-gray-300 text-[10px] italic">Digital Record</div>
-                  )}
+                  ) : null}
                 </div>
                 <div className="border-t border-slate-400 pt-1">
                   <p className="font-extrabold text-slate-900">
                     {viewingReport.approvedByName || jhSignatory?.principalName || 'Kepala Unit Junior High'}
                   </p>
-                  {(viewingReport.principalNIY || jhSignatory?.principalNIY) && (
-                    <p className="text-[10px] text-gray-500 font-mono">
-                      NIY: {viewingReport.principalNIY || jhSignatory?.principalNIY}
-                    </p>
-                  )}
                   <p className="text-[10px] text-gray-500">
                     Approved: {viewingReport.approvedAt ? new Date(viewingReport.approvedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : '-'}
                   </p>
@@ -1595,7 +1623,7 @@ export function IncidentReportPage() {
 
             {/* Confidentiality Footer */}
             <div className="pt-6 text-center text-[9px] text-gray-400 border-t border-gray-100">
-              Lazuardi Junior High • Incident Report Document • Confidential internal record for school leadership and parents.
+              Lazuardi GCS Junior High • Incident Report Document • Confidential internal record for school leadership and parents.
             </div>
 
           </div>

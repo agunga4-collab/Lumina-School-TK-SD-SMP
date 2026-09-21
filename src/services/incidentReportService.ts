@@ -154,6 +154,85 @@ export async function getJHLogoUrl(): Promise<string | null> {
 }
 
 /**
+ * Fetch Homeroom Teacher (Wali Kelas) name and digital signature for a given class
+ */
+export async function getHomeroomTeacherForClass(
+  classId: string, 
+  classNameSnapshot?: string
+): Promise<{ name: string; signatureUrl: string | null }> {
+  try {
+    let classData: any = null;
+
+    if (classId) {
+      const classDoc = await getDoc(doc(db, 'classes', classId));
+      if (classDoc.exists()) {
+        classData = classDoc.data();
+      }
+    }
+
+    // Fallback: If classDoc not found by ID, query classes by name
+    if (!classData && classNameSnapshot) {
+      const q = query(
+        collection(db, 'classes'),
+        where('unitId', '==', 'JUNIOR_HIGH'),
+        where('name', '==', classNameSnapshot)
+      );
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        classData = snap.docs[0].data();
+      }
+    }
+
+    if (!classData) {
+      return { name: '', signatureUrl: null };
+    }
+
+    let homeroomTeacherId = classData.homeroomTeacherId || null;
+    let homeroomTeacherName = classData.homeroomTeacherName || '';
+    let signatureUrl = classData.teacherSignatureUrl || null;
+
+    // Check teacherAssignments array if homeroomTeacherId is not directly set
+    if (!homeroomTeacherId && Array.isArray(classData.teacherAssignments)) {
+      const htAssignment = classData.teacherAssignments.find(
+        (ta: any) => ta.role === 'HOMEROOM_TEACHER' || ta.isPrimary
+      );
+      if (htAssignment) {
+        homeroomTeacherId = htAssignment.userId || null;
+        if (!homeroomTeacherName) {
+          homeroomTeacherName = htAssignment.displayName || htAssignment.email || '';
+        }
+      }
+    }
+
+    // If homeroomTeacherId exists, fetch user profile for updated name & signature
+    if (homeroomTeacherId) {
+      try {
+        const userDoc = await getDoc(doc(db, 'users', homeroomTeacherId));
+        if (userDoc.exists()) {
+          const uData = userDoc.data();
+          if (uData.displayName || uData.name) {
+            homeroomTeacherName = uData.displayName || uData.name;
+          }
+          if (uData.signatureUrl) {
+            signatureUrl = uData.signatureUrl;
+          }
+        }
+      } catch (e) {
+        console.warn('Error fetching homeroom teacher user doc:', e);
+      }
+    }
+
+    return {
+      name: (homeroomTeacherName || '').trim(),
+      signatureUrl: signatureUrl || null
+    };
+  } catch (err) {
+    console.error('Error fetching homeroom teacher info:', err);
+    return { name: '', signatureUrl: null };
+  }
+}
+
+/**
  * Save a new Incident Report (Draft or Submitted)
  */
 export async function createJHIncidentReport(reportData: Omit<IncidentReport, 'id'>): Promise<string> {
