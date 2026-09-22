@@ -46,6 +46,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
   reportConfig,
   logoUrl,
   homeroomTeacherProfile,
+  studentUaName,
   page1Id = 'elem-midterm-pdf-page-1',
   page2Id = 'elem-midterm-pdf-page-2',
 }) => {
@@ -112,6 +113,18 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
       const normName = normalizeElementarySubjectName(doc.subjectKey || subjKey);
       if (!normName) return; // Skip excluded subjects like IPA, IPS, PKN
 
+      const studentUa = studentDataDoc?.performingArtsUA || studentUaName || '';
+
+      if (normName === 'Performing Arts') {
+        const rawKey = doc.subjectKey || subjKey;
+        if (rawKey.includes('-') || rawKey.includes('::')) {
+          const keyUa = rawKey.split(/[-:]+/).pop()?.trim();
+          if (keyUa && studentUa && keyUa.toLowerCase() !== studentUa.toLowerCase()) {
+            return; // Skip this doc because it belongs to another Unit Activity
+          }
+        }
+      }
+
       const goalsList = doc.goals.map(g => ({
         id: g.id,
         text: g.text,
@@ -120,8 +133,8 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
 
       // Determine display subject name (incorporating Performing Arts UA if present)
       let displayName = normName;
-      if (normName === 'Performing Arts' && studentUaName) {
-        displayName = `Performing Arts (${studentUaName})`;
+      if (normName === 'Performing Arts' && studentUa) {
+        displayName = `Performing Arts (${studentUa})`;
       }
 
       if (doc.category === 'PROJECTS' || normName === 'Projects') {

@@ -46,7 +46,7 @@ export const ElementaryMidtermRekapTab: React.FC<ElementaryMidtermRekapTabProps>
 
   const totalStudents = students.length;
   const totalPublished = Object.keys(publishedMap).length;
-  const totalOpened = Object.values(publishedMap).filter(r => r.isOpened).length;
+  const totalOpened = Object.values(publishedMap).filter(r => (r as any)?.isOpened).length;
 
   return (
     <div className="space-y-6">

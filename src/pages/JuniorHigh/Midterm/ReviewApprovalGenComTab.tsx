@@ -114,7 +114,7 @@ export function ReviewApprovalGenComTab({
         semester,
         midtermTerm,
         currentUser.uid,
-        currentUser.displayName || currentUser.name || 'Principal',
+        currentUser.displayName || (currentUser as any).name || 'Principal',
         currentUser.role || 'Principal',
         dataDoc.generalComment?.finalComment || ''
       );
@@ -157,7 +157,7 @@ export function ReviewApprovalGenComTab({
         semester,
         midtermTerm,
         currentUser.uid,
-        currentUser.displayName || currentUser.name || 'Principal',
+        currentUser.displayName || (currentUser as any).name || 'Principal',
         currentUser.role || 'Principal',
         feedbackText.trim(),
         dataDoc.generalComment?.finalComment || ''

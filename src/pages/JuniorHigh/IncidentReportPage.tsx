@@ -485,9 +485,7 @@ export function IncidentReportPage() {
         approvedBy: editingReport?.approvedBy,
         approvedByName: editingReport?.approvedByName,
         approvedAt: editingReport?.approvedAt,
-        principalTitle: editingReport?.principalTitle,
         principalSignatureUrl: editingReport?.principalSignatureUrl,
-        principalNIY: editingReport?.principalNIY,
       };
 
       let reportId = editingReport?.id;

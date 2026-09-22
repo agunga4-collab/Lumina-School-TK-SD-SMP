@@ -34,7 +34,7 @@ export function normalizeElementarySubjectName(rawSubject: string): string | nul
   if (s === "ICT" || s === "TIK" || s === "Information and Communications Technology") {
     return "Information and Communications Technology";
   }
-  if (s === "Performing Arts") return "Performing Arts";
+  if (s.startsWith("Performing Arts")) return "Performing Arts";
   if (s === "Bahasa Indonesia") return "Bahasa Indonesia";
   if (s === "English") return "English";
   if (s === "Projects" || s === "Project" || s === "PROJECTS") return "Projects";
@@ -141,6 +141,36 @@ export interface ElementaryMidtermStudentDataDoc {
     izin: number;
     tanpaKeterangan: number;
   };
+  performingArtsUA?: string;
+}
+
+export function getGradeLevelNumber(cls: { grade?: number | string; name?: string } | null | undefined): number {
+  if (!cls) return 1;
+  if (typeof cls.grade === 'number' && cls.grade >= 1 && cls.grade <= 6) {
+    return cls.grade;
+  }
+  if (typeof cls.grade === 'string') {
+    const parsed = parseInt(cls.grade, 10);
+    if (!isNaN(parsed) && parsed >= 1 && parsed <= 6) return parsed;
+  }
+  const match = (cls.name || '').match(/([1-6])/);
+  if (match) {
+    return parseInt(match[1], 10);
+  }
+  return 1;
+}
+
+export function getDefaultPerformingArtsUAs(gradeLevel: number): string[] {
+  if (gradeLevel === 1 || gradeLevel === 2) {
+    return ['Percussion Pals', 'Choir', 'Dancing', 'Role-play', 'Ensemble Music'];
+  }
+  if (gradeLevel === 3 || gradeLevel === 4) {
+    return ['Traditional Symphony', 'Choir', 'Dancing', 'Acting', 'Ensemble Music'];
+  }
+  if (gradeLevel === 5 || gradeLevel === 6) {
+    return ['Dancing', 'Choir', 'Acting', 'Ensemble Music'];
+  }
+  return ['Dancing', 'Choir', 'Acting', 'Ensemble Music'];
 }
 
 export interface ElementaryMidtermSnapshotGoal {

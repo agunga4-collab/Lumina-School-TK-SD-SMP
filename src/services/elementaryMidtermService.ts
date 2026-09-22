@@ -118,8 +118,8 @@ export async function saveElementaryMidtermMasterGoals(
       subjectKey,
       goals,
       updatedAt: Date.now(),
-      updatedBy: user?.id || 'system',
-      updatedByName: user?.displayName || user?.name || 'System User'
+      updatedBy: user?.uid || (user as any)?.id || 'system',
+      updatedByName: user?.displayName || (user as any)?.name || 'System User'
     };
 
     await setDoc(docRef, docData, { merge: true });
@@ -167,7 +167,8 @@ export function normalizeElementaryMidtermStudentData(
     reviewHistory: Array.isArray(data?.reviewHistory) ? data.reviewHistory : [],
     updatedAt: data?.updatedAt || Date.now(),
     updatedBy: data?.updatedBy || '',
-    attendance: data?.attendance || { sakit: 0, izin: 0, tanpaKeterangan: 0 }
+    attendance: data?.attendance || { sakit: 0, izin: 0, tanpaKeterangan: 0 },
+    performingArtsUA: data?.performingArtsUA || ''
   };
 }
 
@@ -241,7 +242,7 @@ export async function saveElementaryMidtermStudentRemark(
       midtermTerm,
       remarks: currentRemarks,
       updatedAt: Date.now(),
-      updatedBy: user?.id || 'system'
+      updatedBy: user?.uid || (user as any)?.id || 'system'
     };
 
     await setDoc(docRef, payload, { merge: true });
@@ -286,7 +287,7 @@ export async function saveBulkElementaryMidtermStudentRemarks(
         midtermTerm,
         remarks: currentRemarks,
         updatedAt: Date.now(),
-        updatedBy: user?.id || 'system'
+        updatedBy: user?.uid || (user as any)?.id || 'system'
       }, { merge: true });
     }
 
@@ -321,7 +322,7 @@ export async function saveElementaryMidtermGeneralComment(
       midtermTerm,
       generalComment: generalCommentData,
       updatedAt: Date.now(),
-      updatedBy: user?.id || 'system'
+      updatedBy: user?.uid || (user as any)?.id || 'system'
     };
 
     await setDoc(docRef, payload, { merge: true });
@@ -357,27 +358,27 @@ export async function updateElementaryGenComReviewStatus(
 
     const updatePayload: any = {
       updatedAt: now,
-      updatedBy: user.id
+      updatedBy: user.uid || (user as any).id
     };
 
     if (action === 'SUBMIT_REVIEW') {
       newStatus = 'SUBMITTED_FOR_REVIEW';
       historyAction = 'SUBMITTED_FOR_REVIEW';
       updatePayload.submittedForReviewAt = now;
-      updatePayload.submittedForReviewBy = user.id;
-      updatePayload.submittedForReviewByName = user.displayName || user.name || 'Teacher';
+      updatePayload.submittedForReviewBy = user.uid || (user as any).id;
+      updatePayload.submittedForReviewByName = user.displayName || (user as any).name || 'Teacher';
     } else if (action === 'APPROVE') {
       newStatus = 'APPROVED';
       historyAction = 'APPROVED';
       updatePayload.approvedAt = now;
-      updatePayload.approvedBy = user.id;
-      updatePayload.approvedByName = user.displayName || user.name || 'Reviewer';
+      updatePayload.approvedBy = user.uid || (user as any).id;
+      updatePayload.approvedByName = user.displayName || (user as any).name || 'Reviewer';
     } else if (action === 'REQUEST_REVISION') {
       newStatus = 'REVISION_REQUESTED';
       historyAction = 'REVISION_REQUESTED';
       updatePayload.revisionRequestedAt = now;
-      updatePayload.revisionRequestedBy = user.id;
-      updatePayload.revisionRequestedByName = user.displayName || user.name || 'Reviewer';
+      updatePayload.revisionRequestedBy = user.uid || (user as any).id;
+      updatePayload.revisionRequestedByName = user.displayName || (user as any).name || 'Reviewer';
       updatePayload.revisionFeedback = feedback || '';
     } else if (action === 'RESET_DRAFT') {
       newStatus = 'DRAFT';
@@ -388,8 +389,8 @@ export async function updateElementaryGenComReviewStatus(
 
     history.push({
       action: historyAction,
-      actorId: user.id,
-      actorName: user.displayName || user.name || 'User',
+      actorId: user.uid || (user as any).id,
+      actorName: user.displayName || (user as any).name || 'User',
       actorRole: user.role,
       timestamp: now,
       feedback: feedback || '',
@@ -488,8 +489,8 @@ export async function publishElementaryMidtermReport(payload: {
 
       reportSnapshot: payload.reportSnapshot,
 
-      generatedBy: payload.user?.id || 'system',
-      generatedByName: payload.user?.displayName || payload.user?.name || 'System User',
+      generatedBy: payload.user?.uid || (payload.user as any)?.id || 'system',
+      generatedByName: payload.user?.displayName || (payload.user as any)?.name || 'System User',
       generatedAt: now,
 
       isOpened: false,
@@ -551,5 +552,90 @@ export async function fetchElementaryStudentUnitActivityEnrollment(
   } catch (err) {
     console.warn(`[fetchElementaryStudentUnitActivityEnrollment] Error for student ${studentId}:`, err);
     return null;
+  }
+}
+
+export async function saveElementaryMidtermStudentPerformingArtsUa(
+  studentId: string,
+  studentName: string,
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  performingArtsUA: string,
+  user?: User | null
+): Promise<void> {
+  try {
+    const docId = buildStudentDataDocId(studentId, classId, academicYear, semester, midtermTerm);
+    const docRef = doc(db, 'elem_midterm_student_data', docId);
+
+    const payload = {
+      id: docId,
+      studentId,
+      studentName,
+      classId,
+      academicYear,
+      semester,
+      midtermTerm,
+      performingArtsUA,
+      updatedAt: Date.now(),
+      updatedBy: user?.uid || (user as any)?.id || 'system'
+    };
+
+    await setDoc(docRef, payload, { merge: true });
+  } catch (err: any) {
+    handleFirestoreError(err, 'update', `elem_midterm_student_data/${studentId}/performingArtsUA`);
+    throw err;
+  }
+}
+
+export async function fetchElementaryMidtermCustomUas(
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string
+): Promise<string[]> {
+  try {
+    const docId = buildMasterGoalDocId(classId, academicYear, semester, midtermTerm, 'performing_arts_custom_uas');
+    const docRef = doc(db, 'elem_midterm_master_goals', docId);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      if (Array.isArray(data.customUas)) return data.customUas;
+    }
+    return [];
+  } catch (err) {
+    console.warn("Could not fetch custom UAs:", err);
+    return [];
+  }
+}
+
+export async function saveElementaryMidtermCustomUas(
+  classId: string,
+  className: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  customUas: string[],
+  user?: User | null
+): Promise<void> {
+  try {
+    const docId = buildMasterGoalDocId(classId, academicYear, semester, midtermTerm, 'performing_arts_custom_uas');
+    const docRef = doc(db, 'elem_midterm_master_goals', docId);
+    await setDoc(docRef, {
+      id: docId,
+      classId,
+      className,
+      academicYear,
+      semester,
+      midtermTerm,
+      category: 'CONFIG',
+      subjectKey: 'performing_arts_custom_uas',
+      customUas,
+      updatedAt: Date.now(),
+      updatedBy: user?.uid || (user as any)?.id || 'system'
+    }, { merge: true });
+  } catch (err: any) {
+    handleFirestoreError(err, 'update', `elem_midterm_master_goals/performing_arts_custom_uas`);
   }
 }
