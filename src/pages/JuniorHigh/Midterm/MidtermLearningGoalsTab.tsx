@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { 
   Plus, Trash2, Edit2, Check, AlertCircle, Save, 
-  Layers, CheckCircle2, ChevronRight, BookOpen
+  Layers, CheckCircle2, ChevronRight, BookOpen, Clock, Loader2
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { 
@@ -15,7 +15,8 @@ import {
   SPIRITUAL_HEALTH_OPTIONS,
   canUserEditMidtermGoals,
   saveMidtermMasterGoal,
-  saveMidtermStudentRemark
+  saveMidtermStudentRemark,
+  saveBulkMidtermStudentRemarks
 } from '../../../services/juniorHighMidtermService';
 import type { Student, Class, User } from '../../../types';
 
@@ -62,6 +63,16 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
   // Remarks saving state
   const [savingRemarkKey, setSavingRemarkKey] = React.useState<string | null>(null);
 
+  // Save status indicator state
+  const [saveStatus, setSaveStatus] = React.useState<'SAVED' | 'DIRTY' | 'SAVING' | 'ERROR'>('SAVED');
+
+  // Bulk grade confirmation modal state
+  const [bulkConfirmModal, setBulkConfirmModal] = React.useState<{
+    goal: MidtermGoalItem;
+    goalIndex: number;
+    grade: 'A' | 'D' | 'B';
+  } | null>(null);
+
   const currentCategory = categoriesList[selectedCategoryIndex] || categoriesList[0];
   const currentCategorySubjects = Array.isArray(currentCategory?.subjects) ? currentCategory.subjects : [];
 
@@ -71,6 +82,13 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
       setSelectedSubject(currentCategorySubjects[0]);
     }
   }, [selectedCategoryIndex, currentCategory, selectedSubject, currentCategorySubjects]);
+
+  // Reset save status on subject or category change
+  React.useEffect(() => {
+    if (saveStatus !== 'SAVING') {
+      setSaveStatus('SAVED');
+    }
+  }, [selectedSubject, selectedCategoryIndex]);
 
   const canEdit = canUserEditMidtermGoals(currentUser, selectedClass, selectedSubject);
   const currentMasterGoalDoc = safeMasterGoalsMap[selectedSubject];
@@ -180,6 +198,9 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
     if (!selectedClass || !canEdit) return;
     const remarkKey = `${student.id}_${goalId}`;
     setSavingRemarkKey(remarkKey);
+    setSaveStatus('DIRTY');
+    setSaveStatus('SAVING');
+
     try {
       const isSpiritual = selectedSubject === 'Spiritual Health';
       await saveMidtermStudentRemark(
@@ -195,11 +216,56 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
         isSpiritual
       );
       await onRefreshData();
+      setSaveStatus('SAVED');
     } catch (err: any) {
       console.error(err);
+      setSaveStatus('ERROR');
       toast.error('Gagal menyimpan remark: ' + (err.message || 'Error'));
     } finally {
       setSavingRemarkKey(null);
+    }
+  };
+
+  const handleOpenBulkConfirm = (goal: MidtermGoalItem, goalIndex: number, grade: 'A' | 'D' | 'B') => {
+    if (!canEdit) return;
+    setBulkConfirmModal({ goal, goalIndex, grade });
+  };
+
+  const handleApplyBulkGrade = async () => {
+    if (!bulkConfirmModal || !selectedClass || !canEdit) return;
+    const { goal, grade } = bulkConfirmModal;
+    setBulkConfirmModal(null);
+
+    setSaveStatus('DIRTY');
+    setSaveStatus('SAVING');
+
+    try {
+      const isSpiritual = selectedSubject === 'Spiritual Health';
+      const studentsPayload = safeStudents.map(s => ({
+        id: s.id,
+        name: s.name || 'Siswa'
+      }));
+
+      await saveBulkMidtermStudentRemarks(
+        studentsPayload,
+        selectedClass.id,
+        academicYear,
+        semester,
+        midtermTerm,
+        goal.id,
+        grade,
+        currentUser.uid,
+        safeStudentDataMap,
+        isSpiritual
+      );
+
+      await onRefreshData();
+      setSaveStatus('SAVED');
+      toast.success(`✓ Nilai ${grade} berhasil diterapkan dan tersimpan untuk semua siswa pada Goal ini.`);
+    } catch (err: any) {
+      console.error('Error applying bulk grade:', err);
+      setSaveStatus('ERROR');
+      toast.error('Gagal menyimpan. Coba lagi.');
     }
   };
 
@@ -410,9 +476,40 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
       <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div>
-            <h3 className="text-base font-extrabold text-slate-900 uppercase">
-              Input Remark Siswa: {selectedSubject}
-            </h3>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h3 className="text-base font-extrabold text-slate-900 uppercase">
+                Input Remark Siswa: {selectedSubject}
+              </h3>
+
+              {/* Status Penyimpanan Badge */}
+              <div className="inline-flex items-center transition-all">
+                {saveStatus === 'SAVING' && (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-xs font-bold">
+                    <Loader2 className="animate-spin text-amber-600" size={13} />
+                    <span>Menyimpan...</span>
+                  </span>
+                )}
+                {saveStatus === 'SAVED' && (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold">
+                    <CheckCircle2 className="text-emerald-600" size={13} />
+                    <span>✓ Semua perubahan tersimpan</span>
+                  </span>
+                )}
+                {saveStatus === 'DIRTY' && (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold">
+                    <Clock className="text-slate-500" size={13} />
+                    <span>Perubahan belum tersimpan</span>
+                  </span>
+                )}
+                {saveStatus === 'ERROR' && (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-50 text-rose-800 border border-rose-200 text-xs font-bold">
+                    <AlertCircle className="text-rose-600" size={13} />
+                    <span>Gagal menyimpan. Coba lagi.</span>
+                  </span>
+                )}
+              </div>
+            </div>
+
             <p className="text-xs text-slate-500 mt-0.5">
               {isSpiritualHealth 
                 ? 'Pilih evaluasi Spiritual Health: Sangat Baik, Baik, atau Cukup.'
@@ -440,13 +537,52 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
             <table className="w-full text-left border-collapse min-w-[700px]">
               <thead>
                 <tr className="bg-slate-100 text-slate-700 text-[11px] font-bold uppercase tracking-wider border-b border-slate-200">
-                  <th className="p-3 w-12 text-center">No</th>
-                  <th className="p-3 w-48">Nama Siswa</th>
-                  <th className="p-3 w-28">NISN</th>
+                  <th className="p-3 w-12 text-center align-top">No</th>
+                  <th className="p-3 w-48 align-top">Nama Siswa</th>
+                  <th className="p-3 w-28 align-top">NISN</th>
                   {goals.map((g, idx) => (
-                    <th key={g.id} className="p-3 text-center">
-                      <div className="line-clamp-1 max-w-[200px]" title={g.text}>
-                        Goal {idx + 1}: {g.text}
+                    <th key={g.id} className="p-3 text-center min-w-[200px] align-top">
+                      <div className="space-y-2">
+                        <div className="line-clamp-2 max-w-[220px] mx-auto text-slate-800 normal-case text-xs font-bold leading-snug" title={g.text}>
+                          Goal {idx + 1}: {g.text}
+                        </div>
+
+                        {canEdit && !isSpiritualHealth && (
+                          <div className="pt-1.5 border-t border-slate-200/80 flex flex-col items-center gap-1">
+                            <div className="flex items-center justify-center gap-1 flex-wrap">
+                              <button
+                                type="button"
+                                disabled={saveStatus === 'SAVING'}
+                                onClick={() => handleOpenBulkConfirm(g, idx + 1, 'A')}
+                                className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-slate-200/90 hover:bg-emerald-100 text-emerald-800 transition-all cursor-pointer disabled:opacity-50 border border-slate-300/50"
+                                title={`Set Semua A untuk Goal ${idx + 1}`}
+                              >
+                                Set Semua A
+                              </button>
+
+                              {/* Set Semua D - Default / Prominent Choice */}
+                              <button
+                                type="button"
+                                disabled={saveStatus === 'SAVING'}
+                                onClick={() => handleOpenBulkConfirm(g, idx + 1, 'D')}
+                                className="px-2.5 py-0.5 rounded text-[10px] font-black bg-amber-500 hover:bg-amber-600 text-white shadow-xs transition-all cursor-pointer disabled:opacity-50 ring-2 ring-amber-400/50"
+                                title={`Set Semua D (Pilihan Cepat) untuk Goal ${idx + 1}`}
+                              >
+                                Set Semua D
+                              </button>
+
+                              <button
+                                type="button"
+                                disabled={saveStatus === 'SAVING'}
+                                onClick={() => handleOpenBulkConfirm(g, idx + 1, 'B')}
+                                className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-slate-200/90 hover:bg-rose-100 text-rose-800 transition-all cursor-pointer disabled:opacity-50 border border-slate-300/50"
+                                title={`Set Semua B untuk Goal ${idx + 1}`}
+                              >
+                                Set Semua B
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </th>
                   ))}
@@ -483,7 +619,7 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
                                   return (
                                     <button
                                       key={opt}
-                                      disabled={!canEdit || isSavingThis}
+                                      disabled={!canEdit || isSavingThis || saveStatus === 'SAVING'}
                                       onClick={() => handleRemarkChange(student, g.id, opt)}
                                       className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
                                         isSelected
@@ -511,7 +647,7 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
                                   return (
                                     <button
                                       key={rem.code}
-                                      disabled={!canEdit || isSavingThis}
+                                      disabled={!canEdit || isSavingThis || saveStatus === 'SAVING'}
                                       onClick={() => handleRemarkChange(student, g.id, rem.code)}
                                       title={`${rem.label} - ${rem.description}`}
                                       className={`w-7 h-7 rounded-lg text-xs font-black uppercase transition-all cursor-pointer ${
@@ -537,6 +673,66 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
           </div>
         )}
       </div>
+
+      {/* Confirmation Modal for Bulk Grade Application */}
+      {bulkConfirmModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className={`p-2.5 rounded-xl shrink-0 ${
+                bulkConfirmModal.grade === 'A' 
+                  ? 'bg-emerald-100 text-emerald-700' 
+                  : bulkConfirmModal.grade === 'D' 
+                  ? 'bg-amber-100 text-amber-700' 
+                  : 'bg-rose-100 text-rose-700'
+              }`}>
+                <AlertCircle size={22} />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-base font-extrabold text-slate-900 leading-snug">
+                  Terapkan nilai {bulkConfirmModal.grade} untuk semua siswa pada Goal ini?
+                </h4>
+                <p className="text-xs text-slate-500">
+                  Goal {bulkConfirmModal.goalIndex}: <span className="font-semibold text-slate-700">{bulkConfirmModal.goal.text}</span>
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 space-y-1">
+              <p className="font-bold text-slate-800">Detail Penerapan Bulk:</p>
+              <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-600">
+                <li>Nilai <strong>{bulkConfirmModal.grade}</strong> akan diisikan ke seluruh <strong>{safeStudents.length} siswa</strong> pada Goal ini.</li>
+                <li>Goal lain, remark, dan data Midterm lain tidak akan diubah.</li>
+                <li>Anda tetap dapat mengubah nilai tiap siswa secara individu kapan saja.</li>
+              </ul>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setBulkConfirmModal(null)}
+                className="px-4 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 font-bold text-xs transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleApplyBulkGrade}
+                className={`px-4 py-2 rounded-xl text-white font-black text-xs shadow-md transition-all cursor-pointer ${
+                  bulkConfirmModal.grade === 'A'
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : bulkConfirmModal.grade === 'D'
+                    ? 'bg-amber-500 hover:bg-amber-600'
+                    : 'bg-rose-600 hover:bg-rose-700'
+                }`}
+              >
+                Terapkan Nilai {bulkConfirmModal.grade}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

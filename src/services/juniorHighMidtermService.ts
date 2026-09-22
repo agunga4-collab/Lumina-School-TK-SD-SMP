@@ -7,7 +7,8 @@ import {
   where, 
   setDoc, 
   updateDoc, 
-  increment 
+  increment,
+  writeBatch
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import type { 
@@ -377,6 +378,69 @@ export async function saveMidtermStudentRemark(
   }
 
   await setDoc(ref, payload, { merge: true });
+}
+
+/**
+ * Save bulk student remarks for a specific learning goal across all students in a class
+ */
+export async function saveBulkMidtermStudentRemarks(
+  students: { id: string; name: string }[],
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  goalId: string,
+  remark: string,
+  userUid: string,
+  studentDataMap?: Record<string, MidtermStudentDataDoc>,
+  isSpiritualHealth?: boolean
+): Promise<void> {
+  if (!students || students.length === 0 || !classId) return;
+
+  const batch = writeBatch(db);
+
+  for (const student of students) {
+    if (!student?.id) continue;
+
+    const docId = getStudentDataDocId(student.id, classId, academicYear, semester, midtermTerm);
+    const ref = doc(db, 'jh_midterm_student_data', docId);
+
+    const existingData = studentDataMap ? studentDataMap[student.id] : null;
+    const currentRemarks = existingData?.remarks || {};
+    const updatedRemarks = {
+      ...currentRemarks,
+      [goalId]: remark
+    };
+
+    const payload: Partial<MidtermStudentDataDoc> = {
+      studentId: student.id,
+      studentName: student.name || 'Siswa',
+      classId,
+      academicYear,
+      semester: String(semester),
+      midtermTerm: String(midtermTerm),
+      remarks: updatedRemarks,
+      updatedAt: Date.now(),
+      updatedBy: userUid
+    };
+
+    if (isSpiritualHealth) {
+      payload.spiritualHealthRemark = remark;
+    }
+
+    if (!existingData) {
+      payload.status = 'DRAFT';
+      payload.generalComment = {
+        strengths: [],
+        achievements: [],
+        needsImprovement: []
+      };
+    }
+
+    batch.set(ref, payload, { merge: true });
+  }
+
+  await batch.commit();
 }
 
 /**
