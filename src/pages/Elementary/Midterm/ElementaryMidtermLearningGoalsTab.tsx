@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { 
   saveElementaryMidtermMasterGoals, 
+  saveBulkElementaryMidtermMasterGoalForClasses,
   saveElementaryMidtermStudentRemark,
   saveBulkElementaryMidtermStudentRemarks,
   fetchElementaryStudentUnitActivityEnrollment,
@@ -27,6 +28,7 @@ import type { Student, Class, User as UserType, UnitActivityEnrollment } from '.
 interface ElementaryMidtermLearningGoalsTabProps {
   selectedClassId: string;
   selectedClass: Class | null;
+  allElementaryClasses?: Class[];
   selectedYear: string;
   selectedSemester: string;
   selectedTerm: string;
@@ -40,6 +42,7 @@ interface ElementaryMidtermLearningGoalsTabProps {
 export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearningGoalsTabProps> = ({
   selectedClassId,
   selectedClass,
+  allElementaryClasses = [],
   selectedYear,
   selectedSemester,
   selectedTerm,
@@ -74,6 +77,31 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
 
   // Active Performing Arts Unit Activity Sub-tab
   const [activeUaTab, setActiveUaTab] = React.useState<string>('');
+
+  // Find all active classes on the same grade level
+  const sameGradeClasses = React.useMemo(() => {
+    if (!selectedClass) return [];
+    const targetGrade = getGradeLevelNumber(selectedClass);
+    const matched = (allElementaryClasses || []).filter(c => c && getGradeLevelNumber(c) === targetGrade);
+    if (selectedClass && !matched.some(c => c.id === selectedClass.id)) {
+      matched.push(selectedClass);
+    }
+    return matched;
+  }, [selectedClass, allElementaryClasses]);
+
+  // Selected target class IDs for multi-class Goal application
+  const [selectedTargetClassIds, setSelectedTargetClassIds] = React.useState<string[]>([]);
+  const [showAddGoalConfirmModal, setShowAddGoalConfirmModal] = React.useState<boolean>(false);
+  const [bulkGoalSuccessMsg, setBulkGoalSuccessMsg] = React.useState<string | null>(null);
+
+  // Synchronize default selected target classes when grade or selected class changes
+  React.useEffect(() => {
+    if (sameGradeClasses.length > 0) {
+      setSelectedTargetClassIds(sameGradeClasses.map(c => c.id));
+    } else if (selectedClassId) {
+      setSelectedTargetClassIds([selectedClassId]);
+    }
+  }, [selectedClassId, sameGradeClasses]);
 
   // Keep activeUaTab valid when grade level or UAs change
   React.useEffect(() => {
@@ -255,40 +283,75 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
   // Handle adding or editing a Goal
   const handleSaveGoal = async () => {
     if (!goalTextInput.trim()) return;
-    setSavingGoals(true);
 
-    let updatedGoals = [...goals];
     if (editingGoalId) {
-      updatedGoals = updatedGoals.map(g => g.id === editingGoalId ? { ...g, text: goalTextInput.trim() } : g);
+      // Editing existing goal for current selected class
+      setSavingGoals(true);
+      let updatedGoals = goals.map(g => g.id === editingGoalId ? { ...g, text: goalTextInput.trim() } : g);
+      try {
+        const category = activeSubject === 'Projects' ? 'PROJECTS' : 'SUBJECTS';
+        await saveElementaryMidtermMasterGoals(
+          selectedClassId,
+          selectedClass?.name || '',
+          selectedYear,
+          selectedSemester,
+          selectedTerm,
+          effectiveSubjectKey,
+          category,
+          updatedGoals,
+          currentUser
+        );
+
+        setGoals(updatedGoals);
+        setGoalTextInput('');
+        setEditingGoalId(null);
+        await onRefreshData();
+      } catch (e) {
+        console.error("Error editing goal:", e);
+      } finally {
+        setSavingGoals(false);
+      }
     } else {
-      const newId = `goal_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
-      updatedGoals.push({
-        id: newId,
-        text: goalTextInput.trim(),
-        order: updatedGoals.length + 1
-      });
+      // Adding new goal -> check selected target classes & open confirmation modal
+      if (selectedTargetClassIds.length === 0) {
+        alert("Pilih minimal satu kelas untuk menerapkan Learning Goal.");
+        return;
+      }
+      setShowAddGoalConfirmModal(true);
     }
+  };
+
+  // Execute bulk save of new Learning Goal across all selected target classes
+  const executeAddGoalBulk = async () => {
+    if (!goalTextInput.trim() || selectedTargetClassIds.length === 0) return;
+    setSavingGoals(true);
+    setShowAddGoalConfirmModal(false);
 
     try {
       const category = activeSubject === 'Projects' ? 'PROJECTS' : 'SUBJECTS';
-      await saveElementaryMidtermMasterGoals(
-        selectedClassId,
-        selectedClass?.name || '',
+      const targetClassesToApply = sameGradeClasses.filter(c => selectedTargetClassIds.includes(c.id));
+
+      await saveBulkElementaryMidtermMasterGoalForClasses(
+        targetClassesToApply,
         selectedYear,
         selectedSemester,
         selectedTerm,
         effectiveSubjectKey,
         category,
-        updatedGoals,
+        goalTextInput.trim(),
         currentUser
       );
 
-      setGoals(updatedGoals);
+      const count = selectedTargetClassIds.length;
+      setBulkGoalSuccessMsg(`✓ Learning Goal berhasil diterapkan ke ${count} kelas.`);
       setGoalTextInput('');
-      setEditingGoalId(null);
       await onRefreshData();
+
+      setTimeout(() => {
+        setBulkGoalSuccessMsg(null);
+      }, 6000);
     } catch (e) {
-      console.error("Error saving goal:", e);
+      console.error("Error bulk adding learning goal:", e);
     } finally {
       setSavingGoals(false);
     }
@@ -561,8 +624,24 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
           )}
         </div>
 
+        {/* Bulk Success Alert Message */}
+        {bulkGoalSuccessMsg && (
+          <div className="p-3.5 bg-emerald-50 border border-emerald-300 rounded-2xl text-xs font-extrabold text-emerald-900 flex items-center justify-between shadow-2xs animate-in fade-in duration-200">
+            <span className="flex items-center gap-2">
+              <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+              {bulkGoalSuccessMsg}
+            </span>
+            <button
+              onClick={() => setBulkGoalSuccessMsg(null)}
+              className="text-emerald-700 hover:text-emerald-900 font-black text-xs px-2 py-0.5 rounded-lg hover:bg-emerald-100 cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* Add/Edit Goal Input Box */}
-        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-4">
           <label className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider">
             {editingGoalId ? 'Edit Learning Goal' : `+ Tambah Learning Goal Baru (${activeSubject === 'Performing Arts' ? activeUaTab : activeSubject})`}
           </label>
@@ -577,7 +656,7 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
             <div className="flex gap-2">
               <button
                 onClick={handleSaveGoal}
-                disabled={savingGoals || !goalTextInput.trim()}
+                disabled={savingGoals || !goalTextInput.trim() || (!editingGoalId && selectedTargetClassIds.length === 0)}
                 className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 disabled:opacity-50 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 cursor-pointer transition-all"
               >
                 {savingGoals ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
@@ -596,6 +675,64 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
               )}
             </div>
           </div>
+
+          {/* Multi-select Checkboxes for Target Classes */}
+          {!editingGoalId && sameGradeClasses.length > 0 && (
+            <div className="pt-3 border-t border-slate-200/80 space-y-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                <label className="text-xs font-extrabold text-slate-700 uppercase tracking-wider">
+                  Terapkan ke Kelas:
+                </label>
+                <div className="flex items-center gap-2 text-[11px] font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTargetClassIds(sameGradeClasses.map(c => c.id))}
+                    className="text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer"
+                  >
+                    Pilih Semua Kelas Grade {gradeNum}
+                  </button>
+                  <span className="text-slate-300">|</span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTargetClassIds([selectedClassId])}
+                    className="text-slate-500 hover:text-slate-700 hover:underline cursor-pointer"
+                  >
+                    Hanya {selectedClass?.name || 'Kelas Ini'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2.5 p-3 bg-white rounded-xl border border-slate-200">
+                {sameGradeClasses.map(cls => {
+                  const isChecked = selectedTargetClassIds.includes(cls.id);
+                  return (
+                    <label
+                      key={cls.id}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                        isChecked
+                          ? 'bg-emerald-50 border-emerald-300 text-emerald-900 shadow-2xs ring-1 ring-emerald-200'
+                          : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedTargetClassIds(prev => [...prev, cls.id]);
+                          } else {
+                            setSelectedTargetClassIds(prev => prev.filter(id => id !== cls.id));
+                          }
+                        }}
+                        className="w-4 h-4 rounded text-emerald-700 focus:ring-emerald-500 border-slate-300 cursor-pointer"
+                      />
+                      <span>{cls.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -880,6 +1017,73 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
                 className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-extrabold rounded-xl transition-all uppercase tracking-wider cursor-pointer shadow-sm"
               >
                 Terapkan Nilai
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRMATION MODAL: TERAPKAN LEARNING GOAL KE BEBERAPA KELAS */}
+      {showAddGoalConfirmModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-5 border border-slate-100 animate-in fade-in zoom-in-95 duration-150">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-black text-lg">
+              <Layers size={24} />
+            </div>
+
+            <div className="space-y-3">
+              <h3 className="text-base font-black text-slate-900 uppercase tracking-tight">
+                Konfirmasi Terapkan Learning Goal
+              </h3>
+              
+              <div className="p-3.5 bg-emerald-50 rounded-2xl border border-emerald-200/80 text-emerald-950 font-black text-sm">
+                Terapkan Learning Goal ini ke {selectedTargetClassIds.length} kelas?
+              </div>
+
+              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 text-xs font-medium text-slate-800 space-y-2">
+                <div>
+                  <span className="font-bold text-slate-900">Mata Pelajaran: </span>
+                  <span className="font-semibold text-slate-700">{activeSubject} {activeSubject === 'Performing Arts' ? `(${activeUaTab})` : ''}</span>
+                </div>
+                <div>
+                  <span className="font-bold text-slate-900">Learning Goal: </span>
+                  <p className="italic text-slate-700 bg-white p-2.5 rounded-xl border border-slate-200/80 mt-1">
+                    "{goalTextInput.trim()}"
+                  </p>
+                </div>
+                <div>
+                  <span className="font-bold text-slate-900">Kelas Terpilih ({selectedTargetClassIds.length}):</span>
+                  <div className="flex flex-wrap gap-1.5 mt-1.5">
+                    {sameGradeClasses
+                      .filter(c => selectedTargetClassIds.includes(c.id))
+                      .map(c => (
+                        <span key={c.id} className="px-2.5 py-1 bg-emerald-100 text-emerald-900 rounded-lg font-black text-[11px] border border-emerald-200">
+                          {c.name}
+                        </span>
+                      ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-400 font-medium leading-relaxed">
+              * Learning goal tidak akan diduplikasi jika sudah ada pada kelas sasaran. Nilai atau remark siswa yang sudah ada tidak akan diubah.
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100">
+              <button
+                onClick={() => setShowAddGoalConfirmModal(false)}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                onClick={executeAddGoalBulk}
+                disabled={savingGoals}
+                className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 disabled:opacity-50 text-white text-xs font-extrabold rounded-xl transition-all uppercase tracking-wider cursor-pointer shadow-sm flex items-center gap-2"
+              >
+                {savingGoals && <RefreshCw size={14} className="animate-spin" />}
+                <span>Terapkan</span>
               </button>
             </div>
           </div>

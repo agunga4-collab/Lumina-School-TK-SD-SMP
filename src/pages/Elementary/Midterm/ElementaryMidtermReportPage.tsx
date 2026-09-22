@@ -393,6 +393,7 @@ function ElementaryMidtermReportPageContent() {
             <ElementaryMidtermLearningGoalsTab
               selectedClassId={selectedClassId}
               selectedClass={selectedClass}
+              allElementaryClasses={safeClassesList}
               selectedYear={selectedYear}
               selectedSemester={selectedSemester}
               selectedTerm={selectedTerm}

@@ -128,6 +128,82 @@ export async function saveElementaryMidtermMasterGoals(
   }
 }
 
+export async function saveBulkElementaryMidtermMasterGoalForClasses(
+  targetClasses: Array<{ id: string; name: string }>,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  subjectKey: string,
+  category: string,
+  newGoalText: string,
+  user?: User | null
+): Promise<{ successCount: number; totalClasses: number }> {
+  try {
+    const trimmedGoalText = newGoalText.trim();
+    if (!trimmedGoalText || targetClasses.length === 0) {
+      return { successCount: 0, totalClasses: targetClasses.length };
+    }
+
+    let successCount = 0;
+
+    for (const targetCls of targetClasses) {
+      if (!targetCls.id) continue;
+
+      const docId = buildMasterGoalDocId(targetCls.id, academicYear, semester, midtermTerm, subjectKey);
+      const docRef = doc(db, 'elem_midterm_master_goals', docId);
+
+      const snap = await getDoc(docRef);
+      let existingGoals: ElementaryMidtermGoalItem[] = [];
+
+      if (snap.exists()) {
+        const data = snap.data();
+        if (Array.isArray(data?.goals)) {
+          existingGoals = [...data.goals];
+        }
+      }
+
+      // Check if goal text already exists in this class (case-insensitive trim check)
+      const isDuplicate = existingGoals.some(
+        g => g && typeof g.text === 'string' && g.text.trim().toLowerCase() === trimmedGoalText.toLowerCase()
+      );
+
+      if (!isDuplicate) {
+        const newGoalItem: ElementaryMidtermGoalItem = {
+          id: `goal_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+          text: trimmedGoalText,
+          order: existingGoals.length + 1
+        };
+
+        const updatedGoals = [...existingGoals, newGoalItem];
+
+        const docData: ElementaryMidtermMasterGoalDoc = {
+          id: docId,
+          classId: targetCls.id,
+          className: targetCls.name || '',
+          academicYear,
+          semester,
+          midtermTerm,
+          category,
+          subjectKey,
+          goals: updatedGoals,
+          updatedAt: Date.now(),
+          updatedBy: user?.uid || (user as any)?.id || 'system',
+          updatedByName: user?.displayName || (user as any)?.name || 'System User'
+        };
+
+        await setDoc(docRef, docData, { merge: true });
+      }
+
+      successCount++;
+    }
+
+    return { successCount, totalClasses: targetClasses.length };
+  } catch (err: any) {
+    handleFirestoreError(err, 'update', `elem_midterm_master_goals/bulk`);
+    throw err;
+  }
+}
+
 export function normalizeElementaryMidtermStudentData(
   data: any, 
   defaults: { studentId: string; studentName: string; classId: string; academicYear: string; semester: string; midtermTerm: string }
