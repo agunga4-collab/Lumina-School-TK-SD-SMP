@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { 
   Sparkles, Save, CheckCircle2, AlertCircle, Wand2, 
-  User as UserIcon, Plus, X, Lock, RefreshCw, Check
+  User as UserIcon, Plus, X, Lock, RefreshCw, Check, Clock
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { 
