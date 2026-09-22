@@ -794,6 +794,7 @@ export function Layout() {
                   <NavItem to="/elementary/literasi-numerasi" icon={<BookOpen size={18} />} label="Literasi & Numerasi" />
                   <NavItem to="/elementary/mtss-academic" icon={<GraduationCap size={18} />} label="MTSS Academic" />
                   <NavItem to="/elementary/ldss" icon={<ClipboardCheck size={18} />} label="LDSS" />
+                  <NavItem to="/elementary/midterm" icon={<FileText size={18} />} label="Midterm Report" />
                 </div>
               )}
 
