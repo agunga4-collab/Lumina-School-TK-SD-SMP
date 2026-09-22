@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { 
   Plus, Edit2, Trash2, CheckCircle2, AlertCircle, RefreshCw, 
-  Sparkles, Layers, BookOpen, User, Music, PlusCircle, FolderPlus
+  Sparkles, Layers, BookOpen, User, Music, PlusCircle, FolderPlus,
+  Upload, FileCheck2
 } from 'lucide-react';
 import { 
   saveElementaryMidtermMasterGoals, 
@@ -10,10 +11,11 @@ import {
   saveBulkElementaryMidtermStudentRemarks,
   fetchElementaryStudentUnitActivityEnrollment,
   saveElementaryMidtermStudentPerformingArtsUa,
+  saveBulkElementaryMidtermStudentPerformingArtsUa,
   fetchElementaryMidtermCustomUas,
   saveElementaryMidtermCustomUas
 } from '../../../services/elementaryMidtermService';
-import { getLearningGoals } from '../../../lib/firebase';
+import { getLearningGoals, getActiveStudents } from '../../../lib/firebase';
 import { 
   ElementaryMidtermMasterGoalDoc, 
   ElementaryMidtermStudentDataDoc,
@@ -152,7 +154,17 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
   
   // Student Performing Arts UA selection map: studentId -> UA string
   const [studentUaSelection, setStudentUaSelection] = React.useState<Record<string, string>>({});
+  const [savedStudentUaSelection, setSavedStudentUaSelection] = React.useState<Record<string, string>>({});
   const [uaSaveStatus, setUaSaveStatus] = React.useState<'saved' | 'saving' | 'error' | null>(null);
+
+  // Import Peserta Unit Activity Modal State
+  const [showImportUaModal, setShowImportUaModal] = React.useState<boolean>(false);
+  const [selectedImportUa, setSelectedImportUa] = React.useState<string>('');
+  const [importRawText, setImportRawText] = React.useState<string>('');
+  const [overwriteExisting, setOverwriteExisting] = React.useState<boolean>(false);
+  const [importStudentsList, setImportStudentsList] = React.useState<Array<Student & { className?: string }>>([]);
+  const [loadingImportRoster, setLoadingImportRoster] = React.useState<boolean>(false);
+  const [importSuccessMsg, setImportSuccessMsg] = React.useState<string | null>(null);
 
   // Modal State for adding custom UA
   const [showAddUaModal, setShowAddUaModal] = React.useState<boolean>(false);
@@ -210,6 +222,13 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
     }
   }, [effectiveSubjectKey, currentSubjectMasterDoc, selectedClass, selectedYear, activeSubject]);
 
+  // Keep selectedImportUa in sync with active UAs
+  React.useEffect(() => {
+    if (activeGradeUas.length > 0 && (!selectedImportUa || !activeGradeUas.includes(selectedImportUa))) {
+      setSelectedImportUa(activeUaTab || activeGradeUas[0]);
+    }
+  }, [activeGradeUas, activeUaTab, selectedImportUa]);
+
   // Synchronize studentRemarks and studentUaSelection from props into local state
   React.useEffect(() => {
     const remarksMap: Record<string, Record<string, string>> = {};
@@ -224,60 +243,223 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
 
     setLocalRemarks(remarksMap);
     setStudentUaSelection(uasMap);
+    setSavedStudentUaSelection(uasMap);
   }, [studentDataMap]);
 
-  // Handle adding custom UA
-  const handleAddCustomUa = async () => {
-    const trimmed = newUaInput.trim();
-    if (!trimmed) return;
-    setSavingCustomUa(true);
-    try {
-      const updated = [...customUas];
-      if (!updated.includes(trimmed)) {
-        updated.push(trimmed);
-        await saveElementaryMidtermCustomUas(
-          selectedClassId,
-          selectedClass?.name || '',
-          selectedYear,
-          selectedSemester,
-          selectedTerm,
-          updated,
-          currentUser
-        );
-        setCustomUas(updated);
-        setActiveUaTab(trimmed);
-      }
-      setNewUaInput('');
-      setShowAddUaModal(false);
-    } catch (e) {
-      console.error("Error adding custom UA:", e);
-    } finally {
-      setSavingCustomUa(false);
-    }
+  // Check for unsaved local student UA changes
+  const hasPendingUaChanges = React.useMemo(() => {
+    const allKeys = Array.from(new Set([...Object.keys(studentUaSelection), ...Object.keys(savedStudentUaSelection)]));
+    return allKeys.some(k => (studentUaSelection[k] || '') !== (savedStudentUaSelection[k] || ''));
+  }, [studentUaSelection, savedStudentUaSelection]);
+
+  // Handle Student UA assignment local change (NO auto save, NO page refresh)
+  const handleStudentUaChange = (studentId: string, studentName: string, selectedUa: string) => {
+    setStudentUaSelection(prev => ({ ...prev, [studentId]: selectedUa }));
+    setUaSaveStatus(null);
   };
 
-  // Handle Student UA assignment change
-  const handleStudentUaChange = async (studentId: string, studentName: string, selectedUa: string) => {
-    setStudentUaSelection(prev => ({ ...prev, [studentId]: selectedUa }));
+  // Handle saving all Student UA changes in batch to Firestore
+  const handleSaveAllStudentUas = async () => {
     setUaSaveStatus('saving');
     try {
-      await saveElementaryMidtermStudentPerformingArtsUa(
-        studentId,
-        studentName,
-        selectedClassId,
+      const assignments: Array<{
+        studentId: string;
+        studentName: string;
+        classId: string;
+        performingArtsUA: string;
+      }> = [];
+
+      // Include all current class students
+      students.forEach(st => {
+        assignments.push({
+          studentId: st.id,
+          studentName: st.name,
+          classId: selectedClassId,
+          performingArtsUA: studentUaSelection[st.id] || ''
+        });
+      });
+
+      // Include any other imported students from other classes
+      importStudentsList.forEach(st => {
+        if (st.id && studentUaSelection[st.id] !== undefined) {
+          if (!assignments.some(a => a.studentId === st.id)) {
+            assignments.push({
+              studentId: st.id,
+              studentName: st.name,
+              classId: (st as any).classId || selectedClassId,
+              performingArtsUA: studentUaSelection[st.id] || ''
+            });
+          }
+        }
+      });
+
+      await saveBulkElementaryMidtermStudentPerformingArtsUa(
+        assignments,
         selectedYear,
         selectedSemester,
         selectedTerm,
-        selectedUa,
         currentUser
       );
+
+      setSavedStudentUaSelection({ ...studentUaSelection });
       setUaSaveStatus('saved');
-      await onRefreshData();
-      setTimeout(() => setUaSaveStatus(null), 2500);
     } catch (e) {
-      console.error("Error saving student UA:", e);
+      console.error("Error saving bulk student UAs:", e);
       setUaSaveStatus('error');
     }
+  };
+
+  // Load student roster across same grade classes for import matching
+  const loadImportRoster = React.useCallback(async () => {
+    setLoadingImportRoster(true);
+    try {
+      const combined: Array<Student & { className?: string }> = [];
+      const seenIds = new Set<string>();
+
+      students.forEach(st => {
+        if (st && st.id) {
+          seenIds.add(st.id);
+          combined.push({ ...st, className: selectedClass?.name || '' });
+        }
+      });
+
+      const otherClasses = sameGradeClasses.filter(c => c && c.id !== selectedClassId);
+      if (otherClasses.length > 0) {
+        const results = await Promise.all(
+          otherClasses.map(c => getActiveStudents(c.id, selectedYear).catch(() => []))
+        );
+        results.forEach((stList, idx) => {
+          const clsName = otherClasses[idx]?.name || '';
+          if (Array.isArray(stList)) {
+            stList.forEach(st => {
+              if (st && st.id && !seenIds.has(st.id)) {
+                seenIds.add(st.id);
+                combined.push({ ...st, className: clsName });
+              }
+            });
+          }
+        });
+      }
+
+      setImportStudentsList(combined);
+    } catch (err) {
+      console.warn("Could not load full import roster:", err);
+    } finally {
+      setLoadingImportRoster(false);
+    }
+  }, [students, selectedClass, sameGradeClasses, selectedClassId, selectedYear]);
+
+  // Compute live import preview matching
+  const importPreview = React.useMemo(() => {
+    if (!importRawText.trim()) {
+      return { matchedList: [], unmatchedList: [], matchedCount: 0, duplicateCount: 0, overwriteCount: 0 };
+    }
+
+    const lines = importRawText.split('\n').map(l => l.trim()).filter(Boolean);
+    const matchedList: Array<{ student: Student & { className?: string }; willChange: boolean; reason: string }> = [];
+    const unmatchedList: Array<{ rawName: string; rawClass: string }> = [];
+
+    let duplicateCount = 0;
+    let overwriteCount = 0;
+
+    const roster = importStudentsList.length > 0
+      ? importStudentsList
+      : students.map(s => ({ ...s, className: selectedClass?.name || '' }));
+
+    lines.forEach(line => {
+      const lowerLine = line.toLowerCase();
+      if (lowerLine.startsWith('nama') || lowerLine.startsWith('student') || lowerLine.includes('nama siswa\t')) {
+        return;
+      }
+
+      let parts = line.split('\t');
+      if (parts.length < 2) {
+        if (line.includes(',')) parts = line.split(',');
+        else if (/\s{2,}/.test(line)) parts = line.split(/\s{2,}/);
+      }
+
+      const rawName = (parts[0] || '').trim();
+      const rawClass = (parts[1] || '').trim();
+
+      if (!rawName) return;
+
+      const normInputName = rawName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const normInputClass = rawClass.toLowerCase().replace(/grade|kelas|elementary|sd/gi, '').replace(/[^a-z0-9]/g, '');
+
+      const match = roster.find(st => {
+        const stNormName = (st.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const stNormClass = (st.className || '').toLowerCase().replace(/grade|kelas|elementary|sd/gi, '').replace(/[^a-z0-9]/g, '');
+
+        if (!stNormName) return false;
+        const isNameMatched = stNormName === normInputName || stNormName.includes(normInputName) || normInputName.includes(stNormName);
+
+        if (!isNameMatched) return false;
+
+        if (normInputClass) {
+          return stNormClass.includes(normInputClass) || normInputClass.includes(stNormClass);
+        }
+        return true;
+      });
+
+      if (match) {
+        const existingUa = studentUaSelection[match.id] || '';
+        let willChange = false;
+        let reason = 'NEW';
+
+        if (existingUa === selectedImportUa) {
+          duplicateCount++;
+          reason = 'DUPLICATE';
+        } else if (existingUa) {
+          if (overwriteExisting) {
+            willChange = true;
+            overwriteCount++;
+            reason = 'OVERWRITE';
+          } else {
+            reason = 'SKIP_EXISTS';
+          }
+        } else {
+          willChange = true;
+          reason = 'NEW';
+        }
+
+        matchedList.push({ student: match, willChange, reason });
+      } else {
+        unmatchedList.push({ rawName, rawClass });
+      }
+    });
+
+    const validMatchedCount = matchedList.filter(m => m.willChange || m.reason === 'DUPLICATE').length;
+
+    return {
+      matchedList,
+      unmatchedList,
+      matchedCount: validMatchedCount,
+      duplicateCount,
+      overwriteCount
+    };
+  }, [importRawText, importStudentsList, students, selectedClass, studentUaSelection, selectedImportUa, overwriteExisting]);
+
+  const executeApplyImport = () => {
+    if (importPreview.matchedList.length === 0) return;
+
+    const updatedSelection = { ...studentUaSelection };
+    let appliedCount = 0;
+
+    importPreview.matchedList.forEach(m => {
+      if (m.willChange) {
+        updatedSelection[m.student.id] = selectedImportUa;
+        appliedCount++;
+      }
+    });
+
+    setStudentUaSelection(updatedSelection);
+    setShowImportUaModal(false);
+    setImportRawText('');
+
+    setImportSuccessMsg(`✓ Hasil import berhasil diterapkan (${appliedCount} siswa). Klik 'Simpan Perubahan' untuk menyimpan.`);
+    setTimeout(() => {
+      setImportSuccessMsg(null);
+    }, 8000);
   };
 
   // Handle adding or editing a Goal
@@ -739,37 +921,85 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
       {/* SECTION 2 (SPECIAL): TABEL PENETAPAN UNIT ACTIVITY SISWA (PERFORMING ARTS) */}
       {activeSubject === 'Performing Arts' && (
         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 pb-3">
             <div>
               <h3 className="text-base font-black text-slate-900 uppercase tracking-tight flex items-center gap-2">
                 <User size={18} className="text-purple-600" />
                 <span>Tabel Penetapan Unit Activity Performing Arts Siswa</span>
               </h3>
               <p className="text-xs text-slate-500 font-medium">
-                Pilih 1 Unit Activity untuk tiap siswa pada kelas {selectedClass?.name || ''}. Hanya siswa terdaftar yang muncul saat menginput nilai pada tab UA tersebut.
+                Pilih Unit Activity untuk tiap siswa pada kelas {selectedClass?.name || ''}. Data diubah di tampilan lokal terlebih dahulu, lalu klik 'Simpan Perubahan'.
               </p>
             </div>
-            {uaSaveStatus && (
-              <div className="flex items-center gap-2 text-xs font-bold transition-all">
-                {uaSaveStatus === 'saving' && (
-                  <span className="text-amber-600 flex items-center gap-1.5 animate-pulse">
+
+            <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+              {/* Import Peserta UA Button */}
+              <button
+                onClick={() => {
+                  setShowImportUaModal(true);
+                  loadImportRoster();
+                }}
+                className="px-4 py-2 bg-purple-100 hover:bg-purple-200 text-purple-950 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all border border-purple-200 shadow-2xs"
+              >
+                <Upload size={14} className="text-purple-700" />
+                <span>Import Peserta UA</span>
+              </button>
+
+              {/* Simpan Perubahan Button */}
+              <button
+                onClick={handleSaveAllStudentUas}
+                disabled={uaSaveStatus === 'saving' || (!hasPendingUaChanges && uaSaveStatus !== 'error')}
+                className={`px-5 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-sm ${
+                  hasPendingUaChanges
+                    ? 'bg-emerald-800 hover:bg-emerald-900 text-white ring-2 ring-emerald-300 animate-pulse'
+                    : 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                }`}
+              >
+                {uaSaveStatus === 'saving' ? (
+                  <>
                     <RefreshCw size={14} className="animate-spin" />
-                    Menyimpan...
-                  </span>
-                )}
-                {uaSaveStatus === 'saved' && (
-                  <span className="text-emerald-600 flex items-center gap-1.5">
+                    <span>Menyimpan...</span>
+                  </>
+                ) : (
+                  <>
                     <CheckCircle2 size={14} />
-                    Semua perubahan tersimpan
-                  </span>
+                    <span>Simpan Perubahan</span>
+                  </>
                 )}
-                {uaSaveStatus === 'error' && (
-                  <span className="text-red-600 flex items-center gap-1.5">
-                    <AlertCircle size={14} />
-                    Gagal menyimpan. Coba lagi.
-                  </span>
-                )}
-              </div>
+              </button>
+            </div>
+          </div>
+
+          {/* Status Indicators & Notification Banner */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1">
+            <div className="text-xs font-bold flex items-center gap-2">
+              {hasPendingUaChanges ? (
+                <span className="text-amber-800 bg-amber-50 border border-amber-300 px-3 py-1 rounded-xl flex items-center gap-1.5 shadow-2xs">
+                  <AlertCircle size={14} className="text-amber-600 shrink-0 animate-pulse" />
+                  Perubahan belum disimpan
+                </span>
+              ) : uaSaveStatus === 'saved' ? (
+                <span className="text-emerald-800 bg-emerald-50 border border-emerald-300 px-3 py-1 rounded-xl flex items-center gap-1.5 shadow-2xs">
+                  <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                  ✓ Perubahan peserta Unit Activity berhasil disimpan
+                </span>
+              ) : uaSaveStatus === 'error' ? (
+                <span className="text-red-800 bg-red-50 border border-red-300 px-3 py-1 rounded-xl flex items-center gap-1.5">
+                  <AlertCircle size={14} className="text-red-600 shrink-0" />
+                  Gagal menyimpan. Coba lagi.
+                </span>
+              ) : (
+                <span className="text-slate-500 font-semibold flex items-center gap-1.5 text-[11px]">
+                  <CheckCircle2 size={14} className="text-emerald-600" />
+                  ✓ Semua perubahan tersimpan
+                </span>
+              )}
+            </div>
+
+            {importSuccessMsg && (
+              <span className="text-emerald-800 bg-emerald-50 border border-emerald-200 text-[11px] font-extrabold px-3 py-1 rounded-xl flex items-center gap-1.5">
+                {importSuccessMsg}
+              </span>
             )}
           </div>
 
@@ -812,6 +1042,178 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL IMPORT PESERTA UNIT ACTIVITY DARI GOOGLE SHEETS */}
+      {showImportUaModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl p-6 max-w-2xl w-full shadow-2xl space-y-5 border border-slate-100 max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-purple-100 text-purple-900 flex items-center justify-center font-black">
+                  <Upload size={20} />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 uppercase tracking-tight">
+                    Import Peserta Unit Activity
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    Copy-paste data siswa dan kelas dari Google Sheets / Excel
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowImportUaModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-all cursor-pointer font-extrabold text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              {/* 1. Target Unit Activity Dropdown */}
+              <div className="space-y-1.5">
+                <label className="block font-extrabold text-slate-800 uppercase tracking-wider text-[11px]">
+                  1. Pilih Unit Activity Tujuan:
+                </label>
+                <select
+                  value={selectedImportUa}
+                  onChange={(e) => setSelectedImportUa(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-extrabold text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500 cursor-pointer"
+                >
+                  {activeGradeUas.map(ua => (
+                    <option key={ua} value={ua}>
+                      {ua}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 2. Textarea for Google Sheets Copy-Paste */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block font-extrabold text-slate-800 uppercase tracking-wider text-[11px]">
+                    2. Paste Data dari Google Sheets (Format: Nama Siswa [TAB] Kelas):
+                  </label>
+                  <span className="text-[10.5px] text-purple-700 font-semibold">
+                    Contoh: Ahmad Zewail [TAB] 1 Fuji
+                  </span>
+                </div>
+                <textarea
+                  value={importRawText}
+                  onChange={(e) => setImportRawText(e.target.value)}
+                  rows={6}
+                  placeholder={`Ahmad Zewail Ryoutaziz Tahir\t1 Fuji\nAlexein Alvarendra Sudwi\t1 Fuji\nDamar Handaru\t1 Fuji`}
+                  className="w-full p-3 bg-slate-50 border border-slate-300 rounded-2xl font-mono text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-y"
+                />
+              </div>
+
+              {/* 3. Checkbox Option: Ganti peserta UA yang sudah ada */}
+              <div className="p-3.5 bg-purple-50/70 rounded-2xl border border-purple-200 space-y-2">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={overwriteExisting}
+                    onChange={(e) => setOverwriteExisting(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded text-purple-700 focus:ring-purple-500 border-purple-300 cursor-pointer"
+                  />
+                  <div className="space-y-0.5">
+                    <span className="font-extrabold text-purple-950 text-xs">
+                      Ganti peserta UA yang sudah ada
+                    </span>
+                    <p className="text-[11px] text-purple-800 leading-snug">
+                      {overwriteExisting
+                        ? '• Dicentang: Siswa yang cocok dan sudah memiliki UA lain akan DIGANTI dengan UA terpilih.'
+                        : '• Tidak dicentang: Hanya menambahkan/mengisi siswa yang belum memiliki Unit Activity.'}
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              {/* 4. Live Matching Preview */}
+              {importRawText.trim() && (
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                  <h4 className="font-black text-slate-900 uppercase tracking-tight text-[11.5px] flex items-center gap-1.5">
+                    <FileCheck2 size={16} className="text-purple-600" />
+                    <span>Pratinjau Hasil Pencocokan Data ({selectedImportUa})</span>
+                  </h4>
+
+                  {loadingImportRoster ? (
+                    <div className="flex items-center gap-2 text-slate-500 font-bold py-2">
+                      <RefreshCw size={14} className="animate-spin" />
+                      Memuat roster siswa...
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {/* Stats Summary Badges */}
+                      <div className="grid grid-cols-3 gap-2 text-center font-extrabold">
+                        <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-950">
+                          <div className="text-lg font-black text-emerald-800">{importPreview.matchedCount}</div>
+                          <div className="text-[10px] uppercase">Berhasil Cocok</div>
+                        </div>
+                        <div className="p-2.5 bg-red-50 border border-red-200 rounded-xl text-red-950">
+                          <div className="text-lg font-black text-red-700">{importPreview.unmatchedList.length}</div>
+                          <div className="text-[10px] uppercase">Tidak Ditemukan</div>
+                        </div>
+                        <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-950">
+                          <div className="text-lg font-black text-amber-800">{importPreview.duplicateCount}</div>
+                          <div className="text-[10px] uppercase">Duplikat / Tetap</div>
+                        </div>
+                      </div>
+
+                      {/* Overwrite Warning Banner */}
+                      {overwriteExisting && importPreview.overwriteCount > 0 && (
+                        <div className="p-2.5 bg-amber-100/80 border border-amber-300 rounded-xl text-amber-950 text-[11px] font-bold flex items-center gap-2">
+                          <AlertCircle size={14} className="text-amber-700 shrink-0" />
+                          <span>Konfirmasi: {importPreview.overwriteCount} siswa yang sudah memiliki UA lain akan diganti menjadi "{selectedImportUa}".</span>
+                        </div>
+                      )}
+
+                      {/* List of Unmatched Students if any */}
+                      {importPreview.unmatchedList.length > 0 && (
+                        <div className="p-3 bg-red-50/80 rounded-xl border border-red-200/90 text-[11px] space-y-1.5">
+                          <div className="font-extrabold text-red-950 flex items-center justify-between">
+                            <span className="flex items-center gap-1">
+                              <AlertCircle size={13} className="text-red-600" />
+                              Nama / Kelas Tidak Ditemukan ({importPreview.unmatchedList.length} baris):
+                            </span>
+                            <span className="text-[10px] text-red-700 font-normal">* Baris ini akan dilewati</span>
+                          </div>
+                          <div className="max-h-28 overflow-y-auto space-y-1 pr-1 font-mono text-[10.5px] text-red-900">
+                            {importPreview.unmatchedList.map((un, idx) => (
+                              <div key={idx} className="bg-white/80 px-2 py-1 rounded border border-red-200/60 flex justify-between">
+                                <span>{un.rawName}</span>
+                                <span className="font-bold text-red-700">{un.rawClass || 'Kelas ?'}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+              <button
+                onClick={() => setShowImportUaModal(false)}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                onClick={executeApplyImport}
+                disabled={!importRawText.trim() || importPreview.matchedCount === 0}
+                className="px-5 py-2.5 bg-purple-900 hover:bg-purple-950 disabled:opacity-40 text-white text-xs font-extrabold rounded-xl transition-all uppercase tracking-wider cursor-pointer shadow-sm flex items-center gap-2"
+              >
+                <CheckCircle2 size={15} />
+                <span>Terapkan {importPreview.matchedCount} Siswa Valid</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

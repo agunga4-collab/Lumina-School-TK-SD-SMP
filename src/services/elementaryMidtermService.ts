@@ -665,6 +665,53 @@ export async function saveElementaryMidtermStudentPerformingArtsUa(
   }
 }
 
+export async function saveBulkElementaryMidtermStudentPerformingArtsUa(
+  assignments: Array<{
+    studentId: string;
+    studentName: string;
+    classId: string;
+    performingArtsUA: string;
+  }>,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  user?: User | null
+): Promise<void> {
+  try {
+    if (!assignments || assignments.length === 0) return;
+
+    const chunkSize = 400;
+    for (let i = 0; i < assignments.length; i += chunkSize) {
+      const chunk = assignments.slice(i, i + chunkSize);
+      const batch = writeBatch(db);
+
+      chunk.forEach(item => {
+        if (!item.studentId || !item.classId) return;
+        const docId = buildStudentDataDocId(item.studentId, item.classId, academicYear, semester, midtermTerm);
+        const docRef = doc(db, 'elem_midterm_student_data', docId);
+        const payload = {
+          id: docId,
+          studentId: item.studentId,
+          studentName: item.studentName || '',
+          classId: item.classId,
+          academicYear,
+          semester,
+          midtermTerm,
+          performingArtsUA: item.performingArtsUA || '',
+          updatedAt: Date.now(),
+          updatedBy: user?.uid || (user as any)?.id || 'system'
+        };
+        batch.set(docRef, payload, { merge: true });
+      });
+
+      await batch.commit();
+    }
+  } catch (err: any) {
+    handleFirestoreError(err, 'update', 'elem_midterm_student_data/bulk_performing_arts_ua');
+    throw err;
+  }
+}
+
 export async function fetchElementaryMidtermCustomUas(
   classId: string,
   academicYear: string,
