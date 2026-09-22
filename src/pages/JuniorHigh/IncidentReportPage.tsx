@@ -337,9 +337,9 @@ export function IncidentReportPage() {
     setIsFormOpen(true);
   };
 
-  // Open Form for Editing Draft Report
+  // Open Form for Editing Incident Report
   const handleOpenEditForm = (report: IncidentReport) => {
-    if (report.status !== 'DRAFT') {
+    if (report.status !== 'DRAFT' && !isHeadUnit && !isSuperAdmin) {
       toast.error('Laporan tidak dapat diedit karena sudah dikirim atau disetujui');
       return;
     }
@@ -412,8 +412,8 @@ export function IncidentReportPage() {
     }
   };
 
-  // Save Report (as Draft or Direct Submission)
-  const handleSaveReport = async (submitForApproval: boolean = false) => {
+  // Save Report (as Draft, Submitted, Saved Changes, or Direct Approval)
+  const handleSaveReport = async (mode: 'SAVE_DRAFT' | 'SUBMIT' | 'SAVE_CHANGES' | 'SAVE_AND_APPROVE' = 'SAVE_DRAFT') => {
     // Validations
     if (!formData.classId) {
       toast.error('Silakan pilih kelas terlebih dahulu');
@@ -450,9 +450,19 @@ export function IncidentReportPage() {
 
     setIsSaving(true);
     try {
+      // Determine target status
+      let targetStatus: IncidentReportStatus = 'DRAFT';
+      if (mode === 'SUBMIT') {
+        targetStatus = 'MENUNGGU_APPROVAL';
+      } else if (mode === 'SAVE_CHANGES') {
+        targetStatus = editingReport?.status || 'DRAFT';
+      } else if (mode === 'SAVE_AND_APPROVE') {
+        targetStatus = editingReport?.status || 'MENUNGGU_APPROVAL';
+      }
+
       const reportPayload: Omit<IncidentReport, 'id'> = {
         unit: 'JUNIOR_HIGH',
-        status: submitForApproval ? 'MENUNGGU_APPROVAL' : 'DRAFT',
+        status: targetStatus,
         studentId: formData.studentId,
         studentNameSnapshot: formData.studentNameSnapshot,
         classId: formData.classId,
@@ -466,23 +476,48 @@ export function IncidentReportPage() {
         actionTreatmentTaken: formData.actionTreatmentTaken.trim(),
         childConditionFollowingIncident: formData.childConditionFollowingIncident.trim(),
         suggestionNextTreatment: formData.suggestionNextTreatment.trim(),
-        teacherId: currentUser?.uid || 'GURU_JH',
-        teacherName: currentUser?.displayName || currentUser?.email || 'Guru Junior High',
-        teacherSignatureUrl: currentUser?.signatureUrl || null,
+        teacherId: editingReport?.teacherId || currentUser?.uid || 'GURU_JH',
+        teacherName: editingReport?.teacherName || currentUser?.displayName || currentUser?.email || 'Guru Junior High',
+        teacherSignatureUrl: editingReport?.teacherSignatureUrl ?? (currentUser?.signatureUrl || null),
         createdAt: editingReport?.createdAt || Date.now(),
         updatedAt: Date.now(),
-        submittedAt: submitForApproval ? Date.now() : editingReport?.submittedAt,
+        submittedAt: mode === 'SUBMIT' ? Date.now() : (editingReport?.submittedAt || (mode === 'SAVE_AND_APPROVE' ? Date.now() : undefined)),
+        approvedBy: editingReport?.approvedBy,
+        approvedByName: editingReport?.approvedByName,
+        approvedAt: editingReport?.approvedAt,
+        principalTitle: editingReport?.principalTitle,
+        principalSignatureUrl: editingReport?.principalSignatureUrl,
+        principalNIY: editingReport?.principalNIY,
       };
 
-      if (editingReport?.id) {
-        await updateJHIncidentReport(editingReport.id, reportPayload);
-        toast.success(submitForApproval ? 'Incident Report dikirim untuk approval!' : 'Draft Incident Report berhasil diperbarui');
+      let reportId = editingReport?.id;
+      if (reportId) {
+        await updateJHIncidentReport(reportId, reportPayload);
       } else {
-        await createJHIncidentReport(reportPayload);
-        toast.success(submitForApproval ? 'Incident Report berhasil dibuat dan dikirim untuk approval!' : 'Draft Incident Report berhasil disimpan');
+        reportId = await createJHIncidentReport(reportPayload);
+      }
+
+      if (mode === 'SAVE_AND_APPROVE') {
+        if (!currentUser) {
+          toast.error('Gagal melakukan approval: User tidak terotentikasi');
+          return;
+        }
+        await approveJHIncidentReport(
+          reportId,
+          currentUser.uid,
+          currentUser.displayName || currentUser.name || currentUser.email || 'Kepala Unit Junior High'
+        );
+        toast.success('Incident Report berhasil disimpan dan disetujui (APPROVED)!');
+      } else if (mode === 'SAVE_CHANGES') {
+        toast.success('Perubahan Incident Report berhasil disimpan!');
+      } else if (mode === 'SUBMIT') {
+        toast.success('Incident Report berhasil dikirim untuk approval!');
+      } else {
+        toast.success('Draft Incident Report berhasil disimpan!');
       }
 
       setIsFormOpen(false);
+      setEditingReport(null);
       loadData();
     } catch (err) {
       console.error('Error saving incident report:', err);
@@ -865,17 +900,28 @@ export function IncidentReportPage() {
                               </button>
 
                               {(isHeadUnit || isSuperAdmin) && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setViewingReport(report);
-                                    setConfirmApproveReport(report);
-                                  }}
-                                  className="flex items-center gap-1 text-xs font-black text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-xl transition-all cursor-pointer shadow-xs"
-                                >
-                                  <ShieldCheck size={14} />
-                                  <span>Approve</span>
-                                </button>
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditForm(report)}
+                                    className="p-1.5 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all cursor-pointer"
+                                    title="Edit Laporan"
+                                  >
+                                    <Edit3 size={15} />
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setViewingReport(report);
+                                      setConfirmApproveReport(report);
+                                    }}
+                                    className="flex items-center gap-1 text-xs font-black text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-xl transition-all cursor-pointer shadow-xs"
+                                  >
+                                    <ShieldCheck size={14} />
+                                    <span>Approve</span>
+                                  </button>
+                                </>
                               )}
                             </>
                           )}
@@ -891,6 +937,17 @@ export function IncidentReportPage() {
                               >
                                 <Eye size={15} />
                               </button>
+
+                              {(isHeadUnit || isSuperAdmin) && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditForm(report)}
+                                  className="p-1.5 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all cursor-pointer"
+                                  title="Edit Laporan"
+                                >
+                                  <Edit3 size={15} />
+                                </button>
+                              )}
 
                               <button
                                 type="button"
@@ -1154,25 +1211,65 @@ export function IncidentReportPage() {
                 Batal
               </button>
 
-              <button
-                type="button"
-                disabled={isSaving}
-                onClick={() => handleSaveReport(false)}
-                className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-extrabold text-xs cursor-pointer disabled:opacity-50"
-              >
-                {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Clock size={14} />}
-                <span>Simpan Draft</span>
-              </button>
+              {editingReport && editingReport.status !== 'DRAFT' ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={isSaving}
+                    onClick={() => handleSaveReport('SAVE_CHANGES')}
+                    className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl border border-blue-300 bg-blue-50 hover:bg-blue-100 text-blue-800 font-extrabold text-xs cursor-pointer disabled:opacity-50"
+                  >
+                    {isSaving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                    <span>Simpan Perubahan</span>
+                  </button>
 
-              <button
-                type="button"
-                disabled={isSaving}
-                onClick={() => handleSaveReport(true)}
-                className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-md cursor-pointer disabled:opacity-50"
-              >
-                {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                <span>Kirim untuk Approval</span>
-              </button>
+                  {(isHeadUnit || isSuperAdmin) && editingReport.status === 'MENUNGGU_APPROVAL' && (
+                    <button
+                      type="button"
+                      disabled={isSaving}
+                      onClick={() => handleSaveReport('SAVE_AND_APPROVE')}
+                      className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-md cursor-pointer disabled:opacity-50"
+                    >
+                      {isSaving ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                      <span>Simpan & Approve</span>
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={isSaving}
+                    onClick={() => handleSaveReport('SAVE_DRAFT')}
+                    className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-extrabold text-xs cursor-pointer disabled:opacity-50"
+                  >
+                    {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Clock size={14} />}
+                    <span>Simpan Draft</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isSaving}
+                    onClick={() => handleSaveReport('SUBMIT')}
+                    className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-md cursor-pointer disabled:opacity-50"
+                  >
+                    {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                    <span>Kirim untuk Approval</span>
+                  </button>
+
+                  {(isHeadUnit || isSuperAdmin) && (
+                    <button
+                      type="button"
+                      disabled={isSaving}
+                      onClick={() => handleSaveReport('SAVE_AND_APPROVE')}
+                      className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-md cursor-pointer disabled:opacity-50"
+                    >
+                      {isSaving ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                      <span>Simpan & Direct Approve</span>
+                    </button>
+                  )}
+                </>
+              )}
             </div>
 
           </div>
@@ -1316,6 +1413,22 @@ export function IncidentReportPage() {
               </button>
 
               <div className="flex items-center gap-2">
+                {/* EDIT BUTTON FOR HEAD UNIT OR OWNER IN DRAFT */}
+                {((isHeadUnit || isSuperAdmin) || (viewingReport.teacherId === currentUser?.uid && viewingReport.status === 'DRAFT')) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const rep = viewingReport;
+                      setViewingReport(null);
+                      handleOpenEditForm(rep);
+                    }}
+                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-blue-300 bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-xs cursor-pointer"
+                  >
+                    <Edit3 size={15} />
+                    <span>Edit Laporan</span>
+                  </button>
+                )}
+
                 {/* APPROVAL BUTTON FOR HEAD UNIT */}
                 {viewingReport.status === 'MENUNGGU_APPROVAL' && (isHeadUnit || isSuperAdmin) && (
                   <button
