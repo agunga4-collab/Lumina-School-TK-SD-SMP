@@ -4,6 +4,10 @@ import type {
   ElementaryMidtermMasterGoalDoc,
   ElementaryMidtermStudentDataDoc,
 } from '../../../types/elementaryMidtermReport';
+import {
+  normalizeElementarySubjectName,
+  ELEMENTARY_OFFICIAL_SUBJECTS
+} from '../../../types/elementaryMidtermReport';
 import type { Student, Class, ReportConfig } from '../../../types';
 
 interface ElementaryMidtermPdfTemplateProps {
@@ -22,6 +26,7 @@ interface ElementaryMidtermPdfTemplateProps {
   reportConfig?: ReportConfig | null;
   logoUrl?: string | null;
   homeroomTeacherProfile?: { displayName: string; niy?: string; signatureUrl?: string | null };
+  studentUaName?: string | null;
   
   // Print / generation ref IDs
   page1Id?: string;
@@ -97,12 +102,15 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
   // Helper to extract subject data
   const getCategoriesFromLive = () => {
     const subjectsMap = masterGoalsMap || {};
-    const academicSubjects: Array<{ name: string; goals: Array<{ id: string; text: string; remark: string }> }> = [];
-    const projectSubjects: Array<{ name: string; goals: Array<{ id: string; text: string; remark: string }> }> = [];
+    const academicMap: Record<string, { name: string; goals: Array<{ id: string; text: string; remark: string }> }> = {};
+    const projectMap: Record<string, { name: string; goals: Array<{ id: string; text: string; remark: string }> }> = {};
 
     Object.keys(subjectsMap).forEach(subjKey => {
       const doc = subjectsMap[subjKey];
       if (!doc || !Array.isArray(doc.goals) || doc.goals.length === 0) return;
+
+      const normName = normalizeElementarySubjectName(doc.subjectKey || subjKey);
+      if (!normName) return; // Skip excluded subjects like IPA, IPS, PKN
 
       const goalsList = doc.goals.map(g => ({
         id: g.id,
@@ -110,12 +118,33 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
         remark: studentDataDoc?.remarks?.[g.id] || '-'
       }));
 
-      if (doc.category === 'PROJECTS' || doc.subjectKey.toUpperCase().includes('PROJECT')) {
-        projectSubjects.push({ name: doc.subjectKey, goals: goalsList });
+      // Determine display subject name (incorporating Performing Arts UA if present)
+      let displayName = normName;
+      if (normName === 'Performing Arts' && studentUaName) {
+        displayName = `Performing Arts (${studentUaName})`;
+      }
+
+      if (doc.category === 'PROJECTS' || normName === 'Projects') {
+        if (!projectMap[normName]) {
+          projectMap[normName] = { name: displayName, goals: [] };
+        }
+        projectMap[normName].goals.push(...goalsList);
       } else {
-        academicSubjects.push({ name: doc.subjectKey, goals: goalsList });
+        if (!academicMap[normName]) {
+          academicMap[normName] = { name: displayName, goals: [] };
+        }
+        academicMap[normName].goals.push(...goalsList);
       }
     });
+
+    const sortFn = (a: { name: string }, b: { name: string }) => {
+      const idxA = ELEMENTARY_OFFICIAL_SUBJECTS.indexOf(normalizeElementarySubjectName(a.name) as any);
+      const idxB = ELEMENTARY_OFFICIAL_SUBJECTS.indexOf(normalizeElementarySubjectName(b.name) as any);
+      return (idxA >= 0 ? idxA : 99) - (idxB >= 0 ? idxB : 99);
+    };
+
+    const academicSubjects = Object.values(academicMap).sort(sortFn);
+    const projectSubjects = Object.values(projectMap);
 
     return { academicSubjects, projectSubjects };
   };
@@ -123,13 +152,41 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
   const snapshotCategories = snapshot?.categories || [];
   const liveCategories = snapshot ? null : getCategoriesFromLive();
 
-  const academicSubjects = snapshot 
+  const rawAcademicSubjects = snapshot 
     ? (snapshotCategories.find(c => c.name === 'SUBJECTS')?.subjects || snapshotCategories[0]?.subjects || [])
     : (liveCategories?.academicSubjects || []);
 
-  const projectSubjects = snapshot 
+  const rawProjectSubjects = snapshot 
     ? (snapshotCategories.find(c => c.name === 'PROJECTS')?.subjects || [])
     : (liveCategories?.projectSubjects || []);
+
+  // Filter & Normalize Snapshot / Live Subjects
+  const academicSubjects = rawAcademicSubjects
+    .map(subj => {
+      const normName = normalizeElementarySubjectName(subj.name);
+      if (!normName) return null;
+      let displayName = normName;
+      if (normName === 'Performing Arts' && (studentUaName || (subj as any).uaName)) {
+        displayName = `Performing Arts (${studentUaName || (subj as any).uaName})`;
+      } else if (subj.name.includes('Performing Arts') && subj.name.includes('(')) {
+        displayName = subj.name;
+      }
+      return { ...subj, name: displayName };
+    })
+    .filter(Boolean) as Array<{ name: string; goals: Array<{ id: string; text: string; remark: string }> }>;
+
+  academicSubjects.sort((a, b) => {
+    const idxA = ELEMENTARY_OFFICIAL_SUBJECTS.indexOf(normalizeElementarySubjectName(a.name) as any);
+    const idxB = ELEMENTARY_OFFICIAL_SUBJECTS.indexOf(normalizeElementarySubjectName(b.name) as any);
+    return (idxA >= 0 ? idxA : 99) - (idxB >= 0 ? idxB : 99);
+  });
+
+  const projectSubjects = rawProjectSubjects
+    .map(subj => {
+      const normName = normalizeElementarySubjectName(subj.name);
+      return normName ? { ...subj, name: normName === 'Projects' ? 'Projects' : subj.name } : null;
+    })
+    .filter(Boolean) as Array<{ name: string; goals: Array<{ id: string; text: string; remark: string }> }>;
 
   const renderAchievementCheck = (remark: string, target: 'A' | 'D' | 'B') => {
     const normRemark = (remark || '').trim().toUpperCase();

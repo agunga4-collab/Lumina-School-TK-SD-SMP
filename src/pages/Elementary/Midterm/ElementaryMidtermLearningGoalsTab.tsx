@@ -10,10 +10,12 @@ import {
   fetchElementaryStudentUnitActivityEnrollment
 } from '../../../services/elementaryMidtermService';
 import { getLearningGoals } from '../../../lib/firebase';
-import type { 
+import { 
   ElementaryMidtermMasterGoalDoc, 
   ElementaryMidtermStudentDataDoc,
-  ElementaryMidtermGoalItem
+  ElementaryMidtermGoalItem,
+  ELEMENTARY_OFFICIAL_SUBJECTS,
+  normalizeElementarySubjectName
 } from '../../../types/elementaryMidtermReport';
 import type { Student, Class, User as UserType, UnitActivityEnrollment } from '../../../types';
 import { ACADEMIC_SUBJECTS } from '../../../constants';
@@ -43,18 +45,20 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
   onRefreshData,
   currentUser
 }) => {
-  // Available subjects for Elementary
-  const elementarySubjects = React.useMemo(() => {
-    const list = ACADEMIC_SUBJECTS.ELEMENTARY.map(s => s.name);
-    // Add Projects as a subject category
-    if (!list.includes('Projects')) list.push('Projects');
-    return list;
-  }, []);
+  // Official subjects for Elementary
+  const elementarySubjects = ELEMENTARY_OFFICIAL_SUBJECTS;
 
-  const [activeSubject, setActiveSubject] = React.useState<string>(elementarySubjects[0] || 'Matematika');
+  const [activeSubject, setActiveSubject] = React.useState<string>(elementarySubjects[0]);
 
-  // Goals State for selected subject
-  const currentSubjectMasterDoc = masterGoalsMap[activeSubject];
+  // Lookup master doc for selected active subject (including checking legacy keys)
+  const currentSubjectMasterDoc = React.useMemo(() => {
+    if (masterGoalsMap[activeSubject]) return masterGoalsMap[activeSubject];
+    // Find doc where normalized subjectKey matches activeSubject
+    const foundKey = Object.keys(masterGoalsMap).find(
+      key => normalizeElementarySubjectName(key) === activeSubject
+    );
+    return foundKey ? masterGoalsMap[foundKey] : undefined;
+  }, [masterGoalsMap, activeSubject]);
   const [goals, setGoals] = React.useState<ElementaryMidtermGoalItem[]>([]);
   const [editingGoalId, setEditingGoalId] = React.useState<string | null>(null);
   const [goalTextInput, setGoalTextInput] = React.useState<string>('');

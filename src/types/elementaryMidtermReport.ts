@@ -1,3 +1,53 @@
+export const ELEMENTARY_OFFICIAL_SUBJECTS = [
+  'Islamic Studies',
+  'Qur\'an Reciting',
+  'Bahasa Indonesia',
+  'Mathematics',
+  'English',
+  'Arts and Crafts',
+  'Performing Arts',
+  'Physical Education',
+  'Information and Communications Technology',
+  'Projects'
+] as const;
+
+export function normalizeElementarySubjectName(rawSubject: string): string | null {
+  if (!rawSubject) return null;
+  const s = rawSubject.trim();
+
+  // Official subject mappings
+  if (s === "Agama & Budi Pekerti" || s === "Pendidikan Agama Islam" || s === "PABP" || s === "Islamic Studies") {
+    return "Islamic Studies";
+  }
+  if (s === "Pendidikan Al-Quran" || s === "Al-Qur'an" || s === "Qur'an" || s === "Qur'an Reciting") {
+    return "Qur'an Reciting";
+  }
+  if (s === "Matematika" || s === "Mathematics") {
+    return "Mathematics";
+  }
+  if (s === "SBDP" || s === "Seni Budaya & Prakarya" || s === "Seni Budaya" || s === "Arts and Crafts") {
+    return "Arts and Crafts";
+  }
+  if (s === "PJOK" || s === "Pendidikan Jasmani" || s === "Physical Education") {
+    return "Physical Education";
+  }
+  if (s === "ICT" || s === "TIK" || s === "Information and Communications Technology") {
+    return "Information and Communications Technology";
+  }
+  if (s === "Performing Arts") return "Performing Arts";
+  if (s === "Bahasa Indonesia") return "Bahasa Indonesia";
+  if (s === "English") return "English";
+  if (s === "Projects" || s === "Project" || s === "PROJECTS") return "Projects";
+
+  // Exclude non-official elementary subjects
+  const upper = s.toUpperCase();
+  if (["IPA", "IPS", "PKN", "PANCASILA", "PPKN", "ILMU PENGETAHUAN ALAM", "ILMU PENGETAHUAN SOSIAL"].includes(upper)) {
+    return null;
+  }
+
+  return s;
+}
+
 export type ElementaryMidtermReportStatus = 'DRAFT' | 'READY_TO_PUBLISH' | 'PUBLISHED';
 
 export type ElementaryMidtermRemark = 'A' | 'D' | 'B';
