@@ -69,6 +69,31 @@ service cloud.firestore {
       return isActive() && userRole() == 'SECRETARY_ELEM' && currentUser().unitId == 'ELEMENTARY';
     }
 
+    function isElementaryStaff() {
+      return isActive() && (
+        isAdmin() || (
+          userRole() in [
+            'TEACHER', 'HOMEROOM_TEACHER', 'HEAD_UNIT', 'PRINCIPAL',
+            'VICE_PRINCIPAL', 'COORDINATOR', 'SECRETARY_ELEM', 'COUNSELOR', 'BK_MENTOR'
+          ] && (
+            !('unitId' in currentUser()) || currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL' ||
+            ('unit' in currentUser() && (currentUser().unit == 'ELEMENTARY' || currentUser().unit == 'ALL'))
+          )
+        )
+      );
+    }
+
+    function isElementaryHeadUnitOrPrincipal() {
+      return isActive() && (
+        isAdmin() || (
+          userRole() in ['HEAD_UNIT', 'PRINCIPAL', 'VICE_PRINCIPAL', 'SUPER_ADMIN'] && (
+            !('unitId' in currentUser()) || currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL' ||
+            ('unit' in currentUser() && (currentUser().unit == 'ELEMENTARY' || currentUser().unit == 'ALL'))
+          )
+        )
+      );
+    }
+
     function isSecretaryJH() {
       return isActive() && userRole() == 'SECRETARY_JH' && currentUser().unitId == 'JUNIOR_HIGH';
     }
@@ -1365,6 +1390,43 @@ service cloud.firestore {
         isJuniorHighStaff()
       );
       allow delete: if isAdmin();
+    }
+
+    match /elem_midterm_master_goals/{goalId} {
+      allow read, write: if isElementaryStaff();
+    }
+
+    match /elem_midterm_student_data/{dataId} {
+      allow read: if isActive() && (
+        isElementaryStaff() ||
+        (resource != null && isOwnStudentData(resource.data.studentId)) ||
+        (resource != null && isLinkedStudent(resource.data.studentId))
+      );
+
+      allow create, update: if isElementaryStaff();
+
+      allow delete: if isAdmin() || isElementaryHeadUnitOrPrincipal();
+    }
+
+    match /elem_midterm_class_comments_config/{configId} {
+      allow read, write: if isElementaryStaff();
+    }
+
+    match /elem_midterm_published_reports/{reportId} {
+      allow read: if isActive() && (
+        isElementaryStaff() ||
+        (resource != null && isOwnStudentData(resource.data.studentId)) ||
+        (resource != null && isLinkedStudent(resource.data.studentId))
+      );
+
+      allow create, update: if isElementaryStaff();
+
+      allow delete: if isAdmin() || isElementaryHeadUnitOrPrincipal();
+    }
+
+    match /unit_activity_enrollments/{enrollmentId} {
+      allow read: if isActive();
+      allow write: if isElementaryStaff() || isJuniorHighStaff() || isAdmin();
     }
 
     match /archived_kg_reports/{reportId} {
