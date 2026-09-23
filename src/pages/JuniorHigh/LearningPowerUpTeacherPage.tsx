@@ -462,6 +462,7 @@ function LearningPowerUpTeacherPageContent() {
   // Loading states
   const [loadingMetadata, setLoadingMetadata] = React.useState(true);
   const [loadingData, setLoadingData] = React.useState(false);
+  const [savingCells, setSavingCells] = React.useState<Record<string, boolean>>({});
 
   // Search filter inside table
   const [searchQuery, setSearchQuery] = React.useState<string>('');
@@ -2926,6 +2927,284 @@ function LearningPowerUpTeacherPageContent() {
     }
   };
 
+  // Individual Manual Verification Checklist Toggle Handler (optimistic, no page reload)
+  const handleManualChecklistToggle = async (
+    student: Student, 
+    field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi'
+  ) => {
+    if (!activePackage) return;
+
+    // Task active check - must have instructions defined for this subject in the package/week
+    let taskInstructions = activePackage.tasks[field] || '';
+    if (!taskInstructions.trim()) {
+      toast.error(`Tidak ada tugas untuk bidang ${CATEGORY_CONFIG[field].label} pada periode ini.`);
+      return;
+    }
+
+    // Authorization check
+    const activeClass = classes.find(c => c.id === selectedClassId);
+    const hasAccess = canTeacherVerifySubject(currentUser, activeClass, field);
+    if (!hasAccess) {
+      toast.error(`Akses ditolak: Anda tidak berwenang mengelola verifikasi bidang ${CATEGORY_CONFIG[field].label}.`);
+      return;
+    }
+
+    const progress = findProgress(student.id, activePackage.id, field);
+    const currentStatus = progress?.status || 'NOT_STARTED';
+
+    if (currentStatus === 'CANCELLED' as any) {
+      toast.error("Tugas ini telah dibatalkan.");
+      return;
+    }
+
+    const isCurrentlyVerified = currentStatus === 'VERIFIED';
+
+    if (isCurrentlyVerified) {
+      // Unverify Confirmation
+      const confirmUnverify = window.confirm(
+        `Apakah Anda yakin ingin membatalkan verifikasi tugas ${CATEGORY_CONFIG[field].label} untuk siswa ${student.name}?`
+      );
+      if (!confirmUnverify) return;
+    }
+
+    // Prepare optimistic local state update!
+    // We will save copies of processes and loadedAssignments so we can revert if Firestore fails
+    const oldProgresses = [...progresses];
+    const oldLoadedAssignments = [...loadedAssignments];
+
+    // Find target batch (for level-based assignments)
+    let targetBatch: LearningPowerUpTaskBatch | undefined;
+    let assignmentId = '';
+    const isLevelBased = activePackage.id.startsWith('level_week_');
+
+    if (isLevelBased) {
+      targetBatch = taskBatches.find(b => 
+        b.weekStartDate === activePackage.weekStartDate && 
+        b.subjectKey === field &&
+        (b.targetClassIds?.includes(selectedClassId) || (b as any).classId === selectedClassId || (b as any).classIds?.includes(selectedClassId))
+      );
+      if (!targetBatch) {
+        toast.error("Gagal menemukan batch tugas level-based.");
+        return;
+      }
+      assignmentId = generateDeterministicAssignmentId(targetBatch.id, student.id, field);
+    }
+
+    const progressId = progress?.id || (isLevelBased ? assignmentId : `progress_${activePackage.id}_${student.id}_${field}`);
+
+    // Create optimistic progress record
+    const targetStatus = isCurrentlyVerified ? 'NOT_STARTED' : 'VERIFIED';
+    
+    // We should display loading on the specific cell
+    setSavingCells(prev => ({ ...prev, [`${student.id}_${field}`]: true }));
+
+    try {
+      // Optimistically update statuses locally
+      const updatedProgress: TaskProgress = {
+        id: progressId,
+        packageId: activePackage.id,
+        taskPackageId: activePackage.id,
+        studentId: student.id,
+        classId: selectedClassId,
+        academicYearId: activeYear,
+        field,
+        subjectKey: field,
+        status: targetStatus,
+        submittedAt: progress?.submittedAt || null,
+        verifiedAt: targetStatus === 'VERIFIED' ? new Date() : null,
+        verifiedBy: targetStatus === 'VERIFIED' ? currentUser.uid : null,
+        verifiedByUserId: targetStatus === 'VERIFIED' ? currentUser.uid : null,
+        verifiedByName: targetStatus === 'VERIFIED' ? (currentUser.displayName || currentUser.email || 'Guru') : null,
+        verifiedByEmail: targetStatus === 'VERIFIED' ? (currentUser.email || null) : null,
+        verificationMethod: targetStatus === 'VERIFIED' ? ('MANUAL_RECOVERY' as any) : null,
+        revisionNote: null,
+        revisedAt: null,
+        updatedAt: new Date(),
+        history: [
+          ...(progress?.history || []),
+          {
+            timestamp: new Date().toLocaleString('id-ID', { hour12: false }),
+            action: (targetStatus === 'VERIFIED' ? 'MANUAL_VERIFY' : 'MANUAL_UNVERIFY') as any,
+            actorName: currentUser.displayName || currentUser.email || 'Guru/Coach',
+            note: targetStatus === 'VERIFIED' 
+              ? 'Recovery ceklis manual setelah data LPU tidak tersedia.' 
+              : 'Pembatalan verifikasi manual oleh guru.'
+          } as any
+        ]
+      };
+
+      // Set optimistic progresses
+      setProgresses(prev => {
+        const index = prev.findIndex(p => p.id === progressId);
+        if (index >= 0) {
+          const newProgs = [...prev];
+          newProgs[index] = updatedProgress;
+          return newProgs;
+        } else {
+          return [...prev, updatedProgress];
+        }
+      });
+
+      // Also set optimistic loadedAssignments if level-based
+      if (isLevelBased) {
+        const existingAsg = loadedAssignments.find(a => a.id === assignmentId);
+        const newHistoryEntry: LpuAssignmentHistoryEntry = {
+          action: (targetStatus === 'VERIFIED' ? 'MANUAL_VERIFY' : 'MANUAL_UNVERIFY') as any,
+          performedByUid: currentUser.uid,
+          performedByName: currentUser.displayName || currentUser.email || 'Guru',
+          performedByRole: currentUser.role,
+          timestamp: new Date(),
+          note: targetStatus === 'VERIFIED' 
+            ? 'Recovery ceklis manual setelah data LPU tidak tersedia.' 
+            : 'Pembatalan verifikasi manual oleh guru.'
+        };
+
+        const assignmentUpdate: LearningPowerUpAssignment = {
+          id: assignmentId,
+          unit: 'JUNIOR_HIGH',
+          taskBatchId: targetBatch.id,
+          studentId: student.id,
+          studentNameSnapshot: student.name,
+          classId: selectedClassId,
+          classNameSnapshot: classes.find(c => c.id === selectedClassId)?.name || '',
+          subjectKey: field,
+          subjectArea: targetBatch.subjectArea || LPU_SUBJECT_MAP[field] || '',
+          levelSnapshot: existingAsg?.levelSnapshot || null,
+          taskTitle: existingAsg?.taskTitle || `Tugas Penguatan ${CATEGORY_CONFIG[field].label}`,
+          taskInstructions: existingAsg?.taskInstructions || "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.",
+          academicYearId: activeYear,
+          semester: targetBatch.semester || '1',
+          weekStartDate: activePackage.weekStartDate,
+          weekEndDate: activePackage.weekEndDate,
+          weekLabel: activePackage.weekLabel || '',
+          status: targetStatus === 'VERIFIED' ? 'VERIFIED' : 'ASSIGNED',
+          submittedAt: existingAsg?.submittedAt || null,
+          verifiedAt: targetStatus === 'VERIFIED' ? serverTimestamp() as any : null,
+          verifiedBy: targetStatus === 'VERIFIED' ? currentUser.uid : null,
+          verifiedByName: targetStatus === 'VERIFIED' ? (currentUser.displayName || currentUser.email || 'Guru') : null,
+          verifiedByEmail: targetStatus === 'VERIFIED' ? (currentUser.email || null) : null,
+          verificationMethod: targetStatus === 'VERIFIED' ? ('MANUAL_RECOVERY' as any) : null,
+          history: existingAsg ? [...(existingAsg.history || []), newHistoryEntry] : [newHistoryEntry],
+          createdAt: existingAsg?.createdAt || serverTimestamp() as any,
+          updatedAt: serverTimestamp() as any
+        };
+
+        setLoadedAssignments(prev => {
+          const index = prev.findIndex(a => a.id === assignmentId);
+          if (index >= 0) {
+            const newAsgs = [...prev];
+            newAsgs[index] = assignmentUpdate;
+            return newAsgs;
+          } else {
+            return [...prev, assignmentUpdate];
+          }
+        });
+      }
+
+      // Perform background async Firestore write!
+      if (isLevelBased && targetBatch) {
+        const existingAsg = oldLoadedAssignments.find(a => a.id === assignmentId);
+        const newHistoryEntry: LpuAssignmentHistoryEntry = {
+          action: (targetStatus === 'VERIFIED' ? 'MANUAL_VERIFY' : 'MANUAL_UNVERIFY') as any,
+          performedByUid: currentUser.uid,
+          performedByName: currentUser.displayName || currentUser.email || 'Guru',
+          performedByRole: currentUser.role,
+          timestamp: new Date(),
+          note: targetStatus === 'VERIFIED' 
+            ? 'Recovery ceklis manual setelah data LPU tidak tersedia.' 
+            : 'Pembatalan verifikasi manual oleh guru.'
+        };
+
+        const assignmentUpdate: any = {
+          status: targetStatus === 'VERIFIED' ? 'VERIFIED' : 'ASSIGNED',
+          verifiedAt: targetStatus === 'VERIFIED' ? serverTimestamp() : null,
+          verifiedBy: targetStatus === 'VERIFIED' ? currentUser.uid : null,
+          verifiedByName: targetStatus === 'VERIFIED' ? (currentUser.displayName || currentUser.email || 'Guru') : null,
+          verifiedByEmail: targetStatus === 'VERIFIED' ? (currentUser.email || null) : null,
+          verificationMethod: targetStatus === 'VERIFIED' ? 'MANUAL_RECOVERY' : null,
+          history: existingAsg ? [...(existingAsg.history || []), newHistoryEntry] : [newHistoryEntry],
+          updatedAt: serverTimestamp()
+        };
+
+        if (!existingAsg) {
+          const defaultTaskTitle = `Tugas Penguatan ${CATEGORY_CONFIG[field].label}`;
+          const defaultInstructions = "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.";
+
+          assignmentUpdate.id = assignmentId;
+          assignmentUpdate.unit = 'JUNIOR_HIGH';
+          assignmentUpdate.taskBatchId = targetBatch.id;
+          assignmentUpdate.studentId = student.id;
+          assignmentUpdate.studentNameSnapshot = student.name;
+          assignmentUpdate.classId = selectedClassId;
+          assignmentUpdate.classNameSnapshot = classes.find(c => c.id === selectedClassId)?.name || '';
+          assignmentUpdate.subjectKey = field;
+          assignmentUpdate.subjectArea = targetBatch.subjectArea || LPU_SUBJECT_MAP[field] || '';
+          assignmentUpdate.levelSnapshot = null;
+          assignmentUpdate.taskTitle = defaultTaskTitle;
+          assignmentUpdate.taskInstructions = defaultInstructions;
+          assignmentUpdate.academicYearId = activeYear;
+          assignmentUpdate.semester = activePackage.semester || '1';
+          assignmentUpdate.weekStartDate = activePackage.weekStartDate;
+          assignmentUpdate.weekEndDate = activePackage.weekEndDate;
+          assignmentUpdate.weekLabel = activePackage.weekLabel || '';
+          assignmentUpdate.createdAt = serverTimestamp();
+          assignmentUpdate.createdBy = currentUser.uid;
+        }
+
+        await setDoc(doc(db, 'learning_power_up_assignments', assignmentId), assignmentUpdate, { merge: true });
+      } else {
+        // Legacy progress
+        const currentHistory = progress?.history || [];
+        const nowStr = new Date().toLocaleString('id-ID', { hour12: false });
+
+        const newHistoryItem: TaskProgressHistory = {
+          timestamp: nowStr,
+          action: (targetStatus === 'VERIFIED' ? 'VERIFY' : 'UNVERIFY') as any,
+          actorName: currentUser.displayName || currentUser.email || "Guru/Coach",
+          note: targetStatus === 'VERIFIED' 
+            ? 'Recovery ceklis manual setelah data LPU tidak tersedia.' 
+            : 'Pembatalan verifikasi manual oleh guru.'
+        };
+
+        const updatedProgressDoc = {
+          id: progressId,
+          packageId: activePackage.id,
+          taskPackageId: activePackage.id,
+          studentId: student.id,
+          classId: selectedClassId,
+          academicYearId: activeYear,
+          field,
+          subjectKey: field,
+          status: targetStatus,
+          submittedAt: progress?.submittedAt || null,
+          verifiedAt: targetStatus === 'VERIFIED' ? serverTimestamp() : null,
+          verifiedBy: targetStatus === 'VERIFIED' ? (currentUser.displayName || currentUser.email || "Guru/Coach") : null,
+          verifiedByUserId: targetStatus === 'VERIFIED' ? (currentUser.uid || null) : null,
+          verifiedByName: targetStatus === 'VERIFIED' ? (currentUser.displayName || currentUser.email || "Guru/Coach") : null,
+          verifiedByEmail: targetStatus === 'VERIFIED' ? (currentUser.email || null) : null,
+          verificationMethod: targetStatus === 'VERIFIED' ? ('MANUAL_RECOVERY' as any) : null,
+          revisionNote: null,
+          revisedAt: null,
+          updatedAt: serverTimestamp(),
+          history: [...currentHistory, newHistoryItem]
+        };
+
+        await setDoc(doc(db, 'learning_power_up_progress', progressId), updatedProgressDoc, { merge: true });
+      }
+
+      toast.success("Tersimpan");
+    } catch (error) {
+      console.error("Error saving manual checklist toggle:", error);
+      // Revert optimistic updates on failure!
+      setProgresses(oldProgresses);
+      setLoadedAssignments(oldLoadedAssignments);
+      toast.error("Gagal menyimpan. Silakan coba lagi.");
+    } finally {
+      // Clear specific cell loading state
+      setSavingCells(prev => ({ ...prev, [`${student.id}_${field}`]: false }));
+    }
+  };
+
   // Handle spreadsheet cell click -> opens Verification Modal or Unverification Dialog
   const handleCellClick = (student: Student, field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi') => {
     if (!activePackage) return;
@@ -3986,37 +4265,45 @@ function LearningPowerUpTeacherPageContent() {
                                   ) : null}
                                   
                                   <button
-                                    onClick={() => handleCellClick(student, field)}
+                                    onClick={() => handleManualChecklistToggle(student, field)}
                                     className="inline-flex items-center justify-center p-1 rounded-xl transition-all hover:bg-slate-100 focus:outline-none"
-                                    disabled={status === 'CANCELLED' as any}
+                                    disabled={status === 'CANCELLED' as any || savingCells[`${student.id}_${field}`]}
                                   >
-                                    {status === 'VERIFIED' && (
-                                      <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center border border-emerald-200">
-                                        <Check size={18} strokeWidth={3} />
+                                    {savingCells[`${student.id}_${field}`] ? (
+                                      <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center border border-slate-200">
+                                        <Loader2 className="w-4 h-4 animate-spin text-slate-500" />
                                       </div>
-                                    )}
-                                    {status === 'SUBMITTED' && (
-                                      <div className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1 text-[10px] font-black uppercase animate-pulse">
-                                        <Clock size={12} className="text-amber-500" />
-                                        Menunggu Verifikasi Guru
-                                      </div>
-                                    )}
-                                    {status === 'REVISION_REQUIRED' && (
-                                      <div className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1 text-[10px] font-black uppercase">
-                                        <AlertTriangle size={12} className="text-rose-500" />
-                                        Belum Tuntas
-                                      </div>
-                                    )}
-                                    {status === ('CANCELLED' as any) && (
-                                      <div className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-500 border border-slate-200 flex items-center gap-1 text-[10px] font-black uppercase" title="Tugas Dibatalkan">
-                                        <AlertCircle size={12} className="text-slate-400" />
-                                        Batal
-                                      </div>
-                                    )}
-                                    {status === 'NOT_STARTED' && (
-                                      <div className="w-8 h-8 rounded-lg border border-slate-200/60 bg-slate-50 flex items-center justify-center text-slate-300 hover:border-slate-400 transition-all">
-                                        <div className="w-4 h-4 rounded-sm border border-slate-200" />
-                                      </div>
+                                    ) : (
+                                      <>
+                                        {status === 'VERIFIED' && (
+                                          <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center border border-emerald-200">
+                                            <Check size={18} strokeWidth={3} />
+                                          </div>
+                                        )}
+                                        {status === 'SUBMITTED' && (
+                                          <div className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1 text-[10px] font-black uppercase animate-pulse">
+                                            <Clock size={12} className="text-amber-500" />
+                                            Menunggu Verifikasi Guru
+                                          </div>
+                                        )}
+                                        {status === 'REVISION_REQUIRED' && (
+                                          <div className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1 text-[10px] font-black uppercase">
+                                            <AlertTriangle size={12} className="text-rose-500" />
+                                            Belum Tuntas
+                                          </div>
+                                        )}
+                                        {status === ('CANCELLED' as any) && (
+                                          <div className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-500 border border-slate-200 flex items-center gap-1 text-[10px] font-black uppercase" title="Tugas Dibatalkan">
+                                            <AlertCircle size={12} className="text-slate-400" />
+                                            Batal
+                                          </div>
+                                        )}
+                                        {status === 'NOT_STARTED' && (
+                                          <div className="w-8 h-8 rounded-lg border border-slate-200/60 bg-slate-50 flex items-center justify-center text-slate-300 hover:border-slate-400 transition-all">
+                                            <div className="w-4 h-4 rounded-sm border border-slate-200" />
+                                          </div>
+                                        )}
+                                      </>
                                     )}
                                   </button>
                                 </div>
