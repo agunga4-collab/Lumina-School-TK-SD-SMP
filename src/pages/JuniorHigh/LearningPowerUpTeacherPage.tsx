@@ -3300,6 +3300,8 @@ function LearningPowerUpTeacherPageContent() {
     }
 
     setIsSavingVerification(true);
+    // Display loading spinner directly inside the specific cell
+    setSavingCells(prev => ({ ...prev, [`${student.id}_${field}`]: true }));
     try {
       const isLevelBased = activePackage.id.startsWith('level_week_');
       if (isLevelBased) {
@@ -3316,132 +3318,86 @@ function LearningPowerUpTeacherPageContent() {
         const assignmentId = generateDeterministicAssignmentId(targetBatch.id, student.id, field);
         const existingAsg = loadedAssignments.find(a => a.id === assignmentId);
         
+        if (!existingAsg) {
+          toast.error("Dokumen tugas belum ditetapkan untuk siswa ini.");
+          return;
+        }
+
         const newHistoryEntry: LpuAssignmentHistoryEntry = {
           action: isApproved ? 'VERIFY' : 'REVISION_REQUEST',
           performedByUid: currentUser.uid,
-          performedByName: currentUser.displayName || currentUser.email || 'Guru',
+          performedByName: (currentUser as any).name || currentUser.displayName || currentUser.email || 'Guru',
           performedByRole: currentUser.role,
           timestamp: new Date(),
-          note: isApproved ? "Guru menandai tugas Selesai." : `Guru menandai tugas Belum Tuntas. Catatan: "${verificationNote}"`
+          note: isApproved ? 'Tugas diverifikasi oleh guru' : `Guru menandai tugas Belum Tuntas. Catatan: "${verificationNote}"`
         };
 
-        const updatedHistory = existingAsg ? [...(existingAsg.history || []), newHistoryEntry] : [newHistoryEntry];
+        const updatedHistory = [...(existingAsg.history || []), newHistoryEntry];
 
         const assignmentUpdate: any = {
           status: isApproved ? 'VERIFIED' : 'REVISION_REQUIRED',
           verifiedAt: isApproved ? serverTimestamp() : null,
-          verifiedBy: isApproved ? (currentUser.displayName || currentUser.email || "Guru") : null,
-          verifiedByName: isApproved ? (currentUser.displayName || currentUser.email || "Guru") : null,
+          verifiedBy: isApproved ? currentUser.uid : null,
+          verifiedByName: isApproved ? ((currentUser as any).name || currentUser.displayName || currentUser.email || 'Guru') : null,
           verifiedByEmail: isApproved ? (currentUser.email || null) : null,
-          verificationMethod: isApproved ? ("INDIVIDUAL" as const) : null,
+          verificationMethod: isApproved ? 'MANUAL' : null,
           revisionNote: isApproved ? null : verificationNote,
           history: updatedHistory,
           updatedAt: serverTimestamp()
         };
 
-        // If the assignment does not exist in Firestore (student had no level set during batch creation),
-        // we create a complete new assignment document using a non-level fallback
-        if (!existingAsg) {
-          const defaultTaskTitle = `Tugas Penguatan ${CATEGORY_CONFIG[field].label}`;
-          const defaultInstructions = "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.";
+        const assignmentRef = doc(db, 'learning_power_up_assignments', assignmentId);
+        await updateDoc(assignmentRef, assignmentUpdate);
 
-          assignmentUpdate.id = assignmentId;
-          assignmentUpdate.unit = 'JUNIOR_HIGH';
-          assignmentUpdate.taskBatchId = targetBatch.id;
-          assignmentUpdate.studentId = student.id;
-          assignmentUpdate.studentNameSnapshot = student.name;
-          assignmentUpdate.classId = selectedClassId;
-          assignmentUpdate.classNameSnapshot = classes.find(c => c.id === selectedClassId)?.name || '';
-          assignmentUpdate.subjectKey = field;
-          assignmentUpdate.subjectArea = targetBatch.subjectArea || LPU_SUBJECT_MAP[field] || '';
-          assignmentUpdate.levelSnapshot = null;
-          assignmentUpdate.taskTitle = defaultTaskTitle;
-          assignmentUpdate.taskInstructions = defaultInstructions;
-          assignmentUpdate.academicYearId = activeYear;
-          assignmentUpdate.semester = activePackage.semester || '1';
-          assignmentUpdate.weekStartDate = activePackage.weekStartDate;
-          assignmentUpdate.weekEndDate = activePackage.weekEndDate;
-          assignmentUpdate.weekLabel = activePackage.weekLabel || '';
-          assignmentUpdate.createdAt = serverTimestamp();
-          assignmentUpdate.createdBy = currentUser.uid;
+        // Fetch actual updated document from Firestore to guarantee UI loads actual status
+        const freshSnap = await getDoc(assignmentRef);
+        if (freshSnap.exists()) {
+          const freshData = { id: freshSnap.id, ...freshSnap.data() } as LearningPowerUpAssignment;
+
+          // Update local loadedAssignments state
+          setLoadedAssignments(prev => {
+            const filtered = prev.filter(a => a.id !== assignmentId);
+            return [...filtered, freshData];
+          });
+
+          // Update local progresses state virtual Progress
+          let status: TaskProgress['status'] = 'NOT_STARTED';
+          if (freshData.isCancelled) {
+            status = 'CANCELLED' as any;
+          } else if (freshData.status === 'VERIFIED') {
+            status = 'VERIFIED';
+          } else if (freshData.status === 'SUBMITTED') {
+            status = 'SUBMITTED';
+          } else if (freshData.status === 'REVISION_REQUIRED') {
+            status = 'REVISION_REQUIRED';
+          } else if (freshData.status === 'ASSIGNED') {
+            status = 'ASSIGNED';
+          }
+
+          const virtualProg: TaskProgress = {
+            id: freshData.id,
+            packageId: `level_week_${freshData.weekStartDate}`,
+            taskPackageId: `level_week_${freshData.weekStartDate}`,
+            studentId: freshData.studentId,
+            classId: freshData.classId,
+            academicYearId: freshData.academicYearId,
+            field: freshData.subjectKey,
+            subjectKey: freshData.subjectKey,
+            status: status,
+            verifiedAt: freshData.verifiedAt,
+            verifiedBy: freshData.verifiedBy,
+            verifiedByEmail: freshData.verifiedByEmail,
+            verifiedByName: freshData.verifiedByName,
+            verificationMethod: freshData.verificationMethod,
+            revisionNote: freshData.history?.filter(h => h.action === 'REVISION_REQUEST' && h.note).slice(-1)[0]?.note || '',
+            history: freshData.history || []
+          } as any;
+
+          setProgresses(prev => {
+            const filtered = prev.filter(p => p.id !== assignmentId);
+            return [...filtered, virtualProg];
+          });
         }
-
-        await setDoc(doc(db, 'learning_power_up_assignments', assignmentId), assignmentUpdate, { merge: true });
-
-        // Update local loadedAssignments state optimistically with standard JS types
-        const localAsgObj: LearningPowerUpAssignment = {
-          id: assignmentId,
-          unit: 'JUNIOR_HIGH',
-          taskBatchId: targetBatch.id,
-          studentId: student.id,
-          studentNameSnapshot: student.name,
-          classId: selectedClassId,
-          classNameSnapshot: classes.find(c => c.id === selectedClassId)?.name || '',
-          subjectKey: field,
-          subjectArea: targetBatch.subjectArea || LPU_SUBJECT_MAP[field] || '',
-          levelSnapshot: existingAsg?.levelSnapshot || null,
-          taskTitle: existingAsg?.taskTitle || `Tugas Penguatan ${CATEGORY_CONFIG[field].label}`,
-          taskInstructions: existingAsg?.taskInstructions || "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.",
-          academicYearId: activeYear,
-          semester: targetBatch.semester || '1',
-          weekStartDate: activePackage.weekStartDate,
-          weekEndDate: activePackage.weekEndDate,
-          weekLabel: activePackage.weekLabel || '',
-          status: isApproved ? 'VERIFIED' : 'REVISION_REQUIRED',
-          submittedAt: existingAsg?.submittedAt || null,
-          verifiedAt: isApproved ? new Date() : null,
-          verifiedBy: isApproved ? currentUser.uid : null,
-          verifiedByName: isApproved ? (currentUser.displayName || currentUser.email || 'Guru') : null,
-          verifiedByEmail: isApproved ? (currentUser.email || null) : null,
-          verificationMethod: isApproved ? 'INDIVIDUAL' : null,
-          revisionNote: isApproved ? null : verificationNote,
-          history: updatedHistory.map(h => ({
-            ...h,
-            timestamp: safeToDate(h.timestamp)
-          })),
-          createdAt: existingAsg?.createdAt || new Date(),
-          createdBy: existingAsg?.createdBy || currentUser.uid,
-          updatedAt: new Date()
-        };
-
-        setLoadedAssignments(prev => {
-          const filtered = prev.filter(a => a.id !== assignmentId);
-          return [...filtered, localAsgObj];
-        });
-
-        // Also update processes state virtual Progress
-        const virtualProg: TaskProgress = {
-          id: assignmentId,
-          packageId: `level_week_${activePackage.weekStartDate}`,
-          taskPackageId: `level_week_${activePackage.weekStartDate}`,
-          studentId: student.id,
-          classId: selectedClassId,
-          academicYearId: activeYear,
-          field,
-          subjectKey: field,
-          status: isApproved ? 'VERIFIED' : 'REVISION_REQUIRED',
-          verifiedAt: isApproved ? new Date() : null,
-          verifiedBy: isApproved ? (currentUser.displayName || currentUser.email || 'Guru') : null,
-          verifiedByEmail: isApproved ? (currentUser.email || null) : null,
-          verifiedByName: isApproved ? (currentUser.displayName || currentUser.email || 'Guru') : null,
-          verificationMethod: isApproved ? 'INDIVIDUAL' : null,
-          revisionNote: isApproved ? null : verificationNote,
-          history: updatedHistory.map(h => {
-            const parsedDate = safeToDate(h.timestamp);
-            const timeStr = parsedDate.toLocaleString('id-ID', { hour12: false });
-            return {
-              timestamp: timeStr,
-              action: h.action === 'VERIFY' ? 'VERIFY' : h.action === 'REVISION_REQUEST' ? 'REVISION_REQUEST' : 'SUBMIT',
-              actorName: h.performedByName,
-              note: h.note || ''
-            };
-          }) as any
-        } as any;
-
-        setProgresses(prev => {
-          const filtered = prev.filter(p => p.id !== assignmentId);
-          return [...filtered, virtualProg];
-        });
 
         toast.success(isApproved ? "Tugas berhasil ditandai Selesai!" : "Tugas berhasil ditandai Belum Tuntas dengan catatan.");
         setVerifyingProgress(null);
@@ -3455,8 +3411,8 @@ function LearningPowerUpTeacherPageContent() {
       const newHistoryItem: TaskProgressHistory = {
         timestamp: nowStr,
         action: isApproved ? 'VERIFY' : 'REVISION_REQUEST',
-        actorName: currentUser.displayName || currentUser.email || "Guru/Coach",
-        note: isApproved ? "Guru menandai tugas Selesai." : `Guru menandai tugas Belum Tuntas. Catatan: "${verificationNote}"`
+        actorName: (currentUser as any).name || currentUser.displayName || currentUser.email || "Guru/Coach",
+        note: isApproved ? 'Tugas diverifikasi oleh guru' : `Guru menandai tugas Belum Tuntas. Catatan: "${verificationNote}"`
       };
 
       const updatedProgress = {
@@ -3471,9 +3427,9 @@ function LearningPowerUpTeacherPageContent() {
         status: isApproved ? 'VERIFIED' : 'REVISION_REQUIRED',
         submittedAt: progress?.submittedAt || null,
         verifiedAt: isApproved ? serverTimestamp() : (progress?.verifiedAt || null),
-        verifiedBy: isApproved ? (currentUser.displayName || currentUser.email || "Guru/Coach") : (progress?.verifiedBy || null),
+        verifiedBy: isApproved ? ((currentUser as any).name || currentUser.displayName || currentUser.email || "Guru/Coach") : (progress?.verifiedBy || null),
         verifiedByUserId: isApproved ? (currentUser.uid || null) : (progress?.verifiedByUserId || null),
-        verifiedByName: isApproved ? (currentUser.displayName || currentUser.email || "Guru/Coach") : (progress?.verifiedByName || null),
+        verifiedByName: isApproved ? ((currentUser as any).name || currentUser.displayName || currentUser.email || "Guru/Coach") : (progress?.verifiedByName || null),
         verifiedByEmail: isApproved ? (currentUser.email || null) : (progress?.verifiedByEmail || null),
         verificationMethod: isApproved ? ("INDIVIDUAL" as const) : (progress?.verificationMethod || null),
         revisionNote: isApproved ? null : verificationNote,
@@ -3482,27 +3438,27 @@ function LearningPowerUpTeacherPageContent() {
         history: [...currentHistory, newHistoryItem]
       };
 
-      await setDoc(doc(db, 'learning_power_up_progress', progressId), updatedProgress, { merge: true });
+      const progressRef = doc(db, 'learning_power_up_progress', progressId);
+      await setDoc(progressRef, updatedProgress, { merge: true });
 
-      // Update local state for legacy progresses
-      const localProgObj: TaskProgress = {
-        ...updatedProgress,
-        verifiedAt: isApproved ? new Date() : (progress?.verifiedAt ? (progress.verifiedAt instanceof Date ? progress.verifiedAt : new Date(progress.verifiedAt as any)) : null),
-        updatedAt: new Date()
-      } as any;
-
-      setProgresses(prev => {
-        const filtered = prev.filter(p => p.id !== progressId);
-        return [...filtered, localProgObj];
-      });
+      // Fetch fresh standard progress document from Firestore
+      const freshSnap = await getDoc(progressRef);
+      if (freshSnap.exists()) {
+        const freshData = { id: freshSnap.id, ...freshSnap.data() } as TaskProgress;
+        setProgresses(prev => {
+          const filtered = prev.filter(p => p.id !== progressId);
+          return [...filtered, freshData];
+        });
+      }
 
       toast.success(isApproved ? "Tugas berhasil ditandai Selesai!" : "Tugas berhasil ditandai Belum Tuntas dengan catatan.");
       setVerifyingProgress(null);
     } catch (err) {
       console.error("Error saving verification:", err);
-      toast.error("Gagal menyimpan hasil verifikasi.");
+      toast.error("Gagal menyimpan verifikasi");
     } finally {
       setIsSavingVerification(false);
+      setSavingCells(prev => ({ ...prev, [`${student.id}_${field}`]: false }));
     }
   };
 
@@ -3769,7 +3725,7 @@ function LearningPowerUpTeacherPageContent() {
       return;
     }
 
-    setLoadingData(true);
+    setSavingCells(prev => ({ ...prev, [`${student.id}_${field}`]: true }));
     try {
       if (activePackage.id.startsWith('level_week_')) {
         const targetBatch = taskBatches.find(b => 
@@ -3780,23 +3736,28 @@ function LearningPowerUpTeacherPageContent() {
         if (!targetBatch) {
           toast.error("Gagal menemukan batch tugas level-based.");
           setUnverifyingProgress(null);
-          setLoadingData(false);
           return;
         }
 
         const assignmentId = generateDeterministicAssignmentId(targetBatch.id, student.id, field);
         const existingAsg = loadedAssignments.find(a => a.id === assignmentId);
 
+        if (!existingAsg) {
+          toast.error("Dokumen tugas belum ditetapkan untuk siswa ini.");
+          setUnverifyingProgress(null);
+          return;
+        }
+
         const newHistoryEntry: LpuAssignmentHistoryEntry = {
-          action: 'ASSIGN',
+          action: 'UNVERIFY',
           performedByUid: currentUser.uid,
-          performedByName: currentUser.displayName || currentUser.email || 'Guru',
+          performedByName: (currentUser as any).name || currentUser.displayName || currentUser.email || 'Guru',
           performedByRole: currentUser.role,
           timestamp: new Date(),
-          note: "Pembatalan verifikasi tugas manual."
+          note: 'Verifikasi dibatalkan oleh guru'
         };
 
-        const updatedHistory = existingAsg ? [...(existingAsg.history || []), newHistoryEntry] : [newHistoryEntry];
+        const updatedHistory = [...(existingAsg.history || []), newHistoryEntry];
 
         const assignmentUpdate: any = {
           status: 'ASSIGNED',
@@ -3805,110 +3766,63 @@ function LearningPowerUpTeacherPageContent() {
           verifiedByName: null,
           verifiedByEmail: null,
           verificationMethod: null,
+          revisionNote: 'Belum selesai (dibatalkan oleh guru)',
           history: updatedHistory,
           updatedAt: serverTimestamp()
         };
 
-        // Fallback fields in case the assignment does not exist in Firestore
-        if (!existingAsg) {
-          const defaultTaskTitle = `Tugas Penguatan ${CATEGORY_CONFIG[field].label}`;
-          const defaultInstructions = "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.";
+        const assignmentRef = doc(db, 'learning_power_up_assignments', assignmentId);
+        await updateDoc(assignmentRef, assignmentUpdate);
 
-          assignmentUpdate.id = assignmentId;
-          assignmentUpdate.unit = 'JUNIOR_HIGH';
-          assignmentUpdate.taskBatchId = targetBatch.id;
-          assignmentUpdate.studentId = student.id;
-          assignmentUpdate.studentNameSnapshot = student.name;
-          assignmentUpdate.classId = selectedClassId;
-          assignmentUpdate.classNameSnapshot = classes.find(c => c.id === selectedClassId)?.name || '';
-          assignmentUpdate.subjectKey = field;
-          assignmentUpdate.subjectArea = targetBatch.subjectArea || LPU_SUBJECT_MAP[field] || '';
-          assignmentUpdate.levelSnapshot = null;
-          assignmentUpdate.taskTitle = defaultTaskTitle;
-          assignmentUpdate.taskInstructions = defaultInstructions;
-          assignmentUpdate.academicYearId = activeYear;
-          assignmentUpdate.semester = activePackage.semester || '1';
-          assignmentUpdate.weekStartDate = activePackage.weekStartDate;
-          assignmentUpdate.weekEndDate = activePackage.weekEndDate;
-          assignmentUpdate.weekLabel = activePackage.weekLabel || '';
-          assignmentUpdate.createdAt = serverTimestamp();
-          assignmentUpdate.createdBy = currentUser.uid;
+        // Fetch actual updated document from Firestore to guarantee UI loads actual status
+        const freshSnap = await getDoc(assignmentRef);
+        if (freshSnap.exists()) {
+          const freshData = { id: freshSnap.id, ...freshSnap.data() } as LearningPowerUpAssignment;
+
+          // Update local loadedAssignments state
+          setLoadedAssignments(prev => {
+            const filtered = prev.filter(a => a.id !== assignmentId);
+            return [...filtered, freshData];
+          });
+
+          // Update local progresses state virtual Progress
+          let status: TaskProgress['status'] = 'NOT_STARTED';
+          if (freshData.isCancelled) {
+            status = 'CANCELLED' as any;
+          } else if (freshData.status === 'VERIFIED') {
+            status = 'VERIFIED';
+          } else if (freshData.status === 'SUBMITTED') {
+            status = 'SUBMITTED';
+          } else if (freshData.status === 'REVISION_REQUIRED') {
+            status = 'REVISION_REQUIRED';
+          } else if (freshData.status === 'ASSIGNED') {
+            status = 'ASSIGNED';
+          }
+
+          const virtualProg: TaskProgress = {
+            id: freshData.id,
+            packageId: `level_week_${freshData.weekStartDate}`,
+            taskPackageId: `level_week_${freshData.weekStartDate}`,
+            studentId: freshData.studentId,
+            classId: freshData.classId,
+            academicYearId: freshData.academicYearId,
+            field: freshData.subjectKey,
+            subjectKey: freshData.subjectKey,
+            status: status,
+            verifiedAt: freshData.verifiedAt,
+            verifiedBy: freshData.verifiedBy,
+            verifiedByEmail: freshData.verifiedByEmail,
+            verifiedByName: freshData.verifiedByName,
+            verificationMethod: freshData.verificationMethod,
+            revisionNote: freshData.history?.filter(h => h.action === 'REVISION_REQUEST' && h.note).slice(-1)[0]?.note || '',
+            history: freshData.history || []
+          } as any;
+
+          setProgresses(prev => {
+            const filtered = prev.filter(p => p.id !== assignmentId);
+            return [...filtered, virtualProg];
+          });
         }
-
-        await setDoc(doc(db, 'learning_power_up_assignments', assignmentId), assignmentUpdate, { merge: true });
-
-        // Update local loadedAssignments state optimistically
-        const localAsgObj: LearningPowerUpAssignment = {
-          id: assignmentId,
-          unit: 'JUNIOR_HIGH',
-          taskBatchId: targetBatch.id,
-          studentId: student.id,
-          studentNameSnapshot: student.name,
-          classId: selectedClassId,
-          classNameSnapshot: classes.find(c => c.id === selectedClassId)?.name || '',
-          subjectKey: field,
-          subjectArea: targetBatch.subjectArea || LPU_SUBJECT_MAP[field] || '',
-          levelSnapshot: existingAsg?.levelSnapshot || null,
-          taskTitle: existingAsg?.taskTitle || `Tugas Penguatan ${CATEGORY_CONFIG[field].label}`,
-          taskInstructions: existingAsg?.taskInstructions || "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.",
-          academicYearId: activeYear,
-          semester: targetBatch.semester || '1',
-          weekStartDate: activePackage.weekStartDate,
-          weekEndDate: activePackage.weekEndDate,
-          weekLabel: activePackage.weekLabel || '',
-          status: 'ASSIGNED',
-          submittedAt: existingAsg?.submittedAt || null,
-          verifiedAt: null,
-          verifiedBy: null,
-          verifiedByName: null,
-          verifiedByEmail: null,
-          verificationMethod: null,
-          history: updatedHistory.map(h => ({
-            ...h,
-            timestamp: safeToDate(h.timestamp)
-          })),
-          createdAt: existingAsg?.createdAt || new Date(),
-          createdBy: existingAsg?.createdBy || currentUser.uid,
-          updatedAt: new Date()
-        };
-
-        setLoadedAssignments(prev => {
-          const filtered = prev.filter(a => a.id !== assignmentId);
-          return [...filtered, localAsgObj];
-        });
-
-        // Update virtual Progresses state
-        const virtualProg: TaskProgress = {
-          id: assignmentId,
-          packageId: `level_week_${activePackage.weekStartDate}`,
-          taskPackageId: `level_week_${activePackage.weekStartDate}`,
-          studentId: student.id,
-          classId: selectedClassId,
-          academicYearId: activeYear,
-          field,
-          subjectKey: field,
-          status: 'ASSIGNED',
-          verifiedAt: null,
-          verifiedBy: null,
-          verifiedByEmail: null,
-          verifiedByName: null,
-          verificationMethod: null,
-          history: updatedHistory.map(h => {
-            const parsedDate = safeToDate(h.timestamp);
-            const timeStr = parsedDate.toLocaleString('id-ID', { hour12: false });
-            return {
-              timestamp: timeStr,
-              action: 'UNVERIFY',
-              actorName: h.performedByName,
-              note: h.note || ''
-            };
-          }) as any
-        } as any;
-
-        setProgresses(prev => {
-          const filtered = prev.filter(p => p.id !== assignmentId);
-          return [...filtered, virtualProg];
-        });
 
         toast.success(`Berhasil membatalkan verifikasi tugas ${CATEGORY_CONFIG[field].label} untuk ${student.name}!`);
         setUnverifyingProgress(null);
@@ -3922,8 +3836,8 @@ function LearningPowerUpTeacherPageContent() {
       const newHistoryItem: TaskProgressHistory = {
         timestamp: nowStr,
         action: 'UNVERIFY' as const,
-        actorName: currentUser.displayName || currentUser.email || "Guru/Coach",
-        note: "Pembatalan verifikasi tugas manual."
+        actorName: (currentUser as any).name || currentUser.displayName || currentUser.email || "Guru/Coach",
+        note: 'Verifikasi dibatalkan oleh guru'
       };
 
       const updatedProgress = {
@@ -3935,6 +3849,7 @@ function LearningPowerUpTeacherPageContent() {
         verifiedBy: null,
         verifiedAt: null,
         verificationMethod: null,
+        revisionNote: 'Belum selesai (dibatalkan oleh guru)',
 
         lastUnverifiedByUserId: currentUser.uid || null,
         lastUnverifiedByEmail: currentUser.email || null,
@@ -3945,22 +3860,18 @@ function LearningPowerUpTeacherPageContent() {
         history: [...currentHistory, newHistoryItem]
       };
 
-      await setDoc(doc(db, 'learning_power_up_progress', progressId), updatedProgress, { merge: true });
+      const progressRef = doc(db, 'learning_power_up_progress', progressId);
+      await setDoc(progressRef, updatedProgress, { merge: true });
 
-      // Update local legacy progresses state
-      const localProgObj: TaskProgress = {
-        ...progress,
-        ...updatedProgress,
-        status: 'ASSIGNED',
-        verifiedAt: null,
-        updatedAt: new Date(),
-        history: [...currentHistory, newHistoryItem]
-      } as any;
-
-      setProgresses(prev => {
-        const filtered = prev.filter(p => p.id !== progressId);
-        return [...filtered, localProgObj];
-      });
+      // Fetch fresh standard progress document from Firestore
+      const freshSnap = await getDoc(progressRef);
+      if (freshSnap.exists()) {
+        const freshData = { id: freshSnap.id, ...freshSnap.data() } as TaskProgress;
+        setProgresses(prev => {
+          const filtered = prev.filter(p => p.id !== progressId);
+          return [...filtered, freshData];
+        });
+      }
 
       toast.success(`Berhasil membatalkan verifikasi tugas ${CATEGORY_CONFIG[field].label} untuk ${student.name}!`);
       setUnverifyingProgress(null);
@@ -3968,7 +3879,7 @@ function LearningPowerUpTeacherPageContent() {
       console.error("Error un-verifying task:", err);
       toast.error("Gagal membatalkan verifikasi.");
     } finally {
-      setLoadingData(false);
+      setSavingCells(prev => ({ ...prev, [`${student.id}_${field}`]: false }));
     }
   };
 
