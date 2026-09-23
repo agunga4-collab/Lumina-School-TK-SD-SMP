@@ -560,6 +560,12 @@ function LearningPowerUpTeacherPageContent() {
   } | null>(null);
   const [showArchivedCancelled, setShowArchivedCancelled] = React.useState(false);
 
+  // --- Follow-Up & Tracker Filter States ---
+  const [filterStatus, setFilterStatus] = React.useState<'ALL' | 'NOT_STARTED' | 'INCOMPLETE' | 'VERIFIED' | 'REVISION_REQUIRED'>('ALL');
+  const [filterSubject, setFilterSubject] = React.useState<'ALL' | 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi'>('ALL');
+  const [filterProgress, setFilterProgress] = React.useState<'ALL' | 'ZERO' | 'PARTIAL' | 'ALL_DONE'>('ALL');
+  const [quickFilterIncompleteOnly, setQuickFilterIncompleteOnly] = React.useState<boolean>(false);
+
   // --- Deletion States ---
   const [deletingBatch, setDeletingBatch] = React.useState<LearningPowerUpTaskBatch | null>(null);
   const [deletingBatchStats, setDeletingBatchStats] = React.useState<{
@@ -2462,6 +2468,261 @@ function LearningPowerUpTeacherPageContent() {
     f => activePackage.tasks[f] && activePackage.tasks[f]?.trim()
   ) : [];
 
+  const getStudentFieldStatus = (studentId: string, field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi'): string => {
+    const progress = findProgress(studentId, selectedWeek, field);
+    return progress?.status || 'NOT_STARTED';
+  };
+
+  const trackerSummary = React.useMemo(() => {
+    const totalStudents = students.length;
+    let allDoneCount = 0;
+    let partialCount = 0;
+    let zeroCount = 0;
+
+    if (activeFields.length > 0) {
+      students.forEach(student => {
+        let verifiedCount = 0;
+        activeFields.forEach(field => {
+          const st = getStudentFieldStatus(student.id, field);
+          if (st === 'VERIFIED') {
+            verifiedCount++;
+          }
+        });
+        if (verifiedCount === activeFields.length) {
+          allDoneCount++;
+        } else if (verifiedCount > 0) {
+          partialCount++;
+        } else {
+          zeroCount++;
+        }
+      });
+    }
+
+    return {
+      totalStudents,
+      allDoneCount,
+      partialCount,
+      zeroCount
+    };
+  }, [students, activeFields, selectedWeek, progresses, loadedAssignments]);
+
+  const trackerFilteredStudents = React.useMemo(() => {
+    return students.filter(student => {
+      // Search query
+      const q = searchQuery.toLowerCase().trim();
+      if (q) {
+        const matchesName = student.name.toLowerCase().includes(q);
+        const matchesNis = student.nis && student.nis.toLowerCase().includes(q);
+        if (!matchesName && !matchesNis) return false;
+      }
+
+      if (activeFields.length === 0) return true;
+
+      let verifiedCount = 0;
+      let incompleteCount = 0;
+      let notStartedCount = 0;
+      let revisionCount = 0;
+
+      activeFields.forEach(field => {
+        const status = getStudentFieldStatus(student.id, field);
+        if (status === 'VERIFIED') {
+          verifiedCount++;
+        } else if (status !== ('CANCELLED' as any)) {
+          incompleteCount++;
+          if (status === 'NOT_STARTED') notStartedCount++;
+          if (status === 'REVISION_REQUIRED') revisionCount++;
+        }
+      });
+
+      // Quick Filter: Hanya yang Belum Tuntas
+      if (quickFilterIncompleteOnly) {
+        if (filterSubject !== 'ALL') {
+          const st = getStudentFieldStatus(student.id, filterSubject);
+          if (st === 'VERIFIED' || st === ('CANCELLED' as any)) return false;
+        } else {
+          if (incompleteCount === 0) return false;
+        }
+      }
+
+      // Subject & Status Filter
+      if (filterSubject !== 'ALL') {
+        const status = getStudentFieldStatus(student.id, filterSubject);
+        if (filterStatus === 'NOT_STARTED' && status !== 'NOT_STARTED') return false;
+        if (filterStatus === 'INCOMPLETE' && (status === 'VERIFIED' || status === ('CANCELLED' as any))) return false;
+        if (filterStatus === 'VERIFIED' && status !== 'VERIFIED') return false;
+        if (filterStatus === 'REVISION_REQUIRED' && status !== 'REVISION_REQUIRED') return false;
+      } else {
+        if (filterStatus === 'NOT_STARTED' && notStartedCount === 0) return false;
+        if (filterStatus === 'INCOMPLETE' && incompleteCount === 0) return false;
+        if (filterStatus === 'VERIFIED' && verifiedCount !== activeFields.length) return false;
+        if (filterStatus === 'REVISION_REQUIRED' && revisionCount === 0) return false;
+      }
+
+      // Progres Siswa Filter
+      if (filterProgress === 'ZERO' && verifiedCount !== 0) return false;
+      if (filterProgress === 'PARTIAL' && (verifiedCount === 0 || verifiedCount === activeFields.length)) return false;
+      if (filterProgress === 'ALL_DONE' && verifiedCount !== activeFields.length) return false;
+
+      return true;
+    });
+  }, [
+    students, searchQuery, activeFields, selectedWeek, progresses, loadedAssignments,
+    filterStatus, filterSubject, filterProgress, quickFilterIncompleteOnly
+  ]);
+
+  const getStudentDisplayLevel = (studentId: string, field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi'): string => {
+    const isLevelBased = selectedWeek.startsWith('level_week_');
+    const asg = isLevelBased ? loadedAssignments.find(a => 
+      a.studentId === studentId && 
+      `level_week_${a.weekStartDate}` === selectedWeek && 
+      a.subjectKey === field
+    ) : null;
+    const canonicalLitnumLevel = litnumRecordsByStudentId[studentId]?.[field];
+    let rawLvl = asg?.levelSnapshot || canonicalLitnumLevel;
+    if (rawLvl) {
+      const normM = normalizeMengajiLevel(rawLvl);
+      const normN = normalizeNumerasiLevel(rawLvl);
+      return normM ? formatMengajiDisplay(normM) : normN ? formatNumerasiDisplay(normN) : rawLvl;
+    }
+    return 'Level belum ditetapkan';
+  };
+
+  const generateDaftarNamaText = () => {
+    const activePkg = packages.find(p => p.id === selectedWeek);
+    const periodeLabel = activePkg?.weekLabel || (activePkg ? formatDateRange(activePkg.weekStartDate, activePkg.weekEndDate) : '-');
+    const className = selectedClassId === 'ALL_CLASSES'
+      ? 'Semua Kelas Junior High'
+      : (classes.find(c => c.id === selectedClassId)?.name || 'Kelas');
+
+    if (filterSubject !== 'ALL') {
+      const subjectLabel = CATEGORY_CONFIG[filterSubject]?.label || filterSubject;
+      const pendingStudents = trackerFilteredStudents.filter(student => {
+        const st = getStudentFieldStatus(student.id, filterSubject);
+        return st !== 'VERIFIED' && st !== ('CANCELLED' as any);
+      });
+
+      if (pendingStudents.length === 0) {
+        return `Learning Power-Up ${subjectLabel}\nPeriode: ${periodeLabel}\nKelas: ${className}\n\nSemua siswa telah menyelesaikan tugas! 🎉`;
+      }
+
+      let text = `Learning Power-Up ${subjectLabel}\nPeriode: ${periodeLabel}\nKelas: ${className}\n\nSiswa yang belum menyelesaikan tugas:\n`;
+      pendingStudents.forEach((student, idx) => {
+        const level = getStudentDisplayLevel(student.id, filterSubject);
+        text += `${idx + 1}. ${student.name} — ${level}\n`;
+      });
+      return text.trim();
+    } else {
+      const pendingList: Array<{ studentName: string; pendingSubjects: string[] }> = [];
+
+      trackerFilteredStudents.forEach(student => {
+        const pendingSubjects: string[] = [];
+        activeFields.forEach(field => {
+          const st = getStudentFieldStatus(student.id, field);
+          if (st !== 'VERIFIED' && st !== ('CANCELLED' as any)) {
+            pendingSubjects.push(CATEGORY_CONFIG[field]?.label || field);
+          }
+        });
+        if (pendingSubjects.length > 0) {
+          pendingList.push({
+            studentName: student.name,
+            pendingSubjects
+          });
+        }
+      });
+
+      if (pendingList.length === 0) {
+        return `Learning Power-Up Semua Mapel\nPeriode: ${periodeLabel}\nKelas: ${className}\n\nSemua siswa telah menyelesaikan tugas! 🎉`;
+      }
+
+      let text = `Learning Power-Up Semua Mapel\nPeriode: ${periodeLabel}\nKelas: ${className}\n\nSiswa yang belum menyelesaikan tugas:\n`;
+      pendingList.forEach((item, idx) => {
+        text += `${idx + 1}. ${item.studentName} — ${item.pendingSubjects.join(', ')}\n`;
+      });
+      return text.trim();
+    }
+  };
+
+  const generateWhatsAppMessageText = () => {
+    const activePkg = packages.find(p => p.id === selectedWeek);
+    const periodeLabel = activePkg?.weekLabel || (activePkg ? formatDateRange(activePkg.weekStartDate, activePkg.weekEndDate) : '-');
+    const className = selectedClassId === 'ALL_CLASSES'
+      ? 'Semua Kelas Junior High'
+      : (classes.find(c => c.id === selectedClassId)?.name || 'Kelas');
+
+    if (filterSubject !== 'ALL') {
+      const subjectLabel = CATEGORY_CONFIG[filterSubject]?.label || filterSubject;
+      const pendingStudents = trackerFilteredStudents.filter(student => {
+        const st = getStudentFieldStatus(student.id, filterSubject);
+        return st !== 'VERIFIED' && st !== ('CANCELLED' as any);
+      });
+
+      if (pendingStudents.length === 0) {
+        return `Assalamu'alaikum, seluruh siswa kelas ${className} telah menyelesaikan Learning Power-Up ${subjectLabel} periode ${periodeLabel}. Terima kasih! 🎉`;
+      }
+
+      let text = `Assalamu'alaikum, berikut siswa kelas ${className} yang masih perlu menyelesaikan Learning Power-Up ${subjectLabel} periode ${periodeLabel}:\n\n`;
+      pendingStudents.forEach((student, idx) => {
+        text += `${idx + 1}. ${student.name}\n`;
+      });
+      text += `\nMohon tugas segera diselesaikan dan dikonfirmasi kepada guru.\nTerima kasih.`;
+      return text.trim();
+    } else {
+      const pendingList: Array<{ studentName: string; pendingSubjects: string[] }> = [];
+
+      trackerFilteredStudents.forEach(student => {
+        const pendingSubjects: string[] = [];
+        activeFields.forEach(field => {
+          const st = getStudentFieldStatus(student.id, field);
+          if (st !== 'VERIFIED' && st !== ('CANCELLED' as any)) {
+            pendingSubjects.push(CATEGORY_CONFIG[field]?.label || field);
+          }
+        });
+        if (pendingSubjects.length > 0) {
+          pendingList.push({
+            studentName: student.name,
+            pendingSubjects
+          });
+        }
+      });
+
+      if (pendingList.length === 0) {
+        return `Assalamu'alaikum, seluruh siswa kelas ${className} telah menyelesaikan Learning Power-Up periode ${periodeLabel}. Terima kasih! 🎉`;
+      }
+
+      let text = `Assalamu'alaikum, berikut siswa kelas ${className} yang masih perlu menyelesaikan Learning Power-Up periode ${periodeLabel}:\n\n`;
+      pendingList.forEach((item, idx) => {
+        text += `${idx + 1}. ${item.studentName} — ${item.pendingSubjects.join(', ')}\n`;
+      });
+      text += `\nMohon tugas segera diselesaikan dan dikonfirmasi kepada guru.\nTerima kasih.`;
+      return text.trim();
+    }
+  };
+
+  const handleCopyText = async (type: 'DAFTAR_NAMA' | 'WHATSAPP') => {
+    const text = type === 'DAFTAR_NAMA' ? generateDaftarNamaText() : generateWhatsAppMessageText();
+    const label = type === 'DAFTAR_NAMA' ? 'Daftar nama' : 'Pesan WhatsApp';
+
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      toast.success(`${label} berhasil disalin ke clipboard! Guru dapat menempelkan (paste) teks ke grup.`);
+    } catch (err) {
+      console.error("Gagal menyalin teks:", err);
+      toast.error(`Gagal menyalin ${label.toLowerCase()}.`);
+    }
+  };
+
   // Handle spreadsheet cell click -> opens Verification Modal or Unverification Dialog
   const handleCellClick = (student: Student, field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi') => {
     if (!activePackage) return;
@@ -3167,53 +3428,233 @@ function LearningPowerUpTeacherPageContent() {
       {/* TAB 1 — SPREADSHEET TRACKER */}
       {activeTab === 'TRACKER' && (
         <div className="space-y-6">
+          {/* Ringkasan Kelas Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-sm flex items-center justify-between">
+              <div className="space-y-1">
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Total Siswa</span>
+                <p className="text-2xl font-black text-slate-900">{trackerSummary.totalStudents}</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-slate-50 text-slate-600 flex items-center justify-center border border-slate-100">
+                <Users size={22} />
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-emerald-100 p-5 shadow-sm flex items-center justify-between">
+              <div className="space-y-1">
+                <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest block">Semua Tugas Selesai</span>
+                <p className="text-2xl font-black text-emerald-700">{trackerSummary.allDoneCount}</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-200">
+                <CheckCircle2 size={22} />
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-amber-100 p-5 shadow-sm flex items-center justify-between">
+              <div className="space-y-1">
+                <span className="text-[10px] font-black text-amber-600 uppercase tracking-widest block">Masih Ada Belum Tuntas</span>
+                <p className="text-2xl font-black text-amber-700">{trackerSummary.partialCount}</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-200">
+                <Clock size={22} />
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-rose-100 p-5 shadow-sm flex flex-col justify-between gap-3">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <span className="text-[10px] font-black text-rose-600 uppercase tracking-widest block">Belum Mengerjakan Tugas</span>
+                  <p className="text-2xl font-black text-rose-700">{trackerSummary.zeroCount}</p>
+                </div>
+                <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-200">
+                  <AlertCircle size={20} />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterProgress('ZERO');
+                  setFilterStatus('ALL');
+                  setQuickFilterIncompleteOnly(false);
+                }}
+                className="w-full py-1.5 px-3 bg-rose-50 hover:bg-rose-100 text-rose-700 text-[10px] font-extrabold uppercase tracking-wider rounded-lg border border-rose-200 transition-all cursor-pointer text-center"
+              >
+                Lihat Siswa Belum Mengerjakan
+              </button>
+            </div>
+          </div>
+
           {/* Tracker Filters Control Bar */}
-          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-100">
-            <div className="flex flex-wrap items-center gap-6">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-gray-500 uppercase tracking-widest">Periode:</span>
+          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-4">
+            {/* Top Row: Main Filters */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Periode Selector */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Periode Tugas</label>
                 {packages.length > 0 ? (
                   <select
                     value={selectedWeek}
                     onChange={(e) => setSelectedWeek(e.target.value)}
-                    className="bg-white border border-slate-200 text-gray-700 font-bold text-xs px-3 py-2 rounded-lg"
+                    className="w-full bg-slate-50 border border-slate-200 text-slate-800 font-bold text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-[#109E58]/20 focus:border-[#109E58]"
                   >
                     {packages.map(p => (
                       <option key={p.id} value={p.id}>{formatDateRange(p.weekStartDate, p.weekEndDate)}</option>
                     ))}
                   </select>
                 ) : (
-                  <span className="text-xs font-bold text-gray-400 italic">
-                    Belum ada tugas aktif untuk kelas {classes.find(c => c.id === selectedClassId)?.name || 'terpilih'} pada periode ini.
-                  </span>
+                  <span className="text-xs font-bold text-slate-400 italic block py-2">Belum ada tugas aktif</span>
                 )}
               </div>
 
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={showArchivedCancelled}
-                  onChange={(e) => setShowArchivedCancelled(e.target.checked)}
-                  className="rounded border-slate-200 text-[#109E58] focus:ring-[#109E58]"
-                />
-                <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">
-                  Tampilkan Riwayat (Arsip & Batal)
-                </span>
-              </label>
+              {/* Filter Status */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Status Tugas</label>
+                <select
+                  value={filterStatus}
+                  onChange={(e) => setFilterStatus(e.target.value as any)}
+                  className="w-full bg-slate-50 border border-slate-200 text-slate-800 font-bold text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-[#109E58]/20 focus:border-[#109E58]"
+                >
+                  <option value="ALL">Semua Status</option>
+                  <option value="NOT_STARTED">Belum Dikerjakan</option>
+                  <option value="INCOMPLETE">Belum Tuntas</option>
+                  <option value="VERIFIED">Selesai</option>
+                  <option value="REVISION_REQUIRED">Perlu Revisi</option>
+                </select>
+              </div>
+
+              {/* Filter Mapel */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Mata Pelajaran</label>
+                <select
+                  value={filterSubject}
+                  onChange={(e) => setFilterSubject(e.target.value as any)}
+                  className="w-full bg-slate-50 border border-slate-200 text-slate-800 font-bold text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-[#109E58]/20 focus:border-[#109E58]"
+                >
+                  <option value="ALL">Semua Mapel</option>
+                  <option value="bahasaIndonesia">Bahasa Indonesia</option>
+                  <option value="english">English</option>
+                  <option value="mengaji">Mengaji</option>
+                  <option value="numerasi">Numerasi</option>
+                </select>
+              </div>
+
+              {/* Filter Progres Siswa */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Progres Siswa</label>
+                <select
+                  value={filterProgress}
+                  onChange={(e) => setFilterProgress(e.target.value as any)}
+                  className="w-full bg-slate-50 border border-slate-200 text-slate-800 font-bold text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-[#109E58]/20 focus:border-[#109E58]"
+                >
+                  <option value="ALL">Semua Progres</option>
+                  <option value="ZERO">Belum ada tugas selesai (0/{activeFields.length})</option>
+                  <option value="PARTIAL">Sebagian selesai (1–{Math.max(1, activeFields.length - 1)}/{activeFields.length})</option>
+                  <option value="ALL_DONE">Semua selesai ({activeFields.length}/{activeFields.length})</option>
+                </select>
+              </div>
             </div>
 
-            {/* Student Search */}
-            <div className="relative md:w-80">
-              <span className="absolute inset-y-0 left-3 flex items-center text-slate-400">
-                <Search size={16} />
-              </span>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Cari nama atau NIS siswa..."
-                className="w-full pl-10 pr-4 py-2.5 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#109E58]/20 focus:border-[#109E58]"
-              />
+            {/* Bottom Row: Quick Button & Search & Reset */}
+            <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 pt-2 border-t border-slate-100">
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Tombol Cepat: Hanya yang Belum Tuntas */}
+                <button
+                  type="button"
+                  onClick={() => setQuickFilterIncompleteOnly(!quickFilterIncompleteOnly)}
+                  className={cn(
+                    "px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 border transition-all cursor-pointer select-none",
+                    quickFilterIncompleteOnly
+                      ? "bg-amber-500 text-white border-amber-600 shadow-sm"
+                      : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
+                  )}
+                >
+                  <AlertTriangle size={14} />
+                  <span>Hanya yang Belum Tuntas</span>
+                  {quickFilterIncompleteOnly && <Check size={14} strokeWidth={3} />}
+                </button>
+
+                {/* Reset Filters button if any active */}
+                {(filterStatus !== 'ALL' || filterSubject !== 'ALL' || filterProgress !== 'ALL' || quickFilterIncompleteOnly) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilterStatus('ALL');
+                      setFilterSubject('ALL');
+                      setFilterProgress('ALL');
+                      setQuickFilterIncompleteOnly(false);
+                    }}
+                    className="text-xs font-bold text-rose-600 hover:text-rose-800 underline cursor-pointer px-2"
+                  >
+                    Reset Filter
+                  </button>
+                )}
+
+                <label className="flex items-center gap-2 cursor-pointer select-none ml-auto md:ml-2">
+                  <input
+                    type="checkbox"
+                    checked={showArchivedCancelled}
+                    onChange={(e) => setShowArchivedCancelled(e.target.checked)}
+                    className="rounded border-slate-200 text-[#109E58] focus:ring-[#109E58]"
+                  />
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                    Riwayat (Arsip & Batal)
+                  </span>
+                </label>
+              </div>
+
+              {/* Search Input */}
+              <div className="relative md:w-72">
+                <span className="absolute inset-y-0 left-3 flex items-center text-slate-400">
+                  <Search size={15} />
+                </span>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Cari nama atau NIS siswa..."
+                  className="w-full pl-9 pr-4 py-2 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#109E58]/20 focus:border-[#109E58]"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Copy Announcement Action Bar */}
+          <div className="bg-gradient-to-r from-emerald-900 to-slate-900 text-white p-5 rounded-2xl shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase tracking-widest border border-emerald-500/30">
+                  Follow-Up Pengumuman
+                </span>
+                <span className="text-xs text-slate-300 font-bold">
+                  {trackerFilteredStudents.length} siswa pada filter aktif
+                </span>
+              </div>
+              <p className="text-sm font-black tracking-tight text-white">
+                Salin daftar siswa belum selesai untuk pengumuman grup
+              </p>
+              <p className="text-xs text-slate-300 font-medium">
+                Format menyalinkan data sesuai filter mapel ({filterSubject === 'ALL' ? 'Semua Mapel' : CATEGORY_CONFIG[filterSubject]?.label}) dan kelas aktif.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => handleCopyText('DAFTAR_NAMA')}
+                className="px-4 py-2.5 bg-white hover:bg-slate-100 text-slate-900 text-xs font-extrabold uppercase tracking-wider rounded-xl shadow-sm flex items-center gap-2 cursor-pointer transition-all border border-slate-200"
+              >
+                <Copy size={15} className="text-slate-700" />
+                <span>Copy Daftar Nama</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleCopyText('WHATSAPP')}
+                className="px-4 py-2.5 bg-[#109E58] hover:bg-[#0d854a] text-white text-xs font-extrabold uppercase tracking-wider rounded-xl shadow-sm flex items-center gap-2 cursor-pointer transition-all"
+              >
+                <Send size={15} />
+                <span>Copy Pesan WhatsApp</span>
+              </button>
             </div>
           </div>
 
@@ -3236,23 +3677,41 @@ function LearningPowerUpTeacherPageContent() {
                           <th key={field} className="py-4 px-6 text-center align-middle">
                             <div className="flex flex-col items-center gap-1.5 justify-center">
                               <span className="text-gray-900 font-bold">{CATEGORY_CONFIG[field].label}</span>
-                              {isFieldAllVerified(field) ? (
+                              
+                              <div className="flex flex-col items-center gap-1">
                                 <button
-                                  onClick={() => handleBulkUnverifyClick(field)}
-                                  className="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[9px] font-black uppercase tracking-widest rounded-md shadow-sm transition-all whitespace-nowrap"
-                                  title={`Batalkan verifikasi seluruh siswa untuk bidang ${CATEGORY_CONFIG[field].label}`}
+                                  type="button"
+                                  onClick={() => {
+                                    setFilterSubject(field);
+                                    setFilterStatus('INCOMPLETE');
+                                    setQuickFilterIncompleteOnly(true);
+                                  }}
+                                  className="px-2 py-0.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-[9px] font-extrabold uppercase tracking-wider rounded transition-all whitespace-nowrap cursor-pointer"
+                                  title={`Tampilkan hanya siswa yang belum tuntas mapel ${CATEGORY_CONFIG[field].label}`}
                                 >
-                                  Batalkan Semua
+                                  Lihat Belum Selesai
                                 </button>
-                              ) : (
-                                <button
-                                  onClick={() => handleBulkVerifyClick(field)}
-                                  className="px-2 py-1 bg-[#109E58] hover:bg-[#0d854a] text-white text-[9px] font-black uppercase tracking-widest rounded-md shadow-sm transition-all whitespace-nowrap"
-                                  title={`Verifikasi seluruh siswa untuk bidang ${CATEGORY_CONFIG[field].label}`}
-                                >
-                                  Selesai Semua
-                                </button>
-                              )}
+
+                                {isFieldAllVerified(field) ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleBulkUnverifyClick(field)}
+                                    className="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[9px] font-black uppercase tracking-widest rounded-md shadow-sm transition-all whitespace-nowrap"
+                                    title={`Batalkan verifikasi seluruh siswa untuk bidang ${CATEGORY_CONFIG[field].label}`}
+                                  >
+                                    Batalkan Semua
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleBulkVerifyClick(field)}
+                                    className="px-2 py-1 bg-[#109E58] hover:bg-[#0d854a] text-white text-[9px] font-black uppercase tracking-widest rounded-md shadow-sm transition-all whitespace-nowrap"
+                                    title={`Verifikasi seluruh siswa untuk bidang ${CATEGORY_CONFIG[field].label}`}
+                                  >
+                                    Selesai Semua
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           </th>
                         ))
@@ -3265,7 +3724,7 @@ function LearningPowerUpTeacherPageContent() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm font-medium text-gray-700">
-                    {filteredStudents.map((student, idx) => {
+                    {trackerFilteredStudents.map((student, idx) => {
                       let verifiedInWeekCount = 0;
                       let totalWeekTasksCount = activeFields.length;
 

@@ -15,6 +15,8 @@ import {
   SPIRITUAL_HEALTH_OPTIONS,
   canUserEditMidtermGoals,
   saveMidtermMasterGoal,
+  saveBulkMidtermMasterGoalForClasses,
+  getJHGradeLevelNumber,
   saveMidtermStudentRemark,
   saveBulkMidtermStudentRemarks
 } from '../../../services/juniorHighMidtermService';
@@ -23,6 +25,7 @@ import type { Student, Class, User } from '../../../types';
 interface MidtermLearningGoalsTabProps {
   currentUser: User;
   selectedClass: Class | null;
+  allJuniorHighClasses?: Class[];
   students: Student[];
   academicYear: string;
   semester: string;
@@ -36,6 +39,7 @@ interface MidtermLearningGoalsTabProps {
 export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = ({
   currentUser,
   selectedClass,
+  allJuniorHighClasses = [],
   students,
   academicYear,
   semester,
@@ -59,6 +63,30 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
   const [editingGoalId, setEditingGoalId] = React.useState<string | null>(null);
   const [editingGoalText, setEditingGoalText] = React.useState<string>('');
   const [savingMaster, setSavingMaster] = React.useState<boolean>(false);
+
+  // Multi-Class Goal Application State ("Terapkan ke Kelas")
+  const sameGradeClasses = React.useMemo(() => {
+    if (!selectedClass) return [];
+    const targetGrade = getJHGradeLevelNumber(selectedClass);
+    const matched = (allJuniorHighClasses || []).filter(c => c && getJHGradeLevelNumber(c) === targetGrade);
+    if (selectedClass && !matched.some(c => c.id === selectedClass.id)) {
+      matched.push(selectedClass);
+    }
+    return matched;
+  }, [selectedClass, allJuniorHighClasses]);
+
+  const [selectedTargetClassIds, setSelectedTargetClassIds] = React.useState<string[]>([]);
+  const [showAddGoalConfirmModal, setShowAddGoalConfirmModal] = React.useState<boolean>(false);
+  const [bulkGoalSuccessMsg, setBulkGoalSuccessMsg] = React.useState<string | null>(null);
+
+  // Synchronize default selected target classes when grade or selected class changes
+  React.useEffect(() => {
+    if (sameGradeClasses.length > 0) {
+      setSelectedTargetClassIds(sameGradeClasses.map(c => c.id));
+    } else if (selectedClass?.id) {
+      setSelectedTargetClassIds([selectedClass.id]);
+    }
+  }, [selectedClass?.id, sameGradeClasses]);
 
   // Remarks saving state
   const [savingRemarkKey, setSavingRemarkKey] = React.useState<string | null>(null);
@@ -94,36 +122,47 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
   const currentMasterGoalDoc = safeMasterGoalsMap[selectedSubject];
   const goals: MidtermGoalItem[] = Array.isArray(currentMasterGoalDoc?.goals) ? currentMasterGoalDoc.goals.filter(Boolean) : [];
 
-  const handleAddGoal = async () => {
+  const handleAddGoalClick = () => {
     if (!newGoalText.trim() || !selectedClass) return;
-    setSavingMaster(true);
-    try {
-      const newGoal: MidtermGoalItem = {
-        id: `goal_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-        text: newGoalText.trim(),
-        order: goals.length + 1
-      };
+    if (selectedTargetClassIds.length === 0) {
+      alert("Pilih minimal satu kelas untuk menerapkan Learning Goal.");
+      return;
+    }
+    setShowAddGoalConfirmModal(true);
+  };
 
-      const updatedGoals = [...goals, newGoal];
-      await saveMidtermMasterGoal({
-        classId: selectedClass.id,
-        className: selectedClass.name,
+  const executeAddGoalBulk = async () => {
+    if (!newGoalText.trim() || !selectedClass || selectedTargetClassIds.length === 0) return;
+    setSavingMaster(true);
+    setShowAddGoalConfirmModal(false);
+
+    try {
+      const targetClassesToApply = sameGradeClasses.filter(c => selectedTargetClassIds.includes(c.id));
+
+      await saveBulkMidtermMasterGoalForClasses(
+        targetClassesToApply,
         academicYear,
         semester,
         midtermTerm,
-        category: currentCategory.name,
-        subjectKey: selectedSubject,
-        goals: updatedGoals,
-        updatedBy: currentUser.uid,
-        updatedByName: currentUser.displayName || (currentUser as any).name || 'Guru'
-      });
+        currentCategory.name,
+        selectedSubject,
+        newGoalText.trim(),
+        currentUser
+      );
 
+      const count = selectedTargetClassIds.length;
+      const successMessage = `✓ Learning Goal berhasil diterapkan ke ${count} kelas.`;
+      setBulkGoalSuccessMsg(successMessage);
+      toast.success(successMessage);
       setNewGoalText('');
       setIsAddingGoal(false);
       await onRefreshData();
-      toast.success(`Learning goal untuk ${selectedSubject} berhasil ditambahkan.`);
+
+      setTimeout(() => {
+        setBulkGoalSuccessMsg(null);
+      }, 6000);
     } catch (err: any) {
-      console.error(err);
+      console.error("Error bulk adding learning goal:", err);
       toast.error('Gagal menambahkan learning goal: ' + (err.message || 'Error'));
     } finally {
       setSavingMaster(false);
@@ -326,6 +365,14 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
         })}
       </div>
 
+      {/* Success Notification for Bulk Goal Application */}
+      {bulkGoalSuccessMsg && (
+        <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center gap-3 text-emerald-900 font-bold text-xs shadow-xs animate-fadeIn">
+          <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
+          <span>{bulkGoalSuccessMsg}</span>
+        </div>
+      )}
+
       {/* Master Learning Goals Management Card */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
@@ -436,12 +483,13 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
           </div>
         )}
 
-        {/* Add Goal Input Area */}
+        {/* Add Goal Input Area with Multi-Class Selection */}
         {isAddingGoal && (
-          <div className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-xl space-y-3">
+          <div className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-xl space-y-4">
             <label className="block text-xs font-bold text-emerald-950 uppercase tracking-wider">
-              Learning Goal Baru
+              Tambah Learning Goal Baru ({selectedSubject})
             </label>
+            
             <textarea
               value={newGoalText}
               onChange={(e) => setNewGoalText(e.target.value)}
@@ -449,21 +497,81 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
               placeholder={`Ketik learning goal untuk ${selectedSubject}...`}
               className="w-full text-xs p-3 bg-white border border-emerald-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
             />
-            <div className="flex items-center gap-2">
+
+            {/* Terapkan ke Kelas Section */}
+            {sameGradeClasses.length > 0 && (
+              <div className="space-y-2 pt-2 border-t border-emerald-200/60">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    Terapkan ke Kelas:
+                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTargetClassIds(sameGradeClasses.map(c => c.id))}
+                      className="px-2.5 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer"
+                    >
+                      Pilih Semua Kelas Grade {getJHGradeLevelNumber(selectedClass)}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => selectedClass && setSelectedTargetClassIds([selectedClass.id])}
+                      className="px-2.5 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer"
+                    >
+                      Hanya {selectedClass?.name}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 pt-1">
+                  {sameGradeClasses.map(cls => {
+                    const isChecked = selectedTargetClassIds.includes(cls.id);
+                    return (
+                      <label
+                        key={cls.id}
+                        className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-all select-none ${
+                          isChecked
+                            ? 'bg-white border-emerald-500 text-emerald-950 shadow-xs'
+                            : 'bg-slate-50/80 border-slate-200 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedTargetClassIds(prev => Array.from(new Set([...prev, cls.id])));
+                            } else {
+                              setSelectedTargetClassIds(prev => prev.filter(id => id !== cls.id));
+                            }
+                          }}
+                          className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <span>{cls.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 pt-2">
               <button
-                onClick={handleAddGoal}
+                type="button"
+                onClick={handleAddGoalClick}
                 disabled={savingMaster || !newGoalText.trim()}
-                className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-emerald-700 transition-all disabled:opacity-50"
+                className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-emerald-700 transition-all disabled:opacity-50 cursor-pointer"
               >
                 <Save size={13} />
                 {savingMaster ? 'Menyimpan...' : 'Simpan Goal'}
               </button>
               <button
+                type="button"
                 onClick={() => {
                   setIsAddingGoal(false);
                   setNewGoalText('');
                 }}
-                className="px-3.5 py-2 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-300 transition-all"
+                className="px-3.5 py-2 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-300 transition-all cursor-pointer"
               >
                 Batal
               </button>
@@ -673,6 +781,58 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
           </div>
         )}
       </div>
+
+      {/* Confirmation Modal for Multi-Class Goal Application */}
+      {showAddGoalConfirmModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 rounded-xl shrink-0 bg-emerald-100 text-emerald-700">
+                <BookOpen size={22} />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-base font-extrabold text-slate-900 leading-snug">
+                  Terapkan Learning Goal ini ke {selectedTargetClassIds.length} kelas?
+                </h4>
+                <p className="text-xs text-slate-500 font-medium line-clamp-2">
+                  Goal: &ldquo;{newGoalText}&rdquo;
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 space-y-1">
+              <p className="font-bold text-slate-800">Kelas Tujuan ({selectedTargetClassIds.length}):</p>
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {sameGradeClasses
+                  .filter(c => selectedTargetClassIds.includes(c.id))
+                  .map(c => (
+                    <span key={c.id} className="px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-extrabold rounded-md">
+                      {c.name}
+                    </span>
+                  ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowAddGoalConfirmModal(false)}
+                className="px-4 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 font-bold text-xs transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={executeAddGoalBulk}
+                disabled={savingMaster}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-md transition-all cursor-pointer disabled:opacity-50"
+              >
+                {savingMaster ? 'Menyimpan...' : 'Terapkan'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirmation Modal for Bulk Grade Application */}
       {bulkConfirmModal && (

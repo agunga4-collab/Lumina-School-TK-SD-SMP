@@ -481,6 +481,7 @@ function MidtermReportPageContent() {
             <MidtermLearningGoalsTab
               currentUser={effectiveUser}
               selectedClass={selectedClass}
+              allJuniorHighClasses={safeClassesList}
               students={safeStudents}
               academicYear={selectedYear}
               semester={selectedSemester}

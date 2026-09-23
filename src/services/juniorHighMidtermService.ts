@@ -260,6 +260,22 @@ export async function fetchMidtermMasterGoals(
 }
 
 /**
+ * Extract Grade level number for Junior High class (e.g. 7, 8, 9)
+ */
+export function getJHGradeLevelNumber(classObj: Class | null | undefined): number {
+  if (!classObj) return 0;
+  if (classObj.grade !== undefined && classObj.grade !== null && !isNaN(Number(classObj.grade))) {
+    const num = Number(classObj.grade);
+    if (num > 0) return num;
+  }
+  const match = (classObj.name || '').match(/\b(7|8|9|10|11|12|1|2|3|4|5|6)\b/);
+  if (match) return parseInt(match[1], 10);
+  const digitMatch = (classObj.name || '').match(/\d+/);
+  if (digitMatch) return parseInt(digitMatch[0], 10);
+  return 0;
+}
+
+/**
  * Save master goal document
  */
 export async function saveMidtermMasterGoal(
@@ -281,6 +297,83 @@ export async function saveMidtermMasterGoal(
   };
 
   await setDoc(ref, payload, { merge: true });
+}
+
+/**
+ * Save bulk master goal across multiple classes in the same grade.
+ * Does not overwrite existing goals, remarks, or general comments.
+ * Avoids duplicate goals on target classes.
+ */
+export async function saveBulkMidtermMasterGoalForClasses(
+  targetClasses: Class[],
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  category: string,
+  subjectKey: string,
+  newGoalText: string,
+  currentUser: User
+): Promise<void> {
+  if (!targetClasses || targetClasses.length === 0 || !newGoalText.trim()) return;
+
+  const cleanText = newGoalText.trim();
+
+  for (const targetClass of targetClasses) {
+    if (!targetClass || !targetClass.id) continue;
+
+    const docId = getMasterGoalDocId(
+      targetClass.id,
+      academicYear,
+      semester,
+      midtermTerm,
+      subjectKey
+    );
+
+    const ref = doc(db, 'jh_midterm_master_goals', docId);
+    const snap = await getDoc(ref);
+
+    let existingGoals: any[] = [];
+    let existingData: Partial<MidtermMasterGoalDoc> = {};
+
+    if (snap.exists()) {
+      existingData = snap.data() as MidtermMasterGoalDoc;
+      if (Array.isArray(existingData.goals)) {
+        existingGoals = existingData.goals;
+      }
+    }
+
+    // Check duplicate
+    const isDuplicate = existingGoals.some(
+      g => (g?.text || '').trim().toLowerCase() === cleanText.toLowerCase()
+    );
+
+    if (!isDuplicate) {
+      const newGoal = {
+        id: `goal_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        text: cleanText,
+        order: existingGoals.length + 1
+      };
+
+      const updatedGoals = [...existingGoals, newGoal];
+
+      const payload: MidtermMasterGoalDoc = {
+        id: docId,
+        classId: targetClass.id,
+        className: targetClass.name || 'Kelas',
+        academicYear,
+        semester: String(semester),
+        midtermTerm: String(midtermTerm),
+        category,
+        subjectKey,
+        goals: updatedGoals,
+        updatedAt: Date.now(),
+        updatedBy: currentUser.uid,
+        updatedByName: currentUser.displayName || (currentUser as any).name || 'Guru'
+      };
+
+      await setDoc(ref, payload, { merge: true });
+    }
+  }
 }
 
 /**
