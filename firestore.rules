@@ -1353,12 +1353,15 @@ service cloud.firestore {
         )) ||
 
         ((userRole() in ['PRINCIPAL', 'SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR'] || isAdmin()) &&
+         (isAdmin() || userRole() == 'SUPER_ADMIN' || !('unitId' in currentUser()) || currentUser().unitId in ['JUNIOR_HIGH', 'ALL'] || userRole() == 'HEAD_JUNIOR') &&
          resource.data.generalCommentReviewStatus == 'SUBMITTED_FOR_REVIEW' &&
          request.resource.data.generalCommentReviewStatus in ['APPROVED', 'REVISION_REQUESTED'] &&
-         request.resource.data.generalComment == resource.data.generalComment &&
-         request.resource.data.commentBuilder == resource.data.commentBuilder &&
-         resource.data.updatedBy != request.auth.uid &&
-         !(exists(/databases/$(database)/documents/classes/$(resource.data.classId)) && get(/databases/$(database)/documents/classes/$(resource.data.classId)).data.homeroomTeacherId == request.auth.uid)
+         !(exists(/databases/$(database)/documents/classes/$(resource.data.classId)) && get(/databases/$(database)/documents/classes/$(resource.data.classId)).data.homeroomTeacherId == request.auth.uid) &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+           'generalCommentReviewStatus', 'revisionFeedback', 
+           'reviewedBy', 'reviewedByName', 'reviewedAt', 
+           'updatedAt', 'updatedBy'
+         ])
         )
       );
 
