@@ -3268,7 +3268,8 @@ function LearningPowerUpTeacherPageContent() {
 
     setIsSavingVerification(true);
     try {
-      if (activePackage.id.startsWith('level_week_')) {
+      const isLevelBased = activePackage.id.startsWith('level_week_');
+      if (isLevelBased) {
         const targetBatch = taskBatches.find(b => 
           b.weekStartDate === activePackage.weekStartDate && 
           b.subjectKey === field &&
@@ -3333,9 +3334,84 @@ function LearningPowerUpTeacherPageContent() {
         }
 
         await setDoc(doc(db, 'learning_power_up_assignments', assignmentId), assignmentUpdate, { merge: true });
+
+        // Update local loadedAssignments state optimistically with standard JS types
+        const localAsgObj: LearningPowerUpAssignment = {
+          id: assignmentId,
+          unit: 'JUNIOR_HIGH',
+          taskBatchId: targetBatch.id,
+          studentId: student.id,
+          studentNameSnapshot: student.name,
+          classId: selectedClassId,
+          classNameSnapshot: classes.find(c => c.id === selectedClassId)?.name || '',
+          subjectKey: field,
+          subjectArea: targetBatch.subjectArea || LPU_SUBJECT_MAP[field] || '',
+          levelSnapshot: existingAsg?.levelSnapshot || null,
+          taskTitle: existingAsg?.taskTitle || `Tugas Penguatan ${CATEGORY_CONFIG[field].label}`,
+          taskInstructions: existingAsg?.taskInstructions || "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.",
+          academicYearId: activeYear,
+          semester: targetBatch.semester || '1',
+          weekStartDate: activePackage.weekStartDate,
+          weekEndDate: activePackage.weekEndDate,
+          weekLabel: activePackage.weekLabel || '',
+          status: isApproved ? 'VERIFIED' : 'REVISION_REQUIRED',
+          submittedAt: existingAsg?.submittedAt || null,
+          verifiedAt: isApproved ? new Date() : null,
+          verifiedBy: isApproved ? currentUser.uid : null,
+          verifiedByName: isApproved ? (currentUser.displayName || currentUser.email || 'Guru') : null,
+          verifiedByEmail: isApproved ? (currentUser.email || null) : null,
+          verificationMethod: isApproved ? 'INDIVIDUAL' : null,
+          revisionNote: isApproved ? null : verificationNote,
+          history: updatedHistory.map(h => ({
+            ...h,
+            timestamp: h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp as any)
+          })),
+          createdAt: existingAsg?.createdAt || new Date(),
+          createdBy: existingAsg?.createdBy || currentUser.uid,
+          updatedAt: new Date()
+        };
+
+        setLoadedAssignments(prev => {
+          const filtered = prev.filter(a => a.id !== assignmentId);
+          return [...filtered, localAsgObj];
+        });
+
+        // Also update processes state virtual Progress
+        const virtualProg: TaskProgress = {
+          id: assignmentId,
+          packageId: `level_week_${activePackage.weekStartDate}`,
+          taskPackageId: `level_week_${activePackage.weekStartDate}`,
+          studentId: student.id,
+          classId: selectedClassId,
+          academicYearId: activeYear,
+          field,
+          subjectKey: field,
+          status: isApproved ? 'VERIFIED' : 'REVISION_REQUIRED',
+          verifiedAt: isApproved ? new Date() : null,
+          verifiedBy: isApproved ? (currentUser.displayName || currentUser.email || 'Guru') : null,
+          verifiedByEmail: isApproved ? (currentUser.email || null) : null,
+          verifiedByName: isApproved ? (currentUser.displayName || currentUser.email || 'Guru') : null,
+          verificationMethod: isApproved ? 'INDIVIDUAL' : null,
+          revisionNote: isApproved ? null : verificationNote,
+          history: updatedHistory.map(h => {
+            const timeStr = (h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp as any))
+              .toLocaleString('id-ID', { hour12: false });
+            return {
+              timestamp: timeStr,
+              action: h.action === 'VERIFY' ? 'VERIFY' : h.action === 'REVISION_REQUEST' ? 'REVISION_REQUEST' : 'SUBMIT',
+              actorName: h.performedByName,
+              note: h.note || ''
+            };
+          }) as any
+        } as any;
+
+        setProgresses(prev => {
+          const filtered = prev.filter(p => p.id !== assignmentId);
+          return [...filtered, virtualProg];
+        });
+
         toast.success(isApproved ? "Tugas berhasil ditandai Selesai!" : "Tugas berhasil ditandai Belum Tuntas dengan catatan.");
         setVerifyingProgress(null);
-        await loadClassData();
         return;
       }
 
@@ -3374,10 +3450,21 @@ function LearningPowerUpTeacherPageContent() {
       };
 
       await setDoc(doc(db, 'learning_power_up_progress', progressId), updatedProgress, { merge: true });
+
+      // Update local state for legacy progresses
+      const localProgObj: TaskProgress = {
+        ...updatedProgress,
+        verifiedAt: isApproved ? new Date() : (progress?.verifiedAt ? (progress.verifiedAt instanceof Date ? progress.verifiedAt : new Date(progress.verifiedAt as any)) : null),
+        updatedAt: new Date()
+      } as any;
+
+      setProgresses(prev => {
+        const filtered = prev.filter(p => p.id !== progressId);
+        return [...filtered, localProgObj];
+      });
+
       toast.success(isApproved ? "Tugas berhasil ditandai Selesai!" : "Tugas berhasil ditandai Belum Tuntas dengan catatan.");
-      
       setVerifyingProgress(null);
-      await loadClassData();
     } catch (err) {
       console.error("Error saving verification:", err);
       toast.error("Gagal menyimpan hasil verifikasi.");
@@ -3431,6 +3518,9 @@ function LearningPowerUpTeacherPageContent() {
         }
 
         const batch = writeBatch(db);
+        const localAsgsToUpdate: LearningPowerUpAssignment[] = [];
+        const virtualProgsToUpdate: TaskProgress[] = [];
+
         for (const student of students) {
           const assignmentId = generateDeterministicAssignmentId(targetBatch.id, student.id, field);
           const existingAsg = loadedAssignments.find(a => a.id === assignmentId);
@@ -3482,17 +3572,94 @@ function LearningPowerUpTeacherPageContent() {
           }
 
           batch.set(doc(db, 'learning_power_up_assignments', assignmentId), assignmentUpdate, { merge: true });
+
+          const localAsgObj: LearningPowerUpAssignment = {
+            id: assignmentId,
+            unit: 'JUNIOR_HIGH',
+            taskBatchId: targetBatch.id,
+            studentId: student.id,
+            studentNameSnapshot: student.name,
+            classId: selectedClassId,
+            classNameSnapshot: classes.find(c => c.id === selectedClassId)?.name || '',
+            subjectKey: field,
+            subjectArea: targetBatch.subjectArea || LPU_SUBJECT_MAP[field] || '',
+            levelSnapshot: existingAsg?.levelSnapshot || null,
+            taskTitle: existingAsg?.taskTitle || `Tugas Penguatan ${CATEGORY_CONFIG[field].label}`,
+            taskInstructions: existingAsg?.taskInstructions || "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.",
+            academicYearId: activeYear,
+            semester: targetBatch.semester || '1',
+            weekStartDate: activePackage.weekStartDate,
+            weekEndDate: activePackage.weekEndDate,
+            weekLabel: activePackage.weekLabel || '',
+            status: 'VERIFIED',
+            submittedAt: existingAsg?.submittedAt || null,
+            verifiedAt: new Date(),
+            verifiedBy: currentUser.uid,
+            verifiedByName: currentUser.displayName || currentUser.email || 'Guru',
+            verifiedByEmail: currentUser.email || null,
+            verificationMethod: 'BULK',
+            revisionNote: null,
+            history: updatedHistory.map(h => ({
+              ...h,
+              timestamp: h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp as any)
+            })),
+            createdAt: existingAsg?.createdAt || new Date(),
+            createdBy: existingAsg?.createdBy || currentUser.uid,
+            updatedAt: new Date()
+          };
+
+          const virtualProg: TaskProgress = {
+            id: assignmentId,
+            packageId: `level_week_${activePackage.weekStartDate}`,
+            taskPackageId: `level_week_${activePackage.weekStartDate}`,
+            studentId: student.id,
+            classId: selectedClassId,
+            academicYearId: activeYear,
+            field,
+            subjectKey: field,
+            status: 'VERIFIED',
+            verifiedAt: new Date(),
+            verifiedBy: currentUser.displayName || currentUser.email || 'Guru',
+            verifiedByEmail: currentUser.email || null,
+            verifiedByName: currentUser.displayName || currentUser.email || 'Guru',
+            verificationMethod: 'BULK',
+            revisionNote: null,
+            history: updatedHistory.map(h => {
+              const timeStr = (h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp as any))
+                .toLocaleString('id-ID', { hour12: false });
+              return {
+                timestamp: timeStr,
+                action: 'VERIFY',
+                actorName: h.performedByName,
+                note: h.note || ''
+              };
+            }) as any
+          } as any;
+
+          localAsgsToUpdate.push(localAsgObj);
+          virtualProgsToUpdate.push(virtualProg);
         }
 
         await batch.commit();
+
+        setLoadedAssignments(prev => {
+          const idsToReplace = new Set(localAsgsToUpdate.map(a => a.id));
+          return [...prev.filter(a => !idsToReplace.has(a.id)), ...localAsgsToUpdate];
+        });
+
+        setProgresses(prev => {
+          const idsToReplace = new Set(virtualProgsToUpdate.map(p => p.id));
+          return [...prev.filter(p => !idsToReplace.has(p.id)), ...virtualProgsToUpdate];
+        });
+
         toast.success(`Berhasil melakukan verifikasi massal untuk seluruh siswa kelas pada bidang ${CATEGORY_CONFIG[field].label}!`);
         setBulkConfirm(null);
-        await loadClassData();
         return;
       }
 
       const batch = writeBatch(db);
       const nowStr = new Date().toLocaleString('id-ID', { hour12: false });
+      const localProgsToUpdate: TaskProgress[] = [];
 
       for (const student of students) {
         const existingProgress = findProgress(student.id, activePackage.id, field);
@@ -3516,7 +3683,7 @@ function LearningPowerUpTeacherPageContent() {
           field,
           subjectKey: field,
           status: 'VERIFIED' as const,
-          submittedAt: existingProgress?.submittedAt || serverTimestamp(),
+          submittedAt: existingProgress?.submittedAt || null,
           verifiedAt: serverTimestamp(),
           verifiedBy: currentUser.displayName || currentUser.email || "Guru/Coach",
           verifiedByUserId: currentUser.uid || null,
@@ -3530,12 +3697,23 @@ function LearningPowerUpTeacherPageContent() {
         };
 
         batch.set(doc(db, 'learning_power_up_progress', progressId), updatedProgress, { merge: true });
+
+        localProgsToUpdate.push({
+          ...updatedProgress,
+          verifiedAt: new Date(),
+          updatedAt: new Date()
+        } as any);
       }
 
       await batch.commit();
+
+      setProgresses(prev => {
+        const idsToReplace = new Set(localProgsToUpdate.map(p => p.id));
+        return [...prev.filter(p => !idsToReplace.has(p.id)), ...localProgsToUpdate];
+      });
+
       toast.success(`Berhasil melakukan verifikasi massal untuk seluruh siswa kelas pada bidang ${CATEGORY_CONFIG[field].label}!`);
       setBulkConfirm(null);
-      await loadClassData();
     } catch (err) {
       console.error("Error doing bulk verification:", err);
       toast.error("Gagal melakukan verifikasi massal.");
@@ -3625,9 +3803,82 @@ function LearningPowerUpTeacherPageContent() {
         }
 
         await setDoc(doc(db, 'learning_power_up_assignments', assignmentId), assignmentUpdate, { merge: true });
+
+        // Update local loadedAssignments state optimistically
+        const localAsgObj: LearningPowerUpAssignment = {
+          id: assignmentId,
+          unit: 'JUNIOR_HIGH',
+          taskBatchId: targetBatch.id,
+          studentId: student.id,
+          studentNameSnapshot: student.name,
+          classId: selectedClassId,
+          classNameSnapshot: classes.find(c => c.id === selectedClassId)?.name || '',
+          subjectKey: field,
+          subjectArea: targetBatch.subjectArea || LPU_SUBJECT_MAP[field] || '',
+          levelSnapshot: existingAsg?.levelSnapshot || null,
+          taskTitle: existingAsg?.taskTitle || `Tugas Penguatan ${CATEGORY_CONFIG[field].label}`,
+          taskInstructions: existingAsg?.taskInstructions || "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.",
+          academicYearId: activeYear,
+          semester: targetBatch.semester || '1',
+          weekStartDate: activePackage.weekStartDate,
+          weekEndDate: activePackage.weekEndDate,
+          weekLabel: activePackage.weekLabel || '',
+          status: 'ASSIGNED',
+          submittedAt: existingAsg?.submittedAt || null,
+          verifiedAt: null,
+          verifiedBy: null,
+          verifiedByName: null,
+          verifiedByEmail: null,
+          verificationMethod: null,
+          history: updatedHistory.map(h => ({
+            ...h,
+            timestamp: h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp as any)
+          })),
+          createdAt: existingAsg?.createdAt || new Date(),
+          createdBy: existingAsg?.createdBy || currentUser.uid,
+          updatedAt: new Date()
+        };
+
+        setLoadedAssignments(prev => {
+          const filtered = prev.filter(a => a.id !== assignmentId);
+          return [...filtered, localAsgObj];
+        });
+
+        // Update virtual Progresses state
+        const virtualProg: TaskProgress = {
+          id: assignmentId,
+          packageId: `level_week_${activePackage.weekStartDate}`,
+          taskPackageId: `level_week_${activePackage.weekStartDate}`,
+          studentId: student.id,
+          classId: selectedClassId,
+          academicYearId: activeYear,
+          field,
+          subjectKey: field,
+          status: 'NOT_STARTED',
+          verifiedAt: null,
+          verifiedBy: null,
+          verifiedByEmail: null,
+          verifiedByName: null,
+          verificationMethod: null,
+          history: updatedHistory.map(h => {
+            const timeStr = (h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp as any))
+              .toLocaleString('id-ID', { hour12: false });
+            return {
+              timestamp: timeStr,
+              action: 'UNVERIFY',
+              actorName: h.performedByName,
+              note: h.note || ''
+            };
+          }) as any
+        } as any;
+
+        setProgresses(prev => {
+          const filtered = prev.filter(p => p.id !== assignmentId);
+          return [...filtered, virtualProg];
+        });
+
         toast.success(`Berhasil membatalkan verifikasi tugas ${CATEGORY_CONFIG[field].label} untuk ${student.name}!`);
         setUnverifyingProgress(null);
-        await loadClassData();
         return;
       }
 
@@ -3662,9 +3913,22 @@ function LearningPowerUpTeacherPageContent() {
       };
 
       await setDoc(doc(db, 'learning_power_up_progress', progressId), updatedProgress, { merge: true });
+
+      // Update local legacy progresses state
+      const localProgObj: TaskProgress = {
+        ...progress,
+        ...updatedProgress,
+        verifiedAt: null,
+        updatedAt: new Date()
+      } as any;
+
+      setProgresses(prev => {
+        const filtered = prev.filter(p => p.id !== progressId);
+        return [...filtered, localProgObj];
+      });
+
       toast.success(`Berhasil membatalkan verifikasi tugas ${CATEGORY_CONFIG[field].label} untuk ${student.name}!`);
       setUnverifyingProgress(null);
-      await loadClassData();
     } catch (err) {
       console.error("Error un-verifying task:", err);
       toast.error("Gagal membatalkan verifikasi.");
@@ -3718,6 +3982,9 @@ function LearningPowerUpTeacherPageContent() {
         }
 
         const batch = writeBatch(db);
+        const localAsgsToUpdate: LearningPowerUpAssignment[] = [];
+        const virtualProgsToUpdate: TaskProgress[] = [];
+
         for (const student of students) {
           const assignmentId = generateDeterministicAssignmentId(targetBatch.id, student.id, field);
           const existingAsg = loadedAssignments.find(a => a.id === assignmentId);
@@ -3745,17 +4012,73 @@ function LearningPowerUpTeacherPageContent() {
           };
 
           batch.set(doc(db, 'learning_power_up_assignments', assignmentId), assignmentUpdate, { merge: true });
+
+          const localAsgObj: LearningPowerUpAssignment = {
+            ...existingAsg,
+            status: 'ASSIGNED',
+            verifiedAt: null,
+            verifiedBy: null,
+            verifiedByName: null,
+            verifiedByEmail: null,
+            verificationMethod: null,
+            history: updatedHistory.map(h => ({
+              ...h,
+              timestamp: h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp as any)
+            })),
+            updatedAt: new Date()
+          };
+
+          const virtualProg: TaskProgress = {
+            id: assignmentId,
+            packageId: `level_week_${activePackage.weekStartDate}`,
+            taskPackageId: `level_week_${activePackage.weekStartDate}`,
+            studentId: student.id,
+            classId: selectedClassId,
+            academicYearId: activeYear,
+            field,
+            subjectKey: field,
+            status: 'NOT_STARTED',
+            verifiedAt: null,
+            verifiedBy: null,
+            verifiedByEmail: null,
+            verifiedByName: null,
+            verificationMethod: null,
+            history: updatedHistory.map(h => {
+              const timeStr = (h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp as any))
+                .toLocaleString('id-ID', { hour12: false });
+              return {
+                timestamp: timeStr,
+                action: 'UNVERIFY',
+                actorName: h.performedByName,
+                note: h.note || ''
+              };
+            }) as any
+          } as any;
+
+          localAsgsToUpdate.push(localAsgObj);
+          virtualProgsToUpdate.push(virtualProg);
         }
 
         await batch.commit();
+
+        setLoadedAssignments(prev => {
+          const idsToReplace = new Set(localAsgsToUpdate.map(a => a.id));
+          return [...prev.filter(a => !idsToReplace.has(a.id)), ...localAsgsToUpdate];
+        });
+
+        setProgresses(prev => {
+          const idsToReplace = new Set(virtualProgsToUpdate.map(p => p.id));
+          return [...prev.filter(p => !idsToReplace.has(p.id)), ...virtualProgsToUpdate];
+        });
+
         toast.success(`Berhasil membatalkan verifikasi massal untuk seluruh siswa kelas pada bidang ${CATEGORY_CONFIG[field].label}!`);
         setBulkUnverifyConfirm(null);
-        await loadClassData();
         return;
       }
 
       const batch = writeBatch(db);
       const nowStr = new Date().toLocaleString('id-ID', { hour12: false });
+      const localProgsToUpdate: TaskProgress[] = [];
 
       for (const student of students) {
         const existingProgress = findProgress(student.id, activePackage.id, field);
@@ -3790,12 +4113,24 @@ function LearningPowerUpTeacherPageContent() {
         };
 
         batch.set(doc(db, 'learning_power_up_progress', progressId), updatedProgress, { merge: true });
+
+        localProgsToUpdate.push({
+          ...existingProgress,
+          ...updatedProgress,
+          verifiedAt: null,
+          updatedAt: new Date()
+        } as any);
       }
 
       await batch.commit();
+
+      setProgresses(prev => {
+        const idsToReplace = new Set(localProgsToUpdate.map(p => p.id));
+        return [...prev.filter(p => !idsToReplace.has(p.id)), ...localProgsToUpdate];
+      });
+
       toast.success(`Berhasil membatalkan verifikasi massal untuk seluruh siswa kelas pada bidang ${CATEGORY_CONFIG[field].label}!`);
       setBulkUnverifyConfirm(null);
-      await loadClassData();
     } catch (err) {
       console.error("Error doing bulk unverification:", err);
       toast.error("Gagal melakukan pembatalan verifikasi massal.");
@@ -4265,7 +4600,7 @@ function LearningPowerUpTeacherPageContent() {
                                   ) : null}
                                   
                                   <button
-                                    onClick={() => handleManualChecklistToggle(student, field)}
+                                    onClick={() => handleCellClick(student, field)}
                                     className="inline-flex items-center justify-center p-1 rounded-xl transition-all hover:bg-slate-100 focus:outline-none"
                                     disabled={status === 'CANCELLED' as any || savingCells[`${student.id}_${field}`]}
                                   >
