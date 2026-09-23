@@ -2648,34 +2648,74 @@ function LearningPowerUpTeacherPageContent() {
     return matchingProgs[0];
   };
 
+  const findTargetBatchForStudent = (
+    studentId: string,
+    studentClassId: string,
+    field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi',
+    weekStartDate: string
+  ): LearningPowerUpTaskBatch | null => {
+    // 1. Try to find if the student already has an assignment for this week and field
+    const existingAsg = loadedAssignments.find(a => 
+      a.studentId === studentId && 
+      a.subjectKey === field && 
+      a.weekStartDate === weekStartDate
+    );
+    if (existingAsg?.taskBatchId) {
+      const matched = taskBatches.find(b => b.id === existingAsg.taskBatchId);
+      if (matched) return matched;
+    }
+
+    // 2. Fallback to matching with classId robust matching
+    const isClassMatch = (scId: string, bcId: string): boolean => {
+      if (!scId || !bcId) return false;
+      const sClean = scId.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const bClean = bcId.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return sClean === bClean || bClean.includes(sClean) || sClean.includes(bClean);
+    };
+
+    const matchedBatch = taskBatches.find(b => 
+      b.weekStartDate === weekStartDate && 
+      b.subjectKey === field &&
+      (
+        b.targetClassIds?.some(cid => isClassMatch(studentClassId, cid)) || 
+        isClassMatch(studentClassId, (b as any).classId) || 
+        (b as any).classIds?.some((cid: string) => isClassMatch(studentClassId, cid))
+      )
+    );
+
+    return matchedBatch || null;
+  };
+
   const resolveAssignmentForStudent = (
     studentId: string,
     studentClassId: string,
     subjectKey: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi',
     weekStartDate: string
   ): LearningPowerUpAssignment | null => {
-    // 1. Try to find the task batch for this week, subject and class
-    const targetBatch = taskBatches.find(b => 
-      b.weekStartDate === weekStartDate && 
-      b.subjectKey === subjectKey &&
-      (b.targetClassIds?.includes(studentClassId) || (b as any).classId === studentClassId || (b as any).classIds?.includes(studentClassId))
-    );
-
-    // 2. Try to find in loadedAssignments using deterministic ID if we have batch id
-    if (targetBatch) {
-      const deterministicId = generateDeterministicAssignmentId(targetBatch.id, studentId, subjectKey);
-      const matched = loadedAssignments.find(a => a.id === deterministicId);
-      if (matched) return matched;
-    }
-
-    // 3. Fallback to matching by studentId, subjectKey, and weekStartDate
+    // 1. Try to find in loadedAssignments matching studentId, subjectKey, and weekStartDate directly (SSOT)
     const matchedFallback = loadedAssignments.find(a => 
       a.studentId === studentId && 
       a.subjectKey === subjectKey && 
       a.weekStartDate === weekStartDate
     );
+    if (matchedFallback) return matchedFallback;
 
-    return matchedFallback || null;
+    // 2. Otherwise use findTargetBatchForStudent
+    const targetBatch = findTargetBatchForStudent(studentId, studentClassId, subjectKey, weekStartDate);
+    if (targetBatch) {
+      const deterministicId = generateDeterministicAssignmentId(targetBatch.id, studentId, subjectKey);
+      const matched = loadedAssignments.find(a => a.id === deterministicId);
+      if (matched) return matched;
+
+      const matchedByBatchProps = loadedAssignments.find(a => 
+        a.taskBatchId === targetBatch.id && 
+        a.studentId === studentId && 
+        a.subjectKey === subjectKey
+      );
+      if (matchedByBatchProps) return matchedByBatchProps;
+    }
+
+    return null;
   };
 
   const getStudentFieldStatus = (studentId: string, field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi'): string => {
@@ -3238,7 +3278,7 @@ function LearningPowerUpTeacherPageContent() {
   };
 
   // Handle spreadsheet cell click -> opens Verification Modal or Unverification Dialog
-  const handleCellClick = (student: Student, field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi') => {
+  const handleCellClick = async (student: Student, field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi') => {
     if (!activePackage) return;
     const isLevelBased = activePackage.id.startsWith('level_week_');
     
@@ -3249,100 +3289,124 @@ function LearningPowerUpTeacherPageContent() {
     }
 
     if (isLevelBased) {
-      const asg = resolveAssignmentForStudent(
-        student.id,
-        student.classId,
-        field,
-        activePackage.weekStartDate
-      );
+      const isClassMatch = (scId: string, bcId: string): boolean => {
+        if (!scId || !bcId) return false;
+        const sClean = scId.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const bClean = bcId.toLowerCase().replace(/[^a-z0-9]/g, '');
+        return sClean === bClean || bClean.includes(sClean) || sClean.includes(bClean);
+      };
 
       const targetBatch = taskBatches.find(b => 
         b.weekStartDate === activePackage.weekStartDate && 
         b.subjectKey === field &&
-        (b.targetClassIds?.includes(student.classId) || (b as any).classId === student.classId || (b as any).classIds?.includes(student.classId))
+        (
+          b.targetClassIds?.some(cid => isClassMatch(student.classId, cid)) || 
+          isClassMatch(student.classId, (b as any).classId) || 
+          (b as any).classIds?.some((cid: string) => isClassMatch(student.classId, cid))
+        )
+      ) || taskBatches.find(b => 
+        b.weekStartDate === activePackage.weekStartDate && 
+        b.subjectKey === field
       );
-      const resolvedAssignmentId = targetBatch ? generateDeterministicAssignmentId(targetBatch.id, student.id, field) : '';
 
-      if (!asg) {
-        // If assignment document is not found
-        setVerifyingProgress({
-          student,
-          field,
-          taskDescription: '',
-          progress: null,
-          isNotFoundError: true,
-          assignmentId: resolvedAssignmentId,
-          taskBatchId: targetBatch?.id || 'TIDAK_DITEMUKAN',
-          statusFromFirestore: 'TIDAK_ADA_DI_FIRESTORE'
-        } as any);
-        return;
-      }
+      const taskBatchId = targetBatch ? targetBatch.id : '';
+      const assignmentId = `assignment_${taskBatchId}_${student.id}_${field}`;
 
-      // Since we have the assignment document asg
-      const assignmentId = asg.id || resolvedAssignmentId;
-      const taskBatchId = asg.taskBatchId;
-      const statusFromFirestore = asg.status;
+      setLoadingData(true);
+      try {
+        const assignmentRef = doc(db, 'learning_power_up_assignments', assignmentId);
+        const assignmentSnap = await getDoc(assignmentRef);
 
-      // Build virtual TaskProgress from the assignment document
-      const virtualProgress: TaskProgress = {
-        id: asg.id,
-        packageId: `level_week_${asg.weekStartDate}`,
-        taskPackageId: `level_week_${asg.weekStartDate}`,
-        studentId: asg.studentId,
-        classId: asg.classId,
-        academicYearId: asg.academicYearId,
-        field: asg.subjectKey,
-        subjectKey: asg.subjectKey,
-        status: asg.status as any,
-        verifiedAt: asg.verifiedAt,
-        verifiedBy: asg.verifiedBy,
-        verifiedByEmail: asg.verifiedByEmail,
-        verifiedByName: asg.verifiedByName,
-        verificationMethod: asg.verificationMethod,
-        revisionNote: asg.history?.filter(h => h.action === 'REVISION_REQUEST' && h.note).slice(-1)[0]?.note || '',
-        history: (asg.history || []).map(h => ({
-          timestamp: h.timestamp instanceof Date ? h.timestamp.toLocaleString('id-ID') : (h.timestamp?.seconds ? new Date(h.timestamp.seconds * 1000).toLocaleString('id-ID') : String(h.timestamp)),
-          action: h.action,
-          actorUid: h.performedByUid,
-          actorName: h.performedByName,
-          actorRole: h.performedByRole,
-          note: h.note
-        })) as any
-      } as any;
+        if (assignmentSnap.exists()) {
+          const asg = { id: assignmentSnap.id, ...assignmentSnap.data() } as LearningPowerUpAssignment;
 
-      // Check if task is already VERIFIED -> trigger cancellation dialog
-      if (asg.status === 'VERIFIED') {
-        const activeClass = classes.find(c => c.id === student.classId);
-        const hasAccess = canTeacherVerifySubject(currentUser, activeClass, field);
-        if (!hasAccess) {
-          toast.error(`Akses Ditolak: Anda tidak memiliki wewenang untuk membatalkan verifikasi pada bidang ${CATEGORY_CONFIG[field].label}.`);
-          return;
+          // Build virtual TaskProgress from the assignment document
+          const virtualProgress: TaskProgress = {
+            id: asg.id,
+            packageId: `level_week_${asg.weekStartDate}`,
+            taskPackageId: `level_week_${asg.weekStartDate}`,
+            studentId: asg.studentId,
+            classId: asg.classId,
+            academicYearId: asg.academicYearId,
+            field: asg.subjectKey,
+            subjectKey: asg.subjectKey,
+            status: asg.status as any,
+            verifiedAt: asg.verifiedAt,
+            verifiedBy: asg.verifiedBy,
+            verifiedByEmail: asg.verifiedByEmail,
+            verifiedByName: asg.verifiedByName,
+            verificationMethod: asg.verificationMethod,
+            revisionNote: asg.history?.filter(h => h.action === 'REVISION_REQUEST' && h.note).slice(-1)[0]?.note || '',
+            history: (asg.history || []).map(h => ({
+              timestamp: h.timestamp instanceof Date ? h.timestamp.toLocaleString('id-ID') : (h.timestamp?.seconds ? new Date(h.timestamp.seconds * 1000).toLocaleString('id-ID') : String(h.timestamp)),
+              action: h.action,
+              actorUid: h.performedByUid,
+              actorName: h.performedByName,
+              actorRole: h.performedByRole,
+              note: h.note
+            })) as any
+          } as any;
+
+          // Check if task is already VERIFIED -> trigger cancellation dialog
+          if (asg.status === 'VERIFIED') {
+            const activeClass = classes.find(c => c.id === student.classId);
+            const hasAccess = canTeacherVerifySubject(currentUser, activeClass, field);
+            if (!hasAccess) {
+              toast.error(`Akses Ditolak: Anda tidak memiliki wewenang untuk membatalkan verifikasi pada bidang ${CATEGORY_CONFIG[field].label}.`);
+              return;
+            }
+            setUnverifyingProgress({ student, field, progress: virtualProgress });
+            return;
+          }
+
+          let displayLevel = '';
+          if (asg.levelSnapshot) {
+            const normM = normalizeMengajiLevel(asg.levelSnapshot);
+            const normN = normalizeNumerasiLevel(asg.levelSnapshot);
+            displayLevel = normM ? formatMengajiDisplay(normM) : normN ? formatNumerasiDisplay(normN) : asg.levelSnapshot;
+          }
+
+          setVerifyingProgress({
+            student,
+            field,
+            taskDescription: asg.taskInstructions || '',
+            progress: virtualProgress,
+            taskTitle: asg.taskTitle,
+            level: displayLevel,
+            assignmentId,
+            taskBatchId,
+            statusFromFirestore: asg.status,
+            isNotFoundError: false,
+            assignmentDoc: asg
+          } as any);
+          setVerificationNote(virtualProgress.revisionNote || '');
+
+        } else {
+          // Log details precisely as requested
+          console.log("=== FIRESTORE GETDOC FAILURE DEBUG ===");
+          console.log("Firebase Project ID:", db.app.options?.projectId || 'Unknown');
+          console.log("Collection path: learning_power_up_assignments");
+          console.log("Document ID:", assignmentId);
+          console.log("Exists result: false");
+          console.log("=======================================");
+
+          setVerifyingProgress({
+            student,
+            field,
+            taskDescription: '',
+            progress: null,
+            isNotFoundError: true,
+            assignmentId,
+            taskBatchId,
+            statusFromFirestore: 'TIDAK_ADA_DI_FIRESTORE'
+          } as any);
         }
-        setUnverifyingProgress({ student, field, progress: virtualProgress });
-        return;
+      } catch (err: any) {
+        console.error("Error direct fetching assignment:", err);
+        toast.error("Gagal memuat dokumen assignment dari server.");
+      } finally {
+        setLoadingData(false);
       }
-
-      let displayLevel = '';
-      if (asg.levelSnapshot) {
-        const normM = normalizeMengajiLevel(asg.levelSnapshot);
-        const normN = normalizeNumerasiLevel(asg.levelSnapshot);
-        displayLevel = normM ? formatMengajiDisplay(normM) : normN ? formatNumerasiDisplay(normN) : asg.levelSnapshot;
-      }
-
-      setVerifyingProgress({
-        student,
-        field,
-        taskDescription: asg.taskInstructions || '',
-        progress: virtualProgress,
-        taskTitle: asg.taskTitle,
-        level: displayLevel,
-        assignmentId,
-        taskBatchId,
-        statusFromFirestore,
-        isNotFoundError: false,
-        assignmentDoc: asg
-      } as any);
-      setVerificationNote(virtualProgress.revisionNote || '');
     } else {
       // Legacy path
       const progress = findProgress(student.id, activePackage.id, field);
@@ -3383,10 +3447,11 @@ function LearningPowerUpTeacherPageContent() {
     try {
       const isLevelBased = activePackage.id.startsWith('level_week_');
       if (isLevelBased) {
-        const targetBatch = taskBatches.find(b => 
-          b.weekStartDate === activePackage.weekStartDate && 
-          b.subjectKey === field &&
-          (b.targetClassIds?.includes(student.classId) || (b as any).classId === student.classId || (b as any).classIds?.includes(student.classId))
+        const targetBatch = findTargetBatchForStudent(
+          student.id,
+          student.classId,
+          field,
+          activePackage.weekStartDate
         );
         if (!targetBatch) {
           toast.error("Gagal menemukan batch tugas level-based.");
@@ -3826,10 +3891,11 @@ function LearningPowerUpTeacherPageContent() {
     setSavingCells(prev => ({ ...prev, [`${student.id}_${field}`]: true }));
     try {
       if (activePackage.id.startsWith('level_week_')) {
-        const targetBatch = taskBatches.find(b => 
-          b.weekStartDate === activePackage.weekStartDate && 
-          b.subjectKey === field &&
-          (b.targetClassIds?.includes(student.classId) || (b as any).classId === student.classId || (b as any).classIds?.includes(student.classId))
+        const targetBatch = findTargetBatchForStudent(
+          student.id,
+          student.classId,
+          field,
+          activePackage.weekStartDate
         );
         if (!targetBatch) {
           toast.error("Gagal menemukan batch tugas level-based.");
