@@ -3792,17 +3792,11 @@ function LearningPowerUpTeacherPageContent() {
           performedByUid: currentUser.uid,
           performedByName: currentUser.displayName || currentUser.email || 'Guru',
           performedByRole: currentUser.role,
-          timestamp: serverTimestamp() as any,
+          timestamp: new Date(),
           note: "Pembatalan verifikasi tugas manual."
         };
 
-        const localHistoryEntry = {
-          ...newHistoryEntry,
-          timestamp: new Date()
-        };
-
-        const updatedHistoryForFirestore = existingAsg ? [...(existingAsg.history || []), newHistoryEntry] : [newHistoryEntry];
-        const updatedHistoryForLocal = existingAsg ? [...(existingAsg.history || []), localHistoryEntry] : [localHistoryEntry];
+        const updatedHistory = existingAsg ? [...(existingAsg.history || []), newHistoryEntry] : [newHistoryEntry];
 
         const assignmentUpdate: any = {
           status: 'ASSIGNED',
@@ -3811,7 +3805,7 @@ function LearningPowerUpTeacherPageContent() {
           verifiedByName: null,
           verifiedByEmail: null,
           verificationMethod: null,
-          history: updatedHistoryForFirestore,
+          history: updatedHistory,
           updatedAt: serverTimestamp()
         };
 
@@ -3869,7 +3863,7 @@ function LearningPowerUpTeacherPageContent() {
           verifiedByName: null,
           verifiedByEmail: null,
           verificationMethod: null,
-          history: updatedHistoryForLocal.map(h => ({
+          history: updatedHistory.map(h => ({
             ...h,
             timestamp: safeToDate(h.timestamp)
           })),
@@ -3899,7 +3893,7 @@ function LearningPowerUpTeacherPageContent() {
           verifiedByEmail: null,
           verifiedByName: null,
           verificationMethod: null,
-          history: updatedHistoryForLocal.map(h => {
+          history: updatedHistory.map(h => {
             const parsedDate = safeToDate(h.timestamp);
             const timeStr = parsedDate.toLocaleString('id-ID', { hour12: false });
             return {
@@ -3925,14 +3919,7 @@ function LearningPowerUpTeacherPageContent() {
       const currentHistory = progress.history || [];
       const nowStr = new Date().toLocaleString('id-ID', { hour12: false });
 
-      const newHistoryItemForFirestore = {
-        timestamp: serverTimestamp(),
-        action: 'UNVERIFY' as const,
-        actorName: currentUser.displayName || currentUser.email || "Guru/Coach",
-        note: "Pembatalan verifikasi tugas manual."
-      };
-
-      const newHistoryItemForLocal = {
+      const newHistoryItem: TaskProgressHistory = {
         timestamp: nowStr,
         action: 'UNVERIFY' as const,
         actorName: currentUser.displayName || currentUser.email || "Guru/Coach",
@@ -3955,7 +3942,7 @@ function LearningPowerUpTeacherPageContent() {
         unverifyReason: "manual_correction",
         
         updatedAt: serverTimestamp(),
-        history: [...currentHistory, newHistoryItemForFirestore]
+        history: [...currentHistory, newHistoryItem]
       };
 
       await setDoc(doc(db, 'learning_power_up_progress', progressId), updatedProgress, { merge: true });
@@ -3967,7 +3954,7 @@ function LearningPowerUpTeacherPageContent() {
         status: 'ASSIGNED',
         verifiedAt: null,
         updatedAt: new Date(),
-        history: [...currentHistory, newHistoryItemForLocal]
+        history: [...currentHistory, newHistoryItem]
       } as any;
 
       setProgresses(prev => {
@@ -4043,17 +4030,11 @@ function LearningPowerUpTeacherPageContent() {
             performedByUid: currentUser.uid,
             performedByName: currentUser.displayName || currentUser.email || 'Guru',
             performedByRole: currentUser.role,
-            timestamp: serverTimestamp() as any,
+            timestamp: new Date(),
             note: "Pembatalan verifikasi massal oleh guru."
           };
 
-          const localHistoryEntry = {
-            ...newHistoryEntry,
-            timestamp: new Date()
-          };
-
-          const updatedHistoryForFirestore = [...(existingAsg.history || []), newHistoryEntry];
-          const updatedHistoryForLocal = [...(existingAsg.history || []), localHistoryEntry];
+          const updatedHistory = [...(existingAsg.history || []), newHistoryEntry];
 
           const assignmentUpdate = {
             status: 'ASSIGNED',
@@ -4062,7 +4043,7 @@ function LearningPowerUpTeacherPageContent() {
             verifiedByName: null,
             verifiedByEmail: null,
             verificationMethod: null,
-            history: updatedHistoryForFirestore,
+            history: updatedHistory,
             updatedAt: serverTimestamp()
           };
 
@@ -4076,7 +4057,7 @@ function LearningPowerUpTeacherPageContent() {
             verifiedByName: null,
             verifiedByEmail: null,
             verificationMethod: null,
-            history: updatedHistoryForLocal.map(h => ({
+            history: updatedHistory.map(h => ({
               ...h,
               timestamp: safeToDate(h.timestamp)
             })),
@@ -4098,7 +4079,7 @@ function LearningPowerUpTeacherPageContent() {
             verifiedByEmail: null,
             verifiedByName: null,
             verificationMethod: null,
-            history: updatedHistoryForLocal.map(h => {
+            history: updatedHistory.map(h => {
               const parsedDate = safeToDate(h.timestamp);
               const timeStr = parsedDate.toLocaleString('id-ID', { hour12: false });
               return {
@@ -4141,14 +4122,7 @@ function LearningPowerUpTeacherPageContent() {
         const progressId = existingProgress.id;
         const currentHistory = existingProgress.history || [];
 
-        const newHistoryItemForFirestore = {
-          timestamp: serverTimestamp(),
-          action: 'UNVERIFY' as const,
-          actorName: currentUser.displayName || currentUser.email || "Guru/Coach",
-          note: "Pembatalan verifikasi massal oleh guru."
-        };
-
-        const newHistoryItemForLocal = {
+        const newHistoryItem: TaskProgressHistory = {
           timestamp: nowStr,
           action: 'UNVERIFY' as const,
           actorName: currentUser.displayName || currentUser.email || "Guru/Coach",
@@ -4171,7 +4145,7 @@ function LearningPowerUpTeacherPageContent() {
           unverifyReason: "manual_correction",
           
           updatedAt: serverTimestamp(),
-          history: [...currentHistory, newHistoryItemForFirestore]
+          history: [...currentHistory, newHistoryItem]
         };
 
         batch.set(doc(db, 'learning_power_up_progress', progressId), updatedProgress, { merge: true });
@@ -4182,7 +4156,7 @@ function LearningPowerUpTeacherPageContent() {
           status: 'ASSIGNED',
           verifiedAt: null,
           updatedAt: new Date(),
-          history: [...currentHistory, newHistoryItemForLocal]
+          history: [...currentHistory, newHistoryItem]
         } as any);
       }
 
