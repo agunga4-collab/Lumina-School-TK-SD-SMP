@@ -92,7 +92,7 @@ interface TaskProgress {
   academicYearId: string;
   field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi';
   subjectKey?: string;
-  status: 'NOT_STARTED' | 'SUBMITTED' | 'REVISION_REQUIRED' | 'VERIFIED';
+  status: 'NOT_STARTED' | 'SUBMITTED' | 'REVISION_REQUIRED' | 'VERIFIED' | 'ASSIGNED';
   submittedAt: any;
   verifiedAt: any;
   verifiedBy: string | null;
@@ -302,6 +302,39 @@ const formatDateRange = (startStr: string, endStr: string) => {
 
 const formatVerificationTime = (timestamp: any) => {
   return formatLpuDateTime(timestamp, '');
+};
+
+const safeToDate = (ts: any): Date => {
+  if (!ts) return new Date();
+  if (ts instanceof Date) {
+    return isNaN(ts.getTime()) ? new Date() : ts;
+  }
+  if (typeof ts.toDate === 'function') {
+    try {
+      const d = ts.toDate();
+      if (d instanceof Date && !isNaN(d.getTime())) return d;
+    } catch (e) {}
+  }
+  if (typeof ts === 'object') {
+    if ('seconds' in ts) {
+      try {
+        const secs = Number(ts.seconds);
+        const nanos = Number(ts.nanoseconds || 0);
+        const d = new Date(secs * 1000 + Math.floor(nanos / 1_000_000));
+        if (d && !isNaN(d.getTime())) return d;
+      } catch (e) {}
+    }
+    return new Date();
+  }
+  if (typeof ts === 'number') {
+    const d = new Date(ts);
+    if (!isNaN(d.getTime())) return d;
+  }
+  if (typeof ts === 'string') {
+    const d = new Date(ts);
+    if (!isNaN(d.getTime())) return d;
+  }
+  return new Date();
 };
 
 const canTeacherVerifySubject = (
@@ -2993,7 +3026,7 @@ function LearningPowerUpTeacherPageContent() {
     const progressId = progress?.id || (isLevelBased ? assignmentId : `progress_${activePackage.id}_${student.id}_${field}`);
 
     // Create optimistic progress record
-    const targetStatus = isCurrentlyVerified ? 'NOT_STARTED' : 'VERIFIED';
+    const targetStatus = isCurrentlyVerified ? 'ASSIGNED' : 'VERIFIED';
     
     // We should display loading on the specific cell
     setSavingCells(prev => ({ ...prev, [`${student.id}_${field}`]: true }));
@@ -3364,7 +3397,7 @@ function LearningPowerUpTeacherPageContent() {
           revisionNote: isApproved ? null : verificationNote,
           history: updatedHistory.map(h => ({
             ...h,
-            timestamp: h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp as any)
+            timestamp: safeToDate(h.timestamp)
           })),
           createdAt: existingAsg?.createdAt || new Date(),
           createdBy: existingAsg?.createdBy || currentUser.uid,
@@ -3394,8 +3427,8 @@ function LearningPowerUpTeacherPageContent() {
           verificationMethod: isApproved ? 'INDIVIDUAL' : null,
           revisionNote: isApproved ? null : verificationNote,
           history: updatedHistory.map(h => {
-            const timeStr = (h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp as any))
-              .toLocaleString('id-ID', { hour12: false });
+            const parsedDate = safeToDate(h.timestamp);
+            const timeStr = parsedDate.toLocaleString('id-ID', { hour12: false });
             return {
               timestamp: timeStr,
               action: h.action === 'VERIFY' ? 'VERIFY' : h.action === 'REVISION_REQUEST' ? 'REVISION_REQUEST' : 'SUBMIT',
@@ -3601,7 +3634,7 @@ function LearningPowerUpTeacherPageContent() {
             revisionNote: null,
             history: updatedHistory.map(h => ({
               ...h,
-              timestamp: h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp as any)
+              timestamp: safeToDate(h.timestamp)
             })),
             createdAt: existingAsg?.createdAt || new Date(),
             createdBy: existingAsg?.createdBy || currentUser.uid,
@@ -3625,8 +3658,8 @@ function LearningPowerUpTeacherPageContent() {
             verificationMethod: 'BULK',
             revisionNote: null,
             history: updatedHistory.map(h => {
-              const timeStr = (h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp as any))
-                .toLocaleString('id-ID', { hour12: false });
+              const parsedDate = safeToDate(h.timestamp);
+              const timeStr = parsedDate.toLocaleString('id-ID', { hour12: false });
               return {
                 timestamp: timeStr,
                 action: 'VERIFY',
@@ -3759,11 +3792,17 @@ function LearningPowerUpTeacherPageContent() {
           performedByUid: currentUser.uid,
           performedByName: currentUser.displayName || currentUser.email || 'Guru',
           performedByRole: currentUser.role,
-          timestamp: new Date(),
+          timestamp: serverTimestamp() as any,
           note: "Pembatalan verifikasi tugas manual."
         };
 
-        const updatedHistory = existingAsg ? [...(existingAsg.history || []), newHistoryEntry] : [newHistoryEntry];
+        const localHistoryEntry = {
+          ...newHistoryEntry,
+          timestamp: new Date()
+        };
+
+        const updatedHistoryForFirestore = existingAsg ? [...(existingAsg.history || []), newHistoryEntry] : [newHistoryEntry];
+        const updatedHistoryForLocal = existingAsg ? [...(existingAsg.history || []), localHistoryEntry] : [localHistoryEntry];
 
         const assignmentUpdate: any = {
           status: 'ASSIGNED',
@@ -3772,7 +3811,7 @@ function LearningPowerUpTeacherPageContent() {
           verifiedByName: null,
           verifiedByEmail: null,
           verificationMethod: null,
-          history: updatedHistory,
+          history: updatedHistoryForFirestore,
           updatedAt: serverTimestamp()
         };
 
@@ -3830,9 +3869,9 @@ function LearningPowerUpTeacherPageContent() {
           verifiedByName: null,
           verifiedByEmail: null,
           verificationMethod: null,
-          history: updatedHistory.map(h => ({
+          history: updatedHistoryForLocal.map(h => ({
             ...h,
-            timestamp: h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp as any)
+            timestamp: safeToDate(h.timestamp)
           })),
           createdAt: existingAsg?.createdAt || new Date(),
           createdBy: existingAsg?.createdBy || currentUser.uid,
@@ -3854,15 +3893,15 @@ function LearningPowerUpTeacherPageContent() {
           academicYearId: activeYear,
           field,
           subjectKey: field,
-          status: 'NOT_STARTED',
+          status: 'ASSIGNED',
           verifiedAt: null,
           verifiedBy: null,
           verifiedByEmail: null,
           verifiedByName: null,
           verificationMethod: null,
-          history: updatedHistory.map(h => {
-            const timeStr = (h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp as any))
-              .toLocaleString('id-ID', { hour12: false });
+          history: updatedHistoryForLocal.map(h => {
+            const parsedDate = safeToDate(h.timestamp);
+            const timeStr = parsedDate.toLocaleString('id-ID', { hour12: false });
             return {
               timestamp: timeStr,
               action: 'UNVERIFY',
@@ -3886,7 +3925,14 @@ function LearningPowerUpTeacherPageContent() {
       const currentHistory = progress.history || [];
       const nowStr = new Date().toLocaleString('id-ID', { hour12: false });
 
-      const newHistoryItem: TaskProgressHistory = {
+      const newHistoryItemForFirestore = {
+        timestamp: serverTimestamp(),
+        action: 'UNVERIFY' as const,
+        actorName: currentUser.displayName || currentUser.email || "Guru/Coach",
+        note: "Pembatalan verifikasi tugas manual."
+      };
+
+      const newHistoryItemForLocal = {
         timestamp: nowStr,
         action: 'UNVERIFY' as const,
         actorName: currentUser.displayName || currentUser.email || "Guru/Coach",
@@ -3895,7 +3941,7 @@ function LearningPowerUpTeacherPageContent() {
 
       const updatedProgress = {
         id: progressId,
-        status: 'NOT_STARTED' as const,
+        status: 'ASSIGNED' as const,
         verifiedByUserId: null,
         verifiedByEmail: null,
         verifiedByName: null,
@@ -3909,7 +3955,7 @@ function LearningPowerUpTeacherPageContent() {
         unverifyReason: "manual_correction",
         
         updatedAt: serverTimestamp(),
-        history: [...currentHistory, newHistoryItem]
+        history: [...currentHistory, newHistoryItemForFirestore]
       };
 
       await setDoc(doc(db, 'learning_power_up_progress', progressId), updatedProgress, { merge: true });
@@ -3918,8 +3964,10 @@ function LearningPowerUpTeacherPageContent() {
       const localProgObj: TaskProgress = {
         ...progress,
         ...updatedProgress,
+        status: 'ASSIGNED',
         verifiedAt: null,
-        updatedAt: new Date()
+        updatedAt: new Date(),
+        history: [...currentHistory, newHistoryItemForLocal]
       } as any;
 
       setProgresses(prev => {
@@ -3995,11 +4043,18 @@ function LearningPowerUpTeacherPageContent() {
             performedByUid: currentUser.uid,
             performedByName: currentUser.displayName || currentUser.email || 'Guru',
             performedByRole: currentUser.role,
-            timestamp: new Date(),
+            timestamp: serverTimestamp() as any,
             note: "Pembatalan verifikasi massal oleh guru."
           };
 
-          const updatedHistory = [...(existingAsg.history || []), newHistoryEntry];
+          const localHistoryEntry = {
+            ...newHistoryEntry,
+            timestamp: new Date()
+          };
+
+          const updatedHistoryForFirestore = [...(existingAsg.history || []), newHistoryEntry];
+          const updatedHistoryForLocal = [...(existingAsg.history || []), localHistoryEntry];
+
           const assignmentUpdate = {
             status: 'ASSIGNED',
             verifiedAt: null,
@@ -4007,7 +4062,7 @@ function LearningPowerUpTeacherPageContent() {
             verifiedByName: null,
             verifiedByEmail: null,
             verificationMethod: null,
-            history: updatedHistory,
+            history: updatedHistoryForFirestore,
             updatedAt: serverTimestamp()
           };
 
@@ -4021,9 +4076,9 @@ function LearningPowerUpTeacherPageContent() {
             verifiedByName: null,
             verifiedByEmail: null,
             verificationMethod: null,
-            history: updatedHistory.map(h => ({
+            history: updatedHistoryForLocal.map(h => ({
               ...h,
-              timestamp: h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp as any)
+              timestamp: safeToDate(h.timestamp)
             })),
             updatedAt: new Date()
           };
@@ -4037,15 +4092,15 @@ function LearningPowerUpTeacherPageContent() {
             academicYearId: activeYear,
             field,
             subjectKey: field,
-            status: 'NOT_STARTED',
+            status: 'ASSIGNED',
             verifiedAt: null,
             verifiedBy: null,
             verifiedByEmail: null,
             verifiedByName: null,
             verificationMethod: null,
-            history: updatedHistory.map(h => {
-              const timeStr = (h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp as any))
-                .toLocaleString('id-ID', { hour12: false });
+            history: updatedHistoryForLocal.map(h => {
+              const parsedDate = safeToDate(h.timestamp);
+              const timeStr = parsedDate.toLocaleString('id-ID', { hour12: false });
               return {
                 timestamp: timeStr,
                 action: 'UNVERIFY',
@@ -4086,7 +4141,14 @@ function LearningPowerUpTeacherPageContent() {
         const progressId = existingProgress.id;
         const currentHistory = existingProgress.history || [];
 
-        const newHistoryItem: TaskProgressHistory = {
+        const newHistoryItemForFirestore = {
+          timestamp: serverTimestamp(),
+          action: 'UNVERIFY' as const,
+          actorName: currentUser.displayName || currentUser.email || "Guru/Coach",
+          note: "Pembatalan verifikasi massal oleh guru."
+        };
+
+        const newHistoryItemForLocal = {
           timestamp: nowStr,
           action: 'UNVERIFY' as const,
           actorName: currentUser.displayName || currentUser.email || "Guru/Coach",
@@ -4095,7 +4157,7 @@ function LearningPowerUpTeacherPageContent() {
 
         const updatedProgress = {
           id: progressId,
-          status: 'NOT_STARTED' as const,
+          status: 'ASSIGNED' as const,
           verifiedByUserId: null,
           verifiedByEmail: null,
           verifiedByName: null,
@@ -4109,7 +4171,7 @@ function LearningPowerUpTeacherPageContent() {
           unverifyReason: "manual_correction",
           
           updatedAt: serverTimestamp(),
-          history: [...currentHistory, newHistoryItem]
+          history: [...currentHistory, newHistoryItemForFirestore]
         };
 
         batch.set(doc(db, 'learning_power_up_progress', progressId), updatedProgress, { merge: true });
@@ -4117,8 +4179,10 @@ function LearningPowerUpTeacherPageContent() {
         localProgsToUpdate.push({
           ...existingProgress,
           ...updatedProgress,
+          status: 'ASSIGNED',
           verifiedAt: null,
-          updatedAt: new Date()
+          updatedAt: new Date(),
+          history: [...currentHistory, newHistoryItemForLocal]
         } as any);
       }
 
