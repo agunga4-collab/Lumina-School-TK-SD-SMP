@@ -9,11 +9,12 @@ import {
   publishElementaryMidtermReport,
   fetchElementaryStudentUnitActivityEnrollment
 } from '../../../services/elementaryMidtermService';
-import type { 
+import { 
   ElementaryMidtermMasterGoalDoc, 
   ElementaryMidtermStudentDataDoc,
   PublishedElementaryMidtermReport,
-  ElementaryMidtermReportSnapshot
+  ElementaryMidtermReportSnapshot,
+  getActiveMasterGoals
 } from '../../../types/elementaryMidtermReport';
 import { normalizeElementarySubjectName } from '../../../types/elementaryMidtermReport';
 import type { Student, Class, ReportConfig, User as UserType } from '../../../types';
@@ -97,14 +98,15 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
     return map;
   }, [publishedReports]);
 
-  // Calculate Master Goals stats across valid official subjects
+  // Calculate Active Master Goals stats across valid official subjects
   const allMasterGoalsList = React.useMemo(() => {
     const list: Array<{ id: string; subjectKey: string }> = [];
     Object.keys(masterGoalsMap || {}).forEach(key => {
       const doc = masterGoalsMap[key];
       const norm = normalizeElementarySubjectName(doc?.subjectKey || key);
-      if (norm && doc && Array.isArray(doc.goals)) {
-        doc.goals.forEach(g => {
+      const activeGoals = getActiveMasterGoals(doc);
+      if (norm && doc && activeGoals.length > 0) {
+        activeGoals.forEach(g => {
           list.push({ id: g.id, subjectKey: norm });
         });
       }
@@ -127,8 +129,9 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
       Object.keys(masterGoalsMap || {}).forEach(subjKey => {
         const doc = masterGoalsMap[subjKey];
         const norm = normalizeElementarySubjectName(doc?.subjectKey || subjKey);
-        if (norm && doc && Array.isArray(doc.goals) && doc.goals.length > 0) {
-          const goalsList = doc.goals.map(g => ({
+        const activeGoals = getActiveMasterGoals(doc);
+        if (norm && doc && activeGoals.length > 0) {
+          const goalsList = activeGoals.map(g => ({
             id: g.id,
             text: g.text,
             remark: studentDataDoc?.remarks?.[g.id] || '-'

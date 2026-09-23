@@ -6,7 +6,8 @@ import type {
 } from '../../../types/elementaryMidtermReport';
 import {
   normalizeElementarySubjectName,
-  ELEMENTARY_OFFICIAL_SUBJECTS
+  ELEMENTARY_OFFICIAL_SUBJECTS,
+  getActiveMasterGoals
 } from '../../../types/elementaryMidtermReport';
 import type { Student, Class, ReportConfig } from '../../../types';
 
@@ -111,7 +112,10 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
 
     Object.keys(subjectsMap).forEach(subjKey => {
       const doc = subjectsMap[subjKey];
-      if (!doc || !Array.isArray(doc.goals) || doc.goals.length === 0) return;
+      if (!doc) return;
+
+      const activeGoals = getActiveMasterGoals(doc);
+      if (activeGoals.length === 0) return;
 
       const normName = normalizeElementarySubjectName(doc.subjectKey || subjKey);
       if (!normName) return; // Skip excluded subjects like IPA, IPS, PKN
@@ -128,7 +132,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
         }
       }
 
-      const goalsList = doc.goals.map(g => ({
+      const goalsList = activeGoals.map(g => ({
         id: g.id,
         text: g.text,
         remark: studentDataDoc?.remarks?.[g.id] || '-'

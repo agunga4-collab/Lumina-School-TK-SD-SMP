@@ -68,9 +68,20 @@ export interface ElementaryMidtermMasterGoalDoc {
   category: string;
   subjectKey: string;
   goals: ElementaryMidtermGoalItem[];
+  activeGoalIds?: string[]; // IDs of goals selected/active for this Midterm term
   updatedAt: number;
   updatedBy: string;
   updatedByName?: string;
+}
+
+export function getActiveMasterGoals(doc?: ElementaryMidtermMasterGoalDoc | null): ElementaryMidtermGoalItem[] {
+  if (!doc || !Array.isArray(doc.goals)) return [];
+  if (!Array.isArray(doc.activeGoalIds)) {
+    // Default to all goals if activeGoalIds is undefined for backward compatibility
+    return doc.goals;
+  }
+  const activeSet = new Set(doc.activeGoalIds);
+  return doc.goals.filter(g => g && activeSet.has(g.id));
 }
 
 export interface ElementaryMidtermGeneralCommentData {

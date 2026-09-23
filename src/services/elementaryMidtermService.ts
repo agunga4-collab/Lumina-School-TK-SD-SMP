@@ -101,13 +101,14 @@ export async function saveElementaryMidtermMasterGoals(
   subjectKey: string,
   category: string,
   goals: ElementaryMidtermGoalItem[],
-  user?: User | null
+  user?: User | null,
+  activeGoalIds?: string[]
 ): Promise<void> {
   try {
     const docId = buildMasterGoalDocId(classId, academicYear, semester, midtermTerm, subjectKey);
     const docRef = doc(db, 'elem_midterm_master_goals', docId);
     
-    const docData: ElementaryMidtermMasterGoalDoc = {
+    const docData: Record<string, any> = {
       id: docId,
       classId,
       className,
@@ -122,9 +123,37 @@ export async function saveElementaryMidtermMasterGoals(
       updatedByName: user?.displayName || (user as any)?.name || 'System User'
     };
 
+    if (activeGoalIds !== undefined) {
+      docData.activeGoalIds = activeGoalIds;
+    }
+
     await setDoc(docRef, docData, { merge: true });
   } catch (err: any) {
     handleFirestoreError(err, 'update', `elem_midterm_master_goals/${subjectKey}`);
+  }
+}
+
+export async function saveElementaryMidtermActiveGoalIds(
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  subjectKey: string,
+  activeGoalIds: string[],
+  user?: User | null
+): Promise<void> {
+  try {
+    const docId = buildMasterGoalDocId(classId, academicYear, semester, midtermTerm, subjectKey);
+    const docRef = doc(db, 'elem_midterm_master_goals', docId);
+
+    await setDoc(docRef, {
+      activeGoalIds,
+      updatedAt: Date.now(),
+      updatedBy: user?.uid || (user as any)?.id || 'system',
+      updatedByName: user?.displayName || (user as any)?.name || 'System User'
+    }, { merge: true });
+  } catch (err: any) {
+    handleFirestoreError(err, 'update', `elem_midterm_master_goals/${subjectKey}/activeGoalIds`);
   }
 }
 
@@ -136,7 +165,8 @@ export async function saveBulkElementaryMidtermMasterGoalForClasses(
   subjectKey: string,
   category: string,
   newGoalText: string,
-  user?: User | null
+  user?: User | null,
+  useForMidterm: boolean = true
 ): Promise<{ successCount: number; totalClasses: number }> {
   try {
     const trimmedGoalText = newGoalText.trim();
@@ -154,45 +184,65 @@ export async function saveBulkElementaryMidtermMasterGoalForClasses(
 
       const snap = await getDoc(docRef);
       let existingGoals: ElementaryMidtermGoalItem[] = [];
+      let existingActiveGoalIds: string[] | undefined = undefined;
 
       if (snap.exists()) {
         const data = snap.data();
         if (Array.isArray(data?.goals)) {
           existingGoals = [...data.goals];
         }
+        if (Array.isArray(data?.activeGoalIds)) {
+          existingActiveGoalIds = [...data.activeGoalIds];
+        }
       }
 
       // Check if goal text already exists in this class (case-insensitive trim check)
-      const isDuplicate = existingGoals.some(
+      const existingGoalMatch = existingGoals.find(
         g => g && typeof g.text === 'string' && g.text.trim().toLowerCase() === trimmedGoalText.toLowerCase()
       );
 
-      if (!isDuplicate) {
+      let newGoalId = existingGoalMatch?.id;
+
+      if (!existingGoalMatch) {
+        newGoalId = `goal_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
         const newGoalItem: ElementaryMidtermGoalItem = {
-          id: `goal_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+          id: newGoalId,
           text: trimmedGoalText,
           order: existingGoals.length + 1
         };
 
-        const updatedGoals = [...existingGoals, newGoalItem];
-
-        const docData: ElementaryMidtermMasterGoalDoc = {
-          id: docId,
-          classId: targetCls.id,
-          className: targetCls.name || '',
-          academicYear,
-          semester,
-          midtermTerm,
-          category,
-          subjectKey,
-          goals: updatedGoals,
-          updatedAt: Date.now(),
-          updatedBy: user?.uid || (user as any)?.id || 'system',
-          updatedByName: user?.displayName || (user as any)?.name || 'System User'
-        };
-
-        await setDoc(docRef, docData, { merge: true });
+        existingGoals.push(newGoalItem);
       }
+
+      // If activeGoalIds was previously undefined, initialize it with all existing goals
+      let updatedActiveGoalIds: string[];
+      if (existingActiveGoalIds === undefined) {
+        updatedActiveGoalIds = existingGoals.map(g => g.id);
+      } else {
+        updatedActiveGoalIds = [...existingActiveGoalIds];
+      }
+
+      if (useForMidterm && newGoalId && !updatedActiveGoalIds.includes(newGoalId)) {
+        updatedActiveGoalIds.push(newGoalId);
+      }
+
+      const docData: Record<string, any> = {
+        id: docId,
+        classId: targetCls.id,
+        className: targetCls.name || '',
+        academicYear,
+        semester,
+        midtermTerm,
+        category,
+        subjectKey,
+        goals: existingGoals,
+        activeGoalIds: updatedActiveGoalIds,
+        updatedAt: Date.now(),
+        updatedBy: user?.uid || (user as any)?.id || 'system',
+        updatedByName: user?.displayName || (user as any)?.name || 'System User'
+      };
+
+      await setDoc(docRef, docData, { merge: true });
 
       successCount++;
     }

@@ -2,10 +2,11 @@ import * as React from 'react';
 import { 
   Plus, Edit2, Trash2, CheckCircle2, AlertCircle, RefreshCw, 
   Sparkles, Layers, BookOpen, User, Music, PlusCircle, FolderPlus,
-  Upload, FileCheck2
+  Upload, FileCheck2, Check
 } from 'lucide-react';
 import { 
   saveElementaryMidtermMasterGoals, 
+  saveElementaryMidtermActiveGoalIds,
   saveBulkElementaryMidtermMasterGoalForClasses,
   saveElementaryMidtermStudentRemark,
   saveBulkElementaryMidtermStudentRemarks,
@@ -23,7 +24,8 @@ import {
   ELEMENTARY_OFFICIAL_SUBJECTS,
   normalizeElementarySubjectName,
   getGradeLevelNumber,
-  getDefaultPerformingArtsUAs
+  getDefaultPerformingArtsUAs,
+  getActiveMasterGoals
 } from '../../../types/elementaryMidtermReport';
 import type { Student, Class, User as UserType, UnitActivityEnrollment } from '../../../types';
 
@@ -145,9 +147,22 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
   }, [masterGoalsMap, effectiveSubjectKey, activeSubject, activeUaTab]);
 
   const [goals, setGoals] = React.useState<ElementaryMidtermGoalItem[]>([]);
+  const [activeGoalIds, setActiveGoalIds] = React.useState<string[]>([]);
+  const [useForMidtermNewGoal, setUseForMidtermNewGoal] = React.useState<boolean>(true);
   const [editingGoalId, setEditingGoalId] = React.useState<string | null>(null);
   const [goalTextInput, setGoalTextInput] = React.useState<string>('');
   const [savingGoals, setSavingGoals] = React.useState<boolean>(false);
+
+  // Uncheck confirmation modal state when unchecking goal with existing student grades
+  const [uncheckConfirmModal, setUncheckConfirmModal] = React.useState<{
+    isOpen: boolean;
+    goalId: string;
+    goalText: string;
+  }>({
+    isOpen: false,
+    goalId: '',
+    goalText: ''
+  });
 
   // Student remarks map: studentId -> { goalId -> 'A' | 'D' | 'B' }
   const [localRemarks, setLocalRemarks] = React.useState<Record<string, Record<string, string>>>({});
@@ -217,6 +232,12 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
   React.useEffect(() => {
     if (currentSubjectMasterDoc && Array.isArray(currentSubjectMasterDoc.goals)) {
       setGoals(currentSubjectMasterDoc.goals);
+      if (Array.isArray(currentSubjectMasterDoc.activeGoalIds)) {
+        setActiveGoalIds(currentSubjectMasterDoc.activeGoalIds);
+      } else {
+        // Default to all goals active for backwards compatibility
+        setActiveGoalIds(currentSubjectMasterDoc.goals.map(g => g.id));
+      }
     } else {
       // Auto-load default goals from system learning_goals if available
       const loadDefaultGoals = async () => {
@@ -236,17 +257,90 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
               order: idx + 1
             }));
             setGoals(mapped);
+            setActiveGoalIds(mapped.map(g => g.id));
           } else {
             setGoals([]);
+            setActiveGoalIds([]);
           }
         } catch (e) {
           console.warn("Could not fetch default system goals:", e);
           setGoals([]);
+          setActiveGoalIds([]);
         }
       };
       loadDefaultGoals();
     }
   }, [effectiveSubjectKey, currentSubjectMasterDoc, selectedClass, selectedYear, activeSubject]);
+
+  // Derived list of Learning Goals selected for current Midterm
+  const activeGoalsForMidterm = React.useMemo(() => {
+    const activeSet = new Set(activeGoalIds);
+    return goals.filter(g => g && activeSet.has(g.id));
+  }, [goals, activeGoalIds]);
+
+  // Check if a goal has existing student grades recorded
+  const checkGoalHasGrades = (goalId: string): boolean => {
+    const allStudentIds = Array.from(new Set([...Object.keys(localRemarks), ...Object.keys(studentDataMap)]));
+    for (const sId of allStudentIds) {
+      const remark = localRemarks[sId]?.[goalId] || studentDataMap[sId]?.remarks?.[goalId];
+      if (remark && ['A', 'D', 'B'].includes(remark)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Update activeGoalIds in Firestore for current class and subject
+  const updateActiveGoalIdsInDb = async (newActiveIds: string[]) => {
+    setActiveGoalIds(newActiveIds);
+    setSavingGoals(true);
+    try {
+      await saveElementaryMidtermActiveGoalIds(
+        selectedClassId,
+        selectedYear,
+        selectedSemester,
+        selectedTerm,
+        effectiveSubjectKey,
+        newActiveIds,
+        currentUser
+      );
+      await onRefreshData();
+    } catch (err) {
+      console.error("Error updating active goal IDs:", err);
+    } finally {
+      setSavingGoals(false);
+    }
+  };
+
+  // Toggle goal active state in Bank
+  const handleToggleGoalActive = async (goal: ElementaryMidtermGoalItem) => {
+    const isCurrentlyActive = activeGoalIds.includes(goal.id);
+
+    if (isCurrentlyActive) {
+      if (checkGoalHasGrades(goal.id)) {
+        setUncheckConfirmModal({
+          isOpen: true,
+          goalId: goal.id,
+          goalText: goal.text
+        });
+        return;
+      }
+      const newActive = activeGoalIds.filter(id => id !== goal.id);
+      await updateActiveGoalIdsInDb(newActive);
+    } else {
+      const newActive = [...activeGoalIds, goal.id];
+      await updateActiveGoalIdsInDb(newActive);
+    }
+  };
+
+  // Confirm unchecking a goal that already has student grades
+  const confirmUncheckGoalWithGrades = async () => {
+    const { goalId } = uncheckConfirmModal;
+    if (!goalId) return;
+    setUncheckConfirmModal({ isOpen: false, goalId: '', goalText: '' });
+    const newActive = activeGoalIds.filter(id => id !== goalId);
+    await updateActiveGoalIdsInDb(newActive);
+  };
 
   // Keep selectedImportUa in sync with active UAs
   React.useEffect(() => {
@@ -507,7 +601,8 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
           effectiveSubjectKey,
           category,
           updatedGoals,
-          currentUser
+          currentUser,
+          activeGoalIds
         );
 
         setGoals(updatedGoals);
@@ -547,7 +642,8 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
         effectiveSubjectKey,
         category,
         goalTextInput.trim(),
-        currentUser
+        currentUser,
+        useForMidtermNewGoal
       );
 
       const count = selectedTargetClassIds.length;
@@ -566,8 +662,9 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
   };
 
   const handleDeleteGoal = async (goalId: string) => {
-    if (!confirm("Apakah Anda yakin ingin menghapus Goal ini?")) return;
+    if (!confirm("Apakah Anda yakin ingin menghapus Goal ini dari Bank?")) return;
     const updatedGoals = goals.filter(g => g.id !== goalId);
+    const updatedActiveIds = activeGoalIds.filter(id => id !== goalId);
     setSavingGoals(true);
     try {
       const category = activeSubject === 'Projects' ? 'PROJECTS' : 'SUBJECTS';
@@ -580,9 +677,11 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
         effectiveSubjectKey,
         category,
         updatedGoals,
-        currentUser
+        currentUser,
+        updatedActiveIds
       );
       setGoals(updatedGoals);
+      setActiveGoalIds(updatedActiveIds);
       await onRefreshData();
     } catch (e) {
       console.error("Error deleting goal:", e);
@@ -772,60 +871,160 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
         )}
       </div>
 
-      {/* SECTION 1: MASTER GOALS MANAGEMENT FOR SELECTED SUBJECT / UA */}
+      {/* SECTION 1: BANK LEARNING GOALS & SELECTION FOR MIDTERM */}
       <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
           <div>
-            <h2 className="text-base font-black text-slate-900 uppercase tracking-tight flex items-center gap-2">
-              <Layers size={18} className="text-emerald-600" />
-              <span>Learning Goals: {activeSubject} {activeSubject === 'Performing Arts' && activeUaTab ? `— ${activeUaTab}` : ''}</span>
+            <div className="flex items-center gap-2 text-emerald-800 text-xs font-black uppercase tracking-wider mb-1">
+              <BookOpen size={16} />
+              <span>Bank Learning Goals — {activeSubject} {activeSubject === 'Performing Arts' && activeUaTab ? `(${activeUaTab})` : ''}</span>
+            </div>
+            <h2 className="text-base font-black text-slate-900 tracking-tight">
+              Daftar Semua Learning Goals Terdaftar ({goals.length})
             </h2>
             <p className="text-xs text-slate-500 font-medium">
-              Atur target capaian belajar untuk {activeSubject === 'Performing Arts' ? `Unit Activity ${activeUaTab}` : activeSubject} pada kelas {selectedClass?.name || ''}.
+              Centang Learning Goals yang dipakai untuk Midterm {selectedTerm} (Tahun Ajaran {selectedYear}, Semester {selectedSemester}). Goal yang tidak dicentang tetap tersimpan di Bank.
             </p>
+          </div>
+
+          {/* Counter Summary Badge & Quick Selection Buttons */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="px-3.5 py-1.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-950 text-xs font-black flex items-center gap-1.5 shadow-2xs">
+              <CheckCircle2 size={15} className="text-emerald-600" />
+              <span>{activeGoalsForMidterm.length} dari {goals.length} Learning Goals dipakai pada Midterm {selectedTerm}</span>
+            </div>
+
+            {goals.length > 0 && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => updateActiveGoalIdsInDb(goals.map(g => g.id))}
+                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 text-[11px] font-bold rounded-lg transition-all cursor-pointer"
+                  title="Pilih semua goal untuk Midterm"
+                >
+                  Pilih Semua
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateActiveGoalIdsInDb([])}
+                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold rounded-lg transition-all cursor-pointer"
+                  title="Kosongkan pilihan Midterm"
+                >
+                  Kosongkan
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* List of current goals */}
+        {/* 1. BANK LEARNING GOALS LIST WITH CHECKBOXES */}
         <div className="space-y-3">
+          <div className="text-xs font-black uppercase tracking-wider text-slate-500">
+            Bank Learning Goals:
+          </div>
           {goals.length === 0 ? (
             <div className="p-6 bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-center text-xs text-slate-400 font-medium">
-              Belum ada Learning Goals untuk {activeSubject === 'Performing Arts' ? `Performing Arts (${activeUaTab})` : activeSubject}. Tambahkan di bawah.
+              Belum ada Learning Goals di Bank untuk {activeSubject === 'Performing Arts' ? `Performing Arts (${activeUaTab})` : activeSubject}. Tambahkan di bawah.
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-2.5">
-              {goals.map((goal, idx) => (
-                <div 
-                  key={goal.id} 
-                  className="flex items-center justify-between p-3.5 bg-slate-50 hover:bg-slate-100/80 rounded-2xl border border-slate-200/80 transition-all text-xs"
-                >
-                  <div className="flex items-start gap-3">
-                    <span className="w-6 h-6 rounded-xl bg-emerald-100 text-emerald-800 font-black flex items-center justify-center shrink-0 text-[11px]">
-                      {idx + 1}
-                    </span>
-                    <p className="font-semibold text-slate-800 leading-relaxed pt-0.5">
-                      {goal.text}
-                    </p>
+              {goals.map((goal, idx) => {
+                const isSelected = activeGoalIds.includes(goal.id);
+                const hasGrades = checkGoalHasGrades(goal.id);
+
+                return (
+                  <div 
+                    key={goal.id} 
+                    className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all text-xs ${
+                      isSelected
+                        ? 'bg-emerald-50/70 border-emerald-200 shadow-2xs'
+                        : 'bg-slate-50 hover:bg-slate-100/80 border-slate-200/80'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3 flex-1 mr-2">
+                      <label className="flex items-start gap-3 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleGoalActive(goal)}
+                          className="w-4 h-4 mt-0.5 rounded text-emerald-700 focus:ring-emerald-500 border-slate-300 cursor-pointer"
+                        />
+                        <div className="space-y-0.5">
+                          <p className={`font-semibold leading-relaxed ${isSelected ? 'text-emerald-950 font-bold' : 'text-slate-700'}`}>
+                            {goal.text}
+                          </p>
+                          <div className="flex items-center gap-2 pt-0.5">
+                            {isSelected ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md">
+                                <Check size={11} /> Dipakai untuk Midterm {selectedTerm}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 bg-slate-200/60 px-2 py-0.5 rounded-md">
+                                Tersimpan di Bank (Tidak tampil di Rapor)
+                              </span>
+                            )}
+                            {hasGrades && (
+                              <span className="text-[10px] font-extrabold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md" title="Goal ini memiliki nilai siswa yang sudah diinput">
+                                ★ Ada Nilai
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </label>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingGoalId(goal.id);
+                          setGoalTextInput(goal.text);
+                        }}
+                        className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-xl transition-all cursor-pointer"
+                        title="Edit Goal"
+                      >
+                        <Edit2 size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteGoal(goal.id)}
+                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all cursor-pointer"
+                        title="Hapus Goal dari Bank"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={() => {
-                        setEditingGoalId(goal.id);
-                        setGoalTextInput(goal.text);
-                      }}
-                      className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-xl transition-all cursor-pointer"
-                      title="Edit Goal"
-                    >
-                      <Edit2 size={14} />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteGoal(goal.id)}
-                      className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all cursor-pointer"
-                      title="Hapus Goal"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 2. LEARNING GOALS DIPAKAI UNTUK MIDTERM ACTIVE SUMMARY BOX */}
+        <div className="bg-emerald-900/5 p-4 rounded-2xl border border-emerald-200/80 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-black text-emerald-950 uppercase tracking-wider flex items-center gap-2">
+              <CheckCircle2 size={16} className="text-emerald-600" />
+              <span>Learning Goals Dipakai untuk Midterm {selectedTerm} ({activeGoalsForMidterm.length})</span>
+            </h3>
+            <span className="text-[11px] font-bold text-emerald-800">
+              {activeGoalsForMidterm.length} Goal Tampil di Tabel & PDF
+            </span>
+          </div>
+
+          {activeGoalsForMidterm.length === 0 ? (
+            <p className="text-xs text-amber-800 font-semibold bg-amber-50 p-3 rounded-xl border border-amber-200">
+              Belum ada Learning Goal yang dicentang untuk Midterm {selectedTerm}. Silakan centang goal pada Bank Learning Goals di atas.
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              {activeGoalsForMidterm.map((g, idx) => (
+                <div key={g.id} className="flex items-center gap-2.5 text-xs bg-white p-2.5 rounded-xl border border-emerald-200/60 shadow-2xs">
+                  <span className="w-5 h-5 rounded-lg bg-emerald-800 text-white font-black text-[10px] flex items-center justify-center shrink-0">
+                    G{idx + 1}
+                  </span>
+                  <span className="font-bold text-slate-800">{g.text}</span>
                 </div>
               ))}
             </div>
@@ -883,6 +1082,20 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
               )}
             </div>
           </div>
+
+          {!editingGoalId && (
+            <div className="flex items-center gap-2 pt-1">
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={useForMidtermNewGoal}
+                  onChange={(e) => setUseForMidtermNewGoal(e.target.checked)}
+                  className="w-4 h-4 rounded text-emerald-700 focus:ring-emerald-500 border-slate-300 cursor-pointer"
+                />
+                <span>Langsung gunakan Goal ini untuk Midterm {selectedTerm}</span>
+              </label>
+            </div>
+          )}
 
           {/* Multi-select Checkboxes for Target Classes */}
           {!editingGoalId && sameGradeClasses.length > 0 && (
@@ -1258,9 +1471,10 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
           </div>
         </div>
 
-        {goals.length === 0 ? (
-          <div className="p-8 text-center text-xs text-slate-400 font-medium bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-            Tambahkan minimal satu Learning Goal di atas terlebih dahulu untuk mulai memasukkan nilai remark siswa.
+        {activeGoalsForMidterm.length === 0 ? (
+          <div className="p-8 text-center text-xs text-amber-800 font-semibold bg-amber-50 rounded-2xl border border-dashed border-amber-300 space-y-1">
+            <p>Belum ada Learning Goal yang dicentang untuk Midterm {selectedTerm}.</p>
+            <p className="text-[11px] text-amber-700 font-normal">Silakan centang Learning Goal pada Bank Learning Goals di atas untuk menampilkan kolom nilai siswa.</p>
           </div>
         ) : activeSubject === 'Performing Arts' && activeStudentsForGrading.length === 0 ? (
           <div className="p-8 text-center text-xs text-purple-700 font-bold bg-purple-50/80 rounded-2xl border border-dashed border-purple-200 space-y-1">
@@ -1274,7 +1488,7 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
                 <tr className="bg-slate-900 text-white font-extrabold uppercase text-[11px] tracking-wider">
                   <th className="p-3 w-12 text-center border-r border-slate-800">No</th>
                   <th className="p-3 w-48 border-r border-slate-800">Nama Siswa</th>
-                  {goals.map((g, idx) => (
+                  {activeGoalsForMidterm.map((g, idx) => (
                     <th key={g.id} className="p-3 min-w-[220px] border-r border-slate-800 space-y-2 align-top">
                       <div className="text-[10.5px] font-bold text-slate-200 leading-snug line-clamp-2">
                         G{idx + 1}: {g.text}
@@ -1322,7 +1536,7 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
                       <td className="p-3 border-r border-slate-100 font-bold text-slate-900">
                         {st.name}
                       </td>
-                      {goals.map((g) => {
+                      {activeGoalsForMidterm.map((g) => {
                         const currentVal = localRemarks[st.id]?.[g.id] || '';
                         return (
                           <td key={g.id} className="p-3 border-r border-slate-100 text-center">
@@ -1512,6 +1726,48 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
               >
                 {savingGoals && <RefreshCw size={14} className="animate-spin" />}
                 <span>Terapkan</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRMATION MODAL: UNCHECK GOAL THAT HAS EXISTING STUDENT GRADES */}
+      {uncheckConfirmModal.isOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 border border-slate-100">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center font-black shrink-0">
+                <AlertCircle size={22} />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-black text-slate-900 leading-snug">
+                  Learning Goal ini sudah memiliki nilai siswa. Hapus dari Midterm ini?
+                </h3>
+                <p className="text-xs text-slate-600 font-medium leading-relaxed bg-slate-50 p-2.5 rounded-xl border border-slate-200 line-clamp-3">
+                  &ldquo;{uncheckConfirmModal.goalText}&rdquo;
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-500 leading-relaxed font-medium">
+              Nilai A/D/B yang sudah diinput untuk goal ini tidak akan dihapus dan tetap tersimpan sebagai riwayat history, tetapi goal tidak akan ditampilkan pada tabel nilai, kelengkapan rapor, preview, maupun PDF Midterm.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setUncheckConfirmModal({ isOpen: false, goalId: '', goalText: '' })}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={confirmUncheckGoalWithGrades}
+                className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white text-xs font-extrabold rounded-xl transition-all shadow-sm cursor-pointer"
+              >
+                Hapus dari Midterm
               </button>
             </div>
           </div>
