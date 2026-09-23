@@ -29,6 +29,7 @@ interface ElementaryMidtermPublishPdfTabProps {
   studentDataMap: Record<string, ElementaryMidtermStudentDataDoc>;
   publishedReports: PublishedElementaryMidtermReport[];
   reportConfig: ReportConfig | null;
+  logoUrl?: string | null;
   homeroomTeacherProfile: { displayName: string; niy?: string; signatureUrl?: string | null } | null;
   onRefreshData: () => Promise<void>;
   currentUser: UserType | null;
@@ -45,6 +46,7 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
   studentDataMap,
   publishedReports,
   reportConfig,
+  logoUrl,
   homeroomTeacherProfile,
   onRefreshData,
   currentUser
@@ -167,12 +169,14 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
         attendance: studentDataDoc?.attendance || { sakit: 0, izin: 0, tanpaKeterangan: 0 },
         signatory: {
           principalName: reportConfig?.principalName || 'Principal',
+          principalTitle: reportConfig?.principalTitle || 'Principal',
           principalNiy: reportConfig?.principalNIY || '',
           principalSignatureUrl: reportConfig?.principalSignatureUrl || null,
           homeroomTeacherName: selectedClass.homeroomTeacherName || homeroomTeacherProfile?.displayName || 'Homeroom Teacher',
           homeroomTeacherNiy: homeroomTeacherProfile?.niy || '',
-          homeroomTeacherSignatureUrl: homeroomTeacherProfile?.signatureUrl || null
-        }
+          homeroomTeacherSignatureUrl: homeroomTeacherProfile?.signatureUrl || (selectedClass as any)?.teacherSignatureUrl || null
+        },
+        logoUrl: logoUrl || null
       };
 
       await publishElementaryMidtermReport({
@@ -494,6 +498,7 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
                 masterGoalsMap={masterGoalsMap}
                 studentDataDoc={studentDataMap[previewStudent.id]}
                 reportConfig={reportConfig}
+                logoUrl={logoUrl}
                 homeroomTeacherProfile={homeroomTeacherProfile || undefined}
                 studentUaName={studentUaMap[previewStudent.id]}
               />

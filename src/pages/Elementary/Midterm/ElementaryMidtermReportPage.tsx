@@ -104,6 +104,43 @@ function ElementaryMidtermReportPageContent() {
   const [students, setStudents] = React.useState<Student[]>([]);
   const [reportConfig, setReportConfig] = React.useState<ReportConfig | null>(null);
   const [homeroomTeacherProfile, setHomeroomTeacherProfile] = React.useState<{ displayName: string; niy?: string; signatureUrl?: string | null } | null>(null);
+  const [elementaryLogoUrl, setElementaryLogoUrl] = React.useState<string | null>(null);
+
+  // Fetch Elementary logo from settings/logos or localStorage
+  React.useEffect(() => {
+    const fetchElementaryLogo = async () => {
+      try {
+        const logoDoc = await getDoc(doc(db, 'settings', 'logos'));
+        if (logoDoc.exists()) {
+          const data = logoDoc.data() as any;
+          if (data?.ELEMENTARY?.rectangular) {
+            setElementaryLogoUrl(data.ELEMENTARY.rectangular);
+            return;
+          }
+        }
+        const localLogos = localStorage.getItem('lumina_school_logos');
+        if (localLogos) {
+          const parsed = JSON.parse(localLogos);
+          if (parsed?.ELEMENTARY?.rectangular) {
+            setElementaryLogoUrl(parsed.ELEMENTARY.rectangular);
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn("Failed to fetch Elementary logo in ElementaryMidtermReportPage:", e);
+        const localLogos = localStorage.getItem('lumina_school_logos');
+        if (localLogos) {
+          try {
+            const parsed = JSON.parse(localLogos);
+            if (parsed?.ELEMENTARY?.rectangular) {
+              setElementaryLogoUrl(parsed.ELEMENTARY.rectangular);
+            }
+          } catch (_) {}
+        }
+      }
+    };
+    fetchElementaryLogo();
+  }, []);
 
   // Midterm Data Models
   const [masterGoalsMap, setMasterGoalsMap] = React.useState<Record<string, ElementaryMidtermMasterGoalDoc>>({});
@@ -445,6 +482,7 @@ function ElementaryMidtermReportPageContent() {
               studentDataMap={studentDataMap}
               publishedReports={publishedReports}
               reportConfig={reportConfig}
+              logoUrl={elementaryLogoUrl}
               homeroomTeacherProfile={homeroomTeacherProfile}
               onRefreshData={loadClassData}
               currentUser={effectiveUser}

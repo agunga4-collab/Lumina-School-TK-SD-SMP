@@ -198,6 +198,7 @@ export interface ElementaryMidtermAttendanceSnapshot {
 
 export interface ElementaryMidtermSignatorySnapshot {
   principalName: string;
+  principalTitle?: string;
   principalNiy?: string;
   principalSignatureUrl?: string | null;
   homeroomTeacherName: string;
@@ -220,6 +221,7 @@ export interface ElementaryMidtermReportSnapshot {
   generalComment: string;
   attendance: ElementaryMidtermAttendanceSnapshot;
   signatory: ElementaryMidtermSignatorySnapshot;
+  logoUrl?: string | null;
 }
 
 export interface PublishedElementaryMidtermReport {

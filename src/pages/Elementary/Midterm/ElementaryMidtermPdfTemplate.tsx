@@ -66,6 +66,9 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
   const effPrincipalName = snapshot 
     ? snapshot.signatory.principalName 
     : (reportConfig?.principalName || 'Principal');
+  const effPrincipalTitle = snapshot 
+    ? ((snapshot.signatory as any).principalTitle || 'Principal')
+    : (reportConfig?.principalTitle || 'Principal');
   const effPrincipalNiy = snapshot 
     ? snapshot.signatory.principalNiy 
     : (reportConfig?.principalNIY || '');
@@ -81,9 +84,9 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
     : (homeroomTeacherProfile?.niy || '');
   const effHomeroomSignatureUrl = snapshot 
     ? snapshot.signatory.homeroomTeacherSignatureUrl 
-    : (homeroomTeacherProfile?.signatureUrl || null);
+    : (homeroomTeacherProfile?.signatureUrl || (currentClass as any)?.teacherSignatureUrl || null);
 
-  const effLogoUrl = logoUrl || 'https://lazuardi.sch.id/wp-content/uploads/2021/04/Logo-Lazuardi-Elementary.png';
+  const effLogoUrl = snapshot?.logoUrl || logoUrl || null;
 
   const getEffDate = () => {
     const months = [
@@ -291,8 +294,8 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                   crossOrigin="anonymous"
                 />
               ) : (
-                <div className="font-black text-emerald-800 text-lg uppercase tracking-wider">
-                  LAZUARDI ELEMENTARY
+                <div className="px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-800 font-bold text-[10px] rounded-lg text-center">
+                  [Konfigurasi Logo Elementary Belum Diset di Lumina Admin]
                 </div>
               )}
             </div>
@@ -439,7 +442,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
             {/* Principal Signature */}
             <div className="space-y-2 flex flex-col justify-between h-32 border border-slate-200 p-3 rounded-xl bg-slate-50/50">
               <span className="font-bold text-slate-700 uppercase tracking-wide text-[9.5px]">
-                Principal
+                {effPrincipalTitle}
               </span>
               <div className="h-16 flex items-center justify-center">
                 {effPrincipalSignatureUrl ? (
