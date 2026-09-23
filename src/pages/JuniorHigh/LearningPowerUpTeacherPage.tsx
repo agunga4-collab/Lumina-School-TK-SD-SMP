@@ -678,6 +678,21 @@ function LearningPowerUpTeacherPageContent() {
     verifiedPreserved: number;
   } | null>(null);
 
+  const logStatusAudit = (
+    oldStatus: string,
+    newStatus: string,
+    source: 'MANUAL_VERIFY' | 'MANUAL_UNVERIFY' | 'BACKFILL',
+    performedBy: string
+  ) => {
+    console.log("=== LPU STATUS AUDIT LOG ===", {
+      oldStatus,
+      newStatus,
+      source,
+      performedBy,
+      timestamp: new Date().toISOString()
+    });
+  };
+
   const auditAndSyncPublishedBatches = async (
     year: string,
     batchesList: LearningPowerUpTaskBatch[],
@@ -829,155 +844,92 @@ function LearningPowerUpTeacherPageContent() {
 
           const legProg = getLegacyProgress(student.id, subjKey, batch.weekStartDate);
 
-          if (!existing) {
-            const historyEntry: LpuAssignmentHistoryEntry = {
-              action: 'ASSIGN',
-              performedByUid: currentUser?.uid || 'system',
-              performedByName: currentUser?.displayName || currentUser?.email || 'Guru',
-              performedByRole: currentUser?.role || 'TEACHER',
-              timestamp: new Date(),
-              note: "Otomatis di-backfill oleh sistem konsistensi LPU."
-            };
+          if (existing) {
+            // Rule 7: If document already exists, log SKIPPED_EXISTING_ASSIGNMENT and skip writing!
+            console.log("SKIPPED_EXISTING_ASSIGNMENT", {
+              assignmentId: asgId,
+              existingStatus: existing.status,
+              source: 'BACKFILL'
+            });
+            verifiedPreservedCount++;
+            continue;
+          }
 
-            let status: 'ASSIGNED' | 'SUBMITTED' | 'REVISION_REQUIRED' | 'VERIFIED' = 'ASSIGNED';
-            let history: LpuAssignmentHistoryEntry[] = [historyEntry];
-            let submittedAt = null;
-            let verifiedAt = null;
-            let verifiedBy = null;
-            let verifiedByName = null;
-            let verifiedByEmail = null;
-            let verificationMethod: any = null;
+          // Document does not exist. We can safely create it.
+          const historyEntry: LpuAssignmentHistoryEntry = {
+            action: 'ASSIGN',
+            performedByUid: currentUser?.uid || 'system',
+            performedByName: currentUser?.displayName || currentUser?.email || 'Guru',
+            performedByRole: currentUser?.role || 'TEACHER',
+            timestamp: new Date(),
+            note: "Otomatis di-backfill oleh sistem konsistensi LPU."
+          };
 
-            if (legProg) {
-              const legPriority = getStatusPriorityVal(legProg.status);
-              if (legPriority >= 2) {
-                if (legProg.status === 'VERIFIED' || legProg.status === 'APPROVED' || legProg.status === 'COMPLETED') {
-                  status = 'VERIFIED';
-                  verifiedAt = legProg.verifiedAt || legProg.updatedAt || legProg.submittedAt || null;
-                  verifiedBy = legProg.verifiedBy || null;
-                  verifiedByName = legProg.verifiedByName || legProg.verifiedBy || null;
-                  verifiedByEmail = legProg.verifiedByEmail || null;
-                  verificationMethod = legProg.verificationMethod || 'INDIVIDUAL';
-                } else if (legProg.status === 'SUBMITTED') {
-                  status = 'SUBMITTED';
-                } else if (legProg.status === 'REVISION_REQUIRED' || legProg.status === 'REVISION_REQUESTED') {
-                  status = 'REVISION_REQUIRED';
-                }
-                submittedAt = legProg.submittedAt || null;
+          let status: 'ASSIGNED' | 'SUBMITTED' | 'REVISION_REQUIRED' | 'VERIFIED' = 'ASSIGNED';
+          let history: LpuAssignmentHistoryEntry[] = [historyEntry];
+          let submittedAt = null;
+          let verifiedAt = null;
+          let verifiedBy = null;
+          let verifiedByName = null;
+          let verifiedByEmail = null;
+          let verificationMethod: any = null;
 
-                const convertedHist = convertLegacyHistory(legProg);
-                history = [...history, ...convertedHist];
+          if (legProg) {
+            const legPriority = getStatusPriorityVal(legProg.status);
+            if (legPriority >= 2) {
+              if (legProg.status === 'VERIFIED' || legProg.status === 'APPROVED' || legProg.status === 'COMPLETED') {
+                status = 'VERIFIED';
+                verifiedAt = legProg.verifiedAt || legProg.updatedAt || legProg.submittedAt || null;
+                verifiedBy = legProg.verifiedBy || null;
+                verifiedByName = legProg.verifiedByName || legProg.verifiedBy || null;
+                verifiedByEmail = legProg.verifiedByEmail || null;
+                verificationMethod = legProg.verificationMethod || 'INDIVIDUAL';
+              } else if (legProg.status === 'SUBMITTED') {
+                status = 'SUBMITTED';
+              } else if (legProg.status === 'REVISION_REQUIRED' || legProg.status === 'REVISION_REQUESTED') {
+                status = 'REVISION_REQUIRED';
               }
-            }
+              submittedAt = legProg.submittedAt || null;
 
-            const newAsg: LearningPowerUpAssignment = {
-              id: asgId,
-              unit: 'JUNIOR_HIGH',
-              taskBatchId: batch.id,
-              studentId: student.id,
-              studentNameSnapshot: student.name,
-              classId: student.classId,
-              classNameSnapshot: student.className || '',
-              subjectKey: subjKey,
-              subjectArea: LPU_SUBJECT_MAP[subjKey],
-              levelSnapshot: studentLevel || null,
-              taskTitle: resolvedTask ? resolvedTask.title : defaultTitle,
-              taskInstructions: resolvedTask ? resolvedTask.instructions : fallbackInstructions,
-              academicYearId: year,
-              semester: batch.semester || '1',
-              weekStartDate: batch.weekStartDate,
-              weekEndDate: batch.weekEndDate,
-              weekLabel: batch.weekLabel,
-              status,
-              submittedAt,
-              verifiedAt,
-              verifiedBy,
-              verifiedByName,
-              verifiedByEmail,
-              verificationMethod,
-              history,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp()
-            };
-
-            docsToSave.push(newAsg);
-            asgMap.set(asgId, newAsg);
-            backfilled++;
-          } else {
-            // Check if there is a higher priority legacy progress to copy over
-            if (legProg) {
-              const legPriority = getStatusPriorityVal(legProg.status);
-              const existingPriority = getStatusPriorityVal(existing.status);
-
-              if (legPriority > existingPriority) {
-                let status = existing.status;
-                let verifiedAt = existing.verifiedAt || null;
-                let verifiedBy = existing.verifiedBy || null;
-                let verifiedByName = existing.verifiedByName || null;
-                let verifiedByEmail = existing.verifiedByEmail || null;
-                let verificationMethod = existing.verificationMethod || null;
-                let submittedAt = existing.submittedAt || null;
-
-                if (legProg.status === 'VERIFIED' || legProg.status === 'APPROVED' || legProg.status === 'COMPLETED') {
-                  status = 'VERIFIED';
-                  verifiedAt = legProg.verifiedAt || legProg.updatedAt || legProg.submittedAt || null;
-                  verifiedBy = legProg.verifiedBy || null;
-                  verifiedByName = legProg.verifiedByName || legProg.verifiedBy || null;
-                  verifiedByEmail = legProg.verifiedByEmail || null;
-                  verificationMethod = legProg.verificationMethod || 'INDIVIDUAL';
-                } else if (legProg.status === 'SUBMITTED') {
-                  status = 'SUBMITTED';
-                } else if (legProg.status === 'REVISION_REQUIRED' || legProg.status === 'REVISION_REQUESTED') {
-                  status = 'REVISION_REQUIRED';
-                }
-                submittedAt = legProg.submittedAt || existing.submittedAt || null;
-
-                const convertedHist = convertLegacyHistory(legProg);
-                const mergedHistory = [...(existing.history || []), ...convertedHist];
-
-                const updatedAsg: LearningPowerUpAssignment = {
-                  ...existing,
-                  status,
-                  submittedAt,
-                  verifiedAt,
-                  verifiedBy,
-                  verifiedByName,
-                  verifiedByEmail,
-                  verificationMethod,
-                  history: mergedHistory,
-                  updatedAt: serverTimestamp()
-                };
-
-                docsToSave.push(updatedAsg);
-                asgMap.set(asgId, updatedAsg);
-                fixed++;
-                continue;
-              }
-            }
-
-            if (existing.status === 'VERIFIED') {
-              verifiedPreservedCount++;
-              continue;
-            }
-
-            const isFallback = existing.taskInstructions && existing.taskInstructions.includes("Siswa belum memiliki level yang ditetapkan");
-            const levelMismatch = Boolean(studentLevel && existing.levelSnapshot !== studentLevel);
-            const taskMismatch = Boolean(resolvedTask && (existing.taskTitle !== resolvedTask.title || existing.taskInstructions !== resolvedTask.instructions));
-
-            if ((studentLevel && isFallback) || levelMismatch || (resolvedTask && taskMismatch)) {
-              const updatedAsg: LearningPowerUpAssignment = {
-                ...existing,
-                levelSnapshot: studentLevel || existing.levelSnapshot || null,
-                taskTitle: resolvedTask ? resolvedTask.title : defaultTitle,
-                taskInstructions: resolvedTask ? resolvedTask.instructions : fallbackInstructions,
-                updatedAt: serverTimestamp()
-              };
-
-              docsToSave.push(updatedAsg);
-              asgMap.set(asgId, updatedAsg);
-              fixed++;
+              const convertedHist = convertLegacyHistory(legProg);
+              history = [...history, ...convertedHist];
             }
           }
+
+          const newAsg: LearningPowerUpAssignment = {
+            id: asgId,
+            unit: 'JUNIOR_HIGH',
+            taskBatchId: batch.id,
+            studentId: student.id,
+            studentNameSnapshot: student.name,
+            classId: student.classId,
+            classNameSnapshot: student.className || '',
+            subjectKey: subjKey,
+            subjectArea: LPU_SUBJECT_MAP[subjKey],
+            levelSnapshot: studentLevel || null,
+            taskTitle: resolvedTask ? resolvedTask.title : defaultTitle,
+            taskInstructions: resolvedTask ? resolvedTask.instructions : fallbackInstructions,
+            academicYearId: year,
+            semester: batch.semester || '1',
+            weekStartDate: batch.weekStartDate,
+            weekEndDate: batch.weekEndDate,
+            weekLabel: batch.weekLabel,
+            status,
+            submittedAt,
+            verifiedAt,
+            verifiedBy,
+            verifiedByName,
+            verifiedByEmail,
+            verificationMethod,
+            history,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          };
+
+          logStatusAudit('NONE', status, 'BACKFILL', 'System Consistency Backfill');
+          docsToSave.push(newAsg);
+          asgMap.set(asgId, newAsg);
+          backfilled++;
         }
       }
 
@@ -1350,8 +1302,8 @@ function LearningPowerUpTeacherPageContent() {
       // Load new task batches globally
       await loadTaskBatches();
 
-      // Automatically run audit and sync on load
-      await auditAndSyncPublishedBatches(activeYear, allBatches, loadedAsgs, litnumMap);
+      // Automatically run audit and sync on load - Disabled as per URGENT instructions to prevent unwanted status changes
+      // await auditAndSyncPublishedBatches(activeYear, allBatches, loadedAsgs, litnumMap);
 
     } catch (err) {
       console.error("Error loading class data for tracker:", err);
@@ -3323,6 +3275,16 @@ function LearningPowerUpTeacherPageContent() {
           return;
         }
 
+        const oldStatus = existingAsg?.status || 'ASSIGNED';
+        const newStatus = isApproved ? 'VERIFIED' : 'REVISION_REQUIRED';
+
+        logStatusAudit(
+          oldStatus,
+          newStatus,
+          'MANUAL_VERIFY',
+          (currentUser as any).name || currentUser.displayName || currentUser.email || 'Guru'
+        );
+
         const newHistoryEntry: LpuAssignmentHistoryEntry = {
           action: isApproved ? 'VERIFY' : 'REVISION_REQUEST',
           performedByUid: currentUser.uid,
@@ -3335,7 +3297,7 @@ function LearningPowerUpTeacherPageContent() {
         const updatedHistory = [...(existingAsg.history || []), newHistoryEntry];
 
         const assignmentUpdate: any = {
-          status: isApproved ? 'VERIFIED' : 'REVISION_REQUIRED',
+          status: newStatus,
           verifiedAt: isApproved ? serverTimestamp() : null,
           verifiedBy: isApproved ? currentUser.uid : null,
           verifiedByName: isApproved ? ((currentUser as any).name || currentUser.displayName || currentUser.email || 'Guru') : null,
@@ -3408,6 +3370,16 @@ function LearningPowerUpTeacherPageContent() {
       const currentHistory = progress?.history || [];
       const nowStr = new Date().toLocaleString('id-ID', { hour12: false });
 
+      const oldStatus = progress?.status || 'ASSIGNED';
+      const newStatus = isApproved ? 'VERIFIED' : 'REVISION_REQUIRED';
+
+      logStatusAudit(
+        oldStatus,
+        newStatus,
+        'MANUAL_VERIFY',
+        (currentUser as any).name || currentUser.displayName || currentUser.email || 'Guru/Coach'
+      );
+
       const newHistoryItem: TaskProgressHistory = {
         timestamp: nowStr,
         action: isApproved ? 'VERIFY' : 'REVISION_REQUEST',
@@ -3424,7 +3396,7 @@ function LearningPowerUpTeacherPageContent() {
         academicYearId: activeYear,
         field,
         subjectKey: field,
-        status: isApproved ? 'VERIFIED' : 'REVISION_REQUIRED',
+        status: newStatus,
         submittedAt: progress?.submittedAt || null,
         verifiedAt: isApproved ? serverTimestamp() : (progress?.verifiedAt || null),
         verifiedBy: isApproved ? ((currentUser as any).name || currentUser.displayName || currentUser.email || "Guru/Coach") : (progress?.verifiedBy || null),
@@ -3748,6 +3720,15 @@ function LearningPowerUpTeacherPageContent() {
           return;
         }
 
+        const oldStatus = existingAsg?.status || 'VERIFIED';
+
+        logStatusAudit(
+          oldStatus,
+          'ASSIGNED',
+          'MANUAL_UNVERIFY',
+          (currentUser as any).name || currentUser.displayName || currentUser.email || 'Guru'
+        );
+
         const newHistoryEntry: LpuAssignmentHistoryEntry = {
           action: 'UNVERIFY',
           performedByUid: currentUser.uid,
@@ -3832,6 +3813,15 @@ function LearningPowerUpTeacherPageContent() {
       const progressId = progress.id;
       const currentHistory = progress.history || [];
       const nowStr = new Date().toLocaleString('id-ID', { hour12: false });
+
+      const oldStatus = progress?.status || 'VERIFIED';
+
+      logStatusAudit(
+        oldStatus,
+        'ASSIGNED',
+        'MANUAL_UNVERIFY',
+        (currentUser as any).name || currentUser.displayName || currentUser.email || 'Guru/Coach'
+      );
 
       const newHistoryItem: TaskProgressHistory = {
         timestamp: nowStr,
