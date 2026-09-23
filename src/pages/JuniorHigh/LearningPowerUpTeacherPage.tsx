@@ -676,6 +676,91 @@ function LearningPowerUpTeacherPageContent() {
         })
       );
 
+      // Load legacy packages and progresses to heal/sync statuses
+      let legacyPkgs: any[] = [];
+      let legacyProgs: any[] = [];
+      try {
+        const qLegacyPkgs = query(collection(db, 'learning_power_up_tasks'));
+        const legacyPkgsSnap = await getDocs(qLegacyPkgs);
+        legacyPkgs = legacyPkgsSnap.docs
+          .map(doc => ({ id: doc.id, ...doc.data() }) as any)
+          .filter(p => normalizeYear(p.academicYearId || p.academicYear) === normalizeYear(year));
+
+        const qLegacyProgs = query(collection(db, 'learning_power_up_progress'));
+        const legacyProgsSnap = await getDocs(qLegacyProgs);
+        legacyProgs = legacyProgsSnap.docs
+          .map(doc => ({ id: doc.id, ...doc.data() }) as any)
+          .filter(p => normalizeYear(p.academicYearId || p.academicYear) === normalizeYear(year));
+      } catch (err) {
+        console.warn("Failed to load legacy data for LPU backfill healing:", err);
+      }
+
+      const getLegacyProgress = (studentId: string, subjKey: string, weekStartDate: string) => {
+        const matchingPkgIds = legacyPkgs
+          .filter(pkg => pkg.weekStartDate === weekStartDate)
+          .map(pkg => pkg.id);
+        
+        return legacyProgs.find(p => 
+          p.studentId === studentId && 
+          p.field === subjKey && 
+          matchingPkgIds.includes(p.packageId)
+        );
+      };
+
+      const getStatusPriorityVal = (status: string | undefined): number => {
+        if (!status) return 0;
+        const s = status.toUpperCase();
+        if (s === 'APPROVED' || s === 'VERIFIED' || s === 'COMPLETED') return 4;
+        if (s === 'SUBMITTED') return 3;
+        if (s === 'REVISION_REQUIRED' || s === 'REVISION_REQUESTED') return 2;
+        if (s === 'ASSIGNED' || s === 'NOT_STARTED') return 1;
+        return 0;
+      };
+
+      const convertLegacyHistory = (legProg: any): LpuAssignmentHistoryEntry[] => {
+        const list: LpuAssignmentHistoryEntry[] = (legProg.history || []).map((h: any) => {
+          let action: 'ASSIGN' | 'SUBMIT' | 'REVISION_REQUEST' | 'VERIFY' | 'UNVERIFY' = 'ASSIGN';
+          if (h.action === 'SUBMIT' || h.action === 'RESUBMIT') action = 'SUBMIT';
+          else if (h.action === 'REVISION_REQUEST' || h.action === 'REVISION_REQUIRED' || h.action === 'REVISION_REQUESTED') action = 'REVISION_REQUEST';
+          else if (h.action === 'VERIFY' || h.action === 'APPROVED' || h.action === 'VERIFIED' || h.action === 'COMPLETED') action = 'VERIFY';
+
+          let timestamp = h.timestamp;
+          if (timestamp && typeof timestamp.toDate === 'function') {
+            timestamp = timestamp.toDate();
+          } else if (timestamp && timestamp.seconds) {
+            timestamp = new Date(timestamp.seconds * 1000);
+          } else if (typeof timestamp === 'string') {
+            const parsed = Date.parse(timestamp);
+            timestamp = isNaN(parsed) ? new Date() : new Date(parsed);
+          } else {
+            timestamp = new Date();
+          }
+
+          return {
+            action,
+            performedByUid: h.verifiedByUserId || h.verifiedBy || legProg.verifiedBy || 'legacy-system',
+            performedByName: h.actorName || h.verifiedByName || legProg.verifiedByName || legProg.verifiedBy || 'Guru',
+            performedByRole: 'TEACHER',
+            timestamp,
+            note: h.note || h.revisionNote || ''
+          };
+        });
+
+        if (list.length === 0 && (legProg.status === 'VERIFIED' || legProg.status === 'APPROVED' || legProg.status === 'COMPLETED')) {
+          const vAt = legProg.verifiedAt || legProg.updatedAt || legProg.submittedAt;
+          const timestamp = vAt ? (vAt.toDate ? vAt.toDate() : new Date(vAt)) : new Date();
+          list.push({
+            action: 'VERIFY',
+            performedByUid: legProg.verifiedBy || 'legacy-system',
+            performedByName: legProg.verifiedByName || legProg.verifiedBy || 'Guru',
+            performedByRole: 'TEACHER',
+            timestamp,
+            note: legProg.revisionNote || 'Diverifikasi dari data lama.'
+          });
+        }
+        return list;
+      };
+
       const asgMap = new Map<string, LearningPowerUpAssignment>();
       asgsList.forEach(a => asgMap.set(a.id, a));
 
@@ -708,6 +793,8 @@ function LearningPowerUpTeacherPageContent() {
           const defaultTitle = `Tugas Penguatan ${CATEGORY_CONFIG[subjKey]?.label || subjKey}`;
           const fallbackInstructions = "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.";
 
+          const legProg = getLegacyProgress(student.id, subjKey, batch.weekStartDate);
+
           if (!existing) {
             const historyEntry: LpuAssignmentHistoryEntry = {
               action: 'ASSIGN',
@@ -717,6 +804,37 @@ function LearningPowerUpTeacherPageContent() {
               timestamp: new Date(),
               note: "Otomatis di-backfill oleh sistem konsistensi LPU."
             };
+
+            let status: 'ASSIGNED' | 'SUBMITTED' | 'REVISION_REQUIRED' | 'VERIFIED' = 'ASSIGNED';
+            let history: LpuAssignmentHistoryEntry[] = [historyEntry];
+            let submittedAt = null;
+            let verifiedAt = null;
+            let verifiedBy = null;
+            let verifiedByName = null;
+            let verifiedByEmail = null;
+            let verificationMethod: any = null;
+
+            if (legProg) {
+              const legPriority = getStatusPriorityVal(legProg.status);
+              if (legPriority >= 2) {
+                if (legProg.status === 'VERIFIED' || legProg.status === 'APPROVED' || legProg.status === 'COMPLETED') {
+                  status = 'VERIFIED';
+                  verifiedAt = legProg.verifiedAt || legProg.updatedAt || legProg.submittedAt || null;
+                  verifiedBy = legProg.verifiedBy || null;
+                  verifiedByName = legProg.verifiedByName || legProg.verifiedBy || null;
+                  verifiedByEmail = legProg.verifiedByEmail || null;
+                  verificationMethod = legProg.verificationMethod || 'INDIVIDUAL';
+                } else if (legProg.status === 'SUBMITTED') {
+                  status = 'SUBMITTED';
+                } else if (legProg.status === 'REVISION_REQUIRED' || legProg.status === 'REVISION_REQUESTED') {
+                  status = 'REVISION_REQUIRED';
+                }
+                submittedAt = legProg.submittedAt || null;
+
+                const convertedHist = convertLegacyHistory(legProg);
+                history = [...history, ...convertedHist];
+              }
+            }
 
             const newAsg: LearningPowerUpAssignment = {
               id: asgId,
@@ -736,8 +854,14 @@ function LearningPowerUpTeacherPageContent() {
               weekStartDate: batch.weekStartDate,
               weekEndDate: batch.weekEndDate,
               weekLabel: batch.weekLabel,
-              status: 'ASSIGNED',
-              history: [historyEntry],
+              status,
+              submittedAt,
+              verifiedAt,
+              verifiedBy,
+              verifiedByName,
+              verifiedByEmail,
+              verificationMethod,
+              history,
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp()
             };
@@ -746,6 +870,57 @@ function LearningPowerUpTeacherPageContent() {
             asgMap.set(asgId, newAsg);
             backfilled++;
           } else {
+            // Check if there is a higher priority legacy progress to copy over
+            if (legProg) {
+              const legPriority = getStatusPriorityVal(legProg.status);
+              const existingPriority = getStatusPriorityVal(existing.status);
+
+              if (legPriority > existingPriority) {
+                let status = existing.status;
+                let verifiedAt = existing.verifiedAt || null;
+                let verifiedBy = existing.verifiedBy || null;
+                let verifiedByName = existing.verifiedByName || null;
+                let verifiedByEmail = existing.verifiedByEmail || null;
+                let verificationMethod = existing.verificationMethod || null;
+                let submittedAt = existing.submittedAt || null;
+
+                if (legProg.status === 'VERIFIED' || legProg.status === 'APPROVED' || legProg.status === 'COMPLETED') {
+                  status = 'VERIFIED';
+                  verifiedAt = legProg.verifiedAt || legProg.updatedAt || legProg.submittedAt || null;
+                  verifiedBy = legProg.verifiedBy || null;
+                  verifiedByName = legProg.verifiedByName || legProg.verifiedBy || null;
+                  verifiedByEmail = legProg.verifiedByEmail || null;
+                  verificationMethod = legProg.verificationMethod || 'INDIVIDUAL';
+                } else if (legProg.status === 'SUBMITTED') {
+                  status = 'SUBMITTED';
+                } else if (legProg.status === 'REVISION_REQUIRED' || legProg.status === 'REVISION_REQUESTED') {
+                  status = 'REVISION_REQUIRED';
+                }
+                submittedAt = legProg.submittedAt || existing.submittedAt || null;
+
+                const convertedHist = convertLegacyHistory(legProg);
+                const mergedHistory = [...(existing.history || []), ...convertedHist];
+
+                const updatedAsg: LearningPowerUpAssignment = {
+                  ...existing,
+                  status,
+                  submittedAt,
+                  verifiedAt,
+                  verifiedBy,
+                  verifiedByName,
+                  verifiedByEmail,
+                  verificationMethod,
+                  history: mergedHistory,
+                  updatedAt: serverTimestamp()
+                };
+
+                docsToSave.push(updatedAsg);
+                asgMap.set(asgId, updatedAsg);
+                fixed++;
+                continue;
+              }
+            }
+
             if (existing.status === 'VERIFIED') {
               verifiedPreservedCount++;
               continue;
@@ -2451,7 +2626,35 @@ function LearningPowerUpTeacherPageContent() {
 
   // Helper: Find progress record
   const findProgress = (studentId: string, pkgId: string, field: string): TaskProgress | null => {
-    return progresses.find(p => p.studentId === studentId && p.packageId === pkgId && p.field === field) || null;
+    const extractWeekStartDate = (id: string) => {
+      const match = id.match(/\d{4}-\d{2}-\d{2}/);
+      return match ? match[0] : '';
+    };
+
+    const weekStartDate = extractWeekStartDate(pkgId);
+
+    const matchingProgs = progresses.filter(p => {
+      if (p.studentId !== studentId || p.field !== field) return false;
+      if (p.packageId === pkgId) return true;
+      const pWeek = extractWeekStartDate(p.packageId);
+      if (weekStartDate && pWeek === weekStartDate) return true;
+      return false;
+    });
+
+    if (matchingProgs.length === 0) return null;
+
+    const getStatusPriorityVal = (status: string | undefined): number => {
+      if (!status) return 0;
+      const s = status.toUpperCase();
+      if (s === 'APPROVED' || s === 'VERIFIED' || s === 'COMPLETED') return 4;
+      if (s === 'SUBMITTED') return 3;
+      if (s === 'REVISION_REQUIRED' || s === 'REVISION_REQUESTED') return 2;
+      if (s === 'ASSIGNED' || s === 'NOT_STARTED') return 1;
+      return 0;
+    };
+
+    matchingProgs.sort((a, b) => getStatusPriorityVal(b.status) - getStatusPriorityVal(a.status));
+    return matchingProgs[0];
   };
 
   const isFieldAllVerified = (field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi') => {

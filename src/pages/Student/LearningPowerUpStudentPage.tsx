@@ -555,6 +555,42 @@ function LearningPowerUpStudentPageContent() {
     return null;
   }
 
+  const getStatusPriority = (status: string | undefined): number => {
+    if (!status) return 0;
+    const s = status.toUpperCase();
+    if (s === 'APPROVED' || s === 'VERIFIED' || s === 'COMPLETED') return 4;
+    if (s === 'SUBMITTED') return 3;
+    if (s === 'REVISION_REQUIRED' || s === 'REVISION_REQUESTED') return 2;
+    if (s === 'ASSIGNED' || s === 'NOT_STARTED') return 1;
+    return 0;
+  };
+
+  const getFieldHighestStatus = (field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi', weekStartDate: string) => {
+    const asg = assignments.find(a => a.weekStartDate === weekStartDate && a.subjectKey === field);
+    const asgStatus = asg ? (asg.status === 'ASSIGNED' ? 'NOT_STARTED' : asg.status) : 'NOT_STARTED';
+
+    const legPack = packages.find(p => p.weekStartDate === weekStartDate);
+    const legProg = legPack ? progresses[`${legPack.id}_${field}`] : null;
+    const legStatus = legProg ? legProg.status : 'NOT_STARTED';
+
+    if (getStatusPriority(asgStatus) >= getStatusPriority(legStatus)) {
+      return { 
+        status: asgStatus as 'NOT_STARTED' | 'SUBMITTED' | 'REVISION_REQUIRED' | 'VERIFIED', 
+        source: 'asg', 
+        data: asg, 
+        isCancelled: asg?.isCancelled || false 
+      };
+    } else {
+      const mappedLegacyStatus = (legStatus === 'APPROVED' || legStatus === 'COMPLETED' ? 'VERIFIED' : legStatus) as 'NOT_STARTED' | 'SUBMITTED' | 'REVISION_REQUIRED' | 'VERIFIED';
+      return { 
+        status: mappedLegacyStatus, 
+        source: 'legacy', 
+        data: legProg, 
+        isCancelled: false 
+      };
+    }
+  };
+
   // Find current selected unified week
   const activeUnifiedWeek = weeks.find(w => w.id === selectedWeek);
 
@@ -576,19 +612,13 @@ function LearningPowerUpStudentPageContent() {
   const totalWeekTasks = activeFields.length;
 
   const completedCount = activeUnifiedWeek ? activeFields.filter(field => {
-    const asg = assignments.find(a => a.weekStartDate === activeUnifiedWeek.weekStartDate && a.subjectKey === field);
-    if (asg) return asg.status === 'VERIFIED';
-    const legPack = packages.find(p => p.weekStartDate === activeUnifiedWeek.weekStartDate);
-    if (legPack) return progresses[`${legPack.id}_${field}`]?.status === 'VERIFIED';
-    return false;
+    const { status } = getFieldHighestStatus(field, activeUnifiedWeek.weekStartDate);
+    return status === 'VERIFIED';
   }).length : 0;
 
   const notCompletedCount = activeUnifiedWeek ? activeFields.filter(field => {
-    const asg = assignments.find(a => a.weekStartDate === activeUnifiedWeek.weekStartDate && a.subjectKey === field);
-    if (asg) return asg.status === 'REVISION_REQUIRED';
-    const legPack = packages.find(p => p.weekStartDate === activeUnifiedWeek.weekStartDate);
-    if (legPack) return progresses[`${legPack.id}_${field}`]?.status === 'REVISION_REQUIRED';
-    return false;
+    const { status } = getFieldHighestStatus(field, activeUnifiedWeek.weekStartDate);
+    return status === 'REVISION_REQUIRED';
   }).length : 0;
 
   const awaitingCount = Math.max(0, totalWeekTasks - completedCount - notCompletedCount);
@@ -887,7 +917,8 @@ function LearningPowerUpStudentPageContent() {
               // Check if there's a differentiated assignment for this week & subject
               const asg = assignments.find(a => a.weekStartDate === activeUnifiedWeek.weekStartDate && a.subjectKey === field);
               
-              let status: 'NOT_STARTED' | 'SUBMITTED' | 'REVISION_REQUIRED' | 'VERIFIED' = 'NOT_STARTED';
+              const { status: resolvedStatus, isCancelled } = getFieldHighestStatus(field, activeUnifiedWeek.weekStartDate);
+              let status = resolvedStatus;
               let overdue: boolean = false;
               let taskDescription: string = '';
               let title: string = `Tugas ${cfg.label}`;
@@ -896,7 +927,6 @@ function LearningPowerUpStudentPageContent() {
               let weekEndDate = activeUnifiedWeek.weekEndDate;
 
               if (asg) {
-                status = asg.status === 'ASSIGNED' ? 'NOT_STARTED' : asg.status;
                 overdue = isOverdue(asg.weekEndDate) && status !== 'VERIFIED';
                 taskDescription = asg.taskInstructions;
                 title = asg.taskTitle;
@@ -904,8 +934,6 @@ function LearningPowerUpStudentPageContent() {
                 weekLabel = asg.weekLabel;
                 weekEndDate = asg.weekEndDate;
               } else if (activePackage) {
-                const progress = progresses[`${activePackage.id}_${field}`];
-                status = progress?.status || 'NOT_STARTED';
                 overdue = isOverdue(activePackage.weekEndDate) && status !== 'VERIFIED';
                 taskDescription = activePackage.tasks[field] || '';
                 title = `Tugas ${cfg.label}`;
@@ -976,7 +1004,7 @@ function LearningPowerUpStudentPageContent() {
 
                     {/* Status Badge */}
                     <div className="pt-1">
-                      {getStatusBadge(status, weekEndDate, asg?.isCancelled)}
+                      {getStatusBadge(status, weekEndDate, isCancelled)}
                     </div>
 
                     {/* Action Button */}
@@ -1020,10 +1048,10 @@ function LearningPowerUpStudentPageContent() {
             const asg = activeTaskDetail.assignment;
             const cfg = CATEGORY_CONFIG[activeTaskDetail.field];
             
-            const rawStatus = isDiff && asg ? asg.status : (activePackage ? (progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.status || 'NOT_STARTED') : 'NOT_STARTED');
-            const status: "NOT_STARTED" | "SUBMITTED" | "REVISION_REQUIRED" | "VERIFIED" = rawStatus === 'ASSIGNED' ? 'NOT_STARTED' : rawStatus;
-            const revisionNote = isDiff && asg ? asg.revisionNote : (activePackage ? progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.revisionNote : undefined);
-            const history = isDiff && asg ? asg.history : (activePackage ? (progresses[`${activePackage.id}_${activeTaskDetail.field}`]?.history || []) : []);
+            const { status: resolvedStatus, data: resolvedData } = getFieldHighestStatus(activeTaskDetail.field, activeUnifiedWeek?.weekStartDate || '');
+            const status: "NOT_STARTED" | "SUBMITTED" | "REVISION_REQUIRED" | "VERIFIED" = resolvedStatus === 'ASSIGNED' ? 'NOT_STARTED' : resolvedStatus;
+            const revisionNote = resolvedData ? (resolvedData as any).revisionNote : undefined;
+            const history = resolvedData ? ((resolvedData as any).history || []) : [];
             
             const weekLabel = isDiff && asg ? asg.weekLabel : (activeUnifiedWeek?.weekLabel || '');
             const weekEndDate = isDiff && asg ? asg.weekEndDate : (activeUnifiedWeek?.weekEndDate || '');
