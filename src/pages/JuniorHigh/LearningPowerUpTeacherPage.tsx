@@ -6,7 +6,7 @@ import {
   AlertTriangle, Check, ShieldAlert, Plus, 
   Calendar, Search, Filter, Loader2, Info, 
   Eye, Edit, Trash2, Send, Save, ArrowRight, CornerDownLeft, FileText, CheckCircle2,
-  X, AlertCircle, Copy, CheckSquare2
+  X, AlertCircle, Copy, CheckSquare2, RefreshCw
 } from 'lucide-react';
 import { useOutletContext } from 'react-router-dom';
 import { User as AppUser, Student } from '../../types';
@@ -581,6 +581,7 @@ function LearningPowerUpTeacherPageContent() {
 
   // --- New-Style LPU Assignment and Cancellation States ---
   const [loadedAssignments, setLoadedAssignments] = React.useState<LearningPowerUpAssignment[]>([]);
+  const [completions, setCompletions] = React.useState<any[]>([]);
   const [litnumRecordsByStudentId, setLitnumRecordsByStudentId] = React.useState<Record<string, Partial<Record<LpuSubjectKey, string>>>>({});
   const [cancellingBatch, setCancellingBatch] = React.useState<LearningPowerUpTaskBatch | null>(null);
   const [cancellationReason, setCancellationReason] = React.useState<'Salah kelas' | 'Salah periode' | 'Konten perlu diperbaiki' | 'Duplikat' | 'Lainnya' | ''>('');
@@ -1194,6 +1195,22 @@ function LearningPowerUpTeacherPageContent() {
 
       const loadedAsgs = Array.from(loadedAsgsMap.values());
       setLoadedAssignments(loadedAsgs);
+
+      // Load simplified completions for JUNIOR_HIGH
+      let loadedCompletions: any[] = [];
+      try {
+        const qCompletions = query(
+          collection(db, 'learning_power_up_completion'),
+          where('academicYearId', '==', activeYear)
+        );
+        const completionSnap = await getDocs(qCompletions);
+        completionSnap.forEach(docSnap => {
+          loadedCompletions.push({ id: docSnap.id, ...docSnap.data() });
+        });
+      } catch (compErr) {
+        console.warn("Could not load simplified completions:", compErr);
+      }
+      setCompletions(loadedCompletions);
 
       // Map level-based assignments to virtual TaskProgress records
       const virtualProgresses: TaskProgress[] = loadedAsgs.map(asg => {
@@ -2648,11 +2665,64 @@ function LearningPowerUpTeacherPageContent() {
     return matchingProgs[0];
   };
 
+  const resolveAssignmentForStudent = (
+    studentId: string,
+    studentClassId: string,
+    subjectKey: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi',
+    weekStartDate: string
+  ): LearningPowerUpAssignment | null => {
+    // 1. Try to find the task batch for this week, subject and class
+    const targetBatch = taskBatches.find(b => 
+      b.weekStartDate === weekStartDate && 
+      b.subjectKey === subjectKey &&
+      (b.targetClassIds?.includes(studentClassId) || (b as any).classId === studentClassId || (b as any).classIds?.includes(studentClassId))
+    );
+
+    // 2. Try to find in loadedAssignments using deterministic ID if we have batch id
+    if (targetBatch) {
+      const deterministicId = generateDeterministicAssignmentId(targetBatch.id, studentId, subjectKey);
+      const matched = loadedAssignments.find(a => a.id === deterministicId);
+      if (matched) return matched;
+    }
+
+    // 3. Fallback to matching by studentId, subjectKey, and weekStartDate
+    const matchedFallback = loadedAssignments.find(a => 
+      a.studentId === studentId && 
+      a.subjectKey === subjectKey && 
+      a.weekStartDate === weekStartDate
+    );
+
+    return matchedFallback || null;
+  };
+
+  const getCompletionDocId = (
+    academicYearId: string,
+    weekStartDate: string,
+    studentId: string,
+    subjectKey: string
+  ) => {
+    const formattedYear = academicYearId.replace(/\//g, '-');
+    return `${formattedYear}_${weekStartDate}_${studentId}_${subjectKey}`;
+  };
+
+  const getStudentFieldStatus = (studentId: string, field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi'): string => {
+    if (!activePackage) return 'BELUM_SELESAI';
+    const isLevelBased = activePackage.id.startsWith('level_week_');
+    if (isLevelBased) {
+      const docId = getCompletionDocId(activeYear, activePackage.weekStartDate, studentId, field);
+      const comp = completions.find(c => c.id === docId);
+      return comp?.status || 'BELUM_SELESAI';
+    } else {
+      const progress = findProgress(studentId, selectedWeek, field);
+      return progress?.status === 'VERIFIED' ? 'SELESAI' : 'BELUM_SELESAI';
+    }
+  };
+
   const isFieldAllVerified = (field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi') => {
     if (!activePackage || students.length === 0) return false;
     return students.every(student => {
-      const progress = findProgress(student.id, activePackage.id, field);
-      return progress?.status === 'VERIFIED';
+      const status = getStudentFieldStatus(student.id, field);
+      return status === 'SELESAI' || status === 'VERIFIED';
     });
   };
 
@@ -2661,11 +2731,6 @@ function LearningPowerUpTeacherPageContent() {
   const activeFields = activePackage ? (['bahasaIndonesia', 'english', 'mengaji', 'numerasi'] as const).filter(
     f => activePackage.tasks[f] && activePackage.tasks[f]?.trim()
   ) : [];
-
-  const getStudentFieldStatus = (studentId: string, field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi'): string => {
-    const progress = findProgress(studentId, selectedWeek, field);
-    return progress?.status || 'NOT_STARTED';
-  };
 
   const trackerSummary = React.useMemo(() => {
     const totalStudents = students.length;
@@ -3195,55 +3260,117 @@ function LearningPowerUpTeacherPageContent() {
     }
   };
 
+  const toggleCompletionDirectly = async (student: Student, field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi') => {
+    if (!activePackage) return;
+    const isLevelBased = activePackage.id.startsWith('level_week_');
+    if (!isLevelBased) {
+      handleCellClick(student, field);
+      return;
+    }
+
+    const docId = getCompletionDocId(activeYear, activePackage.weekStartDate, student.id, field);
+    const comp = completions.find(c => c.id === docId);
+    const currentStatus = comp?.status || 'BELUM_SELESAI';
+
+    const newStatus = currentStatus === 'SELESAI' ? 'BELUM_SELESAI' : 'SELESAI';
+
+    if (currentStatus === 'SELESAI') {
+      const confirmCancel = window.confirm(`Apakah Anda yakin ingin membatalkan status Selesai untuk tugas ${CATEGORY_CONFIG[field].label} - ${student.name}?`);
+      if (!confirmCancel) return;
+    }
+
+    // Set loading
+    setSavingCells(prev => ({ ...prev, [`${student.id}_${field}`]: true }));
+
+    try {
+      const docRef = doc(db, 'learning_power_up_completion', docId);
+      const dataPayload = {
+        academicYearId: activeYear,
+        weekStartDate: activePackage.weekStartDate,
+        weekEndDate: activePackage.weekEndDate || '',
+        studentId: student.id,
+        studentName: student.name,
+        classId: student.classId,
+        subjectKey: field,
+        status: newStatus,
+        updatedAt: serverTimestamp(),
+        updatedByUid: currentUser.uid,
+        updatedByName: (currentUser as any).name || currentUser.displayName || currentUser.email || 'Guru'
+      };
+
+      await setDoc(docRef, dataPayload, { merge: true });
+
+      const localUpdate = {
+        id: docId,
+        ...dataPayload,
+        updatedAt: new Date()
+      };
+
+      setCompletions(prev => {
+        const filtered = prev.filter(c => c.id !== docId);
+        return [...filtered, localUpdate];
+      });
+
+      toast.success(newStatus === 'SELESAI' ? "Tugas berhasil ditandai Selesai!" : "Status Selesai dibatalkan.");
+    } catch (err) {
+      console.error("Error updating completion:", err);
+      toast.error("Gagal mengubah status tugas. Silakan coba lagi.");
+    } finally {
+      setSavingCells(prev => ({ ...prev, [`${student.id}_${field}`]: false }));
+    }
+  };
+
   // Handle spreadsheet cell click -> opens Verification Modal or Unverification Dialog
   const handleCellClick = (student: Student, field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi') => {
     if (!activePackage) return;
     const isLevelBased = activePackage.id.startsWith('level_week_');
-    
-    let taskDescription = activePackage.tasks[field] || '';
-    if (!taskDescription.trim()) {
-      toast.error(`Tidak ada tugas untuk bidang ${CATEGORY_CONFIG[field].label} pada periode ini.`);
-      return;
-    }
 
-    // Resolve specific task title and instructions if level-based
-    let resolvedTaskTitle = `Tugas Penguatan ${CATEGORY_CONFIG[field].label}`;
-    let resolvedLevel = litnumRecordsByStudentId[student.id]?.[field] || '';
     if (isLevelBased) {
-      const asg = loadedAssignments.find(a => 
-        a.studentId === student.id && 
-        `level_week_${a.weekStartDate}` === activePackage.id && 
-        a.subjectKey === field
-      );
-      if (asg) {
-        taskDescription = asg.taskInstructions || '';
-        resolvedTaskTitle = asg.taskTitle || resolvedTaskTitle;
-        if (asg.levelSnapshot) {
-          const normM = normalizeMengajiLevel(asg.levelSnapshot);
-          const normN = normalizeNumerasiLevel(asg.levelSnapshot);
-          resolvedLevel = normM ? formatMengajiDisplay(normM) : normN ? formatNumerasiDisplay(normN) : asg.levelSnapshot;
-        }
-      } else {
-        taskDescription = "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.";
-      }
-    }
+      // Look up in completions
+      const docId = getCompletionDocId(activeYear, activePackage.weekStartDate, student.id, field);
+      const comp = completions.find(c => c.id === docId);
+      const currentStatus = comp?.status || 'BELUM_SELESAI';
 
-    const progress = findProgress(student.id, activePackage.id, field);
-    
-    // Check if task is already VERIFIED -> trigger cancellation dialog
-    if (progress && progress.status === 'VERIFIED') {
-      const activeClass = classes.find(c => c.id === selectedClassId);
-      const hasAccess = canTeacherVerifySubject(currentUser, activeClass, field);
-      if (!hasAccess) {
-        toast.error(`Akses Ditolak: Anda tidak memiliki wewenang untuk membatalkan verifikasi pada bidang ${CATEGORY_CONFIG[field].label}.`);
+      // Level lookup
+      const canonicalLitnumLevel = litnumRecordsByStudentId[student.id]?.[field] || '';
+
+      setVerifyingProgress({
+        student,
+        field,
+        isLevelBased: true,
+        currentStatus,
+        level: canonicalLitnumLevel,
+        docId
+      } as any);
+      setVerificationNote('');
+    } else {
+      // Legacy path
+      let taskDescription = activePackage.tasks[field] || '';
+      if (!taskDescription.trim()) {
+        toast.error(`Tidak ada tugas untuk bidang ${CATEGORY_CONFIG[field].label} pada periode ini.`);
         return;
       }
-      setUnverifyingProgress({ student, field, progress });
-      return;
-    }
 
-    setVerifyingProgress({ student, field, taskDescription, progress, taskTitle: resolvedTaskTitle, level: resolvedLevel } as any);
-    setVerificationNote(progress?.revisionNote || '');
+      const progress = findProgress(student.id, activePackage.id, field);
+      
+      // Check if task is already VERIFIED -> trigger cancellation dialog
+      if (progress && progress.status === 'VERIFIED') {
+        const activeClass = classes.find(c => c.id === selectedClassId);
+        const hasAccess = canTeacherVerifySubject(currentUser, activeClass, field);
+        if (!hasAccess) {
+          toast.error(`Akses Ditolak: Anda tidak memiliki wewenang untuk membatalkan verifikasi pada bidang ${CATEGORY_CONFIG[field].label}.`);
+          return;
+        }
+        setUnverifyingProgress({ student, field, progress });
+        return;
+      }
+
+      let resolvedTaskTitle = `Tugas Penguatan ${CATEGORY_CONFIG[field].label}`;
+      let resolvedLevel = litnumRecordsByStudentId[student.id]?.[field] || '';
+
+      setVerifyingProgress({ student, field, taskDescription, progress, taskTitle: resolvedTaskTitle, level: resolvedLevel, isLevelBased: false } as any);
+      setVerificationNote(progress?.revisionNote || '');
+    }
   };
 
   // Save teacher verification (Verify Completed / Request Revision)
@@ -3265,7 +3392,7 @@ function LearningPowerUpTeacherPageContent() {
         const targetBatch = taskBatches.find(b => 
           b.weekStartDate === activePackage.weekStartDate && 
           b.subjectKey === field &&
-          (b.targetClassIds?.includes(selectedClassId) || (b as any).classId === selectedClassId || (b as any).classIds?.includes(selectedClassId))
+          (b.targetClassIds?.includes(student.classId) || (b as any).classId === student.classId || (b as any).classIds?.includes(student.classId))
         );
         if (!targetBatch) {
           toast.error("Gagal menemukan batch tugas level-based.");
@@ -3708,7 +3835,7 @@ function LearningPowerUpTeacherPageContent() {
         const targetBatch = taskBatches.find(b => 
           b.weekStartDate === activePackage.weekStartDate && 
           b.subjectKey === field &&
-          (b.targetClassIds?.includes(selectedClassId) || (b as any).classId === selectedClassId || (b as any).classIds?.includes(selectedClassId))
+          (b.targetClassIds?.includes(student.classId) || (b as any).classId === student.classId || (b as any).classIds?.includes(student.classId))
         );
         if (!targetBatch) {
           toast.error("Gagal menemukan batch tugas level-based.");
@@ -4530,22 +4657,20 @@ function LearningPowerUpTeacherPageContent() {
                             </div>
                           </td>
 
-                          {activeFields.map(field => {
-                            const progress = findProgress(student.id, selectedWeek, field);
-                            const status = progress?.status || 'NOT_STARTED';
+                           {activeFields.map(field => {
+                            const isLevelBased = selectedWeek.startsWith('level_week_');
+                            const status = getStudentFieldStatus(student.id, field);
 
-                            if (status === 'VERIFIED') {
+                            if (status === 'SELESAI' || status === 'VERIFIED') {
                               verifiedInWeekCount++;
                             }
 
-                            // If selected week is level-based, look up the assignment levelSnapshot
-                            const isLevelBased = selectedWeek.startsWith('level_week_');
+                            const canonicalLitnumLevel = litnumRecordsByStudentId[student.id]?.[field];
                             const asg = isLevelBased ? loadedAssignments.find(a => 
                               a.studentId === student.id && 
                               `level_week_${a.weekStartDate}` === selectedWeek && 
                               a.subjectKey === field
                             ) : null;
-                            const canonicalLitnumLevel = litnumRecordsByStudentId[student.id]?.[field];
                             let rawLvl = asg?.levelSnapshot || canonicalLitnumLevel;
                             let displayLevel = '';
                             if (rawLvl) {
@@ -4554,6 +4679,9 @@ function LearningPowerUpTeacherPageContent() {
                               displayLevel = normM ? formatMengajiDisplay(normM) : normN ? formatNumerasiDisplay(normN) : rawLvl;
                             }
 
+                            const legacyProgress = !isLevelBased ? findProgress(student.id, selectedWeek, field) : null;
+                            const legacyStatus = legacyProgress?.status || 'NOT_STARTED';
+
                             return (
                               <td 
                                 key={field} 
@@ -4561,73 +4689,103 @@ function LearningPowerUpTeacherPageContent() {
                               >
                                 <div className="flex flex-col items-center gap-1.5 justify-center">
                                   {displayLevel ? (
-                                    <span className="text-[9px] font-extrabold text-violet-700 bg-violet-50 border border-violet-100 px-1.5 py-0.5 rounded-md uppercase tracking-wider block">
+                                    <button
+                                      onClick={() => handleCellClick(student, field)}
+                                      className="text-[9px] font-extrabold text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-100 px-1.5 py-0.5 rounded-md uppercase tracking-wider block transition-colors"
+                                      title="Klik untuk detail penyelesaian"
+                                    >
                                       {displayLevel}
-                                    </span>
+                                    </button>
                                   ) : isLevelBased ? (
-                                    <span className="text-[9px] font-extrabold text-slate-500 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded-md uppercase tracking-wider block">
+                                    <button
+                                      onClick={() => handleCellClick(student, field)}
+                                      className="text-[9px] font-extrabold text-slate-500 bg-slate-50 hover:bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded-md uppercase tracking-wider block transition-colors"
+                                      title="Klik untuk detail penyelesaian"
+                                    >
                                       Level belum ditetapkan
-                                    </span>
+                                    </button>
                                   ) : null}
                                   
-                                  <button
-                                    onClick={() => handleCellClick(student, field)}
-                                    className="inline-flex items-center justify-center p-1 rounded-xl transition-all hover:bg-slate-100 focus:outline-none"
-                                    disabled={status === 'CANCELLED' as any || savingCells[`${student.id}_${field}`]}
-                                  >
-                                    {savingCells[`${student.id}_${field}`] ? (
-                                      <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center border border-slate-200">
-                                        <Loader2 className="w-4 h-4 animate-spin text-slate-500" />
-                                      </div>
-                                    ) : (
-                                      <>
-                                        {status === 'VERIFIED' && (
-                                          <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center border border-emerald-200">
-                                            <Check size={18} strokeWidth={3} />
-                                          </div>
-                                        )}
-                                        {status === 'SUBMITTED' && (
-                                          <div className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1 text-[10px] font-black uppercase animate-pulse">
-                                            <Clock size={12} className="text-amber-500" />
-                                            Menunggu Verifikasi Guru
-                                          </div>
-                                        )}
-                                        {status === 'REVISION_REQUIRED' && (
-                                          <div className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1 text-[10px] font-black uppercase">
-                                            <AlertTriangle size={12} className="text-rose-500" />
-                                            Belum Tuntas
-                                          </div>
-                                        )}
-                                        {status === ('CANCELLED' as any) && (
-                                          <div className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-500 border border-slate-200 flex items-center gap-1 text-[10px] font-black uppercase" title="Tugas Dibatalkan">
-                                            <AlertCircle size={12} className="text-slate-400" />
-                                            Batal
-                                          </div>
-                                        )}
-                                        {status === 'NOT_STARTED' && (
-                                          <div className="w-8 h-8 rounded-lg border border-slate-200/60 bg-slate-50 flex items-center justify-center text-slate-300 hover:border-slate-400 transition-all">
-                                            <div className="w-4 h-4 rounded-sm border border-slate-200" />
-                                          </div>
-                                        )}
-                                      </>
-                                    )}
-                                  </button>
+                                  {isLevelBased ? (
+                                    <button
+                                      onClick={() => toggleCompletionDirectly(student, field)}
+                                      className="inline-flex items-center justify-center p-1 rounded-xl transition-all hover:bg-slate-100 focus:outline-none"
+                                      disabled={savingCells[`${student.id}_${field}`]}
+                                    >
+                                      {savingCells[`${student.id}_${field}`] ? (
+                                        <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center border border-slate-200">
+                                          <Loader2 className="w-4 h-4 animate-spin text-slate-500" />
+                                        </div>
+                                      ) : status === 'SELESAI' ? (
+                                        <div className="w-8 h-8 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-700 flex items-center justify-center border border-emerald-200 shadow-sm">
+                                          <Check size={18} strokeWidth={3} />
+                                        </div>
+                                      ) : (
+                                        <div className="w-8 h-8 rounded-lg border border-slate-200/60 bg-slate-50 flex items-center justify-center text-slate-300 hover:border-slate-400 hover:bg-slate-100 transition-all">
+                                          <div className="w-4 h-4 rounded-sm border border-slate-200" />
+                                        </div>
+                                      )}
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => handleCellClick(student, field)}
+                                      className="inline-flex items-center justify-center p-1 rounded-xl transition-all hover:bg-slate-100 focus:outline-none"
+                                      disabled={legacyStatus === 'CANCELLED' as any || savingCells[`${student.id}_${field}`]}
+                                    >
+                                      {savingCells[`${student.id}_${field}`] ? (
+                                        <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center border border-slate-200">
+                                          <Loader2 className="w-4 h-4 animate-spin text-slate-500" />
+                                        </div>
+                                      ) : (
+                                        <>
+                                          {legacyStatus === 'VERIFIED' && (
+                                            <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center border border-emerald-200">
+                                              <Check size={18} strokeWidth={3} />
+                                            </div>
+                                          )}
+                                          {legacyStatus === 'SUBMITTED' && (
+                                            <div className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1 text-[10px] font-black uppercase animate-pulse">
+                                              <Clock size={12} className="text-amber-500" />
+                                              Menunggu Verifikasi Guru
+                                            </div>
+                                          )}
+                                          {legacyStatus === 'REVISION_REQUIRED' && (
+                                            <div className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1 text-[10px] font-black uppercase">
+                                              <AlertTriangle size={12} className="text-rose-500" />
+                                              Belum Tuntas
+                                            </div>
+                                          )}
+                                          {legacyStatus === ('CANCELLED' as any) && (
+                                            <div className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-500 border border-slate-200 flex items-center gap-1 text-[10px] font-black uppercase" title="Tugas Dibatalkan">
+                                              <AlertCircle size={12} className="text-slate-400" />
+                                              Batal
+                                            </div>
+                                          )}
+                                          {legacyStatus === 'NOT_STARTED' && (
+                                            <div className="w-8 h-8 rounded-lg border border-slate-200/60 bg-slate-50 flex items-center justify-center text-slate-300 hover:border-slate-400 transition-all">
+                                              <div className="w-4 h-4 rounded-sm border border-slate-200" />
+                                            </div>
+                                          )}
+                                        </>
+                                      )}
+                                    </button>
+                                  )}
                                 </div>
 
-                                {status === 'VERIFIED' && (
+                                {!isLevelBased && legacyStatus === 'VERIFIED' && (
                                   <div className="pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-slate-900 text-white text-[11px] p-2.5 rounded-xl shadow-lg z-30 w-48 text-center font-bold leading-normal">
                                     <p className="text-emerald-400">
                                       Verified by: {
-                                        progress?.verifiedByEmail || 
-                                        progress?.verifiedByName || 
-                                        (progress?.verifiedBy && !/^[a-zA-Z0-9]{20,30}$/.test(progress.verifiedBy) && !/^[0-9a-fA-F-]{36}$/.test(progress.verifiedBy) ? progress.verifiedBy : null) || 
+                                        legacyProgress?.verifiedByEmail || 
+                                        legacyProgress?.verifiedByName || 
+                                        (legacyProgress?.verifiedBy && !/^[a-zA-Z0-9]{20,30}$/.test(legacyProgress.verifiedBy) && !/^[0-9a-fA-F-]{36}$/.test(legacyProgress.verifiedBy) ? legacyProgress.verifiedBy : null) || 
                                         'Guru Lumina'
                                       }
                                     </p>
-                                    {progress?.verificationMethod === 'BULK' && (
+                                    {legacyProgress?.verificationMethod === 'BULK' && (
                                       <p className="text-slate-300 text-[10px] font-medium">Bulk verification</p>
                                     )}
-                                    <p className="text-slate-400 text-[10px] mt-0.5">{formatVerificationTime(progress?.verifiedAt || progress?.updatedAt)}</p>
+                                    <p className="text-slate-400 text-[10px] mt-0.5">{formatVerificationTime(legacyProgress?.verifiedAt || legacyProgress?.updatedAt)}</p>
                                   </div>
                                 )}
                               </td>
@@ -5270,7 +5428,10 @@ function LearningPowerUpTeacherPageContent() {
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-[2.5rem] shadow-2xl max-w-4xl w-full overflow-hidden flex flex-col md:flex-row relative"
+              className={cn(
+                "bg-white rounded-[2.5rem] shadow-2xl overflow-hidden relative p-8",
+                (verifyingProgress as any).isLevelBased ? "max-w-lg w-full" : "max-w-4xl w-full flex flex-col md:flex-row"
+              )}
               id="teacher-verification-body"
             >
               {/* Close Button */}
@@ -5281,163 +5442,281 @@ function LearningPowerUpTeacherPageContent() {
                 <X size={18} />
               </button>
 
-              {/* Kiri - Submission info */}
-              <div className="flex-1 p-8 md:p-10 border-r border-slate-100 space-y-6">
-                <div>
-                  <span className="px-3 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 text-[9px] font-black uppercase tracking-widest rounded-full inline-block mb-3">
-                    VERIFIKASI GURU SMP
-                  </span>
-                  <h3 className="text-2xl font-black text-gray-900 tracking-tight leading-tight">
-                    {verifyingProgress.student.name}
-                  </h3>
-                  <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">
-                    Kelas: {classes.find(c => c.id === selectedClassId)?.name} • NIS: {verifyingProgress.student.nis || '-'}
-                  </p>
-                </div>
-
-                {/* Task Details */}
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-2">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Kategori:</span>
-                    <span className="text-xs font-black text-slate-700 bg-white border px-2 py-0.5 rounded-md">
-                      {CATEGORY_CONFIG[verifyingProgress.field].label}
+              {(verifyingProgress as any).isLevelBased ? (
+                // Simplified LPU Completion Modal
+                <div className="space-y-6 w-full">
+                  <div>
+                    <span className="px-3 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 text-[9px] font-black uppercase tracking-widest rounded-full inline-block mb-3">
+                      STATUS PENYELESAIAN LPU SMP
                     </span>
-                    {(verifyingProgress as any).level ? (
-                      <span className="text-xs font-black text-violet-700 bg-violet-50 border border-violet-100 px-2 py-0.5 rounded-md uppercase">
-                        Level: {(verifyingProgress as any).level}
-                      </span>
-                    ) : (
-                      <span className="text-xs font-black text-slate-500 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-md uppercase">
-                        Level belum ditetapkan
-                      </span>
-                    )}
+                    <h3 className="text-2xl font-black text-gray-900 tracking-tight leading-tight">
+                      {verifyingProgress.student.name}
+                    </h3>
+                    <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mt-1">
+                      Kelas: {classes.find(c => c.id === verifyingProgress.student.classId)?.name || verifyingProgress.student.classId}
+                    </p>
                   </div>
-                  <h4 className="font-bold text-sm text-gray-900 leading-snug">
-                    {(verifyingProgress as any).taskTitle || `Tugas Penguatan ${CATEGORY_CONFIG[verifyingProgress.field].label}`}
-                  </h4>
-                  <p className="text-xs font-medium text-gray-500 italic max-h-24 overflow-y-auto leading-relaxed border-t border-slate-200/50 pt-2 mt-1">
-                    "{verifyingProgress.taskDescription}"
-                  </p>
-                </div>
 
-                {/* Submission Status badge info */}
-                <div className="space-y-3">
-                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Status Pengajuan</span>
-                  <div className="flex flex-wrap gap-2">
-                    {verifyingProgress.progress ? (
-                      verifyingProgress.progress.status === 'VERIFIED' ? (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block w-32 shrink-0">Mata Pelajaran:</span>
+                      <span className="text-xs font-black text-slate-700 bg-white border px-2.5 py-0.5 rounded-md">
+                        {CATEGORY_CONFIG[verifyingProgress.field].label}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block w-32 shrink-0">Level Siswa:</span>
+                      {verifyingProgress.level ? (
+                        <span className="text-xs font-black text-violet-700 bg-violet-50 border border-violet-100 px-2.5 py-0.5 rounded-md uppercase">
+                          {verifyingProgress.level}
+                        </span>
+                      ) : (
+                        <span className="text-xs font-black text-slate-500 bg-slate-50 border border-slate-200 px-2.5 py-0.5 rounded-md uppercase">
+                          Level belum ditetapkan
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-2 border-t border-slate-200/50">
+                      <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block w-32 shrink-0">Status:</span>
+                      {(verifyingProgress as any).currentStatus === 'SELESAI' ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                           <CheckCircle2 size={14} className="text-emerald-500" />
                           Selesai
                         </span>
-                      ) : verifyingProgress.progress.status === 'SUBMITTED' ? (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                          <Clock size={14} className="text-amber-500 animate-pulse" />
-                          Menunggu Verifikasi Guru
-                        </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                          <AlertTriangle size={14} className="text-rose-500" />
-                          Belum Tuntas
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                          <Clock size={14} className="text-slate-400" />
+                          Belum Selesai
                         </span>
-                      )
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="pt-2">
+                    {(verifyingProgress as any).currentStatus === 'SELESAI' ? (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await toggleCompletionDirectly(verifyingProgress.student, verifyingProgress.field);
+                          setVerifyingProgress(null);
+                        }}
+                        className="w-full py-3.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-sm"
+                      >
+                        Batalkan Selesai
+                      </button>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-slate-50 text-slate-500 border border-slate-200">
-                        <CheckSquare size={14} className="text-slate-400" />
-                        Belum Dikerjakan
-                      </span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await toggleCompletionDirectly(verifyingProgress.student, verifyingProgress.field);
+                          setVerifyingProgress(null);
+                        }}
+                        className="w-full py-3.5 bg-[#109E58] hover:bg-[#0d854a] text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5"
+                      >
+                        <Check size={16} strokeWidth={3} />
+                        Tandai Selesai
+                      </button>
                     )}
                   </div>
-                </div>
 
-                {/* Action buttons panel */}
-                <div className="pt-4 border-t border-slate-100 space-y-3">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">
-                      Catatan Guru / Feedback Revisi (Wajib jika Belum Tuntas)
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={verificationNote}
-                      onChange={(e) => setVerificationNote(e.target.value)}
-                      placeholder="Tuliskan catatan perbaikan atau feedback untuk siswa..."
-                      className="w-full bg-slate-50 border border-slate-200 text-xs px-4 py-3 rounded-xl focus:outline-none font-medium leading-relaxed focus:ring-2 focus:ring-[#109E58]/20 focus:border-[#109E58]"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3 pt-1">
-                    <button
-                      type="button"
-                      disabled={isSavingVerification}
-                      onClick={() => handleVerificationSave(false)}
-                      className="py-3 bg-rose-50 hover:bg-rose-100 disabled:bg-rose-50/50 text-rose-700 border border-rose-200 font-black text-xs uppercase tracking-widest rounded-xl transition-all"
-                    >
-                      Belum Tuntas
-                    </button>
-                    <button
-                      type="button"
-                      disabled={isSavingVerification}
-                      onClick={() => handleVerificationSave(true)}
-                      className="py-3 bg-[#109E58] hover:bg-[#0d854a] disabled:bg-[#109E58]/50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5"
-                    >
-                      <Check size={16} strokeWidth={3} />
-                      Selesai
-                    </button>
+                  {/* Diagnostic Debug Info Panel */}
+                  <div className="pt-4 border-t border-slate-100/60 text-[10px] font-mono text-gray-400 space-y-1 select-all bg-slate-50/50 p-3 rounded-xl border border-slate-100">
+                    <div className="text-[9px] font-black uppercase text-gray-400 tracking-wider mb-1">🔍 Diagnostic Debug Info</div>
+                    <div>academicYearId: {activeYear}</div>
+                    <div>weekStartDate: {activePackage?.weekStartDate}</div>
+                    <div>studentId: {verifyingProgress.student.id}</div>
+                    <div>subjectKey: {verifyingProgress.field}</div>
+                    <div>documentId: {(verifyingProgress as any).docId}</div>
+                    <div>status: {(verifyingProgress as any).currentStatus}</div>
                   </div>
                 </div>
-              </div>
+              ) : (
+                <>
+                  {/* Kiri - Submission info */}
+                  <div className="flex-1 p-8 md:p-10 border-r border-slate-100 space-y-6">
+                    <div>
+                      <span className="px-3 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 text-[9px] font-black uppercase tracking-widest rounded-full inline-block mb-3">
+                        VERIFIKASI GURU SMP
+                      </span>
+                      <h3 className="text-2xl font-black text-gray-900 tracking-tight leading-tight">
+                        {verifyingProgress.student.name}
+                      </h3>
+                      <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">
+                        Kelas: {classes.find(c => c.id === selectedClassId)?.name} • NIS: {verifyingProgress.student.nis || '-'}
+                      </p>
+                    </div>
 
-              {/* Kanan - Submission timeline log history */}
-              <div className="flex-1 p-8 md:p-10 bg-slate-50 space-y-6">
-                <div>
-                  <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Riwayat Pengajuan</h4>
-                  <h3 className="text-lg font-black text-gray-900">Linimasa & Log Kerja</h3>
-                  <p className="text-xs font-semibold text-gray-400">Semua aktivitas kiriman, revisi, dan status.</p>
-                </div>
-
-                <div className="space-y-4 max-h-96 overflow-y-auto pr-1">
-                  {verifyingProgress.progress?.history && verifyingProgress.progress.history.length > 0 ? (
-                    verifyingProgress.progress.history.map((h, idx) => (
-                      <div key={idx} className="flex gap-3 text-xs">
-                        <div className="flex flex-col items-center">
-                          <div className={cn(
-                            "w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-white font-black text-[10px]",
-                            h.action === 'VERIFY' ? "bg-emerald-500" :
-                            h.action === 'REVISION_REQUEST' ? "bg-rose-500" : "bg-blue-500"
-                          )}>
-                            {idx + 1}
-                          </div>
-                          {idx < verifyingProgress.progress!.history!.length - 1 && (
-                            <div className="w-0.5 bg-slate-200 flex-1 min-h-[20px]" />
-                          )}
-                        </div>
-
-                        <div className="bg-white p-3 rounded-xl border border-slate-100 flex-1 space-y-1">
-                          <div className="flex items-center justify-between text-[10px] font-semibold text-gray-400">
-                            <span>{formatLpuDateTime(h.timestamp)}</span>
-                            <span className="font-bold text-gray-500">{h.actorName}</span>
-                          </div>
-                          <p className="font-bold text-gray-800 text-xs">
-                            {h.action === 'SUBMIT' && "Mengirim tugas untuk diperiksa."}
-                            {h.action === 'RESUBMIT' && "Mengirim ulang tugas setelah revisi."}
-                            {h.action === 'REVISION_REQUEST' && "Guru meminta revisi tugas."}
-                            {h.action === 'VERIFY' && "Guru memverifikasi tugas selesai."}
+                    {verifyingProgress.isNotFoundError ? (
+                      <div className="bg-rose-50 border border-rose-100 rounded-2xl p-6 flex flex-col items-center text-center gap-3">
+                        <AlertCircle className="text-rose-500 w-10 h-10" />
+                        <div>
+                          <h4 className="font-black text-rose-950 text-sm uppercase tracking-wider">Data assignment tidak ditemukan</h4>
+                          <p className="text-xs font-semibold text-rose-700 mt-1 leading-relaxed">
+                            Dokumen tugas belum terdaftar/terbuat di database untuk siswa, pekan, dan mata pelajaran ini. Silakan hubungi admin atau periksa kembali penerbitan tugas.
                           </p>
-                          {h.note && (
-                            <p className="text-[11px] text-gray-500 italic leading-normal bg-slate-50 px-2 py-1.5 rounded border border-slate-100 mt-1">
-                              "{h.note}"
-                            </p>
-                          )}
                         </div>
                       </div>
-                    ))
-                  ) : (
-                    <div className="text-center py-10 text-xs text-gray-400 font-semibold bg-white rounded-xl border border-slate-200/50">
-                      Belum ada aktivitas tercatat untuk tugas ini.
+                    ) : (
+                      <>
+                        {/* Task Details */}
+                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Kategori:</span>
+                            <span className="text-xs font-black text-slate-700 bg-white border px-2 py-0.5 rounded-md">
+                              {CATEGORY_CONFIG[verifyingProgress.field].label}
+                            </span>
+                            {(verifyingProgress as any).level ? (
+                              <span className="text-xs font-black text-violet-700 bg-violet-50 border border-violet-100 px-2 py-0.5 rounded-md uppercase">
+                                Level: {(verifyingProgress as any).level}
+                              </span>
+                            ) : (
+                              <span className="text-xs font-black text-slate-500 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-md uppercase">
+                                Level belum ditetapkan
+                              </span>
+                            )}
+                          </div>
+                          <h4 className="font-bold text-sm text-gray-900 leading-snug">
+                            {(verifyingProgress as any).taskTitle || `Tugas Penguatan ${CATEGORY_CONFIG[verifyingProgress.field].label}`}
+                          </h4>
+                          <p className="text-xs font-medium text-gray-500 italic max-h-24 overflow-y-auto leading-relaxed border-t border-slate-200/50 pt-2 mt-1">
+                            "{verifyingProgress.taskDescription}"
+                          </p>
+                        </div>
+
+                        {/* Submission Status badge info */}
+                        <div className="space-y-3">
+                          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Status Pengajuan</span>
+                          <div className="flex flex-wrap gap-2">
+                            {verifyingProgress.progress ? (
+                              verifyingProgress.progress.status === 'VERIFIED' ? (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  <CheckCircle2 size={14} className="text-emerald-500" />
+                                  Selesai
+                                </span>
+                              ) : verifyingProgress.progress.status === 'SUBMITTED' ? (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                  <Clock size={14} className="text-amber-500 animate-pulse" />
+                                  Menunggu Verifikasi Guru
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                  <AlertTriangle size={14} className="text-rose-500" />
+                                  Belum Tuntas
+                                </span>
+                              )
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-slate-50 text-slate-500 border border-slate-200">
+                                <CheckSquare size={14} className="text-slate-400" />
+                                Belum Dikerjakan
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Action buttons panel */}
+                        <div className="pt-4 border-t border-slate-100 space-y-3">
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">
+                              Catatan Guru / Feedback Revisi (Wajib jika Belum Tuntas)
+                            </label>
+                            <textarea
+                              rows={3}
+                              value={verificationNote}
+                              onChange={(e) => setVerificationNote(e.target.value)}
+                              placeholder="Tuliskan catatan perbaikan atau feedback untuk siswa..."
+                              className="w-full bg-slate-50 border border-slate-200 text-xs px-4 py-3 rounded-xl focus:outline-none font-medium leading-relaxed focus:ring-2 focus:ring-[#109E58]/20 focus:border-[#109E58]"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3 pt-1">
+                            <button
+                              type="button"
+                              disabled={isSavingVerification}
+                              onClick={() => handleVerificationSave(false)}
+                              className="py-3 bg-rose-50 hover:bg-rose-100 disabled:bg-rose-50/50 text-rose-700 border border-rose-200 font-black text-xs uppercase tracking-widest rounded-xl transition-all"
+                            >
+                              Belum Tuntas
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isSavingVerification}
+                              onClick={() => handleVerificationSave(true)}
+                              className="py-3 bg-[#109E58] hover:bg-[#0d854a] disabled:bg-[#109E58]/50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5"
+                            >
+                              <Check size={16} strokeWidth={3} />
+                              Selesai
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Temporary Diagnostic Debug Info Panel */}
+                    <div className="pt-4 border-t border-slate-100/60 text-[10px] font-mono text-gray-400 space-y-1 select-all bg-slate-50/50 p-3 rounded-xl border border-slate-100">
+                      <div className="text-[9px] font-black uppercase text-gray-400 tracking-wider mb-1">🔍 Diagnostic Debug Info</div>
+                      <div>assignmentId: {(verifyingProgress as any).assignmentId || 'N/A'}</div>
+                      <div>studentId: {verifyingProgress.student.id}</div>
+                      <div>taskBatchId: {(verifyingProgress as any).taskBatchId || 'N/A'}</div>
+                      <div>subjectKey: {verifyingProgress.field}</div>
+                      <div>status dari Firestore: {(verifyingProgress as any).statusFromFirestore || 'N/A'}</div>
                     </div>
-                  )}
-                </div>
-              </div>
+                  </div>
+
+                  {/* Kanan - Submission timeline log history */}
+                  <div className="flex-1 p-8 md:p-10 bg-slate-50 space-y-6">
+                    <div>
+                      <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Riwayat Pengajuan</h4>
+                      <h3 className="text-lg font-black text-gray-900">Linimasa & Log Kerja</h3>
+                      <p className="text-xs font-semibold text-gray-400">Semua aktivitas kiriman, revisi, dan status.</p>
+                    </div>
+
+                    <div className="space-y-4 max-h-96 overflow-y-auto pr-1">
+                      {verifyingProgress.progress?.history && verifyingProgress.progress.history.length > 0 ? (
+                        verifyingProgress.progress.history.map((h, idx) => (
+                          <div key={idx} className="flex gap-3 text-xs">
+                            <div className="flex flex-col items-center">
+                              <div className={cn(
+                                "w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-white font-black text-[10px]",
+                                h.action === 'VERIFY' ? "bg-emerald-500" :
+                                h.action === 'REVISION_REQUEST' ? "bg-rose-500" : "bg-blue-500"
+                              )}>
+                                {idx + 1}
+                              </div>
+                              {idx < verifyingProgress.progress!.history!.length - 1 && (
+                                <div className="w-0.5 bg-slate-200 flex-1 min-h-[20px]" />
+                              )}
+                            </div>
+
+                            <div className="bg-white p-3 rounded-xl border border-slate-100 flex-1 space-y-1">
+                              <div className="flex items-center justify-between text-[10px] font-semibold text-gray-400">
+                                <span>{formatLpuDateTime(h.timestamp)}</span>
+                                <span className="font-bold text-gray-500">{h.actorName}</span>
+                              </div>
+                              <p className="font-bold text-gray-800 text-xs">
+                                {h.action === 'SUBMIT' && "Mengirim tugas untuk diperiksa."}
+                                {h.action === 'RESUBMIT' && "Mengirim ulang tugas setelah revisi."}
+                                {h.action === 'REVISION_REQUEST' && "Guru meminta revisi tugas."}
+                                {h.action === 'VERIFY' && "Guru memverifikasi tugas selesai."}
+                              </p>
+                              {h.note && (
+                                <p className="text-[11px] text-gray-500 italic leading-normal bg-slate-50 px-2 py-1.5 rounded border border-slate-100 mt-1">
+                                  "{h.note}"
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-center py-10 text-xs text-gray-400 font-semibold bg-white rounded-xl border border-slate-200/50">
+                          Belum ada aktivitas tercatat untuk tugas ini.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
             </motion.div>
           </div>
         )}

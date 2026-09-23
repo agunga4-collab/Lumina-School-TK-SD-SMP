@@ -711,6 +711,11 @@ service cloud.firestore {
       allow write: if isJuniorHighStaff();
     }
 
+    match /learning_power_up_completion/{completionId} {
+      allow read: if isActive();
+      allow write: if isJuniorHighStaff() || isAdmin();
+    }
+
     match /cicoWeeklyReflections/{reflectionId} {
       allow read: if isActive() && isJuniorHighStaff();
       allow read: if isActive() && isLinkedStudent(existing().studentId);
