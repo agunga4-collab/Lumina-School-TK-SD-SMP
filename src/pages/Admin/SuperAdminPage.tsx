@@ -995,6 +995,36 @@ export default function SuperAdminPage() {
   const [promotionSearchQuery, setPromotionSearchQuery] = React.useState("");
   const [promotionSortOrder, setPromotionSortOrder] = React.useState<"asc" | "desc">("asc");
 
+  // NIY Guru States & Handlers
+  const [niySearchQuery, setNiySearchQuery] = React.useState("");
+  const [niyUnitFilter, setNiyUnitFilter] = React.useState<"ALL" | "KINDERGARTEN" | "ELEMENTARY" | "JUNIOR_HIGH">("ALL");
+  const [editingNiyValues, setEditingNiyValues] = React.useState<Record<string, string>>({});
+  const [savingNiyStatus, setSavingNiyStatus] = React.useState<Record<string, "idle" | "saving" | "saved" | "error">>({});
+
+  const handleSaveNiy = async (teacherId: string) => {
+    const niyValue = (editingNiyValues[teacherId] ?? "").trim();
+    
+    setSavingNiyStatus(prev => ({ ...prev, [teacherId]: "saving" }));
+    try {
+      const userRef = doc(db, "users", teacherId);
+      await updateDoc(userRef, {
+        niy: niyValue,
+        updatedAt: Date.now()
+      });
+      
+      setTeachers(prev => prev.map(t => t.uid === teacherId ? { ...t, niy: niyValue } : t));
+      
+      setSavingNiyStatus(prev => ({ ...prev, [teacherId]: "saved" }));
+      setTimeout(() => {
+        setSavingNiyStatus(prev => ({ ...prev, [teacherId]: "idle" }));
+      }, 3000);
+    } catch (err: any) {
+      console.error("Failed to save NIY for user:", teacherId, err);
+      setSavingNiyStatus(prev => ({ ...prev, [teacherId]: "error" }));
+      alert("Gagal menyimpan NIY: " + (err.message || "Unknown error"));
+    }
+  };
+
   // Class Form State
   const [classFormData, setClassFormData] = React.useState({
     grade: "7",
@@ -2423,6 +2453,26 @@ export default function SuperAdminPage() {
               </div>
               <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-red-950 text-red-400">
                 {counts.PENDING}
+              </span>
+            </button>
+            <button
+              onClick={() => {
+                setActiveMenu("niy-guru");
+                setIsMobileSidebarOpen(false);
+              }}
+              className={cn(
+                "w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-left flex items-center justify-between transition-all",
+                activeMenu === "niy-guru"
+                  ? "bg-slate-900 text-white font-bold border border-slate-800"
+                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200"
+              )}
+            >
+              <div className="flex items-center gap-2.5 flex-1 select-none">
+                <div className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                <span>NIY Guru</span>
+              </div>
+              <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-indigo-950 text-indigo-400">
+                {teachers.filter(t => t.uid && !t.uid.startsWith('INVITE_')).length}
               </span>
             </button>
           </div>
@@ -6370,6 +6420,157 @@ export default function SuperAdminPage() {
                       </div>
                     </div>
                   )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeMenu === "niy-guru" && (
+            <div className="space-y-6 animate-in fade-in duration-200">
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
+                <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                  <GraduationCap className="text-indigo-600" size={24} />
+                  <span>Manajemen NIY Guru</span>
+                </h2>
+                <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider mt-1">
+                  Atur Nomor Induk Yayasan (NIY) Guru Lazuardi GCS langsung ke Profil Pengguna
+                </p>
+              </div>
+
+              {/* Filter and Search Bar */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+                {/* Search */}
+                <div className="relative flex-1 max-w-md">
+                  <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400 pointer-events-none">
+                    <Search size={16} />
+                  </span>
+                  <input
+                    type="text"
+                    value={niySearchQuery}
+                    onChange={(e) => setNiySearchQuery(e.target.value)}
+                    placeholder="Cari nama atau email guru..."
+                    className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white transition-all"
+                  />
+                </div>
+
+                {/* Filter Unit */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Unit:</span>
+                  <select
+                    value={niyUnitFilter}
+                    onChange={(e) => setNiyUnitFilter(e.target.value as any)}
+                    className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-700"
+                  >
+                    <option value="ALL">Semua Unit</option>
+                    <option value="KINDERGARTEN">Kindergarten</option>
+                    <option value="ELEMENTARY">Elementary</option>
+                    <option value="JUNIOR_HIGH">Junior High</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Table of active teachers */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse text-left text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-700 font-extrabold uppercase text-[10px] tracking-wider border-b border-slate-200">
+                        <th className="p-4 text-center w-12 border-r border-slate-200">No</th>
+                        <th className="p-4 border-r border-slate-200">Nama Guru</th>
+                        <th className="p-4 border-r border-slate-200">Email</th>
+                        <th className="p-4 border-r border-slate-200">Role</th>
+                        <th className="p-4 border-r border-slate-200">Unit</th>
+                        <th className="p-4 border-r border-slate-200 w-64">NIY (Nomor Induk Yayasan)</th>
+                        <th className="p-4 text-center w-40">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {(() => {
+                        // Filter teachers state: active users only, matching search and unit
+                        const activeTeachers = teachers.filter(t => t.uid && !t.uid.startsWith('INVITE_'));
+                        
+                        const filtered = activeTeachers.filter(t => {
+                          const nameMatch = (t.displayName || t.name || "").toLowerCase().includes(niySearchQuery.toLowerCase());
+                          const emailMatch = (t.email || "").toLowerCase().includes(niySearchQuery.toLowerCase());
+                          const unitMatch = niyUnitFilter === "ALL" || t.unitId === niyUnitFilter;
+                          return (nameMatch || emailMatch) && unitMatch;
+                        });
+
+                        if (filtered.length === 0) {
+                          return (
+                            <tr>
+                              <td colSpan={7} className="p-8 text-center font-bold text-slate-400 italic">
+                                Tidak ada data guru yang cocok.
+                              </td>
+                            </tr>
+                          );
+                        }
+
+                        return filtered.map((teacher, idx) => {
+                          const currentNiyValue = editingNiyValues[teacher.uid] ?? teacher.niy ?? "";
+                          const status = savingNiyStatus[teacher.uid] || "idle";
+                          const isSaving = status === "saving";
+                          const isSaved = status === "saved";
+                          const isError = status === "error";
+
+                          return (
+                            <tr key={teacher.uid} className="hover:bg-slate-50 transition-colors">
+                              <td className="p-4 text-center font-bold text-slate-400 border-r border-slate-100">
+                                {idx + 1}
+                              </td>
+                              <td className="p-4 border-r border-slate-100 font-extrabold text-slate-900">
+                                {teacher.displayName || teacher.name || "N/A"}
+                              </td>
+                              <td className="p-4 border-r border-slate-100 font-semibold text-slate-600 font-mono text-[11px]">
+                                {teacher.email}
+                              </td>
+                              <td className="p-4 border-r border-slate-100">
+                                <span className="px-2 py-0.5 bg-blue-50 text-blue-700 font-black text-[9.5px] rounded-md border border-blue-100 uppercase">
+                                  {getRoleLabel(teacher.role)}
+                                </span>
+                              </td>
+                              <td className="p-4 border-r border-slate-100 font-bold text-slate-500 uppercase">
+                                {teacher.unitId || "ALL"}
+                              </td>
+                              <td className="p-4 border-r border-slate-100">
+                                <input
+                                  type="text"
+                                  value={currentNiyValue}
+                                  onChange={(e) => setEditingNiyValues(prev => ({ ...prev, [teacher.uid]: e.target.value }))}
+                                  placeholder="Contoh: 19920311201509"
+                                  disabled={isSaving}
+                                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white transition-all"
+                                />
+                              </td>
+                              <td className="p-4 text-center">
+                                <button
+                                  onClick={() => handleSaveNiy(teacher.uid)}
+                                  disabled={isSaving}
+                                  className={cn(
+                                    "px-3.5 py-1.5 rounded-lg text-[10.5px] font-extrabold uppercase tracking-wider transition-all inline-flex items-center gap-1.5 cursor-pointer",
+                                    isSaving 
+                                      ? "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
+                                      : isSaved
+                                        ? "bg-emerald-50 text-emerald-850 border border-emerald-200"
+                                        : isError
+                                          ? "bg-red-50 text-red-850 border border-red-200"
+                                          : "bg-indigo-600 text-white hover:bg-indigo-700 active:bg-indigo-800 shadow-2xs"
+                                  )}
+                                >
+                                  {isSaving && <RefreshCw size={12} className="animate-spin" />}
+                                  {isSaved && <CheckCircle2 size={12} className="text-emerald-600" />}
+                                  {isError && <AlertTriangle size={12} className="text-red-600" />}
+                                  <span>
+                                    {isSaving ? "Menyimpan" : isSaved ? "Tersimpan ✓" : isError ? "Gagal!" : "Simpan NIY"}
+                                  </span>
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        });
+                      })()}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>

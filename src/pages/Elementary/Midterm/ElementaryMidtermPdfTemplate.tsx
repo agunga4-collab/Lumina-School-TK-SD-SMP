@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../../lib/firebase';
 import type { 
   ElementaryMidtermReportSnapshot,
   ElementaryMidtermMasterGoalDoc,
@@ -77,17 +79,78 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
     ? snapshot.signatory.principalSignatureUrl 
     : (reportConfig?.principalSignatureUrl || null);
 
+  // Local states to resolve dynamic Class and Homeroom profile from DB
+  const [dbClass, setDbClass] = React.useState<Class | null>(null);
+  const [teacherUser, setTeacherUser] = React.useState<any | null>(null);
+
+  React.useEffect(() => {
+    if (snapshot) return; // Snapshot mode doesn't need DB resolve
+    const targetClassId = student?.classId || currentClass?.id;
+    if (!targetClassId) return;
+
+    if (currentClass && currentClass.id === targetClassId) {
+      setDbClass(currentClass);
+      return;
+    }
+
+    const fetchClass = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'classes', targetClassId));
+        if (snap.exists()) {
+          setDbClass({ id: snap.id, ...snap.data() } as Class);
+        }
+      } catch (e) {
+        console.warn("Failed to fetch class in PDF Template:", targetClassId, e);
+      }
+    };
+    fetchClass();
+  }, [student?.classId, currentClass, snapshot]);
+
+  React.useEffect(() => {
+    if (snapshot) return;
+    const teacherId = dbClass?.homeroomTeacherId || currentClass?.homeroomTeacherId;
+    if (!teacherId) {
+      setTeacherUser(null);
+      return;
+    }
+
+    const fetchTeacher = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'users', teacherId));
+        if (snap.exists()) {
+          setTeacherUser(snap.data());
+        }
+      } catch (e) {
+        console.warn("Failed to fetch teacher profile in PDF Template:", teacherId, e);
+      }
+    };
+    fetchTeacher();
+  }, [dbClass?.homeroomTeacherId, currentClass?.homeroomTeacherId, snapshot]);
+
   const effHomeroomName = snapshot 
     ? snapshot.signatory.homeroomTeacherName 
-    : (currentClass?.homeroomTeacherName || homeroomTeacherProfile?.displayName || 'Homeroom Teacher');
+    : (dbClass?.homeroomTeacherName || currentClass?.homeroomTeacherName || homeroomTeacherProfile?.displayName || 'Homeroom Teacher');
   const effHomeroomNiy = snapshot 
-    ? snapshot.signatory.homeroomTeacherNiy 
-    : (homeroomTeacherProfile?.niy || '');
+    ? (snapshot.signatory.homeroomTeacherNiy || '') 
+    : (teacherUser?.niy || homeroomTeacherProfile?.niy || '');
   const effHomeroomSignatureUrl = snapshot 
     ? snapshot.signatory.homeroomTeacherSignatureUrl 
-    : (homeroomTeacherProfile?.signatureUrl || (currentClass as any)?.teacherSignatureUrl || null);
+    : (dbClass?.teacherSignatureUrl || currentClass?.teacherSignatureUrl || homeroomTeacherProfile?.signatureUrl || null);
 
   const effLogoUrl = snapshot?.logoUrl || logoUrl || null;
+
+  // Validate signatures to prevent broken images
+  const isValidHomeroomSignature = effHomeroomSignatureUrl && 
+    effHomeroomSignatureUrl !== "none" && 
+    effHomeroomSignatureUrl !== "null" && 
+    effHomeroomSignatureUrl !== "" &&
+    (effHomeroomSignatureUrl.startsWith("data:") || effHomeroomSignatureUrl.startsWith("http://") || effHomeroomSignatureUrl.startsWith("https://") || effHomeroomSignatureUrl.startsWith("/"));
+
+  const isValidPrincipalSignature = effPrincipalSignatureUrl && 
+    effPrincipalSignatureUrl !== "none" && 
+    effPrincipalSignatureUrl !== "null" && 
+    effPrincipalSignatureUrl !== "" &&
+    (effPrincipalSignatureUrl.startsWith("data:") || effPrincipalSignatureUrl.startsWith("http://") || effPrincipalSignatureUrl.startsWith("https://") || effPrincipalSignatureUrl.startsWith("/"));
 
   const getEffDate = () => {
     const months = [
@@ -449,12 +512,12 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                 {effPrincipalTitle}
               </span>
               <div className="h-16 flex items-center justify-center">
-                {effPrincipalSignatureUrl ? (
+                {isValidPrincipalSignature ? (
                   <img 
                     src={effPrincipalSignatureUrl} 
                     alt="Principal Signature" 
                     className="h-14 max-w-[140px] object-contain"
-                    crossOrigin="anonymous"
+                    crossOrigin={effPrincipalSignatureUrl.startsWith("data:") ? undefined : "anonymous"}
                   />
                 ) : (
                   <div className="text-[9px] text-slate-400 italic">Verified Digitally</div>
@@ -472,12 +535,12 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                 Homeroom Teacher
               </span>
               <div className="h-16 flex items-center justify-center">
-                {effHomeroomSignatureUrl ? (
+                {isValidHomeroomSignature ? (
                   <img 
                     src={effHomeroomSignatureUrl} 
                     alt="Homeroom Teacher Signature" 
                     className="h-14 max-w-[140px] object-contain"
-                    crossOrigin="anonymous"
+                    crossOrigin={effHomeroomSignatureUrl.startsWith("data:") ? undefined : "anonymous"}
                   />
                 ) : (
                   <div className="text-[9px] text-slate-400 italic">Verified Digitally</div>

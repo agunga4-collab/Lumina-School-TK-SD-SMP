@@ -263,13 +263,32 @@ function ElementaryMidtermReportPageContent() {
             const uData = uSnap.data();
             setHomeroomTeacherProfile({
               displayName: uData?.displayName || uData?.name || selectedClass.homeroomTeacherName || 'Homeroom Teacher',
-              niy: uData?.niy,
-              signatureUrl: uData?.signatureUrl
+              niy: uData?.niy || '',
+              signatureUrl: selectedClass.teacherSignatureUrl || uData?.signatureUrl || null
+            });
+          } else {
+            setHomeroomTeacherProfile({
+              displayName: selectedClass.homeroomTeacherName || 'Homeroom Teacher',
+              niy: '',
+              signatureUrl: selectedClass.teacherSignatureUrl || null
             });
           }
         } catch (e) {
           console.warn('Could not load homeroom user profile', e);
+          setHomeroomTeacherProfile({
+            displayName: selectedClass.homeroomTeacherName || 'Homeroom Teacher',
+            niy: '',
+            signatureUrl: selectedClass.teacherSignatureUrl || null
+          });
         }
+      } else if (selectedClass) {
+        setHomeroomTeacherProfile({
+          displayName: selectedClass.homeroomTeacherName || 'Homeroom Teacher',
+          niy: '',
+          signatureUrl: selectedClass.teacherSignatureUrl || null
+        });
+      } else {
+        setHomeroomTeacherProfile(null);
       }
     } catch (err) {
       console.error('Error loading Elementary Midterm class data:', err);
