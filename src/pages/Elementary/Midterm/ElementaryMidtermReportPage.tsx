@@ -113,7 +113,10 @@ function ElementaryMidtermReportPageContent() {
         const logoDoc = await getDoc(doc(db, 'settings', 'logos'));
         if (logoDoc.exists()) {
           const data = logoDoc.data() as any;
-          if (data?.ELEMENTARY?.rectangular) {
+          if (data?.ELEMENTARY?.reportHeaderLogo?.originalUrl) {
+            setElementaryLogoUrl(data.ELEMENTARY.reportHeaderLogo.originalUrl);
+            return;
+          } else if (data?.ELEMENTARY?.rectangular) {
             setElementaryLogoUrl(data.ELEMENTARY.rectangular);
             return;
           }
@@ -121,7 +124,10 @@ function ElementaryMidtermReportPageContent() {
         const localLogos = localStorage.getItem('lumina_school_logos');
         if (localLogos) {
           const parsed = JSON.parse(localLogos);
-          if (parsed?.ELEMENTARY?.rectangular) {
+          if (parsed?.ELEMENTARY?.reportHeaderLogo?.originalUrl) {
+            setElementaryLogoUrl(parsed.ELEMENTARY.reportHeaderLogo.originalUrl);
+            return;
+          } else if (parsed?.ELEMENTARY?.rectangular) {
             setElementaryLogoUrl(parsed.ELEMENTARY.rectangular);
             return;
           }
@@ -132,7 +138,9 @@ function ElementaryMidtermReportPageContent() {
         if (localLogos) {
           try {
             const parsed = JSON.parse(localLogos);
-            if (parsed?.ELEMENTARY?.rectangular) {
+            if (parsed?.ELEMENTARY?.reportHeaderLogo?.originalUrl) {
+              setElementaryLogoUrl(parsed.ELEMENTARY.reportHeaderLogo.originalUrl);
+            } else if (parsed?.ELEMENTARY?.rectangular) {
               setElementaryLogoUrl(parsed.ELEMENTARY.rectangular);
             }
           } catch (_) {}

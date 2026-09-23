@@ -75,6 +75,36 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
 
   // Background rendering elements for PDF creation
   const [activeGeneratingStudent, setActiveGeneratingStudent] = React.useState<Student | null>(null);
+  const [logoUrl, setLogoUrl] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const fetchLogo = async () => {
+      try {
+        const logoDoc = await getDoc(doc(db, 'settings', 'logos'));
+        if (logoDoc.exists()) {
+          const data = logoDoc.data() as any;
+          if (data?.JUNIOR_HIGH?.reportHeaderLogo?.originalUrl) {
+            setLogoUrl(data.JUNIOR_HIGH.reportHeaderLogo.originalUrl);
+          } else if (data?.JUNIOR_HIGH?.rectangular) {
+            setLogoUrl(data.JUNIOR_HIGH.rectangular);
+          }
+        } else {
+          const localLogos = localStorage.getItem('lumina_school_logos');
+          if (localLogos) {
+            const parsed = JSON.parse(localLogos);
+            if (parsed?.JUNIOR_HIGH?.reportHeaderLogo?.originalUrl) {
+              setLogoUrl(parsed.JUNIOR_HIGH.reportHeaderLogo.originalUrl);
+            } else if (parsed?.JUNIOR_HIGH?.rectangular) {
+              setLogoUrl(parsed.JUNIOR_HIGH.rectangular);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("Failed to fetch Junior High logo in PublishPdfTab:", e);
+      }
+    };
+    fetchLogo();
+  }, []);
 
   const safeStudents = Array.isArray(students) ? students.filter(Boolean) : [];
   const safeStudentDataMap = studentDataMap && typeof studentDataMap === 'object' ? studentDataMap : {};
@@ -157,7 +187,8 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
         homeroomTeacherName: selectedClass?.homeroomTeacherName || homeroomTeacherProfile?.displayName || 'Homeroom Teacher',
         homeroomTeacherNiy: homeroomTeacherProfile?.niy || '',
         homeroomTeacherSignatureUrl: selectedClass?.teacherSignatureUrl || null
-      }
+      },
+      logoUrl: logoUrl || null
     };
   };
 
@@ -590,6 +621,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
                 }}
                 reportConfig={reportConfig}
                 homeroomTeacherProfile={homeroomTeacherProfile || undefined}
+                logoUrl={logoUrl}
               />
             </div>
 
@@ -641,6 +673,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
             }}
             reportConfig={reportConfig}
             homeroomTeacherProfile={homeroomTeacherProfile || undefined}
+            logoUrl={logoUrl}
           />
         </div>
       )}

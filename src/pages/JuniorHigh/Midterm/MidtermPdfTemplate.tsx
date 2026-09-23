@@ -28,6 +28,7 @@ interface MidtermPdfTemplateProps {
   // Print / generation ref IDs
   page1Id?: string;
   page2Id?: string;
+  logoUrl?: string | null;
 }
 
 export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
@@ -44,6 +45,7 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
   homeroomTeacherProfile,
   page1Id = 'jh-midterm-pdf-page-1',
   page2Id = 'jh-midterm-pdf-page-2',
+  logoUrl,
 }) => {
   // Derive student identity
   const studentName = snapshot ? snapshot.student.name : (student?.name || '');
@@ -65,6 +67,50 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
   const effPrincipalSignatureUrl = snapshot 
     ? snapshot.signatory.principalSignatureUrl 
     : (reportConfig?.principalSignatureUrl || null);
+
+  const [resolvedLogoUrl, setResolvedLogoUrl] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (snapshot?.logoUrl) {
+      setResolvedLogoUrl(snapshot.logoUrl);
+      return;
+    }
+    if (logoUrl) {
+      setResolvedLogoUrl(logoUrl);
+      return;
+    }
+
+    const fetchLogo = async () => {
+      try {
+        const logoDoc = await getDoc(doc(db, 'settings', 'logos'));
+        if (logoDoc.exists()) {
+          const data = logoDoc.data() as any;
+          if (data?.JUNIOR_HIGH?.reportHeaderLogo?.originalUrl) {
+            setResolvedLogoUrl(data.JUNIOR_HIGH.reportHeaderLogo.originalUrl);
+          } else if (data?.JUNIOR_HIGH?.rectangular) {
+            setResolvedLogoUrl(data.JUNIOR_HIGH.rectangular);
+          } else {
+            setResolvedLogoUrl(null);
+          }
+        } else {
+          const localLogos = localStorage.getItem('lumina_school_logos');
+          if (localLogos) {
+            const parsed = JSON.parse(localLogos);
+            if (parsed?.JUNIOR_HIGH?.reportHeaderLogo?.originalUrl) {
+              setResolvedLogoUrl(parsed.JUNIOR_HIGH.reportHeaderLogo.originalUrl);
+            } else if (parsed?.JUNIOR_HIGH?.rectangular) {
+              setResolvedLogoUrl(parsed.JUNIOR_HIGH.rectangular);
+            } else {
+              setResolvedLogoUrl(null);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to load Junior High school logo in template:", err);
+      }
+    };
+    fetchLogo();
+  }, [snapshot, logoUrl]);
 
   // Local states to resolve dynamic Class and Homeroom profile from DB
   const [dbClass, setDbClass] = React.useState<Class | null>(null);
@@ -262,16 +308,14 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
           {/* Header & Logo */}
           <div className="flex items-center justify-between border-b-2 border-black pb-3 mb-4">
             <div className="flex items-center gap-3">
-              <img 
-                src="https://lazuardi.sch.id/wp-content/uploads/2021/04/Logo-Lazuardi-Junior-High.png" 
-                alt="Lazuardi Junior High Logo"
-                className="h-12 w-auto object-contain"
-                crossOrigin="anonymous"
-                onError={(e) => {
-                  // Fallback to text if external image fails
-                  (e.target as HTMLElement).style.display = 'none';
-                }}
-              />
+              {resolvedLogoUrl ? (
+                <img 
+                  src={resolvedLogoUrl} 
+                  alt="Lazuardi Junior High Logo"
+                  className="h-12 w-auto object-contain"
+                  crossOrigin={resolvedLogoUrl.startsWith("data:") ? undefined : "anonymous"}
+                />
+              ) : null}
               <div>
                 <h1 className="text-base font-black tracking-wider text-black uppercase leading-tight">
                   STUDENT'S PROGRESS REPORT

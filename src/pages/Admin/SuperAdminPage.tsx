@@ -133,13 +133,13 @@ export default function SuperAdminPage() {
   });
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = React.useState(false);
   const [logos, setLogos] = React.useState<{
-    KINDERGARTEN: { rectangular: string; square: string };
-    ELEMENTARY: { rectangular: string; square: string };
-    JUNIOR_HIGH: { rectangular: string; square: string };
+    KINDERGARTEN: { rectangular: string; square: string; reportHeaderLogo?: any | null };
+    ELEMENTARY: { rectangular: string; square: string; reportHeaderLogo?: any | null };
+    JUNIOR_HIGH: { rectangular: string; square: string; reportHeaderLogo?: any | null };
   }>({
-    KINDERGARTEN: { rectangular: "", square: "" },
-    ELEMENTARY: { rectangular: "", square: "" },
-    JUNIOR_HIGH: { rectangular: "", square: "" },
+    KINDERGARTEN: { rectangular: "", square: "", reportHeaderLogo: null },
+    ELEMENTARY: { rectangular: "", square: "", reportHeaderLogo: null },
+    JUNIOR_HIGH: { rectangular: "", square: "", reportHeaderLogo: null },
   });
   const [isLogosSaving, setIsLogosSaving] = React.useState(false);
 
@@ -201,6 +201,68 @@ export default function SuperAdminPage() {
         }));
       };
       img.src = base64;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleReportHeaderLogoUpload = (unit: "KINDERGARTEN" | "ELEMENTARY" | "JUNIOR_HIGH", file: File) => {
+    if (!file) return;
+
+    const allowedTypes = ["image/png", "image/jpeg", "image/jpg"];
+    if (!allowedTypes.includes(file.type)) {
+      alert("Format file tidak didukung! Harap pilih gambar dengan format PNG, JPG, atau JPEG.");
+      return;
+    }
+
+    const maxSizeBytes = 10 * 1024 * 1024; // 10 MB
+    if (file.size > maxSizeBytes) {
+      alert("Ukuran file terlalu besar! Maksimum ukuran file adalah 10 MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const originalUrl = e.target?.result as string;
+      const img = new Image();
+      img.onload = () => {
+        const width = img.width;
+        const height = img.height;
+
+        // Wajib orientasi horizontal / landscape
+        if (width <= height) {
+          alert("Gagal: Orientasi gambar wajib horizontal / landscape (lebar harus lebih besar dari tinggi)!");
+          return;
+        }
+
+        // Validasi rasio logo horizontal, rekomendasi rasio sekitar 3:1 sampai 5:1.
+        const ratio = width / height;
+        if (ratio < 2.5 || ratio > 6.0) {
+          alert(`Peringatan: Rasio gambar (${ratio.toFixed(1)}:1) kurang ideal! Rekomendasi rasio logo horizontal adalah antara 3:1 sampai 5:1.`);
+        }
+
+        // Rekomendasi minimum: 1600 × 500 px.
+        if (width < 1600 || height < 500) {
+          alert(`Peringatan: Kualitas logo mungkin kurang optimal. Lebar gambar Anda (${width} px) atau tinggi (${height} px) di bawah rekomendasi minimum (1600 × 500 px). Disarankan mengunggah gambar resolusi tinggi agar tidak blur di PDF.`);
+        }
+
+        setLogos((prev) => ({
+          ...prev,
+          [unit]: {
+            ...prev[unit],
+            reportHeaderLogo: {
+              originalUrl: originalUrl,
+              fileName: file.name,
+              mimeType: file.type,
+              sizeBytes: file.size,
+              width: width,
+              height: height,
+              uploadedAt: Date.now(),
+              uploadedBy: auth.currentUser?.email || "admin@lumina.id"
+            }
+          }
+        }));
+      };
+      img.src = originalUrl;
     };
     reader.readAsDataURL(file);
   };
@@ -4126,16 +4188,105 @@ export default function SuperAdminPage() {
                               </label>
                             )}
                           </div>
+
+                          {/* 3. Report Header Logo Shape (HD) */}
+                          <div className="space-y-2 pt-3 border-t border-dashed border-gray-200">
+                            <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-wider text-gray-400">
+                              <span>Logo Rapor HD / Header PDF</span>
+                              <span className="text-[8px] text-emerald-600">Min: 1600x500 px</span>
+                            </div>
+                            <p className="text-[9px] text-gray-500 leading-normal">
+                              Digunakan khusus untuk kop dokumen resmi, Preview, Print, dan PDF rapor.
+                            </p>
+
+                            {unitLogos.reportHeaderLogo?.originalUrl ? (
+                              <div className="space-y-2">
+                                <div id={`preview-header-${unit}`} className="border border-gray-100 rounded-2xl p-4 bg-white relative overflow-hidden flex flex-col items-center justify-center h-28 group shadow-sm">
+                                  <img src={unitLogos.reportHeaderLogo.originalUrl} alt="Logo Rapor HD" className="max-h-full max-w-full object-contain" />
+                                  <div className="absolute inset-0 bg-gray-950/40 backdrop-blur-[1px] opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center gap-2">
+                                    <label id={`lbl-header-upload-${unit}`} className="p-2 bg-white/90 hover:bg-white text-gray-950 rounded-xl text-[10px] font-bold uppercase tracking-wider cursor-pointer shadow-md transition-transform hover:scale-105">
+                                      Ganti Logo
+                                      <input
+                                        id={`input-file-header-${unit}`}
+                                        type="file"
+                                        accept="image/png, image/jpeg, image/jpg"
+                                        className="hidden"
+                                        onChange={(e) => {
+                                          const file = e.target.files?.[0];
+                                          if (file) handleReportHeaderLogoUpload(unit, file);
+                                        }}
+                                      />
+                                    </label>
+                                    <button
+                                      id={`btn-clear-header-${unit}`}
+                                      onClick={() => {
+                                        setLogos(prev => ({
+                                          ...prev,
+                                          [unit]: { ...prev[unit], reportHeaderLogo: null }
+                                        }));
+                                      }}
+                                      className="p-2 bg-red-600/95 hover:bg-red-700 text-white rounded-xl text-[10px] font-bold uppercase tracking-wider shadow-md transition-transform hover:scale-105"
+                                    >
+                                      Hapus Logo
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="bg-white border border-gray-100 rounded-2xl p-3 space-y-1 text-[9px] text-gray-500 font-medium">
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Nama File:</span>
+                                    <span className="font-bold text-gray-700 max-w-[140px] truncate">{unitLogos.reportHeaderLogo.fileName}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Dimensi:</span>
+                                    <span className="font-bold text-gray-700">{unitLogos.reportHeaderLogo.width} × {unitLogos.reportHeaderLogo.height} px</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Ukuran:</span>
+                                    <span className="font-bold text-gray-700">{(unitLogos.reportHeaderLogo.sizeBytes / (1024 * 1024)).toFixed(2)} MB</span>
+                                  </div>
+                                  <div className="flex justify-between items-center pt-1 border-t border-gray-50">
+                                    <span className="text-gray-400">Status:</span>
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-100 font-black text-[8px] uppercase tracking-wider">
+                                      Logo Aktif
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                <label id={`dropzone-header-${unit}`} className="border border-dashed border-gray-200 hover:border-blue-400 rounded-2xl h-24 flex flex-col items-center justify-center bg-white hover:bg-blue-50/10 cursor-pointer group transition-all">
+                                  <Upload size={18} className="text-gray-300 group-hover:text-blue-500 transition-colors mb-1.5" />
+                                  <span className="text-[10px] font-bold text-gray-450 group-hover:text-blue-600">Klik / Seret Gambar</span>
+                                  <span className="text-[8px] text-gray-300 font-bold uppercase tracking-widest mt-0.5">PNG, JPG, JPEG • landscape</span>
+                                  <input
+                                    id={`input-file-header-empty-${unit}`}
+                                    type="file"
+                                    accept="image/png, image/jpeg, image/jpg"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) handleReportHeaderLogoUpload(unit, file);
+                                    }}
+                                  />
+                                </label>
+                                <div className="flex justify-between items-center text-[9px] text-gray-400 p-1 bg-gray-50 rounded-xl px-3 border border-gray-100">
+                                  <span>Status:</span>
+                                  <span className="font-black text-[8px] text-gray-500 uppercase tracking-wider">Belum diunggah</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         </div>
 
                         {/* Reset individual unit logos */}
-                        {(unitLogos.rectangular || unitLogos.square) && (
+                        {(unitLogos.rectangular || unitLogos.square || unitLogos.reportHeaderLogo) && (
                           <button
                             id={`btn-clear-unit-logos-${unit}`}
                             onClick={() => {
                               setLogos(prev => ({
                                 ...prev,
-                                [unit]: { rectangular: "", square: "" }
+                                [unit]: { rectangular: "", square: "", reportHeaderLogo: null }
                               }));
                             }}
                             className="w-full text-center text-[10px] font-black uppercase text-red-500 hover:text-red-700 tracking-wider pt-3 border-t border-dashed border-gray-200 transition-colors"

@@ -358,13 +358,9 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                   src={effLogoUrl} 
                   alt="Lazuardi Elementary Logo" 
                   className="h-12 max-w-[180px] object-contain"
-                  crossOrigin="anonymous"
+                  crossOrigin={effLogoUrl.startsWith("data:") ? undefined : "anonymous"}
                 />
-              ) : (
-                <div className="px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-800 font-bold text-[10px] rounded-lg text-center">
-                  [Konfigurasi Logo Elementary Belum Diset di Lumina Admin]
-                </div>
-              )}
+              ) : null}
             </div>
             <div className="text-right space-y-0.5">
               <h1 className="text-base font-black tracking-tight text-slate-900 uppercase">
@@ -449,7 +445,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                   src={effLogoUrl} 
                   alt="Lazuardi Elementary Logo" 
                   className="h-10 max-w-[160px] object-contain"
-                  crossOrigin="anonymous"
+                  crossOrigin={effLogoUrl.startsWith("data:") ? undefined : "anonymous"}
                 />
               )}
             </div>

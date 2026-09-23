@@ -120,6 +120,36 @@ export default function MidtermSummary() {
   const [resolvedTeacherName, setResolvedTeacherName] = React.useState<string | null>(null);
   const [resolvedTeacherNiy, setResolvedTeacherNiy] = React.useState<string>('-');
   const [isSignatureLoading, setIsSignatureLoading] = React.useState<boolean>(false);
+  const [resolvedLogoUrl, setResolvedLogoUrl] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const fetchLogo = async () => {
+      try {
+        const logoDoc = await getDoc(doc(db, 'settings', 'logos'));
+        if (logoDoc.exists()) {
+          const data = logoDoc.data() as any;
+          if (data?.KINDERGARTEN?.reportHeaderLogo?.originalUrl) {
+            setResolvedLogoUrl(data.KINDERGARTEN.reportHeaderLogo.originalUrl);
+          } else if (data?.KINDERGARTEN?.rectangular) {
+            setResolvedLogoUrl(data.KINDERGARTEN.rectangular);
+          }
+        } else {
+          const localLogos = localStorage.getItem('lumina_school_logos');
+          if (localLogos) {
+            const parsed = JSON.parse(localLogos);
+            if (parsed?.KINDERGARTEN?.reportHeaderLogo?.originalUrl) {
+              setResolvedLogoUrl(parsed.KINDERGARTEN.reportHeaderLogo.originalUrl);
+            } else if (parsed?.KINDERGARTEN?.rectangular) {
+              setResolvedLogoUrl(parsed.KINDERGARTEN.rectangular);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to fetch Kindergarten school logo in MidtermSummary:", err);
+      }
+    };
+    fetchLogo();
+  }, []);
 
   const [kindySignatory, setKindySignatory] = React.useState<{
     principalName: string;
@@ -2919,17 +2949,30 @@ export default function MidtermSummary() {
                         <div className="bg-[#109E58] py-4 px-5 text-white relative flex flex-col justify-between rounded-sm">
                           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-white/20 pb-3 mb-3 gap-3">
                             <div className="flex items-center gap-3">
-                              <div className="bg-white/10 p-2 rounded-lg shrink-0">
-                                <svg className="w-8 h-8 text-white" viewBox="0 0 100 100" fill="currentColor">
-                                  <path d="M50 10 C42 35 25 45 10 50 C25 55 42 65 50 90 C58 65 75 55 90 50 C75 45 58 35 50 10 Z" />
-                                  <path d="M50 25 C45 40 35 48 25 50 C35 52 45 60 50 75 C55 60 65 52 75 50 C65 48 55 40 50 25 Z" fill="#109E58" />
-                                </svg>
-                              </div>
-                              <div className="text-left leading-none">
-                                <span className="block font-sans text-base font-black tracking-widest text-white m-0">Lazuardi</span>
-                                <span className="block font-sans text-[10px] font-bold tracking-[0.25em] text-emerald-100 m-0 uppercase leading-none mt-0.5">KINDERGARTEN</span>
-                                <span className="block font-sans text-[7px] text-emerald-200 mt-0.5 uppercase tracking-wider leading-none font-semibold">Global Compassionate School</span>
-                              </div>
+                              {resolvedLogoUrl ? (
+                                <div className="bg-white p-1.5 rounded-lg shrink-0 flex items-center justify-center" style={{ height: '56px' }}>
+                                  <img 
+                                    src={resolvedLogoUrl} 
+                                    alt="Lazuardi Kindergarten Logo" 
+                                    className="h-10 w-auto object-contain"
+                                    crossOrigin={resolvedLogoUrl.startsWith("data:") ? undefined : "anonymous"}
+                                  />
+                                </div>
+                              ) : (
+                                <>
+                                  <div className="bg-white/10 p-2 rounded-lg shrink-0">
+                                    <svg className="w-8 h-8 text-white" viewBox="0 0 100 100" fill="currentColor">
+                                      <path d="M50 10 C42 35 25 45 10 50 C25 55 42 65 50 90 C58 65 75 55 90 50 C75 45 58 35 50 10 Z" />
+                                      <path d="M50 25 C45 40 35 48 25 50 C35 52 45 60 50 75 C55 60 65 52 75 50 C65 48 55 40 50 25 Z" fill="#109E58" />
+                                    </svg>
+                                  </div>
+                                  <div className="text-left leading-none">
+                                    <span className="block font-sans text-base font-black tracking-widest text-white m-0">Lazuardi</span>
+                                    <span className="block font-sans text-[10px] font-bold tracking-[0.25em] text-emerald-100 m-0 uppercase leading-none mt-0.5">KINDERGARTEN</span>
+                                    <span className="block font-sans text-[7px] text-emerald-200 mt-0.5 uppercase tracking-wider leading-none font-semibold">Global Compassionate School</span>
+                                  </div>
+                                </>
+                              )}
                             </div>
 
                             <div className="text-right sm:text-right w-full sm:w-auto flex flex-col items-end justify-center">
