@@ -175,7 +175,16 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
           principalTitle: reportConfig?.principalTitle || 'Principal',
           principalNiy: reportConfig?.principalNIY || '',
           principalSignatureUrl: reportConfig?.principalSignatureUrl || null,
-          homeroomTeacherName: selectedClass.homeroomTeacherName || homeroomTeacherProfile?.displayName || 'Homeroom Teacher',
+          homeroomTeacherName: (() => {
+            const isEmail = (val?: string | null) => !!val && val.includes('@');
+            if (homeroomTeacherProfile?.displayName && !isEmail(homeroomTeacherProfile.displayName)) {
+              return homeroomTeacherProfile.displayName;
+            }
+            if (selectedClass.homeroomTeacherName && !isEmail(selectedClass.homeroomTeacherName)) {
+              return selectedClass.homeroomTeacherName;
+            }
+            return 'Homeroom Teacher';
+          })(),
           homeroomTeacherNiy: homeroomTeacherProfile?.niy || '',
           homeroomTeacherSignatureUrl: homeroomTeacherProfile?.signatureUrl || (selectedClass as any)?.teacherSignatureUrl || null
         },

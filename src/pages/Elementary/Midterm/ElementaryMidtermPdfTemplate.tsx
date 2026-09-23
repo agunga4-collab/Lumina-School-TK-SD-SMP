@@ -127,9 +127,22 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
     fetchTeacher();
   }, [dbClass?.homeroomTeacherId, currentClass?.homeroomTeacherId, snapshot]);
 
-  const effHomeroomName = snapshot 
-    ? snapshot.signatory.homeroomTeacherName 
-    : (dbClass?.homeroomTeacherName || currentClass?.homeroomTeacherName || homeroomTeacherProfile?.displayName || 'Homeroom Teacher');
+  const effHomeroomName = (() => {
+    const isEmail = (val?: string | null) => !!val && val.includes('@');
+    if (snapshot) {
+      const snapName = snapshot.signatory.homeroomTeacherName;
+      if (snapName && !isEmail(snapName)) return snapName;
+      return 'Homeroom Teacher';
+    }
+    const userProfileName = teacherUser?.displayName || teacherUser?.name || homeroomTeacherProfile?.displayName;
+    if (userProfileName && !isEmail(userProfileName)) return userProfileName;
+
+    const classRoomName = dbClass?.homeroomTeacherName || currentClass?.homeroomTeacherName;
+    if (classRoomName && !isEmail(classRoomName)) return classRoomName;
+
+    return 'Homeroom Teacher';
+  })();
+
   const effHomeroomNiy = snapshot 
     ? (snapshot.signatory.homeroomTeacherNiy || '') 
     : (teacherUser?.niy || homeroomTeacherProfile?.niy || '');
@@ -544,7 +557,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
               </div>
               <div>
                 <p className="font-bold text-slate-900 underline">{effHomeroomName}</p>
-                {effHomeroomNiy && <p className="text-[9px] text-slate-500">NIY: {effHomeroomNiy}</p>}
+                <p className="text-[9px] text-slate-500">NIY: {(!effHomeroomNiy || effHomeroomNiy === '-') ? '-' : effHomeroomNiy}</p>
               </div>
             </div>
 

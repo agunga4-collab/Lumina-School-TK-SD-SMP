@@ -184,7 +184,16 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
         principalName: reportConfig?.principalName || 'Principal',
         principalNiy: reportConfig?.principalNIY || '',
         principalSignatureUrl: reportConfig?.principalSignatureUrl || null,
-        homeroomTeacherName: selectedClass?.homeroomTeacherName || homeroomTeacherProfile?.displayName || 'Homeroom Teacher',
+        homeroomTeacherName: (() => {
+          const isEmail = (val?: string | null) => !!val && val.includes('@');
+          if (homeroomTeacherProfile?.displayName && !isEmail(homeroomTeacherProfile.displayName)) {
+            return homeroomTeacherProfile.displayName;
+          }
+          if (selectedClass?.homeroomTeacherName && !isEmail(selectedClass.homeroomTeacherName)) {
+            return selectedClass.homeroomTeacherName;
+          }
+          return 'Homeroom Teacher';
+        })(),
         homeroomTeacherNiy: homeroomTeacherProfile?.niy || '',
         homeroomTeacherSignatureUrl: selectedClass?.teacherSignatureUrl || null
       },

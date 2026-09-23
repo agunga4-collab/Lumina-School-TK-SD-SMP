@@ -715,24 +715,46 @@ export default function MidtermSummary() {
         if (classSnap.exists() && active) {
           const data = classSnap.data();
           setResolvedSignatureUrl(data.teacherSignatureUrl || null);
-          setResolvedTeacherName(data.homeroomTeacherName || null);
           
-          let teacherNiyVal = data.teacherNiy || data.homeroomTeacherNiy || '';
-          if (!teacherNiyVal && data.homeroomTeacherId) {
+          let resolvedName: string | null = null;
+          let teacherNiyVal = '';
+
+          const isEmail = (val?: string | null) => !!val && val.includes('@');
+
+          if (data.homeroomTeacherId) {
             try {
               const userSnap = await getDoc(doc(db, 'users', data.homeroomTeacherId));
               if (userSnap.exists()) {
-                teacherNiyVal = userSnap.data().niy || '';
+                const uData = userSnap.data();
+                const possibleName = uData.displayName || uData.name || null;
+                if (possibleName && !isEmail(possibleName)) {
+                  resolvedName = possibleName;
+                }
+                teacherNiyVal = uData.niy || '';
               }
             } catch (e) {
-              console.error("Error fetching teacher NIY:", e);
+              console.error("Error fetching teacher details from user doc:", e);
             }
           }
+
+          if (!resolvedName && data.homeroomTeacherName && !isEmail(data.homeroomTeacherName)) {
+            resolvedName = data.homeroomTeacherName;
+          }
+
+          setResolvedTeacherName(resolvedName || 'Homeroom Teacher');
           setResolvedTeacherNiy(teacherNiyVal || '-');
         } else if (active) {
           const fallbackClass = classes.find(c => c.id === studentCanonicalClassId) || activeClassObj;
           setResolvedSignatureUrl(fallbackClass?.teacherSignatureUrl || null);
-          setResolvedTeacherName(fallbackClass?.homeroomTeacherName || null);
+          
+          let resolvedName: string | null = null;
+          const isEmail = (val?: string | null) => !!val && val.includes('@');
+
+          if (fallbackClass?.homeroomTeacherName && !isEmail(fallbackClass.homeroomTeacherName)) {
+            resolvedName = fallbackClass.homeroomTeacherName;
+          }
+
+          setResolvedTeacherName(resolvedName || 'Homeroom Teacher');
           setResolvedTeacherNiy(fallbackClass?.teacherNiy || fallbackClass?.homeroomTeacherNiy || '-');
         }
       } catch (err) {
@@ -3205,11 +3227,9 @@ export default function MidtermSummary() {
                                <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
                                  {resolvedTeacherName || "Nama Guru Kelas"}
                                </span>
-                               {resolvedTeacherNiy && resolvedTeacherNiy !== '-' && resolvedTeacherNiy !== '' && (
-                                 <span className="text-[8px] text-gray-400 block mt-1 font-sans">
-                                   NIY: {resolvedTeacherNiy}
-                                 </span>
-                               )}
+                                <span className="text-[8px] text-gray-400 block mt-1 font-sans">
+                                  NIY: {(!resolvedTeacherNiy || resolvedTeacherNiy === '-') ? '-' : resolvedTeacherNiy}
+                                </span>
                              </div>
                            </div>
 
