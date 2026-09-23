@@ -167,10 +167,8 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
       if (snapName && !isEmail(snapName)) return snapName;
       return 'Homeroom Teacher';
     }
-    const userProfileName = teacherUser?.displayName || teacherUser?.name || homeroomTeacherProfile?.displayName;
-    if (userProfileName && !isEmail(userProfileName)) return userProfileName;
 
-    const classRoomName = dbClass?.homeroomTeacherName || currentClass?.homeroomTeacherName;
+    const classRoomName = dbClass?.homeroomTeacherName || currentClass?.homeroomTeacherName || homeroomTeacherProfile?.displayName;
     if (classRoomName && !isEmail(classRoomName)) return classRoomName;
 
     return 'Homeroom Teacher';

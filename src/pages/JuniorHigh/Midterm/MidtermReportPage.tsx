@@ -268,12 +268,8 @@ function MidtermReportPageContent() {
           if (uSnap.exists()) {
             const uData = uSnap.data();
             let resolvedName: string | null = null;
-            const possibleName = uData?.displayName || uData?.name || null;
-            if (possibleName && !isEmail(possibleName)) {
-              resolvedName = possibleName;
-            }
 
-            if (!resolvedName && selectedClass.homeroomTeacherName && !isEmail(selectedClass.homeroomTeacherName)) {
+            if (selectedClass.homeroomTeacherName && !isEmail(selectedClass.homeroomTeacherName)) {
               resolvedName = selectedClass.homeroomTeacherName;
             }
 

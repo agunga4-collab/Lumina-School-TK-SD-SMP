@@ -721,24 +721,20 @@ export default function MidtermSummary() {
 
           const isEmail = (val?: string | null) => !!val && val.includes('@');
 
+          if (data.homeroomTeacherName && !isEmail(data.homeroomTeacherName)) {
+            resolvedName = data.homeroomTeacherName;
+          }
+
           if (data.homeroomTeacherId) {
             try {
               const userSnap = await getDoc(doc(db, 'users', data.homeroomTeacherId));
               if (userSnap.exists()) {
                 const uData = userSnap.data();
-                const possibleName = uData.displayName || uData.name || null;
-                if (possibleName && !isEmail(possibleName)) {
-                  resolvedName = possibleName;
-                }
                 teacherNiyVal = uData.niy || '';
               }
             } catch (e) {
               console.error("Error fetching teacher details from user doc:", e);
             }
-          }
-
-          if (!resolvedName && data.homeroomTeacherName && !isEmail(data.homeroomTeacherName)) {
-            resolvedName = data.homeroomTeacherName;
           }
 
           setResolvedTeacherName(resolvedName || 'Homeroom Teacher');

@@ -186,9 +186,6 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
         principalSignatureUrl: reportConfig?.principalSignatureUrl || null,
         homeroomTeacherName: (() => {
           const isEmail = (val?: string | null) => !!val && val.includes('@');
-          if (homeroomTeacherProfile?.displayName && !isEmail(homeroomTeacherProfile.displayName)) {
-            return homeroomTeacherProfile.displayName;
-          }
           if (selectedClass?.homeroomTeacherName && !isEmail(selectedClass.homeroomTeacherName)) {
             return selectedClass.homeroomTeacherName;
           }
