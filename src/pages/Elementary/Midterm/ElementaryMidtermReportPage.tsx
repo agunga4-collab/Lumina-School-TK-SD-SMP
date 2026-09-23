@@ -207,9 +207,9 @@ function ElementaryMidtermReportPageContent() {
   const selectedClass = safeClassesList.find(c => c.id === selectedClassId) || null;
 
   // Load class data
-  const loadClassData = React.useCallback(async () => {
+  const loadClassData = React.useCallback(async (silent = false) => {
     if (!selectedClassId || !selectedYear) return;
-    setLoadingData(true);
+    if (!silent) setLoadingData(true);
     try {
       const [studentList, config, goals, sData, published] = await Promise.all([
         getActiveStudents(selectedClassId, selectedYear),
@@ -274,7 +274,7 @@ function ElementaryMidtermReportPageContent() {
     } catch (err) {
       console.error('Error loading Elementary Midterm class data:', err);
     } finally {
-      setLoadingData(false);
+      if (!silent) setLoadingData(false);
     }
   }, [selectedClassId, selectedYear, selectedSemester, selectedTerm, selectedClass]);
 

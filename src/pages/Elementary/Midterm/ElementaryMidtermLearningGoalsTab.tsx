@@ -39,7 +39,7 @@ interface ElementaryMidtermLearningGoalsTabProps {
   students: Student[];
   masterGoalsMap: Record<string, ElementaryMidtermMasterGoalDoc>;
   studentDataMap: Record<string, ElementaryMidtermStudentDataDoc>;
-  onRefreshData: () => Promise<void>;
+  onRefreshData: (silent?: boolean) => Promise<void>;
   currentUser: UserType | null;
 }
 
@@ -215,6 +215,9 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
   // Save status indicator: 'saved' | 'saving' | 'error' | null
   const [saveStatus, setSaveStatus] = React.useState<'saved' | 'saving' | 'error' | null>(null);
 
+  // Learning Goals Save status indicator: 'saved' | 'saving' | 'error' | null
+  const [lgSaveStatus, setLgSaveStatus] = React.useState<'saved' | 'saving' | 'error' | null>('saved');
+
   // Bulk Confirmation Modal State
   const [bulkModal, setBulkModal] = React.useState<{
     isOpen: boolean;
@@ -292,8 +295,9 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
 
   // Update activeGoalIds in Firestore for current class and subject
   const updateActiveGoalIdsInDb = async (newActiveIds: string[]) => {
+    const previousActiveIds = [...activeGoalIds];
     setActiveGoalIds(newActiveIds);
-    setSavingGoals(true);
+    setLgSaveStatus('saving');
     try {
       await saveElementaryMidtermActiveGoalIds(
         selectedClassId,
@@ -304,11 +308,12 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
         newActiveIds,
         currentUser
       );
-      await onRefreshData();
+      setLgSaveStatus('saved');
+      await onRefreshData(true); // Silent reload in background
     } catch (err) {
       console.error("Error updating active goal IDs:", err);
-    } finally {
-      setSavingGoals(false);
+      setActiveGoalIds(previousActiveIds); // Rollback state!
+      setLgSaveStatus('error');
     }
   };
 
@@ -588,8 +593,12 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
 
     if (editingGoalId) {
       // Editing existing goal for current selected class
-      setSavingGoals(true);
-      let updatedGoals = goals.map(g => g.id === editingGoalId ? { ...g, text: goalTextInput.trim() } : g);
+      const previousGoals = [...goals];
+      const updatedGoals = goals.map(g => g.id === editingGoalId ? { ...g, text: goalTextInput.trim() } : g);
+      setGoals(updatedGoals);
+      setGoalTextInput('');
+      setEditingGoalId(null);
+      setLgSaveStatus('saving');
       try {
         const category = activeSubject === 'Projects' ? 'PROJECTS' : 'SUBJECTS';
         await saveElementaryMidtermMasterGoals(
@@ -604,15 +613,12 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
           currentUser,
           activeGoalIds
         );
-
-        setGoals(updatedGoals);
-        setGoalTextInput('');
-        setEditingGoalId(null);
-        await onRefreshData();
+        setLgSaveStatus('saved');
+        await onRefreshData(true); // Silent reload in background
       } catch (e) {
         console.error("Error editing goal:", e);
-      } finally {
-        setSavingGoals(false);
+        setGoals(previousGoals); // Rollback
+        setLgSaveStatus('error');
       }
     } else {
       // Adding new goal -> check selected target classes & open confirmation modal
@@ -627,7 +633,29 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
   // Execute bulk save of new Learning Goal across all selected target classes
   const executeAddGoalBulk = async () => {
     if (!goalTextInput.trim() || selectedTargetClassIds.length === 0) return;
+
+    const goalText = goalTextInput.trim();
+    const tempGoalId = `goal_temp_${Date.now()}`;
+    const newGoalItem: ElementaryMidtermGoalItem = {
+      id: tempGoalId,
+      text: goalText,
+      order: goals.length + 1
+    };
+
+    const previousGoals = [...goals];
+    const previousActiveIds = [...activeGoalIds];
+
+    // Optimistic state update for current class if selected
+    const currentClassIsTarget = selectedTargetClassIds.includes(selectedClassId);
+    if (currentClassIsTarget) {
+      setGoals(prev => [...prev, newGoalItem]);
+      if (useForMidtermNewGoal) {
+        setActiveGoalIds(prev => [...prev, tempGoalId]);
+      }
+    }
+
     setSavingGoals(true);
+    setLgSaveStatus('saving');
     setShowAddGoalConfirmModal(false);
 
     try {
@@ -641,7 +669,7 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
         selectedTerm,
         effectiveSubjectKey,
         category,
-        goalTextInput.trim(),
+        goalText,
         currentUser,
         useForMidtermNewGoal
       );
@@ -649,13 +677,21 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
       const count = selectedTargetClassIds.length;
       setBulkGoalSuccessMsg(`✓ Learning Goal berhasil diterapkan ke ${count} kelas.`);
       setGoalTextInput('');
-      await onRefreshData();
+      setLgSaveStatus('saved');
+
+      await onRefreshData(true); // Silent reload in background
 
       setTimeout(() => {
         setBulkGoalSuccessMsg(null);
       }, 6000);
     } catch (e) {
       console.error("Error bulk adding learning goal:", e);
+      // Rollback on error
+      if (currentClassIsTarget) {
+        setGoals(previousGoals);
+        setActiveGoalIds(previousActiveIds);
+      }
+      setLgSaveStatus('error');
     } finally {
       setSavingGoals(false);
     }
@@ -663,9 +699,17 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
 
   const handleDeleteGoal = async (goalId: string) => {
     if (!confirm("Apakah Anda yakin ingin menghapus Goal ini dari Bank?")) return;
+    const previousGoals = [...goals];
+    const previousActiveIds = [...activeGoalIds];
+
     const updatedGoals = goals.filter(g => g.id !== goalId);
     const updatedActiveIds = activeGoalIds.filter(id => id !== goalId);
+
+    setGoals(updatedGoals);
+    setActiveGoalIds(updatedActiveIds);
     setSavingGoals(true);
+    setLgSaveStatus('saving');
+
     try {
       const category = activeSubject === 'Projects' ? 'PROJECTS' : 'SUBJECTS';
       await saveElementaryMidtermMasterGoals(
@@ -680,11 +724,13 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
         currentUser,
         updatedActiveIds
       );
-      setGoals(updatedGoals);
-      setActiveGoalIds(updatedActiveIds);
-      await onRefreshData();
+      setLgSaveStatus('saved');
+      await onRefreshData(true); // Silent reload in background
     } catch (e) {
       console.error("Error deleting goal:", e);
+      setGoals(previousGoals);
+      setActiveGoalIds(previousActiveIds);
+      setLgSaveStatus('error');
     } finally {
       setSavingGoals(false);
     }
@@ -875,9 +921,26 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
       <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
           <div>
-            <div className="flex items-center gap-2 text-emerald-800 text-xs font-black uppercase tracking-wider mb-1">
+            <div className="flex items-center flex-wrap gap-2 text-emerald-800 text-xs font-black uppercase tracking-wider mb-1">
               <BookOpen size={16} />
               <span>Bank Learning Goals — {activeSubject} {activeSubject === 'Performing Arts' && activeUaTab ? `(${activeUaTab})` : ''}</span>
+              
+              {lgSaveStatus === 'saving' && (
+                <span className="inline-flex items-center gap-1 text-[11px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full animate-pulse transition-all">
+                  <RefreshCw size={11} className="animate-spin text-amber-500" />
+                  Menyimpan...
+                </span>
+              )}
+              {lgSaveStatus === 'saved' && (
+                <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full transition-all animate-in fade-in duration-300">
+                  ✓ Semua perubahan tersimpan
+                </span>
+              )}
+              {lgSaveStatus === 'error' && (
+                <span className="inline-flex items-center gap-1 text-[11px] font-black text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full transition-all">
+                  Gagal menyimpan. Coba lagi.
+                </span>
+              )}
             </div>
             <h2 className="text-base font-black text-slate-900 tracking-tight">
               Daftar Semua Learning Goals Terdaftar ({goals.length})
