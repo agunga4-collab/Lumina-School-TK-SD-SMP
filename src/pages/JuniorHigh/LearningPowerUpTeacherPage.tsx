@@ -496,6 +496,7 @@ function LearningPowerUpTeacherPageContent() {
   const [loadingMetadata, setLoadingMetadata] = React.useState(true);
   const [loadingData, setLoadingData] = React.useState(false);
   const [savingCells, setSavingCells] = React.useState<Record<string, boolean>>({});
+  const [firestoreError, setFirestoreError] = React.useState<string | null>(null);
 
   // Search filter inside table
   const [searchQuery, setSearchQuery] = React.useState<string>('');
@@ -616,6 +617,7 @@ function LearningPowerUpTeacherPageContent() {
   React.useEffect(() => {
     const loadClassesList = async () => {
       setLoadingMetadata(true);
+      setFirestoreError(null);
       try {
         const qClasses = query(
           collection(db, 'classes'),
@@ -657,6 +659,7 @@ function LearningPowerUpTeacherPageContent() {
         }
       } catch (err) {
         console.error("Error loading teacher classes:", err);
+        setFirestoreError("Koneksi data sedang bermasalah. Silakan coba lagi.");
         toast.error("Gagal memuat daftar kelas SMP.");
       } finally {
         setLoadingMetadata(false);
@@ -977,6 +980,7 @@ function LearningPowerUpTeacherPageContent() {
     setPackages([]);
     setProgresses([]);
     setLitnumRecordsByStudentId({});
+    setFirestoreError(null);
     
     setLoadingData(true);
     try {
@@ -1307,6 +1311,7 @@ function LearningPowerUpTeacherPageContent() {
 
     } catch (err) {
       console.error("Error loading class data for tracker:", err);
+      setFirestoreError("Koneksi data sedang bermasalah. Silakan coba lagi.");
       toast.error("Gagal memuat data tracker kelas.");
     } finally {
       setLoadingData(false);
@@ -4093,6 +4098,33 @@ function LearningPowerUpTeacherPageContent() {
     );
   }
 
+  if (firestoreError) {
+    return (
+      <div className="min-h-[60vh] flex flex-col items-center justify-center gap-6 text-center max-w-md mx-auto px-4" id="lpu-firestore-error-container">
+        <div className="w-16 h-16 rounded-2xl bg-red-50 text-red-500 flex items-center justify-center border border-red-100 shadow-sm">
+          <AlertTriangle className="w-8 h-8" />
+        </div>
+        <div className="space-y-2">
+          <h2 className="text-xl font-black text-gray-950">Gagal Memuat Data</h2>
+          <p className="text-sm font-semibold text-gray-500">{firestoreError}</p>
+        </div>
+        <button
+          onClick={() => {
+            setFirestoreError(null);
+            if (selectedClassId && activeYear) {
+              loadClassData();
+            } else {
+              window.location.reload();
+            }
+          }}
+          className="px-6 py-3 bg-[#109E58] hover:bg-[#109E58]/90 text-white font-bold text-sm rounded-xl shadow-md transition-colors"
+        >
+          Muat Ulang
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 space-y-8" id="learning-power-up-teacher-root">
       
@@ -4664,7 +4696,7 @@ function LearningPowerUpTeacherPageContent() {
             <div className="bg-emerald-50/70 border border-emerald-100 rounded-2xl p-5 flex flex-col md:flex-row items-center justify-between gap-4 shadow-xs">
               <div className="flex items-center gap-4">
                 <div className="w-10 h-10 rounded-xl bg-emerald-100 text-[#109E58] flex items-center justify-center shrink-0 font-bold">
-                  <CheckCircle size={22} />
+                  <CheckCircle2 size={22} />
                 </div>
                 <div>
                   <h3 className="text-xs font-black text-emerald-950 uppercase tracking-wider">
