@@ -156,7 +156,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
         principalSignatureUrl: reportConfig?.principalSignatureUrl || null,
         homeroomTeacherName: selectedClass?.homeroomTeacherName || homeroomTeacherProfile?.displayName || 'Homeroom Teacher',
         homeroomTeacherNiy: homeroomTeacherProfile?.niy || '',
-        homeroomTeacherSignatureUrl: homeroomTeacherProfile?.signatureUrl || null
+        homeroomTeacherSignatureUrl: selectedClass?.teacherSignatureUrl || null
       }
     };
   };

@@ -1746,6 +1746,18 @@ export default function MidtermSummary() {
 
   const isAuthorizer = profile?.role === 'SUPER_ADMIN' || profile?.role === 'HEAD_UNIT' || profile?.role === 'kindergarten_head';
 
+  const isValidHomeroomSignature = !!(resolvedSignatureUrl && 
+    resolvedSignatureUrl !== "none" && 
+    resolvedSignatureUrl !== "null" && 
+    resolvedSignatureUrl !== "" &&
+    (resolvedSignatureUrl.startsWith("data:") || resolvedSignatureUrl.startsWith("http://") || resolvedSignatureUrl.startsWith("https://") || resolvedSignatureUrl.startsWith("/")));
+
+  const isValidPrincipalSignature = !!(kindySignatory?.principalSignatureUrl && 
+    kindySignatory.principalSignatureUrl !== "none" && 
+    kindySignatory.principalSignatureUrl !== "null" && 
+    kindySignatory.principalSignatureUrl !== "" &&
+    (kindySignatory.principalSignatureUrl.startsWith("data:") || kindySignatory.principalSignatureUrl.startsWith("http://") || kindySignatory.principalSignatureUrl.startsWith("https://") || kindySignatory.principalSignatureUrl.startsWith("/")));
+
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-20 px-4 font-sans">
       
@@ -3134,25 +3146,27 @@ export default function MidtermSummary() {
                            <div className="flex flex-col items-center justify-between h-[100px]">
                              <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">Guru Kelas</span>
                              <div className="h-12 flex items-center justify-center">
-                               {resolvedSignatureUrl ? (
+                               {isValidHomeroomSignature ? (
                                  <img 
-                                   src={resolvedSignatureUrl} 
+                                   src={resolvedSignatureUrl!} 
                                    alt="Signature" 
                                    className="h-10 w-auto object-contain"
                                    referrerPolicy="no-referrer"
-                                   crossOrigin="anonymous"
+                                   crossOrigin={resolvedSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
                                  />
                                ) : (
-                                 <div className="text-[9px] text-gray-300 italic font-sans">Belum bertanda tangan</div>
+                                 <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
                                )}
                              </div>
                              <div className="text-center font-sans leading-none">
                                <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
                                  {resolvedTeacherName || "Nama Guru Kelas"}
                                </span>
-                               <span className="text-[8px] text-gray-400 block mt-1 font-sans">
-                                 NIY: {resolvedTeacherNiy || '-'}
-                               </span>
+                               {resolvedTeacherNiy && resolvedTeacherNiy !== '-' && resolvedTeacherNiy !== '' && (
+                                 <span className="text-[8px] text-gray-400 block mt-1 font-sans">
+                                   NIY: {resolvedTeacherNiy}
+                                 </span>
+                               )}
                              </div>
                            </div>
 
@@ -3162,25 +3176,27 @@ export default function MidtermSummary() {
                                Kepala Pra-TK/TK Lazuardi GCS
                              </span>
                              <div className="h-12 flex items-center justify-center">
-                               {kindySignatory?.principalSignatureUrl ? (
+                               {isValidPrincipalSignature ? (
                                  <img 
-                                   src={kindySignatory.principalSignatureUrl} 
+                                   src={kindySignatory!.principalSignatureUrl!} 
                                    alt="Signature" 
                                    className="h-10 w-auto object-contain"
                                    referrerPolicy="no-referrer"
-                                   crossOrigin="anonymous"
+                                   crossOrigin={kindySignatory!.principalSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
                                  />
                                ) : (
-                                 <div className="text-[9px] text-gray-300 italic font-sans">Belum bertanda tangan</div>
+                                 <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
                                )}
                              </div>
                              <div className="text-center font-sans leading-none">
                                <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
                                  {kindySignatory?.principalName || "Nama Kepala Unit"}
                                </span>
-                               <span className="text-[8px] text-gray-400 block mt-1 font-sans">
-                                 NIY: {kindySignatory?.principalNiy || '-'}
-                               </span>
+                               {kindySignatory?.principalNiy && kindySignatory.principalNiy !== '-' && kindySignatory.principalNiy !== '' && (
+                                 <span className="text-[8px] text-gray-400 block mt-1 font-sans">
+                                   NIY: {kindySignatory.principalNiy}
+                                 </span>
+                               )}
                              </div>
                            </div>
                          </div>
