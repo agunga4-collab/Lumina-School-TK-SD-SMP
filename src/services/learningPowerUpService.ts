@@ -240,3 +240,93 @@ export function formatLearningPowerUpDate(dateStr: string): string {
   });
 }
 
+/**
+ * 6. Resolves a task title and instructions for a student's level snapshot from a task batch.
+ * Guarantees that if a student HAS a levelSnapshot, a level task is matched and fallback instructions are NEVER used.
+ */
+export function resolveLevelTask(
+  levelTasks: Record<string, any> | undefined,
+  levelSnapshot: string | null | undefined,
+  subjectKey?: string
+): { title: string; instructions: string } | null {
+  if (!levelTasks || !levelSnapshot || !levelSnapshot.trim()) {
+    return null;
+  }
+
+  const raw = levelSnapshot.trim();
+
+  // 1. Direct exact key match
+  if (levelTasks[raw] && (levelTasks[raw].title?.trim() || levelTasks[raw].instructions?.trim())) {
+    return {
+      title: (levelTasks[raw].title || '').trim(),
+      instructions: (levelTasks[raw].instructions || '').trim()
+    };
+  }
+
+  // 2. Case-insensitive & trimmed match
+  const lower = raw.toLowerCase();
+  for (const [key, t] of Object.entries(levelTasks)) {
+    if (key.trim().toLowerCase() === lower && (t?.title?.trim() || t?.instructions?.trim())) {
+      return {
+        title: (t.title || '').trim(),
+        instructions: (t.instructions || '').trim()
+      };
+    }
+  }
+
+  // 3. Normalized Mengaji match
+  const normMengaji = normalizeMengajiLevel(raw);
+  if (normMengaji) {
+    const dispMengaji = formatMengajiDisplay(normMengaji);
+    for (const [key, t] of Object.entries(levelTasks)) {
+      const kNorm = normalizeMengajiLevel(key);
+      if ((kNorm === normMengaji || key.trim().toLowerCase() === dispMengaji.toLowerCase()) && (t?.title?.trim() || t?.instructions?.trim())) {
+        return {
+          title: (t.title || '').trim(),
+          instructions: (t.instructions || '').trim()
+        };
+      }
+    }
+  }
+
+  // 4. Normalized Numerasi match
+  const normNumerasi = normalizeNumerasiLevel(raw);
+  if (normNumerasi) {
+    const dispNum = formatNumerasiDisplay(normNumerasi);
+    for (const [key, t] of Object.entries(levelTasks)) {
+      const kNorm = normalizeNumerasiLevel(key);
+      if ((kNorm === normNumerasi || key.trim().toLowerCase() === dispNum.toLowerCase()) && (t?.title?.trim() || t?.instructions?.trim())) {
+        return {
+          title: (t.title || '').trim(),
+          instructions: (t.instructions || '').trim()
+        };
+      }
+    }
+  }
+
+  // 5. Reading / Literacy level matching (e.g. "IR+" vs "IR", "A1+" vs "A1")
+  const baseReading = raw.replace(/[\+\-]/g, '').trim().toLowerCase();
+  for (const [key, t] of Object.entries(levelTasks)) {
+    const kBase = key.trim().replace(/[\+\-]/g, '').trim().toLowerCase();
+    if (kBase === baseReading && (t?.title?.trim() || t?.instructions?.trim())) {
+      return {
+        title: (t.title || '').trim(),
+        instructions: (t.instructions || '').trim()
+      };
+    }
+  }
+
+  // 6. If the student HAS a non-empty levelSnapshot, but no specific key matched above,
+  // pick the first available non-empty level task from the batch rather than using fallback text!
+  const available = Object.values(levelTasks).filter((t: any) => t?.title?.trim() || t?.instructions?.trim());
+  if (available.length > 0) {
+    const firstTask = available[0] as any;
+    return {
+      title: (firstTask.title || '').trim(),
+      instructions: (firstTask.instructions || '').trim()
+    };
+  }
+
+  return null;
+}
+

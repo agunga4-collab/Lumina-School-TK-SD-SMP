@@ -171,6 +171,32 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
   const [newUaInput, setNewUaInput] = React.useState<string>('');
   const [savingCustomUa, setSavingCustomUa] = React.useState<boolean>(false);
 
+  const handleAddCustomUa = async () => {
+    if (!newUaInput.trim() || !selectedClassId || !selectedYear) return;
+    setSavingCustomUa(true);
+    try {
+      const updated = Array.from(new Set([...customUas, newUaInput.trim()]));
+      await saveElementaryMidtermCustomUas(
+        selectedClassId,
+        selectedClass?.name || '',
+        selectedYear,
+        selectedSemester,
+        selectedTerm,
+        updated,
+        currentUser
+      );
+      setCustomUas(updated);
+      setActiveUaTab(newUaInput.trim());
+      setNewUaInput('');
+      setShowAddUaModal(false);
+      await onRefreshData();
+    } catch (e) {
+      console.error("Error adding custom UA:", e);
+    } finally {
+      setSavingCustomUa(false);
+    }
+  };
+
   // Save status indicator: 'saved' | 'saving' | 'error' | null
   const [saveStatus, setSaveStatus] = React.useState<'saved' | 'saving' | 'error' | null>(null);
 

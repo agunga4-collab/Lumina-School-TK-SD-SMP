@@ -37,6 +37,7 @@ import {
   resolveStudentActiveSubjectLevel,
   resolveTeacherAuthorizedScope,
   generateDeterministicAssignmentId,
+  resolveLevelTask,
   LPU_SUBJECT_MAP
 } from '../../services/learningPowerUpService';
 import {
@@ -627,10 +628,184 @@ function LearningPowerUpTeacherPageContent() {
     }
   }, [currentUser, activeYear]);
 
+  // Audit & Sync State
+  const [isAuditing, setIsAuditing] = React.useState<boolean>(false);
+  const [auditSummary, setAuditSummary] = React.useState<{
+    totalBatches: number;
+    targetStudents: number;
+    backfilled: number;
+    fixed: number;
+    verifiedPreserved: number;
+  } | null>(null);
+
+  const auditAndSyncPublishedBatches = async (
+    year: string,
+    batchesList: LearningPowerUpTaskBatch[],
+    asgsList: LearningPowerUpAssignment[],
+    litnumMap: Record<string, Partial<Record<LpuSubjectKey, string>>>
+  ) => {
+    try {
+      setIsAuditing(true);
+      const pubBatches = batchesList.filter(b => b.status === 'PUBLISHED' && normalizeYear(b.academicYearId || (b as any).academicYear) === normalizeYear(year));
+      if (pubBatches.length === 0) {
+        setIsAuditing(false);
+        return;
+      }
+
+      const activeJHClasses = classes;
+      if (activeJHClasses.length === 0) {
+        setIsAuditing(false);
+        return;
+      }
+
+      const studentsMap: Record<string, any[]> = {};
+      await Promise.all(
+        activeJHClasses.map(async (c) => {
+          try {
+            const r = await getActiveStudents(c.id, year) || [];
+            studentsMap[c.id] = r.map(st => ({ ...st, className: c.name || st.classId }));
+          } catch (e) {
+            studentsMap[c.id] = [];
+          }
+        })
+      );
+
+      const asgMap = new Map<string, LearningPowerUpAssignment>();
+      asgsList.forEach(a => asgMap.set(a.id, a));
+
+      const docsToSave: LearningPowerUpAssignment[] = [];
+      let backfilled = 0;
+      let fixed = 0;
+      let verifiedPreservedCount = 0;
+      let totalTargetStudents = 0;
+
+      for (const batch of pubBatches) {
+        const targetCids = batch.targetClassIds || (batch.classId ? [batch.classId] : []);
+        const subjKey = batch.subjectKey;
+        if (!subjKey) continue;
+
+        const targetStudentsList: any[] = [];
+        targetCids.forEach(cid => {
+          const list = studentsMap[cid] || [];
+          list.forEach(st => targetStudentsList.push(st));
+        });
+
+        totalTargetStudents += targetStudentsList.length;
+
+        for (const student of targetStudentsList) {
+          const asgId = generateDeterministicAssignmentId(batch.id, student.id, subjKey);
+          const existing = asgMap.get(asgId);
+
+          const studentLevel = litnumMap[student.id]?.[subjKey] || '';
+          const resolvedTask = resolveLevelTask(batch.levelTasks, studentLevel, subjKey);
+
+          const defaultTitle = `Tugas Penguatan ${CATEGORY_CONFIG[subjKey]?.label || subjKey}`;
+          const fallbackInstructions = "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.";
+
+          if (!existing) {
+            const historyEntry: LpuAssignmentHistoryEntry = {
+              action: 'ASSIGN',
+              performedByUid: currentUser?.uid || 'system',
+              performedByName: currentUser?.displayName || currentUser?.email || 'Guru',
+              performedByRole: currentUser?.role || 'TEACHER',
+              timestamp: new Date(),
+              note: "Otomatis di-backfill oleh sistem konsistensi LPU."
+            };
+
+            const newAsg: LearningPowerUpAssignment = {
+              id: asgId,
+              unit: 'JUNIOR_HIGH',
+              taskBatchId: batch.id,
+              studentId: student.id,
+              studentNameSnapshot: student.name,
+              classId: student.classId,
+              classNameSnapshot: student.className || '',
+              subjectKey: subjKey,
+              subjectArea: LPU_SUBJECT_MAP[subjKey],
+              levelSnapshot: studentLevel || null,
+              taskTitle: resolvedTask ? resolvedTask.title : defaultTitle,
+              taskInstructions: resolvedTask ? resolvedTask.instructions : fallbackInstructions,
+              academicYearId: year,
+              semester: batch.semester || '1',
+              weekStartDate: batch.weekStartDate,
+              weekEndDate: batch.weekEndDate,
+              weekLabel: batch.weekLabel,
+              status: 'ASSIGNED',
+              history: [historyEntry],
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            };
+
+            docsToSave.push(newAsg);
+            asgMap.set(asgId, newAsg);
+            backfilled++;
+          } else {
+            if (existing.status === 'VERIFIED') {
+              verifiedPreservedCount++;
+              continue;
+            }
+
+            const isFallback = existing.taskInstructions && existing.taskInstructions.includes("Siswa belum memiliki level yang ditetapkan");
+            const levelMismatch = Boolean(studentLevel && existing.levelSnapshot !== studentLevel);
+            const taskMismatch = Boolean(resolvedTask && (existing.taskTitle !== resolvedTask.title || existing.taskInstructions !== resolvedTask.instructions));
+
+            if ((studentLevel && isFallback) || levelMismatch || (resolvedTask && taskMismatch)) {
+              const updatedAsg: LearningPowerUpAssignment = {
+                ...existing,
+                levelSnapshot: studentLevel || existing.levelSnapshot || null,
+                taskTitle: resolvedTask ? resolvedTask.title : defaultTitle,
+                taskInstructions: resolvedTask ? resolvedTask.instructions : fallbackInstructions,
+                updatedAt: serverTimestamp()
+              };
+
+              docsToSave.push(updatedAsg);
+              asgMap.set(asgId, updatedAsg);
+              fixed++;
+            }
+          }
+        }
+      }
+
+      if (docsToSave.length > 0) {
+        const chunkSize = 400;
+        for (let i = 0; i < docsToSave.length; i += chunkSize) {
+          const chunk = docsToSave.slice(i, i + chunkSize);
+          const writeB = writeBatch(db);
+          chunk.forEach(docItem => {
+            writeB.set(doc(db, 'learning_power_up_assignments', docItem.id), docItem, { merge: true });
+          });
+          await writeB.commit();
+        }
+      }
+
+      setAuditSummary({
+        totalBatches: pubBatches.length,
+        targetStudents: totalTargetStudents,
+        backfilled,
+        fixed,
+        verifiedPreserved: verifiedPreservedCount
+      });
+
+      if (docsToSave.length > 0) {
+        setLoadedAssignments(Array.from(asgMap.values()));
+      }
+    } catch (err) {
+      console.error("Error during audit and sync of LPU batches:", err);
+    } finally {
+      setIsAuditing(false);
+    }
+  };
+
+  const handleManualAuditSync = async () => {
+    if (!activeYear) return;
+    toast.info("Memulai audit & sinkronisasi tugas...");
+    await auditAndSyncPublishedBatches(activeYear, taskBatches, loadedAssignments, litnumRecordsByStudentId);
+    toast.success("✓ Audit & Sinkronisasi Selesai! Data tugas sudah konsisten untuk seluruh kelas.");
+  };
+
   // Load packages, progress, and student roster for the selected class
   const loadClassData = async () => {
     if (!selectedClassId || !activeYear) return;
-    // Clear the previous class's students/data while the new class is loading
     setStudents([]);
     setPackages([]);
     setProgresses([]);
@@ -638,12 +813,28 @@ function LearningPowerUpTeacherPageContent() {
     
     setLoadingData(true);
     try {
-      // 1. Load active student roster
-      const roster = await getActiveStudents(selectedClassId, activeYear) || [];
+      // 1. Load active student roster (support ALL_CLASSES)
+      let roster: any[] = [];
+      if (selectedClassId === 'ALL_CLASSES') {
+        const rosters = await Promise.all(
+          classes.map(async c => {
+            try {
+              const r = await getActiveStudents(c.id, activeYear) || [];
+              return r.map(st => ({ ...st, className: c.name || st.classId }));
+            } catch {
+              return [];
+            }
+          })
+        );
+        roster = rosters.flat();
+      } else {
+        const rawRoster = await getActiveStudents(selectedClassId, activeYear) || [];
+        const currentCls = classes.find(c => c.id === selectedClassId);
+        roster = rawRoster.map(st => ({ ...st, className: currentCls?.name || st.classId }));
+      }
       
       // Enrich each student with resolved NIS
       const enrichedStudents = await Promise.all(roster.map(async (student: any) => {
-        // Try getting NIS from existing fields
         let foundNis = 
           student.nis ||
           student.NIS ||
@@ -653,10 +844,8 @@ function LearningPowerUpTeacherPageContent() {
           student.studentProfile?.nis ||
           student.luminaId;
 
-        // If not found directly, perform a lookup based on studentId (student.id)
         if (!foundNis && student.id) {
           try {
-            // Lookup in students collection
             const sDoc = await getDoc(doc(db, 'students', student.id));
             if (sDoc.exists()) {
               const sData = sDoc.data();
@@ -670,7 +859,6 @@ function LearningPowerUpTeacherPageContent() {
                 sData.studentProfile?.nis;
             }
 
-            // Fallback lookup in roleInvites if still not found
             if (!foundNis) {
               const iDoc = await getDoc(doc(db, 'roleInvites', student.id));
               if (iDoc.exists()) {
@@ -681,7 +869,6 @@ function LearningPowerUpTeacherPageContent() {
               }
             }
 
-            // Fallback lookup in users if still not found
             if (!foundNis) {
               const uDoc = await getDoc(doc(db, 'users', student.id));
               if (uDoc.exists()) {
@@ -696,7 +883,6 @@ function LearningPowerUpTeacherPageContent() {
           }
         }
 
-        // If found, format as string, otherwise check if id itself is numeric/not standard Firestore ID/UUID
         let resolvedNis = "-";
         if (foundNis) {
           resolvedNis = String(foundNis);
@@ -720,83 +906,27 @@ function LearningPowerUpTeacherPageContent() {
 
       setStudents(enrichedStudents);
 
-      // 2. Load level-based batches for this class & year
-      // Query specific targets to satisfy Firestore rules (rules are not filters)
-      const qBatchesTarget = query(
+      // 2. Load all Junior High level-based batches for activeYear globally
+      const qBatches = query(
         collection(db, 'learning_power_up_task_batches'),
-        where('targetClassIds', 'array-contains', selectedClassId)
+        where('unit', '==', 'JUNIOR_HIGH')
       );
-      const qBatchesClassIds = query(
-        collection(db, 'learning_power_up_task_batches'),
-        where('classIds', 'array-contains', selectedClassId)
-      );
-      const qBatchesClassId = query(
-        collection(db, 'learning_power_up_task_batches'),
-        where('classId', '==', selectedClassId)
-      );
-
-      const queryResults = await Promise.allSettled([
-        getDocs(qBatchesTarget),
-        getDocs(qBatchesClassIds),
-        getDocs(qBatchesClassId)
-      ]);
-
-      const mergedDocsMap = new Map<string, any>();
-      queryResults.forEach((res, idx) => {
-        if (res.status === 'fulfilled') {
-          res.value.docs.forEach(doc => {
-            mergedDocsMap.set(doc.id, { id: doc.id, ...doc.data() });
-          });
-        } else {
-          console.error(`DEBUG BATCHES: query ${idx} failed in loadClassData:`, res.reason);
-        }
-      });
-
-      const allBatches = Array.from(mergedDocsMap.values());
-
-      // Prepare active Junior High sets
-      const activeJHClassIds = new Set(classes.map(c => c.id).filter(Boolean));
-      const activeJHClassNames = new Set(classes.map(c => normalizeClassName(c.name)).filter(Boolean));
-
-      const isLegacyBatchActiveJH = (b: any) => {
-        const cId = b.classId;
-        if (cId && activeJHClassIds.has(cId)) return true;
-
-        const cIds = b.classIds;
-        if (Array.isArray(cIds) && cIds.some(id => activeJHClassIds.has(id))) return true;
-
-        const tClassIds = b.targetClassIds;
-        if (Array.isArray(tClassIds) && tClassIds.some(id => activeJHClassIds.has(id))) return true;
-
-        const cName = b.className;
-        if (cName && activeJHClassNames.has(normalizeClassName(cName))) return true;
-
-        const cNameSnapshot = b.classNameSnapshot;
-        if (cNameSnapshot && activeJHClassNames.has(normalizeClassName(cNameSnapshot))) return true;
-
-        const tClassNames = b.targetClassNames;
-        if (Array.isArray(tClassNames) && tClassNames.some(name => activeJHClassNames.has(normalizeClassName(name)))) return true;
-
-        return false;
-      };
+      const batchesSnap = await getDocs(qBatches);
+      const allBatches = batchesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }) as LearningPowerUpTaskBatch);
 
       const classLevelBatches = allBatches.filter(b => {
-        // Academic year check on client side to handle all variations
-        const bYear = b.academicYearId || b.academicYear;
+        const bYear = b.academicYearId || (b as any).academicYear;
         if (normalizeYear(bYear) !== normalizeYear(activeYear)) return false;
 
-        // 1. Check if the batch belongs to Junior High
-        const isJH = b.unit === 'JUNIOR_HIGH' || (!b.unit && isLegacyBatchActiveJH(b));
-        if (!isJH) return false;
+        if (selectedClassId === 'ALL_CLASSES') return true;
 
-        // 2. Check if the batch targets the selected class
         const targetsSelectedClass = 
           (b.classId === selectedClassId) ||
           (Array.isArray(b.classIds) && b.classIds.includes(selectedClassId)) ||
           (Array.isArray(b.targetClassIds) && b.targetClassIds.includes(selectedClassId));
 
         return targetsSelectedClass;
-      }) as LearningPowerUpTaskBatch[];
+      });
 
       const filteredClassBatches = classLevelBatches.filter(b => 
         b.status === 'PUBLISHED' || (showArchivedCancelled && (b.status === 'CANCELLED' || b.status === 'ARCHIVED'))
@@ -827,20 +957,22 @@ function LearningPowerUpTeacherPageContent() {
         };
       });
 
-      // 2.5 Load legacy packages for this class
-      const qLegacyPackages = query(
-        collection(db, 'learning_power_up_tasks'),
-        where('classId', '==', selectedClassId)
-      );
-      const legacyPackagesSnap = await getDocs(qLegacyPackages);
-      const legacyPackages = legacyPackagesSnap.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }) as any)
-        .filter(p => {
-          const pYear = p.academicYearId || p.academicYear;
-          return normalizeYear(pYear) === normalizeYear(activeYear);
-        }) as LearningPowerUpPackage[];
+      // Load legacy packages if specific class selected
+      let legacyPackages: LearningPowerUpPackage[] = [];
+      if (selectedClassId !== 'ALL_CLASSES') {
+        const qLegacyPackages = query(
+          collection(db, 'learning_power_up_tasks'),
+          where('classId', '==', selectedClassId)
+        );
+        const legacyPackagesSnap = await getDocs(qLegacyPackages);
+        legacyPackages = legacyPackagesSnap.docs
+          .map(doc => ({ id: doc.id, ...doc.data() }) as any)
+          .filter(p => {
+            const pYear = p.academicYearId || p.academicYear;
+            return normalizeYear(pYear) === normalizeYear(activeYear);
+          }) as LearningPowerUpPackage[];
+      }
 
-      // Sort combined packages by start date descending
       const loadedPackages = [...virtualPackages, ...legacyPackages];
       loadedPackages.sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate));
       setPackages(loadedPackages);
@@ -851,18 +983,45 @@ function LearningPowerUpTeacherPageContent() {
         setSelectedWeek(loadedPackages[0].id);
       }
 
-      // 3. Load level-based assignments
-      const qAssignments = query(
-        collection(db, 'learning_power_up_assignments'),
-        where('classId', '==', selectedClassId)
+      // 3. Load level-based assignments globally across active JH classes
+      const activeJHClassIdsList = classes.map(c => c.id).filter(Boolean);
+      const assignmentPromises: Promise<any>[] = [];
+      
+      if (activeJHClassIdsList.length > 0) {
+        for (let i = 0; i < activeJHClassIdsList.length; i += 10) {
+          const chunk = activeJHClassIdsList.slice(i, i + 10);
+          assignmentPromises.push(
+            getDocs(query(
+              collection(db, 'learning_power_up_assignments'),
+              where('classId', 'in', chunk)
+            ))
+          );
+        }
+      }
+      assignmentPromises.push(
+        getDocs(query(
+          collection(db, 'learning_power_up_assignments'),
+          where('unit', '==', 'JUNIOR_HIGH')
+        ))
       );
-      const assignmentsSnap = await getDocs(qAssignments);
-      const loadedAsgs = assignmentsSnap.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }) as any)
-        .filter(asg => {
-          const asgYear = asg.academicYearId || asg.academicYear;
-          return normalizeYear(asgYear) === normalizeYear(activeYear);
-        }) as LearningPowerUpAssignment[];
+
+      const asgResults = await Promise.allSettled(assignmentPromises);
+      const loadedAsgsMap = new Map<string, LearningPowerUpAssignment>();
+      asgResults.forEach(res => {
+        if (res.status === 'fulfilled') {
+          res.value.docs.forEach((doc: any) => {
+            const d = { id: doc.id, ...doc.data() } as LearningPowerUpAssignment;
+            const asgYear = d.academicYearId || (d as any).academicYear;
+            if (normalizeYear(asgYear) === normalizeYear(activeYear)) {
+              if (selectedClassId === 'ALL_CLASSES' || d.classId === selectedClassId) {
+                loadedAsgsMap.set(d.id, d);
+              }
+            }
+          });
+        }
+      });
+
+      const loadedAsgs = Array.from(loadedAsgsMap.values());
       setLoadedAssignments(loadedAsgs);
 
       // Map level-based assignments to virtual TaskProgress records
@@ -900,22 +1059,25 @@ function LearningPowerUpTeacherPageContent() {
         } as any;
       });
 
-      // 3.5 Load legacy progress records for this class
-      const qLegacyProgress = query(
-        collection(db, 'learning_power_up_progress'),
-        where('classId', '==', selectedClassId)
-      );
-      const legacyProgressSnap = await getDocs(qLegacyProgress);
-      const legacyProgresses = legacyProgressSnap.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }) as any)
-        .filter(p => {
-          const pYear = p.academicYearId || p.academicYear;
-          return normalizeYear(pYear) === normalizeYear(activeYear);
-        }) as TaskProgress[];
+      // Load legacy progress records if specific class selected
+      let legacyProgresses: TaskProgress[] = [];
+      if (selectedClassId !== 'ALL_CLASSES') {
+        const qLegacyProgress = query(
+          collection(db, 'learning_power_up_progress'),
+          where('classId', '==', selectedClassId)
+        );
+        const legacyProgressSnap = await getDocs(qLegacyProgress);
+        legacyProgresses = legacyProgressSnap.docs
+          .map(doc => ({ id: doc.id, ...doc.data() }) as any)
+          .filter(p => {
+            const pYear = p.academicYearId || p.academicYear;
+            return normalizeYear(pYear) === normalizeYear(activeYear);
+          }) as TaskProgress[];
+      }
       
       setProgresses([...virtualProgresses, ...legacyProgresses]);
 
-      // Load canonical Litnum records for this class & year
+      // Load canonical Litnum records for activeYear
       const litnumMap: Record<string, Partial<Record<LpuSubjectKey, string>>> = {};
       try {
         const qLitnum = query(
@@ -970,8 +1132,11 @@ function LearningPowerUpTeacherPageContent() {
       }
       setLitnumRecordsByStudentId(litnumMap);
 
-      // Load new task batches as well
+      // Load new task batches globally
       await loadTaskBatches();
+
+      // Automatically run audit and sync on load
+      await auditAndSyncPublishedBatches(activeYear, allBatches, loadedAsgs, litnumMap);
 
     } catch (err) {
       console.error("Error loading class data for tracker:", err);
@@ -1694,45 +1859,46 @@ function LearningPowerUpTeacherPageContent() {
       // 3. Collect all assignments to create
       const assignmentsToCreate: LearningPowerUpAssignment[] = [];
       rosterLevels.forEach(({ student, className, level, resolved }) => {
-        if (resolved && level) {
-          const task = levelTasks[level];
-          if (task && task.title.trim() && task.instructions.trim()) {
-            const assignmentId = generateDeterministicAssignmentId(batchId, student.id, batch.subjectKey!);
-            
-            const historyEntry: LpuAssignmentHistoryEntry = {
-              action: 'ASSIGN',
-              performedByUid: currentUser.uid,
-              performedByName: currentUser.displayName || currentUser.email || 'Guru',
-              performedByRole: currentUser.role,
-              timestamp: new Date()
-            };
+        const assignmentId = generateDeterministicAssignmentId(batchId, student.id, batch.subjectKey!);
+        
+        const historyEntry: LpuAssignmentHistoryEntry = {
+          action: 'ASSIGN',
+          performedByUid: currentUser.uid,
+          performedByName: currentUser.displayName || currentUser.email || 'Guru',
+          performedByRole: currentUser.role,
+          timestamp: new Date()
+        };
 
-            const assignmentDoc: LearningPowerUpAssignment = {
-              id: assignmentId,
-              unit: 'JUNIOR_HIGH',
-              taskBatchId: batchId,
-              studentId: student.id,
-              studentNameSnapshot: student.name,
-              classId: student.classId,
-              classNameSnapshot: className,
-              subjectKey: batch.subjectKey!,
-              subjectArea: batch.subjectArea!,
-              levelSnapshot: level,
-              taskTitle: task.title.trim(),
-              taskInstructions: task.instructions.trim(),
-              academicYearId: activeYear,
-              semester: batch.semester!,
-              weekStartDate: batch.weekStartDate!,
-              weekEndDate: batch.weekEndDate!,
-              weekLabel: batch.weekLabel!,
-              status: 'ASSIGNED',
-              history: [historyEntry],
-              updatedAt: serverTimestamp()
-            };
+        const studentLevel = (resolved && level) ? level : null;
+        const resolvedTask = resolveLevelTask(levelTasks, studentLevel, batch.subjectKey!);
 
-            assignmentsToCreate.push(assignmentDoc);
-          }
-        }
+        const defaultTitle = `Tugas Penguatan ${CATEGORY_CONFIG[batch.subjectKey!]?.label || batch.subjectKey}`;
+        const fallbackInstructions = "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.";
+
+        const assignmentDoc: LearningPowerUpAssignment = {
+          id: assignmentId,
+          unit: 'JUNIOR_HIGH',
+          taskBatchId: batchId,
+          studentId: student.id,
+          studentNameSnapshot: student.name,
+          classId: student.classId,
+          classNameSnapshot: className,
+          subjectKey: batch.subjectKey!,
+          subjectArea: batch.subjectArea!,
+          levelSnapshot: studentLevel,
+          taskTitle: resolvedTask ? resolvedTask.title : defaultTitle,
+          taskInstructions: resolvedTask ? resolvedTask.instructions : fallbackInstructions,
+          academicYearId: activeYear,
+          semester: batch.semester!,
+          weekStartDate: batch.weekStartDate!,
+          weekEndDate: batch.weekEndDate!,
+          weekLabel: batch.weekLabel!,
+          status: 'ASSIGNED',
+          history: [historyEntry],
+          updatedAt: serverTimestamp()
+        };
+
+        assignmentsToCreate.push(assignmentDoc);
       });
 
       // 4. Batch-write assignments in chunks of 400 to protect limits
@@ -1870,55 +2036,46 @@ function LearningPowerUpTeacherPageContent() {
           studentDocs.push(...sSnap.docs.map(d => ({ id: d.id, ...d.data() })));
         }
 
-        const levelsSnap = await getDocs(collection(db, 'system_lpu_levels'));
-        const levelMap: Record<string, string> = {};
-        levelsSnap.docs.forEach(d => {
-          const data = d.data();
-          if (data.studentId && data[newSubject]) {
-            levelMap[data.studentId] = data[newSubject];
-          }
-        });
-
         const assignmentsToCreate: LearningPowerUpAssignment[] = [];
         for (const student of studentDocs) {
           const studentClass = classes.find(c => c.id === student.classId);
-          const level = levelMap[student.id];
-          if (level) {
-            const task = cleanLevelTasks[level];
-            if (task && task.title?.trim() && task.instructions?.trim()) {
-              const assignmentId = `assignment_${editingBatchId}_${student.id}_${newSubject}`;
-              const historyEntry: LpuAssignmentHistoryEntry = {
-                action: 'ASSIGN',
-                performedByUid: currentUser.uid,
-                performedByName: currentUser.displayName || currentUser.email || 'Guru',
-                performedByRole: currentUser.role,
-                timestamp: new Date()
-              };
+          const level = litnumRecordsByStudentId[student.id]?.[newSubject] || '';
+          const resolvedTask = resolveLevelTask(cleanLevelTasks, level, newSubject);
 
-              assignmentsToCreate.push({
-                id: assignmentId,
-                unit: 'JUNIOR_HIGH',
-                taskBatchId: editingBatchId,
-                studentId: student.id,
-                studentNameSnapshot: student.name,
-                classId: student.classId,
-                classNameSnapshot: studentClass?.name || '',
-                subjectKey: newSubject,
-                subjectArea: LPU_SUBJECT_MAP[newSubject],
-                levelSnapshot: level,
-                taskTitle: task.title.trim(),
-                taskInstructions: task.instructions.trim(),
-                academicYearId: activeYear,
-                semester: newSemester,
-                weekStartDate: newWeekStartDate,
-                weekEndDate: newWeekEndDate,
-                weekLabel: newWeekLabel || `Pekan (${formatDateShort(newWeekStartDate)} - ${formatDateShort(newWeekEndDate)})`,
-                status: 'ASSIGNED',
-                history: [historyEntry],
-                updatedAt: serverTimestamp()
-              });
-            }
-          }
+          const defaultTitle = `Tugas Penguatan ${CATEGORY_CONFIG[newSubject]?.label || newSubject}`;
+          const fallbackInstructions = "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.";
+
+          const assignmentId = generateDeterministicAssignmentId(editingBatchId, student.id, newSubject);
+          const historyEntry: LpuAssignmentHistoryEntry = {
+            action: 'ASSIGN',
+            performedByUid: currentUser.uid,
+            performedByName: currentUser.displayName || currentUser.email || 'Guru',
+            performedByRole: currentUser.role,
+            timestamp: new Date()
+          };
+
+          assignmentsToCreate.push({
+            id: assignmentId,
+            unit: 'JUNIOR_HIGH',
+            taskBatchId: editingBatchId,
+            studentId: student.id,
+            studentNameSnapshot: student.name,
+            classId: student.classId,
+            classNameSnapshot: studentClass?.name || '',
+            subjectKey: newSubject,
+            subjectArea: LPU_SUBJECT_MAP[newSubject],
+            levelSnapshot: level || null,
+            taskTitle: resolvedTask ? resolvedTask.title : defaultTitle,
+            taskInstructions: resolvedTask ? resolvedTask.instructions : fallbackInstructions,
+            academicYearId: activeYear,
+            semester: newSemester,
+            weekStartDate: newWeekStartDate,
+            weekEndDate: newWeekEndDate,
+            weekLabel: newWeekLabel || `Pekan (${formatDateShort(newWeekStartDate)} - ${formatDateShort(newWeekEndDate)})`,
+            status: 'ASSIGNED',
+            history: [historyEntry],
+            updatedAt: serverTimestamp()
+          });
         }
 
         const chunkSize = 400;
@@ -1939,8 +2096,11 @@ function LearningPowerUpTeacherPageContent() {
           const updateB = writeBatch(db);
           snap.docs.forEach(docSnap => {
             const asg = docSnap.data() as LearningPowerUpAssignment;
-            const task = cleanLevelTasks[asg.levelSnapshot];
-            if (task) {
+            // Preserving VERIFIED status per requirement 5
+            if (asg.status === 'VERIFIED') return;
+
+            const resolvedTask = resolveLevelTask(cleanLevelTasks, asg.levelSnapshot, newSubject);
+            if (resolvedTask) {
               const historyEntry: LpuAssignmentHistoryEntry = {
                 action: 'ASSIGN',
                 performedByUid: currentUser.uid,
@@ -1951,8 +2111,8 @@ function LearningPowerUpTeacherPageContent() {
               };
 
               updateB.update(docSnap.ref, {
-                taskTitle: task.title.trim(),
-                taskInstructions: task.instructions.trim(),
+                taskTitle: resolvedTask.title,
+                taskInstructions: resolvedTask.instructions,
                 weekEndDate: newWeekEndDate,
                 weekLabel: newWeekLabel || `Pekan (${formatDateShort(newWeekStartDate)} - ${formatDateShort(newWeekEndDate)})`,
                 changeNote: changeNote,
@@ -2951,19 +3111,21 @@ function LearningPowerUpTeacherPageContent() {
                 <select
                   value={selectedClassId}
                   onChange={(e) => setSelectedClassId(e.target.value)}
-                  className="bg-white border border-slate-200 text-gray-700 font-bold text-sm px-4 py-2.5 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-[#109E58]/20 focus:border-[#109E58] min-w-[200px]"
+                  className="bg-white border border-slate-200 text-gray-700 font-bold text-sm px-4 py-2.5 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-[#109E58]/20 focus:border-[#109E58] min-w-[220px]"
                 >
+                  <option value="ALL_CLASSES">Semua Kelas (Junior High)</option>
                   {classes.map(c => (
                     <option key={c.id} value={c.id}>
                       {c.name}
                     </option>
                   ))}
                 </select>
-                {classes.find(c => c.id === selectedClassId) && (
-                  <span className="text-xs text-gray-500 font-bold" id="selected-class-student-count-display">
-                    Terpilih: {classes.find(c => c.id === selectedClassId)?.name} ({students.length} siswa)
-                  </span>
-                )}
+                <span className="text-xs text-gray-500 font-bold" id="selected-class-student-count-display">
+                  {selectedClassId === 'ALL_CLASSES'
+                    ? `Terpilih: Semua Kelas (${students.length} siswa)`
+                    : `Terpilih: ${classes.find(c => c.id === selectedClassId)?.name || selectedClassId} (${students.length} siswa)`
+                  }
+                </span>
               </div>
             ) : (
               <div className="text-xs font-bold text-red-500 bg-red-50 border border-red-100 p-2.5 rounded-xl">
@@ -3275,6 +3437,34 @@ function LearningPowerUpTeacherPageContent() {
         return (
           <div className="space-y-8">
             
+            {/* Audit & Consistency Status Banner */}
+            <div className="bg-emerald-50/70 border border-emerald-100 rounded-2xl p-5 flex flex-col md:flex-row items-center justify-between gap-4 shadow-xs">
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-xl bg-emerald-100 text-[#109E58] flex items-center justify-center shrink-0 font-bold">
+                  <CheckCircle size={22} />
+                </div>
+                <div>
+                  <h3 className="text-xs font-black text-emerald-950 uppercase tracking-wider">
+                    Status Konsistensi Tugas Junior High
+                  </h3>
+                  <p className="text-xs font-semibold text-emerald-700 mt-0.5">
+                    {auditSummary 
+                      ? `Audit Selesai: ${auditSummary.totalBatches} batch terbit diperiksa. ${auditSummary.backfilled} tugas di-backfill, ${auditSummary.fixed} instruksi level diperbarui. (${auditSummary.verifiedPreserved} tugas TERVERIFIKASI dipertahankan).`
+                      : "Sistem otomatis memeriksa seluruh siswa di kelas target menerima tugas sesuai level kemampuan saat batch terbit."}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={handleManualAuditSync}
+                disabled={isAuditing}
+                className="px-4 py-2.5 bg-[#109E58] hover:bg-[#0d854a] disabled:opacity-50 text-white text-xs font-black rounded-xl shadow-xs transition-all uppercase tracking-wider flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0"
+              >
+                {isAuditing ? <Loader2 className="animate-spin" size={15} /> : <RefreshCw size={15} />}
+                <span>Audit & Sinkronkan Semua Batch</span>
+              </button>
+            </div>
+
             {/* Main Form: Atur Tugas */}
             <div className="bg-white rounded-[2rem] border border-slate-100 p-8 shadow-sm space-y-6 animate-fadeIn">
               <div className="border-b border-slate-100 pb-4">
