@@ -115,6 +115,49 @@ export default function MidtermSummary() {
   const { currentUser } = useOutletContext<{ currentUser: any }>() || {};
   const { profile, getGoogleDriveToken } = useAuth();
 
+  // Basic states defined at the top to avoid TDZ / cannot access before initialization errors
+  const [selectedClassId, setSelectedClassId] = React.useState<string>('');
+  const [students, setStudents] = React.useState<any[]>(() => DEFAULT_STUDENTS);
+  const [selectedStudentId, setSelectedStudentId] = React.useState<string>('');
+  const [semester, setSemester] = React.useState<number>(1);
+  const [activeTab, setActiveTab] = React.useState<'kompilasi' | 'editor' | 'review' | 'publish'>('kompilasi');
+  const [midtermDrafts, setMidtermDrafts] = React.useState<Record<string, MidtermSummaryDraft>>({});
+
+  const activeDraft = React.useMemo(() => {
+    return midtermDrafts[selectedStudentId] || null;
+  }, [midtermDrafts, selectedStudentId]);
+
+  // Date selections - Default to Monday 6 weeks ago and Friday of this week
+  const [startDateStr, setStartDateStr] = React.useState<string>(() => {
+    const fromSession = sessionStorage.getItem('kindy_midterm_start');
+    if (fromSession) return fromSession;
+    const d = new Date();
+    d.setDate(d.getDate() - 42); // Approx 6 weeks
+    const mon = getMonday(d);
+    return formatDateToKey(mon);
+  });
+
+  const [endDateStr, setEndDateStr] = React.useState<string>(() => {
+    const fromSession = sessionStorage.getItem('kindy_midterm_end');
+    if (fromSession) return fromSession;
+    const mon = getMonday(new Date());
+    const fri = new Date(mon);
+    fri.setDate(mon.getDate() + 4);
+    return formatDateToKey(fri);
+  });
+
+  // Title Case Formatting Helper
+  const toTitleCase = React.useCallback((str: string | undefined | null): string => {
+    if (!str) return '';
+    return str
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+  }, []);
+
   // Publishing & Signatory States
   const [publishedReports, setPublishedReports] = React.useState<Record<string, any>>({});
   const [isFetchingPublished, setIsFetchingPublished] = React.useState(false);
@@ -126,6 +169,75 @@ export default function MidtermSummary() {
   const [resolvedTeacherNiy, setResolvedTeacherNiy] = React.useState<string>('-');
   const [isSignatureLoading, setIsSignatureLoading] = React.useState<boolean>(false);
   const [resolvedLogoUrl, setResolvedLogoUrl] = React.useState<string | null>(null);
+
+  // States for Real Attendance computation
+  const [realAttendanceList, setRealAttendanceList] = React.useState<any[]>([]);
+  const [isFetchingRealAttendance, setIsFetchingRealAttendance] = React.useState(false);
+
+  // State to determine if signatures overflow Page 2
+  const [shouldMoveSignaturesToPage3, setShouldMoveSignaturesToPage3] = React.useState(false);
+
+  // Real Attendance fetch hook matching requested formula:
+  // startDate = tanggal mulai Midterm
+  // endDate = minimum(tanggal akhir Midterm, tanggal hari ini)
+  React.useEffect(() => {
+    if (!selectedClassId || !startDateStr || !endDateStr) return;
+    
+    async function fetchRealAttendanceData() {
+      setIsFetchingRealAttendance(true);
+      try {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const minEndDateStr = endDateStr < todayStr ? endDateStr : todayStr;
+        
+        console.log(`[Attendance Sync] Querying attendance from ${startDateStr} to ${minEndDateStr}`);
+        const q = query(
+          collection(db, 'attendance'),
+          where('classId', '==', selectedClassId),
+          where('date', '>=', startDateStr),
+          where('date', '<=', minEndDateStr)
+        );
+        
+        const snap = await getDocs(q);
+        logFirestoreRead('attendanceReports', snap.docs.length || 1);
+        
+        const docs = snap.docs.map(docSnap => {
+          const data = docSnap.data();
+          return {
+            id: docSnap.id,
+            date: data.date,
+            students: data.students || []
+          };
+        });
+        
+        setRealAttendanceList(docs);
+      } catch (err) {
+        console.error('Error fetching real attendance:', err);
+      } finally {
+        setIsFetchingRealAttendance(false);
+      }
+    }
+    
+    fetchRealAttendanceData();
+  }, [selectedClassId, startDateStr, endDateStr]);
+
+  // Measuring comments height effect to decide whether to move signatures to Page 3
+  React.useEffect(() => {
+    const checkOverflow = () => {
+      const el = document.getElementById('preview-comments-container');
+      if (el) {
+        // Natural comments text height check
+        if (el.scrollHeight > 350) {
+          setShouldMoveSignaturesToPage3(true);
+        } else {
+          setShouldMoveSignaturesToPage3(false);
+        }
+      }
+    };
+    
+    // Check after slight delay to ensure fonts & content have fully rendered
+    const timer = setTimeout(checkOverflow, 250);
+    return () => clearTimeout(timer);
+  }, [selectedStudentId, activeDraft?.midtermGeneralComment, activeTab]);
 
   React.useEffect(() => {
     const fetchLogo = async () => {
@@ -163,19 +275,6 @@ export default function MidtermSummary() {
     principalNiy: string;
   } | null>(null);
 
-  // Role Protection
-  if (profile?.role === 'kindergarten_subject_teacher') {
-    return (
-      <div className="p-8 text-center max-w-2xl mx-auto my-12 bg-white rounded-3xl border border-gray-150 p-12">
-        <h1 className="text-xl font-bold text-red-600 font-sans">Akses Ditolak</h1>
-        <p className="text-gray-500 mt-2 font-sans">Anda tidak memiliki izin untuk membuka halaman Midterm Report ini.</p>
-      </div>
-    );
-  }
-
-  // Active Semester Context (Defaults to S1, can toggle)
-  const [semester, setSemester] = React.useState<number>(1);
-
   // Class Selection using centralized hook
   const {
     assignedClasses: classes,
@@ -188,8 +287,15 @@ export default function MidtermSummary() {
     academicYearId: activeYear || '2026/2027'
   });
 
-  const [selectedClassId, setSelectedClassId] = React.useState<string>('');
-  const [students, setStudents] = React.useState<any[]>(() => DEFAULT_STUDENTS);
+  // Role Protection (placed after all hook declarations to respect React hook rules)
+  if (profile?.role === 'kindergarten_subject_teacher') {
+    return (
+      <div className="p-8 text-center max-w-2xl mx-auto my-12 bg-white rounded-3xl border border-gray-150 p-12">
+        <h1 className="text-xl font-bold text-red-600 font-sans">Akses Ditolak</h1>
+        <p className="text-gray-500 mt-2 font-sans">Anda tidak memiliki izin untuk membuka halaman Midterm Report ini.</p>
+      </div>
+    );
+  }
 
   // Auto-select Class
   React.useEffect(() => {
@@ -295,9 +401,6 @@ export default function MidtermSummary() {
     return students.filter(student => isStudentInClass(student.classId, activeClassObj));
   }, [students, selectedClassId, activeClassObj, isStudentInClass]);
 
-  // Selected Student Selection
-  const [selectedStudentId, setSelectedStudentId] = React.useState<string>('');
-
   React.useEffect(() => {
     if (classStudents.length > 0) {
       // Keep selected student if they are still in the active class
@@ -312,25 +415,6 @@ export default function MidtermSummary() {
   const selectedStudentObj = React.useMemo(() => {
     return classStudents.find(s => s.id === selectedStudentId);
   }, [classStudents, selectedStudentId]);
-
-  // Date selections - Default to Monday 6 weeks ago and Friday of this week
-  const [startDateStr, setStartDateStr] = React.useState<string>(() => {
-    const fromSession = sessionStorage.getItem('kindy_midterm_start');
-    if (fromSession) return fromSession;
-    const d = new Date();
-    d.setDate(d.getDate() - 42); // Approx 6 weeks
-    const mon = getMonday(d);
-    return formatDateToKey(mon);
-  });
-
-  const [endDateStr, setEndDateStr] = React.useState<string>(() => {
-    const fromSession = sessionStorage.getItem('kindy_midterm_end');
-    if (fromSession) return fromSession;
-    const mon = getMonday(new Date());
-    const fri = new Date(mon);
-    fri.setDate(mon.getDate() + 4);
-    return formatDateToKey(fri);
-  });
 
   const handleStartDateChange = (val: string) => {
     setStartDateStr(val);
@@ -359,10 +443,6 @@ export default function MidtermSummary() {
 
     return `${sDate.getDate()} ${monthsIndo[sDate.getMonth()]} ${sDate.getFullYear()} - ${eDate.getDate()} ${monthsIndo[eDate.getMonth()]} ${eDate.getFullYear()}`;
   }, [startDateStr, endDateStr]);
-
-  // Tabs layout selection
-  // Tabs: 'kompilasi' (Kompilasi Mingguan) | 'editor' (Buat GenCom Midterm) | 'review' (Review & ACC GenCom) | 'publish' (Publish PDF)
-  const [activeTab, setActiveTab] = React.useState<'kompilasi' | 'editor' | 'review' | 'publish'>('kompilasi');
 
   // Review & Audit States
   const [reviewNotes, setReviewNotes] = React.useState<Record<string, string>>({});
@@ -432,7 +512,6 @@ export default function MidtermSummary() {
     };
   }, [weeklySources]);
 
-  const [midtermDrafts, setMidtermDrafts] = React.useState<Record<string, MidtermSummaryDraft>>({});
   const [isFetchingDrafts, setIsFetchingDrafts] = React.useState(false);
   const [isSavingDraft, setIsSavingDraft] = React.useState(false);
 
@@ -1615,17 +1694,17 @@ export default function MidtermSummary() {
           },
           signatories: {
             principal: {
-              name: kindySignatory?.principalName || '',
+              name: toTitleCase(kindySignatory?.principalName || ''),
               title: kindySignatory?.principalTitle || 'Principal',
               signatureUrl: kindySignatory?.principalSignatureUrl || null
             },
             classTeacher: {
-              name: resolvedTeacherName || '',
+              name: toTitleCase(resolvedTeacherName || ''),
               title: 'Class Teacher',
               signatureUrl: resolvedSignatureUrl || null
             }
           },
-          attendanceSummary: computedAttendance,
+          attendanceSummary: getAttendance(),
           compiledWeeks: activeDraft.compiledWeeklySources || []
         }
       };
@@ -1872,7 +1951,6 @@ export default function MidtermSummary() {
     !!publishedReports[selectedStudentId]
   ) && profile?.role !== 'SUPER_ADMIN' && profile?.role !== 'HEAD_UNIT' && profile?.role !== 'kindergarten_head';
 
-  const activeDraft = midtermDrafts[selectedStudentId];
   const publishedReportObj = publishedReports[selectedStudentId];
 
   const computedAttendance = React.useMemo(() => {
@@ -1883,25 +1961,37 @@ export default function MidtermSummary() {
       noNews: 0,
       total: 0
     };
-
-    if (activeDraft?.compiledWeeklySources) {
-      activeDraft.compiledWeeklySources.forEach(source => {
-        const matchingWeekly = weeklySources.find(w => w.id === source.weeklyDraftId);
-        const att = matchingWeekly?.attendanceSummary || {};
-        const present = (att.happy || 0) + (att.sad || 0) + (att.angry || 0) + (att.ok || 0);
-        const sick = att.sick || 0;
-        const izin = att.izin || 0;
-        const noNews = att.noNews || 0;
-
-        summary.present += present;
-        summary.sick += sick;
-        summary.izin += izin;
-        summary.noNews += noNews;
-      });
-    }
-    summary.total = summary.present + summary.sick + summary.izin + summary.noNews;
+    
+    if (!selectedStudentId || realAttendanceList.length === 0) return summary;
+    
+    realAttendanceList.forEach(doc => {
+      const studentRecord = doc.students?.find((s: any) => s.studentId === selectedStudentId);
+      if (studentRecord) {
+        const status = (studentRecord.status || '').toLowerCase();
+        const emotion = (studentRecord.emotion || '').toLowerCase();
+        
+        if (status === 'sakit' || emotion === 'sick') {
+          summary.sick++;
+        } else if (status === 'izin' || emotion === 'izin') {
+          summary.izin++;
+        } else if (
+          status === 'tanpa_kabar' || 
+          status === 'alpha' || 
+          status === 'tanpa keterangan' || 
+          emotion === 'nonews' || 
+          status === 'no_news' ||
+          status === 'no news'
+        ) {
+          summary.noNews++;
+        } else {
+          summary.present++;
+        }
+      }
+    });
+    
+    summary.total = summary.sick + summary.izin + summary.noNews;
     return summary;
-  }, [activeDraft, weeklySources]);
+  }, [selectedStudentId, realAttendanceList]);
 
   // Getters for PDF rendering
   const getAgamaGoalText = () => {
@@ -1933,9 +2023,6 @@ export default function MidtermSummary() {
   };
 
   const getAttendance = () => {
-    if (publishedReportObj?.reportSnapshot?.attendanceSummary) {
-      return publishedReportObj.reportSnapshot.attendanceSummary;
-    }
     return computedAttendance;
   };
 
@@ -3230,7 +3317,7 @@ export default function MidtermSummary() {
                               <div className="grid grid-cols-12 leading-none">
                                 <span className="col-span-4 font-bold text-emerald-100">Teachers</span>
                                 <span className="col-span-1 text-emerald-100/70 text-center">:</span>
-                                <span className="col-span-7 font-bold text-white">{resolvedTeacherName || '-'}</span>
+                                <span className="col-span-7 font-bold text-white">{toTitleCase(resolvedTeacherName) || '-'}</span>
                               </div>
                               <div className="grid grid-cols-12 leading-none">
                                 <span className="col-span-4 font-bold text-emerald-100">Group</span>
@@ -3328,24 +3415,22 @@ export default function MidtermSummary() {
 
                       <div className="flex justify-between items-center text-[8px] text-gray-400 font-sans mt-4">
                         <span>Lazuardi GCS Kindergarten</span>
-                        <span>Halaman 1 dari 2</span>
+                        <span>Halaman 1 dari {shouldMoveSignaturesToPage3 ? '3' : '2'}</span>
                       </div>
                     </div>
 
-                     {/* PAGE 2 — COMMENTS, ATTENDANCE TABLE & SIGNATURES */}
-                     <div className="bg-white px-8 py-6 md:px-12 md:py-8 shadow-md border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-between print:border-none print:shadow-none print:p-0 print:m-0" id="midterm-report-page-2">
+                     {/* PAGE 2 — COMMENTS & ATTENDANCE TABLE */}
+                     <div className="bg-white px-8 py-6 md:px-12 md:py-8 shadow-md border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-start print:border-none print:shadow-none print:p-0 print:m-0" id="midterm-report-page-2">
                        
-                       <div className="space-y-4 flex-1 flex flex-col justify-between">
+                       <div className="space-y-4 flex-1 flex flex-col justify-start">
                          <div>
                            {/* Section: General Comments */}
                            <div className="space-y-2">
                              <h3 className="text-xs font-black text-emerald-800 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 text-center font-sans">
                                General Comments (Catatan Umum)
                              </h3>
-                             <div className="bg-emerald-50/10 border border-emerald-100 p-4 rounded-xl h-[480px] overflow-y-auto">
-                               <p className="text-[11px] text-gray-800 font-serif leading-relaxed whitespace-pre-wrap">
-                                 {getGeneralCommentText() || "Komentar evaluasi tengah semester belum dimasukkan."}
-                               </p>
+                             <div id="preview-comments-container" className="bg-emerald-50/10 border border-emerald-100 p-4 rounded-xl text-[11px] text-gray-800 font-serif leading-relaxed whitespace-pre-wrap">
+                               {getGeneralCommentText() || "Komentar evaluasi tengah semester belum dimasukkan."}
                              </div>
                            </div>
 
@@ -3392,72 +3477,162 @@ export default function MidtermSummary() {
                            </div>
                          </div>
 
-                         {/* Signatures Area */}
-                         <div className="grid grid-cols-2 gap-8 pt-6 border-t border-dashed border-gray-200 text-center shrink-0 mt-8">
-                           {/* Homeroom Teacher */}
-                           <div className="flex flex-col items-center justify-between h-[100px]">
-                             <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">Guru Kelas</span>
-                             <div className="h-12 flex items-center justify-center">
-                               {isValidHomeroomSignature ? (
-                                 <img 
-                                   src={resolvedSignatureUrl!} 
-                                   alt="Signature" 
-                                   className="h-10 w-auto object-contain"
-                                   referrerPolicy="no-referrer"
-                                   crossOrigin={resolvedSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
-                                 />
-                               ) : (
-                                 <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
-                               )}
-                             </div>
-                             <div className="text-center font-sans leading-none">
-                               <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
-                                 {resolvedTeacherName || "Nama Guru Kelas"}
-                               </span>
-                                <span className="text-[8px] text-gray-400 block mt-1 font-sans">
-                                  NIY: {(!resolvedTeacherNiy || resolvedTeacherNiy === '-') ? '-' : resolvedTeacherNiy}
-                                </span>
-                             </div>
-                           </div>
-
-                           {/* Principal */}
-                           <div className="flex flex-col items-center justify-between h-[100px]">
-                             <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">
-                               Kepala Pra-TK/TK Lazuardi GCS
-                             </span>
-                             <div className="h-12 flex items-center justify-center">
-                               {isValidPrincipalSignature ? (
-                                 <img 
-                                   src={kindySignatory!.principalSignatureUrl!} 
-                                   alt="Signature" 
-                                   className="h-10 w-auto object-contain"
-                                   referrerPolicy="no-referrer"
-                                   crossOrigin={kindySignatory!.principalSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
-                                 />
-                               ) : (
-                                 <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
-                               )}
-                             </div>
-                             <div className="text-center font-sans leading-none">
-                               <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
-                                 {kindySignatory?.principalName || "Nama Kepala Unit"}
-                               </span>
-                               {kindySignatory?.principalNiy && kindySignatory.principalNiy !== '-' && kindySignatory.principalNiy !== '' && (
-                                 <span className="text-[8px] text-gray-400 block mt-1 font-sans">
-                                   NIY: {kindySignatory.principalNiy}
+                         {/* Signatures Area - Rendered here on Page 2 ONLY if they do NOT overflow to Page 3 */}
+                         {!shouldMoveSignaturesToPage3 && (
+                           <div className="grid grid-cols-2 gap-8 pt-6 border-t border-dashed border-gray-200 text-center shrink-0 mt-8">
+                             {/* Homeroom Teacher */}
+                             <div className="flex flex-col items-center justify-between h-[100px]">
+                               <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">Guru Kelas</span>
+                               <div className="h-12 flex items-center justify-center">
+                                 {isValidHomeroomSignature ? (
+                                   <img 
+                                     src={resolvedSignatureUrl!} 
+                                     alt="Signature" 
+                                     className="h-10 w-auto object-contain"
+                                     referrerPolicy="no-referrer"
+                                     crossOrigin={resolvedSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
+                                   />
+                                 ) : (
+                                   <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
+                                 )}
+                               </div>
+                               <div className="text-center font-sans leading-none">
+                                 <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
+                                   {toTitleCase(resolvedTeacherName) || "Nama Guru Kelas"}
                                  </span>
-                               )}
+                                 <span className="text-[8px] text-gray-400 block mt-1 font-sans">
+                                   NIY: {(!resolvedTeacherNiy || resolvedTeacherNiy === '-') ? '-' : resolvedTeacherNiy}
+                                 </span>
+                               </div>
+                             </div>
+
+                             {/* Principal */}
+                             <div className="flex flex-col items-center justify-between h-[100px]">
+                               <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">
+                                 Kepala Pra-TK/TK Lazuardi GCS
+                               </span>
+                               <div className="h-12 flex items-center justify-center">
+                                 {isValidPrincipalSignature ? (
+                                   <img 
+                                     src={kindySignatory!.principalSignatureUrl!} 
+                                     alt="Signature" 
+                                     className="h-10 w-auto object-contain"
+                                     referrerPolicy="no-referrer"
+                                     crossOrigin={kindySignatory!.principalSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
+                                   />
+                                 ) : (
+                                   <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
+                                 )}
+                               </div>
+                               <div className="text-center font-sans leading-none">
+                                 <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
+                                   {toTitleCase(kindySignatory?.principalName) || "Nama Kepala Unit"}
+                                 </span>
+                                 {kindySignatory?.principalNiy && kindySignatory.principalNiy !== '-' && kindySignatory.principalNiy !== '' && (
+                                   <span className="text-[8px] text-gray-400 block mt-1 font-sans">
+                                     NIY: {kindySignatory.principalNiy}
+                                   </span>
+                                 )}
+                               </div>
                              </div>
                            </div>
-                         </div>
+                         )}
                        </div>
 
                        {/* Footer */}
-                       <div className="flex justify-between items-center text-[8px] text-gray-400 font-sans mt-4 pt-2 border-t border-gray-100">
+                       <div className="flex justify-between items-center text-[8px] text-gray-400 font-sans mt-auto pt-2 border-t border-gray-100">
                          <span>Dicetak tanggal: {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
-                         <span>Halaman 2 dari 2</span>
+                         <span>Halaman 2 dari {shouldMoveSignaturesToPage3 ? '3' : '2'}</span>
                        </div>
                      </div>
+
+                     {/* PAGE 3 — CONDITIONAL SIGNATURES PAGE */}
+                     {shouldMoveSignaturesToPage3 && (
+                       <div className="bg-white px-8 py-6 md:px-12 md:py-8 shadow-md border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-between print:border-none print:shadow-none print:p-0 print:m-0" id="midterm-report-page-3">
+                         
+                         <div className="space-y-4 flex-1 flex flex-col justify-start">
+                           {/* School/Report info context header */}
+                           <div className="border-b border-gray-200 pb-2.5 mb-6">
+                             <div className="flex justify-between items-center text-[9px] font-sans font-black text-gray-400 uppercase tracking-widest">
+                               <span>Lazuardi GCS Kindergarten</span>
+                               <span>Midterm Progress Report - Page 3</span>
+                             </div>
+                             <div className="text-[10px] text-gray-800 font-bold mt-1.5">
+                               Nama Siswa: {selectedStudentObj?.name} | Kelas: {activeClassObj?.name}
+                             </div>
+                           </div>
+
+                           <div className="text-[11px] text-gray-500 italic mb-8 font-sans leading-relaxed">
+                             Lembar Tanda Tangan Pengesahan (Signature Endorsement Page). Bagian ini dipisahkan secara otomatis karena halaman sebelumnya telah terisi penuh oleh komentar evaluasi.
+                           </div>
+
+                           {/* Signatures Area */}
+                           <div className="grid grid-cols-2 gap-8 pt-10 border-t border-dashed border-gray-200 text-center shrink-0">
+                             {/* Homeroom Teacher */}
+                             <div className="flex flex-col items-center justify-between h-[100px]">
+                               <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">Guru Kelas</span>
+                               <div className="h-12 flex items-center justify-center">
+                                 {isValidHomeroomSignature ? (
+                                   <img 
+                                     src={resolvedSignatureUrl!} 
+                                     alt="Signature" 
+                                     className="h-10 w-auto object-contain"
+                                     referrerPolicy="no-referrer"
+                                     crossOrigin={resolvedSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
+                                   />
+                                 ) : (
+                                   <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
+                                 )}
+                               </div>
+                               <div className="text-center font-sans leading-none">
+                                 <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
+                                   {toTitleCase(resolvedTeacherName) || "Nama Guru Kelas"}
+                                 </span>
+                                 <span className="text-[8px] text-gray-400 block mt-1 font-sans">
+                                   NIY: {(!resolvedTeacherNiy || resolvedTeacherNiy === '-') ? '-' : resolvedTeacherNiy}
+                                 </span>
+                               </div>
+                             </div>
+
+                             {/* Principal */}
+                             <div className="flex flex-col items-center justify-between h-[100px]">
+                               <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">
+                                 Kepala Pra-TK/TK Lazuardi GCS
+                               </span>
+                               <div className="h-12 flex items-center justify-center">
+                                 {isValidPrincipalSignature ? (
+                                   <img 
+                                     src={kindySignatory!.principalSignatureUrl!} 
+                                     alt="Signature" 
+                                     className="h-10 w-auto object-contain"
+                                     referrerPolicy="no-referrer"
+                                     crossOrigin={kindySignatory!.principalSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
+                                   />
+                                 ) : (
+                                   <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
+                                 )}
+                               </div>
+                               <div className="text-center font-sans leading-none">
+                                 <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
+                                   {toTitleCase(kindySignatory?.principalName) || "Nama Kepala Unit"}
+                                 </span>
+                                 {kindySignatory?.principalNiy && kindySignatory.principalNiy !== '-' && kindySignatory.principalNiy !== '' && (
+                                   <span className="text-[8px] text-gray-400 block mt-1 font-sans">
+                                     NIY: {kindySignatory.principalNiy}
+                                   </span>
+                                 )}
+                               </div>
+                             </div>
+                           </div>
+                         </div>
+
+                         {/* Footer */}
+                         <div className="flex justify-between items-center text-[8px] text-gray-400 font-sans mt-auto pt-2 border-t border-gray-100">
+                           <span>Dicetak tanggal: {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+                           <span>Halaman 3 dari 3</span>
+                         </div>
+                       </div>
+                     )}
 
                   </div>
                 ) : (

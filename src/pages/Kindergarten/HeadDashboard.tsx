@@ -637,7 +637,7 @@ export default function KindergartenHeadDashboard() {
                 Distribusi Emosi Anak
              </h3>
              {stats.hasChecklistData ? (
-                <div className="h-48 w-full relative">
+                <div style={{ width: '100%', minWidth: 0, minHeight: 192, height: 192 }} className="relative">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
@@ -696,7 +696,7 @@ export default function KindergartenHeadDashboard() {
            </h3>
            
            {stats.hasObservationData ? (
-              <div className="h-64 w-full">
+              <div style={{ width: '100%', minWidth: 0, minHeight: 256, height: 256 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={stats.domainChartData}

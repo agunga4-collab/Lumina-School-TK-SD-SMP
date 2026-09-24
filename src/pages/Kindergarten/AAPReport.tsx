@@ -1763,7 +1763,7 @@ export default function AAPReport() {
                     <span className="w-1.5 h-3 bg-indigo-600 rounded"></span> II. Grafik Capaian Hasil Asesmen (%)
                   </h4>
                   <div className="bg-gray-50/40 border border-gray-100 rounded-3xl p-6 flex justify-center">
-                    <div className="w-full h-[240px]">
+                    <div style={{ width: '100%', minWidth: 0, minHeight: 250, height: 300 }}>
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart
                           data={chartData}
