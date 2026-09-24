@@ -226,12 +226,59 @@ export default function MidtermSummary() {
   const isStudentInClass = React.useCallback((studClassId: string, activeClass: { id: string; name: string }) => {
     const sClass = (studClassId || '').trim().toLowerCase();
     const actId = (activeClass.id || '').trim().toLowerCase();
-    if (sClass === actId) return true;
+    const actName = (activeClass.name || '').trim().toLowerCase();
     
-    // Fallback checks
-    const activeNameLower = (activeClass.name || '').toLowerCase();
-    if (activeNameLower.includes('butterfly') && sClass.includes('butterfly')) return true;
-    if (activeNameLower.includes('caterpillar') && sClass.includes('caterpillar')) return true;
+    if (!sClass) return false;
+    if (sClass === actId || sClass === actName) return true;
+    
+    const norm = (str: string) => str.replace(/[\s\-_]+/g, '').toLowerCase();
+    const normS = norm(sClass);
+    const normId = norm(actId);
+    const normName = norm(actName);
+    
+    if (normS === normName || normS === normId) return true;
+    
+    // Check for specific sub-classes
+    const hasKoala = (str: string) => str.includes('koala');
+    const hasPanda = (str: string) => str.includes('panda');
+    const hasCaterpillar = (str: string) => str.includes('caterpillar');
+    const hasButterfly = (str: string) => str.includes('butterfly');
+    const hasCenderawasih = (str: string) => str.includes('cenderawasih');
+    const hasElang = (str: string) => str.includes('elang');
+    const hasKakatua = (str: string) => str.includes('kakatua');
+    const hasBadak = (str: string) => str.includes('badak');
+    const hasKomodo = (str: string) => str.includes('komodo');
+    const hasTapir = (str: string) => str.includes('tapir');
+    const hasBaluran = (str: string) => str.includes('baluran');
+    const hasBunaken = (str: string) => str.includes('bunaken');
+    
+    if (hasKoala(normS) && hasKoala(normName)) return true;
+    if (hasPanda(normS) && hasPanda(normName)) return true;
+    if (hasCaterpillar(normS) && hasCaterpillar(normName)) return true;
+    if (hasButterfly(normS) && hasButterfly(normName)) return true;
+    if (hasCenderawasih(normS) && hasCenderawasih(normName)) return true;
+    if (hasElang(normS) && hasElang(normName)) return true;
+    if (hasKakatua(normS) && hasKakatua(normName)) return true;
+    if (hasBadak(normS) && hasBadak(normName)) return true;
+    if (hasKomodo(normS) && hasKomodo(normName)) return true;
+    if (hasTapir(normS) && hasTapir(normName)) return true;
+    if (hasBaluran(normS) && hasBaluran(normName)) return true;
+    if (hasBunaken(normS) && hasBunaken(normName)) return true;
+
+    // Prevent generic "tka" from loosely matching specific sub-classes
+    const specificClassWords = [
+      'koala', 'panda', 'caterpillar', 'butterfly',
+      'cenderawasih', 'elang', 'kakatua', 'badak', 'komodo', 'tapir',
+      'baluran', 'bunaken'
+    ];
+    const hasSpecS = specificClassWords.some(w => normS.includes(w));
+    const hasSpecAct = specificClassWords.some(w => normId.includes(w) || normName.includes(w));
+    
+    if (hasSpecAct && !hasSpecS) {
+      return false; // student is general, but active class is specific
+    }
+    
+    if (normId.includes(normS) || normS.includes(normId)) return true;
     
     return false;
   }, []);
