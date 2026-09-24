@@ -3279,6 +3279,11 @@ function LearningPowerUpTeacherPageContent() {
 
   // Handle spreadsheet cell click -> opens Verification Modal or Unverification Dialog
   const handleCellClick = async (student: Student, field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi') => {
+    console.log('LPU CELL CLICKED', {
+      studentId: student.id,
+      studentName: student.name,
+      subjectKey: field,
+    });
     if (!activePackage) return;
     const isLevelBased = activePackage.id.startsWith('level_week_');
     
@@ -3309,7 +3314,12 @@ function LearningPowerUpTeacherPageContent() {
         b.subjectKey === field
       );
 
-      const taskBatchId = targetBatch ? targetBatch.id : '';
+      if (!targetBatch) {
+        toast.error(`Belum ada batch tugas ${CATEGORY_CONFIG[field].label} yang diterbitkan untuk pekan ini.`);
+        return;
+      }
+
+      const taskBatchId = targetBatch.id;
       const assignmentId = `assignment_${taskBatchId}_${student.id}_${field}`;
 
       setLoadingData(true);
@@ -3382,24 +3392,103 @@ function LearningPowerUpTeacherPageContent() {
           setVerificationNote(virtualProgress.revisionNote || '');
 
         } else {
-          // Log details precisely as requested
-          console.log("=== FIRESTORE GETDOC FAILURE DEBUG ===");
-          console.log("Firebase Project ID:", db.app.options?.projectId || 'Unknown');
-          console.log("Collection path: learning_power_up_assignments");
-          console.log("Document ID:", assignmentId);
-          console.log("Exists result: false");
-          console.log("=======================================");
+          // If assignment doc does NOT exist, auto-create it as requested
+          const rawLevel = litnumRecordsByStudentId[student.id]?.[field] || '';
+          const levelSnapshot = rawLevel ? rawLevel : null;
+
+          const resolvedTask = resolveLevelTask(targetBatch.levelTasks, levelSnapshot, field);
+          const defaultTitle = `Tugas Penguatan ${CATEGORY_CONFIG[field]?.label || field}`;
+          const fallbackInstructions = "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.";
+
+          const taskTitle = resolvedTask ? resolvedTask.title : defaultTitle;
+          const taskInstructions = resolvedTask ? resolvedTask.instructions : fallbackInstructions;
+
+          const newHistoryEntry: LpuAssignmentHistoryEntry = {
+            action: 'ASSIGN',
+            performedByUid: currentUser.uid,
+            performedByName: currentUser.displayName || currentUser.email || 'Guru',
+            performedByRole: currentUser.role,
+            timestamp: new Date()
+          };
+
+          const newAssignment: LearningPowerUpAssignment = {
+            id: assignmentId,
+            unit: 'JUNIOR_HIGH',
+            taskBatchId: targetBatch.id,
+            studentId: student.id,
+            studentNameSnapshot: student.name,
+            classId: student.classId,
+            classNameSnapshot: classes.find(c => c.id === student.classId)?.name || (student as any).className || 'Unknown Class',
+            subjectKey: field,
+            subjectArea: LPU_SUBJECT_MAP[field] as any,
+            levelSnapshot: levelSnapshot,
+            taskTitle,
+            taskInstructions,
+            academicYearId: targetBatch.academicYearId || activeYear,
+            semester: targetBatch.semester || '1',
+            weekStartDate: targetBatch.weekStartDate,
+            weekEndDate: targetBatch.weekEndDate,
+            weekLabel: targetBatch.weekLabel || `Pekan (${formatDateShort(targetBatch.weekStartDate)} - ${formatDateShort(targetBatch.weekEndDate)})`,
+            status: 'ASSIGNED',
+            history: [newHistoryEntry],
+            updatedAt: serverTimestamp() as any
+          };
+
+          await setDoc(doc(db, 'learning_power_up_assignments', assignmentId), newAssignment);
+
+          // Update local states synchronously
+          setLoadedAssignments(prev => [...prev, newAssignment]);
+
+          const virtualProgress: TaskProgress = {
+            id: newAssignment.id,
+            packageId: `level_week_${newAssignment.weekStartDate}`,
+            taskPackageId: `level_week_${newAssignment.weekStartDate}`,
+            studentId: newAssignment.studentId,
+            classId: newAssignment.classId,
+            academicYearId: newAssignment.academicYearId,
+            field: newAssignment.subjectKey,
+            subjectKey: newAssignment.subjectKey,
+            status: 'NOT_STARTED',
+            verifiedAt: null,
+            verifiedBy: null,
+            verifiedByEmail: null,
+            verifiedByName: null,
+            verificationMethod: null,
+            revisionNote: '',
+            history: (newAssignment.history || []).map(h => ({
+              timestamp: h.timestamp instanceof Date ? h.timestamp.toLocaleString('id-ID') : String(h.timestamp),
+              action: h.action,
+              actorUid: h.performedByUid,
+              actorName: h.performedByName,
+              actorRole: h.performedByRole,
+              note: h.note
+            })) as any
+          } as any;
+
+          setProgresses(prev => [...prev, virtualProgress]);
+
+          let displayLevel = '';
+          if (newAssignment.levelSnapshot) {
+            const normM = normalizeMengajiLevel(newAssignment.levelSnapshot);
+            const normN = normalizeNumerasiLevel(newAssignment.levelSnapshot);
+            displayLevel = normM ? formatMengajiDisplay(normM) : normN ? formatNumerasiDisplay(normN) : newAssignment.levelSnapshot;
+          }
 
           setVerifyingProgress({
             student,
             field,
-            taskDescription: '',
-            progress: null,
-            isNotFoundError: true,
+            taskDescription: newAssignment.taskInstructions || '',
+            progress: virtualProgress,
+            taskTitle: newAssignment.taskTitle,
+            level: displayLevel,
             assignmentId,
-            taskBatchId,
-            statusFromFirestore: 'TIDAK_ADA_DI_FIRESTORE'
+            taskBatchId: targetBatch.id,
+            statusFromFirestore: 'ASSIGNED',
+            isNotFoundError: false,
+            assignmentDoc: newAssignment
           } as any);
+          setVerificationNote('');
+          toast.success("Tugas individu berhasil dibuat secara otomatis.");
         }
       } catch (err: any) {
         console.error("Error direct fetching assignment:", err);
@@ -3433,6 +3522,9 @@ function LearningPowerUpTeacherPageContent() {
 
   // Save teacher verification (Verify Completed / Request Revision)
   const handleVerificationSave = async (isApproved: boolean) => {
+    if (isApproved) {
+      console.log('LPU VERIFY BUTTON CLICKED');
+    }
     if (!verifyingProgress || !activePackage) return;
     const { student, field, progress } = verifyingProgress;
     
@@ -3447,19 +3539,9 @@ function LearningPowerUpTeacherPageContent() {
     try {
       const isLevelBased = activePackage.id.startsWith('level_week_');
       if (isLevelBased) {
-        const targetBatch = findTargetBatchForStudent(
-          student.id,
-          student.classId,
-          field,
-          activePackage.weekStartDate
-        );
-        if (!targetBatch) {
-          toast.error("Gagal menemukan batch tugas level-based.");
-          return;
-        }
-
-        const assignmentId = generateDeterministicAssignmentId(targetBatch.id, student.id, field);
-        const existingAsg = loadedAssignments.find(a => a.id === assignmentId);
+        const vp = verifyingProgress as any;
+        const assignmentId = vp.assignmentId || `assignment_${vp.taskBatchId}_${student.id}_${field}`;
+        const existingAsg = vp.assignmentDoc || loadedAssignments.find(a => a.id === assignmentId);
         
         if (!existingAsg) {
           toast.error("Dokumen tugas belum ditetapkan untuk siswa ini.");
@@ -4758,9 +4840,10 @@ function LearningPowerUpTeacherPageContent() {
                                   ) : null}
                                   
                                   <button
+                                    type="button"
                                     onClick={() => handleCellClick(student, field)}
                                     className="inline-flex items-center justify-center p-1 rounded-xl transition-all hover:bg-slate-100 focus:outline-none"
-                                    disabled={status === 'CANCELLED' as any || savingCells[`${student.id}_${field}`]}
+                                    disabled={false}
                                   >
                                     {savingCells[`${student.id}_${field}`] ? (
                                       <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center border border-slate-200">
@@ -4791,7 +4874,7 @@ function LearningPowerUpTeacherPageContent() {
                                             Batal
                                           </div>
                                         )}
-                                        {status === 'NOT_STARTED' && (
+                                        {(status === 'NOT_STARTED' || status === 'ASSIGNED') && (
                                           <div className="w-8 h-8 rounded-lg border border-slate-200/60 bg-slate-50 flex items-center justify-center text-slate-300 hover:border-slate-400 transition-all">
                                             <div className="w-4 h-4 rounded-sm border border-slate-200" />
                                           </div>
