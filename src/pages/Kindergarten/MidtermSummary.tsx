@@ -208,16 +208,23 @@ export default function MidtermSummary() {
   React.useEffect(() => {
     async function loadKindergartenStudentsData() {
       try {
+        console.log('[MidtermSummary] Requesting cached Kindergarten students for year:', activeYear);
         const cached = await getKindergartenStudents(activeYear || '2026/2027');
         if (cached && cached.length > 0) {
           setStudents(cached);
+          saveStoredStudents(cached);
+        } else {
+          const local = getStoredStudents();
+          if (local && local.length > 0) {
+            setStudents(local);
+          }
         }
       } catch (err) {
         console.error('Error loading Kindergarten students:', err);
       }
     }
     loadKindergartenStudentsData();
-  }, []);
+  }, [activeYear]);
 
   const activeClassObj = React.useMemo(() => {
     return classes.find(c => c.id === selectedClassId);
