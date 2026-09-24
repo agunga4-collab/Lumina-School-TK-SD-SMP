@@ -16,7 +16,7 @@ import {
   getStoredStudents,
   saveStoredStudents
 } from '../../lib/kindergartenWeeklyReport';
-import { collection, query, where, getDocs, doc, setDoc, getDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, setDoc, getDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { useAuth } from '../../context/AuthContext';
@@ -57,6 +57,11 @@ interface MidtermSummaryDraft {
   periodLabel: string;
 
   midtermGeneralComment: string;
+
+  heightCm?: number | null;
+  weightKg?: number | null;
+  physicalDataUpdatedAt?: any;
+  physicalDataUpdatedBy?: string | null;
 
   learningGoals?: {
     nilaiAgamaBudiPekerti: string;
@@ -379,6 +384,9 @@ export default function MidtermSummary() {
 
   // Unsaved changes tracking
   const [localComment, setLocalComment] = React.useState<string>('');
+  const [localHeight, setLocalHeight] = React.useState<string>('');
+  const [localWeight, setLocalWeight] = React.useState<string>('');
+  const [isSavingPhysicalData, setIsSavingPhysicalData] = React.useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = React.useState(false);
 
   // Confirmation dialogs
@@ -803,9 +811,13 @@ export default function MidtermSummary() {
     if (selectedStudentId) {
       const activeDraft = midtermDrafts[selectedStudentId];
       setLocalComment(activeDraft?.midtermGeneralComment || '');
+      setLocalHeight(activeDraft?.heightCm !== undefined && activeDraft?.heightCm !== null ? String(activeDraft.heightCm) : '');
+      setLocalWeight(activeDraft?.weightKg !== undefined && activeDraft?.weightKg !== null ? String(activeDraft.weightKg) : '');
       setHasUnsavedChanges(false);
     } else {
       setLocalComment('');
+      setLocalHeight('');
+      setLocalWeight('');
       setHasUnsavedChanges(false);
     }
   }, [selectedStudentId, midtermDrafts]);
@@ -1102,6 +1114,87 @@ export default function MidtermSummary() {
       toast.error('Gagal menyimpan draf.', { id: toastId });
     } finally {
       setIsSavingDraft(false);
+    }
+  };
+
+  // Save Physical Data (Tinggi & Berat Badan)
+  const handleSavePhysicalData = async () => {
+    if (!selectedStudentId || !selectedStudentObj || !activeClassObj) {
+      toast.error('Siswa atau Kelas belum dipilih.');
+      return;
+    }
+    
+    setIsSavingPhysicalData(true);
+    const draftId = getMidtermDraftId(selectedStudentId);
+    const activeDraft = midtermDrafts[selectedStudentId];
+
+    const trimmedHeight = localHeight.trim();
+    const trimmedWeight = localWeight.trim();
+
+    const parsedHeight = trimmedHeight !== '' ? parseFloat(trimmedHeight) : null;
+    const parsedWeight = trimmedWeight !== '' ? parseFloat(trimmedWeight) : null;
+
+    if (trimmedHeight !== '' && isNaN(parsedHeight!)) {
+      toast.error('Tinggi Badan harus berupa angka atau desimal.');
+      setIsSavingPhysicalData(false);
+      return;
+    }
+    if (trimmedWeight !== '' && isNaN(parsedWeight!)) {
+      toast.error('Berat Badan harus berupa angka atau desimal.');
+      setIsSavingPhysicalData(false);
+      return;
+    }
+
+    const payload: Partial<MidtermSummaryDraft> = {
+      unit: 'KINDERGARTEN',
+      reportType: 'KINDY_MIDTERM_REPORT',
+      studentId: selectedStudentId,
+      studentNameSnapshot: selectedStudentObj.name,
+      classId: selectedClassId,
+      classNameSnapshot: activeClassObj.name,
+      academicYear: activeYear || '2026/2027',
+      semester,
+      periodKey: `${startDateStr}_${endDateStr}`,
+      startDate: startDateStr,
+      endDate: endDateStr,
+      periodLabel: formattedPeriodRangeIndo,
+      
+      heightCm: parsedHeight,
+      weightKg: parsedWeight,
+      physicalDataUpdatedAt: serverTimestamp(),
+      physicalDataUpdatedBy: currentUser?.uid || profile?.uid || 'System',
+      updatedAt: Date.now(),
+      updatedBy: profile?.email || 'System'
+    };
+
+    if (!activeDraft) {
+      payload.createdAt = Date.now();
+      payload.createdBy = profile?.email || 'System';
+      payload.midtermGeneralComment = '';
+      payload.status = 'DRAFT';
+      payload.compiledWeeklySources = [];
+    }
+
+    const toastId = toast.loading('Menyimpan Data Fisik Siswa...');
+    try {
+      await setDoc(doc(db, 'midterm_summary_drafts', draftId), payload, { merge: true });
+      
+      // Sync local midtermDrafts cache state
+      setMidtermDrafts(prev => ({
+        ...prev,
+        [selectedStudentId]: {
+          ...(prev[selectedStudentId] || {}),
+          ...payload,
+          id: draftId
+        } as MidtermSummaryDraft
+      }));
+
+      toast.success('Data Fisik Siswa berhasil disimpan! ✨', { id: toastId });
+    } catch (err) {
+      console.error('[MidtermSummary] Save physical data error:', err);
+      toast.error('Gagal menyimpan Data Fisik Siswa.', { id: toastId });
+    } finally {
+      setIsSavingPhysicalData(false);
     }
   };
 
@@ -2437,6 +2530,50 @@ export default function MidtermSummary() {
                   )}
                 </div>
 
+                {/* DATA FISIK SISWA */}
+                <div className="bg-white border border-gray-150 p-5 rounded-2xl shadow-sm space-y-4">
+                  <div className="pb-2.5 border-b border-gray-100">
+                    <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider font-sans">Data Fisik Siswa</h3>
+                    <p className="text-[10px] text-gray-400 font-medium">Data diisi khusus untuk rapor Midterm siswa ini.</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block font-sans">Tinggi Badan (cm)</label>
+                      <input
+                        type="text"
+                        value={localHeight}
+                        onChange={(e) => setLocalHeight(e.target.value)}
+                        placeholder="Contoh: 105.5"
+                        disabled={isSavingPhysicalData || isLockedForEditing}
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs font-sans outline-none focus:border-[#109E58] focus:ring-1 focus:ring-[#109E58]/35 focus:ring-offset-0 transition-all text-gray-800 bg-white"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block font-sans">Berat Badan (kg)</label>
+                      <input
+                        type="text"
+                        value={localWeight}
+                        onChange={(e) => setLocalWeight(e.target.value)}
+                        placeholder="Contoh: 17.2"
+                        disabled={isSavingPhysicalData || isLockedForEditing}
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs font-sans outline-none focus:border-[#109E58] focus:ring-1 focus:ring-[#109E58]/35 focus:ring-offset-0 transition-all text-gray-800 bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-2 border-t border-gray-100">
+                    <button
+                      onClick={handleSavePhysicalData}
+                      disabled={isSavingPhysicalData || isLockedForEditing}
+                      className="flex items-center gap-1.5 bg-[#109E58] hover:bg-emerald-700 disabled:opacity-40 text-white font-extrabold text-xs px-4 py-2 rounded-xl cursor-pointer transition-all shadow-md shadow-[#109E58]/10 disabled:cursor-not-allowed"
+                    >
+                      {isSavingPhysicalData ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                      Simpan Data Fisik
+                    </button>
+                  </div>
+                </div>
+
                 <div className="bg-white border border-gray-150 p-5 rounded-2xl shadow-sm space-y-4">
                   
                   <div className="flex justify-between items-center pb-2.5 border-b border-gray-100 flex-wrap gap-2">
@@ -3023,14 +3160,14 @@ export default function MidtermSummary() {
                                 <span className="col-span-4 font-bold text-emerald-100">Height</span>
                                 <span className="col-span-1 text-emerald-100/70 text-center">:</span>
                                 <span className="col-span-7 font-bold text-white">
-                                  {selectedStudentObj?.height ? `${selectedStudentObj.height} cm` : '-'}
+                                  {activeDraft?.heightCm !== undefined && activeDraft?.heightCm !== null && activeDraft?.heightCm !== '' && !isNaN(Number(activeDraft.heightCm)) ? `${activeDraft.heightCm} cm` : '-'}
                                 </span>
                               </div>
                               <div className="grid grid-cols-12 leading-none">
                                 <span className="col-span-4 font-bold text-emerald-100">Weight</span>
                                 <span className="col-span-1 text-emerald-100/70 text-center">:</span>
                                 <span className="col-span-7 font-bold text-white">
-                                  {selectedStudentObj?.weight ? `${selectedStudentObj.weight} kg` : '-'}
+                                  {activeDraft?.weightKg !== undefined && activeDraft?.weightKg !== null && activeDraft?.weightKg !== '' && !isNaN(Number(activeDraft.weightKg)) ? `${activeDraft.weightKg} kg` : '-'}
                                 </span>
                               </div>
                             </div>
