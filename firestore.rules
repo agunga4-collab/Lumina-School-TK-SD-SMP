@@ -1501,7 +1501,7 @@ service cloud.firestore {
         isAdmin() ||
         isKindergartenHeadUnit() ||
         isSecretaryKindy() ||
-        (isTeacher() && (resource == null || isTeacherAssignedToClass(resource.data.classId)))
+        (isTeacher() && (resource == null || currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL' || isTeacherAssignedToClass(resource.data.classId)))
       );
       allow create: if isActive() && (
         isAdmin() ||
@@ -1522,7 +1522,7 @@ service cloud.firestore {
           isTeacherAssignedToClass(incoming().classId) && 
           isMidtermIdentityUnchanged() &&
           (
-            (existing().status in ['DRAFT', 'READY_FOR_REVIEW', 'PERLU_REVISI', 'APPROVED'] && incoming().status in ['DRAFT', 'READY_FOR_REVIEW']) ||
+            (existing().status in ['DRAFT', 'READY_FOR_REVIEW', 'SUBMITTED_FOR_REVIEW', 'PERLU_REVISI', 'APPROVED'] && incoming().status in ['DRAFT', 'READY_FOR_REVIEW', 'SUBMITTED_FOR_REVIEW']) ||
             (existing().status in ['APPROVED', 'PUBLISHED'] && incoming().status == 'PUBLISHED')
           )
         )
@@ -1539,13 +1539,13 @@ service cloud.firestore {
         isAdmin() ||
         isKindergartenHeadUnit() ||
         isSecretaryKindy() ||
-        (isTeacher() && (resource == null || isTeacherAssignedToClass(resource.data.classId)))
+        (isTeacher() && (resource == null || currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL' || isTeacherAssignedToClass(resource.data.classId)))
       );
       allow create: if isActive() && (
         isAdmin() ||
         isKindergartenHeadUnit() ||
         isSecretaryKindy() ||
-        (isTeacher() && isTeacherAssignedToClass(incoming().classId))
+        (isTeacher() && (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL' || isTeacherAssignedToClass(incoming().classId)))
       );
       allow update, delete: if false;
     }
