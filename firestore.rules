@@ -1394,7 +1394,7 @@ service cloud.firestore {
       allow update: if isActive() && (
         isAdmin() ||
         
-        (isJuniorHighStaff() && isTeacherAssignedToClass(resource.data.classId) && (
+        (isJuniorHighTeacherOrAuthorizedStaff() && (
           ((resource.data.generalCommentReviewStatus == 'DRAFT' || resource.data.generalCommentReviewStatus == 'REVISION_REQUESTED' || !('generalCommentReviewStatus' in resource.data)) &&
            request.resource.data.generalCommentReviewStatus in ['DRAFT', 'SUBMITTED_FOR_REVIEW'] &&
            !('revisionFeedback' in request.resource.data && request.resource.data.revisionFeedback != resource.data.revisionFeedback)) ||
