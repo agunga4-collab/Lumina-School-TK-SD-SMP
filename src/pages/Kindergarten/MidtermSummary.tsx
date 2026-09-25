@@ -1612,8 +1612,138 @@ export default function MidtermSummary() {
 
       const base64Data = await getBase64(pdfBlob);
 
-      // Filename standard
-      const filename = `S${semester} - ${selectedStudentObj?.name} - ${activeClassObj?.name || 'Class'} - Midterm Report.pdf`;
+      // Filename standard matching 'S1 - Zac Jaden Kotahatuhaha - Midterm Report.pdf'
+      const filename = `S${semester} - ${selectedStudentObj?.name} - Midterm Report.pdf`;
+
+      setPublishStatus("Menyiapkan folder Google Drive...");
+      toast.loading("Menyiapkan folder Google Drive...", { id: toastId });
+
+      const parentWeeklyFolderId = '1IBy2Ly_h72v3znKod3rXLLgx1IaeoGqO';
+
+      // Helper function to find a folder by name inside a parent on Google Drive
+      const findFolderOnDrive = async (tok: string, name: string, parentId: string): Promise<string | null> => {
+        const escapedName = name.replace(/'/g, "\\'");
+        const q = `name = '${escapedName}' and '${parentId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+        const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id,name)`;
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${tok}` }
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`Gagal mencari folder '${name}' di Google Drive: ${text}`);
+        }
+        const data = await res.json();
+        if (data.files && data.files.length > 0) {
+          return data.files[0].id;
+        }
+        return null;
+      };
+
+      // Helper function to create a folder on Google Drive
+      const createFolderOnDrive = async (tok: string, name: string, parentId: string): Promise<string> => {
+        const url = `https://www.googleapis.com/drive/v3/files?supportsAllDrives=true`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${tok}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name,
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: [parentId]
+          })
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`Gagal membuat folder '${name}' di Google Drive: ${text}`);
+        }
+        const data = await res.json();
+        return data.id;
+      };
+
+      // Resolve Midterm Reports parent folder and class folder
+      let classMidtermFolderId = '';
+      let midtermRootFolderId = '';
+      const className = activeClassObj?.name || 'Class';
+
+      // 1. Try to fetch from local Firestore cache first to satisfy "Identitas folder kelas harus disimpan berdasarkan classId"
+      const folderMetaRef = doc(db, 'midterm_folders', selectedClassId);
+      const folderMetaSnap = await getDoc(folderMetaRef);
+
+      if (folderMetaSnap.exists()) {
+        const metaData = folderMetaSnap.data();
+        classMidtermFolderId = metaData.classMidtermFolderId || '';
+        midtermRootFolderId = metaData.midtermRootFolderId || '';
+
+        // Verify folder still exists on Drive
+        if (classMidtermFolderId) {
+          try {
+            const checkRes = await fetch(`https://www.googleapis.com/drive/v3/files/${classMidtermFolderId}?supportsAllDrives=true`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            if (!checkRes.ok) {
+              classMidtermFolderId = '';
+              midtermRootFolderId = '';
+            }
+          } catch (err) {
+            classMidtermFolderId = '';
+            midtermRootFolderId = '';
+          }
+        }
+      }
+
+      // 2. Find-or-create folders on Google Drive if not loaded from cache
+      if (!classMidtermFolderId) {
+        setPublishStatus("Mencari folder utama Midterm Reports...");
+        midtermRootFolderId = await findFolderOnDrive(token, 'Midterm Reports', parentWeeklyFolderId) || '';
+        if (!midtermRootFolderId) {
+          setPublishStatus("Membuat folder utama Midterm Reports...");
+          midtermRootFolderId = await createFolderOnDrive(token, 'Midterm Reports', parentWeeklyFolderId);
+        }
+
+        setPublishStatus(`Mencari folder kelas ${className}...`);
+        classMidtermFolderId = await findFolderOnDrive(token, className, midtermRootFolderId) || '';
+        if (!classMidtermFolderId) {
+          setPublishStatus(`Membuat folder kelas ${className}...`);
+          classMidtermFolderId = await createFolderOnDrive(token, className, midtermRootFolderId);
+        }
+
+        // Save metadata to Firestore 'midterm_folders' collection
+        await setDoc(folderMetaRef, {
+          parentWeeklyFolderId,
+          midtermRootFolderId,
+          classId: selectedClassId,
+          className: className,
+          classMidtermFolderId,
+          updatedAt: Date.now()
+        }, { merge: true });
+      }
+
+      // 3. Search and delete any existing files with the exact same name inside the class midterm folder to prevent duplicate file entries on Google Drive
+      try {
+        setPublishStatus("Mengecek file lama...");
+        const escapedFilename = filename.replace(/'/g, "\\'");
+        const qSearch = `name = '${escapedFilename}' and '${classMidtermFolderId}' in parents and trashed = false`;
+        const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(qSearch)}&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id)`;
+        const searchRes = await fetch(searchUrl, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (searchRes.ok) {
+          const searchData = await searchRes.json();
+          if (searchData.files && searchData.files.length > 0) {
+            setPublishStatus("Mengganti file lama di Google Drive...");
+            for (const oldFile of searchData.files) {
+              await fetch(`https://www.googleapis.com/drive/v3/files/${oldFile.id}?supportsAllDrives=true`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${token}` }
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Error while searching/deleting old midterm report on Google Drive:", err);
+      }
 
       setPublishStatus("Mengunggah ke Google Drive...");
       toast.loading("Mengunggah ke Google Drive...", { id: toastId });
@@ -1625,7 +1755,7 @@ export default function MidtermSummary() {
       const metadata = {
         name: filename,
         mimeType: 'application/pdf',
-        parents: ['1IBy2Ly_h72v3znKod3rXLLgx1IaeoGqO'],
+        parents: [classMidtermFolderId],
       };
 
       const multipartRequestBody =
@@ -1659,6 +1789,23 @@ export default function MidtermSummary() {
       const driveFileId = driveData.id || '';
       const driveFileUrl = driveFileId ? `https://drive.google.com/file/d/${driveFileId}/view` : '';
 
+      // 4. Grant read permissions to anyone on the newly created file so it is publicly accessible
+      try {
+        await fetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}/permissions?supportsAllDrives=true`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            role: 'reader',
+            type: 'anyone'
+          })
+        });
+      } catch (permErr) {
+        console.warn("Failed to grant public permissions for the published PDF on Google Drive:", permErr);
+      }
+
       setPublishStatus("Menyimpan publikasi...");
       toast.loading("Menyimpan publikasi...", { id: toastId });
 
@@ -1687,6 +1834,7 @@ export default function MidtermSummary() {
         reportType: 'KINDY_MIDTERM_REPORT',
         publishedAt: Date.now(),
         driveFileId,
+        driveFolderId: classMidtermFolderId,
         driveFileUrl,
         version: nextVersion,
         publishedBy: profile?.uid || 'Unknown',
