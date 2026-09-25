@@ -50,7 +50,10 @@ export function ReviewApprovalGenComTab({
 
   // Helper roles
   const userRoleStr = currentUser.role || '';
-  const isApprover = ['SUPER_ADMIN', 'PRINCIPAL', 'HEAD_UNIT', 'HEAD_JUNIOR'].includes(userRoleStr);
+  const isApprover = 
+    currentUser.unitId === 'JUNIOR_HIGH' ||
+    currentUser.unitId === 'ALL' ||
+    ['SUPER_ADMIN', 'PRINCIPAL', 'HEAD_UNIT', 'HEAD_JUNIOR'].includes(userRoleStr);
 
   // Filter students based on state & search query
   const filteredStudents = React.useMemo(() => {
