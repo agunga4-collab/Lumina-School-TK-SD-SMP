@@ -1314,7 +1314,7 @@ service cloud.firestore {
         isAdmin() ||
         isKindergartenHeadUnit() ||
         isSecretaryKindy() ||
-        (isTeacher() && isTeacherAssignedToClass(resource.data.classId)) ||
+        (isTeacher() && (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL' || isTeacherAssignedToClass(resource.data.classId))) ||
         isOwnStudentData(resource.data.studentId) ||
         isLinkedStudent(resource.data.studentId)
       );
@@ -1325,7 +1325,7 @@ service cloud.firestore {
           (
             isKindergartenHeadUnit() || 
             isSecretaryKindy() || 
-            (isTeacher() && isTeacherAssignedToClass(request.resource.data.classId))
+            (isTeacher() && (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL' || isTeacherAssignedToClass(request.resource.data.classId)))
           ) && (
             // Validate: unit is KINDERGARTEN
             (exists(/databases/$(database)/documents/classes/$(request.resource.data.classId)) && 
@@ -1342,7 +1342,7 @@ service cloud.firestore {
           (
             isKindergartenHeadUnit() || 
             isSecretaryKindy() || 
-            (isTeacher() && isTeacherAssignedToClass(resource.data.classId))
+            (isTeacher() && (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL' || isTeacherAssignedToClass(resource.data.classId)))
           ) && (
             // Ensure studentId and classId are immutable during update
             request.resource.data.studentId == resource.data.studentId &&
