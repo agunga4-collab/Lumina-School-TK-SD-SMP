@@ -812,3 +812,227 @@ export async function saveElementaryMidtermCustomUas(
     handleFirestoreError(err, 'update', `elem_midterm_master_goals/performing_arts_custom_uas`);
   }
 }
+
+export const ELEM_STRENGTH_PROGRESS_BANK = [
+  'Berpartisipasi aktif dalam diskusi kelas dan tugas kelompok kolaboratif',
+  'Menunjukkan rasa ingin tahu yang tinggi, pemikiran kritis, dan antusiasme dalam belajar',
+  'Menunjukkan sikap hormat, disiplin, dan interaksi positif dengan teman serta guru',
+  'Konsisten menyelesaikan tugas harian dengan tekun dan penuh tanggung jawab',
+  'Menampilkan adaptabilitas, kreativitas, dan inisiatif positif dalam kegiatan kelas',
+  'Menunjukkan pengelolaan diri yang baik, konsistensi, dan fokus saat belajar mandiri',
+  'Mampu mengekspresikan gagasan secara artikulatif dan mendengarkan pendapat orang lain dengan penuh perhatian',
+  'Menunjukkan perkembangan akademis yang stabil dan menerima umpan balik dengan positif'
+];
+
+export const ELEM_ACHIEVEMENT_BANK = [
+  'Berhasil menunjukkan pemahaman yang sangat baik dan kepemimpinan dalam pembelajaran berbasis proyek',
+  'Berkontribusi aktif memberikan ide-ide cemerlang dan mengoordinasikan tim dengan efektif dalam kerja kelompok',
+  'Mencapai peningkatan signifikan dalam pemecahan masalah dan konsistensi tugas',
+  'Menampilkan kreativitas, pemikiran analitis, dan keterampilan presentasi yang sangat baik dalam proyek kelas',
+  'Konsisten menghasilkan pekerjaan rumah dan tugas yang rapi serta terorganisasi dengan baik',
+  'Dikenal memiliki sportivitas, empati, dan semangat kerja sama yang luar biasa'
+];
+
+export const ELEM_NEEDS_IMPROVEMENT_BANK = [
+  'mempertahankan fokus yang konsisten dan pengelolaan waktu selama tugas mandiri',
+  'lebih aktif mengutarakan pendapat dan berpartisipasi dengan percaya diri dalam diskusi kelas',
+  'meningkatkan ketelitian terhadap detail dan memeriksa kembali tugas secara menyeluruh sebelum dikumpulkan',
+  'meningkatkan keterampilan organisasi dalam mengelola materi pelajaran dan jadwal harian',
+  'berani bertanya untuk meminta klarifikasi atau bimbingan guru ketika menghadapi konsep yang menantang',
+  'memperkuat konsistensi dalam menyelesaikan tugas tepat waktu sesuai tenggat yang ditentukan'
+];
+
+/**
+ * Checks if user is homeroom teacher of this class
+ */
+export function isHomeroomTeacherOfClass(user: User | null | undefined, classData: Class | null | undefined): boolean {
+  if (!user || !classData) return false;
+  if (user.role === 'SUPER_ADMIN' || user.role === 'HEAD_UNIT') return true;
+
+  const uid = user.uid || (user as any).id;
+  if (classData.homeroomTeacherId === uid) return true;
+  if (classData.homeroomTeacherIds && Array.isArray(classData.homeroomTeacherIds) && classData.homeroomTeacherIds.includes(uid)) return true;
+  if ((classData as any).waliKelasIds && Array.isArray((classData as any).waliKelasIds) && (classData as any).waliKelasIds.includes(uid)) return true;
+  if (classData.assignedTeacherIds && Array.isArray(classData.assignedTeacherIds) && classData.assignedTeacherIds.includes(uid)) return true;
+
+  return false;
+}
+
+/**
+ * Save custom category configurations for an elementary class context
+ */
+export async function saveElementaryMidtermClassCommentsConfig(
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  configData: Partial<any>,
+  userUid: string
+): Promise<void> {
+  const normYear = normalizeAcademicYear(academicYear);
+  const docId = `${classId}_${normYear}_S${semester}_T${midtermTerm}`;
+  const ref = doc(db, 'elem_midterm_class_comments_config', docId);
+
+  const payload = {
+    classId,
+    academicYear,
+    semester: String(semester),
+    midtermTerm: String(midtermTerm),
+    ...configData,
+    updatedAt: Date.now(),
+    updatedBy: userUid
+  };
+
+  await setDoc(ref, payload, { merge: true });
+}
+
+/**
+ * Load custom category configurations for an elementary class context
+ */
+export async function getElementaryMidtermClassCommentsConfig(
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string
+): Promise<any | null> {
+  const normYear = normalizeAcademicYear(academicYear);
+  const docId = `${classId}_${normYear}_S${semester}_T${midtermTerm}`;
+  const ref = doc(db, 'elem_midterm_class_comments_config', docId);
+
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    return null;
+  }
+  return snap.data();
+}
+
+/**
+ * Submit Elementary General Comments for review
+ */
+export async function submitElementaryMidtermGeneralCommentForReview(
+  studentId: string,
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  userUid: string,
+  userName: string,
+  userRole: string,
+  commentSnapshot: string
+): Promise<void> {
+  const docId = buildStudentDataDocId(studentId, classId, academicYear, semester, midtermTerm);
+  const ref = doc(db, 'elem_midterm_student_data', docId);
+
+  const snap = await getDoc(ref);
+  const existing = snap.exists() ? (snap.data() as ElementaryMidtermStudentDataDoc) : null;
+  
+  const history = Array.isArray(existing?.reviewHistory) ? [...existing.reviewHistory] : [];
+  const previousStatus = existing?.generalCommentReviewStatus || 'DRAFT';
+  const action = previousStatus === 'REVISION_REQUESTED' ? 'RESUBMITTED_FOR_REVIEW' : 'SUBMITTED_FOR_REVIEW';
+
+  const entry: any = {
+    action,
+    actorId: userUid,
+    actorName: userName,
+    actorRole: userRole,
+    timestamp: Date.now(),
+    commentSnapshot
+  };
+  history.push(entry);
+
+  const currentVersion = Number(existing?.reviewVersion ?? 0);
+  const nextVersion = action === 'SUBMITTED_FOR_REVIEW' ? currentVersion + 1 : currentVersion;
+
+  await setDoc(ref, {
+    generalCommentReviewStatus: 'SUBMITTED_FOR_REVIEW',
+    submittedForReviewAt: Date.now(),
+    submittedForReviewBy: userUid,
+    submittedForReviewByName: userName,
+    reviewVersion: nextVersion,
+    reviewHistory: history,
+    updatedAt: Date.now(),
+    updatedBy: userUid
+  }, { merge: true });
+}
+
+/**
+ * Generates General Comment draft using the secure server-side AI endpoint for Elementary
+ */
+export async function generateElementaryMidtermGeneralCommentAI(params: {
+  studentName: string;
+  nickname?: string;
+  strengths: string[];
+  achievements: string[];
+  needsImprovement: string[];
+  manualNotes?: string;
+}): Promise<string> {
+  const { auth } = await import('../lib/firebase');
+  const idToken = await auth.currentUser?.getIdToken();
+  if (!idToken) {
+    throw new Error('Sesi login telah berakhir. Silakan refresh halaman.');
+  }
+
+  const response = await fetch('/api/elementary/midterm/generate-general-comment', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({
+      studentName: params.studentName,
+      nickname: params.nickname,
+      strengths: params.strengths,
+      achievements: params.achievements,
+      needsImprovement: params.needsImprovement,
+      manualNotes: params.manualNotes,
+    }),
+  });
+
+  const resJson = await response.json();
+  if (!response.ok) {
+    throw new Error(resJson.error || 'AI belum dapat digunakan. Silakan coba lagi atau isi komentar secara manual.');
+  }
+
+  return resJson.text || '';
+}
+
+/**
+ * Polishes teacher comment draft using the secure server-side AI endpoint for Elementary
+ */
+export async function refineElementaryMidtermGeneralCommentAI(params: {
+  draftText?: string;
+  originalComment?: string;
+  studentName?: string;
+  nickname?: string;
+}): Promise<string> {
+  const { auth } = await import('../lib/firebase');
+  const idToken = await auth.currentUser?.getIdToken();
+  if (!idToken) {
+    throw new Error('Sesi login telah berakhir. Silakan refresh halaman.');
+  }
+
+  const originalComment = (params.originalComment || params.draftText || '').trim();
+  if (!originalComment) {
+    throw new Error('Teks komentar tidak boleh kosong.');
+  }
+
+  const response = await fetch('/api/elementary/midterm/refine-general-comment', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({
+      studentName: params.studentName,
+      nickname: params.nickname,
+      originalComment,
+    }),
+  });
+
+  const resJson = await response.json();
+  if (!response.ok) {
+    throw new Error(resJson.error || 'AI belum dapat digunakan. Silakan coba lagi.');
+  }
+
+  return resJson.text || '';
+}

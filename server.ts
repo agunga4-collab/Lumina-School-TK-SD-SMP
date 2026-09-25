@@ -5290,7 +5290,54 @@ Output rules:
 10. Never use the word “however”.
 11. If a suggestion is already present, preserve it in constructive wording.
 12. Do not add a title, bullet, markdown, quotation marks, explanation, or label.
-Return only the refined paragraph.`
+Return only the refined paragraph.`,
+    elementary_midterm_general_comment: `Kamu adalah editor narasi rapor Midterm Elementary berbahasa Indonesia.
+Tulis satu paragraf komentar rapor yang formal, hangat, objektif, dan mudah dipahami orang tua.
+
+Nama Siswa: {{studentName}}
+Nama Panggilan: {{nickname}}
+
+Perkembangan positif / Kekuatan:
+{{strengths}}
+
+Pencapaian:
+{{achievements}}
+
+Area pengembangan / Hal yang perlu ditingkatkan:
+{{needsImprovement}}
+
+Catatan tambahan dari guru:
+{{manualNotes}}
+
+=== ATURAN PEMBUATAN ===
+1. Tulis dalam Bahasa Indonesia yang baik dan benar.
+2. Hasil akhir HARUS berupa tepat satu paragraf narasi utuh (tanpa baris baru/line breaks).
+3. Panjang maksimum 120 kata.
+4. Gunakan nama panggilan siswa secara wajar secara natural.
+5. SANGAT PENTING: Jangan gunakan gender atau kata ganti orang ketiga bergender seperti "dia laki-laki/perempuan", "ia", "beliau", "he/she", atau kata ganti pronoun gender lainnya. Sebutkan nama panggilan siswa jika ingin merujuk kepadanya.
+6. Mulailah dengan apresiasi terhadap perkembangan positif atau kekuatan siswa.
+7. Sebutkan pencapaian siswa hanya jika ada data pencapaian yang disediakan di atas. Jangan mengarang pencapaian atau prestasi yang tidak dipilih oleh guru.
+8. Sampaikan area pengembangan secara konstruktif, positif, sopan, ramah, dan wajib disertai saran atau solusi/arah perbaikan praktis di dalam paragraf tersebut.
+9. Jangan menyebutkan nilai huruf atau angka rapor kecuali jika terdapat instruksi khusus dalam catatan tambahan guru.
+10. Jangan menyertakan judul, poin bulet, tanda kutip, label, penjelasan pra/pasca teks, atau format markdown tebal/miring. Kembalikan HANYA paragraf komentar final saja.`,
+    elementary_midterm_refine_comment: `Kamu adalah editor narasi rapor Midterm Elementary berbahasa Indonesia.
+Rapikan, edit, dan sempurnakan draf komentar rapor Midterm Elementary berikut agar tata bahasanya benar (sesuai EYD), mengalir dengan profesional, hangat, objektif, dan mudah dipahami orang tua.
+
+Nama Siswa: {{studentName}}
+Nama Panggilan: {{nickname}}
+
+Draf komentar dari guru:
+{{originalComment}}
+
+=== ATURAN PEMBUATAN ===
+1. Tulis dalam Bahasa Indonesia yang baik dan benar (sesuai EYD).
+2. Hasil akhir HARUS berupa tepat satu paragraf narasi utuh (tanpa baris baru/line breaks).
+3. Panjang maksimum 120 kata.
+4. Pertahankan semua fakta, makna, pencapaian, dan arahan perkembangan yang ditulis oleh guru. Jangan mengarang informasi baru.
+5. Gunakan nama panggilan siswa secara wajar secara natural.
+6. SANGAT PENTING: Jangan gunakan gender atau kata ganti orang ketiga bergender seperti "dia laki-laki/perempuan", "ia", "beliau", "he/she", atau kata ganti pronoun gender lainnya. Sebutkan nama panggilan siswa jika ingin merujuk kepadanya.
+7. Sampaikan masukan perkembangan secara konstruktif dan solutif.
+8. Jangan menyertakan judul, poin bulet, tanda kutip, label, penjelasan pra/pasca teks, atau format markdown tebal/miring. Kembalikan HANYA paragraf komentar final saja.`
   };
 
   try {
@@ -5834,6 +5881,195 @@ app.post("/api/junior-high/midterm/refine-general-comment", async (req, res) => 
     res.json({ text: sanitizedText, refinedText: sanitizedText });
   } catch (error: any) {
     console.error("[JuniorHighMidtermAI:refine] Server error:", error);
+    res.status(500).json({
+      error: "AI belum dapat digunakan. Silakan coba lagi atau isi komentar secara manual."
+    });
+  }
+});
+
+// ==========================================
+// Elementary Midterm AI Endpoints
+// ==========================================
+
+// POST /api/elementary/midterm/generate-general-comment
+app.post("/api/elementary/midterm/generate-general-comment", async (req, res) => {
+  try {
+    // 1. Validate Auth Token
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    
+    let decodedToken;
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    const db = getAdminDb();
+    if (!db) {
+      return res.status(500).json({ error: "Firestore is not online." });
+    }
+
+    // 2. Validate Elementary Staff Authorization
+    const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+    if (!userDoc.exists) {
+      return res.status(403).json({ error: "Access denied. User profile not found." });
+    }
+    const userData = userDoc.data() || {};
+    const userRole = userData.role || null;
+
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
+    const isElementary = userData.unitId === 'ELEMENTARY' || 
+      userData.unitId === 'ALL' ||
+      (Array.isArray(userData.assignedUnits) && userData.assignedUnits.includes('ELEMENTARY')) ||
+      userData.unit === 'ELEMENTARY' || 
+      userData.unit === 'SD';
+    
+    const hasValidRole = isSuperAdmin || [
+      'SUPER_ADMIN', 'HEAD_UNIT', 'PRINCIPAL', 'VICE_PRINCIPAL', 
+      'COORDINATOR', 'SECRETARY_ELEM', 'COUNSELOR', 'BK_MENTOR', 'TEACHER', 'HOMEROOM_TEACHER'
+    ].includes(userRole || "");
+    const isAuthorized = isSuperAdmin || (hasValidRole && isElementary);
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: "Access denied. Active Elementary role/unit required." });
+    }
+
+    // 3. Validate Payload
+    const { studentName, nickname, strengths, achievements, needsImprovement, manualNotes } = req.body;
+    if (!studentName || typeof studentName !== 'string' || !studentName.trim()) {
+      return res.status(400).json({ error: "Nama siswa wajib diisi." });
+    }
+
+    const formattedStrengths = Array.isArray(strengths) && strengths.length > 0 
+      ? strengths.map(s => `- ${s}`).join("\n")
+      : "- Menunjukkan sikap positif dan partisipasi aktif dalam pembelajaran.";
+    const formattedAchievements = Array.isArray(achievements) && achievements.length > 0 
+      ? achievements.map(a => `- ${a}`).join("\n")
+      : "(Tidak ada pencapaian spesifik)";
+    const formattedNeedsImprovement = Array.isArray(needsImprovement) && needsImprovement.length > 0 
+      ? needsImprovement.map(n => `- ${n}`).join("\n")
+      : "(Tidak ada area pengembangan spesifik)";
+    const formattedManualNotes = manualNotes && typeof manualNotes === 'string' && manualNotes.trim() 
+      ? manualNotes.trim() 
+      : "(Tidak ada catatan tambahan)";
+
+    // 4. Resolve Prompt Template
+    let prompt = "";
+    try {
+      prompt = await getPrompt("elementary_midterm_general_comment", {
+        studentName: studentName.trim(),
+        nickname: (nickname && typeof nickname === 'string' && nickname.trim()) || studentName.trim(),
+        strengths: formattedStrengths,
+        achievements: formattedAchievements,
+        needsImprovement: formattedNeedsImprovement,
+        manualNotes: formattedManualNotes
+      });
+    } catch (promptErr: any) {
+      if (promptErr.code === "PROMPT_INACTIVE") {
+        return res.status(400).json({
+          error: "Template AI Midterm Elementary belum aktif. Hubungi Super Admin."
+        });
+      }
+      throw promptErr;
+    }
+
+    // 5. Call Server-Side AI
+    const rawResult = await callGeminiAi(prompt, 0.3);
+    const sanitizedText = sanitizeJuniorHighComment(rawResult); // Re-use general collapsing sanitizer
+
+    res.json({ text: sanitizedText, refinedText: sanitizedText });
+  } catch (error: any) {
+    console.error("[ElementaryMidtermAI:generate] Server error:", error);
+    res.status(500).json({
+      error: "AI belum dapat digunakan. Silakan coba lagi atau isi komentar secara manual."
+    });
+  }
+});
+
+// POST /api/elementary/midterm/refine-general-comment
+app.post("/api/elementary/midterm/refine-general-comment", async (req, res) => {
+  try {
+    // 1. Validate Auth Token
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    
+    let decodedToken;
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    const db = getAdminDb();
+    if (!db) {
+      return res.status(500).json({ error: "Firestore is not online." });
+    }
+
+    // 2. Validate Elementary Staff Authorization
+    const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+    if (!userDoc.exists) {
+      return res.status(403).json({ error: "Access denied. User profile not found." });
+    }
+    const userData = userDoc.data() || {};
+    const userRole = userData.role || null;
+
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
+    const isElementary = userData.unitId === 'ELEMENTARY' || 
+      userData.unitId === 'ALL' ||
+      (Array.isArray(userData.assignedUnits) && userData.assignedUnits.includes('ELEMENTARY')) ||
+      userData.unit === 'ELEMENTARY' || 
+      userData.unit === 'SD';
+    
+    const hasValidRole = isSuperAdmin || [
+      'SUPER_ADMIN', 'HEAD_UNIT', 'PRINCIPAL', 'VICE_PRINCIPAL', 
+      'COORDINATOR', 'SECRETARY_ELEM', 'COUNSELOR', 'BK_MENTOR', 'TEACHER', 'HOMEROOM_TEACHER'
+    ].includes(userRole || "");
+    const isAuthorized = isSuperAdmin || (hasValidRole && isElementary);
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: "Access denied. Active Elementary role/unit required." });
+    }
+
+    // 3. Validate Payload
+    const { studentName, nickname, originalComment, draftText } = req.body;
+    const commentToRefine = (originalComment || draftText || "").trim();
+    if (!commentToRefine) {
+      return res.status(400).json({ error: "Teks komentar yang ingin dirapikan tidak boleh kosong." });
+    }
+
+    // 4. Resolve Prompt Template
+    let prompt = "";
+    try {
+      prompt = await getPrompt("elementary_midterm_refine_comment", {
+        studentName: (studentName && typeof studentName === 'string' ? studentName.trim() : "") || "Siswa",
+        nickname: (nickname && typeof nickname === 'string' && nickname.trim()) || (studentName && typeof studentName === 'string' ? studentName.trim() : "Siswa"),
+        originalComment: commentToRefine
+      });
+    } catch (promptErr: any) {
+      if (promptErr.code === "PROMPT_INACTIVE") {
+        return res.status(400).json({
+          error: "Template AI Midterm Elementary belum aktif. Hubungi Super Admin."
+        });
+      }
+      throw promptErr;
+    }
+
+    // 5. Call Server-Side AI
+    const rawResult = await callGeminiAi(prompt, 0.2);
+    const sanitizedText = sanitizeJuniorHighComment(rawResult);
+
+    res.json({ text: sanitizedText, refinedText: sanitizedText });
+  } catch (error: any) {
+    console.error("[ElementaryMidtermAI:refine] Server error:", error);
     res.status(500).json({
       error: "AI belum dapat digunakan. Silakan coba lagi atau isi komentar secara manual."
     });
