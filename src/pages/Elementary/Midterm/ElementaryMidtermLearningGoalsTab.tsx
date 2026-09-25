@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { 
   Plus, Edit2, Trash2, CheckCircle2, AlertCircle, RefreshCw, 
   Sparkles, Layers, BookOpen, User, Music, PlusCircle, FolderPlus,
@@ -59,7 +60,42 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
   // Official subjects for Elementary
   const elementarySubjects = ELEMENTARY_OFFICIAL_SUBJECTS;
 
-  const [activeSubject, setActiveSubject] = React.useState<string>(elementarySubjects[0]);
+  const SUBJECT_KEY_MAP: Record<string, string> = {
+    'ISLAMIC_STUDIES': 'Islamic Studies',
+    'QURAN_RECITING': "Qur'an Reciting",
+    'BAHASA_INDONESIA': 'Bahasa Indonesia',
+    'MATHEMATICS': 'Mathematics',
+    'ENGLISH': 'English',
+    'ARTS_AND_CRAFTS': 'Arts and Crafts',
+    'PERFORMING_ARTS': 'Performing Arts',
+    'PHYSICAL_EDUCATION': 'Physical Education',
+    'ICT': 'Information and Communications Technology',
+    'PROJECTS': 'Projects'
+  };
+
+  const OFFICIAL_TO_KEY_MAP: Record<string, string> = {
+    'Islamic Studies': 'ISLAMIC_STUDIES',
+    "Qur'an Reciting": 'QURAN_RECITING',
+    'Bahasa Indonesia': 'BAHASA_INDONESIA',
+    'Mathematics': 'MATHEMATICS',
+    'English': 'ENGLISH',
+    'Arts and Crafts': 'ARTS_AND_CRAFTS',
+    'Performing Arts': 'PERFORMING_ARTS',
+    'Physical Education': 'PHYSICAL_EDUCATION',
+    'Information and Communications Technology': 'ICT',
+    'Projects': 'PROJECTS'
+  };
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlSubject = searchParams.get('subject') || '';
+  const activeSubject = SUBJECT_KEY_MAP[urlSubject.toUpperCase()] || elementarySubjects[0];
+
+  const setActiveSubject = (newSubj: string) => {
+    const key = OFFICIAL_TO_KEY_MAP[newSubj] || 'ISLAMIC_STUDIES';
+    const newParams = new URLSearchParams(searchParams);
+    newParams.set('subject', key);
+    setSearchParams(newParams, { replace: true });
+  };
 
   // Grade level detection (1 to 6)
   const gradeNum = React.useMemo(() => getGradeLevelNumber(selectedClass), [selectedClass]);

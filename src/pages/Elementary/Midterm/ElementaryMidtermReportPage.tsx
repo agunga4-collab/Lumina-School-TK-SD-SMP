@@ -1,5 +1,7 @@
 import * as React from 'react';
 import { Component } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { toast } from 'sonner';
 import { 
   FileText, Calendar, Users, Layers, Sparkles, 
   Upload, FileCheck2, RefreshCw, AlertCircle, CheckCircle2 
@@ -81,6 +83,8 @@ function ElementaryMidtermReportPageContent() {
   const effectiveUser = (currentUser || profile) as User;
   const { activeYear } = useAcademicYear();
 
+  const [searchParams, setSearchParams] = useSearchParams();
+
   const availableYears = React.useMemo(() => {
     const defaults = ['2024/2025', '2025/2026', '2026/2027'];
     if (activeYear && !defaults.includes(activeYear)) {
@@ -89,11 +93,22 @@ function ElementaryMidtermReportPageContent() {
     return defaults;
   }, [activeYear]);
 
-  // Primary Context Filters
-  const [selectedYear, setSelectedYear] = React.useState<string>(activeYear || '2025/2026');
-  const [selectedSemester, setSelectedSemester] = React.useState<string>('1');
-  const [selectedTerm, setSelectedTerm] = React.useState<string>('1');
-  const [activeTab, setActiveTab] = React.useState<'GOALS' | 'COMMENTS' | 'REVIEW' | 'PUBLISH' | 'REKAP'>('GOALS');
+  // Primary Context Filters derived from Search Params with default fallbacks
+  const urlYear = searchParams.get('academicYear');
+  const [selectedYear, setSelectedYear] = React.useState<string>(urlYear || activeYear || '2025/2026');
+  
+  const urlSemester = searchParams.get('semester');
+  const [selectedSemester, setSelectedSemester] = React.useState<string>(urlSemester === '2' ? '2' : '1');
+  
+  const urlPeriod = searchParams.get('period');
+  const [selectedTerm, setSelectedTerm] = React.useState<string>(urlPeriod === 'midterm-2' ? '2' : '1');
+
+  const urlTab = searchParams.get('tab') || '';
+  const initialActiveTab = urlTab === 'general-comments' ? 'COMMENTS' :
+                           urlTab === 'review-approval' ? 'REVIEW' :
+                           urlTab === 'publish' ? 'PUBLISH' :
+                           urlTab === 'tracking' ? 'REKAP' : 'GOALS';
+  const [activeTab, setActiveTab] = React.useState<'GOALS' | 'COMMENTS' | 'REVIEW' | 'PUBLISH' | 'REKAP'>(initialActiveTab);
 
   // Classes & Selection
   const [classesList, setClassesList] = React.useState<Class[]>([]);
@@ -156,12 +171,12 @@ function ElementaryMidtermReportPageContent() {
   const [publishedReports, setPublishedReports] = React.useState<PublishedElementaryMidtermReport[]>([]);
   const [loadingData, setLoadingData] = React.useState<boolean>(false);
 
-  // Sync active academic year on change
+  // Sync active academic year on change if not in URL
   React.useEffect(() => {
-    if (activeYear) {
+    if (activeYear && !searchParams.get('academicYear')) {
       setSelectedYear(activeYear);
     }
-  }, [activeYear]);
+  }, [activeYear, searchParams]);
 
   // Load Elementary Classes
   React.useEffect(() => {
@@ -195,8 +210,18 @@ function ElementaryMidtermReportPageContent() {
         });
 
         setClassesList(elemClasses);
-        if (elemClasses.length > 0) {
-          if (!elemClasses.some(c => c && c.id === selectedClassId)) {
+
+        // Validation of url classId
+        const urlClassId = searchParams.get('classId');
+        const isValidUrlClass = elemClasses.some(c => c && c.id === urlClassId);
+
+        if (isValidUrlClass && urlClassId) {
+          setSelectedClassId(urlClassId);
+        } else if (elemClasses.length > 0) {
+          // If previous selection is valid in newly loaded classes, preserve it; else fallback to first
+          if (selectedClassId && elemClasses.some(c => c && c.id === selectedClassId)) {
+            // Keep it
+          } else {
             setSelectedClassId(elemClasses[0].id);
           }
         } else {
@@ -210,6 +235,47 @@ function ElementaryMidtermReportPageContent() {
     };
     fetchElementaryClasses();
   }, [selectedYear]);
+
+  // Update URL search parameters when filters change
+  React.useEffect(() => {
+    if (loadingClasses) return;
+
+    const newParams = new URLSearchParams(searchParams);
+    
+    if (selectedClassId) {
+      newParams.set('classId', selectedClassId);
+    } else {
+      newParams.delete('classId');
+    }
+    
+    newParams.set('academicYear', selectedYear);
+    newParams.set('semester', selectedSemester);
+    newParams.set('period', selectedTerm === '2' ? 'midterm-2' : 'midterm-1');
+
+    const tabParamValue = activeTab === 'GOALS' ? 'learning-goals' :
+                         activeTab === 'COMMENTS' ? 'general-comments' :
+                         activeTab === 'REVIEW' ? 'review-approval' :
+                         activeTab === 'PUBLISH' ? 'publish' :
+                         'tracking';
+    newParams.set('tab', tabParamValue);
+
+    // Compare before setting to avoid infinite render loop
+    let hasChanged = false;
+    newParams.forEach((val, key) => {
+      if (searchParams.get(key) !== val) {
+        hasChanged = true;
+      }
+    });
+    searchParams.forEach((val, key) => {
+      if (!newParams.has(key)) {
+        hasChanged = true;
+      }
+    });
+
+    if (hasChanged) {
+      setSearchParams(newParams, { replace: true });
+    }
+  }, [selectedClassId, selectedYear, selectedSemester, selectedTerm, activeTab, loadingClasses, setSearchParams]);
 
   const safeClassesList = Array.isArray(classesList) ? classesList.filter(Boolean) : [];
   const selectedClass = safeClassesList.find(c => c.id === selectedClassId) || null;
@@ -308,14 +374,29 @@ function ElementaryMidtermReportPageContent() {
             </p>
           </div>
 
-          <button
-            onClick={loadClassData}
-            disabled={loadingData}
-            className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-2xl text-xs font-bold uppercase tracking-wider backdrop-blur-md transition-all flex items-center gap-2 border border-white/10 cursor-pointer self-start md:self-auto"
-          >
-            <RefreshCw size={14} className={loadingData ? "animate-spin" : ""} />
-            <span>Refresh Data</span>
-          </button>
+          <div className="flex flex-wrap gap-2 self-start md:self-auto">
+            <button
+              onClick={() => {
+                const url = window.location.origin + window.location.pathname + '?' + searchParams.toString();
+                navigator.clipboard.writeText(url);
+                toast.success('Link kelas berhasil disalin ke clipboard!');
+              }}
+              disabled={!selectedClassId}
+              className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              <FileText size={14} />
+              <span>Salin Link Kelas</span>
+            </button>
+
+            <button
+              onClick={loadClassData}
+              disabled={loadingData}
+              className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-2xl text-xs font-bold uppercase tracking-wider backdrop-blur-md transition-all flex items-center gap-2 border border-white/10 cursor-pointer"
+            >
+              <RefreshCw size={14} className={loadingData ? "animate-spin" : ""} />
+              <span>Refresh Data</span>
+            </button>
+          </div>
         </div>
 
         {/* Filters Header Bar */}
