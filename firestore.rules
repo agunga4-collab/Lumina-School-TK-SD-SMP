@@ -1388,7 +1388,7 @@ service cloud.firestore {
       
       allow create: if isActive() && (
         isAdmin() ||
-        (isJuniorHighStaff() && isTeacherAssignedToClass(request.resource.data.classId))
+        isJuniorHighTeacherOrAuthorizedStaff()
       );
 
       allow update: if isActive() && (
