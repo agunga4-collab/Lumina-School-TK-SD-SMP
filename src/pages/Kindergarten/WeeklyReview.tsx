@@ -19,7 +19,7 @@ import {
   KINDY_GENERAL_COMMENTS_CUTOVER_DATE
 } from '../../lib/kindergartenWeeklyReport';
 import { collection, query, where, getDocs, addDoc, deleteDoc, doc, updateDoc, getDoc, writeBatch, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { db, auth } from '../../lib/firebase';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { useAuth } from '../../context/AuthContext';
 import { useTeacherAssignedClasses } from '../../hooks/useTeacherAssignedClasses';
@@ -1598,7 +1598,12 @@ export default function WeeklyReview() {
       setReportToSend(null);
       fetchPublishedReports();
     } catch (err: any) {
-      console.error("Error sending to parent:", err);
+      console.error('WEEKLY SEND FAILED', {
+        collection: 'published_kg_reports',
+        documentId: reportToSend.id,
+        operation: 'update',
+        currentUser: auth.currentUser?.uid
+      }, err);
       toast.error(`Gagal mengirim laporan: ${err.message}`, { id: toastId });
     } finally {
       setIsSending(false);

@@ -1310,34 +1310,47 @@ service cloud.firestore {
     }
 
     match /published_kg_reports/{reportId} {
-      allow read: if isActive() && (
+      allow read: if (
         isAdmin() ||
         isKindergartenHeadUnit() ||
         isSecretaryKindy() ||
-        isTeacher() ||
-        isOwnStudentData(existing().studentId) ||
-        isLinkedStudent(existing().studentId)
+        (isTeacher() && isTeacherAssignedToClass(resource.data.classId)) ||
+        isOwnStudentData(resource.data.studentId) ||
+        isLinkedStudent(resource.data.studentId)
       );
 
-      allow create: if isActive() && (
+      allow create: if (
         isAdmin() ||
-        isKindergartenHeadUnit() ||
-        isSecretaryKindy() ||
-        isTeacher()
-      );
-
-      allow update: if isActive() && (
         (
-          (isAdmin() || isKindergartenHeadUnit() || isSecretaryKindy() || isTeacher()) && (
-            // Ensure immutable identifier fields are not modified
-            incoming().studentId == existing().studentId &&
-            incoming().classId == existing().classId &&
-            incoming().semester == existing().semester &&
-            incoming().academicYear == existing().academicYear
+          (
+            isKindergartenHeadUnit() || 
+            isSecretaryKindy() || 
+            (isTeacher() && isTeacherAssignedToClass(request.resource.data.classId))
+          ) && (
+            // Validate: unit is KINDERGARTEN
+            (exists(/databases/$(database)/documents/classes/$(request.resource.data.classId)) && 
+             get(/databases/$(database)/documents/classes/$(request.resource.data.classId)).data.unitId == 'KINDERGARTEN') ||
+            (request.resource.data.unit == 'KINDERGARTEN') ||
+            (request.resource.data.unitId == 'KINDERGARTEN')
+          )
+        )
+      );
+
+      allow update: if (
+        isAdmin() ||
+        (
+          (
+            isKindergartenHeadUnit() || 
+            isSecretaryKindy() || 
+            (isTeacher() && isTeacherAssignedToClass(resource.data.classId))
+          ) && (
+            // Ensure studentId and classId are immutable during update
+            request.resource.data.studentId == resource.data.studentId &&
+            request.resource.data.classId == resource.data.classId
           )
         ) || (
-          isOwnStudentData(existing().studentId) &&
-          incoming().diff(existing()).affectedKeys().hasOnly([
+          (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'studentViewedAt', 'lastStudentViewedAt', 'pdfOpenedAt', 'viewCount'
           ])
         )
