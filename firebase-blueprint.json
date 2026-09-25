@@ -1049,9 +1049,25 @@
         "createdAt": { "type": "number" },
         "createdBy": { "type": "string" },
         "updatedAt": { "type": "number" },
-        "updatedBy": { "type": "string" }
+        "updatedBy": { "type": "string" },
+        "signingDate": { "type": "string" },
+        "signingLocation": { "type": "string" }
       },
       "required": ["classId", "academicYear", "semester", "midtermPeriodKey", "status", "createdAt", "createdBy", "updatedAt", "updatedBy"]
+    },
+    "MidtermFolder": {
+      "title": "MidtermFolder",
+      "description": "Cache metadata for Google Drive folders mapping class IDs to midterm report folder structures.",
+      "type": "object",
+      "properties": {
+        "parentWeeklyFolderId": { "type": "string" },
+        "midtermRootFolderId": { "type": "string" },
+        "classId": { "type": "string" },
+        "className": { "type": "string" },
+        "classMidtermFolderId": { "type": "string" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["parentWeeklyFolderId", "midtermRootFolderId", "classId", "className", "classMidtermFolderId", "updatedAt"]
     }
   },
   "firestore": {
@@ -1301,6 +1317,10 @@
     "kindy_midterm_class_learning_goals/{documentId}": {
       "schema": "KindyMidtermClassLearningGoals",
       "description": "Class-wide learning goals for Kindergarten Midterm reports."
+    },
+    "midterm_folders/{folderId}": {
+      "schema": "MidtermFolder",
+      "description": "Cached structures and parent directory references on Google Drive for Midterm reports."
     }
   }
 }

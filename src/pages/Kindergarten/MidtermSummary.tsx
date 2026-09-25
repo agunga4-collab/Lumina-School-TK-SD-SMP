@@ -523,6 +523,11 @@ export default function MidtermSummary() {
       setHasUnsavedClassGoals(false);
       toast.success('Learning Goals Kelas berhasil disimpan! ✨', { id: toastId });
     } catch (err) {
+      console.error('MIDTERM WRITE FAILED', {
+        collection: 'kindy_midterm_class_learning_goals',
+        documentId: docId,
+        operation: 'create/update'
+      }, err);
       console.error('Error saving class learning goals:', err);
       toast.error('Gagal menyimpan Learning Goals Kelas.', { id: toastId });
     } finally {
@@ -612,7 +617,16 @@ export default function MidtermSummary() {
       };
 
       const docRef = doc(collection(db, 'midterm_summary_history'));
-      await setDoc(docRef, historyPayload);
+      try {
+        await setDoc(docRef, historyPayload);
+      } catch (err) {
+        console.error('MIDTERM WRITE FAILED', {
+          collection: 'midterm_summary_history',
+          documentId: docRef.id,
+          operation: 'create/update'
+        }, err);
+        throw err;
+      }
     } catch (err) {
       console.error('[MidtermSummary] Failed to save audit history:', err);
     }
@@ -1188,6 +1202,11 @@ export default function MidtermSummary() {
       toast.success('Kompilasi mingguan berhasil disimpan! Mengalihkan ke tab Editor...', { id: toastId });
       setActiveTab('editor');
     } catch (err) {
+      console.error('MIDTERM WRITE FAILED', {
+        collection: 'midterm_summary_drafts',
+        documentId: draftId,
+        operation: 'create/update'
+      }, err);
       console.error('[MidtermSummary] Error compiling:', err);
       toast.error('Gagal menyimpan kompilasi.', { id: toastId });
     } finally {
@@ -1265,6 +1284,11 @@ export default function MidtermSummary() {
         toast.success('Draf berhasil disimpan! ✨', { id: toastId });
       }
     } catch (err) {
+      console.error('MIDTERM WRITE FAILED', {
+        collection: 'midterm_summary_drafts',
+        documentId: draftId,
+        operation: 'create/update'
+      }, err);
       console.error('[MidtermSummary] Save error:', err);
       toast.error('Gagal menyimpan draf.', { id: toastId });
     } finally {
@@ -1346,6 +1370,11 @@ export default function MidtermSummary() {
 
       toast.success('Data Fisik Siswa berhasil disimpan! ✨', { id: toastId });
     } catch (err) {
+      console.error('MIDTERM WRITE FAILED', {
+        collection: 'midterm_summary_drafts',
+        documentId: draftId,
+        operation: 'create/update'
+      }, err);
       console.error('[MidtermSummary] Save physical data error:', err);
       toast.error('Gagal menyimpan Data Fisik Siswa.', { id: toastId });
     } finally {
@@ -1429,6 +1458,11 @@ export default function MidtermSummary() {
       setHasUnsavedChanges(false);
       toast.success('Review berhasil diajukan! 🚀', { id: toastId });
     } catch (err) {
+      console.error('MIDTERM WRITE FAILED', {
+        collection: 'midterm_summary_drafts',
+        documentId: draftId,
+        operation: 'create/update'
+      }, err);
       console.error('[MidtermSummary] Submit error:', err);
       toast.error('Gagal mengajukan review.', { id: toastId });
     } finally {
@@ -1710,14 +1744,23 @@ export default function MidtermSummary() {
         }
 
         // Save metadata to Firestore 'midterm_folders' collection
-        await setDoc(folderMetaRef, {
-          parentWeeklyFolderId,
-          midtermRootFolderId,
-          classId: selectedClassId,
-          className: className,
-          classMidtermFolderId,
-          updatedAt: Date.now()
-        }, { merge: true });
+        try {
+          await setDoc(folderMetaRef, {
+            parentWeeklyFolderId,
+            midtermRootFolderId,
+            classId: selectedClassId,
+            className: className,
+            classMidtermFolderId,
+            updatedAt: Date.now()
+          }, { merge: true });
+        } catch (err) {
+          console.error('MIDTERM WRITE FAILED', {
+            collection: 'midterm_folders',
+            documentId: selectedClassId,
+            operation: 'create/update'
+          }, err);
+          throw err;
+        }
       }
 
       // 3. Search and delete any existing files with the exact same name inside the class midterm folder to prevent duplicate file entries on Google Drive
@@ -1881,11 +1924,29 @@ export default function MidtermSummary() {
 
       // Save to published_kg_reports
       const publishedDocId = `${selectedStudentId}_S${semester}_MIDTERM_V${nextVersion}`;
-      await setDoc(doc(db, 'published_kg_reports', publishedDocId), reportPayload);
+      try {
+        await setDoc(doc(db, 'published_kg_reports', publishedDocId), reportPayload);
+      } catch (err) {
+        console.error('MIDTERM WRITE FAILED', {
+          collection: 'published_kg_reports',
+          documentId: publishedDocId,
+          operation: 'create/update'
+        }, err);
+        throw err;
+      }
 
       // Update source draft status to 'PUBLISHED'
       const draftId = getMidtermDraftId(selectedStudentId);
-      await setDoc(doc(db, 'midterm_summary_drafts', draftId), { status: 'PUBLISHED' }, { merge: true });
+      try {
+        await setDoc(doc(db, 'midterm_summary_drafts', draftId), { status: 'PUBLISHED' }, { merge: true });
+      } catch (err) {
+        console.error('MIDTERM WRITE FAILED', {
+          collection: 'midterm_summary_drafts',
+          documentId: draftId,
+          operation: 'create/update'
+        }, err);
+        throw err;
+      }
 
       // Update local states
       setMidtermDrafts(prev => ({
@@ -1972,6 +2033,11 @@ export default function MidtermSummary() {
 
       toast.success("Draf berhasil disetujui! Status kini APPROVED.", { id: toastId });
     } catch (err: any) {
+      console.error('MIDTERM WRITE FAILED', {
+        collection: 'midterm_summary_drafts',
+        documentId: draftId,
+        operation: 'create/update'
+      }, err);
       console.error("Error approving draft:", err);
       toast.error(`Gagal menyetujui draf: ${err.message}`, { id: toastId });
     }
@@ -2028,6 +2094,11 @@ export default function MidtermSummary() {
 
       toast.success("Draf berhasil dikembalikan dengan status PERLU_REVISI.", { id: toastId });
     } catch (err: any) {
+      console.error('MIDTERM WRITE FAILED', {
+        collection: 'midterm_summary_drafts',
+        documentId: draftId,
+        operation: 'create/update'
+      }, err);
       console.error("Error returning draft:", err);
       toast.error(`Gagal mengembalikan draf: ${err.message}`, { id: toastId });
     }

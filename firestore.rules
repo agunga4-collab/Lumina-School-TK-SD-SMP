@@ -502,7 +502,13 @@ service cloud.firestore {
         'nilaiAgamaBudiPekerti', 'jatiDiri', 'dasarLiterasiSteam',
         'status', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'
       ])
-      && data.keys().size() == 12
+      && data.keys().size() >= 12 && data.keys().size() <= 14
+      && data.keys().hasOnly([
+        'classId', 'academicYear', 'semester', 'midtermPeriodKey',
+        'nilaiAgamaBudiPekerti', 'jatiDiri', 'dasarLiterasiSteam',
+        'status', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy',
+        'signingDate', 'signingLocation'
+      ])
       && data.classId is string && data.classId.size() <= 128
       && data.academicYear is string && data.academicYear.size() <= 32
       && (data.semester is int || data.semester is float) && data.semester in [1, 2]
@@ -514,7 +520,9 @@ service cloud.firestore {
       && (data.createdAt is int || data.createdAt is float) && data.createdAt > 0
       && data.createdBy is string && data.createdBy.size() <= 256
       && (data.updatedAt is int || data.updatedAt is float) && data.updatedAt > 0
-      && data.updatedBy is string && data.updatedBy.size() <= 256;
+      && data.updatedBy is string && data.updatedBy.size() <= 256
+      && (!('signingDate' in data) || data.signingDate is string)
+      && (!('signingLocation' in data) || data.signingLocation is string);
     }
 
     match /users/{userId} {
@@ -1302,13 +1310,40 @@ service cloud.firestore {
     }
 
     match /published_kg_reports/{reportId} {
-      allow read: if isActive() &&
-        (isJuniorHighStaff() || isTeacher() || isSecretaryKindy() || isKindergartenHeadUnit() || isOwnStudentData(existing().studentId));
-      allow create: if isJuniorHighStaff() || isAdmin() || isTeacher() || isSecretaryKindy() || isKindergartenHeadUnit();
-      allow update: if (isJuniorHighStaff() || isAdmin() || isTeacher() || isSecretaryKindy() || isKindergartenHeadUnit()) ||
-        (isActive() && isOwnStudentData(existing().studentId) &&
-         incoming().diff(existing()).affectedKeys().hasOnly(['studentViewedAt', 'lastStudentViewedAt', 'pdfOpenedAt', 'viewCount']));
-      allow delete: if isJuniorHighStaff() || isAdmin() || isTeacher() || isSecretaryKindy() || isKindergartenHeadUnit();
+      allow read: if isActive() && (
+        isAdmin() ||
+        isKindergartenHeadUnit() ||
+        isSecretaryKindy() ||
+        isTeacher() ||
+        isOwnStudentData(existing().studentId) ||
+        isLinkedStudent(existing().studentId)
+      );
+
+      allow create: if isActive() && (
+        isAdmin() ||
+        isKindergartenHeadUnit() ||
+        isSecretaryKindy() ||
+        isTeacher()
+      );
+
+      allow update: if isActive() && (
+        (
+          (isAdmin() || isKindergartenHeadUnit() || isSecretaryKindy() || isTeacher()) && (
+            // Ensure immutable identifier fields are not modified
+            incoming().studentId == existing().studentId &&
+            incoming().classId == existing().classId &&
+            incoming().semester == existing().semester &&
+            incoming().academicYear == existing().academicYear
+          )
+        ) || (
+          isOwnStudentData(existing().studentId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'studentViewedAt', 'lastStudentViewedAt', 'pdfOpenedAt', 'viewCount'
+          ])
+        )
+      );
+
+      allow delete: if isAdmin() || isKindergartenHeadUnit() || isSecretaryKindy();
     }
 
     match /published_junior_high_monthly_reports/{reportId} {
@@ -1475,7 +1510,7 @@ service cloud.firestore {
           isMidtermIdentityUnchanged() &&
           (
             (existing().status in ['DRAFT', 'READY_FOR_REVIEW', 'PERLU_REVISI', 'APPROVED'] && incoming().status in ['DRAFT', 'READY_FOR_REVIEW']) ||
-            (existing().status == 'APPROVED' && incoming().status == 'PUBLISHED')
+            (existing().status in ['APPROVED', 'PUBLISHED'] && incoming().status == 'PUBLISHED')
           )
         )
       );
@@ -1512,24 +1547,52 @@ service cloud.firestore {
       allow create: if isActive() && (
         isAdmin() ||
         isKindergartenHeadUnit() ||
+        isSecretaryKindy() ||
         (isTeacher() && (isTeacherAssignedToClass(incoming().classId) || (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL')))
       ) && isValidClassLearningGoals(incoming());
       allow update: if isActive() && (
         isAdmin() ||
         isKindergartenHeadUnit() ||
+        isSecretaryKindy() ||
         (isTeacher() && (
           isTeacherAssignedToClass(existing().classId) || (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL')
-        ) && (
-          isTeacherAssignedToClass(incoming().classId) || (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL')
         ))
-      ) && isValidClassLearningGoals(incoming()) && (
-        incoming().classId == existing().classId &&
-        incoming().academicYear == existing().academicYear &&
-        incoming().semester == existing().semester &&
-        incoming().midtermPeriodKey == existing().midtermPeriodKey &&
-        incoming().createdAt == existing().createdAt &&
-        incoming().createdBy == existing().createdBy
+      ) && (
+        (isValidClassLearningGoals(incoming()) && (
+          incoming().classId == existing().classId &&
+          incoming().academicYear == existing().academicYear &&
+          incoming().semester == existing().semester &&
+          incoming().midtermPeriodKey == existing().midtermPeriodKey &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().createdBy == existing().createdBy
+        )) ||
+        (incoming().diff(existing()).affectedKeys().hasOnly([
+          'signingLocation', 'signingDate', 'updatedAt', 'updatedBy'
+        ]) && (
+          (!('signingDate' in incoming()) || incoming().signingDate is string) &&
+          (!('signingLocation' in incoming()) || incoming().signingLocation is string) &&
+          incoming().updatedAt is int &&
+          incoming().updatedBy is string
+        ))
       );
+    }
+
+    match /midterm_folders/{folderId} {
+      allow read: if isActive() && (
+        isAdmin() ||
+        isKindergartenHeadUnit() ||
+        isSecretaryKindy() ||
+        isTeacher()
+      );
+
+      allow create, update: if isActive() && (
+        isAdmin() ||
+        isKindergartenHeadUnit() ||
+        isSecretaryKindy() ||
+        (isTeacher() && isTeacherAssignedToClass(folderId))
+      );
+
+      allow delete: if isAdmin();
     }
 
     match /ldssTemplates/{templateId} {
