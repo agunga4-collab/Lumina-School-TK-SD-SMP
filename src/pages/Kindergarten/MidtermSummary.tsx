@@ -106,6 +106,7 @@ interface MidtermSummaryHistoryLog {
 }
 
 export default function MidtermSummary() {
+  // --- A. ROUTER, AUTH, AND CONTEXT HOOKS ---
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const paramClassId = searchParams.get('classId');
@@ -115,17 +116,25 @@ export default function MidtermSummary() {
   const { currentUser } = useOutletContext<{ currentUser: any }>() || {};
   const { profile, getGoogleDriveToken } = useAuth();
 
-  // Basic states defined at the top to avoid TDZ / cannot access before initialization errors
+  // Custom class assignment hook
+  const {
+    assignedClasses: classes,
+    primaryClassId,
+    isRestrictedToAssignedClasses,
+    loading: isLoadingClasses,
+    setLastSelectedClassId
+  } = useTeacherAssignedClasses({
+    userId: profile?.uid,
+    academicYearId: activeYear || '2026/2027'
+  });
+
+  // --- B. STATE HOOKS (useState) ---
   const [selectedClassId, setSelectedClassId] = React.useState<string>('');
   const [students, setStudents] = React.useState<any[]>(() => DEFAULT_STUDENTS);
   const [selectedStudentId, setSelectedStudentId] = React.useState<string>('');
   const [semester, setSemester] = React.useState<number>(1);
   const [activeTab, setActiveTab] = React.useState<'kompilasi' | 'editor' | 'review' | 'publish'>('kompilasi');
   const [midtermDrafts, setMidtermDrafts] = React.useState<Record<string, MidtermSummaryDraft>>({});
-
-  const activeDraft = React.useMemo(() => {
-    return midtermDrafts[selectedStudentId] || null;
-  }, [midtermDrafts, selectedStudentId]);
 
   // Date selections - Default to Monday 6 weeks ago and Friday of this week
   const [startDateStr, setStartDateStr] = React.useState<string>(() => {
@@ -146,19 +155,6 @@ export default function MidtermSummary() {
     return formatDateToKey(fri);
   });
 
-  // Title Case Formatting Helper
-  const toTitleCase = React.useCallback((str: string | undefined | null): string => {
-    if (!str) return '';
-    return str
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, ' ')
-      .split(' ')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ');
-  }, []);
-
-  // Publishing & Signatory States
   const [publishedReports, setPublishedReports] = React.useState<Record<string, any>>({});
   const [isFetchingPublished, setIsFetchingPublished] = React.useState(false);
   const [isPublishing, setIsPublishing] = React.useState(false);
@@ -170,103 +166,10 @@ export default function MidtermSummary() {
   const [isSignatureLoading, setIsSignatureLoading] = React.useState<boolean>(false);
   const [resolvedLogoUrl, setResolvedLogoUrl] = React.useState<string | null>(null);
 
-  // States for Real Attendance computation
   const [realAttendanceList, setRealAttendanceList] = React.useState<any[]>([]);
   const [isFetchingRealAttendance, setIsFetchingRealAttendance] = React.useState(false);
 
-  // State to determine if signatures overflow Page 2
   const [shouldMoveSignaturesToPage3, setShouldMoveSignaturesToPage3] = React.useState(false);
-
-  // Real Attendance fetch hook matching requested formula:
-  // startDate = tanggal mulai Midterm
-  // endDate = minimum(tanggal akhir Midterm, tanggal hari ini)
-  React.useEffect(() => {
-    if (!selectedClassId || !startDateStr || !endDateStr) return;
-    
-    async function fetchRealAttendanceData() {
-      setIsFetchingRealAttendance(true);
-      try {
-        const todayStr = new Date().toISOString().split('T')[0];
-        const minEndDateStr = endDateStr < todayStr ? endDateStr : todayStr;
-        
-        console.log(`[Attendance Sync] Querying attendance from ${startDateStr} to ${minEndDateStr}`);
-        const q = query(
-          collection(db, 'attendance'),
-          where('classId', '==', selectedClassId),
-          where('date', '>=', startDateStr),
-          where('date', '<=', minEndDateStr)
-        );
-        
-        const snap = await getDocs(q);
-        logFirestoreRead('attendanceReports', snap.docs.length || 1);
-        
-        const docs = snap.docs.map(docSnap => {
-          const data = docSnap.data();
-          return {
-            id: docSnap.id,
-            date: data.date,
-            students: data.students || []
-          };
-        });
-        
-        setRealAttendanceList(docs);
-      } catch (err) {
-        console.error('Error fetching real attendance:', err);
-      } finally {
-        setIsFetchingRealAttendance(false);
-      }
-    }
-    
-    fetchRealAttendanceData();
-  }, [selectedClassId, startDateStr, endDateStr]);
-
-  // Measuring comments height effect to decide whether to move signatures to Page 3
-  React.useEffect(() => {
-    const checkOverflow = () => {
-      const el = document.getElementById('preview-comments-container');
-      if (el) {
-        // Natural comments text height check
-        if (el.scrollHeight > 350) {
-          setShouldMoveSignaturesToPage3(true);
-        } else {
-          setShouldMoveSignaturesToPage3(false);
-        }
-      }
-    };
-    
-    // Check after slight delay to ensure fonts & content have fully rendered
-    const timer = setTimeout(checkOverflow, 250);
-    return () => clearTimeout(timer);
-  }, [selectedStudentId, activeDraft?.midtermGeneralComment, activeTab]);
-
-  React.useEffect(() => {
-    const fetchLogo = async () => {
-      try {
-        const logoDoc = await getDoc(doc(db, 'settings', 'logos'));
-        if (logoDoc.exists()) {
-          const data = logoDoc.data() as any;
-          if (data?.KINDERGARTEN?.reportHeaderLogo?.originalUrl) {
-            setResolvedLogoUrl(data.KINDERGARTEN.reportHeaderLogo.originalUrl);
-          } else if (data?.KINDERGARTEN?.rectangular) {
-            setResolvedLogoUrl(data.KINDERGARTEN.rectangular);
-          }
-        } else {
-          const localLogos = localStorage.getItem('lumina_school_logos');
-          if (localLogos) {
-            const parsed = JSON.parse(localLogos);
-            if (parsed?.KINDERGARTEN?.reportHeaderLogo?.originalUrl) {
-              setResolvedLogoUrl(parsed.KINDERGARTEN.reportHeaderLogo.originalUrl);
-            } else if (parsed?.KINDERGARTEN?.rectangular) {
-              setResolvedLogoUrl(parsed.KINDERGARTEN.rectangular);
-            }
-          }
-        }
-      } catch (err) {
-        console.warn("Failed to fetch Kindergarten school logo in MidtermSummary:", err);
-      }
-    };
-    fetchLogo();
-  }, []);
 
   const [kindySignatory, setKindySignatory] = React.useState<{
     principalName: string;
@@ -275,66 +178,72 @@ export default function MidtermSummary() {
     principalNiy: string;
   } | null>(null);
 
-  // Class Selection using centralized hook
-  const {
-    assignedClasses: classes,
-    primaryClassId,
-    isRestrictedToAssignedClasses,
-    loading: isLoadingClasses,
-    setLastSelectedClassId
-  } = useTeacherAssignedClasses({
-    userId: profile?.uid,
-    academicYearId: activeYear || '2026/2027'
+  const [reviewNotes, setReviewNotes] = React.useState<Record<string, string>>({});
+  const [selectedAuditStudent, setSelectedAuditStudent] = React.useState<any | null>(null);
+  const [auditLogs, setAuditLogs] = React.useState<any[]>([]);
+  const [isFetchingAuditLogs, setIsFetchingAuditLogs] = React.useState(false);
+
+  const [classLearningGoals, setClassLearningGoals] = React.useState<any | null>(null);
+  const [isFetchingClassGoals, setIsFetchingClassGoals] = React.useState(false);
+  const [isSavingClassGoals, setIsSavingClassGoals] = React.useState(false);
+
+  const [classGoalsInput, setClassGoalsInput] = React.useState<{
+    nilaiAgamaBudiPekerti: string;
+    jatiDiri: string;
+    dasarLiterasiSteam: string;
+    signingDate: string;
+  }>({
+    nilaiAgamaBudiPekerti: '',
+    jatiDiri: '',
+    dasarLiterasiSteam: '',
+    signingDate: ''
   });
 
-  // Role Protection (placed after all hook declarations to respect React hook rules)
-  if (profile?.role === 'kindergarten_subject_teacher') {
-    return (
-      <div className="p-8 text-center max-w-2xl mx-auto my-12 bg-white rounded-3xl border border-gray-150 p-12">
-        <h1 className="text-xl font-bold text-red-600 font-sans">Akses Ditolak</h1>
-        <p className="text-gray-500 mt-2 font-sans">Anda tidak memiliki izin untuk membuka halaman Midterm Report ini.</p>
-      </div>
-    );
-  }
+  const [classGoalsStatus, setClassGoalsStatus] = React.useState<'DRAFT' | 'READY'>('DRAFT');
+  const [hasUnsavedClassGoals, setHasUnsavedClassGoals] = React.useState(false);
 
-  // Auto-select Class
-  React.useEffect(() => {
-    if (classes.length > 0) {
-      if (paramClassId && classes.some(c => c.id === paramClassId)) {
-        setSelectedClassId(paramClassId);
-      } else if (primaryClassId) {
-        setSelectedClassId(primaryClassId);
-      } else {
-        setSelectedClassId(classes[0].id);
-      }
-    }
-  }, [classes, paramClassId, primaryClassId]);
+  const [isFetchingWeeklySources, setIsFetchingWeeklySources] = React.useState(false);
+  const [weeklySources, setWeeklySources] = React.useState<any[]>([]);
 
-  // Load students data from cache/Firestore
-  React.useEffect(() => {
-    async function loadKindergartenStudentsData() {
-      try {
-        console.log('[MidtermSummary] Requesting cached Kindergarten students for year:', activeYear);
-        const cached = await getKindergartenStudents(activeYear || '2026/2027');
-        if (cached && cached.length > 0) {
-          setStudents(cached);
-          saveStoredStudents(cached);
-        } else {
-          const local = getStoredStudents();
-          if (local && local.length > 0) {
-            setStudents(local);
-          }
-        }
-      } catch (err) {
-        console.error('Error loading Kindergarten students:', err);
-      }
-    }
-    loadKindergartenStudentsData();
-  }, [activeYear]);
+  const [isFetchingDrafts, setIsFetchingDrafts] = React.useState(false);
+  const [isSavingDraft, setIsSavingDraft] = React.useState(false);
 
-  const activeClassObj = React.useMemo(() => {
-    return classes.find(c => c.id === selectedClassId);
-  }, [classes, selectedClassId]);
+  const [localComment, setLocalComment] = React.useState<string>('');
+  const [localHeight, setLocalHeight] = React.useState<string>('');
+  const [localWeight, setLocalWeight] = React.useState<string>('');
+  const [isSavingPhysicalData, setIsSavingPhysicalData] = React.useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = React.useState(false);
+
+  const [pendingSelection, setPendingSelection] = React.useState<{
+    type: 'student' | 'class' | 'tab' | 'semester' | 'dates';
+    targetValue: string;
+  } | null>(null);
+
+  const [recompileConfirm, setRecompileConfirm] = React.useState<{
+    oldSourcesCount: number;
+    newSourcesCount: number;
+    newSources: CompiledWeeklySource[];
+  } | null>(null);
+
+  const [isRefining, setIsRefining] = React.useState(false);
+  const [refineReview, setRefineReview] = React.useState<{
+    studentId: string;
+    studentName: string;
+    originalText: string;
+    refinedText: string;
+  } | null>(null);
+
+  // --- C. UTILITIES AND MEMOIZED/DERIVED VARIABLES (useMemo) ---
+  const toTitleCase = React.useCallback((str: string | undefined | null): string => {
+    if (!str) return '';
+    return str
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+  }, []);
 
   const isStudentInClass = React.useCallback((studClassId: string, activeClass: { id: string; name: string }) => {
     const sClass = (studClassId || '').trim().toLowerCase();
@@ -396,35 +305,22 @@ export default function MidtermSummary() {
     return false;
   }, []);
 
+  const activeDraft = React.useMemo(() => {
+    return midtermDrafts[selectedStudentId] || null;
+  }, [midtermDrafts, selectedStudentId]);
+
+  const activeClassObj = React.useMemo(() => {
+    return classes.find(c => c.id === selectedClassId);
+  }, [classes, selectedClassId]);
+
   const classStudents = React.useMemo(() => {
     if (!selectedClassId || !activeClassObj) return [];
     return students.filter(student => isStudentInClass(student.classId, activeClassObj));
   }, [students, selectedClassId, activeClassObj, isStudentInClass]);
 
-  React.useEffect(() => {
-    if (classStudents.length > 0) {
-      // Keep selected student if they are still in the active class
-      if (!selectedStudentId || !classStudents.some(s => s.id === selectedStudentId)) {
-        setSelectedStudentId(classStudents[0].id);
-      }
-    } else {
-      setSelectedStudentId('');
-    }
-  }, [classStudents, selectedStudentId]);
-
   const selectedStudentObj = React.useMemo(() => {
     return classStudents.find(s => s.id === selectedStudentId);
   }, [classStudents, selectedStudentId]);
-
-  const handleStartDateChange = (val: string) => {
-    setStartDateStr(val);
-    sessionStorage.setItem('kindy_midterm_start', val);
-  };
-
-  const handleEndDateChange = (val: string) => {
-    setEndDateStr(val);
-    sessionStorage.setItem('kindy_midterm_end', val);
-  };
 
   const formattedPeriodRangeIndo = React.useMemo(() => {
     if (!startDateStr || !endDateStr) return '';
@@ -464,36 +360,6 @@ export default function MidtermSummary() {
       return '....................';
     }
   }, [classGoalsInput.signingDate, classLearningGoals?.signingDate]);
-
-  // Review & Audit States
-  const [reviewNotes, setReviewNotes] = React.useState<Record<string, string>>({});
-  const [selectedAuditStudent, setSelectedAuditStudent] = React.useState<any | null>(null);
-  const [auditLogs, setAuditLogs] = React.useState<any[]>([]);
-  const [isFetchingAuditLogs, setIsFetchingAuditLogs] = React.useState(false);
-
-  // Class-level Learning Goals state
-  const [classLearningGoals, setClassLearningGoals] = React.useState<any | null>(null);
-  const [isFetchingClassGoals, setIsFetchingClassGoals] = React.useState(false);
-  const [isSavingClassGoals, setIsSavingClassGoals] = React.useState(false);
-
-  const [classGoalsInput, setClassGoalsInput] = React.useState<{
-    nilaiAgamaBudiPekerti: string;
-    jatiDiri: string;
-    dasarLiterasiSteam: string;
-    signingDate: string;
-  }>({
-    nilaiAgamaBudiPekerti: '',
-    jatiDiri: '',
-    dasarLiterasiSteam: '',
-    signingDate: ''
-  });
-
-  const [classGoalsStatus, setClassGoalsStatus] = React.useState<'DRAFT' | 'READY'>('DRAFT');
-  const [hasUnsavedClassGoals, setHasUnsavedClassGoals] = React.useState(false);
-
-  // Firestore Draft and Weekly Source State
-  const [isFetchingWeeklySources, setIsFetchingWeeklySources] = React.useState(false);
-  const [weeklySources, setWeeklySources] = React.useState<any[]>([]);
 
   const extractedLearningGoals = React.useMemo(() => {
     const agamaGoals = new Set<string>();
@@ -535,41 +401,21 @@ export default function MidtermSummary() {
     };
   }, [weeklySources]);
 
-  const [isFetchingDrafts, setIsFetchingDrafts] = React.useState(false);
-  const [isSavingDraft, setIsSavingDraft] = React.useState(false);
-
-  // Unsaved changes tracking
-  const [localComment, setLocalComment] = React.useState<string>('');
-  const [localHeight, setLocalHeight] = React.useState<string>('');
-  const [localWeight, setLocalWeight] = React.useState<string>('');
-  const [isSavingPhysicalData, setIsSavingPhysicalData] = React.useState(false);
-  const [hasUnsavedChanges, setHasUnsavedChanges] = React.useState(false);
-
-  // Confirmation dialogs
-  const [pendingSelection, setPendingSelection] = React.useState<{
-    type: 'student' | 'class' | 'tab' | 'semester' | 'dates';
-    targetValue: string;
-  } | null>(null);
-
-  const [recompileConfirm, setRecompileConfirm] = React.useState<{
-    oldSourcesCount: number;
-    newSourcesCount: number;
-    newSources: CompiledWeeklySource[];
-  } | null>(null);
-
-  // AI Refinement states
-  const [isRefining, setIsRefining] = React.useState(false);
-  const [refineReview, setRefineReview] = React.useState<{
-    studentId: string;
-    studentName: string;
-    originalText: string;
-    refinedText: string;
-  } | null>(null);
-
   // Normalized Academic Year String
   const normalizedYear = React.useMemo(() => {
     return (activeYear || '2026/2027').replace(/\//g, '-');
   }, [activeYear]);
+
+  // --- D. ACTION HANDLERS AND HELPER CALLBACKS (useCallback / Functions) ---
+  const handleStartDateChange = (val: string) => {
+    setStartDateStr(val);
+    sessionStorage.setItem('kindy_midterm_start', val);
+  };
+
+  const handleEndDateChange = (val: string) => {
+    setEndDateStr(val);
+    sessionStorage.setItem('kindy_midterm_end', val);
+  };
 
   // Calculate Deterministic Midterm Draft Doc ID
   const getMidtermDraftId = React.useCallback((studId: string) => {
@@ -683,10 +529,6 @@ export default function MidtermSummary() {
       setIsSavingClassGoals(false);
     }
   };
-
-  React.useEffect(() => {
-    fetchClassLearningGoals();
-  }, [fetchClassLearningGoals]);
 
   // Load all midterm drafts for the selected class to map the status dots of students
   const fetchMidtermDraftsForClass = React.useCallback(async () => {
@@ -832,6 +674,262 @@ export default function MidtermSummary() {
     }
   }, [selectedClassId, activeYear, semester]);
 
+  const checkHasUnsavedChanges = (
+    comment: string
+  ) => {
+    const activeDraft = midtermDrafts[selectedStudentId];
+    const originalComment = activeDraft?.midtermGeneralComment || '';
+
+    const isChanged = comment !== originalComment;
+
+    setHasUnsavedChanges(isChanged);
+  };
+
+  // Handle local comment input edits
+  const handleCommentChange = (text: string) => {
+    setLocalComment(text);
+    checkHasUnsavedChanges(text);
+  };
+
+  // Handle class goals changes
+  const handleClassGoalChange = (field: 'nilaiAgamaBudiPekerti' | 'jatiDiri' | 'dasarLiterasiSteam' | 'signingDate', value: string) => {
+    const updated = { ...classGoalsInput, [field]: value };
+    setClassGoalsInput(updated);
+    setHasUnsavedClassGoals(true);
+  };
+
+  // Navigation intercepts with warnings
+  const confirmNavigation = (
+    type: 'student' | 'class' | 'tab' | 'semester' | 'dates',
+    targetValue: string
+  ) => {
+    if (type === 'dates') {
+      const activeDraft = midtermDrafts[selectedStudentId];
+      const hasExistingDraft = !!activeDraft || localComment.trim().length > 0;
+      if (hasExistingDraft) {
+        setPendingSelection({ type, targetValue });
+        return;
+      }
+    }
+    if (hasUnsavedChanges || hasUnsavedClassGoals) {
+      setPendingSelection({ type, targetValue });
+    } else {
+      executeNavigation(type, targetValue);
+    }
+  };
+
+  const executeNavigation = (
+    type: 'student' | 'class' | 'tab' | 'semester' | 'dates',
+    targetValue: string
+  ) => {
+    setHasUnsavedChanges(false);
+    setHasUnsavedClassGoals(false);
+    if (type === 'student') {
+      setSelectedStudentId(targetValue);
+      const activeDraft = midtermDrafts[targetValue];
+      setLocalComment(activeDraft?.midtermGeneralComment || '');
+    } else if (type === 'class') {
+      setSelectedClassId(targetValue);
+      setLastSelectedClassId(targetValue);
+    } else if (type === 'tab') {
+      setActiveTab(targetValue as any);
+    } else if (type === 'semester') {
+      setSemester(Number(targetValue));
+    } else if (type === 'dates') {
+      const [start, end] = targetValue.split('|');
+      handleStartDateChange(start);
+      handleEndDateChange(end);
+    }
+    setPendingSelection(null);
+  };
+
+  // Fetch weekly summary drafts of current student inside selected range
+  const fetchWeeklySourcesForStudent = React.useCallback(async () => {
+    if (!selectedStudentId || !selectedClassId) {
+      setWeeklySources([]);
+      return;
+    }
+    setIsFetchingWeeklySources(true);
+    try {
+      const q = query(
+        collection(db, 'weekly_summary_drafts'),
+        where('studentId', '==', selectedStudentId),
+        where('classId', '==', selectedClassId),
+        where('academicYear', '==', activeYear || '2026/2027')
+      );
+      const snap = await getDocs(q);
+      logFirestoreRead('attendanceReports', snap.docs.length || 1);
+      
+      const filteredSources: any[] = [];
+      snap.docs.forEach(docSnap => {
+        const data = docSnap.data();
+        
+        // Date overlap check: weekly report start or end date falls within midterm range
+        const wStart = data.startDate;
+        const wEnd = data.endDate;
+
+        const overlaps = wStart && wEnd && (wStart <= endDateStr && wEnd >= startDateStr);
+        if (overlaps) {
+          filteredSources.push({
+            id: docSnap.id,
+            ...data
+          });
+        }
+      });
+
+      // Sort chronologically by startDate
+      filteredSources.sort((a, b) => (a.startDate || '').localeCompare(b.startDate || ''));
+      setWeeklySources(filteredSources);
+    } catch (err) {
+      console.error('[MidtermSummary] Error fetching weekly sources:', err);
+      toast.error('Gagal mengambil data draf mingguan.');
+    } finally {
+      setIsFetchingWeeklySources(false);
+    }
+  }, [selectedStudentId, selectedClassId, startDateStr, endDateStr, activeYear]);
+
+  // --- E. LIFECYCLE EFFECTS (useEffect) ---
+  // Real Attendance fetch hook matching requested formula:
+  // startDate = tanggal mulai Midterm
+  // endDate = minimum(tanggal akhir Midterm, tanggal hari ini)
+  React.useEffect(() => {
+    if (!selectedClassId || !startDateStr || !endDateStr) return;
+    
+    async function fetchRealAttendanceData() {
+      setIsFetchingRealAttendance(true);
+      try {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const minEndDateStr = endDateStr < todayStr ? endDateStr : todayStr;
+        
+        console.log(`[Attendance Sync] Querying attendance from ${startDateStr} to ${minEndDateStr}`);
+        const q = query(
+          collection(db, 'attendance'),
+          where('classId', '==', selectedClassId),
+          where('date', '>=', startDateStr),
+          where('date', '<=', minEndDateStr)
+        );
+        
+        const snap = await getDocs(q);
+        logFirestoreRead('attendanceReports', snap.docs.length || 1);
+        
+        const docs = snap.docs.map(docSnap => {
+          const data = docSnap.data();
+          return {
+            id: docSnap.id,
+            date: data.date,
+            students: data.students || []
+          };
+        });
+        
+        setRealAttendanceList(docs);
+      } catch (err) {
+        console.error('Error fetching real attendance:', err);
+      } finally {
+        setIsFetchingRealAttendance(false);
+      }
+    }
+    
+    fetchRealAttendanceData();
+  }, [selectedClassId, startDateStr, endDateStr]);
+
+  // Measuring comments height effect to decide whether to move signatures to Page 3
+  React.useEffect(() => {
+    const checkOverflow = () => {
+      const el = document.getElementById('preview-comments-container');
+      if (el) {
+        // Natural comments text height check
+        if (el.scrollHeight > 350) {
+          setShouldMoveSignaturesToPage3(true);
+        } else {
+          setShouldMoveSignaturesToPage3(false);
+        }
+      }
+    };
+    
+    // Check after slight delay to ensure fonts & content have fully rendered
+    const timer = setTimeout(checkOverflow, 250);
+    return () => clearTimeout(timer);
+  }, [selectedStudentId, activeDraft?.midtermGeneralComment, activeTab]);
+
+  React.useEffect(() => {
+    const fetchLogo = async () => {
+      try {
+        const logoDoc = await getDoc(doc(db, 'settings', 'logos'));
+        if (logoDoc.exists()) {
+          const data = logoDoc.data() as any;
+          if (data?.KINDERGARTEN?.reportHeaderLogo?.originalUrl) {
+            setResolvedLogoUrl(data.KINDERGARTEN.reportHeaderLogo.originalUrl);
+          } else if (data?.KINDERGARTEN?.rectangular) {
+            setResolvedLogoUrl(data.KINDERGARTEN.rectangular);
+          }
+        } else {
+          const localLogos = localStorage.getItem('lumina_school_logos');
+          if (localLogos) {
+            const parsed = JSON.parse(localLogos);
+            if (parsed?.KINDERGARTEN?.reportHeaderLogo?.originalUrl) {
+              setResolvedLogoUrl(parsed.KINDERGARTEN.reportHeaderLogo.originalUrl);
+            } else if (parsed?.KINDERGARTEN?.rectangular) {
+              setResolvedLogoUrl(parsed.KINDERGARTEN.rectangular);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to fetch Kindergarten school logo in MidtermSummary:", err);
+      }
+    };
+    fetchLogo();
+  }, []);
+
+  // Auto-select Class
+  React.useEffect(() => {
+    if (classes.length > 0) {
+      if (paramClassId && classes.some(c => c.id === paramClassId)) {
+        setSelectedClassId(paramClassId);
+      } else if (primaryClassId) {
+        setSelectedClassId(primaryClassId);
+      } else {
+        setSelectedClassId(classes[0].id);
+      }
+    }
+  }, [classes, paramClassId, primaryClassId]);
+
+  // Load students data from cache/Firestore
+  React.useEffect(() => {
+    async function loadKindergartenStudentsData() {
+      try {
+        console.log('[MidtermSummary] Requesting cached Kindergarten students for year:', activeYear);
+        const cached = await getKindergartenStudents(activeYear || '2026/2027');
+        if (cached && cached.length > 0) {
+          setStudents(cached);
+          saveStoredStudents(cached);
+        } else {
+          const local = getStoredStudents();
+          if (local && local.length > 0) {
+            setStudents(local);
+          }
+        }
+      } catch (err) {
+        console.error('Error loading Kindergarten students:', err);
+      }
+    }
+    loadKindergartenStudentsData();
+  }, [activeYear]);
+
+  React.useEffect(() => {
+    if (classStudents.length > 0) {
+      // Keep selected student if they are still in the active class
+      if (!selectedStudentId || !classStudents.some(s => s.id === selectedStudentId)) {
+        setSelectedStudentId(classStudents[0].id);
+      }
+    } else {
+      setSelectedStudentId('');
+    }
+  }, [classStudents, selectedStudentId]);
+
+  React.useEffect(() => {
+    fetchClassLearningGoals();
+  }, [fetchClassLearningGoals]);
+
   React.useEffect(() => {
     fetchMidtermDraftsForClass();
     fetchPublishedReportsForClass();
@@ -942,30 +1040,6 @@ export default function MidtermSummary() {
     };
   }, [selectedStudentId, selectedClassId, classes, activeClassObj, students]);
 
-  const checkHasUnsavedChanges = (
-    comment: string
-  ) => {
-    const activeDraft = midtermDrafts[selectedStudentId];
-    const originalComment = activeDraft?.midtermGeneralComment || '';
-
-    const isChanged = comment !== originalComment;
-
-    setHasUnsavedChanges(isChanged);
-  };
-
-  // Handle local comment input edits
-  const handleCommentChange = (text: string) => {
-    setLocalComment(text);
-    checkHasUnsavedChanges(text);
-  };
-
-  // Handle class goals changes
-  const handleClassGoalChange = (field: 'nilaiAgamaBudiPekerti' | 'jatiDiri' | 'dasarLiterasiSteam' | 'signingDate', value: string) => {
-    const updated = { ...classGoalsInput, [field]: value };
-    setClassGoalsInput(updated);
-    setHasUnsavedClassGoals(true);
-  };
-
   // Synchronize local editors when selectedStudentId or midtermDrafts changes
   React.useEffect(() => {
     if (selectedStudentId) {
@@ -1004,99 +1078,20 @@ export default function MidtermSummary() {
     };
   }, [hasUnsavedChanges, hasUnsavedClassGoals]);
 
-  // Navigation intercepts with warnings
-  const confirmNavigation = (
-    type: 'student' | 'class' | 'tab' | 'semester' | 'dates',
-    targetValue: string
-  ) => {
-    if (type === 'dates') {
-      const activeDraft = midtermDrafts[selectedStudentId];
-      const hasExistingDraft = !!activeDraft || localComment.trim().length > 0;
-      if (hasExistingDraft) {
-        setPendingSelection({ type, targetValue });
-        return;
-      }
-    }
-    if (hasUnsavedChanges || hasUnsavedClassGoals) {
-      setPendingSelection({ type, targetValue });
-    } else {
-      executeNavigation(type, targetValue);
-    }
-  };
-
-  const executeNavigation = (
-    type: 'student' | 'class' | 'tab' | 'semester' | 'dates',
-    targetValue: string
-  ) => {
-    setHasUnsavedChanges(false);
-    setHasUnsavedClassGoals(false);
-    if (type === 'student') {
-      setSelectedStudentId(targetValue);
-      const activeDraft = midtermDrafts[targetValue];
-      setLocalComment(activeDraft?.midtermGeneralComment || '');
-    } else if (type === 'class') {
-      setSelectedClassId(targetValue);
-      setLastSelectedClassId(targetValue);
-    } else if (type === 'tab') {
-      setActiveTab(targetValue as any);
-    } else if (type === 'semester') {
-      setSemester(Number(targetValue));
-    } else if (type === 'dates') {
-      const [start, end] = targetValue.split('|');
-      handleStartDateChange(start);
-      handleEndDateChange(end);
-    }
-    setPendingSelection(null);
-  };
-
-  // Fetch weekly summary drafts of current student inside selected range
-  const fetchWeeklySourcesForStudent = React.useCallback(async () => {
-    if (!selectedStudentId || !selectedClassId) {
-      setWeeklySources([]);
-      return;
-    }
-    setIsFetchingWeeklySources(true);
-    try {
-      const q = query(
-        collection(db, 'weekly_summary_drafts'),
-        where('studentId', '==', selectedStudentId),
-        where('classId', '==', selectedClassId),
-        where('academicYear', '==', activeYear || '2026/2027')
-      );
-      const snap = await getDocs(q);
-      logFirestoreRead('attendanceReports', snap.docs.length || 1);
-      
-      const filteredSources: any[] = [];
-      snap.docs.forEach(docSnap => {
-        const data = docSnap.data();
-        
-        // Date overlap check: weekly report start or end date falls within midterm range
-        const wStart = data.startDate;
-        const wEnd = data.endDate;
-
-        const overlaps = wStart && wEnd && (wStart <= endDateStr && wEnd >= startDateStr);
-        if (overlaps) {
-          filteredSources.push({
-            id: docSnap.id,
-            ...data
-          });
-        }
-      });
-
-      // Sort chronologically by startDate
-      filteredSources.sort((a, b) => (a.startDate || '').localeCompare(b.startDate || ''));
-      setWeeklySources(filteredSources);
-    } catch (err) {
-      console.error('[MidtermSummary] Error fetching weekly sources:', err);
-      toast.error('Gagal mengambil data draf mingguan.');
-    } finally {
-      setIsFetchingWeeklySources(false);
-    }
-  }, [selectedStudentId, selectedClassId, startDateStr, endDateStr, activeYear]);
-
   React.useEffect(() => {
     fetchWeeklySourcesForStudent();
   }, [fetchWeeklySourcesForStudent]);
+
+  // --- F. ROLE PROTECTION EARLY RETURN ---
+  // (Safely positioned after all hook declarations to strictly prevent conditional hook issues)
+  if (profile?.role === 'kindergarten_subject_teacher') {
+    return (
+      <div className="p-8 text-center max-w-2xl mx-auto my-12 bg-white rounded-3xl border border-gray-150 p-12">
+        <h1 className="text-xl font-bold text-red-600 font-sans">Akses Ditolak</h1>
+        <p className="text-gray-500 mt-2 font-sans">Anda tidak memiliki izin untuk membuka halaman Midterm Report ini.</p>
+      </div>
+    );
+  }
 
   // Compilation Action
   const handleCompileWeekly = async () => {
