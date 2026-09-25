@@ -444,6 +444,27 @@ export default function MidtermSummary() {
     return `${sDate.getDate()} ${monthsIndo[sDate.getMonth()]} ${sDate.getFullYear()} - ${eDate.getDate()} ${monthsIndo[eDate.getMonth()]} ${eDate.getFullYear()}`;
   }, [startDateStr, endDateStr]);
 
+  const formattedSigningDate = React.useMemo(() => {
+    const rawDate = classGoalsInput.signingDate || classLearningGoals?.signingDate;
+    if (!rawDate) return '....................';
+    try {
+      const parts = rawDate.split('-');
+      if (parts.length !== 3) return '....................';
+      const year = Number(parts[0]);
+      const month = Number(parts[1]);
+      const day = Number(parts[2]);
+      if (isNaN(year) || isNaN(month) || isNaN(day)) return '....................';
+      
+      const monthsIndo = [
+        'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+        'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+      ];
+      return `${day} ${monthsIndo[month - 1]} ${year}`;
+    } catch (err) {
+      return '....................';
+    }
+  }, [classGoalsInput.signingDate, classLearningGoals?.signingDate]);
+
   // Review & Audit States
   const [reviewNotes, setReviewNotes] = React.useState<Record<string, string>>({});
   const [selectedAuditStudent, setSelectedAuditStudent] = React.useState<any | null>(null);
@@ -459,10 +480,12 @@ export default function MidtermSummary() {
     nilaiAgamaBudiPekerti: string;
     jatiDiri: string;
     dasarLiterasiSteam: string;
+    signingDate: string;
   }>({
     nilaiAgamaBudiPekerti: '',
     jatiDiri: '',
     dasarLiterasiSteam: '',
+    signingDate: ''
   });
 
   const [classGoalsStatus, setClassGoalsStatus] = React.useState<'DRAFT' | 'READY'>('DRAFT');
@@ -569,7 +592,8 @@ export default function MidtermSummary() {
       setClassGoalsInput({
         nilaiAgamaBudiPekerti: '',
         jatiDiri: '',
-        dasarLiterasiSteam: ''
+        dasarLiterasiSteam: '',
+        signingDate: ''
       });
       setClassGoalsStatus('DRAFT');
       setHasUnsavedClassGoals(false);
@@ -586,7 +610,8 @@ export default function MidtermSummary() {
         setClassGoalsInput({
           nilaiAgamaBudiPekerti: data.nilaiAgamaBudiPekerti || '',
           jatiDiri: data.jatiDiri || '',
-          dasarLiterasiSteam: data.dasarLiterasiSteam || ''
+          dasarLiterasiSteam: data.dasarLiterasiSteam || '',
+          signingDate: data.signingDate || ''
         });
         setClassGoalsStatus(data.status || 'DRAFT');
       } else {
@@ -595,6 +620,7 @@ export default function MidtermSummary() {
           nilaiAgamaBudiPekerti: '',
           jatiDiri: '',
           dasarLiterasiSteam: '',
+          signingDate: ''
         });
         setClassGoalsStatus('DRAFT');
       }
@@ -628,6 +654,7 @@ export default function MidtermSummary() {
       nilaiAgamaBudiPekerti: classGoalsInput.nilaiAgamaBudiPekerti,
       jatiDiri: classGoalsInput.jatiDiri,
       dasarLiterasiSteam: classGoalsInput.dasarLiterasiSteam,
+      signingDate: classGoalsInput.signingDate,
       status: finalStatus,
       updatedAt: Date.now(),
       updatedBy: profile?.email || 'System'
@@ -933,7 +960,7 @@ export default function MidtermSummary() {
   };
 
   // Handle class goals changes
-  const handleClassGoalChange = (field: 'nilaiAgamaBudiPekerti' | 'jatiDiri' | 'dasarLiterasiSteam', value: string) => {
+  const handleClassGoalChange = (field: 'nilaiAgamaBudiPekerti' | 'jatiDiri' | 'dasarLiterasiSteam' | 'signingDate', value: string) => {
     const updated = { ...classGoalsInput, [field]: value };
     setClassGoalsInput(updated);
     setHasUnsavedClassGoals(true);
@@ -2322,15 +2349,33 @@ export default function MidtermSummary() {
               </div>
             </div>
 
-            <div className="flex justify-end pt-2 border-t border-gray-100">
-              <button
-                onClick={() => handleSaveClassLearningGoals()}
-                disabled={isSavingClassGoals || !hasUnsavedClassGoals}
-                className="flex items-center gap-1.5 bg-[#109E58] hover:bg-emerald-700 disabled:opacity-40 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl cursor-pointer transition-all shadow-md shadow-[#109E58]/10 disabled:cursor-not-allowed"
-              >
-                {isSavingClassGoals ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-                Simpan Learning Goals Kelas
-              </button>
+            <div className="pt-4 border-t border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1.5 max-w-xs w-full">
+                <label className="text-[10px] font-black text-[#109E58] uppercase tracking-wider block font-sans">
+                  Tanggal Penandatanganan Rapor
+                </label>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500 font-bold font-sans">Depok,</span>
+                  <input
+                    type="date"
+                    value={classGoalsInput.signingDate || ''}
+                    onChange={(e) => handleClassGoalChange('signingDate', e.target.value)}
+                    disabled={isSavingClassGoals}
+                    className="flex-1 bg-white border border-gray-200 rounded-xl px-3.5 py-2 text-xs font-bold outline-none text-gray-700 cursor-pointer focus:border-[#109E58] focus:ring-1 focus:ring-[#109E58]/35 focus:ring-offset-0 transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  onClick={() => handleSaveClassLearningGoals()}
+                  disabled={isSavingClassGoals || !hasUnsavedClassGoals}
+                  className="flex items-center gap-1.5 bg-[#109E58] hover:bg-emerald-700 disabled:opacity-40 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl cursor-pointer transition-all shadow-md shadow-[#109E58]/10 disabled:cursor-not-allowed"
+                >
+                  {isSavingClassGoals ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                  Simpan Learning Goals & Tanggal
+                </button>
+              </div>
             </div>
           </div>
 
@@ -3338,30 +3383,6 @@ export default function MidtermSummary() {
                           </div>
                         </div>
 
-                        {/* Attendance Summary */}
-                        <div className="border border-gray-200 rounded-lg p-3 bg-gray-50/50">
-                          <h4 className="text-[10px] font-black text-emerald-800 uppercase tracking-widest mb-2 font-sans">
-                            Kehadiran (Attendance Summary)
-                          </h4>
-                          <div className="grid grid-cols-3 gap-4 text-center">
-                            <div className="bg-white border border-gray-150 rounded p-1.5">
-                              <span className="text-[9px] font-bold text-amber-700 uppercase tracking-wider block font-sans">Sakit</span>
-                              <span className="text-sm font-black text-amber-900 block font-sans">{getAttendance().sick}</span>
-                              <span className="text-[8px] text-gray-400 block font-sans">Hari</span>
-                            </div>
-                            <div className="bg-white border border-gray-150 rounded p-1.5">
-                              <span className="text-[9px] font-bold text-blue-700 uppercase tracking-wider block font-sans">Izin</span>
-                              <span className="text-sm font-black text-blue-900 block font-sans">{getAttendance().izin}</span>
-                              <span className="text-[8px] text-gray-400 block font-sans">Hari</span>
-                            </div>
-                            <div className="bg-white border border-gray-150 rounded p-1.5">
-                              <span className="text-[9px] font-bold text-red-700 uppercase tracking-wider block font-sans">Tanpa Keterangan</span>
-                              <span className="text-sm font-black text-red-900 block font-sans">{getAttendance().noNews}</span>
-                              <span className="text-[8px] text-gray-400 block font-sans">Hari</span>
-                            </div>
-                          </div>
-                        </div>
-
                         {/* Semester Learning Goals */}
                         <div className="space-y-2">
                           <h4 className="text-[11px] font-black text-emerald-800 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 text-center font-sans">
@@ -3369,7 +3390,7 @@ export default function MidtermSummary() {
                           </h4>
                           <div className="grid grid-cols-3 gap-3">
                             {/* Column 1: Nilai Agama & Budi Pekerti */}
-                            <div className="border border-emerald-100 rounded-lg p-3 bg-emerald-50/10 flex flex-col h-[610px]">
+                            <div className="border border-emerald-100 rounded-lg p-3 bg-emerald-50/10 flex flex-col h-[730px]">
                               <span className="text-[9px] font-black text-emerald-800 block text-center border-b border-emerald-100 pb-1.5 mb-2 font-sans">
                                 Nilai Agama & Budi Pekerti
                               </span>
@@ -3383,7 +3404,7 @@ export default function MidtermSummary() {
                             </div>
 
                             {/* Column 2: Jati Diri */}
-                            <div className="border border-emerald-100 rounded-lg p-3 bg-emerald-50/10 flex flex-col h-[610px]">
+                            <div className="border border-emerald-100 rounded-lg p-3 bg-emerald-50/10 flex flex-col h-[730px]">
                               <span className="text-[9px] font-black text-emerald-800 block text-center border-b border-emerald-100 pb-1.5 mb-2 font-sans">
                                 Jati Diri
                               </span>
@@ -3397,7 +3418,7 @@ export default function MidtermSummary() {
                             </div>
 
                             {/* Column 3: Dasar-dasar Literasi & STEAM */}
-                            <div className="border border-emerald-100 rounded-lg p-3 bg-emerald-50/10 flex flex-col h-[610px]">
+                            <div className="border border-emerald-100 rounded-lg p-3 bg-emerald-50/10 flex flex-col h-[730px]">
                               <span className="text-[9px] font-black text-emerald-800 block text-center border-b border-emerald-100 pb-1.5 mb-2 font-sans">
                                 Dasar-dasar Literasi & STEAM
                               </span>
@@ -3478,162 +3499,171 @@ export default function MidtermSummary() {
                          </div>
 
                          {/* Signatures Area - Rendered here on Page 2 ONLY if they do NOT overflow to Page 3 */}
-                         {!shouldMoveSignaturesToPage3 && (
-                           <div className="grid grid-cols-2 gap-8 pt-6 border-t border-dashed border-gray-200 text-center shrink-0 mt-8">
-                             {/* Homeroom Teacher */}
-                             <div className="flex flex-col items-center justify-between h-[100px]">
-                               <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">Guru Kelas</span>
-                               <div className="h-12 flex items-center justify-center">
-                                 {isValidHomeroomSignature ? (
-                                   <img 
-                                     src={resolvedSignatureUrl!} 
-                                     alt="Signature" 
-                                     className="h-10 w-auto object-contain"
-                                     referrerPolicy="no-referrer"
-                                     crossOrigin={resolvedSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
-                                   />
-                                 ) : (
-                                   <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
-                                 )}
-                               </div>
-                               <div className="text-center font-sans leading-none">
-                                 <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
-                                   {toTitleCase(resolvedTeacherName) || "Nama Guru Kelas"}
-                                 </span>
-                                 <span className="text-[8px] text-gray-400 block mt-1 font-sans">
-                                   NIY: {(!resolvedTeacherNiy || resolvedTeacherNiy === '-') ? '-' : resolvedTeacherNiy}
-                                 </span>
-                               </div>
-                             </div>
+                          {!shouldMoveSignaturesToPage3 && (
+                            <div className="pt-6 border-t border-dashed border-gray-200 mt-8 shrink-0">
+                              <div className="text-right text-[9.5px] font-sans text-gray-800 pr-8 mb-4">
+                                Depok, {formattedSigningDate}
+                              </div>
+                              <div className="grid grid-cols-2 gap-8 text-center">
+                                {/* Principal */}
+                                <div className="flex flex-col items-center justify-between h-[100px]">
+                                  <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">
+                                    Kepala Pra-TK/TK Lazuardi GCS
+                                  </span>
+                                  <div className="h-12 flex items-center justify-center">
+                                    {isValidPrincipalSignature ? (
+                                      <img 
+                                        src={kindySignatory!.principalSignatureUrl!} 
+                                        alt="Signature" 
+                                        className="h-10 w-auto object-contain"
+                                        referrerPolicy="no-referrer"
+                                        crossOrigin={kindySignatory!.principalSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
+                                      />
+                                    ) : (
+                                      <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
+                                    )}
+                                  </div>
+                                  <div className="text-center font-sans leading-none">
+                                    <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
+                                      {toTitleCase(kindySignatory?.principalName) || "Nama Kepala Unit"}
+                                    </span>
+                                    {kindySignatory?.principalNiy && kindySignatory.principalNiy !== '-' && kindySignatory.principalNiy !== '' && (
+                                      <span className="text-[8px] text-gray-400 block mt-1 font-sans">
+                                        NIY: {kindySignatory.principalNiy}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
 
-                             {/* Principal */}
-                             <div className="flex flex-col items-center justify-between h-[100px]">
-                               <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">
-                                 Kepala Pra-TK/TK Lazuardi GCS
-                               </span>
-                               <div className="h-12 flex items-center justify-center">
-                                 {isValidPrincipalSignature ? (
-                                   <img 
-                                     src={kindySignatory!.principalSignatureUrl!} 
-                                     alt="Signature" 
-                                     className="h-10 w-auto object-contain"
-                                     referrerPolicy="no-referrer"
-                                     crossOrigin={kindySignatory!.principalSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
-                                   />
-                                 ) : (
-                                   <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
-                                 )}
-                               </div>
-                               <div className="text-center font-sans leading-none">
-                                 <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
-                                   {toTitleCase(kindySignatory?.principalName) || "Nama Kepala Unit"}
-                                 </span>
-                                 {kindySignatory?.principalNiy && kindySignatory.principalNiy !== '-' && kindySignatory.principalNiy !== '' && (
-                                   <span className="text-[8px] text-gray-400 block mt-1 font-sans">
-                                     NIY: {kindySignatory.principalNiy}
-                                   </span>
-                                 )}
-                               </div>
-                             </div>
-                           </div>
-                         )}
+                                {/* Homeroom Teacher */}
+                                <div className="flex flex-col items-center justify-between h-[100px]">
+                                  <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">Guru Kelas</span>
+                                  <div className="h-12 flex items-center justify-center">
+                                    {isValidHomeroomSignature ? (
+                                      <img 
+                                        src={resolvedSignatureUrl!} 
+                                        alt="Signature" 
+                                        className="h-10 w-auto object-contain"
+                                        referrerPolicy="no-referrer"
+                                        crossOrigin={resolvedSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
+                                      />
+                                    ) : (
+                                      <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
+                                    )}
+                                  </div>
+                                  <div className="text-center font-sans leading-none">
+                                    <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
+                                      {toTitleCase(resolvedTeacherName) || "Nama Guru Kelas"}
+                                    </span>
+                                    <span className="text-[8px] text-gray-400 block mt-1 font-sans">
+                                      NIY: {(!resolvedTeacherNiy || resolvedTeacherNiy === '-') ? '-' : resolvedTeacherNiy}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
                        </div>
 
                        {/* Footer */}
                        <div className="flex justify-between items-center text-[8px] text-gray-400 font-sans mt-auto pt-2 border-t border-gray-100">
-                         <span>Dicetak tanggal: {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+                         <span>Lazuardi GCS Kindergarten</span>
                          <span>Halaman 2 dari {shouldMoveSignaturesToPage3 ? '3' : '2'}</span>
                        </div>
                      </div>
 
                      {/* PAGE 3 — CONDITIONAL SIGNATURES PAGE */}
                      {shouldMoveSignaturesToPage3 && (
-                       <div className="bg-white px-8 py-6 md:px-12 md:py-8 shadow-md border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-between print:border-none print:shadow-none print:p-0 print:m-0" id="midterm-report-page-3">
-                         
-                         <div className="space-y-4 flex-1 flex flex-col justify-start">
-                           {/* School/Report info context header */}
-                           <div className="border-b border-gray-200 pb-2.5 mb-6">
-                             <div className="flex justify-between items-center text-[9px] font-sans font-black text-gray-400 uppercase tracking-widest">
-                               <span>Lazuardi GCS Kindergarten</span>
-                               <span>Midterm Progress Report - Page 3</span>
-                             </div>
-                             <div className="text-[10px] text-gray-800 font-bold mt-1.5">
-                               Nama Siswa: {selectedStudentObj?.name} | Kelas: {activeClassObj?.name}
-                             </div>
-                           </div>
+                        <div className="bg-white px-8 py-6 md:px-12 md:py-8 shadow-md border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-between print:border-none print:shadow-none print:p-0 print:m-0" id="midterm-report-page-3">
+                          
+                          <div className="space-y-4 flex-1 flex flex-col justify-start">
+                            {/* School/Report info context header */}
+                            <div className="border-b border-gray-200 pb-2.5 mb-6">
+                              <div className="flex justify-between items-center text-[9px] font-sans font-black text-gray-400 uppercase tracking-widest">
+                                <span>Lazuardi GCS Kindergarten</span>
+                                <span>Midterm Progress Report - Page 3</span>
+                              </div>
+                              <div className="text-[10px] text-gray-800 font-bold mt-1.5">
+                                Nama Siswa: {selectedStudentObj?.name} | Kelas: {activeClassObj?.name}
+                              </div>
+                            </div>
 
-                           <div className="text-[11px] text-gray-500 italic mb-8 font-sans leading-relaxed">
-                             Lembar Tanda Tangan Pengesahan (Signature Endorsement Page). Bagian ini dipisahkan secara otomatis karena halaman sebelumnya telah terisi penuh oleh komentar evaluasi.
-                           </div>
+                            <div className="text-[11px] text-gray-500 italic mb-8 font-sans leading-relaxed">
+                              Lembar Tanda Tangan Pengesahan (Signature Endorsement Page). Bagian ini dipisahkan secara otomatis karena halaman sebelumnya telah terisi penuh oleh komentar evaluasi.
+                            </div>
 
-                           {/* Signatures Area */}
-                           <div className="grid grid-cols-2 gap-8 pt-10 border-t border-dashed border-gray-200 text-center shrink-0">
-                             {/* Homeroom Teacher */}
-                             <div className="flex flex-col items-center justify-between h-[100px]">
-                               <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">Guru Kelas</span>
-                               <div className="h-12 flex items-center justify-center">
-                                 {isValidHomeroomSignature ? (
-                                   <img 
-                                     src={resolvedSignatureUrl!} 
-                                     alt="Signature" 
-                                     className="h-10 w-auto object-contain"
-                                     referrerPolicy="no-referrer"
-                                     crossOrigin={resolvedSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
-                                   />
-                                 ) : (
-                                   <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
-                                 )}
-                               </div>
-                               <div className="text-center font-sans leading-none">
-                                 <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
-                                   {toTitleCase(resolvedTeacherName) || "Nama Guru Kelas"}
-                                 </span>
-                                 <span className="text-[8px] text-gray-400 block mt-1 font-sans">
-                                   NIY: {(!resolvedTeacherNiy || resolvedTeacherNiy === '-') ? '-' : resolvedTeacherNiy}
-                                 </span>
-                               </div>
-                             </div>
+                            {/* Signatures Area */}
+                            <div className="pt-10 border-t border-dashed border-gray-200 shrink-0">
+                              <div className="text-right text-[9.5px] font-sans text-gray-800 pr-8 mb-4">
+                                Depok, {formattedSigningDate}
+                              </div>
+                              <div className="grid grid-cols-2 gap-8 text-center">
+                                {/* Principal */}
+                                <div className="flex flex-col items-center justify-between h-[100px]">
+                                  <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">
+                                    Kepala Pra-TK/TK Lazuardi GCS
+                                  </span>
+                                  <div className="h-12 flex items-center justify-center">
+                                    {isValidPrincipalSignature ? (
+                                      <img 
+                                        src={kindySignatory!.principalSignatureUrl!} 
+                                        alt="Signature" 
+                                        className="h-10 w-auto object-contain"
+                                        referrerPolicy="no-referrer"
+                                        crossOrigin={kindySignatory!.principalSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
+                                      />
+                                    ) : (
+                                      <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
+                                    )}
+                                  </div>
+                                  <div className="text-center font-sans leading-none">
+                                    <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
+                                      {toTitleCase(kindySignatory?.principalName) || "Nama Kepala Unit"}
+                                    </span>
+                                    {kindySignatory?.principalNiy && kindySignatory.principalNiy !== '-' && kindySignatory.principalNiy !== '' && (
+                                      <span className="text-[8px] text-gray-400 block mt-1 font-sans">
+                                        NIY: {kindySignatory.principalNiy}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
 
-                             {/* Principal */}
-                             <div className="flex flex-col items-center justify-between h-[100px]">
-                               <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">
-                                 Kepala Pra-TK/TK Lazuardi GCS
-                               </span>
-                               <div className="h-12 flex items-center justify-center">
-                                 {isValidPrincipalSignature ? (
-                                   <img 
-                                     src={kindySignatory!.principalSignatureUrl!} 
-                                     alt="Signature" 
-                                     className="h-10 w-auto object-contain"
-                                     referrerPolicy="no-referrer"
-                                     crossOrigin={kindySignatory!.principalSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
-                                   />
-                                 ) : (
-                                   <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
-                                 )}
-                               </div>
-                               <div className="text-center font-sans leading-none">
-                                 <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
-                                   {toTitleCase(kindySignatory?.principalName) || "Nama Kepala Unit"}
-                                 </span>
-                                 {kindySignatory?.principalNiy && kindySignatory.principalNiy !== '-' && kindySignatory.principalNiy !== '' && (
-                                   <span className="text-[8px] text-gray-400 block mt-1 font-sans">
-                                     NIY: {kindySignatory.principalNiy}
-                                   </span>
-                                 )}
-                               </div>
-                             </div>
-                           </div>
-                         </div>
+                                {/* Homeroom Teacher */}
+                                <div className="flex flex-col items-center justify-between h-[100px]">
+                                  <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">Guru Kelas</span>
+                                  <div className="h-12 flex items-center justify-center">
+                                    {isValidHomeroomSignature ? (
+                                      <img 
+                                        src={resolvedSignatureUrl!} 
+                                        alt="Signature" 
+                                        className="h-10 w-auto object-contain"
+                                        referrerPolicy="no-referrer"
+                                        crossOrigin={resolvedSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
+                                      />
+                                    ) : (
+                                      <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
+                                    )}
+                                  </div>
+                                  <div className="text-center font-sans leading-none">
+                                    <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
+                                      {toTitleCase(resolvedTeacherName) || "Nama Guru Kelas"}
+                                    </span>
+                                    <span className="text-[8px] text-gray-400 block mt-1 font-sans">
+                                      NIY: {(!resolvedTeacherNiy || resolvedTeacherNiy === '-') ? '-' : resolvedTeacherNiy}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
 
-                         {/* Footer */}
-                         <div className="flex justify-between items-center text-[8px] text-gray-400 font-sans mt-auto pt-2 border-t border-gray-100">
-                           <span>Dicetak tanggal: {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
-                           <span>Halaman 3 dari 3</span>
-                         </div>
-                       </div>
-                     )}
-
+                          {/* Footer */}
+                          <div className="flex justify-between items-center text-[8px] text-gray-400 font-sans mt-auto pt-2 border-t border-gray-100">
+                            <span>Lazuardi GCS Kindergarten</span>
+                            <span>Halaman 3 dari 3</span>
+                          </div>
+                        </div>
+                      )}
                   </div>
                 ) : (
                   <div className="bg-white p-12 border border-gray-150 rounded-3xl shadow-sm text-center">
