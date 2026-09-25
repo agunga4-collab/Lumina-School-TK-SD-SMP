@@ -144,20 +144,28 @@ export function canUserEditMidtermGeneralComments(
   user: User | null | undefined, 
   classData: Class | null | undefined
 ): boolean {
-  if (!user) return false;
+  if (!user || !classData) return false;
   const role = user.role;
+  const uid = user.uid;
 
-  // Super Admin & Head JH can edit general comments for any class
-  if (['SUPER_ADMIN', 'HEAD_JUNIOR'].includes(role)) {
+  const canEditGenCom =
+    role === 'SUPER_ADMIN' ||
+    role === 'HEAD_JUNIOR' ||
+    classData.homeroomTeacherId === uid ||
+    classData.homeroomTeacherIds?.includes(uid) ||
+    (classData as any).waliKelasIds?.includes(uid);
+
+  if (canEditGenCom) {
     return true;
   }
 
-  // Homeroom Teacher can edit ONLY for their homeroom class
-  if (isHomeroomTeacherOfClass(user, classData)) {
-    return true;
+  if (classData.teacherAssignments && Array.isArray(classData.teacherAssignments)) {
+    const isPrimaryOrHomeroom = classData.teacherAssignments.some(
+      a => a.userId === uid && a.role === 'HOMEROOM_TEACHER'
+    );
+    if (isPrimaryOrHomeroom) return true;
   }
 
-  // Secretary JH, Subject Teacher, BK Mentor, MTSS PJ: read-only
   return false;
 }
 

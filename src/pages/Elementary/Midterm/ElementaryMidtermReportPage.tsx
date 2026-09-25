@@ -264,52 +264,7 @@ function ElementaryMidtermReportPageContent() {
       setPublishedReports(Array.isArray(published) ? published.filter(Boolean) : []);
 
       // Load Homeroom teacher user profile
-      if (selectedClass?.homeroomTeacherId) {
-        try {
-          const uSnap = await getDoc(doc(db, 'users', selectedClass.homeroomTeacherId));
-          const isEmail = (val?: string | null) => !!val && val.includes('@');
-
-          if (uSnap.exists()) {
-            const uData = uSnap.data();
-            let resolvedName: string | null = null;
-
-            if (selectedClass.homeroomTeacherName && !isEmail(selectedClass.homeroomTeacherName)) {
-              resolvedName = selectedClass.homeroomTeacherName;
-            }
-
-            setHomeroomTeacherProfile({
-              displayName: resolvedName || 'Homeroom Teacher',
-              niy: uData?.niy || '',
-              signatureUrl: selectedClass.teacherSignatureUrl || uData?.signatureUrl || null
-            });
-          } else {
-            let resolvedName: string | null = null;
-            if (selectedClass.homeroomTeacherName && !isEmail(selectedClass.homeroomTeacherName)) {
-              resolvedName = selectedClass.homeroomTeacherName;
-            }
-
-            setHomeroomTeacherProfile({
-              displayName: resolvedName || 'Homeroom Teacher',
-              niy: '',
-              signatureUrl: selectedClass.teacherSignatureUrl || null
-            });
-          }
-        } catch (e) {
-          console.warn('Could not load homeroom user profile', e);
-          let resolvedName: string | null = null;
-          const isEmail = (val?: string | null) => !!val && val.includes('@');
-
-          if (selectedClass.homeroomTeacherName && !isEmail(selectedClass.homeroomTeacherName)) {
-            resolvedName = selectedClass.homeroomTeacherName;
-          }
-
-          setHomeroomTeacherProfile({
-            displayName: resolvedName || 'Homeroom Teacher',
-            niy: '',
-            signatureUrl: selectedClass.teacherSignatureUrl || null
-          });
-        }
-      } else if (selectedClass) {
+      if (selectedClass) {
         let resolvedName: string | null = null;
         const isEmail = (val?: string | null) => !!val && val.includes('@');
 

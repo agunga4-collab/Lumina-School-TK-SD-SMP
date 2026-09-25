@@ -114,7 +114,6 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
 
   // Local states to resolve dynamic Class and Homeroom profile from DB
   const [dbClass, setDbClass] = React.useState<Class | null>(null);
-  const [teacherUser, setTeacherUser] = React.useState<any | null>(null);
 
   React.useEffect(() => {
     if (snapshot) return; // Snapshot mode doesn't need DB resolve
@@ -139,27 +138,6 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
     fetchClass();
   }, [student?.classId, currentClass, snapshot]);
 
-  React.useEffect(() => {
-    if (snapshot) return;
-    const teacherId = dbClass?.homeroomTeacherId || currentClass?.homeroomTeacherId;
-    if (!teacherId) {
-      setTeacherUser(null);
-      return;
-    }
-
-    const fetchTeacher = async () => {
-      try {
-        const snap = await getDoc(doc(db, 'users', teacherId));
-        if (snap.exists()) {
-          setTeacherUser(snap.data());
-        }
-      } catch (e) {
-        console.warn("Failed to fetch teacher profile in PDF Template:", teacherId, e);
-      }
-    };
-    fetchTeacher();
-  }, [dbClass?.homeroomTeacherId, currentClass?.homeroomTeacherId, snapshot]);
-
   const effHomeroomName = (() => {
     const isEmail = (val?: string | null) => !!val && val.includes('@');
     if (snapshot) {
@@ -176,7 +154,7 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
 
   const effHomeroomNiy = snapshot 
     ? (snapshot.signatory.homeroomTeacherNiy || '') 
-    : (teacherUser?.niy || homeroomTeacherProfile?.niy || '');
+    : (homeroomTeacherProfile?.niy || '');
   const effHomeroomSignatureUrl = snapshot 
     ? snapshot.signatory.homeroomTeacherSignatureUrl 
     : (dbClass?.teacherSignatureUrl || currentClass?.teacherSignatureUrl || null);
