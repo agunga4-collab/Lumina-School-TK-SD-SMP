@@ -1452,6 +1452,21 @@ service cloud.firestore {
       allow read, write: if isElementaryStaff();
     }
 
+    match /elem_midterm_period_configs/{configId} {
+      allow read: if isActive() && isElementaryStaff();
+
+      allow create, update: if isActive() && (
+        isAdmin() ||
+        isElementaryHeadUnitOrPrincipal() ||
+        (userRole() in ['COORDINATOR', 'SECRETARY_ELEM'] && (
+          !('unitId' in currentUser()) || currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL' ||
+          ('unit' in currentUser() && (currentUser().unit == 'ELEMENTARY' || currentUser().unit == 'ALL'))
+        ))
+      );
+
+      allow delete: if isAdmin();
+    }
+
     match /elem_midterm_student_data/{dataId} {
       allow read: if isActive() && (
         isElementaryStaff() ||
