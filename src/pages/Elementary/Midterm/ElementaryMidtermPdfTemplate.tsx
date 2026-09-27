@@ -27,8 +27,27 @@ interface ElementaryMidtermPdfTemplateProps {
   logoUrl?: string | null;
   homeroomTeacherProfile?: { displayName: string; niy?: string; signatureUrl?: string | null };
   studentUaName?: string | null;
-  page1Id?: string;
-  page2Id?: string;
+  reportSigningDate?: string;
+  reportSigningLocation?: string;
+  attendanceCutoffDate?: string;
+}
+
+interface PageData {
+  academicSubjects: Array<{
+    name: string;
+    originalNo: number;
+    isContinued?: boolean;
+    goals: Array<{ id: string; text: string; remark: string }>;
+  }>;
+  projectSubjects: Array<{
+    name: string;
+    originalNo: number;
+    isContinued?: boolean;
+    goals: Array<{ id: string; text: string; remark: string }>;
+  }>;
+  showAcademicHeader?: boolean;
+  showProjectHeader?: boolean;
+  showFinalBlock?: boolean;
 }
 
 export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplateProps> = ({
@@ -45,6 +64,9 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
   logoUrl,
   homeroomTeacherProfile,
   studentUaName,
+  reportSigningDate,
+  reportSigningLocation = 'Depok',
+  attendanceCutoffDate
 }) => {
   // Derive student identity
   const studentName = snapshot ? snapshot.student.name : (student?.name || '');
@@ -146,6 +168,11 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
     return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
   };
   const formattedDate = getEffDate();
+
+  // Signing date & cutoff overrides
+  const effSigningDate = snapshot?.reportSigningDate || reportSigningDate || formattedDate;
+  const effSigningLocation = snapshot?.reportSigningLocation || reportSigningLocation || 'Depok';
+  const effCutoffDate = snapshot?.attendanceCutoffDate || attendanceCutoffDate || '';
 
   // Helper to extract subject data
   const getCategoriesFromLive = () => {
@@ -257,88 +284,250 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
     return null;
   };
 
-  const renderSubjectTable = (
-    subjects: Array<{ name: string; goals: Array<{ id: string; text: string; remark: string }> }>,
-    startSubjNo = 1
-  ) => {
-    return (
-      <table className="w-full text-left border-collapse border border-slate-900 text-[10px]">
-        <thead>
-          <tr className="bg-slate-100 text-slate-900 font-bold uppercase border-b border-slate-900 text-center">
-            <th className="border-r border-slate-900 p-1.5 w-[7%]">NO.</th>
-            <th className="border-r border-slate-900 p-1.5 w-[68%] text-left">SUBJECTS AND LEARNING GOALS</th>
-            <th className="p-1.5 w-[25%]" colSpan={3}>
-              ACHIEVEMENT
-              <div className="grid grid-cols-3 border-t border-slate-900 mt-1 pt-1 font-extrabold text-[9px]">
-                <div>A</div>
-                <div className="border-x border-slate-900">D</div>
-                <div>B</div>
-              </div>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {subjects.map((subj, sIdx) => {
-            return (
-              <React.Fragment key={`subj-${sIdx}`}>
-                {/* Subject Header Row - Displays Subject Number */}
-                <tr className="bg-slate-50 font-extrabold border-b border-slate-900 text-slate-900 uppercase tr-keep-together">
-                  <td className="border-r border-slate-900 p-1.5 text-center">{startSubjNo + sIdx}</td>
-                  <td className="border-r border-slate-900 p-1.5 font-bold" colSpan={4}>
-                    {subj.name}
-                  </td>
-                </tr>
-
-                {/* Goals Rows - Displays Bullet and NO seq number */}
-                {subj.goals.map((goal) => {
-                  return (
-                    <tr key={goal.id} className="border-b border-slate-900/40 tr-keep-together">
-                      <td className="border-r border-slate-900 p-1.5 text-center text-slate-500 font-medium text-[9px]">
-                        {/* No sequences, empty column */}
-                      </td>
-                      <td className="border-r border-slate-900 p-1.5 leading-relaxed text-slate-800 flex items-start gap-1">
-                        <span className="shrink-0">•</span>
-                        <span>{goal.text}</span>
-                      </td>
-                      <td className="border-r border-slate-900 p-1 text-center w-[8%] font-bold">
-                        {renderAchievementCheck(goal.remark, 'A')}
-                      </td>
-                      <td className="border-r border-slate-900 p-1 text-center w-[8%] font-bold">
-                        {renderAchievementCheck(goal.remark, 'D')}
-                      </td>
-                      <td className="p-1 text-center w-[8%] font-bold">
-                        {renderAchievementCheck(goal.remark, 'B')}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </React.Fragment>
-            );
-          })}
-        </tbody>
-      </table>
-    );
+  // ----------------------------------------------------
+  // DYNAMIC PACKING ALGORITHM FOR PAGINATION NATURAL
+  // ----------------------------------------------------
+  const getGoalHeight = (text: string) => {
+    if (!text) return 8;
+    if (text.length > 170) return 14;
+    if (text.length > 85) return 11;
+    return 8;
   };
 
-  // Determine dynamic pagination layout based on goals count & projects
-  const totalAcademicGoals = academicSubjects.reduce((acc, s) => acc + s.goals.length, 0);
-  const totalProjectGoals = projectSubjects.reduce((acc, s) => acc + s.goals.length, 0);
-  const totalGoals = totalAcademicGoals + totalProjectGoals;
-  const hasProjects = projectSubjects.length > 0;
+  const buildPages = (): PageData[] => {
+    const pagesList: PageData[] = [];
+    let currentPageIndex = 0;
+    // Page 1 budget: 255mm total capacity. Logo header (15) + Student Identity Grid (22) = 37mm starting cost.
+    let remainingHeight = 255 - 37; 
 
-  let pageCount = 2;
-  if (totalGoals <= 8 && !hasProjects && effGeneralComment.length < 300) {
-    pageCount = 1;
-  } else if (totalGoals > 18 || (hasProjects && totalGoals > 12) || effGeneralComment.length > 1000) {
-    pageCount = 3;
-  }
+    let currentPage: PageData = {
+      academicSubjects: [],
+      projectSubjects: [],
+      showAcademicHeader: false,
+      showProjectHeader: false,
+      showFinalBlock: false
+    };
 
-  // Footer text generator
+    const startNewPage = () => {
+      pagesList.push(currentPage);
+      currentPageIndex++;
+      // Subsequent pages budget: 255mm capacity. Only Logo header (15) = 15mm starting cost.
+      remainingHeight = 255 - 15; 
+      currentPage = {
+        academicSubjects: [],
+        projectSubjects: [],
+        showAcademicHeader: false,
+        showProjectHeader: false,
+        showFinalBlock: false
+      };
+    };
+
+    // 1. Pack Academic Subjects
+    if (academicSubjects.length > 0) {
+      currentPage.showAcademicHeader = true;
+      remainingHeight -= 8;  // Section title
+      remainingHeight -= 12; // Table standard header (thead)
+
+      academicSubjects.forEach((subj, sIdx) => {
+        const originalNo = sIdx + 1;
+        let goalIndex = 0;
+        let isContinued = false;
+
+        while (goalIndex < subj.goals.length) {
+          const currentGoal = subj.goals[goalIndex];
+          const firstGoalHeight = getGoalHeight(currentGoal.text);
+          // Minimum spacing to render subject header (8mm) + first remaining goal
+          const minRequired = 8 + firstGoalHeight;
+
+          if (remainingHeight < minRequired) {
+            startNewPage();
+            currentPage.showAcademicHeader = true;
+            remainingHeight -= 8;  // Section title
+            remainingHeight -= 12; // Table standard header
+          }
+
+          // Deduct subject header
+          remainingHeight -= 8;
+
+          // Pack goals that fit
+          const goalsForThisPage: typeof subj.goals = [];
+          while (goalIndex < subj.goals.length) {
+            const goal = subj.goals[goalIndex];
+            const gh = getGoalHeight(goal.text);
+            if (remainingHeight >= gh) {
+              goalsForThisPage.push(goal);
+              remainingHeight -= gh;
+              goalIndex++;
+            } else {
+              break;
+            }
+          }
+
+          if (goalsForThisPage.length > 0) {
+            currentPage.academicSubjects.push({
+              name: isContinued ? `${subj.name} (Continued)` : subj.name,
+              originalNo,
+              isContinued,
+              goals: goalsForThisPage
+            });
+          }
+
+          if (goalIndex < subj.goals.length) {
+            isContinued = true;
+          }
+        }
+      });
+    }
+
+    // 2. Pack Project Subjects
+    if (projectSubjects.length > 0) {
+      const projSectionHeaderCost = 8 + 12; // Section 2 title (8) + thead (12)
+      const firstProjSubj = projectSubjects[0];
+      const firstGoalHeight = getGoalHeight(firstProjSubj.goals[0]?.text || '');
+      const minProjRequired = projSectionHeaderCost + 8 + firstGoalHeight;
+
+      if (remainingHeight < minProjRequired) {
+        startNewPage();
+      }
+
+      if (currentPage.projectSubjects.length === 0) {
+        currentPage.showProjectHeader = true;
+        remainingHeight -= projSectionHeaderCost;
+      }
+
+      projectSubjects.forEach((subj, sIdx) => {
+        const originalNo = sIdx + 1;
+        let goalIndex = 0;
+        let isContinued = false;
+
+        while (goalIndex < subj.goals.length) {
+          const currentGoal = subj.goals[goalIndex];
+          const firstGoalHeight = getGoalHeight(currentGoal.text);
+          const minRequired = 8 + firstGoalHeight;
+
+          if (remainingHeight < minRequired) {
+            startNewPage();
+            currentPage.showProjectHeader = true;
+            remainingHeight -= projSectionHeaderCost;
+          }
+
+          remainingHeight -= 8; // Subject header
+
+          const goalsForThisPage: typeof subj.goals = [];
+          while (goalIndex < subj.goals.length) {
+            const goal = subj.goals[goalIndex];
+            const gh = getGoalHeight(goal.text);
+            if (remainingHeight >= gh) {
+              goalsForThisPage.push(goal);
+              remainingHeight -= gh;
+              goalIndex++;
+            } else {
+              break;
+            }
+          }
+
+          if (goalsForThisPage.length > 0) {
+            currentPage.projectSubjects.push({
+              name: isContinued ? `${subj.name} (Continued)` : subj.name,
+              originalNo,
+              isContinued,
+              goals: goalsForThisPage
+            });
+          }
+
+          if (goalIndex < subj.goals.length) {
+            isContinued = true;
+          }
+        }
+      });
+    }
+
+    // 3. Pack Final Block (General Comments, Note, Attendance, Signatures)
+    const commentsHeight = 12 + Math.max(50, Math.ceil(effGeneralComment.length / 85) * 5.5);
+    // Comments (calculated) + Note (15) + Attendance (18) + Signatures (50) + margins (10)
+    const finalBlockHeight = commentsHeight + 15 + 18 + 50 + 10;
+
+    if (remainingHeight < finalBlockHeight) {
+      startNewPage();
+    }
+
+    currentPage.showFinalBlock = true;
+    remainingHeight -= finalBlockHeight;
+
+    pagesList.push(currentPage);
+    return pagesList;
+  };
+
+  const pages = buildPages();
   const normalizedYear = effAcademicYear.replace(/\//g, '-');
-  const getFooterHTML = (pageNum: number) => {
+
+  const renderPartitionedTable = (
+    subjects: Array<{ name: string; originalNo: number; isContinued?: boolean; goals: Array<{ id: string; text: string; remark: string }> }>,
+    sectionTitle: string
+  ) => {
+    if (subjects.length === 0) return null;
     return (
-      <div className="absolute bottom-[8mm] left-0 right-0 text-center text-[10px] text-slate-500 font-medium select-none no-print">
-        {pageNum} {studentName}/{className}/Mid Term-{effTermRoman}/{normalizedYear}
+      <div className="space-y-2">
+        <h2 className="text-[10px] font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-0.5">
+          {sectionTitle}
+        </h2>
+        <table className="w-full text-left border-collapse border border-slate-900 text-[10px]">
+          <thead>
+            <tr className="bg-slate-100 text-slate-900 font-bold uppercase border-b border-slate-900 text-center">
+              <th className="border-r border-slate-900 p-1.5 w-[7%]">NO.</th>
+              <th className="border-r border-slate-900 p-1.5 w-[68%] text-left">SUBJECTS AND LEARNING GOALS</th>
+              <th className="p-1.5 w-[25%]" colSpan={3}>
+                ACHIEVEMENT
+                <div className="grid grid-cols-3 border-t border-slate-900 mt-1 pt-1 font-extrabold text-[9px]">
+                  <div>A</div>
+                  <div className="border-x border-slate-900">D</div>
+                  <div>B</div>
+                </div>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {subjects.map((subj, sIdx) => {
+              return (
+                <React.Fragment key={`subj-${sIdx}`}>
+                  {/* Subject Header Row */}
+                  <tr className="bg-slate-50 font-extrabold border-b border-slate-900 text-slate-900 uppercase tr-keep-together">
+                    <td className="border-r border-slate-900 p-1.5 text-center">
+                      {subj.isContinued ? "" : subj.originalNo}
+                    </td>
+                    <td className="border-r border-slate-900 p-1.5 font-bold" colSpan={4}>
+                      {subj.name}
+                    </td>
+                  </tr>
+
+                  {/* Goals Rows */}
+                  {subj.goals.map((goal) => {
+                    return (
+                      <tr key={goal.id} className="border-b border-slate-900/40 tr-keep-together">
+                        <td className="border-r border-slate-900 p-1.5 text-center text-slate-500 font-medium text-[9px]">
+                          {/* Empty */}
+                        </td>
+                        <td className="border-r border-slate-900 p-1.5 leading-relaxed text-slate-800 flex items-start gap-1">
+                          <span className="shrink-0">•</span>
+                          <span>{goal.text}</span>
+                        </td>
+                        <td className="border-r border-slate-900 p-1 text-center w-[8%] font-bold">
+                          {renderAchievementCheck(goal.remark, 'A')}
+                        </td>
+                        <td className="border-r border-slate-900 p-1 text-center w-[8%] font-bold">
+                          {renderAchievementCheck(goal.remark, 'D')}
+                        </td>
+                        <td className="p-1 text-center w-[8%] font-bold">
+                          {renderAchievementCheck(goal.remark, 'B')}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     );
   };
@@ -447,159 +636,20 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
           max-height: 22mm;
           object-fit: contain;
         }
+
+        .absolute-footer {
+          position: absolute;
+          bottom: 8mm;
+          left: 0;
+          right: 0;
+          text-align: center;
+        }
       ` }} />
 
-      {/* CASE 1: 1-PAGE RAPOR (Siswa dengan sedikit LG) */}
-      {pageCount === 1 && (
-        <div className="pdf-page flex flex-col justify-between">
-          <div className="space-y-4">
-            {/* Header: Logo Only */}
-            <div className="flex items-center justify-start border-b border-slate-200 pb-2">
-              {effLogoUrl ? (
-                <img 
-                  src={effLogoUrl} 
-                  alt="Logo" 
-                  className="h-10 max-w-[150px] object-contain"
-                />
-              ) : null}
-            </div>
-
-            {/* Student Identity Grid - No Date */}
-            <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200 text-[10.5px]">
-              <div className="space-y-1">
-                <div className="flex">
-                  <span className="w-24 font-bold text-slate-500 uppercase text-[9px]">Student's Name</span>
-                  <span className="font-extrabold text-slate-900">: {studentName}</span>
-                </div>
-                <div className="flex">
-                  <span className="w-24 font-bold text-slate-500 uppercase text-[9px]">NISN</span>
-                  <span className="font-bold text-slate-800">: {studentNisn}</span>
-                </div>
-              </div>
-              <div className="space-y-1">
-                <div className="flex">
-                  <span className="w-20 font-bold text-slate-500 uppercase text-[9px]">Class</span>
-                  <span className="font-extrabold text-slate-900">: {className}</span>
-                </div>
-                <div className="flex">
-                  <span className="w-20 font-bold text-slate-500 uppercase text-[9px]">Period</span>
-                  <span className="font-bold text-slate-800">: Year {effAcademicYear}, Mid Term {effTermRoman}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Section 1 Table */}
-            <div className="space-y-2">
-              <h2 className="text-[10px] font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-0.5">
-                SECTION 1: SUBJECTS AND LEARNING GOALS
-              </h2>
-              {renderSubjectTable(academicSubjects, 1)}
-            </div>
-
-            {/* General Comments */}
-            <div className="space-y-1 pt-1 keep-together">
-              <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-0.5">
-                General Comments :
-              </h3>
-              <div className="p-3 border border-slate-900 rounded-lg bg-slate-50/50 text-[10px] leading-relaxed font-medium whitespace-pre-wrap text-slate-800 min-h-[50px]">
-                {effGeneralComment || <span className="text-slate-400 italic">Belum ada komentar.</span>}
-              </div>
-            </div>
-
-            {/* Legend / Note */}
-            <div className="space-y-1 keep-together">
-              <h3 className="text-[9px] font-black uppercase tracking-wider text-slate-900 border-b border-slate-200 pb-0.5">
-                Note :
-              </h3>
-              <div className="text-[9px] leading-relaxed text-slate-700">
-                <p><strong>A (Achieved):</strong> Demonstrates mastery of learning</p>
-                <p><strong>D (Developing):</strong> Shows progress towards achieving learning goals and needs improvement to master them</p>
-                <p><strong>B (Beginner):</strong> Early stage of learning, needs further support and guidance</p>
-              </div>
-            </div>
-
-            {/* Attendance */}
-            <div className="space-y-1 pt-1 keep-together">
-              <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-0.5">
-                ATTENDANCE RECAP
-              </h3>
-              <div className="grid grid-cols-3 gap-2">
-                <div className="border border-slate-200 p-1.5 rounded-lg text-center bg-slate-50">
-                  <span className="block text-[8.5px] font-bold text-slate-500 uppercase">Sakit</span>
-                  <span className="text-xs font-extrabold text-slate-900">{effAttendance?.sakit ?? 0} hari</span>
-                </div>
-                <div className="border border-slate-200 p-1.5 rounded-lg text-center bg-slate-50">
-                  <span className="block text-[8.5px] font-bold text-slate-500 uppercase">Izin</span>
-                  <span className="text-xs font-extrabold text-slate-900">{effAttendance?.izin ?? 0} hari</span>
-                </div>
-                <div className="border border-slate-200 p-1.5 rounded-lg text-center bg-slate-50">
-                  <span className="block text-[8.5px] font-bold text-slate-500 uppercase">Tanpa Keterangan</span>
-                  <span className="text-xs font-extrabold text-slate-900">{effAttendance?.tanpaKeterangan ?? 0} hari</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Footer signatures */}
-          <div className="space-y-3 keep-together text-left pt-2 border-t border-slate-200">
-            <div>
-              <p className="text-[10px] text-slate-900">Depok, {formattedDate}</p>
-              <p className="text-[10px] font-bold text-slate-900 mt-0.5">Acknowledged by,</p>
-            </div>
-
-            {/* Signature Grid */}
-            <div className="signature-grid">
-              <div className="text-center">
-                <span className="font-black text-slate-700 uppercase tracking-wider text-[9px] block mb-1">{effPrincipalTitle}</span>
-                <div className="signature-image-slot">
-                  {isValidPrincipalSignature ? (
-                    <img src={effPrincipalSignatureUrl} alt="Signature" />
-                  ) : null}
-                </div>
-                <div className="border-t border-slate-900 pt-1 mt-1 text-center">
-                  <p className="font-extrabold text-slate-900 text-[10px]">{effPrincipalName}</p>
-                  {effPrincipalNiy && <p className="text-[8.5px] text-slate-500">NIY: {effPrincipalNiy}</p>}
-                </div>
-              </div>
-
-              <div className="text-center">
-                <span className="font-black text-slate-700 uppercase tracking-wider text-[9px] block mb-1">Homeroom Teacher</span>
-                <div className="signature-image-slot">
-                  {isValidHomeroomSignature ? (
-                    <img src={effHomeroomSignatureUrl} alt="Signature" />
-                  ) : null}
-                </div>
-                <div className="border-t border-slate-900 pt-1 mt-1 text-center">
-                  <p className="font-extrabold text-slate-900 text-[10px]">{effHomeroomName}</p>
-                  {effHomeroomNiy && <p className="text-[8.5px] text-slate-500">NIY: {effHomeroomNiy}</p>}
-                </div>
-              </div>
-
-              <div className="text-center">
-                <span className="font-black text-slate-700 uppercase tracking-wider text-[9px] block mb-1">Parent</span>
-                <div className="signature-image-slot">
-                  {/* Empty Parent signature space */}
-                </div>
-                <div className="border-t border-slate-900 pt-1 mt-1 text-center">
-                  <p className="font-extrabold text-slate-900 text-[10px]">&nbsp;</p>
-                  <p className="text-[8.5px] text-slate-500 font-extrabold">Parent / Guardian</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Absolute page footer */}
-          <div className="absolute-footer">
-            {getFooterHTML(1)}
-          </div>
-        </div>
-      )}
-
-      {/* CASE 2: 2-PAGE RAPOR (Standard / Default) */}
-      {pageCount === 2 && (
-        <>
-          {/* PAGE 1 */}
-          <div className="pdf-page flex flex-col justify-between">
+      {pages.map((page, pageIdx) => {
+        const pageNum = pageIdx + 1;
+        return (
+          <div key={pageIdx} className="pdf-page flex flex-col justify-between">
             <div className="space-y-4">
               {/* Header: Logo Only */}
               <div className="flex items-center justify-start border-b border-slate-200 pb-2">
@@ -612,379 +662,149 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                 ) : null}
               </div>
 
-              {/* Student Identity Grid - No Date */}
-              <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200 text-[10.5px]">
-                <div className="space-y-1">
-                  <div className="flex">
-                    <span className="w-24 font-bold text-slate-500 uppercase text-[9px]">Student's Name</span>
-                    <span className="font-extrabold text-slate-900">: {studentName}</span>
+              {/* Student Identity Grid - ONLY ON PAGE 1 */}
+              {pageNum === 1 && (
+                <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200 text-[10.5px]">
+                  <div className="space-y-1">
+                    <div className="flex">
+                      <span className="w-24 font-bold text-slate-500 uppercase text-[9px]">Student's Name</span>
+                      <span className="font-extrabold text-slate-900">: {studentName}</span>
+                    </div>
+                    <div className="flex">
+                      <span className="w-24 font-bold text-slate-500 uppercase text-[9px]">NISN</span>
+                      <span className="font-bold text-slate-800">: {studentNisn}</span>
+                    </div>
                   </div>
-                  <div className="flex">
-                    <span className="w-24 font-bold text-slate-500 uppercase text-[9px]">NISN</span>
-                    <span className="font-bold text-slate-800">: {studentNisn}</span>
+                  <div className="space-y-1">
+                    <div className="flex">
+                      <span className="w-20 font-bold text-slate-500 uppercase text-[9px]">Class</span>
+                      <span className="font-extrabold text-slate-900">: {className}</span>
+                    </div>
+                    <div className="flex">
+                      <span className="w-20 font-bold text-slate-500 uppercase text-[9px]">Period</span>
+                      <span className="font-bold text-slate-800">: Year {effAcademicYear}, Mid Term {effTermRoman}</span>
+                    </div>
                   </div>
-                </div>
-                <div className="space-y-1">
-                  <div className="flex">
-                    <span className="w-20 font-bold text-slate-500 uppercase text-[9px]">Class</span>
-                    <span className="font-extrabold text-slate-900">: {className}</span>
-                  </div>
-                  <div className="flex">
-                    <span className="w-20 font-bold text-slate-500 uppercase text-[9px]">Period</span>
-                    <span className="font-bold text-slate-800">: Year {effAcademicYear}, Mid Term {effTermRoman}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Section 1 Table (All Academic) */}
-              <div className="space-y-2">
-                <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
-                  SECTION 1: SUBJECTS AND LEARNING GOALS
-                </h2>
-                {renderSubjectTable(academicSubjects, 1)}
-              </div>
-            </div>
-
-            {/* Absolute page footer */}
-            <div className="absolute-footer">
-              {getFooterHTML(1)}
-            </div>
-          </div>
-
-          {/* PAGE 2 */}
-          <div className="pdf-page flex flex-col justify-between">
-            <div className="space-y-4">
-              {/* Header: Logo Only */}
-              <div className="flex items-center justify-start border-b border-slate-200 pb-2">
-                {effLogoUrl ? (
-                  <img 
-                    src={effLogoUrl} 
-                    alt="Logo" 
-                    className="h-10 max-w-[150px] object-contain"
-                  />
-                ) : null}
-              </div>
-
-              {/* Section 2 Projects (if any) */}
-              {projectSubjects.length > 0 && (
-                <div className="space-y-2">
-                  <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
-                    SECTION 2: PROJECTS AND LEARNING GOALS
-                  </h2>
-                  {renderSubjectTable(projectSubjects, 1)}
                 </div>
               )}
 
-              {/* General Comments */}
-              <div className="space-y-1 keep-together">
-                <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
-                  General Comments :
-                </h3>
-                <div className="p-4 border border-slate-900 rounded-lg bg-slate-50/50 text-[11px] leading-relaxed font-medium whitespace-pre-wrap text-slate-800 min-h-[60px]">
-                  {effGeneralComment || <span className="text-slate-400 italic">Belum ada komentar.</span>}
-                </div>
-              </div>
+              {/* Academic Subjects Table */}
+              {page.academicSubjects.length > 0 && renderPartitionedTable(page.academicSubjects, "SECTION 1: SUBJECTS AND LEARNING GOALS")}
 
-              {/* Legend / Note */}
-              <div className="space-y-1 keep-together">
-                <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-900 border-b border-slate-200 pb-1">
-                  Note :
-                </h3>
-                <div className="text-[10px] leading-relaxed text-slate-700 space-y-1">
-                  <p><strong>A (Achieved):</strong> Demonstrates mastery of learning</p>
-                  <p><strong>D (Developing):</strong> Shows progress towards achieving learning goals and needs improvement to master them</p>
-                  <p><strong>B (Beginner):</strong> Early stage of learning, needs further support and guidance</p>
-                </div>
-              </div>
+              {/* Project Subjects Table */}
+              {page.projectSubjects.length > 0 && renderPartitionedTable(page.projectSubjects, "SECTION 2: PROJECTS AND LEARNING GOALS")}
 
-              {/* Attendance */}
-              <div className="space-y-1 keep-together">
-                <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
-                  ATTENDANCE RECAP
-                </h3>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="border border-slate-300 p-2 rounded-lg text-center bg-slate-50">
-                    <span className="block text-[9px] font-bold text-slate-500 uppercase">Sakit</span>
-                    <span className="text-sm font-extrabold text-slate-900">{effAttendance?.sakit ?? 0} hari</span>
+              {/* Final Block (Comments, Note, Attendance, Signatures) */}
+              {page.showFinalBlock && (
+                <>
+                  {/* General Comments */}
+                  <div className="space-y-1 keep-together">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
+                      General Comments :
+                    </h3>
+                    <div className="p-4 border border-slate-900 rounded-lg bg-slate-50/50 text-[11px] leading-relaxed font-medium whitespace-pre-wrap text-slate-800 min-h-[60px]">
+                      {effGeneralComment || <span className="text-slate-400 italic">Belum ada komentar.</span>}
+                    </div>
                   </div>
-                  <div className="border border-slate-300 p-2 rounded-lg text-center bg-slate-50">
-                    <span className="block text-[9px] font-bold text-slate-500 uppercase">Izin</span>
-                    <span className="text-sm font-extrabold text-slate-900">{effAttendance?.izin ?? 0} hari</span>
-                  </div>
-                  <div className="border border-slate-300 p-2 rounded-lg text-center bg-slate-50">
-                    <span className="block text-[9px] font-bold text-slate-500 uppercase">Tanpa Keterangan</span>
-                    <span className="text-sm font-extrabold text-slate-900">{effAttendance?.tanpaKeterangan ?? 0} hari</span>
-                  </div>
-                </div>
-              </div>
-            </div>
 
-            {/* Footer signatures - directly under attendance recap with spacing */}
-            <div className="space-y-4 keep-together text-left pt-3 border-t border-slate-200">
-              <div>
-                <p className="text-xs text-slate-900">Depok, {formattedDate}</p>
-                <p className="text-xs font-bold text-slate-900 mt-1">Acknowledged by,</p>
-              </div>
-
-              {/* Signature Grid */}
-              <div className="signature-grid">
-                <div className="text-center">
-                  <span className="font-black text-slate-700 uppercase tracking-wider text-[9.5px] block mb-1">{effPrincipalTitle}</span>
-                  <div className="signature-image-slot">
-                    {isValidPrincipalSignature ? (
-                      <img src={effPrincipalSignatureUrl} alt="Signature" />
-                    ) : null}
+                  {/* Legend / Note */}
+                  <div className="space-y-1 keep-together">
+                    <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-900 border-b border-slate-200 pb-1">
+                      Note :
+                    </h3>
+                    <div className="text-[10px] leading-relaxed text-slate-700 space-y-1">
+                      <p><strong>A (Achieved):</strong> Demonstrates mastery of learning</p>
+                      <p><strong>D (Developing):</strong> Shows progress towards achieving learning goals and needs improvement to master them</p>
+                      <p><strong>B (Beginner):</strong> Early stage of learning, needs further support and guidance</p>
+                    </div>
                   </div>
-                  <div className="border-t border-slate-900 pt-1 mt-1 text-center">
-                    <p className="font-extrabold text-slate-900 text-[11px]">{effPrincipalName}</p>
-                    {effPrincipalNiy && <p className="text-[9px] text-slate-500">NIY: {effPrincipalNiy}</p>}
+
+                  {/* Attendance */}
+                  <div className="space-y-1 keep-together">
+                    <div className="flex justify-between items-baseline border-b border-slate-300 pb-1">
+                      <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                        ATTENDANCE RECAP
+                      </h3>
+                      {effCutoffDate && (
+                        <span className="text-[9.5px] text-slate-500 font-bold italic">Rekap kehadiran sampai {effCutoffDate}</span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="border border-slate-300 p-2 rounded-lg text-center bg-slate-50">
+                        <span className="block text-[9px] font-bold text-slate-500 uppercase">Sakit</span>
+                        <span className="text-sm font-extrabold text-slate-900">{effAttendance?.sakit ?? 0} hari</span>
+                      </div>
+                      <div className="border border-slate-300 p-2 rounded-lg text-center bg-slate-50">
+                        <span className="block text-[9px] font-bold text-slate-500 uppercase">Izin</span>
+                        <span className="text-sm font-extrabold text-slate-900">{effAttendance?.izin ?? 0} hari</span>
+                      </div>
+                      <div className="border border-slate-300 p-2 rounded-lg text-center bg-slate-50">
+                        <span className="block text-[9px] font-bold text-slate-500 uppercase">Tanpa Keterangan</span>
+                        <span className="text-sm font-extrabold text-slate-900">{effAttendance?.tanpaKeterangan ?? 0} hari</span>
+                      </div>
+                    </div>
                   </div>
-                </div>
 
-                <div className="text-center">
-                  <span className="font-black text-slate-700 uppercase tracking-wider text-[9.5px] block mb-1">Homeroom Teacher</span>
-                  <div className="signature-image-slot">
-                    {isValidHomeroomSignature ? (
-                      <img src={effHomeroomSignatureUrl} alt="Signature" />
-                    ) : null}
+                  {/* Signatures block directly following the attendance recap */}
+                  <div className="space-y-4 keep-together text-left pt-3 border-t border-slate-200">
+                    <div>
+                      <p className="text-xs text-slate-900">{effSigningLocation}, {effSigningDate}</p>
+                      <p className="text-xs font-bold text-slate-900 mt-1">Acknowledged by,</p>
+                    </div>
+
+                    {/* Signature Grid */}
+                    <div className="signature-grid">
+                      <div className="text-center">
+                        <span className="font-black text-slate-700 uppercase tracking-wider text-[9.5px] block mb-1">{effPrincipalTitle}</span>
+                        <div className="signature-image-slot">
+                          {isValidPrincipalSignature ? (
+                            <img src={effPrincipalSignatureUrl} alt="Signature" />
+                          ) : null}
+                        </div>
+                        <div className="border-t border-slate-900 pt-1 mt-1 text-center">
+                          <p className="font-extrabold text-slate-900 text-[11px]">{effPrincipalName}</p>
+                          {effPrincipalNiy && <p className="text-[9px] text-slate-500">NIY: {effPrincipalNiy}</p>}
+                        </div>
+                      </div>
+
+                      <div className="text-center">
+                        <span className="font-black text-slate-700 uppercase tracking-wider text-[9.5px] block mb-1">Homeroom Teacher</span>
+                        <div className="signature-image-slot">
+                          {isValidHomeroomSignature ? (
+                            <img src={effHomeroomSignatureUrl} alt="Signature" />
+                          ) : null}
+                        </div>
+                        <div className="border-t border-slate-900 pt-1 mt-1 text-center">
+                          <p className="font-extrabold text-slate-900 text-[11px]">{effHomeroomName}</p>
+                          {effHomeroomNiy && <p className="text-[9px] text-slate-500">NIY: {effHomeroomNiy}</p>}
+                        </div>
+                      </div>
+
+                      <div className="text-center">
+                        <span className="font-black text-slate-700 uppercase tracking-wider text-[9.5px] block mb-1">Parent</span>
+                        <div className="signature-image-slot">
+                          {/* Empty Parent signature space */}
+                        </div>
+                        <div className="border-t border-slate-900 pt-1 mt-1 text-center">
+                          <p className="font-extrabold text-slate-900 text-[11px]">&nbsp;</p>
+                          <p className="text-[9px] text-slate-500 font-extrabold">Parent / Guardian</p>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <div className="border-t border-slate-900 pt-1 mt-1 text-center">
-                    <p className="font-extrabold text-slate-900 text-[11px]">{effHomeroomName}</p>
-                    {effHomeroomNiy && <p className="text-[9px] text-slate-500">NIY: {effHomeroomNiy}</p>}
-                  </div>
-                </div>
-
-                <div className="text-center">
-                  <span className="font-black text-slate-700 uppercase tracking-wider text-[9.5px] block mb-1">Parent</span>
-                  <div className="signature-image-slot">
-                    {/* Empty Parent signature space */}
-                  </div>
-                  <div className="border-t border-slate-900 pt-1 mt-1 text-center">
-                    <p className="font-extrabold text-slate-900 text-[11px]">&nbsp;</p>
-                    <p className="text-[9px] text-slate-500 font-extrabold">Parent / Guardian</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Absolute page footer */}
-            <div className="absolute-footer">
-              {getFooterHTML(2)}
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* CASE 3: 3-PAGE RAPOR (Siswa dengan banyak LG/Projects) */}
-      {pageCount === 3 && (
-        <>
-          {/* PAGE 1 */}
-          <div className="pdf-page flex flex-col justify-between">
-            <div className="space-y-4">
-              {/* Header: Logo Only */}
-              <div className="flex items-center justify-start border-b border-slate-200 pb-2">
-                {effLogoUrl ? (
-                  <img 
-                    src={effLogoUrl} 
-                    alt="Logo" 
-                    className="h-10 max-w-[150px] object-contain"
-                  />
-                ) : null}
-              </div>
-
-              {/* Student Identity Grid - No Date */}
-              <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200 text-[10.5px]">
-                <div className="space-y-1">
-                  <div className="flex">
-                    <span className="w-24 font-bold text-slate-500 uppercase text-[9px]">Student's Name</span>
-                    <span className="font-extrabold text-slate-900">: {studentName}</span>
-                  </div>
-                  <div className="flex">
-                    <span className="w-24 font-bold text-slate-500 uppercase text-[9px]">NISN</span>
-                    <span className="font-bold text-slate-800">: {studentNisn}</span>
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <div className="flex">
-                    <span className="w-20 font-bold text-slate-500 uppercase text-[9px]">Class</span>
-                    <span className="font-extrabold text-slate-900">: {className}</span>
-                  </div>
-                  <div className="flex">
-                    <span className="w-20 font-bold text-slate-500 uppercase text-[9px]">Period</span>
-                    <span className="font-bold text-slate-800">: Year {effAcademicYear}, Mid Term {effTermRoman}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Section 1 Table Part 1 (First 5 Academic Subjects) */}
-              <div className="space-y-2">
-                <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
-                  SECTION 1: SUBJECTS AND LEARNING GOALS
-                </h2>
-                {renderSubjectTable(academicSubjects.slice(0, 5), 1)}
-              </div>
-            </div>
-
-            {/* Absolute page footer */}
-            <div className="absolute-footer">
-              {getFooterHTML(1)}
-            </div>
-          </div>
-
-          {/* PAGE 2 */}
-          <div className="pdf-page flex flex-col justify-between">
-            <div className="space-y-4">
-              {/* Header: Logo Only */}
-              <div className="flex items-center justify-start border-b border-slate-200 pb-2">
-                {effLogoUrl ? (
-                  <img 
-                    src={effLogoUrl} 
-                    alt="Logo" 
-                    className="h-10 max-w-[150px] object-contain"
-                  />
-                ) : null}
-              </div>
-
-              {/* Section 1 Table Part 2 (Remaining Academic Subjects, if any) */}
-              {academicSubjects.length > 5 && (
-                <div className="space-y-2">
-                  <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
-                    SECTION 1: SUBJECTS AND LEARNING GOALS (CONTINUED)
-                  </h2>
-                  {renderSubjectTable(academicSubjects.slice(5), 6)}
-                </div>
-              )}
-
-              {/* Section 2 Projects (if any) */}
-              {projectSubjects.length > 0 && (
-                <div className="space-y-2 pt-2">
-                  <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
-                    SECTION 2: PROJECTS AND LEARNING GOALS
-                  </h2>
-                  {renderSubjectTable(projectSubjects, 1)}
-                </div>
+                </>
               )}
             </div>
 
-            {/* Absolute page footer */}
+            {/* Absolute Page Footer */}
             <div className="absolute-footer">
-              {getFooterHTML(2)}
+              <div className="text-center text-[10px] text-slate-500 font-medium select-none">
+                {pageNum} {studentName}/{className}/Mid Term-{effTermRoman}/{normalizedYear}
+              </div>
             </div>
           </div>
-
-          {/* PAGE 3 */}
-          <div className="pdf-page flex flex-col justify-between">
-            <div className="space-y-4">
-              {/* Header: Logo Only */}
-              <div className="flex items-center justify-start border-b border-slate-200 pb-2">
-                {effLogoUrl ? (
-                  <img 
-                    src={effLogoUrl} 
-                    alt="Logo" 
-                    className="h-10 max-w-[150px] object-contain"
-                  />
-                ) : null}
-              </div>
-
-              {/* General Comments */}
-              <div className="space-y-1 keep-together">
-                <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
-                  General Comments :
-                </h3>
-                <div className="p-4 border border-slate-900 rounded-lg bg-slate-50/50 text-[11px] leading-relaxed font-medium whitespace-pre-wrap text-slate-800 min-h-[80px]">
-                  {effGeneralComment || <span className="text-slate-400 italic">Belum ada komentar.</span>}
-                </div>
-              </div>
-
-              {/* Legend / Note */}
-              <div className="space-y-1 keep-together">
-                <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-900 border-b border-slate-200 pb-1">
-                  Note :
-                </h3>
-                <div className="text-[10px] leading-relaxed text-slate-700 space-y-1">
-                  <p><strong>A (Achieved):</strong> Demonstrates mastery of learning</p>
-                  <p><strong>D (Developing):</strong> Shows progress towards achieving learning goals and needs improvement to master them</p>
-                  <p><strong>B (Beginner):</strong> Early stage of learning, needs further support and guidance</p>
-                </div>
-              </div>
-
-              {/* Attendance */}
-              <div className="space-y-1 keep-together">
-                <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
-                  ATTENDANCE RECAP
-                </h3>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="border border-slate-300 p-2.5 rounded-lg text-center bg-slate-50">
-                    <span className="block text-[9px] font-bold text-slate-500 uppercase">Sakit</span>
-                    <span className="text-sm font-extrabold text-slate-900">{effAttendance?.sakit ?? 0} hari</span>
-                  </div>
-                  <div className="border border-slate-300 p-2.5 rounded-lg text-center bg-slate-50">
-                    <span className="block text-[9px] font-bold text-slate-500 uppercase">Izin</span>
-                    <span className="text-sm font-extrabold text-slate-900">{effAttendance?.izin ?? 0} hari</span>
-                  </div>
-                  <div className="border border-slate-300 p-2.5 rounded-lg text-center bg-slate-50">
-                    <span className="block text-[9px] font-bold text-slate-500 uppercase">Tanpa Keterangan</span>
-                    <span className="text-sm font-extrabold text-slate-900">{effAttendance?.tanpaKeterangan ?? 0} hari</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Footer signatures - directly under attendance recap with spacing */}
-            <div className="space-y-4 keep-together text-left pt-3 border-t border-slate-200">
-              <div>
-                <p className="text-xs text-slate-900">Depok, {formattedDate}</p>
-                <p className="text-xs font-bold text-slate-900 mt-1">Acknowledged by,</p>
-              </div>
-
-              {/* Signature Grid */}
-              <div className="signature-grid">
-                <div className="text-center">
-                  <span className="font-black text-slate-700 uppercase tracking-wider text-[9.5px] block mb-1">{effPrincipalTitle}</span>
-                  <div className="signature-image-slot">
-                    {isValidPrincipalSignature ? (
-                      <img src={effPrincipalSignatureUrl} alt="Signature" />
-                    ) : null}
-                  </div>
-                  <div className="border-t border-slate-900 pt-1 mt-1 text-center">
-                    <p className="font-extrabold text-slate-900 text-[11px]">{effPrincipalName}</p>
-                    {effPrincipalNiy && <p className="text-[9px] text-slate-500">NIY: {effPrincipalNiy}</p>}
-                  </div>
-                </div>
-
-                <div className="text-center">
-                  <span className="font-black text-slate-700 uppercase tracking-wider text-[9.5px] block mb-1">Homeroom Teacher</span>
-                  <div className="signature-image-slot">
-                    {isValidHomeroomSignature ? (
-                      <img src={effHomeroomSignatureUrl} alt="Signature" />
-                    ) : null}
-                  </div>
-                  <div className="border-t border-slate-900 pt-1 mt-1 text-center">
-                    <p className="font-extrabold text-slate-900 text-[11px]">{effHomeroomName}</p>
-                    {effHomeroomNiy && <p className="text-[9px] text-slate-500">NIY: {effHomeroomNiy}</p>}
-                  </div>
-                </div>
-
-                <div className="text-center">
-                  <span className="font-black text-slate-700 uppercase tracking-wider text-[9.5px] block mb-1">Parent</span>
-                  <div className="signature-image-slot">
-                    {/* Empty Parent signature space */}
-                  </div>
-                  <div className="border-t border-slate-900 pt-1 mt-1 text-center">
-                    <p className="font-extrabold text-slate-900 text-[11px]">&nbsp;</p>
-                    <p className="text-[9px] text-slate-500 font-extrabold">Parent / Guardian</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Absolute page footer */}
-            <div className="absolute-footer">
-              {getFooterHTML(3)}
-            </div>
-          </div>
-        </>
-      )}
+        );
+      })}
     </div>
   );
 };

@@ -233,6 +233,10 @@ export interface ElementaryMidtermReportSnapshot {
   attendance: ElementaryMidtermAttendanceSnapshot;
   signatory: ElementaryMidtermSignatorySnapshot;
   logoUrl?: string | null;
+  reportSigningDate?: string;
+  reportSigningLocation?: string;
+  attendanceCutoffDate?: string;
+  midtermPeriod?: string;
 }
 
 export interface PublishedElementaryMidtermReport {

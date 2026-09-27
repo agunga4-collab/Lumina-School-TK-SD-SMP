@@ -4,6 +4,8 @@ import {
   AlertCircle, RefreshCw, User, Sparkles, X, Printer,
   Check, Clock, FileText, AlertTriangle
 } from 'lucide-react';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../../../lib/firebase';
 import { ElementaryMidtermPdfTemplate } from './ElementaryMidtermPdfTemplate';
 import { 
   publishElementaryMidtermReport,
@@ -34,6 +36,10 @@ interface ElementaryMidtermPublishPdfTabProps {
   homeroomTeacherProfile: { displayName: string; niy?: string; signatureUrl?: string | null } | null;
   onRefreshData: () => Promise<void>;
   currentUser: UserType | null;
+  signingDateRaw: string;
+  cutoffDateRaw: string;
+  reportSigningDate: string;
+  attendanceCutoffDate: string;
 }
 
 export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPdfTabProps> = ({
@@ -50,7 +56,11 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
   logoUrl,
   homeroomTeacherProfile,
   onRefreshData,
-  currentUser
+  currentUser,
+  signingDateRaw,
+  cutoffDateRaw,
+  reportSigningDate,
+  attendanceCutoffDate
 }) => {
   // Modal Preview state
   const [previewStudent, setPreviewStudent] = React.useState<Student | null>(null);
@@ -61,6 +71,70 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
 
   // Student Unit Activity Map: studentId -> UA Name (e.g. "Choir")
   const [studentUaMap, setStudentUaMap] = React.useState<Record<string, string>>({});
+
+  // Attendance Records for cutoff recalculation
+  const [attendanceRecords, setAttendanceRecords] = React.useState<any[]>([]);
+
+  // Fetch attendance records on load
+  React.useEffect(() => {
+    if (!selectedClassId || !selectedYear) return;
+    const fetchAttendanceRecords = async () => {
+      try {
+        const qSnap = await getDocs(query(
+          collection(db, 'attendance_records'),
+          where('classId', '==', selectedClassId),
+          where('academicYear', '==', selectedYear)
+        ));
+        setAttendanceRecords(qSnap.docs.map(d => d.data()));
+      } catch (e) {
+        console.error("Error fetching attendance records for cutoff calc:", e);
+      }
+    };
+    fetchAttendanceRecords();
+  }, [selectedClassId, selectedYear]);
+
+  // Recalculate attendance up to cutoff date (inclusive)
+  const getDynamicAttendanceForStudent = React.useCallback((studentId: string, originalAttendance: { sakit: number | null, izin: number | null, tanpaKeterangan: number | null }) => {
+    if (!cutoffDateRaw) {
+      return originalAttendance || { sakit: 0, izin: 0, tanpaKeterangan: 0 };
+    }
+
+    const matched = attendanceRecords.filter(r => {
+      const recStudentId = r.studentId || '';
+      const recDate = r.date || '';
+      const recSemester = String(r.semester || '');
+      
+      return (
+        recStudentId === studentId &&
+        recSemester === String(selectedSemester) &&
+        recDate <= cutoffDateRaw
+      );
+    });
+
+    let sakit = 0;
+    let izin = 0;
+    let tanpaKeterangan = 0;
+
+    matched.forEach(r => {
+      const status = (r.status || '').toUpperCase();
+      if (status === 'SAKIT') sakit++;
+      else if (status === 'IZIN') izin++;
+      else if (status === 'ALPA') tanpaKeterangan++;
+    });
+
+    return { sakit, izin, tanpaKeterangan };
+  }, [attendanceRecords, cutoffDateRaw, selectedSemester]);
+
+  // Date picker & configuration validations
+  const dateConfigError = React.useMemo(() => {
+    if (!signingDateRaw || !cutoffDateRaw) {
+      return "Lengkapi Tanggal Titimangsa dan Tanggal Cut Off Kehadiran terlebih dahulu.";
+    }
+    if (new Date(cutoffDateRaw) > new Date(signingDateRaw)) {
+      return "Tanggal Cut Off Kehadiran tidak boleh lebih besar dari Tanggal Titimangsa.";
+    }
+    return null;
+  }, [signingDateRaw, cutoffDateRaw]);
 
   // Fetch UA enrollments for students
   React.useEffect(() => {
@@ -117,6 +191,10 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
   // Publish Individual Report Function
   const handlePublishStudentReport = async (student: Student) => {
     if (!student || !selectedClass) return;
+    if (dateConfigError) {
+      toast.error(dateConfigError);
+      return;
+    }
     setPublishingStudentId(student.id);
     setPublishMessage(null);
 
@@ -156,6 +234,8 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
         ? (studentDataDoc?.generalComment?.finalComment || studentDataDoc?.generalComment?.aiDraft || '')
         : '';
 
+      const dynamicAttendance = getDynamicAttendanceForStudent(student.id, studentDataDoc?.attendance || { sakit: 0, izin: 0, tanpaKeterangan: 0 });
+
       const snapshot: ElementaryMidtermReportSnapshot = {
         student: {
           id: student.id,
@@ -169,7 +249,7 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
         midtermTerm: selectedTerm,
         categories: categoriesSnapshot,
         generalComment: approvedGenCom,
-        attendance: studentDataDoc?.attendance || { sakit: 0, izin: 0, tanpaKeterangan: 0 },
+        attendance: dynamicAttendance,
         signatory: {
           principalName: reportConfig?.principalName || 'Principal',
           principalTitle: reportConfig?.principalTitle || 'Principal',
@@ -185,7 +265,11 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
           homeroomTeacherNiy: homeroomTeacherProfile?.niy || '',
           homeroomTeacherSignatureUrl: homeroomTeacherProfile?.signatureUrl || (selectedClass as any)?.teacherSignatureUrl || null
         },
-        logoUrl: logoUrl || null
+        logoUrl: logoUrl || null,
+        reportSigningDate: reportSigningDate,
+        reportSigningLocation: 'Depok',
+        attendanceCutoffDate: attendanceCutoffDate,
+        midtermPeriod: selectedTerm
       };
 
       await publishElementaryMidtermReport({
@@ -226,6 +310,14 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
 
   return (
     <div className="space-y-6">
+      {/* Date validation warning banner */}
+      {dateConfigError && (
+        <div className="p-4 bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold rounded-2xl flex items-center gap-2.5 animate-in fade-in duration-200">
+          <AlertTriangle size={18} className="text-amber-600 shrink-0" />
+          <span>{dateConfigError}</span>
+        </div>
+      )}
+
       {/* HEADER & SUMMARY STATS BAR */}
       <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -308,8 +400,8 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
                 const genComReviewStatus = stData?.generalCommentReviewStatus || (stData?.generalComment?.isFinal ? 'APPROVED' : 'DRAFT');
                 const isGenComApproved = genComReviewStatus === 'APPROVED' || Boolean(stData?.generalComment?.isFinal);
 
-                // Can publish check
-                const canPublish = isGenComApproved && isGoalsComplete;
+                // Can publish check with date config constraint
+                const canPublish = isGenComApproved && isGoalsComplete && !dateConfigError;
                 const isPublishingThis = publishingStudentId === st.id;
 
                 return (
@@ -401,7 +493,7 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
                           <span>Preview</span>
                         </button>
 
-                        {/* Publish Button (ACTIVE ONLY IF APPROVED & COMPLETE) */}
+                        {/* Publish Button */}
                         <button
                           onClick={() => handlePublishStudentReport(st)}
                           disabled={!canPublish || isPublishingThis}
@@ -411,11 +503,13 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
                               : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-60'
                           }`}
                           title={
-                            !canPublish 
-                              ? !isGenComApproved 
-                                ? 'General comment belum diapprove' 
-                                : 'Learning goals belum lengkap'
-                              : 'Publikasikan PDF Rapor Siswa'
+                            dateConfigError
+                              ? dateConfigError
+                              : !canPublish 
+                                ? !isGenComApproved 
+                                  ? 'General comment belum diapprove' 
+                                  : 'Learning goals belum lengkap'
+                                : 'Publikasikan PDF Rapor Siswa'
                           }
                         >
                           {isPublishingThis ? (
@@ -471,11 +565,13 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
                   }}
                   disabled={
                     publishingStudentId === previewStudent.id ||
+                    !!dateConfigError ||
                     !(
                       (studentDataMap[previewStudent.id]?.generalCommentReviewStatus === 'APPROVED' || Boolean(studentDataMap[previewStudent.id]?.generalComment?.isFinal))
                     )
                   }
                   className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 disabled:opacity-50 text-white font-extrabold rounded-xl text-xs uppercase tracking-wider flex items-center gap-2 cursor-pointer transition-all shadow-sm"
+                  title={dateConfigError || 'Publish Rapor'}
                 >
                   {publishingStudentId === previewStudent.id ? (
                     <RefreshCw size={14} className="animate-spin" />
@@ -510,6 +606,10 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
                 logoUrl={logoUrl}
                 homeroomTeacherProfile={homeroomTeacherProfile || undefined}
                 studentUaName={studentUaMap[previewStudent.id]}
+                attendance={getDynamicAttendanceForStudent(previewStudent.id, studentDataMap[previewStudent.id]?.attendance || { sakit: 0, izin: 0, tanpaKeterangan: 0 })}
+                reportSigningDate={reportSigningDate}
+                reportSigningLocation="Depok"
+                attendanceCutoffDate={attendanceCutoffDate}
               />
             </div>
           </div>

@@ -9,7 +9,7 @@ import {
 import { useAuth } from '../../../context/AuthContext';
 import { useAcademicYear } from '../../../context/AcademicYearContext';
 import { db, getClasses, getActiveStudents, getReportConfig } from '../../../lib/firebase';
-import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { 
   fetchElementaryMidtermMasterGoals, 
   fetchElementaryMidtermStudentData, 
@@ -102,6 +102,105 @@ function ElementaryMidtermReportPageContent() {
   
   const urlPeriod = searchParams.get('period');
   const [selectedTerm, setSelectedTerm] = React.useState<string>(urlPeriod === 'midterm-2' ? '2' : '1');
+
+  // Config states for Titimangsa & Cut Off
+  const [signingDateRaw, setSigningDateRaw] = React.useState<string>('');
+  const [cutoffDateRaw, setCutoffDateRaw] = React.useState<string>('');
+  const [loadingPeriodConfig, setLoadingPeriodConfig] = React.useState<boolean>(false);
+
+  const configDocId = `ELEMENTARY_${selectedYear.replace(/\//g, '_')}_${selectedSemester}_${selectedTerm}`;
+
+  const formatToCustomDate = (dateStr: string): string => {
+    if (!dateStr) return '';
+    const [year, month, day] = dateStr.split('-');
+    const months = [
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December"
+    ];
+    const mIndex = parseInt(month, 10) - 1;
+    const dNum = parseInt(day, 10);
+    return `${dNum} ${months[mIndex]} ${year}`;
+  };
+
+  // Load period config
+  React.useEffect(() => {
+    const loadPeriodConfig = async () => {
+      setLoadingPeriodConfig(true);
+      try {
+        const docRef = doc(db, 'elem_midterm_period_configs', configDocId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setSigningDateRaw(data.signingDateRaw || '');
+          setCutoffDateRaw(data.cutoffDateRaw || '');
+        } else {
+          setSigningDateRaw('');
+          setCutoffDateRaw('');
+        }
+      } catch (e) {
+        console.error("Error loading period config:", e);
+      } finally {
+        setLoadingPeriodConfig(false);
+      }
+    };
+    loadPeriodConfig();
+  }, [configDocId]);
+
+  const signingDateFormatted = React.useMemo(() => formatToCustomDate(signingDateRaw), [signingDateRaw]);
+  const cutoffDateFormatted = React.useMemo(() => formatToCustomDate(cutoffDateRaw), [cutoffDateRaw]);
+
+  const isAuthorizedToEdit = React.useMemo(() => {
+    if (!effectiveUser) return false;
+    const role = (effectiveUser.role || (effectiveUser as any).roleId || '').toUpperCase();
+    return [
+      'SUPER_ADMIN',
+      'PRINCIPAL',
+      'HEAD_UNIT',
+      'VICE_PRINCIPAL',
+      'COORDINATOR',
+      'SECRETARY_ELEM',
+      'ADMIN'
+    ].includes(role);
+  }, [effectiveUser]);
+
+  const handleSaveSigningDate = async (val: string) => {
+    if (!isAuthorizedToEdit) return;
+    setSigningDateRaw(val);
+    try {
+      const docRef = doc(db, 'elem_midterm_period_configs', configDocId);
+      await setDoc(docRef, {
+        signingDateRaw: val,
+        reportSigningDate: formatToCustomDate(val),
+        reportSigningLocation: 'Depok',
+        academicYear: selectedYear,
+        semester: selectedSemester,
+        midtermPeriod: selectedTerm,
+        updatedAt: Date.now()
+      }, { merge: true });
+      toast.success('Tanggal Titimangsa berhasil disimpan!');
+    } catch (e: any) {
+      toast.error('Gagal menyimpan Tanggal Titimangsa: ' + e.message);
+    }
+  };
+
+  const handleSaveCutoffDate = async (val: string) => {
+    if (!isAuthorizedToEdit) return;
+    setCutoffDateRaw(val);
+    try {
+      const docRef = doc(db, 'elem_midterm_period_configs', configDocId);
+      await setDoc(docRef, {
+        cutoffDateRaw: val,
+        attendanceCutoffDate: formatToCustomDate(val),
+        academicYear: selectedYear,
+        semester: selectedSemester,
+        midtermPeriod: selectedTerm,
+        updatedAt: Date.now()
+      }, { merge: true });
+      toast.success('Tanggal Cut Off Kehadiran berhasil disimpan!');
+    } catch (e: any) {
+      toast.error('Gagal menyimpan Tanggal Cut Off Kehadiran: ' + e.message);
+    }
+  };
 
   const urlTab = searchParams.get('tab') || '';
   const initialActiveTab = urlTab === 'general-comments' ? 'COMMENTS' :
@@ -468,6 +567,57 @@ function ElementaryMidtermReportPageContent() {
             </select>
           </div>
         </div>
+
+        {/* Date Pickers for Titimangsa & Cut Off Kehadiran */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-emerald-700/50 mt-4">
+          {/* Tanggal Titimangsa */}
+          <div className="space-y-1">
+            <div className="flex justify-between items-center">
+              <label className="text-[10px] font-black uppercase tracking-wider text-emerald-200">
+                Tanggal Titimangsa (signing date)
+              </label>
+              {!isAuthorizedToEdit && (
+                <span className="text-[9px] text-amber-300 font-bold uppercase tracking-wider">Read Only</span>
+              )}
+            </div>
+            <input
+              type="date"
+              disabled={!isAuthorizedToEdit}
+              value={signingDateRaw}
+              onChange={(e) => handleSaveSigningDate(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-900/80 text-white border border-emerald-500/30 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-400 disabled:opacity-50"
+            />
+            {signingDateFormatted ? (
+              <p className="text-[10px] text-emerald-300 font-bold">Format PDF: Depok, {signingDateFormatted}</p>
+            ) : (
+              <p className="text-[10px] text-red-400 font-bold">Harap diisi sebelum publish</p>
+            )}
+          </div>
+
+          {/* Tanggal Cut Off Kehadiran */}
+          <div className="space-y-1">
+            <div className="flex justify-between items-center">
+              <label className="text-[10px] font-black uppercase tracking-wider text-emerald-200">
+                Tanggal Cut Off Kehadiran
+              </label>
+              {!isAuthorizedToEdit && (
+                <span className="text-[9px] text-amber-300 font-bold uppercase tracking-wider">Read Only</span>
+              )}
+            </div>
+            <input
+              type="date"
+              disabled={!isAuthorizedToEdit}
+              value={cutoffDateRaw}
+              onChange={(e) => handleSaveCutoffDate(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-900/80 text-white border border-emerald-500/30 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-400 disabled:opacity-50"
+            />
+            {cutoffDateFormatted ? (
+              <p className="text-[10px] text-emerald-300 font-bold">Rekap sampai: {cutoffDateFormatted}</p>
+            ) : (
+              <p className="text-[10px] text-red-400 font-bold">Harap diisi sebelum publish</p>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Primary Navigation Tabs (5 Steps) */}
@@ -576,6 +726,10 @@ function ElementaryMidtermReportPageContent() {
               homeroomTeacherProfile={homeroomTeacherProfile}
               onRefreshData={loadClassData}
               currentUser={effectiveUser}
+              signingDateRaw={signingDateRaw}
+              cutoffDateRaw={cutoffDateRaw}
+              reportSigningDate={signingDateFormatted}
+              attendanceCutoffDate={cutoffDateFormatted}
             />
           )}
 
