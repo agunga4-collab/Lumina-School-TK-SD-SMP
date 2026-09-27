@@ -267,6 +267,281 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
     value: 'D'
   });
 
+  // Import Remarks Modal States
+  const [isImportRemarksModalOpen, setIsImportRemarksModalOpen] = React.useState<boolean>(false);
+  const [importRemarksMode, setImportRemarksMode] = React.useState<'single' | 'multi'>('single');
+  const [singleTargetGoalId, setSingleTargetGoalId] = React.useState<string>('');
+  const [remarksRawInput, setRemarksRawInput] = React.useState<string>('');
+  const [remarksParsedRows, setRemarksParsedRows] = React.useState<any[]>([]);
+  const [remarksHeaders, setRemarksHeaders] = React.useState<string[]>([]);
+  const [remarksColumnMapping, setRemarksColumnMapping] = React.useState<Record<number, string>>({});
+  const [remarksOverwrite, setRemarksOverwrite] = React.useState<boolean>(false);
+  const [importRemarksSaving, setImportRemarksSaving] = React.useState<boolean>(false);
+
+  React.useEffect(() => {
+    if (activeGoalsForMidterm.length > 0 && !singleTargetGoalId) {
+      setSingleTargetGoalId(activeGoalsForMidterm[0].id);
+    }
+  }, [activeGoalsForMidterm, singleTargetGoalId]);
+
+  const handleParseRemarksInput = () => {
+    if (!remarksRawInput.trim()) {
+      toast.error('Silakan paste data nilai terlebih dahulu.');
+      return;
+    }
+
+    const lines = remarksRawInput.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
+    if (lines.length === 0) {
+      toast.error('Tidak ada data yang ditemukan.');
+      return;
+    }
+
+    let isTsv = true;
+    let headers = lines[0].split('\t');
+    if (headers.length <= 1) {
+      headers = lines[0].split(/,|;/);
+      isTsv = false;
+    }
+
+    const cleanHeader = (h: string) => h.trim().toLowerCase().replace(/[\s_\-]/g, '');
+    const isFullnameHeader = (h: string) => ['namalengkap', 'fullname', 'nama', 'studentname'].includes(cleanHeader(h));
+
+    let fullnameColIndex = -1;
+    headers.forEach((h, idx) => {
+      if (isFullnameHeader(h)) fullnameColIndex = idx;
+    });
+
+    if (fullnameColIndex === -1) {
+      toast.error("Header kolom nama tidak terdeteksi. Pastikan baris pertama tabel memiliki judul 'Nama Lengkap'.");
+      return;
+    }
+
+    setRemarksHeaders(headers);
+
+    const initialMapping: Record<number, string> = {};
+    if (importRemarksMode === 'single') {
+      const valColIdx = headers.findIndex((h, idx) => idx !== fullnameColIndex && cleanHeader(h) !== 'no' && cleanHeader(h) !== 'nomor');
+      if (valColIdx !== -1 && singleTargetGoalId) {
+        initialMapping[valColIdx] = singleTargetGoalId;
+      }
+    } else {
+      headers.forEach((h, idx) => {
+        if (idx === fullnameColIndex) return;
+        if (cleanHeader(h) === 'no' || cleanHeader(h) === 'nomor') return;
+
+        const cleanH = cleanHeader(h);
+        const matchGoal = activeGoalsForMidterm.find(g => 
+          g.id.toLowerCase() === cleanH || 
+          g.text.toLowerCase().includes(h.trim().toLowerCase()) ||
+          cleanH === `g${activeGoalsForMidterm.indexOf(g) + 1}`
+        );
+
+        if (matchGoal) {
+          initialMapping[idx] = matchGoal.id;
+        }
+      });
+    }
+
+    setRemarksColumnMapping(initialMapping);
+
+    const dataLines = lines.slice(1);
+    const normalizeName = (n: string) => {
+      if (!n) return '';
+      return n.trim().toLowerCase().replace(/\s+/g, ' ');
+    };
+
+    const parsed = dataLines.map((line, lineIdx) => {
+      const cells = isTsv ? line.split('\t') : line.split(/,|;/);
+      const rawName = (cells[fullnameColIndex] || '').trim();
+      
+      const targetNormal = normalizeName(rawName);
+      const matches = activeStudentsForGrading.filter(s => normalizeName(s.name) === targetNormal);
+
+      let matchedStudent: Student | null = null;
+      let nameStatus: 'VALID' | 'NAMA_TIDAK_DITEMUKAN' | 'AMBIGU' = 'VALID';
+
+      if (matches.length === 1) {
+        matchedStudent = matches[0];
+      } else if (matches.length > 1) {
+        nameStatus = 'AMBIGU';
+      } else {
+        nameStatus = 'NAMA_TIDAK_DITEMUKAN';
+      }
+
+      const valuesMap: Record<number, string> = {};
+      cells.forEach((val, colIdx) => {
+        if (colIdx !== fullnameColIndex) {
+          valuesMap[colIdx] = val.trim();
+        }
+      });
+
+      return {
+        lineIndex: lineIdx + 2,
+        rawName,
+        matchedStudent,
+        nameStatus,
+        valuesMap
+      };
+    });
+
+    setRemarksParsedRows(parsed);
+    toast.success(`Berhasil memproses ${parsed.length} baris.`);
+  };
+
+  const evaluatedRows = React.useMemo(() => {
+    return remarksParsedRows.map(row => {
+      const colEntries = Object.entries(remarksColumnMapping);
+      const goalsEvaluations = colEntries.map(([colIdxStr, goalId]) => {
+        const colIdx = parseInt(colIdxStr, 10);
+        const rawVal = (row.valuesMap[colIdx] || '').trim().toUpperCase();
+        
+        let status: 'VALID' | 'NILAI_TIDAK_VALID' | 'NAMA_TIDAK_DITEMUKAN' | 'NAMA_AMBIGU' | 'LG_AMBIGU' | 'HEADER_LG_TIDAK_DIKENALI' | 'SUDAH_ADA_NILAI' | 'KOSONG' = 'VALID';
+        
+        if (row.nameStatus === 'NAMA_TIDAK_DITEMUKAN') {
+          status = 'NAMA_TIDAK_DITEMUKAN';
+        } else if (row.nameStatus === 'AMBIGU') {
+          status = 'NAMA_AMBIGU';
+        } else if (!goalId) {
+          status = 'HEADER_LG_TIDAK_DIKENALI';
+        } else if (rawVal === '') {
+          status = 'KOSONG';
+        } else if (rawVal !== 'A' && rawVal !== 'D' && rawVal !== 'B') {
+          status = 'NILAI_TIDAK_VALID';
+        } else {
+          if (row.matchedStudent) {
+            const currentGrade = localRemarks[row.matchedStudent.id]?.[goalId] || studentDataMap[row.matchedStudent.id]?.remarks?.[goalId];
+            if (currentGrade && currentGrade !== rawVal) {
+              status = 'SUDAH_ADA_NILAI';
+            }
+          }
+        }
+
+        const targetGoal = activeGoalsForMidterm.find(g => g.id === goalId);
+
+        return {
+          goalId,
+          goalText: targetGoal?.text || 'Goal',
+          val: rawVal,
+          status,
+          currentGrade: row.matchedStudent ? (localRemarks[row.matchedStudent.id]?.[goalId] || studentDataMap[row.matchedStudent.id]?.remarks?.[goalId] || '-') : '-'
+        };
+      }).filter(Boolean);
+
+      let overallStatus: 'VALID' | 'NILAI_TIDAK_VALID' | 'NAMA_TIDAK_DITEMUKAN' | 'NAMA_AMBIGU' | 'HEADER_LG_TIDAK_DIKENALI' | 'SUDAH_ADA_NILAI' | 'KOSONG' = 'VALID';
+      
+      if (row.nameStatus === 'NAMA_TIDAK_DITEMUKAN') {
+        overallStatus = 'NAMA_TIDAK_DITEMUKAN';
+      } else if (row.nameStatus === 'AMBIGU') {
+        overallStatus = 'NAMA_AMBIGU';
+      } else if (goalsEvaluations.length === 0) {
+        overallStatus = 'HEADER_LG_TIDAK_DIKENALI';
+      } else if (goalsEvaluations.some(g => g.status === 'NILAI_TIDAK_VALID')) {
+        overallStatus = 'NILAI_TIDAK_VALID';
+      } else if (goalsEvaluations.some(g => g.status === 'HEADER_LG_TIDAK_DIKENALI')) {
+        overallStatus = 'HEADER_LG_TIDAK_DIKENALI';
+      } else if (goalsEvaluations.every(g => g.status === 'KOSONG')) {
+        overallStatus = 'KOSONG';
+      } else if (goalsEvaluations.some(g => g.status === 'SUDAH_ADA_NILAI')) {
+        overallStatus = 'SUDAH_ADA_NILAI';
+      }
+
+      const checked = (overallStatus === 'VALID' || (overallStatus === 'SUDAH_ADA_NILAI' && remarksOverwrite)) && row.nameStatus === 'VALID';
+
+      return {
+        ...row,
+        goalsEvaluations,
+        overallStatus,
+        checked
+      };
+    });
+  }, [remarksParsedRows, remarksColumnMapping, remarksOverwrite, localRemarks, studentDataMap, activeGoalsForMidterm]);
+
+  const handleSaveRemarksImport = async () => {
+    const targets = evaluatedRows.filter(r => r.checked && r.matchedStudent);
+    if (targets.length === 0) {
+      toast.error('Tidak ada baris valid yang dicentang.');
+      return;
+    }
+
+    setImportRemarksSaving(true);
+    let successCount = 0;
+    let skipCount = 0;
+
+    try {
+      const batch = writeBatch(db);
+
+      for (const row of targets) {
+        if (!row.matchedStudent) continue;
+        const studentId = row.matchedStudent.id;
+        const docId = `${studentId}_${selectedYear.replace(/\//g, '_')}_S${selectedSemester}_T${selectedTerm}`;
+        const docRef = doc(db, 'elem_midterm_student_data', docId);
+
+        const existingData = studentDataMap[studentId];
+        const currentRemarks = existingData?.remarks && typeof existingData.remarks === 'object'
+          ? { ...existingData.remarks }
+          : {};
+
+        if (localRemarks[studentId]) {
+          Object.assign(currentRemarks, localRemarks[studentId]);
+        }
+
+        let updatedAny = false;
+        row.goalsEvaluations.forEach(ge => {
+          if (ge.status === 'KOSONG') return;
+          
+          if (ge.status === 'SUDAH_ADA_NILAI' && !remarksOverwrite) {
+            skipCount++;
+            return;
+          }
+
+          currentRemarks[ge.goalId] = ge.val;
+          updatedAny = true;
+        });
+
+        if (updatedAny) {
+          batch.set(docRef, {
+            id: docId,
+            studentId,
+            studentName: row.matchedStudent.name,
+            classId: selectedClassId,
+            academicYear: selectedYear,
+            semester: selectedSemester,
+            midtermTerm: selectedTerm,
+            remarks: currentRemarks,
+            updatedAt: Date.now(),
+            updatedBy: currentUser?.uid || (currentUser as any)?.id || 'system'
+          }, { merge: true });
+
+          setLocalRemarks(prev => ({
+            ...prev,
+            [studentId]: {
+              ...(prev[studentId] || {}),
+              ...currentRemarks
+            }
+          }));
+
+          successCount++;
+        }
+      }
+
+      await batch.commit();
+      toast.success(`Berhasil mengimpor nilai untuk ${successCount} siswa.`);
+      if (skipCount > 0) {
+        toast.info(`${skipCount} nilai dilewati karena sudah memiliki nilai sebelumnya.`);
+      }
+
+      setIsImportRemarksModalOpen(false);
+      setRemarksParsedRows([]);
+      setRemarksRawInput('');
+      await onRefreshData(true);
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Gagal mengimpor nilai: ' + err.message);
+    } finally {
+      setImportRemarksSaving(false);
+    }
+  };
+
   // Synchronize master goals when effectiveSubjectKey or masterGoalsMap changes
   React.useEffect(() => {
     if (currentSubjectMasterDoc && Array.isArray(currentSubjectMasterDoc.goals)) {
@@ -1568,6 +1843,23 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
               Pilih nilai <strong className="text-slate-800">A (Achieved)</strong>, <strong className="text-slate-800">D (Developing)</strong>, atau <strong className="text-slate-800">B (Beginning)</strong> untuk tiap siswa.
             </p>
           </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setIsImportRemarksModalOpen(true);
+                if (activeGoalsForMidterm.length > 0) {
+                  setSingleTargetGoalId(activeGoalsForMidterm[0].id);
+                }
+              }}
+              disabled={activeGoalsForMidterm.length === 0}
+              className="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 text-emerald-800 border border-emerald-200 hover:border-emerald-300 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+            >
+              <Upload size={14} />
+              <span>Import Nilai dari Sheet</span>
+            </button>
+          </div>
         </div>
 
         {activeGoalsForMidterm.length === 0 ? (
@@ -1868,6 +2160,351 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
               >
                 Hapus dari Midterm
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* IMPORT REMARKS MODAL */}
+      {isImportRemarksModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-[2rem] w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl border border-slate-100 overflow-hidden text-slate-800">
+            {/* Modal Header */}
+            <div className="p-6 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="p-2.5 bg-emerald-100 text-emerald-800 rounded-2xl flex items-center justify-center shadow-2xs">
+                  <Upload size={18} />
+                </span>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 uppercase tracking-tight">Import Nilai Remark A/D/B</h3>
+                  <p className="text-[11px] text-slate-500 font-bold mt-0.5 uppercase tracking-wide">
+                    Copy-Paste Nilai Siswa dari Google Sheets / Excel
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setIsImportRemarksModalOpen(false);
+                  setRemarksParsedRows([]);
+                  setRemarksRawInput('');
+                }}
+                className="p-2 hover:bg-slate-200 text-slate-400 hover:text-slate-700 rounded-xl transition-all cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 flex-1 overflow-y-auto space-y-6">
+              {/* Context Summary Bar */}
+              <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-2xl grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs font-bold text-emerald-950">
+                <div>
+                  <span className="block text-[9px] text-emerald-700 uppercase font-black tracking-wider">Kelas / Unit</span>
+                  <span>{selectedClass?.name || selectedClassId} (ELEMENTARY)</span>
+                </div>
+                <div>
+                  <span className="block text-[9px] text-emerald-700 uppercase font-black tracking-wider">Tahun / Semester</span>
+                  <span>{selectedYear} • S{selectedSemester}</span>
+                </div>
+                <div>
+                  <span className="block text-[9px] text-emerald-700 uppercase font-black tracking-wider">Periode Midterm</span>
+                  <span>Mid Term {selectedTerm}</span>
+                </div>
+                <div>
+                  <span className="block text-[9px] text-emerald-700 uppercase font-black tracking-wider">Mata Pelajaran</span>
+                  <span>{activeSubject}</span>
+                </div>
+              </div>
+
+              {remarksParsedRows.length === 0 ? (
+                /* STEP 1: Paste Input and Mode Selection */
+                <div className="space-y-6">
+                  {/* Mode Selector */}
+                  <div className="space-y-2">
+                    <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">Mode Import</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <button
+                        type="button"
+                        onClick={() => setImportRemarksMode('single')}
+                        className={`p-4 rounded-2xl border text-left transition-all flex flex-col justify-between h-24 cursor-pointer ${
+                          importRemarksMode === 'single'
+                            ? 'bg-emerald-50 border-emerald-400 ring-2 ring-emerald-300/30'
+                            : 'bg-white border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="font-extrabold text-slate-900 text-xs uppercase tracking-wide">1. Satu Learning Goal</span>
+                        <p className="text-[11px] text-slate-500 font-medium">Hanya mengimpor nilai untuk 1 target Learning Goal terpilih.</p>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setImportRemarksMode('multi')}
+                        className={`p-4 rounded-2xl border text-left transition-all flex flex-col justify-between h-24 cursor-pointer ${
+                          importRemarksMode === 'multi'
+                            ? 'bg-emerald-50 border-emerald-400 ring-2 ring-emerald-300/30'
+                            : 'bg-white border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="font-extrabold text-slate-900 text-xs uppercase tracking-wide">2. Beberapa Learning Goal sekaligus</span>
+                        <p className="text-[11px] text-slate-500 font-medium">Mengimpor nilai ke beberapa Learning Goal berdasarkan kolom tabel.</p>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Single Mode Target Goal Dropdown */}
+                  {importRemarksMode === 'single' && (
+                    <div className="space-y-2">
+                      <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">Pilih Target Learning Goal</label>
+                      <select
+                        value={singleTargetGoalId}
+                        onChange={(e) => setSingleTargetGoalId(e.target.value)}
+                        className="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 animate-none"
+                      >
+                        {activeGoalsForMidterm.map((g, idx) => (
+                          <option key={g.id} value={g.id}>
+                            G{idx + 1}: {g.text.substring(0, 80)}{g.text.length > 80 ? '...' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Format Instructions Banner */}
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 text-xs font-medium space-y-1.5 leading-relaxed">
+                    <p className="font-extrabold uppercase tracking-wide flex items-center gap-1.5">
+                      <AlertCircle size={14} />
+                      Format Salinan Google Sheets:
+                    </p>
+                    {importRemarksMode === 'single' ? (
+                      <p>Pastikan baris pertama tabel memiliki judul kolom <strong>Nama Lengkap</strong> dan satu kolom nilai (misal: <strong>Nilai</strong> atau <strong>G1</strong>). Baris setelahnya berisi nama siswa dan nilai remark: <strong>A</strong>, <strong>D</strong>, atau <strong>B</strong>.</p>
+                    ) : (
+                      <p>Pastikan baris pertama memiliki kolom <strong>Nama Lengkap</strong> beserta kolom-kolom untuk setiap goal (misal: <strong>G1</strong>, <strong>G2</strong>, <strong>G3</strong>). Anda akan dapat memetakan setiap kolom ke Learning Goal target pada langkah berikutnya.</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">Paste Data di Sini</label>
+                    <textarea
+                      value={remarksRawInput}
+                      onChange={(e) => setRemarksRawInput(e.target.value)}
+                      placeholder={
+                        importRemarksMode === 'single'
+                          ? "Nama Lengkap\tNilai\nSiswa A\tA\nSiswa B\tD"
+                          : "Nama Lengkap\tG1\tG2\nSiswa A\tA\tD\nSiswa B\tB\tA"
+                      }
+                      rows={8}
+                      className="w-full text-xs p-4 bg-slate-50 border border-slate-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 font-mono"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-end">
+                    <button
+                      type="button"
+                      onClick={handleParseRemarksInput}
+                      className="px-6 py-3 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold uppercase tracking-wider rounded-2xl shadow-sm cursor-pointer transition-all"
+                    >
+                      Proses & Pratinjau
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* STEP 2: Preview, Columns Mapping and Confirmation */
+                <div className="space-y-6">
+                  {/* Column Mapping Section for Multi Mode */}
+                  {importRemarksMode === 'multi' && (
+                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+                      <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">Pemetaan Kolom Nilai</h4>
+                      <p className="text-[11px] text-slate-500">Petakan setiap kolom dari Sheet Anda ke Learning Goal aktif di sistem:</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {remarksHeaders.map((header, colIdx) => {
+                          const cleanH = header.trim().toLowerCase().replace(/[\s_\-]/g, '');
+                          if (['namalengkap', 'fullname', 'nama', 'studentname', 'no', 'nomor'].includes(cleanH)) return null;
+
+                          return (
+                            <div key={colIdx} className="flex items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200">
+                              <span className="font-bold text-xs text-slate-700 truncate max-w-[150px]" title={header}>
+                                Kolom: <strong className="text-slate-950 font-black">{header}</strong>
+                              </span>
+                              <select
+                                value={remarksColumnMapping[colIdx] || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setRemarksColumnMapping(prev => ({ ...prev, [colIdx]: val }));
+                                }}
+                                className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-[11px] font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                              >
+                                <option value="">-- Lewati Kolom --</option>
+                                {activeGoalsForMidterm.map((g, idx) => (
+                                  <option key={g.id} value={g.id}>
+                                    G{idx + 1}: {g.text.substring(0, 40)}...
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Overwrite Choice */}
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <h4 className="text-xs font-black text-slate-800 uppercase tracking-tight">Opsi Penanganan Nilai Existing:</h4>
+                      <p className="text-[10px] font-medium text-slate-500 mt-0.5">Tentukan tindakan jika siswa sudah memiliki nilai untuk Goal ini di sistem.</p>
+                    </div>
+
+                    <div className="flex items-center gap-4">
+                      <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700">
+                        <input
+                          type="radio"
+                          name="remarksOverwriteOption"
+                          checked={!remarksOverwrite}
+                          onChange={() => setRemarksOverwrite(false)}
+                          className="text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <span>Lewati nilai yang sudah ada (Default)</span>
+                      </label>
+
+                      <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700">
+                        <input
+                          type="radio"
+                          name="remarksOverwriteOption"
+                          checked={remarksOverwrite}
+                          onChange={() => {
+                            const count = evaluatedRows.filter(r => r.overallStatus === 'SUDAH_ADA_NILAI').length;
+                            if (count > 0) {
+                              const confirmText = `Peringatan: Terdapat sekitar ${count} siswa yang sudah memiliki nilai di sistem. Apakah Anda yakin ingin mengaktifkan opsi timpa nilai?`;
+                              if (window.confirm(confirmText)) {
+                                setRemarksOverwrite(true);
+                              }
+                            } else {
+                              setRemarksOverwrite(true);
+                            }
+                          }}
+                          className="text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <span className="text-rose-600 font-extrabold">Timpa nilai yang sudah ada</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Preview Table */}
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden max-h-[350px] overflow-y-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-100 text-slate-600 font-extrabold uppercase tracking-wider text-[10px] sticky top-0 z-10 border-b border-slate-200">
+                          <th className="p-3 w-12 text-center bg-slate-100">Aktif</th>
+                          <th className="p-3 bg-slate-100">Nama Sheet</th>
+                          <th className="p-3 bg-slate-100">Siswa Cocok</th>
+                          <th className="p-3 bg-slate-100">Target Goal & Nilai</th>
+                          <th className="p-3 bg-slate-100">Status Row</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {evaluatedRows.map((row) => {
+                          let overallBadge = 'bg-emerald-50 text-emerald-700 border border-emerald-100';
+                          let statusLabel = 'Valid';
+
+                          if (row.nameStatus === 'NAMA_TIDAK_DITEMUKAN') {
+                            statusLabel = 'Nama Tidak Ditemukan';
+                            overallBadge = 'bg-rose-50 text-rose-700 border border-rose-100';
+                          } else if (row.nameStatus === 'AMBIGU') {
+                            statusLabel = 'Nama Ambigu';
+                            overallBadge = 'bg-amber-50 text-amber-700 border border-amber-100';
+                          } else if (row.overallStatus === 'NILAI_TIDAK_VALID') {
+                            statusLabel = 'Nilai Tidak Valid';
+                            overallBadge = 'bg-rose-50 text-rose-700 border border-rose-100';
+                          } else if (row.overallStatus === 'HEADER_LG_TIDAK_DIKENALI') {
+                            statusLabel = 'Belum Ada Pemetaan';
+                            overallBadge = 'bg-slate-100 text-slate-500 border border-slate-200';
+                          } else if (row.overallStatus === 'SUDAH_ADA_NILAI') {
+                            statusLabel = 'Sudah Ada Nilai';
+                            overallBadge = 'bg-amber-50 text-amber-700 border border-amber-100';
+                          } else if (row.overallStatus === 'KOSONG') {
+                            statusLabel = 'Semua Kolom Kosong';
+                            overallBadge = 'bg-slate-100 text-slate-400 border border-slate-200';
+                          }
+
+                          return (
+                            <tr key={row.lineIndex} className="hover:bg-slate-50/50">
+                              <td className="p-3 text-center">
+                                <input
+                                  type="checkbox"
+                                  disabled={row.nameStatus !== 'VALID' || (row.overallStatus === 'SUDAH_ADA_NILAI' && !remarksOverwrite) || row.overallStatus === 'KOSONG'}
+                                  checked={row.checked}
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setRemarksParsedRows(prev => prev.map(r => r.lineIndex === row.lineIndex ? { ...r, checked } : r));
+                                  }}
+                                  className="rounded text-emerald-600 focus:ring-emerald-500 disabled:opacity-30"
+                                />
+                              </td>
+                              <td className="p-3 font-semibold text-slate-800">{row.rawName}</td>
+                              <td className="p-3 font-bold text-emerald-950">
+                                {row.matchedStudent ? row.matchedStudent.name : <span className="text-slate-400 font-normal italic">-</span>}
+                              </td>
+                              <td className="p-3 space-y-1">
+                                {row.goalsEvaluations.map((ge, gIdx) => {
+                                  let subColor = 'text-slate-600';
+                                  if (ge.status === 'NILAI_TIDAK_VALID') subColor = 'text-red-600 font-bold';
+                                  else if (ge.status === 'SUDAH_ADA_NILAI') subColor = 'text-amber-700 font-bold';
+                                  else if (ge.status === 'KOSONG') subColor = 'text-slate-400 italic';
+                                  else if (ge.status === 'VALID') subColor = 'text-emerald-700 font-bold';
+
+                                  return (
+                                    <div key={gIdx} className="text-[10.5px] leading-tight flex items-center justify-between border-b border-slate-50 pb-0.5">
+                                      <span className="text-slate-400 truncate max-w-[120px]" title={ge.goalText}>
+                                        {ge.goalId}: {ge.goalText}
+                                      </span>
+                                      <span className={subColor}>
+                                        {ge.status === 'KOSONG' ? 'Lewati' : `Nilai: ${ge.val} (Lama: ${ge.currentGrade})`}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </td>
+                              <td className="p-3">
+                                <span className={`text-[9px] font-black px-2 py-0.5 rounded-lg uppercase tracking-wider ${overallBadge}`}>
+                                  {statusLabel}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRemarksParsedRows([]);
+                        setRemarksRawInput('');
+                      }}
+                      className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+                    >
+                      Kembali / Edit Input
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleSaveRemarksImport}
+                      disabled={importRemarksSaving || !evaluatedRows.some(r => r.checked)}
+                      className="px-6 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                    >
+                      {importRemarksSaving ? (
+                        <RefreshCw size={14} className="animate-spin" />
+                      ) : (
+                        <Check size={14} />
+                      )}
+                      <span>Simpan ({evaluatedRows.filter(r => r.checked).length} Siswa)</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
