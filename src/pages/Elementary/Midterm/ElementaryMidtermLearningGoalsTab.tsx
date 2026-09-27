@@ -267,6 +267,12 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
     value: 'D'
   });
 
+  // Derived list of Learning Goals selected for current Midterm
+  const activeGoalsForMidterm = React.useMemo(() => {
+    const activeSet = new Set(activeGoalIds);
+    return goals.filter(g => g && activeSet.has(g.id));
+  }, [goals, activeGoalIds]);
+
   // Import Remarks Modal States
   const [isImportRemarksModalOpen, setIsImportRemarksModalOpen] = React.useState<boolean>(false);
   const [importRemarksMode, setImportRemarksMode] = React.useState<'single' | 'multi'>('single');
@@ -553,20 +559,21 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
         setActiveGoalIds(currentSubjectMasterDoc.goals.map(g => g.id));
       }
     } else {
-      // Auto-load default goals from system learning_goals if available
+      // Offline/Default fallback if no master doc exists in cache/DB
       const loadDefaultGoals = async () => {
         try {
-          const classGrade = selectedClass?.grade || selectedClass?.name?.match(/\d+/)?.[0] || '';
-          const sysGoals = await getLearningGoals({
-            unitId: 'ELEMENTARY',
-            grade: classGrade ? String(classGrade) : undefined,
-            subject: activeSubject,
+          const cat = activeSubject === 'Projects' ? 'PROJECTS' : 'SUBJECTS';
+          const defaultGoals = await fetchElementaryMidtermMasterGoals({
+            classId: selectedClassId,
             academicYear: selectedYear,
-            isActive: true
+            semester: selectedSemester,
+            midtermTerm: selectedTerm,
+            subjectKey: effectiveSubjectKey,
+            category: cat
           });
-          if (sysGoals && sysGoals.length > 0) {
-            const mapped = sysGoals.slice(0, 5).map((g, idx) => ({
-              id: g.id || `lg_${idx + 1}`,
+          if (defaultGoals && defaultGoals.length > 0) {
+            const mapped = defaultGoals[0].goals.map((g: any, idx: number) => ({
+              id: g.id || g.code || `goal_${idx + 1}`,
               text: g.goalText || g.code || `Goal ${idx + 1}`,
               order: idx + 1
             }));
@@ -585,12 +592,6 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
       loadDefaultGoals();
     }
   }, [effectiveSubjectKey, currentSubjectMasterDoc, selectedClass, selectedYear, activeSubject]);
-
-  // Derived list of Learning Goals selected for current Midterm
-  const activeGoalsForMidterm = React.useMemo(() => {
-    const activeSet = new Set(activeGoalIds);
-    return goals.filter(g => g && activeSet.has(g.id));
-  }, [goals, activeGoalIds]);
 
   // Check if a goal has existing student grades recorded
   const checkGoalHasGrades = (goalId: string): boolean => {
