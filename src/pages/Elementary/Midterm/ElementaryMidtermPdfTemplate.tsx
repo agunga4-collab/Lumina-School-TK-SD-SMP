@@ -14,10 +14,7 @@ import {
 import type { Student, Class, ReportConfig } from '../../../types';
 
 interface ElementaryMidtermPdfTemplateProps {
-  // Snapshot mode (for published reports viewing) or Live mode (for preview before publish)
   snapshot?: ElementaryMidtermReportSnapshot;
-  
-  // Live props (when snapshot not provided)
   student?: Student;
   currentClass?: Class;
   academicYear?: string;
@@ -30,8 +27,6 @@ interface ElementaryMidtermPdfTemplateProps {
   logoUrl?: string | null;
   homeroomTeacherProfile?: { displayName: string; niy?: string; signatureUrl?: string | null };
   studentUaName?: string | null;
-  
-  // Print / generation ref IDs
   page1Id?: string;
   page2Id?: string;
 }
@@ -50,8 +45,6 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
   logoUrl,
   homeroomTeacherProfile,
   studentUaName,
-  page1Id = 'elem-midterm-pdf-page-1',
-  page2Id = 'elem-midterm-pdf-page-2',
 }) => {
   // Derive student identity
   const studentName = snapshot ? snapshot.student.name : (student?.name || '');
@@ -79,11 +72,10 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
     ? snapshot.signatory.principalSignatureUrl 
     : (reportConfig?.principalSignatureUrl || null);
 
-  // Local states to resolve dynamic Class and Homeroom profile from DB
   const [dbClass, setDbClass] = React.useState<Class | null>(null);
 
   React.useEffect(() => {
-    if (snapshot) return; // Snapshot mode doesn't need DB resolve
+    if (snapshot) return;
     const targetClassId = student?.classId || currentClass?.id;
     if (!targetClassId) return;
 
@@ -128,7 +120,6 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
 
   const effLogoUrl = snapshot?.logoUrl || logoUrl || null;
 
-  // Validate signatures to prevent broken images
   const isValidHomeroomSignature = effHomeroomSignatureUrl && 
     effHomeroomSignatureUrl !== "none" && 
     effHomeroomSignatureUrl !== "null" && 
@@ -170,7 +161,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
       if (activeGoals.length === 0) return;
 
       const normName = normalizeElementarySubjectName(doc.subjectKey || subjKey);
-      if (!normName) return; // Skip excluded subjects like IPA, IPS, PKN
+      if (!normName) return;
 
       const studentUa = studentDataDoc?.performingArtsUA || studentUaName || '';
 
@@ -179,7 +170,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
         if (rawKey.includes('-') || rawKey.includes('::')) {
           const keyUa = rawKey.split(/[-:]+/).pop()?.trim();
           if (keyUa && studentUa && keyUa.toLowerCase() !== studentUa.toLowerCase()) {
-            return; // Skip this doc because it belongs to another Unit Activity
+            return;
           }
         }
       }
@@ -190,7 +181,6 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
         remark: studentDataDoc?.remarks?.[g.id] || '-'
       }));
 
-      // Determine display subject name (incorporating Performing Arts UA if present)
       let displayName = normName;
       if (normName === 'Performing Arts' && studentUa) {
         displayName = `Performing Arts (${studentUa})`;
@@ -232,7 +222,6 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
     ? (snapshotCategories.find(c => c.name === 'PROJECTS')?.subjects || [])
     : (liveCategories?.projectSubjects || []);
 
-  // Filter & Normalize Snapshot / Live Subjects
   const academicSubjects = rawAcademicSubjects
     .map(subj => {
       const normName = normalizeElementarySubjectName(subj.name);
@@ -292,7 +281,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
             return (
               <React.Fragment key={`subj-${sIdx}`}>
                 {/* Subject Header Row */}
-                <tr className="bg-slate-50 font-extrabold border-b border-slate-900 text-slate-900 uppercase">
+                <tr className="bg-slate-50 font-extrabold border-b border-slate-900 text-slate-900 uppercase tr-keep-together">
                   <td className="border-r border-slate-900 p-1.5 text-center">{sIdx + 1}</td>
                   <td className="border-r border-slate-900 p-1.5 font-bold" colSpan={4}>
                     {subj.name}
@@ -303,7 +292,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                 {subj.goals.map((goal) => {
                   const num = globalGoalNo++;
                   return (
-                    <tr key={goal.id || `g-${num}`} className="border-b border-slate-900/40 hover:bg-slate-50/50">
+                    <tr key={goal.id || `g-${num}`} className="border-b border-slate-900/40 tr-keep-together">
                       <td className="border-r border-slate-900 p-1.5 text-center text-slate-500 font-medium text-[9px]">
                         {num}
                       </td>
@@ -331,172 +320,184 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
   };
 
   return (
-    <div className="bg-slate-200 p-4 space-y-6 flex flex-col items-center select-none printable-container">
-      {/* PAGE 1: ACADEMIC & PROJECT PROGRESS */}
+    <div className="bg-slate-200 p-4 space-y-6 flex flex-col items-center select-none printable-container w-full">
+      {/* Dynamic @media print overrides */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        @media print {
+          /* Hide absolutely everything else */
+          body * {
+            visibility: hidden;
+          }
+          
+          /* Only show the print container and its contents */
+          .printable-container, .printable-container * {
+            visibility: visible;
+          }
+          
+          .printable-container {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100% !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            background: white !important;
+          }
+          
+          /* Set A4 sizing */
+          @page {
+            size: A4 portrait;
+            margin: 15mm;
+          }
+          
+          /* Page break behaviors */
+          tr.tr-keep-together {
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+          }
+          
+          .keep-together {
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+          }
+          
+          thead {
+            display: table-header-group;
+          }
+        }
+      ` }} />
+
+      {/* SINGLE CONTINUOUS FLOWING CANVAS */}
       <div 
-        id={page1Id} 
-        className="w-[210mm] min-h-[297mm] bg-white p-[15mm] shadow-lg flex flex-col justify-between text-slate-900 font-sans text-[11px] relative box-sizing-border"
-        style={{ width: '210mm', minHeight: '297mm' }}
+        className="w-[210mm] bg-white p-[15mm] shadow-lg flex flex-col text-slate-900 font-sans text-[11px] relative box-sizing-border pdf-page-preview space-y-6"
+        style={{ width: '210mm' }}
       >
-        <div className="space-y-4">
-          {/* Header */}
-          <div className="flex items-center justify-between border-b-2 border-slate-900 pb-3">
-            <div className="flex items-center gap-4">
-              {effLogoUrl ? (
-                <img 
-                  src={effLogoUrl} 
-                  alt="Lazuardi Elementary Logo" 
-                  className="h-12 max-w-[180px] object-contain"
-                  crossOrigin={effLogoUrl.startsWith("data:") ? undefined : "anonymous"}
-                />
-              ) : null}
-            </div>
-            <div className="text-right space-y-0.5">
-              <h1 className="text-base font-black tracking-tight text-slate-900 uppercase">
-                STUDENT'S PROGRESS REPORT
-              </h1>
-              <p className="text-xs font-bold text-slate-700">
-                Lazuardi GCS - Elementary
-              </p>
-              <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
-                Year {effAcademicYear}, Mid Term {effTermRoman}
-              </p>
-            </div>
+        {/* Header */}
+        <div className="flex items-center justify-between border-b-2 border-slate-900 pb-3">
+          <div className="flex items-center gap-4">
+            {effLogoUrl ? (
+              <img 
+                src={effLogoUrl} 
+                alt="Lazuardi Elementary Logo" 
+                className="h-12 max-w-[180px] object-contain"
+                crossOrigin={effLogoUrl.startsWith("data:") ? undefined : "anonymous"}
+              />
+            ) : null}
           </div>
-
-          {/* Student Identity Grid */}
-          <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200 text-[10.5px]">
-            <div className="space-y-1">
-              <div className="flex">
-                <span className="w-28 font-bold text-slate-600">Student's Name</span>
-                <span className="font-bold text-slate-900">: {studentName}</span>
-              </div>
-              <div className="flex">
-                <span className="w-28 font-bold text-slate-600">NISN</span>
-                <span className="font-medium text-slate-800">: {studentNisn}</span>
-              </div>
-            </div>
-            <div className="space-y-1">
-              <div className="flex">
-                <span className="w-24 font-bold text-slate-600">Class</span>
-                <span className="font-bold text-slate-900">: {className}</span>
-              </div>
-              <div className="flex">
-                <span className="w-24 font-bold text-slate-600">Date</span>
-                <span className="font-medium text-slate-800">: {formattedDate}</span>
-              </div>
-            </div>
+          <div className="text-right space-y-0.5">
+            <h1 className="text-base font-black tracking-tight text-slate-900 uppercase">
+              STUDENT'S PROGRESS REPORT
+            </h1>
+            <p className="text-xs font-bold text-slate-700">
+              Lazuardi GCS - Elementary
+            </p>
+            <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
+              Year {effAcademicYear}, Mid Term {effTermRoman}
+            </p>
           </div>
+        </div>
 
-          {/* SECTION 1: ACADEMIC SUBJECTS & LEARNING GOALS */}
-          <div className="space-y-2">
-            <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
-              SECTION 1: SUBJECTS AND LEARNING GOALS
-            </h2>
-            {academicSubjects.length > 0 ? (
-              renderSubjectTable(academicSubjects)
-            ) : (
-              <div className="p-4 text-center text-slate-400 font-medium italic border border-dashed border-slate-300 rounded-lg">
-                Belum ada mata pelajaran & Learning Goals yang dicatat untuk periode ini.
-              </div>
-            )}
+        {/* Student Identity Grid - No Date column */}
+        <div className="grid grid-cols-3 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200 text-[10.5px]">
+          <div className="flex flex-col">
+            <span className="text-[9px] font-bold text-slate-500 uppercase">Student's Name</span>
+            <span className="font-extrabold text-slate-900 text-xs mt-0.5">{studentName}</span>
           </div>
+          <div className="flex flex-col">
+            <span className="text-[9px] font-bold text-slate-500 uppercase">NISN</span>
+            <span className="font-bold text-slate-800 text-xs mt-0.5">{studentNisn}</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[9px] font-bold text-slate-500 uppercase">Class</span>
+            <span className="font-extrabold text-slate-900 text-xs mt-0.5">{className}</span>
+          </div>
+        </div>
 
-          {/* SECTION 2: PROJECTS AND LEARNING GOALS (If available) */}
-          {projectSubjects.length > 0 && (
-            <div className="space-y-2 pt-2">
-              <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
-                SECTION 2: PROJECTS AND LEARNING GOALS
-              </h2>
-              {renderSubjectTable(projectSubjects)}
+        {/* SECTION 1: ACADEMIC SUBJECTS & LEARNING GOALS */}
+        <div className="space-y-2">
+          <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
+            SECTION 1: SUBJECTS AND LEARNING GOALS
+          </h2>
+          {academicSubjects.length > 0 ? (
+            renderSubjectTable(academicSubjects)
+          ) : (
+            <div className="p-4 text-center text-slate-400 font-medium italic border border-dashed border-slate-300 rounded-lg">
+              Belum ada mata pelajaran & Learning Goals yang dicatat untuk periode ini.
             </div>
           )}
+        </div>
 
-          {/* Legend */}
-          <div className="text-[9.5px] font-medium text-slate-600 pt-1 italic">
-            Note: <strong className="text-slate-800">A</strong> = Achieved, <strong className="text-slate-800">D</strong> = Developing, <strong className="text-slate-800">B</strong> = Beginning
+        {/* SECTION 2: PROJECTS AND LEARNING GOALS (If available) */}
+        {projectSubjects.length > 0 && (
+          <div className="space-y-2">
+            <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
+              SECTION 2: PROJECTS AND LEARNING GOALS
+            </h2>
+            {renderSubjectTable(projectSubjects)}
+          </div>
+        )}
+
+        {/* GENERAL COMMENTS SECTION */}
+        <div className="space-y-2 keep-together">
+          <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
+            General Comments :
+          </h3>
+          <div className="p-4 border border-slate-900 rounded-lg bg-slate-50/50 text-[11px] leading-relaxed font-medium whitespace-pre-wrap text-slate-800 min-h-[80px]">
+            {effGeneralComment ? (
+              effGeneralComment
+            ) : (
+              <span className="text-slate-400 italic">Belum ada catatan umum (General Comments) yang disetujui.</span>
+            )}
           </div>
         </div>
-      </div>
 
-      {/* PAGE 2: GENERAL COMMENTS, ATTENDANCE & SIGNATURES */}
-      <div 
-        id={page2Id} 
-        className="w-[210mm] min-h-[297mm] bg-white p-[15mm] shadow-lg flex flex-col justify-between text-slate-900 font-sans text-[11px] relative box-sizing-border"
-        style={{ width: '210mm', minHeight: '297mm' }}
-      >
-        <div className="space-y-6">
-          {/* Header */}
-          <div className="flex items-center justify-between border-b-2 border-slate-900 pb-3">
-            <div className="flex items-center gap-3">
-              {effLogoUrl && (
-                <img 
-                  src={effLogoUrl} 
-                  alt="Lazuardi Elementary Logo" 
-                  className="h-10 max-w-[160px] object-contain"
-                  crossOrigin={effLogoUrl.startsWith("data:") ? undefined : "anonymous"}
-                />
-              )}
-            </div>
-            <div className="text-right">
-              <h2 className="text-xs font-black text-slate-900 uppercase">
-                GENERAL COMMENTS & ATTENDANCE
-              </h2>
-              <p className="text-[10px] text-slate-500 font-medium">
-                {studentName} — {className}
-              </p>
-            </div>
+        {/* Legend / Note */}
+        <div className="space-y-2 pt-2 keep-together">
+          <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-900 border-b border-slate-200 pb-1">
+            Note :
+          </h3>
+          <div className="text-[10px] leading-relaxed text-slate-700 space-y-1">
+            <p><strong>A (Achieved):</strong> Demonstrates mastery of learning</p>
+            <p><strong>D (Developing):</strong> Shows progress towards achieving learning goals and needs improvement to master them</p>
+            <p><strong>B (Beginner):</strong> Early stage of learning, needs further support and guidance</p>
           </div>
+        </div>
 
-          {/* GENERAL COMMENTS SECTION */}
-          <div className="space-y-2">
-            <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
-              GENERAL COMMENTS
-            </h3>
-            <div className="p-4 border border-slate-900 rounded-lg min-h-[180px] bg-slate-50/50 text-[11px] leading-relaxed font-medium whitespace-pre-wrap text-slate-800">
-              {effGeneralComment ? (
-                effGeneralComment
-              ) : (
-                <span className="text-slate-400 italic">Belum ada catatan umum (General Comments) yang disetujui.</span>
-              )}
+        {/* ATTENDANCE RECAP */}
+        <div className="space-y-2 keep-together">
+          <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
+            ATTENDANCE RECAP
+          </h3>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="border border-slate-300 p-2.5 rounded-lg text-center bg-slate-50">
+              <span className="block text-[9.5px] font-bold text-slate-500 uppercase">Sakit (Sick)</span>
+              <span className="text-sm font-extrabold text-slate-900">{effAttendance?.sakit ?? 0} hari</span>
             </div>
-          </div>
-
-          {/* ATTENDANCE RECAP */}
-          <div className="space-y-2">
-            <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
-              ATTENDANCE RECAP
-            </h3>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="border border-slate-300 p-2.5 rounded-lg text-center bg-slate-50">
-                <span className="block text-[9.5px] font-bold text-slate-500 uppercase">Sakit (Sick)</span>
-                <span className="text-sm font-extrabold text-slate-900">{effAttendance?.sakit ?? 0} hari</span>
-              </div>
-              <div className="border border-slate-300 p-2.5 rounded-lg text-center bg-slate-50">
-                <span className="block text-[9.5px] font-bold text-slate-500 uppercase">Izin (Permit)</span>
-                <span className="text-sm font-extrabold text-slate-900">{effAttendance?.izin ?? 0} hari</span>
-              </div>
-              <div className="border border-slate-300 p-2.5 rounded-lg text-center bg-slate-50">
-                <span className="block text-[9.5px] font-bold text-slate-500 uppercase">Tanpa Keterangan</span>
-                <span className="text-sm font-extrabold text-slate-900">{effAttendance?.tanpaKeterangan ?? 0} hari</span>
-              </div>
+            <div className="border border-slate-300 p-2.5 rounded-lg text-center bg-slate-50">
+              <span className="block text-[9.5px] font-bold text-slate-500 uppercase">Izin (Permit)</span>
+              <span className="text-sm font-extrabold text-slate-900">{effAttendance?.izin ?? 0} hari</span>
+            </div>
+            <div className="border border-slate-300 p-2.5 rounded-lg text-center bg-slate-50">
+              <span className="block text-[9.5px] font-bold text-slate-500 uppercase">Tanpa Keterangan</span>
+              <span className="text-sm font-extrabold text-slate-900">{effAttendance?.tanpaKeterangan ?? 0} hari</span>
             </div>
           </div>
         </div>
 
-        {/* SIGNATURE FOOTER SECTION */}
-        <div className="pt-8 border-t border-slate-300 space-y-4">
-          <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider text-center">
-            Acknowledged by,
-          </p>
+        {/* BLOK TANGGAL DAN TANDA TANGAN */}
+        <div className="pt-6 space-y-4 keep-together text-left">
+          <div>
+            <p className="text-xs text-slate-900">Depok, {formattedDate}</p>
+            <p className="text-xs font-bold text-slate-900 mt-1">Acknowledged by,</p>
+          </div>
 
-          <div className="grid grid-cols-3 gap-6 text-center text-[10.5px]">
+          <div className="grid grid-cols-3 gap-8 pt-4">
             {/* Principal Signature */}
-            <div className="space-y-2 flex flex-col justify-between h-32 border border-slate-200 p-3 rounded-xl bg-slate-50/50">
+            <div className="space-y-2 flex flex-col justify-between min-h-[120px]">
               <span className="font-bold text-slate-700 uppercase tracking-wide text-[9.5px]">
                 {effPrincipalTitle}
               </span>
-              <div className="h-16 flex items-center justify-center">
+              <div className="h-16 flex items-center justify-start">
                 {isValidPrincipalSignature ? (
                   <img 
                     src={effPrincipalSignatureUrl} 
@@ -505,21 +506,21 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                     crossOrigin={effPrincipalSignatureUrl.startsWith("data:") ? undefined : "anonymous"}
                   />
                 ) : (
-                  <div className="text-[9px] text-slate-400 italic">Verified Digitally</div>
+                  <div className="h-14 w-32 border-b border-slate-200"></div>
                 )}
               </div>
-              <div>
+              <div className="space-y-0.5">
                 <p className="font-bold text-slate-900 underline">{effPrincipalName}</p>
                 {effPrincipalNiy && <p className="text-[9px] text-slate-500">NIY: {effPrincipalNiy}</p>}
               </div>
             </div>
 
             {/* Homeroom Teacher Signature */}
-            <div className="space-y-2 flex flex-col justify-between h-32 border border-slate-200 p-3 rounded-xl bg-slate-50/50">
+            <div className="space-y-2 flex flex-col justify-between min-h-[120px]">
               <span className="font-bold text-slate-700 uppercase tracking-wide text-[9.5px]">
                 Homeroom Teacher
               </span>
-              <div className="h-16 flex items-center justify-center">
+              <div className="h-16 flex items-center justify-start">
                 {isValidHomeroomSignature ? (
                   <img 
                     src={effHomeroomSignatureUrl} 
@@ -528,26 +529,26 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                     crossOrigin={effHomeroomSignatureUrl.startsWith("data:") ? undefined : "anonymous"}
                   />
                 ) : (
-                  <div className="text-[9px] text-slate-400 italic">Verified Digitally</div>
+                  <div className="h-14 w-32 border-b border-slate-200"></div>
                 )}
               </div>
-              <div>
+              <div className="space-y-0.5">
                 <p className="font-bold text-slate-900 underline">{effHomeroomName}</p>
-                <p className="text-[9px] text-slate-500">NIY: {(!effHomeroomNiy || effHomeroomNiy === '-') ? '-' : effHomeroomNiy}</p>
+                {effHomeroomNiy && <p className="text-[9px] text-slate-500">NIY: {(!effHomeroomNiy || effHomeroomNiy === '-') ? '-' : effHomeroomNiy}</p>}
               </div>
             </div>
 
             {/* Parent / Guardian Signature */}
-            <div className="space-y-2 flex flex-col justify-between h-32 border border-slate-200 p-3 rounded-xl bg-slate-50/50">
+            <div className="space-y-2 flex flex-col justify-between min-h-[120px]">
               <span className="font-bold text-slate-700 uppercase tracking-wide text-[9.5px]">
-                Parent / Guardian
+                Parent
               </span>
-              <div className="h-16 flex items-end justify-center pb-2">
-                <div className="w-32 border-b border-dashed border-slate-400"></div>
+              <div className="h-16 flex items-end justify-start pb-2">
+                <div className="w-36 border-b border-dashed border-slate-400"></div>
               </div>
-              <div>
-                <p className="font-bold text-slate-800">( Parent / Guardian )</p>
-                <p className="text-[9px] text-slate-400">Signature & Date</p>
+              <div className="space-y-0.5">
+                <p className="font-bold text-slate-800">&nbsp;</p>
+                <p className="text-[9px] text-slate-400">&nbsp;</p>
               </div>
             </div>
           </div>
