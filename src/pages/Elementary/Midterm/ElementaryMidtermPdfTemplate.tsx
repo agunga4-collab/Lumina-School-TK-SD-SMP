@@ -259,11 +259,8 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
 
   const renderSubjectTable = (
     subjects: Array<{ name: string; goals: Array<{ id: string; text: string; remark: string }> }>,
-    startGoalNo = 1,
     startSubjNo = 1
   ) => {
-    let globalGoalNo = startGoalNo;
-
     return (
       <table className="w-full text-left border-collapse border border-slate-900 text-[10px]">
         <thead>
@@ -284,7 +281,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
           {subjects.map((subj, sIdx) => {
             return (
               <React.Fragment key={`subj-${sIdx}`}>
-                {/* Subject Header Row */}
+                {/* Subject Header Row - Displays Subject Number */}
                 <tr className="bg-slate-50 font-extrabold border-b border-slate-900 text-slate-900 uppercase tr-keep-together">
                   <td className="border-r border-slate-900 p-1.5 text-center">{startSubjNo + sIdx}</td>
                   <td className="border-r border-slate-900 p-1.5 font-bold" colSpan={4}>
@@ -292,16 +289,16 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                   </td>
                 </tr>
 
-                {/* Goals Rows */}
+                {/* Goals Rows - Displays Bullet and NO seq number */}
                 {subj.goals.map((goal) => {
-                  const num = globalGoalNo++;
                   return (
-                    <tr key={goal.id || `g-${num}`} className="border-b border-slate-900/40 tr-keep-together">
+                    <tr key={goal.id} className="border-b border-slate-900/40 tr-keep-together">
                       <td className="border-r border-slate-900 p-1.5 text-center text-slate-500 font-medium text-[9px]">
-                        {num}
+                        {/* No sequences, empty column */}
                       </td>
-                      <td className="border-r border-slate-900 p-1.5 leading-relaxed text-slate-800">
-                        {goal.text}
+                      <td className="border-r border-slate-900 p-1.5 leading-relaxed text-slate-800 flex items-start gap-1">
+                        <span className="shrink-0">•</span>
+                        <span>{goal.text}</span>
                       </td>
                       <td className="border-r border-slate-900 p-1 text-center w-[8%] font-bold">
                         {renderAchievementCheck(goal.remark, 'A')}
@@ -336,9 +333,14 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
     pageCount = 3;
   }
 
-  // Helper to calculate start goal index for page splits
-  const getGoalsCount = (subjectsList: typeof academicSubjects) => {
-    return subjectsList.reduce((acc, s) => acc + s.goals.length, 0);
+  // Footer text generator
+  const normalizedYear = effAcademicYear.replace(/\//g, '-');
+  const getFooterHTML = (pageNum: number) => {
+    return (
+      <div className="absolute bottom-[8mm] left-0 right-0 text-center text-[10px] text-slate-500 font-medium select-none no-print">
+        {pageNum} {studentName}/{className}/Mid Term-{effTermRoman}/{normalizedYear}
+      </div>
+    );
   };
 
   return (
@@ -346,12 +348,10 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
       {/* Dynamic @media print overrides */}
       <style dangerouslySetInnerHTML={{ __html: `
         @media print {
-          /* Hide absolutely everything else */
           body * {
             visibility: hidden;
           }
           
-          /* Only show the print container and its contents */
           .printable-container, .printable-container * {
             visibility: visible;
           }
@@ -372,11 +372,13 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
             height: 297mm !important;
             margin: 0 !important;
             padding: 15mm !important;
+            padding-bottom: 20mm !important;
             box-shadow: none !important;
             break-after: page !important;
             page-break-after: always !important;
             background: #fff !important;
             box-sizing: border-box !important;
+            position: relative !important;
           }
 
           .pdf-page:last-child {
@@ -397,6 +399,16 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
           thead {
             display: table-header-group !important;
           }
+
+          /* Force footer print positioning */
+          .absolute-footer {
+            position: absolute !important;
+            bottom: 8mm !important;
+            left: 0 !important;
+            right: 0 !important;
+            text-align: center !important;
+            visibility: visible !important;
+          }
         }
 
         /* Screen Preview styles */
@@ -407,56 +419,72 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
           background: #fff;
           margin: 0 auto 12mm;
           padding: 15mm;
+          padding-bottom: 20mm;
           overflow: hidden;
           position: relative;
           box-shadow: 0 4px 18px rgba(0,0,0,.18);
         }
-      ` }} />
 
-      {/* RENDER PAGES */}
+        .signature-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          column-gap: 18mm;
+          align-items: start;
+          width: 100%;
+        }
+
+        .signature-image-slot {
+          height: 26mm;
+          display: flex;
+          align-items: flex-end;
+          justify-content: center;
+        }
+
+        .signature-image-slot img {
+          width: auto;
+          max-width: 42mm;
+          height: auto;
+          max-height: 22mm;
+          object-fit: contain;
+        }
+      ` }} />
 
       {/* CASE 1: 1-PAGE RAPOR (Siswa dengan sedikit LG) */}
       {pageCount === 1 && (
         <div className="pdf-page flex flex-col justify-between">
           <div className="space-y-4">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b-2 border-slate-900 pb-3">
-              <div className="flex items-center gap-4">
-                {effLogoUrl ? (
-                  <img 
-                    src={effLogoUrl} 
-                    alt="Lazuardi Elementary Logo" 
-                    className="h-12 max-w-[180px] object-contain"
-                    crossOrigin={effLogoUrl.startsWith("data:") ? undefined : "anonymous"}
-                  />
-                ) : null}
-              </div>
-              <div className="text-right space-y-0.5">
-                <h1 className="text-base font-black tracking-tight text-slate-900 uppercase">
-                  STUDENT'S PROGRESS REPORT
-                </h1>
-                <p className="text-xs font-bold text-slate-700">
-                  Lazuardi GCS - Elementary
-                </p>
-                <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
-                  Year {effAcademicYear}, Mid Term {effTermRoman}
-                </p>
-              </div>
+            {/* Header: Logo Only */}
+            <div className="flex items-center justify-start border-b border-slate-200 pb-2">
+              {effLogoUrl ? (
+                <img 
+                  src={effLogoUrl} 
+                  alt="Logo" 
+                  className="h-10 max-w-[150px] object-contain"
+                />
+              ) : null}
             </div>
 
             {/* Student Identity Grid - No Date */}
-            <div className="grid grid-cols-3 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200 text-[10.5px]">
-              <div className="flex flex-col">
-                <span className="text-[9px] font-bold text-slate-500 uppercase">Student's Name</span>
-                <span className="font-extrabold text-slate-900 text-xs mt-0.5">{studentName}</span>
+            <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200 text-[10.5px]">
+              <div className="space-y-1">
+                <div className="flex">
+                  <span className="w-24 font-bold text-slate-500 uppercase text-[9px]">Student's Name</span>
+                  <span className="font-extrabold text-slate-900">: {studentName}</span>
+                </div>
+                <div className="flex">
+                  <span className="w-24 font-bold text-slate-500 uppercase text-[9px]">NISN</span>
+                  <span className="font-bold text-slate-800">: {studentNisn}</span>
+                </div>
               </div>
-              <div className="flex flex-col">
-                <span className="text-[9px] font-bold text-slate-500 uppercase">NISN</span>
-                <span className="font-bold text-slate-800 text-xs mt-0.5">{studentNisn}</span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[9px] font-bold text-slate-500 uppercase">Class</span>
-                <span className="font-extrabold text-slate-900 text-xs mt-0.5">{className}</span>
+              <div className="space-y-1">
+                <div className="flex">
+                  <span className="w-20 font-bold text-slate-500 uppercase text-[9px]">Class</span>
+                  <span className="font-extrabold text-slate-900">: {className}</span>
+                </div>
+                <div className="flex">
+                  <span className="w-20 font-bold text-slate-500 uppercase text-[9px]">Period</span>
+                  <span className="font-bold text-slate-800">: Year {effAcademicYear}, Mid Term {effTermRoman}</span>
+                </div>
               </div>
             </div>
 
@@ -465,7 +493,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
               <h2 className="text-[10px] font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-0.5">
                 SECTION 1: SUBJECTS AND LEARNING GOALS
               </h2>
-              {renderSubjectTable(academicSubjects)}
+              {renderSubjectTable(academicSubjects, 1)}
             </div>
 
             {/* General Comments */}
@@ -473,7 +501,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
               <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-0.5">
                 General Comments :
               </h3>
-              <div className="p-3 border border-slate-900 rounded-lg bg-slate-50/50 text-[10px] leading-relaxed font-medium whitespace-pre-wrap text-slate-800 min-h-[60px]">
+              <div className="p-3 border border-slate-900 rounded-lg bg-slate-50/50 text-[10px] leading-relaxed font-medium whitespace-pre-wrap text-slate-800 min-h-[50px]">
                 {effGeneralComment || <span className="text-slate-400 italic">Belum ada komentar.</span>}
               </div>
             </div>
@@ -519,44 +547,50 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
               <p className="text-[10px] font-bold text-slate-900 mt-0.5">Acknowledged by,</p>
             </div>
 
-            <div className="grid grid-cols-3 gap-4 pt-1">
-              <div className="flex flex-col justify-between min-h-[90px]">
-                <span className="font-bold text-slate-700 uppercase tracking-wide text-[8.5px]">{effPrincipalTitle}</span>
-                <div className="h-10 flex items-center justify-start">
+            {/* Signature Grid */}
+            <div className="signature-grid">
+              <div className="text-center">
+                <span className="font-black text-slate-700 uppercase tracking-wider text-[9px] block mb-1">{effPrincipalTitle}</span>
+                <div className="signature-image-slot">
                   {isValidPrincipalSignature ? (
-                    <img src={effPrincipalSignatureUrl} alt="Signature" className="h-10 max-w-[120px] object-contain" />
-                  ) : <div className="h-8 w-24 border-b border-slate-200"></div>}
+                    <img src={effPrincipalSignatureUrl} alt="Signature" />
+                  ) : null}
                 </div>
-                <div>
-                  <p className="font-bold text-slate-900 text-[10px] underline">{effPrincipalName}</p>
+                <div className="border-t border-slate-900 pt-1 mt-1 text-center">
+                  <p className="font-extrabold text-slate-900 text-[10px]">{effPrincipalName}</p>
                   {effPrincipalNiy && <p className="text-[8.5px] text-slate-500">NIY: {effPrincipalNiy}</p>}
                 </div>
               </div>
 
-              <div className="flex flex-col justify-between min-h-[90px]">
-                <span className="font-bold text-slate-700 uppercase tracking-wide text-[8.5px]">Homeroom Teacher</span>
-                <div className="h-10 flex items-center justify-start">
+              <div className="text-center">
+                <span className="font-black text-slate-700 uppercase tracking-wider text-[9px] block mb-1">Homeroom Teacher</span>
+                <div className="signature-image-slot">
                   {isValidHomeroomSignature ? (
-                    <img src={effHomeroomSignatureUrl} alt="Signature" className="h-10 max-w-[120px] object-contain" />
-                  ) : <div className="h-8 w-24 border-b border-slate-200"></div>}
+                    <img src={effHomeroomSignatureUrl} alt="Signature" />
+                  ) : null}
                 </div>
-                <div>
-                  <p className="font-bold text-slate-900 text-[10px] underline">{effHomeroomName}</p>
+                <div className="border-t border-slate-900 pt-1 mt-1 text-center">
+                  <p className="font-extrabold text-slate-900 text-[10px]">{effHomeroomName}</p>
                   {effHomeroomNiy && <p className="text-[8.5px] text-slate-500">NIY: {effHomeroomNiy}</p>}
                 </div>
               </div>
 
-              <div className="flex flex-col justify-between min-h-[90px]">
-                <span className="font-bold text-slate-700 uppercase tracking-wide text-[8.5px]">Parent</span>
-                <div className="h-10 flex items-end justify-start pb-1">
-                  <div className="w-28 border-b border-dashed border-slate-400"></div>
+              <div className="text-center">
+                <span className="font-black text-slate-700 uppercase tracking-wider text-[9px] block mb-1">Parent</span>
+                <div className="signature-image-slot">
+                  {/* Empty Parent signature space */}
                 </div>
-                <div>
-                  <p className="font-bold text-slate-800 text-[10px]">&nbsp;</p>
-                  <p className="text-[8.5px] text-slate-500">&nbsp;</p>
+                <div className="border-t border-slate-900 pt-1 mt-1 text-center">
+                  <p className="font-extrabold text-slate-900 text-[10px]">&nbsp;</p>
+                  <p className="text-[8.5px] text-slate-500 font-extrabold">Parent / Guardian</p>
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Absolute page footer */}
+          <div className="absolute-footer">
+            {getFooterHTML(1)}
           </div>
         </div>
       )}
@@ -565,46 +599,40 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
       {pageCount === 2 && (
         <>
           {/* PAGE 1 */}
-          <div className="pdf-page">
+          <div className="pdf-page flex flex-col justify-between">
             <div className="space-y-4">
-              {/* Header */}
-              <div className="flex items-center justify-between border-b-2 border-slate-900 pb-3">
-                <div className="flex items-center gap-4">
-                  {effLogoUrl ? (
-                    <img 
-                      src={effLogoUrl} 
-                      alt="Lazuardi Elementary Logo" 
-                      className="h-12 max-w-[180px] object-contain"
-                      crossOrigin={effLogoUrl.startsWith("data:") ? undefined : "anonymous"}
-                    />
-                  ) : null}
-                </div>
-                <div className="text-right space-y-0.5">
-                  <h1 className="text-base font-black tracking-tight text-slate-900 uppercase">
-                    STUDENT'S PROGRESS REPORT
-                  </h1>
-                  <p className="text-xs font-bold text-slate-700">
-                    Lazuardi GCS - Elementary
-                  </p>
-                  <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
-                    Year {effAcademicYear}, Mid Term {effTermRoman}
-                  </p>
-                </div>
+              {/* Header: Logo Only */}
+              <div className="flex items-center justify-start border-b border-slate-200 pb-2">
+                {effLogoUrl ? (
+                  <img 
+                    src={effLogoUrl} 
+                    alt="Logo" 
+                    className="h-10 max-w-[150px] object-contain"
+                  />
+                ) : null}
               </div>
 
-              {/* Identity */}
-              <div className="grid grid-cols-3 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200 text-[10.5px]">
-                <div className="flex flex-col">
-                  <span className="text-[9px] font-bold text-slate-500 uppercase">Student's Name</span>
-                  <span className="font-extrabold text-slate-900 text-xs mt-0.5">{studentName}</span>
+              {/* Student Identity Grid - No Date */}
+              <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200 text-[10.5px]">
+                <div className="space-y-1">
+                  <div className="flex">
+                    <span className="w-24 font-bold text-slate-500 uppercase text-[9px]">Student's Name</span>
+                    <span className="font-extrabold text-slate-900">: {studentName}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="w-24 font-bold text-slate-500 uppercase text-[9px]">NISN</span>
+                    <span className="font-bold text-slate-800">: {studentNisn}</span>
+                  </div>
                 </div>
-                <div className="flex flex-col">
-                  <span className="text-[9px] font-bold text-slate-500 uppercase">NISN</span>
-                  <span className="font-bold text-slate-800 text-xs mt-0.5">{studentNisn}</span>
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-[9px] font-bold text-slate-500 uppercase">Class</span>
-                  <span className="font-extrabold text-slate-900 text-xs mt-0.5">{className}</span>
+                <div className="space-y-1">
+                  <div className="flex">
+                    <span className="w-20 font-bold text-slate-500 uppercase text-[9px]">Class</span>
+                    <span className="font-extrabold text-slate-900">: {className}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="w-20 font-bold text-slate-500 uppercase text-[9px]">Period</span>
+                    <span className="font-bold text-slate-800">: Year {effAcademicYear}, Mid Term {effTermRoman}</span>
+                  </div>
                 </div>
               </div>
 
@@ -613,25 +641,28 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                 <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
                   SECTION 1: SUBJECTS AND LEARNING GOALS
                 </h2>
-                {renderSubjectTable(academicSubjects, 1, 1)}
+                {renderSubjectTable(academicSubjects, 1)}
               </div>
+            </div>
+
+            {/* Absolute page footer */}
+            <div className="absolute-footer">
+              {getFooterHTML(1)}
             </div>
           </div>
 
           {/* PAGE 2 */}
           <div className="pdf-page flex flex-col justify-between">
             <div className="space-y-4">
-              {/* Mini Header Page 2 */}
-              <div className="flex items-center justify-between border-b border-slate-300 pb-2 mb-2">
-                <div className="flex items-center">
-                  {effLogoUrl && (
-                    <img src={effLogoUrl} alt="Lazuardi" className="h-8 max-w-[120px] object-contain" />
-                  )}
-                </div>
-                <div className="text-right">
-                  <span className="text-[9px] font-black text-slate-500 uppercase tracking-wider">Progress Report — Year {effAcademicYear}</span>
-                  <p className="text-[10px] font-bold text-slate-900 mt-0.5">{studentName} • {className}</p>
-                </div>
+              {/* Header: Logo Only */}
+              <div className="flex items-center justify-start border-b border-slate-200 pb-2">
+                {effLogoUrl ? (
+                  <img 
+                    src={effLogoUrl} 
+                    alt="Logo" 
+                    className="h-10 max-w-[150px] object-contain"
+                  />
+                ) : null}
               </div>
 
               {/* Section 2 Projects (if any) */}
@@ -640,22 +671,22 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                   <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
                     SECTION 2: PROJECTS AND LEARNING GOALS
                   </h2>
-                  {renderSubjectTable(projectSubjects, 1, 1)}
+                  {renderSubjectTable(projectSubjects, 1)}
                 </div>
               )}
 
               {/* General Comments */}
-              <div className="space-y-2 keep-together">
+              <div className="space-y-1 keep-together">
                 <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
                   General Comments :
                 </h3>
-                <div className="p-4 border border-slate-900 rounded-lg bg-slate-50/50 text-[11px] leading-relaxed font-medium whitespace-pre-wrap text-slate-800 min-h-[80px]">
+                <div className="p-4 border border-slate-900 rounded-lg bg-slate-50/50 text-[11px] leading-relaxed font-medium whitespace-pre-wrap text-slate-800 min-h-[60px]">
                   {effGeneralComment || <span className="text-slate-400 italic">Belum ada komentar.</span>}
                 </div>
               </div>
 
               {/* Legend / Note */}
-              <div className="space-y-2 keep-together">
+              <div className="space-y-1 keep-together">
                 <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-900 border-b border-slate-200 pb-1">
                   Note :
                 </h3>
@@ -667,72 +698,78 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
               </div>
 
               {/* Attendance */}
-              <div className="space-y-2 keep-together">
+              <div className="space-y-1 keep-together">
                 <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
                   ATTENDANCE RECAP
                 </h3>
                 <div className="grid grid-cols-3 gap-3">
-                  <div className="border border-slate-300 p-2.5 rounded-lg text-center bg-slate-50">
-                    <span className="block text-[9.5px] font-bold text-slate-500 uppercase">Sakit</span>
+                  <div className="border border-slate-300 p-2 rounded-lg text-center bg-slate-50">
+                    <span className="block text-[9px] font-bold text-slate-500 uppercase">Sakit</span>
                     <span className="text-sm font-extrabold text-slate-900">{effAttendance?.sakit ?? 0} hari</span>
                   </div>
-                  <div className="border border-slate-300 p-2.5 rounded-lg text-center bg-slate-50">
-                    <span className="block text-[9.5px] font-bold text-slate-500 uppercase">Izin</span>
+                  <div className="border border-slate-300 p-2 rounded-lg text-center bg-slate-50">
+                    <span className="block text-[9px] font-bold text-slate-500 uppercase">Izin</span>
                     <span className="text-sm font-extrabold text-slate-900">{effAttendance?.izin ?? 0} hari</span>
                   </div>
-                  <div className="border border-slate-300 p-2.5 rounded-lg text-center bg-slate-50">
-                    <span className="block text-[9.5px] font-bold text-slate-500 uppercase">Tanpa Keterangan</span>
+                  <div className="border border-slate-300 p-2 rounded-lg text-center bg-slate-50">
+                    <span className="block text-[9px] font-bold text-slate-500 uppercase">Tanpa Keterangan</span>
                     <span className="text-sm font-extrabold text-slate-900">{effAttendance?.tanpaKeterangan ?? 0} hari</span>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Footer signatures */}
-            <div className="space-y-4 keep-together text-left pt-4 border-t border-slate-200">
+            {/* Footer signatures - directly under attendance recap with spacing */}
+            <div className="space-y-4 keep-together text-left pt-3 border-t border-slate-200">
               <div>
                 <p className="text-xs text-slate-900">Depok, {formattedDate}</p>
                 <p className="text-xs font-bold text-slate-900 mt-1">Acknowledged by,</p>
               </div>
 
-              <div className="grid grid-cols-3 gap-8 pt-2">
-                <div className="flex flex-col justify-between min-h-[110px]">
-                  <span className="font-bold text-slate-700 uppercase tracking-wide text-[9.5px]">{effPrincipalTitle}</span>
-                  <div className="h-12 flex items-center justify-start">
+              {/* Signature Grid */}
+              <div className="signature-grid">
+                <div className="text-center">
+                  <span className="font-black text-slate-700 uppercase tracking-wider text-[9.5px] block mb-1">{effPrincipalTitle}</span>
+                  <div className="signature-image-slot">
                     {isValidPrincipalSignature ? (
-                      <img src={effPrincipalSignatureUrl} alt="Signature" className="h-12 max-w-[130px] object-contain" />
-                    ) : <div className="h-10 w-28 border-b border-slate-200"></div>}
+                      <img src={effPrincipalSignatureUrl} alt="Signature" />
+                    ) : null}
                   </div>
-                  <div>
-                    <p className="font-bold text-slate-900 text-[11px] underline">{effPrincipalName}</p>
+                  <div className="border-t border-slate-900 pt-1 mt-1 text-center">
+                    <p className="font-extrabold text-slate-900 text-[11px]">{effPrincipalName}</p>
                     {effPrincipalNiy && <p className="text-[9px] text-slate-500">NIY: {effPrincipalNiy}</p>}
                   </div>
                 </div>
 
-                <div className="flex flex-col justify-between min-h-[110px]">
-                  <span className="font-bold text-slate-700 uppercase tracking-wide text-[9.5px]">Homeroom Teacher</span>
-                  <div className="h-12 flex items-center justify-start">
+                <div className="text-center">
+                  <span className="font-black text-slate-700 uppercase tracking-wider text-[9.5px] block mb-1">Homeroom Teacher</span>
+                  <div className="signature-image-slot">
                     {isValidHomeroomSignature ? (
-                      <img src={effHomeroomSignatureUrl} alt="Signature" className="h-12 max-w-[130px] object-contain" />
-                    ) : <div className="h-10 w-28 border-b border-slate-200"></div>}
+                      <img src={effHomeroomSignatureUrl} alt="Signature" />
+                    ) : null}
                   </div>
-                  <div>
-                    <p className="font-bold text-slate-900 text-[11px] underline">{effHomeroomName}</p>
+                  <div className="border-t border-slate-900 pt-1 mt-1 text-center">
+                    <p className="font-extrabold text-slate-900 text-[11px]">{effHomeroomName}</p>
                     {effHomeroomNiy && <p className="text-[9px] text-slate-500">NIY: {effHomeroomNiy}</p>}
                   </div>
                 </div>
 
-                <div className="flex flex-col justify-between min-h-[110px]">
-                  <span className="font-bold text-slate-700 uppercase tracking-wide text-[9.5px]">Parent</span>
-                  <div className="h-12 flex items-end justify-start pb-2">
-                    <div className="w-32 border-b border-dashed border-slate-400"></div>
+                <div className="text-center">
+                  <span className="font-black text-slate-700 uppercase tracking-wider text-[9.5px] block mb-1">Parent</span>
+                  <div className="signature-image-slot">
+                    {/* Empty Parent signature space */}
                   </div>
-                  <div>
-                    <p className="font-bold text-slate-800 text-[11px]">&nbsp;</p>
-                    <p className="text-[9px] text-slate-500">&nbsp;</p>
+                  <div className="border-t border-slate-900 pt-1 mt-1 text-center">
+                    <p className="font-extrabold text-slate-900 text-[11px]">&nbsp;</p>
+                    <p className="text-[9px] text-slate-500 font-extrabold">Parent / Guardian</p>
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Absolute page footer */}
+            <div className="absolute-footer">
+              {getFooterHTML(2)}
             </div>
           </div>
         </>
@@ -742,46 +779,40 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
       {pageCount === 3 && (
         <>
           {/* PAGE 1 */}
-          <div className="pdf-page">
+          <div className="pdf-page flex flex-col justify-between">
             <div className="space-y-4">
-              {/* Header */}
-              <div className="flex items-center justify-between border-b-2 border-slate-900 pb-3">
-                <div className="flex items-center gap-4">
-                  {effLogoUrl ? (
-                    <img 
-                      src={effLogoUrl} 
-                      alt="Lazuardi Elementary Logo" 
-                      className="h-12 max-w-[180px] object-contain"
-                      crossOrigin={effLogoUrl.startsWith("data:") ? undefined : "anonymous"}
-                    />
-                  ) : null}
-                </div>
-                <div className="text-right space-y-0.5">
-                  <h1 className="text-base font-black tracking-tight text-slate-900 uppercase">
-                    STUDENT'S PROGRESS REPORT
-                  </h1>
-                  <p className="text-xs font-bold text-slate-700">
-                    Lazuardi GCS - Elementary
-                  </p>
-                  <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
-                    Year {effAcademicYear}, Mid Term {effTermRoman}
-                  </p>
-                </div>
+              {/* Header: Logo Only */}
+              <div className="flex items-center justify-start border-b border-slate-200 pb-2">
+                {effLogoUrl ? (
+                  <img 
+                    src={effLogoUrl} 
+                    alt="Logo" 
+                    className="h-10 max-w-[150px] object-contain"
+                  />
+                ) : null}
               </div>
 
-              {/* Identity */}
-              <div className="grid grid-cols-3 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200 text-[10.5px]">
-                <div className="flex flex-col">
-                  <span className="text-[9px] font-bold text-slate-500 uppercase">Student's Name</span>
-                  <span className="font-extrabold text-slate-900 text-xs mt-0.5">{studentName}</span>
+              {/* Student Identity Grid - No Date */}
+              <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200 text-[10.5px]">
+                <div className="space-y-1">
+                  <div className="flex">
+                    <span className="w-24 font-bold text-slate-500 uppercase text-[9px]">Student's Name</span>
+                    <span className="font-extrabold text-slate-900">: {studentName}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="w-24 font-bold text-slate-500 uppercase text-[9px]">NISN</span>
+                    <span className="font-bold text-slate-800">: {studentNisn}</span>
+                  </div>
                 </div>
-                <div className="flex flex-col">
-                  <span className="text-[9px] font-bold text-slate-500 uppercase">NISN</span>
-                  <span className="font-bold text-slate-800 text-xs mt-0.5">{studentNisn}</span>
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-[9px] font-bold text-slate-500 uppercase">Class</span>
-                  <span className="font-extrabold text-slate-900 text-xs mt-0.5">{className}</span>
+                <div className="space-y-1">
+                  <div className="flex">
+                    <span className="w-20 font-bold text-slate-500 uppercase text-[9px]">Class</span>
+                    <span className="font-extrabold text-slate-900">: {className}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="w-20 font-bold text-slate-500 uppercase text-[9px]">Period</span>
+                    <span className="font-bold text-slate-800">: Year {effAcademicYear}, Mid Term {effTermRoman}</span>
+                  </div>
                 </div>
               </div>
 
@@ -790,25 +821,28 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                 <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
                   SECTION 1: SUBJECTS AND LEARNING GOALS
                 </h2>
-                {renderSubjectTable(academicSubjects.slice(0, 5), 1, 1)}
+                {renderSubjectTable(academicSubjects.slice(0, 5), 1)}
               </div>
+            </div>
+
+            {/* Absolute page footer */}
+            <div className="absolute-footer">
+              {getFooterHTML(1)}
             </div>
           </div>
 
           {/* PAGE 2 */}
-          <div className="pdf-page">
+          <div className="pdf-page flex flex-col justify-between">
             <div className="space-y-4">
-              {/* Mini Header Page 2 */}
-              <div className="flex items-center justify-between border-b border-slate-300 pb-2 mb-2">
-                <div className="flex items-center">
-                  {effLogoUrl && (
-                    <img src={effLogoUrl} alt="Lazuardi" className="h-8 max-w-[120px] object-contain" />
-                  )}
-                </div>
-                <div className="text-right">
-                  <span className="text-[9px] font-black text-slate-500 uppercase tracking-wider">Progress Report — Year {effAcademicYear}</span>
-                  <p className="text-[10px] font-bold text-slate-900 mt-0.5">{studentName} • {className}</p>
-                </div>
+              {/* Header: Logo Only */}
+              <div className="flex items-center justify-start border-b border-slate-200 pb-2">
+                {effLogoUrl ? (
+                  <img 
+                    src={effLogoUrl} 
+                    alt="Logo" 
+                    className="h-10 max-w-[150px] object-contain"
+                  />
+                ) : null}
               </div>
 
               {/* Section 1 Table Part 2 (Remaining Academic Subjects, if any) */}
@@ -817,7 +851,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                   <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
                     SECTION 1: SUBJECTS AND LEARNING GOALS (CONTINUED)
                   </h2>
-                  {renderSubjectTable(academicSubjects.slice(5), getGoalsCount(academicSubjects.slice(0, 5)) + 1, 6)}
+                  {renderSubjectTable(academicSubjects.slice(5), 6)}
                 </div>
               )}
 
@@ -827,40 +861,43 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                   <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
                     SECTION 2: PROJECTS AND LEARNING GOALS
                   </h2>
-                  {renderSubjectTable(projectSubjects, 1, 1)}
+                  {renderSubjectTable(projectSubjects, 1)}
                 </div>
               )}
+            </div>
+
+            {/* Absolute page footer */}
+            <div className="absolute-footer">
+              {getFooterHTML(2)}
             </div>
           </div>
 
           {/* PAGE 3 */}
           <div className="pdf-page flex flex-col justify-between">
             <div className="space-y-4">
-              {/* Mini Header Page 3 */}
-              <div className="flex items-center justify-between border-b border-slate-300 pb-2 mb-2">
-                <div className="flex items-center">
-                  {effLogoUrl && (
-                    <img src={effLogoUrl} alt="Lazuardi" className="h-8 max-w-[120px] object-contain" />
-                  )}
-                </div>
-                <div className="text-right">
-                  <span className="text-[9px] font-black text-slate-500 uppercase tracking-wider">Progress Report — Year {effAcademicYear}</span>
-                  <p className="text-[10px] font-bold text-slate-900 mt-0.5">{studentName} • {className}</p>
-                </div>
+              {/* Header: Logo Only */}
+              <div className="flex items-center justify-start border-b border-slate-200 pb-2">
+                {effLogoUrl ? (
+                  <img 
+                    src={effLogoUrl} 
+                    alt="Logo" 
+                    className="h-10 max-w-[150px] object-contain"
+                  />
+                ) : null}
               </div>
 
               {/* General Comments */}
-              <div className="space-y-2 keep-together">
+              <div className="space-y-1 keep-together">
                 <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
                   General Comments :
                 </h3>
-                <div className="p-4 border border-slate-900 rounded-lg bg-slate-50/50 text-[11px] leading-relaxed font-medium whitespace-pre-wrap text-slate-800 min-h-[100px]">
+                <div className="p-4 border border-slate-900 rounded-lg bg-slate-50/50 text-[11px] leading-relaxed font-medium whitespace-pre-wrap text-slate-800 min-h-[80px]">
                   {effGeneralComment || <span className="text-slate-400 italic">Belum ada komentar.</span>}
                 </div>
               </div>
 
               {/* Legend / Note */}
-              <div className="space-y-2 keep-together">
+              <div className="space-y-1 keep-together">
                 <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-900 border-b border-slate-200 pb-1">
                   Note :
                 </h3>
@@ -872,72 +909,78 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
               </div>
 
               {/* Attendance */}
-              <div className="space-y-2 keep-together">
+              <div className="space-y-1 keep-together">
                 <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
                   ATTENDANCE RECAP
                 </h3>
                 <div className="grid grid-cols-3 gap-3">
                   <div className="border border-slate-300 p-2.5 rounded-lg text-center bg-slate-50">
-                    <span className="block text-[9.5px] font-bold text-slate-500 uppercase">Sakit</span>
+                    <span className="block text-[9px] font-bold text-slate-500 uppercase">Sakit</span>
                     <span className="text-sm font-extrabold text-slate-900">{effAttendance?.sakit ?? 0} hari</span>
                   </div>
                   <div className="border border-slate-300 p-2.5 rounded-lg text-center bg-slate-50">
-                    <span className="block text-[9.5px] font-bold text-slate-500 uppercase">Izin</span>
+                    <span className="block text-[9px] font-bold text-slate-500 uppercase">Izin</span>
                     <span className="text-sm font-extrabold text-slate-900">{effAttendance?.izin ?? 0} hari</span>
                   </div>
                   <div className="border border-slate-300 p-2.5 rounded-lg text-center bg-slate-50">
-                    <span className="block text-[9.5px] font-bold text-slate-500 uppercase">Tanpa Keterangan</span>
+                    <span className="block text-[9px] font-bold text-slate-500 uppercase">Tanpa Keterangan</span>
                     <span className="text-sm font-extrabold text-slate-900">{effAttendance?.tanpaKeterangan ?? 0} hari</span>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Footer signatures */}
-            <div className="space-y-4 keep-together text-left pt-4 border-t border-slate-200">
+            {/* Footer signatures - directly under attendance recap with spacing */}
+            <div className="space-y-4 keep-together text-left pt-3 border-t border-slate-200">
               <div>
                 <p className="text-xs text-slate-900">Depok, {formattedDate}</p>
                 <p className="text-xs font-bold text-slate-900 mt-1">Acknowledged by,</p>
               </div>
 
-              <div className="grid grid-cols-3 gap-8 pt-2">
-                <div className="flex flex-col justify-between min-h-[110px]">
-                  <span className="font-bold text-slate-700 uppercase tracking-wide text-[9.5px]">{effPrincipalTitle}</span>
-                  <div className="h-12 flex items-center justify-start">
+              {/* Signature Grid */}
+              <div className="signature-grid">
+                <div className="text-center">
+                  <span className="font-black text-slate-700 uppercase tracking-wider text-[9.5px] block mb-1">{effPrincipalTitle}</span>
+                  <div className="signature-image-slot">
                     {isValidPrincipalSignature ? (
-                      <img src={effPrincipalSignatureUrl} alt="Signature" className="h-12 max-w-[130px] object-contain" />
-                    ) : <div className="h-10 w-28 border-b border-slate-200"></div>}
+                      <img src={effPrincipalSignatureUrl} alt="Signature" />
+                    ) : null}
                   </div>
-                  <div>
-                    <p className="font-bold text-slate-900 text-[11px] underline">{effPrincipalName}</p>
+                  <div className="border-t border-slate-900 pt-1 mt-1 text-center">
+                    <p className="font-extrabold text-slate-900 text-[11px]">{effPrincipalName}</p>
                     {effPrincipalNiy && <p className="text-[9px] text-slate-500">NIY: {effPrincipalNiy}</p>}
                   </div>
                 </div>
 
-                <div className="flex flex-col justify-between min-h-[110px]">
-                  <span className="font-bold text-slate-700 uppercase tracking-wide text-[9.5px]">Homeroom Teacher</span>
-                  <div className="h-12 flex items-center justify-start">
+                <div className="text-center">
+                  <span className="font-black text-slate-700 uppercase tracking-wider text-[9.5px] block mb-1">Homeroom Teacher</span>
+                  <div className="signature-image-slot">
                     {isValidHomeroomSignature ? (
-                      <img src={effHomeroomSignatureUrl} alt="Signature" className="h-12 max-w-[130px] object-contain" />
-                    ) : <div className="h-10 w-28 border-b border-slate-200"></div>}
+                      <img src={effHomeroomSignatureUrl} alt="Signature" />
+                    ) : null}
                   </div>
-                  <div>
-                    <p className="font-bold text-slate-900 text-[11px] underline">{effHomeroomName}</p>
+                  <div className="border-t border-slate-900 pt-1 mt-1 text-center">
+                    <p className="font-extrabold text-slate-900 text-[11px]">{effHomeroomName}</p>
                     {effHomeroomNiy && <p className="text-[9px] text-slate-500">NIY: {effHomeroomNiy}</p>}
                   </div>
                 </div>
 
-                <div className="flex flex-col justify-between min-h-[110px]">
-                  <span className="font-bold text-slate-700 uppercase tracking-wide text-[9.5px]">Parent</span>
-                  <div className="h-12 flex items-end justify-start pb-2">
-                    <div className="w-32 border-b border-dashed border-slate-400"></div>
+                <div className="text-center">
+                  <span className="font-black text-slate-700 uppercase tracking-wider text-[9.5px] block mb-1">Parent</span>
+                  <div className="signature-image-slot">
+                    {/* Empty Parent signature space */}
                   </div>
-                  <div>
-                    <p className="font-bold text-slate-800 text-[11px]">&nbsp;</p>
-                    <p className="text-[9px] text-slate-500">&nbsp;</p>
+                  <div className="border-t border-slate-900 pt-1 mt-1 text-center">
+                    <p className="font-extrabold text-slate-900 text-[11px]">&nbsp;</p>
+                    <p className="text-[9px] text-slate-500 font-extrabold">Parent / Guardian</p>
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Absolute page footer */}
+            <div className="absolute-footer">
+              {getFooterHTML(3)}
             </div>
           </div>
         </>
