@@ -1,8 +1,10 @@
 import * as React from 'react';
 import { 
   Sparkles, Save, CheckCircle2, AlertCircle, Wand2, 
-  Plus, X, Lock, RefreshCw, Check, Clock, MessageSquare, ShieldCheck, User as UserIcon
+  Plus, X, Lock, RefreshCw, Check, Clock, MessageSquare, ShieldCheck, User as UserIcon, Upload
 } from 'lucide-react';
+import { doc, writeBatch } from 'firebase/firestore';
+import { db } from '../../../lib/firebase';
 import { toast } from 'sonner';
 import { 
   ELEM_STRENGTH_PROGRESS_BANK, 
@@ -78,6 +80,197 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
   const [polishingAI, setPolishingAI] = React.useState<boolean>(false);
   const [saving, setSaving] = React.useState<boolean>(false);
   const [submittingForReview, setSubmittingForReview] = React.useState<boolean>(false);
+
+  // Import from Sheets states
+  interface ImportRow {
+    index: number;
+    rawName: string;
+    rawNickname: string;
+    rawComment: string;
+    status: 'VALID' | 'NAMA_TIDAK_DITEMUKAN' | 'AMBIGU' | 'KOMENTAR_KOSONG' | 'SUDAH_ADA_DRAFT' | 'WORKFLOW_LOCKED';
+    matchedStudent: Student | null;
+    existingStatus?: string;
+    checked: boolean;
+  }
+
+  const [isImportModalOpen, setIsImportModalOpen] = React.useState<boolean>(false);
+  const [rawInput, setRawInput] = React.useState<string>('');
+  const [parsedRows, setParsedRows] = React.useState<ImportRow[]>([]);
+  const [allowOverwrite, setAllowOverwrite] = React.useState<boolean>(false);
+  const [importing, setImporting] = React.useState<boolean>(false);
+
+  const handleParseInput = () => {
+    if (!rawInput.trim()) {
+      toast.error('Silakan paste data terlebih dahulu.');
+      return;
+    }
+
+    const lines = rawInput.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
+    if (lines.length === 0) {
+      toast.error('Tidak ada data yang ditemukan.');
+      return;
+    }
+
+    // Try splitting by tab first, fallback to comma/semicolon if tab doesn't produce multiple columns
+    let isTsv = true;
+    let headers = lines[0].split('\t');
+    if (headers.length <= 1) {
+      headers = lines[0].split(/,|;/);
+      isTsv = false;
+    }
+
+    // Normalise helpers
+    const cleanHeader = (h: string) => h.trim().toLowerCase().replace(/[\s_\-]/g, '');
+    const isFullnameHeader = (h: string) => ['namalengkap', 'fullname', 'nama', 'studentname'].includes(cleanHeader(h));
+    const isNicknameHeader = (h: string) => ['namapanggilan', 'nickname', 'nicknam', 'nickname'].includes(cleanHeader(h));
+    const isCommentHeader = (h: string) => ['komentar', 'narrativereport', 'narrative', 'generalcomment', 'catatanperkembangan', 'finalcomment'].includes(cleanHeader(h));
+
+    let fullnameIndex = -1;
+    let nicknameIndex = -1;
+    let commentIndex = -1;
+
+    // Search header row
+    headers.forEach((h, idx) => {
+      if (isFullnameHeader(h)) fullnameIndex = idx;
+      else if (isNicknameHeader(h)) nicknameIndex = idx;
+      else if (isCommentHeader(h)) commentIndex = idx;
+    });
+
+    let dataLines = lines.slice(1);
+    
+    // If no header detected, alert and stop
+    if (fullnameIndex === -1 || commentIndex === -1) {
+      toast.error("Header kolom tidak terdeteksi. Pastikan baris pertama tabel memiliki judul 'Nama Lengkap' dan 'Komentar'.");
+      return;
+    }
+
+    const normalizeName = (n: string) => {
+      if (!n) return '';
+      return n.trim().toLowerCase().replace(/\s+/g, ' ');
+    };
+
+    const rows: ImportRow[] = dataLines.map((line, idx) => {
+      const cells = isTsv ? line.split('\t') : line.split(/,|;/);
+      const rawName = (cells[fullnameIndex] || '').trim();
+      const rawNickname = nicknameIndex !== -1 ? (cells[nicknameIndex] || '').trim() : '';
+      const rawComment = (cells[commentIndex] || '').trim();
+
+      let status: ImportRow['status'] = 'VALID';
+      let matchedStudent: Student | null = null;
+      let existingStatus = 'DRAFT';
+
+      const targetNormal = normalizeName(rawName);
+      const matches = safeStudents.filter(s => normalizeName(s.name) === targetNormal);
+
+      if (matches.length === 1) {
+        matchedStudent = matches[0];
+      } else if (matches.length > 1) {
+        status = 'AMBIGU';
+      } else {
+        status = 'NAMA_TIDAK_DITEMUKAN';
+      }
+
+      if (status === 'VALID' && !rawComment) {
+        status = 'KOMENTAR_KOSONG';
+      }
+
+      if (status === 'VALID' && matchedStudent) {
+        const sData = safeStudentDataMap[matchedStudent.id];
+        const existingComment = sData?.generalComment?.finalComment || sData?.generalComment?.aiDraft;
+        const reviewStatus = sData?.generalCommentReviewStatus || 'DRAFT';
+        existingStatus = reviewStatus;
+
+        if (existingComment) {
+          if (reviewStatus === 'DRAFT' || reviewStatus === 'REVISION_REQUESTED') {
+            status = 'SUDAH_ADA_DRAFT';
+          } else {
+            status = 'WORKFLOW_LOCKED';
+          }
+        }
+      }
+
+      return {
+        index: idx + 2, // Excel row index is 1-based and includes header (idx + 2)
+        rawName,
+        rawNickname,
+        rawComment,
+        status,
+        matchedStudent,
+        existingStatus,
+        checked: status === 'VALID'
+      };
+    });
+
+    setParsedRows(rows);
+    toast.success(`Berhasil memproses ${rows.length} baris.`);
+  };
+
+  const handleSaveImport = async () => {
+    const selectedRows = parsedRows.filter(r => r.checked && (r.status === 'VALID' || (allowOverwrite && r.status === 'SUDAH_ADA_DRAFT')));
+    if (selectedRows.length === 0) {
+      toast.error('Tidak ada baris valid yang dicentang.');
+      return;
+    }
+
+    setImporting(true);
+    let successCount = 0;
+
+    try {
+      // Firebase Firestore limits batch to 500 writes
+      const batchSize = 400;
+      for (let i = 0; i < selectedRows.length; i += batchSize) {
+        const chunk = selectedRows.slice(i, i + batchSize);
+        const batch = writeBatch(db);
+
+        chunk.forEach(row => {
+          if (!row.matchedStudent) return;
+          const docId = `${row.matchedStudent.id}_${selectedYear.replace(/\//g, '_')}_S${selectedSemester}_T${selectedTerm}`;
+          const docRef = doc(db, 'elem_midterm_student_data', docId);
+
+          const existingData = safeStudentDataMap[row.matchedStudent.id];
+          const newPayload: any = {
+            id: docId,
+            studentId: row.matchedStudent.id,
+            studentName: row.matchedStudent.name,
+            classId: selectedClassId,
+            academicYear: selectedYear,
+            semester: selectedSemester,
+            midtermTerm: selectedTerm,
+            generalComment: {
+              studentName: row.matchedStudent.name,
+              nickname: row.rawNickname.trim() || row.matchedStudent.nickname || row.matchedStudent.name.split(' ')[0],
+              finalComment: row.rawComment.trim(),
+              isFinal: false,
+              strengths: existingData?.generalComment?.strengths || [],
+              achievements: existingData?.generalComment?.achievements || [],
+              needsImprovement: existingData?.generalComment?.needsImprovement || [],
+              manualNotes: existingData?.generalComment?.manualNotes || '',
+              aiDraft: existingData?.generalComment?.aiDraft || '',
+            },
+            generalCommentReviewStatus: 'DRAFT',
+            updatedAt: Date.now(),
+            updatedBy: currentUser?.uid || (currentUser as any)?.id || 'system'
+          };
+
+          batch.set(docRef, newPayload, { merge: true });
+        });
+
+        await batch.commit();
+        successCount += chunk.length;
+      }
+
+      toast.success(`Berhasil mengimpor ${successCount} komentar sebagai DRAFT.`);
+      setIsImportModalOpen(false);
+      setParsedRows([]);
+      setRawInput('');
+      await onRefreshData();
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Gagal memproses import: ' + err.message);
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const canEdit = currentUser ? (
     currentUser.role === 'SUPER_ADMIN' ||
@@ -414,11 +607,22 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
       {/* Left Sidebar: Students List */}
       <div className="lg:col-span-4 bg-white p-4 rounded-3xl border border-slate-200 shadow-xs flex flex-col h-full min-h-[500px]">
-        <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3 px-1">
-          <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
-            <UserIcon size={16} className="text-emerald-600" />
-            <span>Daftar Siswa ({safeStudents.length})</span>
-          </h3>
+        <div className="flex flex-col gap-2.5 pb-3 border-b border-slate-100 mb-3 px-1">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
+              <UserIcon size={16} className="text-emerald-600" />
+              <span>Daftar Siswa ({safeStudents.length})</span>
+            </h3>
+          </div>
+          {canEdit && (
+            <button
+              onClick={() => setIsImportModalOpen(true)}
+              className="w-full py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 hover:border-emerald-300 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+            >
+              <Upload size={14} />
+              <span>Import dari Google Sheets</span>
+            </button>
+          )}
         </div>
 
         <div className="space-y-1.5 overflow-y-auto max-h-[700px] flex-1 pr-1">
@@ -914,6 +1118,281 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
           </div>
         )}
       </div>
+
+      {/* Import Modal */}
+      {isImportModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-[2rem] w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl border border-slate-100 overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-6 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="p-2.5 bg-emerald-100 text-emerald-800 rounded-2xl flex items-center justify-center shadow-2xs">
+                  <Upload size={18} />
+                </span>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 uppercase tracking-tight">Import General Comments</h3>
+                  <p className="text-[11px] text-slate-500 font-bold mt-0.5 uppercase tracking-wide">
+                    Copy-Paste dari Google Sheets / Excel
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setIsImportModalOpen(false);
+                  setParsedRows([]);
+                  setRawInput('');
+                }}
+                className="p-2 hover:bg-slate-200 text-slate-400 hover:text-slate-700 rounded-xl transition-all cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 flex-1 overflow-y-auto space-y-6">
+              {parsedRows.length === 0 ? (
+                /* Step 1: Input Area */
+                <div className="space-y-4">
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 text-xs font-medium space-y-1.5 leading-relaxed">
+                    <p className="font-extrabold uppercase tracking-wide flex items-center gap-1.5">
+                      <AlertCircle size={14} />
+                      Petunjuk Format Tabel:
+                    </p>
+                    <p>
+                      Pastikan tabel Anda memiliki baris header (judul kolom) di bagian paling atas dengan kolom minimal wajib:
+                    </p>
+                    <ul className="list-disc pl-5 font-bold space-y-0.5">
+                      <li>Nama Lengkap (atau: Full Name, Nama, Student Name)</li>
+                      <li>Komentar (atau: Narrative Report, Narrative, General Comment, Catatan Perkembangan, Final Comment)</li>
+                    </ul>
+                    <p>Kolom opsional: <strong>Nama Panggilan</strong> (atau: Nickname, Nick Name).</p>
+                    <p>Contoh: Salin (Ctrl+C) seluruh baris dan kolom tabel Anda dari Google Sheets, lalu tempel (Ctrl+V) di area bawah.</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">
+                      Area Paste Data
+                    </label>
+                    <textarea
+                      value={rawInput}
+                      onChange={(e) => setRawInput(e.target.value)}
+                      placeholder="Tempel (Paste) baris-baris tabel Google Sheets Anda di sini..."
+                      rows={10}
+                      className="w-full text-xs p-4 bg-slate-50 border border-slate-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 font-mono leading-relaxed"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-end">
+                    <button
+                      onClick={handleParseInput}
+                      className="px-6 py-3 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold uppercase tracking-wider rounded-2xl shadow-sm cursor-pointer transition-all"
+                    >
+                      Proses & Pratinjau
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* Step 2: Preview Area */
+                <div className="space-y-6">
+                  {/* Summary Cards */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-center">
+                      <span className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Total Baris</span>
+                      <strong className="text-lg font-black text-slate-900">{parsedRows.length}</strong>
+                    </div>
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-center">
+                      <span className="block text-[10px] font-extrabold text-emerald-600 uppercase tracking-wider">Valid</span>
+                      <strong className="text-lg font-black text-emerald-800">
+                        {parsedRows.filter(r => r.status === 'VALID').length}
+                      </strong>
+                    </div>
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-center">
+                      <span className="block text-[10px] font-extrabold text-amber-600 uppercase tracking-wider">Sudah Ada Draft</span>
+                      <strong className="text-lg font-black text-amber-800">
+                        {parsedRows.filter(r => r.status === 'SUDAH_ADA_DRAFT').length}
+                      </strong>
+                    </div>
+                    <div className="p-3 bg-rose-50 border border-rose-100 rounded-xl text-center">
+                      <span className="block text-[10px] font-extrabold text-rose-600 uppercase tracking-wider">Tidak Cocok</span>
+                      <strong className="text-lg font-black text-rose-800">
+                        {parsedRows.filter(r => r.status === 'NAMA_TIDAK_DITEMUKAN').length}
+                      </strong>
+                    </div>
+                    <div className="p-3 bg-slate-100 border border-slate-200 rounded-xl text-center">
+                      <span className="block text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Ambigu</span>
+                      <strong className="text-lg font-black text-slate-700">
+                        {parsedRows.filter(r => r.status === 'AMBIGU').length}
+                      </strong>
+                    </div>
+                    <div className="p-3 bg-rose-50 border border-rose-100 rounded-xl text-center">
+                      <span className="block text-[10px] font-extrabold text-rose-600 tracking-wider">Terkunci</span>
+                      <strong className="text-lg font-black text-rose-800">
+                        {parsedRows.filter(r => r.status === 'WORKFLOW_LOCKED').length}
+                      </strong>
+                    </div>
+                  </div>
+
+                  {/* Overwrite Choice */}
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <h4 className="text-xs font-black text-slate-800 uppercase tracking-tight">Opsi Penanganan Data Ganda:</h4>
+                      <p className="text-[10px] font-medium text-slate-500 mt-0.5">Tentukan tindakan jika siswa di kelas aktif sudah memiliki catatan komentar.</p>
+                    </div>
+
+                    <div className="flex items-center gap-4">
+                      <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700">
+                        <input
+                          type="radio"
+                          name="overwriteOption"
+                          checked={!allowOverwrite}
+                          onChange={() => {
+                            setAllowOverwrite(false);
+                            // Uncheck all SUDAH_ADA_DRAFT
+                            setParsedRows(prev => prev.map(r => r.status === 'SUDAH_ADA_DRAFT' ? { ...r, checked: false } : r));
+                          }}
+                          className="text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <span>Lewati komentar yang sudah ada (Default)</span>
+                      </label>
+
+                      <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700">
+                        <input
+                          type="radio"
+                          name="overwriteOption"
+                          checked={allowOverwrite}
+                          onChange={() => {
+                            setAllowOverwrite(true);
+                            // Auto check all SUDAH_ADA_DRAFT as option is chosen
+                            setParsedRows(prev => prev.map(r => r.status === 'SUDAH_ADA_DRAFT' ? { ...r, checked: true } : r));
+                          }}
+                          className="text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <span className="text-rose-600">Timpa draft yang sudah ada</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Preview Table */}
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden max-h-[400px] overflow-y-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-black uppercase tracking-wider text-slate-500 sticky top-0 z-10">
+                          <th className="p-3 w-12 text-center bg-slate-50">
+                            <input
+                              type="checkbox"
+                              checked={parsedRows.every(r => {
+                                if (r.status === 'VALID') return r.checked;
+                                if (r.status === 'SUDAH_ADA_DRAFT' && allowOverwrite) return r.checked;
+                                return true;
+                              }) && parsedRows.some(r => r.checked)}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setParsedRows(prev => prev.map(r => {
+                                  if (r.status === 'VALID' || (r.status === 'SUDAH_ADA_DRAFT' && allowOverwrite)) {
+                                    return { ...r, checked };
+                                  }
+                                  return r;
+                                }));
+                              }}
+                              className="rounded text-emerald-600 focus:ring-emerald-500"
+                            />
+                          </th>
+                          <th className="p-3 w-12 text-center bg-slate-50">Baris</th>
+                          <th className="p-3 bg-slate-50">Nama di Sheet</th>
+                          <th className="p-3 bg-slate-50">Siswa Hasil Cocok</th>
+                          <th className="p-3 bg-slate-50">Status</th>
+                          <th className="p-3 bg-slate-50">Preview Komentar</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-xs">
+                        {parsedRows.map((row) => {
+                          let statusText = 'Valid';
+                          let badgeColor = 'bg-emerald-50 text-emerald-700 border border-emerald-100';
+                          
+                          if (row.status === 'NAMA_TIDAK_DITEMUKAN') {
+                            statusText = 'Nama Tidak Ditemukan';
+                            badgeColor = 'bg-rose-50 text-rose-700 border border-rose-100';
+                          } else if (row.status === 'AMBIGU') {
+                            statusText = 'Nama Ambigu';
+                            badgeColor = 'bg-amber-50 text-amber-700 border border-amber-100';
+                          } else if (row.status === 'KOMENTAR_KOSONG') {
+                            statusText = 'Komentar Kosong';
+                            badgeColor = 'bg-slate-50 text-slate-500 border border-slate-200';
+                          } else if (row.status === 'SUDAH_ADA_DRAFT') {
+                            statusText = `Sudah Ada Draft (${row.existingStatus})`;
+                            badgeColor = 'bg-amber-50 text-amber-700 border border-amber-100';
+                          } else if (row.status === 'WORKFLOW_LOCKED') {
+                            statusText = `Locked (${row.existingStatus})`;
+                            badgeColor = 'bg-rose-100 text-rose-800 border border-rose-200';
+                          }
+
+                          const canCheck = row.status === 'VALID' || (row.status === 'SUDAH_ADA_DRAFT' && allowOverwrite);
+
+                          return (
+                            <tr key={row.index} className="hover:bg-slate-50/50">
+                              <td className="p-3 text-center">
+                                <input
+                                  type="checkbox"
+                                  disabled={!canCheck}
+                                  checked={row.checked}
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setParsedRows(prev => prev.map(r => r.index === row.index ? { ...r, checked } : r));
+                                  }}
+                                  className="rounded text-emerald-600 focus:ring-emerald-500 disabled:opacity-30"
+                                />
+                              </td>
+                              <td className="p-3 text-center font-bold text-slate-400">{row.index}</td>
+                              <td className="p-3 font-semibold text-slate-800">{row.rawName}</td>
+                              <td className="p-3 font-bold text-emerald-900">
+                                {row.matchedStudent ? row.matchedStudent.name : <span className="text-slate-400 font-normal italic">-</span>}
+                              </td>
+                              <td className="p-3">
+                                <span className={`text-[9px] font-black px-2 py-0.5 rounded-lg ${badgeColor} uppercase tracking-wider`}>
+                                  {statusText}
+                                </span>
+                              </td>
+                              <td className="p-3 max-w-xs truncate text-slate-600 animate-pulse" title={row.rawComment}>
+                                {row.rawComment}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+                    <button
+                      onClick={() => {
+                        setParsedRows([]);
+                        setRawInput('');
+                      }}
+                      className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+                    >
+                      Kembali / Edit Input
+                    </button>
+
+                    <button
+                      onClick={handleSaveImport}
+                      disabled={importing || !parsedRows.some(r => r.checked)}
+                      className="px-6 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                    >
+                      {importing ? (
+                        <RefreshCw size={14} className="animate-spin" />
+                      ) : (
+                        <Check size={14} />
+                      )}
+                      <span>Simpan ({parsedRows.filter(r => r.checked).length} Komentar)</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
