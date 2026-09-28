@@ -1448,6 +1448,17 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    match /jh_midterm_period_configs/{configId} {
+      allow read: if isActive() && isJuniorHighStaff();
+
+      allow create, update: if isActive() && (
+        isAdmin() ||
+        userRole() in ['PRINCIPAL', 'HEAD_JUNIOR', 'HEAD_UNIT', 'VICE_PRINCIPAL', 'COORDINATOR', 'SECRETARY_JH']
+      );
+
+      allow delete: if isAdmin();
+    }
+
     match /elem_midterm_master_goals/{goalId} {
       allow read, write: if isElementaryStaff();
     }

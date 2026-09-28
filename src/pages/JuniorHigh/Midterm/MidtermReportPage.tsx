@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Component } from 'react';
+import { toast } from 'sonner';
 import { 
   FileText, Calendar, Users, Layers, Sparkles, 
   Upload, FileCheck2, RefreshCw, AlertCircle, CheckCircle2 
@@ -7,7 +8,7 @@ import {
 import { useAuth } from '../../../context/AuthContext';
 import { useAcademicYear } from '../../../context/AcademicYearContext';
 import { db, getClasses, getActiveStudents, getReportConfig } from '../../../lib/firebase';
-import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { useJHReportAttendance } from '../../../hooks/useJHReportAttendance';
 import { 
   fetchMidtermMasterGoals, 
@@ -116,6 +117,106 @@ function MidtermReportPageContent() {
   const [selectedSemester, setSelectedSemester] = React.useState<string>('1');
   const [selectedTerm, setSelectedTerm] = React.useState<string>('1');
   const [activeTab, setActiveTab] = React.useState<'GOALS' | 'COMMENTS' | 'REVIEW' | 'PUBLISH' | 'REKAP'>('GOALS');
+
+  // Config states for Titimangsa & Cut Off
+  const [signingDateRaw, setSigningDateRaw] = React.useState<string>('');
+  const [cutoffDateRaw, setCutoffDateRaw] = React.useState<string>('');
+  const [loadingPeriodConfig, setLoadingPeriodConfig] = React.useState<boolean>(false);
+
+  const configDocId = `JUNIOR_HIGH_${selectedYear.replace(/\//g, '_')}_${selectedSemester}_${selectedTerm}`;
+
+  const formatToCustomDate = (dateStr: string): string => {
+    if (!dateStr) return '';
+    const [year, month, day] = dateStr.split('-');
+    const months = [
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December"
+    ];
+    const mIndex = parseInt(month, 10) - 1;
+    const dNum = parseInt(day, 10);
+    return `${dNum} ${months[mIndex]} ${year}`;
+  };
+
+  // Load period config
+  React.useEffect(() => {
+    const loadPeriodConfig = async () => {
+      setLoadingPeriodConfig(true);
+      try {
+        const docRef = doc(db, 'jh_midterm_period_configs', configDocId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setSigningDateRaw(data.signingDateRaw || '');
+          setCutoffDateRaw(data.cutoffDateRaw || '');
+        } else {
+          setSigningDateRaw('');
+          setCutoffDateRaw('');
+        }
+      } catch (e) {
+        console.error("Error loading JH period config:", e);
+      } finally {
+        setLoadingPeriodConfig(false);
+      }
+    };
+    loadPeriodConfig();
+  }, [configDocId]);
+
+  const signingDateFormatted = React.useMemo(() => formatToCustomDate(signingDateRaw), [signingDateRaw]);
+  const cutoffDateFormatted = React.useMemo(() => formatToCustomDate(cutoffDateRaw), [cutoffDateRaw]);
+
+  const isAuthorizedToEdit = React.useMemo(() => {
+    if (!effectiveUser) return false;
+    const role = (effectiveUser.role || (effectiveUser as any).roleId || '').toUpperCase();
+    return [
+      'SUPER_ADMIN',
+      'PRINCIPAL',
+      'HEAD_UNIT',
+      'HEAD_JUNIOR',
+      'VICE_PRINCIPAL',
+      'COORDINATOR',
+      'SECRETARY_JH',
+      'ADMIN'
+    ].includes(role);
+  }, [effectiveUser]);
+
+  const handleSaveSigningDate = async (val: string) => {
+    if (!isAuthorizedToEdit) return;
+    setSigningDateRaw(val);
+    try {
+      const docRef = doc(db, 'jh_midterm_period_configs', configDocId);
+      await setDoc(docRef, {
+        signingDateRaw: val,
+        reportSigningDate: formatToCustomDate(val),
+        reportSigningLocation: 'Depok',
+        academicYear: selectedYear,
+        semester: selectedSemester,
+        midtermPeriod: selectedTerm,
+        updatedAt: Date.now()
+      }, { merge: true });
+      toast.success('Tanggal Titimangsa berhasil disimpan!');
+    } catch (e: any) {
+      toast.error('Gagal menyimpan Tanggal Titimangsa: ' + e.message);
+    }
+  };
+
+  const handleSaveCutoffDate = async (val: string) => {
+    if (!isAuthorizedToEdit) return;
+    setCutoffDateRaw(val);
+    try {
+      const docRef = doc(db, 'jh_midterm_period_configs', configDocId);
+      await setDoc(docRef, {
+        cutoffDateRaw: val,
+        attendanceCutoffDate: formatToCustomDate(val),
+        academicYear: selectedYear,
+        semester: selectedSemester,
+        midtermPeriod: selectedTerm,
+        updatedAt: Date.now()
+      }, { merge: true });
+      toast.success('Tanggal Cut Off Kehadiran berhasil disimpan!');
+    } catch (e: any) {
+      toast.error('Gagal menyimpan Tanggal Cut Off Kehadiran: ' + e.message);
+    }
+  };
 
   // Classes & Selection
   const [classesList, setClassesList] = React.useState<Class[]>([]);
@@ -306,98 +407,151 @@ function MidtermReportPageContent() {
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
       {/* Top Header Banner */}
-      <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <span className="w-10 h-10 rounded-2xl bg-slate-900 text-white flex items-center justify-center shadow-sm">
-              <FileText size={20} className="text-emerald-400" />
-            </span>
-            <div>
-              <h1 className="text-xl font-black text-slate-900 tracking-tight uppercase">
-                Midterm Report
-              </h1>
-              <p className="text-xs text-slate-500 font-semibold mt-0.5">
-                Lazuardi GCS Junior High — Progress Report Management & Publishing
-              </p>
+      <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-slate-100 pb-4">
+          <div>
+            <div className="flex items-center gap-2.5">
+              <span className="w-10 h-10 rounded-2xl bg-slate-900 text-white flex items-center justify-center shadow-sm">
+                <FileText size={20} className="text-emerald-400" />
+              </span>
+              <div>
+                <h1 className="text-xl font-black text-slate-900 tracking-tight uppercase">
+                  Midterm Report
+                </h1>
+                <p className="text-xs text-slate-500 font-semibold mt-0.5">
+                  Lazuardi GCS Junior High — Progress Report Management & Publishing
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Global Context Controls */}
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Academic Year */}
+            <div className="flex flex-col">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                Tahun Ajaran
+              </label>
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(e.target.value)}
+                className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+              >
+                {availableYears.map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Semester */}
+            <div className="flex flex-col">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                Semester
+              </label>
+              <select
+                value={selectedSemester}
+                onChange={(e) => setSelectedSemester(e.target.value)}
+                className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+              >
+                <option value="1">Semester 1</option>
+                <option value="2">Semester 2</option>
+              </select>
+            </div>
+
+            {/* Midterm Term */}
+            <div className="flex flex-col">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                Periode Midterm
+              </label>
+              <select
+                value={selectedTerm}
+                onChange={(e) => setSelectedTerm(e.target.value)}
+                className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+              >
+                <option value="1">Midterm 1</option>
+                <option value="2">Midterm 2</option>
+              </select>
+            </div>
+
+            {/* Class Selector */}
+            <div className="flex flex-col">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                Kelas Junior High
+              </label>
+              <select
+                value={selectedClassId}
+                onChange={(e) => setSelectedClassId(e.target.value)}
+                disabled={loadingClasses || safeClassesList.length === 0}
+                className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10 min-w-[140px]"
+              >
+                {safeClassesList.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Refresh button */}
+            <div className="flex flex-col justify-end">
+              <button
+                onClick={() => loadClassData()}
+                disabled={loadingData}
+                className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-all disabled:opacity-50 mt-auto cursor-pointer"
+                title="Refresh Data"
+              >
+                <RefreshCw size={15} className={loadingData ? 'animate-spin' : ''} />
+              </button>
             </div>
           </div>
         </div>
 
-        {/* Global Context Controls */}
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Academic Year */}
-          <div className="flex flex-col">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-              Tahun Ajaran
-            </label>
-            <select
-              value={selectedYear}
-              onChange={(e) => setSelectedYear(e.target.value)}
-              className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-            >
-              {availableYears.map(y => (
-                <option key={y} value={y}>{y}</option>
-              ))}
-            </select>
+        {/* Date Pickers for Titimangsa & Cut Off Kehadiran */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+          {/* Tanggal Titimangsa */}
+          <div className="space-y-1">
+            <div className="flex justify-between items-center">
+              <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                Tanggal Titimangsa (signing date)
+              </label>
+              {!isAuthorizedToEdit && (
+                <span className="text-[9px] text-amber-500 font-bold uppercase tracking-wider">Read Only</span>
+              )}
+            </div>
+            <input
+              type="date"
+              disabled={!isAuthorizedToEdit}
+              value={signingDateRaw}
+              onChange={(e) => handleSaveSigningDate(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-slate-900/10 disabled:opacity-50"
+            />
+            {signingDateFormatted ? (
+              <p className="text-[10px] text-slate-600 font-bold">Format PDF: Depok, {signingDateFormatted}</p>
+            ) : (
+              <p className="text-[10px] text-red-500 font-bold">Harap diisi sebelum publish</p>
+            )}
           </div>
 
-          {/* Semester */}
-          <div className="flex flex-col">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-              Semester
-            </label>
-            <select
-              value={selectedSemester}
-              onChange={(e) => setSelectedSemester(e.target.value)}
-              className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-            >
-              <option value="1">Semester 1</option>
-              <option value="2">Semester 2</option>
-            </select>
-          </div>
-
-          {/* Midterm Term */}
-          <div className="flex flex-col">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-              Periode Midterm
-            </label>
-            <select
-              value={selectedTerm}
-              onChange={(e) => setSelectedTerm(e.target.value)}
-              className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-            >
-              <option value="1">Midterm 1</option>
-              <option value="2">Midterm 2</option>
-            </select>
-          </div>
-
-          {/* Class Selector */}
-          <div className="flex flex-col">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-              Kelas Junior High
-            </label>
-            <select
-              value={selectedClassId}
-              onChange={(e) => setSelectedClassId(e.target.value)}
-              disabled={loadingClasses || safeClassesList.length === 0}
-              className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10 min-w-[140px]"
-            >
-              {safeClassesList.map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Refresh button */}
-          <div className="flex flex-col justify-end">
-            <button
-              onClick={() => loadClassData()}
-              disabled={loadingData}
-              className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-all disabled:opacity-50 mt-auto cursor-pointer"
-              title="Refresh Data"
-            >
-              <RefreshCw size={15} className={loadingData ? 'animate-spin' : ''} />
-            </button>
+          {/* Tanggal Cut Off Kehadiran */}
+          <div className="space-y-1">
+            <div className="flex justify-between items-center">
+              <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                Tanggal Cut Off Kehadiran (attendance cutoff date)
+              </label>
+              {!isAuthorizedToEdit && (
+                <span className="text-[9px] text-amber-500 font-bold uppercase tracking-wider">Read Only</span>
+              )}
+            </div>
+            <input
+              type="date"
+              disabled={!isAuthorizedToEdit}
+              value={cutoffDateRaw}
+              onChange={(e) => handleSaveCutoffDate(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-slate-900/10 disabled:opacity-50"
+            />
+            {cutoffDateFormatted ? (
+              <p className="text-[10px] text-slate-600 font-bold">Format PDF: Rekap kehadiran sampai {cutoffDateFormatted}</p>
+            ) : (
+              <p className="text-[10px] text-red-500 font-bold">Harap diisi sebelum publish</p>
+            )}
           </div>
         </div>
       </div>
@@ -538,6 +692,11 @@ function MidtermReportPageContent() {
               homeroomTeacherProfile={homeroomTeacherProfile}
               onRefreshData={loadClassData}
               loading={loadingData}
+              reportSigningDate={signingDateFormatted}
+              reportSigningLocation="Depok"
+              attendanceCutoffDate={cutoffDateFormatted}
+              signingDateRaw={signingDateRaw}
+              cutoffDateRaw={cutoffDateRaw}
             />
           )}
 

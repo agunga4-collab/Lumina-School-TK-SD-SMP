@@ -5,6 +5,8 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../../../context/AuthContext';
+import { db } from '../../../lib/firebase';
+import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { 
   evaluateStudentMidtermStatus,
   canUserPublishMidterm,
@@ -42,6 +44,11 @@ interface MidtermPublishPdfTabProps {
   homeroomTeacherProfile: { displayName: string; niy?: string; signatureUrl?: string | null } | null;
   onRefreshData: () => Promise<void>;
   loading: boolean;
+  reportSigningLocation?: string;
+  reportSigningDate?: string;
+  attendanceCutoffDate?: string;
+  signingDateRaw?: string;
+  cutoffDateRaw?: string;
 }
 
 export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
@@ -58,7 +65,12 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
   reportConfig,
   homeroomTeacherProfile,
   onRefreshData,
-  loading
+  loading,
+  reportSigningLocation = 'Depok',
+  reportSigningDate,
+  attendanceCutoffDate,
+  signingDateRaw,
+  cutoffDateRaw,
 }) => {
   const { getGoogleDriveToken } = useAuth();
   const [filterStatus, setFilterStatus] = React.useState<'ALL' | 'READY' | 'PUBLISHED' | 'DRAFT'>('ALL');
@@ -76,6 +88,78 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
   // Background rendering elements for PDF creation
   const [activeGeneratingStudent, setActiveGeneratingStudent] = React.useState<Student | null>(null);
   const [logoUrl, setLogoUrl] = React.useState<string | null>(null);
+
+  const [cutoffAttendanceMap, setCutoffAttendanceMap] = React.useState<Record<string, { sickLeave: number | null; excusedLeave: number | null; absent: number | null }>>({});
+  const [loadingAttendance, setLoadingAttendance] = React.useState<boolean>(false);
+
+  const isDatesValid = React.useMemo(() => {
+    if (!signingDateRaw || !cutoffDateRaw) return false;
+    return cutoffDateRaw <= signingDateRaw;
+  }, [signingDateRaw, cutoffDateRaw]);
+
+  React.useEffect(() => {
+    if (!selectedClass || !academicYear || !semester || !cutoffDateRaw || safeStudents.length === 0) {
+      setCutoffAttendanceMap({});
+      return;
+    }
+
+    const fetchCutoffAttendance = async () => {
+      setLoadingAttendance(true);
+      try {
+        const classIdentifiers = [selectedClass.id];
+        if (selectedClass.name && selectedClass.name !== selectedClass.id) {
+          classIdentifiers.push(selectedClass.name);
+        }
+
+        const attQuery = query(
+          collection(db, 'attendance_records'),
+          where('classId', 'in', classIdentifiers),
+          where('academicYear', '==', academicYear)
+        );
+
+        const snap = await getDocs(attQuery);
+        const docs = snap.docs.map(d => d.data());
+
+        const rosterSet = new Set(safeStudents.map(s => s.id));
+        const map: Record<string, { sickLeave: number | null; excusedLeave: number | null; absent: number | null }> = {};
+
+        // Initialize everyone to 0
+        safeStudents.forEach(st => {
+          map[st.id] = { sickLeave: 0, excusedLeave: 0, absent: 0 };
+        });
+
+        docs.forEach(record => {
+          const recStudentId = record.studentId || '';
+          const recSemester = String(record.semester || '');
+          const recordDate = record.date || ''; // YYYY-MM-DD
+          const recStatus = record.status || '';
+
+          if (
+            rosterSet.has(recStudentId) &&
+            recSemester === String(semester) &&
+            recordDate <= cutoffDateRaw &&
+            ['HADIR', 'SAKIT', 'IZIN', 'ALPA', 'LATE'].includes(recStatus)
+          ) {
+            if (recStatus === 'SAKIT') {
+              map[recStudentId].sickLeave = (map[recStudentId].sickLeave || 0) + 1;
+            } else if (recStatus === 'IZIN') {
+              map[recStudentId].excusedLeave = (map[recStudentId].excusedLeave || 0) + 1;
+            } else if (recStatus === 'ALPA') {
+              map[recStudentId].absent = (map[recStudentId].absent || 0) + 1;
+            }
+          }
+        });
+
+        setCutoffAttendanceMap(map);
+      } catch (err) {
+        console.error("Error fetching cutoff attendance:", err);
+      } finally {
+        setLoadingAttendance(false);
+      }
+    };
+
+    fetchCutoffAttendance();
+  }, [selectedClass, academicYear, semester, cutoffDateRaw, safeStudents]);
 
   React.useEffect(() => {
     const fetchLogo = async () => {
@@ -142,7 +226,9 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
   const buildLiveSnapshot = (student: Student): MidtermReportSnapshot => {
     if (!student) throw new Error('Data siswa tidak valid.');
     const sData = safeStudentDataMap[student.id];
-    const att = safeStudentAttendanceMap[student.id] || { sickLeave: 0, excusedLeave: 0, absent: 0 };
+    
+    // Use real-time cutoff attendance if available, fallback to full attendance map or zeros
+    const att = cutoffAttendanceMap[student.id] || safeStudentAttendanceMap[student.id] || { sickLeave: 0, excusedLeave: 0, absent: 0 };
     const categoriesList = Array.isArray(JH_MIDTERM_CATEGORIES) ? JH_MIDTERM_CATEGORIES : [];
 
     const categories = categoriesList.map(cat => ({
@@ -194,7 +280,10 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
         homeroomTeacherNiy: homeroomTeacherProfile?.niy || '',
         homeroomTeacherSignatureUrl: selectedClass?.teacherSignatureUrl || null
       },
-      logoUrl: logoUrl || null
+      logoUrl: logoUrl || null,
+      reportSigningLocation: reportSigningLocation || 'Depok',
+      reportSigningDate: reportSigningDate || '',
+      attendanceCutoffDate: attendanceCutoffDate || ''
     };
   };
 
@@ -289,6 +378,11 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
       return;
     }
 
+    if (!isDatesValid) {
+      toast.error('Lengkapi Tanggal Titimangsa dan Tanggal Cut Off Kehadiran terlebih dahulu.');
+      return;
+    }
+
     const sData = studentDataMap[student.id];
     const published = publishedReportsMap[student.id];
     const evalStatus = evaluateStudentMidtermStatus(student, masterGoalsMap, sData, false);
@@ -326,6 +420,11 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
 
   const handleBulkPublishReady = async () => {
     if (!canPublish) return;
+
+    if (!isDatesValid) {
+      toast.error('Lengkapi Tanggal Titimangsa dan Tanggal Cut Off Kehadiran terlebih dahulu.');
+      return;
+    }
 
     const readyStudents = safeStudents.filter(student => {
       if (!student || !student.id) return false;
@@ -370,6 +469,21 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Date configurations validation error notice */}
+      {!isDatesValid && (
+        <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex items-start gap-3 text-xs text-rose-950 font-bold shadow-sm">
+          <AlertCircle size={18} className="text-rose-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p>Lengkapi Tanggal Titimangsa dan Tanggal Cut Off Kehadiran terlebih dahulu.</p>
+            {cutoffDateRaw && signingDateRaw && cutoffDateRaw > signingDateRaw && (
+              <p className="text-[10px] text-rose-700 font-medium normal-case">
+                Peringatan: Tanggal Cut Off Kehadiran ({attendanceCutoffDate}) tidak boleh melewati Tanggal Titimangsa ({reportSigningDate}).
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Top Banner & Permission Notice */}
       {!canPublish && (
         <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2.5 text-xs text-amber-900 font-medium">
@@ -405,17 +519,17 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
         {/* Search & Bulk Publish Button */}
         <div className="flex items-center gap-3">
           <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Cari siswa/NISN..."
-            className="text-xs px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10 w-44"
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Cari siswa/NISN..."
+              className="text-xs px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10 w-44"
           />
 
           {canPublish && (
             <button
               onClick={handleBulkPublishReady}
-              disabled={bulkPublishing}
+              disabled={bulkPublishing || !isDatesValid}
               className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-emerald-700 transition-all shadow-sm disabled:opacity-50 cursor-pointer"
             >
               <Upload size={14} />
@@ -550,16 +664,20 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
                         {canPublish && (
                           <button
                             onClick={() => handlePublishSingle(student)}
-                            disabled={isPublishing || (!isPublished && !evalStatus.isReady)}
+                            disabled={isPublishing || (!isPublished && !evalStatus.isReady) || !isDatesValid}
                             className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all shadow-xs cursor-pointer ${
-                              isPublished
+                              !isDatesValid
+                                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                : isPublished
                                 ? 'bg-amber-600 hover:bg-amber-700 text-white'
                                 : evalStatus.isReady
                                 ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
                                 : 'bg-slate-200 text-slate-400 cursor-not-allowed'
                             }`}
                             title={
-                              isPublished
+                              !isDatesValid
+                                ? 'Lengkapi Tanggal Titimangsa dan Tanggal Cut Off Kehadiran terlebih dahulu'
+                                : isPublished
                                 ? 'Terbitkan revisi baru (v+1)'
                                 : evalStatus.isReady
                                 ? 'Publish rapor ke Google Drive & Orang Tua'
@@ -620,14 +738,21 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
                 midtermTerm={midtermTerm}
                 masterGoalsMap={masterGoalsMap}
                 studentDataDoc={studentDataMap[previewStudent.id]}
-                attendance={{
-                  sakit: studentAttendanceMap[previewStudent.id]?.sickLeave ?? 0,
-                  izin: studentAttendanceMap[previewStudent.id]?.excusedLeave ?? 0,
-                  tanpaKeterangan: studentAttendanceMap[previewStudent.id]?.absent ?? 0
+                attendance={previewSnapshot ? {
+                  sakit: previewSnapshot.attendance?.sakit ?? 0,
+                  izin: previewSnapshot.attendance?.izin ?? 0,
+                  tanpaKeterangan: previewSnapshot.attendance?.tanpaKeterangan ?? 0
+                } : {
+                  sakit: cutoffAttendanceMap[previewStudent.id]?.sickLeave ?? studentAttendanceMap[previewStudent.id]?.sickLeave ?? 0,
+                  izin: cutoffAttendanceMap[previewStudent.id]?.excusedLeave ?? studentAttendanceMap[previewStudent.id]?.excusedLeave ?? 0,
+                  tanpaKeterangan: cutoffAttendanceMap[previewStudent.id]?.absent ?? studentAttendanceMap[previewStudent.id]?.absent ?? 0
                 }}
                 reportConfig={reportConfig}
                 homeroomTeacherProfile={homeroomTeacherProfile || undefined}
                 logoUrl={logoUrl}
+                reportSigningLocation={reportSigningLocation}
+                reportSigningDate={reportSigningDate}
+                attendanceCutoffDate={attendanceCutoffDate}
               />
             </div>
 
@@ -673,13 +798,16 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
             masterGoalsMap={masterGoalsMap}
             studentDataDoc={studentDataMap[activeGeneratingStudent.id]}
             attendance={{
-              sakit: studentAttendanceMap[activeGeneratingStudent.id]?.sickLeave ?? 0,
-              izin: studentAttendanceMap[activeGeneratingStudent.id]?.excusedLeave ?? 0,
-              tanpaKeterangan: studentAttendanceMap[activeGeneratingStudent.id]?.absent ?? 0
+              sakit: cutoffAttendanceMap[activeGeneratingStudent.id]?.sickLeave ?? studentAttendanceMap[activeGeneratingStudent.id]?.sickLeave ?? 0,
+              izin: cutoffAttendanceMap[activeGeneratingStudent.id]?.excusedLeave ?? studentAttendanceMap[activeGeneratingStudent.id]?.excusedLeave ?? 0,
+              tanpaKeterangan: cutoffAttendanceMap[activeGeneratingStudent.id]?.absent ?? studentAttendanceMap[activeGeneratingStudent.id]?.absent ?? 0
             }}
             reportConfig={reportConfig}
             homeroomTeacherProfile={homeroomTeacherProfile || undefined}
             logoUrl={logoUrl}
+            reportSigningLocation={reportSigningLocation}
+            reportSigningDate={reportSigningDate}
+            attendanceCutoffDate={attendanceCutoffDate}
           />
         </div>
       )}

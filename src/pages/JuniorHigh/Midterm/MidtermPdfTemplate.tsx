@@ -29,6 +29,10 @@ interface MidtermPdfTemplateProps {
   page1Id?: string;
   page2Id?: string;
   logoUrl?: string | null;
+
+  reportSigningLocation?: string;
+  reportSigningDate?: string;
+  attendanceCutoffDate?: string;
 }
 
 export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
@@ -46,6 +50,9 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
   page1Id = 'jh-midterm-pdf-page-1',
   page2Id = 'jh-midterm-pdf-page-2',
   logoUrl,
+  reportSigningLocation = 'Depok',
+  reportSigningDate,
+  attendanceCutoffDate,
 }) => {
   // Derive student identity
   const studentName = snapshot ? snapshot.student.name : (student?.name || '');
@@ -67,6 +74,10 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
   const effPrincipalSignatureUrl = snapshot 
     ? snapshot.signatory.principalSignatureUrl 
     : (reportConfig?.principalSignatureUrl || null);
+
+  const effSigningLocation = snapshot?.reportSigningLocation || reportSigningLocation || 'Depok';
+  const effSigningDate = snapshot?.reportSigningDate || reportSigningDate || '';
+  const effCutoffDate = snapshot?.attendanceCutoffDate || attendanceCutoffDate || '';
 
   const [resolvedLogoUrl, setResolvedLogoUrl] = React.useState<string | null>(null);
 
@@ -421,7 +432,14 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
 
             {/* Attendance List */}
             <div className="border border-black p-2.5 text-[10.5px]">
-              <div className="font-bold text-black uppercase mb-1">Attendance List</div>
+              <div className="font-bold text-black uppercase mb-1">
+                Attendance List
+                {effCutoffDate && (
+                  <span className="block text-[8px] text-slate-500 font-bold italic normal-case mt-0.5">
+                    Attendance record up to {effCutoffDate}
+                  </span>
+                )}
+              </div>
               <div className="space-y-0.5 text-slate-800">
                 <div className="flex justify-between">
                   <span>Sakit:</span>
@@ -442,7 +460,7 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
           {/* Signatory Block */}
           <div className="mt-2 pt-2 border-t border-black">
             <div className="text-[10.5px] text-black text-left mb-2">
-              Depok, {formattedDate}
+              {effSigningLocation}, {effSigningDate || formattedDate}
             </div>
 
             <div className="grid grid-cols-3 gap-6 text-[10.5px]">

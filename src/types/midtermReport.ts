@@ -185,6 +185,10 @@ export interface MidtermReportSnapshot {
   generalComment: string;
   attendance: MidtermAttendanceSnapshot;
   signatory: MidtermSignatorySnapshot;
+  logoUrl?: string | null;
+  reportSigningLocation?: string;
+  reportSigningDate?: string;
+  attendanceCutoffDate?: string;
 }
 
 export interface PublishedMidtermReport {
