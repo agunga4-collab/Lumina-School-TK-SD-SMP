@@ -593,9 +593,9 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
           .absolute-footer {
             position: absolute !important;
             bottom: 8mm !important;
-            left: 0 !important;
-            right: 0 !important;
-            text-align: center !important;
+            left: 15mm !important;
+            right: 15mm !important;
+            text-align: right !important;
             visibility: visible !important;
           }
         }
@@ -640,9 +640,9 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
         .absolute-footer {
           position: absolute;
           bottom: 8mm;
-          left: 0;
-          right: 0;
-          text-align: center;
+          left: 15mm;
+          right: 15mm;
+          text-align: right;
         }
       ` }} />
 
@@ -651,16 +651,39 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
         return (
           <div key={pageIdx} className="pdf-page flex flex-col justify-between">
             <div className="space-y-4">
-              {/* Header: Logo Only */}
-              <div className="flex items-center justify-start border-b border-slate-200 pb-2">
-                {effLogoUrl ? (
-                  <img 
-                    src={effLogoUrl} 
-                    alt="Logo" 
-                    className="h-10 max-w-[150px] object-contain"
-                  />
-                ) : null}
-              </div>
+              {/* Header */}
+              {pageNum === 1 ? (
+                <div className="flex items-center justify-between border-b-2 border-slate-900 pb-2">
+                  {effLogoUrl ? (
+                    <img 
+                      src={effLogoUrl} 
+                      alt="Logo" 
+                      className="h-14 max-w-[150px] object-contain"
+                    />
+                  ) : <div className="h-14" />}
+                  <div className="text-right space-y-0.5">
+                    <h1 className="text-[13px] font-black text-slate-900 uppercase tracking-tight leading-tight">
+                      STUDENT'S PROGRESS REPORT
+                    </h1>
+                    <p className="text-[10px] font-black text-slate-700 uppercase tracking-wider">
+                      Lazuardi GCS - Elementary
+                    </p>
+                    <p className="text-[9.5px] text-slate-600 font-bold">
+                      Year {effAcademicYear}, Mid Term {effTermRoman}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-start border-b border-slate-200 pb-2">
+                  {effLogoUrl ? (
+                    <img 
+                      src={effLogoUrl} 
+                      alt="Logo" 
+                      className="h-10 max-w-[150px] object-contain"
+                    />
+                  ) : null}
+                </div>
+              )}
 
               {/* Student Identity Grid - ONLY ON PAGE 1 */}
               {pageNum === 1 && (
@@ -798,7 +821,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
 
             {/* Absolute Page Footer */}
             <div className="absolute-footer">
-              <div className="text-center text-[10px] text-slate-500 font-medium select-none">
+              <div className="text-right text-[7.5pt] text-slate-500 font-medium select-none">
                 {pageNum} {studentName}/{className}/Mid Term-{effTermRoman}/{normalizedYear}
               </div>
             </div>
