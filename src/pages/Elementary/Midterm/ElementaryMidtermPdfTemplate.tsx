@@ -30,6 +30,7 @@ interface ElementaryMidtermPdfTemplateProps {
   reportSigningDate?: string;
   reportSigningLocation?: string;
   attendanceCutoffDate?: string;
+  showAttendanceRecap?: boolean;
 }
 
 interface PageData {
@@ -66,9 +67,14 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
   studentUaName,
   reportSigningDate,
   reportSigningLocation = 'Depok',
-  attendanceCutoffDate
+  attendanceCutoffDate,
+  showAttendanceRecap
 }) => {
   // Derive student identity
+  const effShowAttendanceRecap = snapshot && ('showAttendanceRecap' in snapshot)
+    ? snapshot.showAttendanceRecap !== false
+    : showAttendanceRecap !== false;
+
   const studentName = snapshot ? snapshot.student.name : (student?.name || '');
   const studentNisn = snapshot ? (snapshot.student.nisn || '-') : (student?.nisn || (student as any)?.nis || '-');
   const className = snapshot ? snapshot.student.className : (currentClass?.name || '');
@@ -444,8 +450,9 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
 
     // 3. Pack Final Block (General Comments, Note, Attendance, Signatures)
     const commentsHeight = 12 + Math.max(50, Math.ceil(effGeneralComment.length / 85) * 5.5);
-    // Comments (calculated) + Note (15) + Attendance (18) + Signatures (50) + margins (10)
-    const finalBlockHeight = commentsHeight + 15 + 18 + 50 + 10;
+    const attendanceHeight = effShowAttendanceRecap ? 18 : 0;
+    // Comments (calculated) + Note (15) + Attendance (18 or 0) + Signatures (50) + margins (10)
+    const finalBlockHeight = commentsHeight + 15 + attendanceHeight + 50 + 10;
 
     if (remainingHeight < finalBlockHeight) {
       startNewPage();
@@ -743,30 +750,32 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                   </div>
 
                   {/* Attendance */}
-                  <div className="space-y-1 keep-together">
-                    <div className="flex justify-between items-baseline border-b border-slate-300 pb-1">
-                      <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
-                        ATTENDANCE RECAP
-                      </h3>
-                      {effCutoffDate && (
-                        <span className="text-[9.5px] text-slate-500 font-bold italic">Rekap kehadiran sampai {effCutoffDate}</span>
-                      )}
+                  {effShowAttendanceRecap && (
+                    <div className="space-y-1 keep-together">
+                      <div className="flex justify-between items-baseline border-b border-slate-300 pb-1">
+                        <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                          ATTENDANCE RECAP
+                        </h3>
+                        {effCutoffDate && (
+                          <span className="text-[9.5px] text-slate-500 font-bold italic">Rekap kehadiran sampai {effCutoffDate}</span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="border border-slate-300 p-2 rounded-lg text-center bg-slate-50">
+                          <span className="block text-[9px] font-bold text-slate-500 uppercase">Sakit</span>
+                          <span className="text-sm font-extrabold text-slate-900">{effAttendance?.sakit ?? 0} hari</span>
+                        </div>
+                        <div className="border border-slate-300 p-2 rounded-lg text-center bg-slate-50">
+                          <span className="block text-[9px] font-bold text-slate-500 uppercase">Izin</span>
+                          <span className="text-sm font-extrabold text-slate-900">{effAttendance?.izin ?? 0} hari</span>
+                        </div>
+                        <div className="border border-slate-300 p-2 rounded-lg text-center bg-slate-50">
+                          <span className="block text-[9px] font-bold text-slate-500 uppercase">Tanpa Keterangan</span>
+                          <span className="text-sm font-extrabold text-slate-900">{effAttendance?.tanpaKeterangan ?? 0} hari</span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="grid grid-cols-3 gap-3">
-                      <div className="border border-slate-300 p-2 rounded-lg text-center bg-slate-50">
-                        <span className="block text-[9px] font-bold text-slate-500 uppercase">Sakit</span>
-                        <span className="text-sm font-extrabold text-slate-900">{effAttendance?.sakit ?? 0} hari</span>
-                      </div>
-                      <div className="border border-slate-300 p-2 rounded-lg text-center bg-slate-50">
-                        <span className="block text-[9px] font-bold text-slate-500 uppercase">Izin</span>
-                        <span className="text-sm font-extrabold text-slate-900">{effAttendance?.izin ?? 0} hari</span>
-                      </div>
-                      <div className="border border-slate-300 p-2 rounded-lg text-center bg-slate-50">
-                        <span className="block text-[9px] font-bold text-slate-500 uppercase">Tanpa Keterangan</span>
-                        <span className="text-sm font-extrabold text-slate-900">{effAttendance?.tanpaKeterangan ?? 0} hari</span>
-                      </div>
-                    </div>
-                  </div>
+                  )}
 
                   {/* Signatures block directly following the attendance recap */}
                   <div className="space-y-4 keep-together text-left pt-3 border-t border-slate-200">

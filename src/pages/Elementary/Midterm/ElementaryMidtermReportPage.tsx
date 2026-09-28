@@ -106,6 +106,7 @@ function ElementaryMidtermReportPageContent() {
   // Config states for Titimangsa & Cut Off
   const [signingDateRaw, setSigningDateRaw] = React.useState<string>('');
   const [cutoffDateRaw, setCutoffDateRaw] = React.useState<string>('');
+  const [showAttendanceRecap, setShowAttendanceRecap] = React.useState<boolean>(true);
   const [loadingPeriodConfig, setLoadingPeriodConfig] = React.useState<boolean>(false);
 
   const configDocId = `ELEMENTARY_${selectedYear.replace(/\//g, '_')}_${selectedSemester}_${selectedTerm}`;
@@ -133,9 +134,11 @@ function ElementaryMidtermReportPageContent() {
           const data = docSnap.data();
           setSigningDateRaw(data.signingDateRaw || '');
           setCutoffDateRaw(data.cutoffDateRaw || '');
+          setShowAttendanceRecap(data.showAttendanceRecap !== false);
         } else {
           setSigningDateRaw('');
           setCutoffDateRaw('');
+          setShowAttendanceRecap(true);
         }
       } catch (e) {
         console.error("Error loading period config:", e);
@@ -199,6 +202,24 @@ function ElementaryMidtermReportPageContent() {
       toast.success('Tanggal Cut Off Kehadiran berhasil disimpan!');
     } catch (e: any) {
       toast.error('Gagal menyimpan Tanggal Cut Off Kehadiran: ' + e.message);
+    }
+  };
+
+  const handleToggleAttendanceRecap = async (val: boolean) => {
+    if (!isAuthorizedToEdit) return;
+    setShowAttendanceRecap(val);
+    try {
+      const docRef = doc(db, 'elem_midterm_period_configs', configDocId);
+      await setDoc(docRef, {
+        showAttendanceRecap: val,
+        academicYear: selectedYear,
+        semester: selectedSemester,
+        midtermPeriod: selectedTerm,
+        updatedAt: Date.now()
+      }, { merge: true });
+      toast.success(val ? 'Rekap Kehadiran diaktifkan di Rapor!' : 'Rekap Kehadiran dinonaktifkan di Rapor!');
+    } catch (e: any) {
+      toast.error('Gagal memperbarui opsi rekap kehadiran: ' + e.message);
     }
   };
 
@@ -616,6 +637,21 @@ function ElementaryMidtermReportPageContent() {
             ) : (
               <p className="text-[10px] text-red-400 font-bold">Harap diisi sebelum publish</p>
             )}
+
+            {/* Toggle Tampilkan Rekap Kehadiran di Rapor */}
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                type="checkbox"
+                id="showAttendanceRecapToggle"
+                disabled={!isAuthorizedToEdit}
+                checked={showAttendanceRecap}
+                onChange={(e) => handleToggleAttendanceRecap(e.target.checked)}
+                className="w-4 h-4 rounded border-emerald-500/30 text-emerald-600 focus:ring-emerald-400 focus:ring-opacity-25"
+              />
+              <label htmlFor="showAttendanceRecapToggle" className="text-[11px] font-bold text-emerald-200 cursor-pointer select-none">
+                Tampilkan Rekap Kehadiran di Rapor
+              </label>
+            </div>
           </div>
         </div>
       </div>
@@ -730,6 +766,7 @@ function ElementaryMidtermReportPageContent() {
               cutoffDateRaw={cutoffDateRaw}
               reportSigningDate={signingDateFormatted}
               attendanceCutoffDate={cutoffDateFormatted}
+              showAttendanceRecap={showAttendanceRecap}
             />
           )}
 

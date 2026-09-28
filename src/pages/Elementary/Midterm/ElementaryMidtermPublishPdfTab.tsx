@@ -40,6 +40,7 @@ interface ElementaryMidtermPublishPdfTabProps {
   cutoffDateRaw: string;
   reportSigningDate: string;
   attendanceCutoffDate: string;
+  showAttendanceRecap?: boolean;
 }
 
 export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPdfTabProps> = ({
@@ -60,7 +61,8 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
   signingDateRaw,
   cutoffDateRaw,
   reportSigningDate,
-  attendanceCutoffDate
+  attendanceCutoffDate,
+  showAttendanceRecap
 }) => {
   // Modal Preview state
   const [previewStudent, setPreviewStudent] = React.useState<Student | null>(null);
@@ -269,7 +271,8 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
         reportSigningDate: reportSigningDate,
         reportSigningLocation: 'Depok',
         attendanceCutoffDate: attendanceCutoffDate,
-        midtermPeriod: selectedTerm
+        midtermPeriod: selectedTerm,
+        showAttendanceRecap: showAttendanceRecap !== false
       };
 
       await publishElementaryMidtermReport({
@@ -610,6 +613,7 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
                 reportSigningDate={reportSigningDate}
                 reportSigningLocation="Depok"
                 attendanceCutoffDate={attendanceCutoffDate}
+                showAttendanceRecap={showAttendanceRecap}
               />
             </div>
           </div>

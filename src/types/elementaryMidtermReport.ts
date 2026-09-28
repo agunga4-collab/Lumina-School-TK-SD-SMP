@@ -237,6 +237,7 @@ export interface ElementaryMidtermReportSnapshot {
   reportSigningLocation?: string;
   attendanceCutoffDate?: string;
   midtermPeriod?: string;
+  showAttendanceRecap?: boolean;
 }
 
 export interface PublishedElementaryMidtermReport {
