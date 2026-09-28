@@ -11,7 +11,8 @@ import {
   query, 
   where, 
   getDocs,
-  writeBatch
+  writeBatch,
+  deleteField
 } from 'firebase/firestore';
 import type { 
   ElementaryMidtermMasterGoalDoc, 
@@ -420,6 +421,84 @@ export async function saveBulkElementaryMidtermStudentRemarks(
     await batch.commit();
   } catch (err: any) {
     handleFirestoreError(err, 'update', `elem_midterm_student_data/bulk`);
+    throw err;
+  }
+}
+
+/**
+ * Delete a single student remark for a specific learning goal.
+ * Uses deleteField() on `remarks.${goalId}` without modifying other fields or deleting the document.
+ */
+export async function deleteElementaryMidtermStudentRemark(
+  studentId: string,
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  goalId: string,
+  user?: User | null
+): Promise<void> {
+  try {
+    const docId = buildStudentDataDocId(studentId, classId, academicYear, semester, midtermTerm);
+    const docRef = doc(db, 'elem_midterm_student_data', docId);
+
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) return;
+    const existing = snap.data();
+    if (!existing?.remarks || existing.remarks[goalId] === undefined) {
+      return;
+    }
+
+    await updateDoc(docRef, {
+      [`remarks.${goalId}`]: deleteField(),
+      updatedAt: Date.now(),
+      updatedBy: user?.uid || (user as any)?.id || 'system'
+    });
+  } catch (err: any) {
+    handleFirestoreError(err, 'update', `elem_midterm_student_data/${studentId}`);
+    throw err;
+  }
+}
+
+/**
+ * Bulk delete remark for a specific learning goal across students who currently have a value on that goal.
+ * Uses writeBatch and deleteField() on `remarks.${goalId}` without deleting documents or other remarks.
+ */
+export async function deleteBulkElementaryMidtermStudentRemarks(
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  goalId: string,
+  studentIdsWithRemark: string[],
+  user?: User | null
+): Promise<number> {
+  try {
+    if (!studentIdsWithRemark || studentIdsWithRemark.length === 0) {
+      return 0;
+    }
+    const batch = writeBatch(db);
+    let count = 0;
+
+    for (const studentId of studentIdsWithRemark) {
+      if (!studentId) continue;
+      const docId = buildStudentDataDocId(studentId, classId, academicYear, semester, midtermTerm);
+      const docRef = doc(db, 'elem_midterm_student_data', docId);
+
+      batch.update(docRef, {
+        [`remarks.${goalId}`]: deleteField(),
+        updatedAt: Date.now(),
+        updatedBy: user?.uid || (user as any)?.id || 'system'
+      });
+      count++;
+    }
+
+    if (count > 0) {
+      await batch.commit();
+    }
+    return count;
+  } catch (err: any) {
+    handleFirestoreError(err, 'update', `elem_midterm_student_data/bulk_delete`);
     throw err;
   }
 }

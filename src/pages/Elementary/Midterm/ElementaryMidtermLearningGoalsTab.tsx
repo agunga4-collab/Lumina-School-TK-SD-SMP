@@ -11,6 +11,8 @@ import {
   saveBulkElementaryMidtermMasterGoalForClasses,
   saveElementaryMidtermStudentRemark,
   saveBulkElementaryMidtermStudentRemarks,
+  deleteElementaryMidtermStudentRemark,
+  deleteBulkElementaryMidtermStudentRemarks,
   fetchElementaryStudentUnitActivityEnrollment,
   saveElementaryMidtermStudentPerformingArtsUa,
   saveBulkElementaryMidtermStudentPerformingArtsUa,
@@ -272,12 +274,14 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
     isOpen: boolean;
     goalId: string;
     goalText: string;
-    value: 'A' | 'D' | 'B';
+    value: 'A' | 'D' | 'B' | 'CLEAR';
+    actionType?: 'SET' | 'CLEAR';
   }>({
     isOpen: false,
     goalId: '',
     goalText: '',
-    value: 'D'
+    value: 'D',
+    actionType: 'SET'
   });
 
   // Derived list of Learning Goals selected for current Midterm
@@ -1100,10 +1104,110 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
     }
   };
 
+  // Handle Clear Single Remark (Kembalikan ke belum diisi / —)
+  const handleClearRemark = async (studentId: string, goalId: string) => {
+    const currentRemark = localRemarks[studentId]?.[goalId] || studentDataMap[studentId]?.remarks?.[goalId];
+    if (!currentRemark) return;
+
+    // Optimistic local update: remove only this goalId from student's remarks
+    setLocalRemarks(prev => {
+      const next = { ...prev };
+      if (next[studentId]) {
+        const studentRemarks = { ...next[studentId] };
+        delete studentRemarks[goalId];
+        next[studentId] = studentRemarks;
+      }
+      return next;
+    });
+
+    setSaveStatus('saving');
+    try {
+      await deleteElementaryMidtermStudentRemark(
+        studentId,
+        selectedClassId,
+        selectedYear,
+        selectedSemester,
+        selectedTerm,
+        goalId,
+        currentUser
+      );
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus(null), 2500);
+    } catch (e) {
+      console.error("Error clearing remark:", e);
+      // Revert if failed
+      setLocalRemarks(prev => ({
+        ...prev,
+        [studentId]: {
+          ...(prev[studentId] || {}),
+          [goalId]: currentRemark
+        }
+      }));
+      setSaveStatus('error');
+      toast.error('Gagal menghapus nilai remark.');
+    }
+  };
+
   // Confirm and Execute Bulk Action
   const executeBulkRemark = async () => {
-    const { goalId, value } = bulkModal;
-    if (!goalId || !value) return;
+    const { goalId, value, actionType } = bulkModal;
+    if (!goalId) return;
+
+    // Check if this is a bulk CLEAR action
+    if (actionType === 'CLEAR' || value === 'CLEAR') {
+      // Find students who currently have a remark for this goal
+      const studentsWithRemark = activeStudentsForGrading.filter(st => {
+        const val = localRemarks[st.id]?.[goalId] || studentDataMap[st.id]?.remarks?.[goalId];
+        return Boolean(val);
+      });
+
+      if (studentsWithRemark.length === 0) {
+        toast.info('Tidak ada siswa yang memiliki nilai pada Goal ini untuk dihapus.');
+        setBulkModal(prev => ({ ...prev, isOpen: false }));
+        return;
+      }
+
+      // Local optimistic update
+      setLocalRemarks(prev => {
+        const updated = { ...prev };
+        studentsWithRemark.forEach(st => {
+          if (updated[st.id]) {
+            const studentRemarks = { ...updated[st.id] };
+            delete studentRemarks[goalId];
+            updated[st.id] = studentRemarks;
+          }
+        });
+        return updated;
+      });
+
+      setSaveStatus('saving');
+      setBulkModal(prev => ({ ...prev, isOpen: false }));
+
+      try {
+        const studentIds = studentsWithRemark.map(s => s.id);
+        const count = await deleteBulkElementaryMidtermStudentRemarks(
+          selectedClassId,
+          selectedYear,
+          selectedSemester,
+          selectedTerm,
+          goalId,
+          studentIds,
+          currentUser
+        );
+        setSaveStatus('saved');
+        await onRefreshData(true);
+        toast.success(`Berhasil menghapus pilihan nilai pada Goal ini untuk ${count} siswa.`);
+        setTimeout(() => setSaveStatus(null), 3000);
+      } catch (e) {
+        console.error("Error executing bulk clear remark:", e);
+        setSaveStatus('error');
+        toast.error('Gagal menghapus nilai secara massal.');
+        await onRefreshData(true);
+      }
+      return;
+    }
+
+    if (!value || value === 'CLEAR') return;
 
     // Local optimistic update for active students for this goalId ONLY
     setLocalRemarks(prev => {
@@ -1910,12 +2014,13 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
                       </div>
 
                       {/* Bulk Action Buttons Header for this Goal */}
-                      <div className="flex items-center gap-1 pt-1 border-t border-slate-800">
+                      <div className="flex items-center gap-1 pt-1 border-t border-slate-800 flex-wrap">
                         <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tight mr-1">
                           Bulk:
                         </span>
                         <button
-                          onClick={() => setBulkModal({ isOpen: true, goalId: g.id, goalText: g.text, value: 'A' })}
+                          type="button"
+                          onClick={() => setBulkModal({ isOpen: true, goalId: g.id, goalText: g.text, value: 'A', actionType: 'SET' })}
                           className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-emerald-300 rounded-lg text-[10px] font-black uppercase tracking-wider cursor-pointer transition-all border border-slate-700"
                           title="Set semua siswa pada Goal ini ke nilai A"
                         >
@@ -1923,18 +2028,29 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
                         </button>
                         {/* Primary default quick action: Set Semua D */}
                         <button
-                          onClick={() => setBulkModal({ isOpen: true, goalId: g.id, goalText: g.text, value: 'D' })}
+                          type="button"
+                          onClick={() => setBulkModal({ isOpen: true, goalId: g.id, goalText: g.text, value: 'D', actionType: 'SET' })}
                           className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black rounded-lg text-[10px] uppercase tracking-wider cursor-pointer transition-all shadow-xs ring-1 ring-amber-300"
                           title="Set semua siswa pada Goal ini ke nilai D"
                         >
                           ★ Set Semua D
                         </button>
                         <button
-                          onClick={() => setBulkModal({ isOpen: true, goalId: g.id, goalText: g.text, value: 'B' })}
+                          type="button"
+                          onClick={() => setBulkModal({ isOpen: true, goalId: g.id, goalText: g.text, value: 'B', actionType: 'SET' })}
                           className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-blue-300 rounded-lg text-[10px] font-black uppercase tracking-wider cursor-pointer transition-all border border-slate-700"
                           title="Set semua siswa pada Goal ini ke nilai B"
                         >
                           Set Semua B
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setBulkModal({ isOpen: true, goalId: g.id, goalText: g.text, value: 'CLEAR', actionType: 'CLEAR' })}
+                          className="px-2 py-1 bg-rose-950/70 hover:bg-rose-900 text-rose-300 hover:text-rose-100 rounded-lg text-[10px] font-black uppercase tracking-wider cursor-pointer transition-all border border-rose-900/60 flex items-center gap-1 shadow-xs"
+                          title="Hapus Semua Pilihan pada Goal Ini"
+                        >
+                          <X size={11} className="stroke-[3]" />
+                          <span>Hapus Semua</span>
                         </button>
                       </div>
                     </th>
@@ -1953,6 +2069,8 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
                       </td>
                       {activeGoalsForMidterm.map((g) => {
                         const currentVal = localRemarks[st.id]?.[g.id] || '';
+                        const hasRemark = Boolean(currentVal && ['A', 'D', 'B'].includes(currentVal as any));
+
                         return (
                           <td key={g.id} className="p-3 border-r border-slate-100 text-center">
                             <div className="flex items-center justify-center gap-1">
@@ -1961,6 +2079,7 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
                                 return (
                                   <button
                                     key={val}
+                                    type="button"
                                     onClick={() => handleRemarkChange(st.id, st.name, g.id, val)}
                                     className={`w-9 h-8 rounded-xl font-extrabold text-xs transition-all cursor-pointer flex items-center justify-center ${
                                       isSelected
@@ -1976,6 +2095,40 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
                                   </button>
                                 );
                               })}
+
+                              {/* Tombol Hapus Pilihan Remark */}
+                              <button
+                                type="button"
+                                disabled={!hasRemark}
+                                onClick={() => handleClearRemark(st.id, g.id)}
+                                title={
+                                  hasRemark
+                                    ? `Hapus nilai ${currentVal} untuk goal ini (kembalikan ke Belum diisi)`
+                                    : 'Belum diisi'
+                                }
+                                className={`w-8 h-8 rounded-xl font-extrabold text-xs transition-all flex items-center justify-center ${
+                                  hasRemark
+                                    ? 'bg-slate-100 text-slate-500 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-300 border border-slate-200 cursor-pointer shadow-2xs'
+                                    : 'bg-slate-50 text-slate-200 cursor-not-allowed border border-transparent opacity-60'
+                                }`}
+                              >
+                                <X size={13} className={hasRemark ? 'stroke-[2.5]' : 'stroke-2'} />
+                              </button>
+                            </div>
+                            <div className="text-[10px] font-semibold mt-1">
+                              {hasRemark ? (
+                                <span className={
+                                  currentVal === 'A' 
+                                    ? 'text-emerald-700' 
+                                    : currentVal === 'D' 
+                                    ? 'text-amber-700' 
+                                    : 'text-blue-700'
+                                }>
+                                  {currentVal === 'A' ? 'Achieved' : currentVal === 'D' ? 'Developing' : 'Beginning'}
+                                </span>
+                              ) : (
+                                <span className="text-slate-300">—</span>
+                              )}
                             </div>
                           </td>
                         );
@@ -2042,40 +2195,82 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
       {bulkModal.isOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-5 border border-slate-100 animate-in fade-in zoom-in-95 duration-150">
-            <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center font-black text-lg">
-              <Sparkles size={24} />
-            </div>
+            {bulkModal.actionType === 'CLEAR' || bulkModal.value === 'CLEAR' ? (
+              <>
+                <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center font-black text-lg">
+                  <Trash2 size={24} />
+                </div>
 
-            <div className="space-y-2">
-              <h3 className="text-base font-black text-slate-900 uppercase tracking-tight">
-                Konfirmasi Bulk Nilai
-              </h3>
-              <p className="text-xs text-slate-600 leading-relaxed font-medium">
-                Terapkan nilai <strong className="text-amber-700 font-black">{bulkModal.value}</strong> untuk semua ({activeStudentsForGrading.length}) siswa pada Goal ini?
-              </p>
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 italic">
-                "{bulkModal.goalText}"
-              </div>
-            </div>
+                <div className="space-y-2">
+                  <h3 className="text-base font-black text-slate-900 uppercase tracking-tight">
+                    Hapus Semua Pilihan pada Goal Ini
+                  </h3>
+                  <p className="text-xs text-slate-600 leading-relaxed font-medium">
+                    Apakah Anda yakin ingin menghapus semua pilihan nilai pada Goal ini untuk seluruh siswa di kelas aktif?
+                  </p>
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 italic">
+                    "{bulkModal.goalText}"
+                  </div>
+                </div>
 
-            <p className="text-[11px] text-slate-400 font-medium">
-              * Perubahan hanya berlaku untuk Goal ini. Anda tetap dapat mengubah nilai tiap siswa satu per satu setelahnya.
-            </p>
+                <p className="text-[11px] text-rose-600 font-semibold bg-rose-50 p-2.5 rounded-xl border border-rose-100">
+                  * Siswa yang sudah memiliki nilai (A/D/B) pada Goal ini akan dikembalikan menjadi <strong>Belum diisi (—)</strong>. Data siswa, kelas lain, dan nilai pada Goal lain tidak akan terhapus.
+                </p>
 
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                onClick={() => setBulkModal(prev => ({ ...prev, isOpen: false }))}
-                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all cursor-pointer"
-              >
-                Batal
-              </button>
-              <button
-                onClick={executeBulkRemark}
-                className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-extrabold rounded-xl transition-all uppercase tracking-wider cursor-pointer shadow-sm"
-              >
-                Terapkan Nilai
-              </button>
-            </div>
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button
+                    onClick={() => setBulkModal(prev => ({ ...prev, isOpen: false }))}
+                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    onClick={executeBulkRemark}
+                    className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold rounded-xl transition-all uppercase tracking-wider cursor-pointer shadow-sm flex items-center gap-1.5"
+                  >
+                    <Trash2 size={13} />
+                    <span>Hapus Semua Pilihan</span>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center font-black text-lg">
+                  <Sparkles size={24} />
+                </div>
+
+                <div className="space-y-2">
+                  <h3 className="text-base font-black text-slate-900 uppercase tracking-tight">
+                    Konfirmasi Bulk Nilai
+                  </h3>
+                  <p className="text-xs text-slate-600 leading-relaxed font-medium">
+                    Terapkan nilai <strong className="text-amber-700 font-black">{bulkModal.value}</strong> untuk semua ({activeStudentsForGrading.length}) siswa pada Goal ini?
+                  </p>
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 italic">
+                    "{bulkModal.goalText}"
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-slate-400 font-medium">
+                  * Perubahan hanya berlaku untuk Goal ini. Anda tetap dapat mengubah nilai tiap siswa satu per satu setelahnya.
+                </p>
+
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button
+                    onClick={() => setBulkModal(prev => ({ ...prev, isOpen: false }))}
+                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    onClick={executeBulkRemark}
+                    className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-extrabold rounded-xl transition-all uppercase tracking-wider cursor-pointer shadow-sm"
+                  >
+                    Terapkan Nilai
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
