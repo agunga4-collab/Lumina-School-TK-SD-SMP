@@ -72,6 +72,12 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
   signingDateRaw,
   cutoffDateRaw,
 }) => {
+  const safeStudents = Array.isArray(students) ? students.filter(Boolean) : [];
+  const safeStudentDataMap = studentDataMap && typeof studentDataMap === 'object' ? studentDataMap : {};
+  const safePublishedReportsMap = publishedReportsMap && typeof publishedReportsMap === 'object' ? publishedReportsMap : {};
+  const safeMasterGoalsMap = masterGoalsMap && typeof masterGoalsMap === 'object' ? masterGoalsMap : {};
+  const safeStudentAttendanceMap = studentAttendanceMap && typeof studentAttendanceMap === 'object' ? studentAttendanceMap : {};
+
   const { getGoogleDriveToken } = useAuth();
   const [filterStatus, setFilterStatus] = React.useState<'ALL' | 'READY' | 'PUBLISHED' | 'DRAFT'>('ALL');
   const [searchQuery, setSearchQuery] = React.useState<string>('');
@@ -189,12 +195,6 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
     };
     fetchLogo();
   }, []);
-
-  const safeStudents = Array.isArray(students) ? students.filter(Boolean) : [];
-  const safeStudentDataMap = studentDataMap && typeof studentDataMap === 'object' ? studentDataMap : {};
-  const safePublishedReportsMap = publishedReportsMap && typeof publishedReportsMap === 'object' ? publishedReportsMap : {};
-  const safeMasterGoalsMap = masterGoalsMap && typeof masterGoalsMap === 'object' ? masterGoalsMap : {};
-  const safeStudentAttendanceMap = studentAttendanceMap && typeof studentAttendanceMap === 'object' ? studentAttendanceMap : {};
 
   const canPublish = canUserPublishMidterm(currentUser, selectedClass);
 
