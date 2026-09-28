@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { 
   Plus, Edit2, Trash2, CheckCircle2, AlertCircle, RefreshCw, 
   Sparkles, Layers, BookOpen, User, Music, PlusCircle, FolderPlus,
-  Upload, FileCheck2, Check
+  Upload, FileCheck2, Check, X
 } from 'lucide-react';
 import { 
   saveElementaryMidtermMasterGoals, 
@@ -18,7 +18,9 @@ import {
   saveElementaryMidtermCustomUas,
   fetchElementaryMidtermMasterGoals
 } from '../../../services/elementaryMidtermService';
-import { getLearningGoals, getActiveStudents } from '../../../lib/firebase';
+import { getLearningGoals, getActiveStudents, db } from '../../../lib/firebase';
+import { writeBatch, doc } from 'firebase/firestore';
+import { toast } from 'sonner';
 import { 
   ElementaryMidtermMasterGoalDoc, 
   ElementaryMidtermStudentDataDoc,

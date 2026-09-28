@@ -4,7 +4,7 @@ import {
   Sparkles, Loader2, Save, Smile, Meh, Frown, Angry, AlertCircle, CheckCircle2,
   Calendar, Edit3, BookOpen, Clock, Heart, ShieldAlert, ArrowRight, Eye, RefreshCw, 
   ChevronDown, ChevronUp, Check, Trash2, ClipboardList, ChevronLeft, ChevronRight,
-  FileSpreadsheet, Send, FileText, HelpCircle, CheckSquare, XSquare, History
+  FileSpreadsheet, Send, FileText, HelpCircle, CheckSquare, XSquare, History, X
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
@@ -134,26 +134,12 @@ export default function MidtermSummary() {
   const [selectedStudentId, setSelectedStudentId] = React.useState<string>('');
   const [semester, setSemester] = React.useState<number>(1);
   const [activeTab, setActiveTab] = React.useState<'kompilasi' | 'editor' | 'review' | 'publish'>('kompilasi');
+  const [allClassDrafts, setAllClassDrafts] = React.useState<MidtermSummaryDraft[]>([]);
   const [midtermDrafts, setMidtermDrafts] = React.useState<Record<string, MidtermSummaryDraft>>({});
 
-  // Date selections - Default to Monday 6 weeks ago and Friday of this week
-  const [startDateStr, setStartDateStr] = React.useState<string>(() => {
-    const fromSession = sessionStorage.getItem('kindy_midterm_start');
-    if (fromSession) return fromSession;
-    const d = new Date();
-    d.setDate(d.getDate() - 42); // Approx 6 weeks
-    const mon = getMonday(d);
-    return formatDateToKey(mon);
-  });
-
-  const [endDateStr, setEndDateStr] = React.useState<string>(() => {
-    const fromSession = sessionStorage.getItem('kindy_midterm_end');
-    if (fromSession) return fromSession;
-    const mon = getMonday(new Date());
-    const fri = new Date(mon);
-    fri.setDate(mon.getDate() + 4);
-    return formatDateToKey(fri);
-  });
+  // Date selections - Default to empty so all drafts in semester load immediately without requiring period selection
+  const [startDateStr, setStartDateStr] = React.useState<string>('');
+  const [endDateStr, setEndDateStr] = React.useState<string>('');
 
   const [publishedReports, setPublishedReports] = React.useState<Record<string, any>>({});
   const [isFetchingPublished, setIsFetchingPublished] = React.useState(false);
@@ -305,9 +291,105 @@ export default function MidtermSummary() {
     return false;
   }, []);
 
+  // Extract distinct period keys from all loaded drafts in this class & semester
+  const distinctPeriods = React.useMemo(() => {
+    const map = new Map<string, { periodKey: string; startDate: string; endDate: string; periodLabel: string }>();
+    allClassDrafts.forEach(d => {
+      const key = d.periodKey || (d.startDate && d.endDate ? `${d.startDate}_${d.endDate}` : '');
+      if (key && !map.has(key)) {
+        map.set(key, {
+          periodKey: key,
+          startDate: d.startDate || '',
+          endDate: d.endDate || '',
+          periodLabel: d.periodLabel || `${d.startDate || ''} - ${d.endDate || ''}`
+        });
+      }
+    });
+    return Array.from(map.values());
+  }, [allClassDrafts]);
+
+  // Derived state ordered strictly to prevent temporal dead zone (TDZ)
+  const selectedPeriodKey = React.useMemo(() => {
+    return (startDateStr && endDateStr) ? `${startDateStr}_${endDateStr}` : null;
+  }, [startDateStr, endDateStr]);
+
+  const selectedDraftsForDisplay = React.useMemo(() => {
+    if (!selectedPeriodKey) {
+      return allClassDrafts;
+    }
+    return allClassDrafts.filter(draft => 
+      draft.periodKey === selectedPeriodKey ||
+      (draft.startDate === startDateStr && draft.endDate === endDateStr)
+    );
+  }, [allClassDrafts, selectedPeriodKey, startDateStr, endDateStr]);
+
+  const draftByStudentId = React.useMemo(() => {
+    // Map draft terbaru per studentId (sort descending by updatedAt)
+    const sorted = [...selectedDraftsForDisplay].sort((a, b) => {
+      const timeA = typeof a.updatedAt === 'number' ? a.updatedAt : (a.updatedAt ? new Date(a.updatedAt).getTime() : 0);
+      const timeB = typeof b.updatedAt === 'number' ? b.updatedAt : (b.updatedAt ? new Date(b.updatedAt).getTime() : 0);
+      return timeB - timeA;
+    });
+
+    const map = new Map<string, MidtermSummaryDraft>();
+    sorted.forEach(d => {
+      if (d.studentId && !map.has(d.studentId)) {
+        map.set(d.studentId, d);
+      }
+    });
+    return map;
+  }, [selectedDraftsForDisplay]);
+
   const activeDraft = React.useMemo(() => {
-    return midtermDrafts[selectedStudentId] || null;
-  }, [midtermDrafts, selectedStudentId]);
+    if (!selectedStudentId) return null;
+    return draftByStudentId.get(selectedStudentId) ?? (midtermDrafts[selectedStudentId] || null);
+  }, [selectedStudentId, draftByStudentId, midtermDrafts]);
+
+  const activeDraftPeriodLabel = React.useMemo(() => {
+    return activeDraft?.periodLabel
+      ?? (activeDraft?.startDate && activeDraft?.endDate
+        ? `${activeDraft.startDate} - ${activeDraft.endDate}`
+        : '-');
+  }, [activeDraft]);
+
+  // Rule 3: Jika hanya ada satu periode pada Semester tersebut:
+  // Gunakan periode itu secara otomatis untuk kebutuhan tampilan tanpa mengubah filter lokal atau Firestore data.
+  const effectivePeriod = React.useMemo(() => {
+    if (startDateStr && endDateStr) {
+      const key = `${startDateStr}_${endDateStr}`;
+      const found = distinctPeriods.find(p => p.periodKey === key);
+      return {
+        periodKey: key,
+        startDate: startDateStr,
+        endDate: endDateStr,
+        periodLabel: found?.periodLabel || `${startDateStr} - ${endDateStr}`
+      };
+    }
+    if (activeDraft?.periodKey || (activeDraft?.startDate && activeDraft?.endDate)) {
+      return {
+        periodKey: activeDraft.periodKey || `${activeDraft.startDate}_${activeDraft.endDate}`,
+        startDate: activeDraft.startDate || '',
+        endDate: activeDraft.endDate || '',
+        periodLabel: activeDraft.periodLabel || `${activeDraft.startDate || ''} - ${activeDraft.endDate || ''}`
+      };
+    }
+    if (distinctPeriods.length === 1) {
+      return distinctPeriods[0];
+    }
+    return null;
+  }, [startDateStr, endDateStr, activeDraft, distinctPeriods]);
+
+  // Synchronize midtermDrafts map and reviewNotes for quick lookups across components
+  React.useEffect(() => {
+    const draftsMap: Record<string, MidtermSummaryDraft> = {};
+    const notesMap: Record<string, string> = {};
+    draftByStudentId.forEach((draft, studentId) => {
+      draftsMap[studentId] = draft;
+      notesMap[studentId] = draft.reviewNote || '';
+    });
+    setMidtermDrafts(draftsMap);
+    setReviewNotes(notesMap);
+  }, [draftByStudentId]);
 
   const activeClassObj = React.useMemo(() => {
     return classes.find(c => c.id === selectedClassId);
@@ -323,22 +405,33 @@ export default function MidtermSummary() {
   }, [classStudents, selectedStudentId]);
 
   const formattedPeriodRangeIndo = React.useMemo(() => {
-    if (!startDateStr || !endDateStr) return '';
-    const monthsIndo = [
-      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
-    ];
-    
-    const parseDate = (dStr: string) => {
-      const [y, m, d] = dStr.split('-').map(Number);
-      return new Date(y, m - 1, d);
-    };
+    if (startDateStr && endDateStr) {
+      const monthsIndo = [
+        'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+        'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+      ];
+      
+      const parseDate = (dStr: string) => {
+        const [y, m, d] = dStr.split('-').map(Number);
+        return new Date(y, m - 1, d);
+      };
 
-    const sDate = parseDate(startDateStr);
-    const eDate = parseDate(endDateStr);
-
-    return `${sDate.getDate()} ${monthsIndo[sDate.getMonth()]} ${sDate.getFullYear()} - ${eDate.getDate()} ${monthsIndo[eDate.getMonth()]} ${eDate.getFullYear()}`;
-  }, [startDateStr, endDateStr]);
+      try {
+        const sDate = parseDate(startDateStr);
+        const eDate = parseDate(endDateStr);
+        return `${sDate.getDate()} ${monthsIndo[sDate.getMonth()]} ${sDate.getFullYear()} - ${eDate.getDate()} ${monthsIndo[eDate.getMonth()]} ${eDate.getFullYear()}`;
+      } catch (_) {
+        return `${startDateStr} - ${endDateStr}`;
+      }
+    }
+    if (activeDraft?.periodLabel) {
+      return activeDraft.periodLabel;
+    }
+    if (distinctPeriods.length === 1 && distinctPeriods[0].periodLabel) {
+      return distinctPeriods[0].periodLabel;
+    }
+    return '';
+  }, [startDateStr, endDateStr, activeDraft, distinctPeriods]);
 
   const formattedSigningDate = React.useMemo(() => {
     const rawDate = classGoalsInput.signingDate || classLearningGoals?.signingDate;
@@ -409,27 +502,47 @@ export default function MidtermSummary() {
   // --- D. ACTION HANDLERS AND HELPER CALLBACKS (useCallback / Functions) ---
   const handleStartDateChange = (val: string) => {
     setStartDateStr(val);
-    sessionStorage.setItem('kindy_midterm_start', val);
+    if (val) {
+      sessionStorage.setItem('kindy_midterm_start', val);
+    } else {
+      sessionStorage.removeItem('kindy_midterm_start');
+    }
   };
 
   const handleEndDateChange = (val: string) => {
     setEndDateStr(val);
-    sessionStorage.setItem('kindy_midterm_end', val);
+    if (val) {
+      sessionStorage.setItem('kindy_midterm_end', val);
+    } else {
+      sessionStorage.removeItem('kindy_midterm_end');
+    }
   };
 
   // Calculate Deterministic Midterm Draft Doc ID
   const getMidtermDraftId = React.useCallback((studId: string) => {
     if (!studId) return '';
-    const periodKey = `${startDateStr}_${endDateStr}`;
+    // If student already has an existing draft loaded in midtermDrafts, ALWAYS use its existing document ID!
+    if (midtermDrafts[studId]?.id) {
+      return midtermDrafts[studId].id;
+    }
+    const effStart = startDateStr || effectivePeriod?.startDate || 'NODATE';
+    const effEnd = endDateStr || effectivePeriod?.endDate || 'NODATE';
+    const periodKey = `${effStart}_${effEnd}`;
     return `${studId}_${normalizedYear}_S${semester}_MIDTERM_${periodKey}`;
-  }, [normalizedYear, semester, startDateStr, endDateStr]);
+  }, [midtermDrafts, normalizedYear, semester, startDateStr, endDateStr, effectivePeriod]);
 
   // Calculate Deterministic Class Learning Goals Doc ID
   const getClassGoalsDocId = React.useCallback(() => {
     if (!selectedClassId) return '';
-    const periodKey = `${startDateStr}_${endDateStr}`;
-    return `${selectedClassId}_${normalizedYear}_S${semester}_${periodKey}`;
-  }, [selectedClassId, normalizedYear, semester, startDateStr, endDateStr]);
+    if (startDateStr && endDateStr) {
+      const periodKey = `${startDateStr}_${endDateStr}`;
+      return `${selectedClassId}_${normalizedYear}_S${semester}_${periodKey}`;
+    }
+    if (effectivePeriod?.periodKey) {
+      return `${selectedClassId}_${normalizedYear}_S${semester}_${effectivePeriod.periodKey}`;
+    }
+    return '';
+  }, [selectedClassId, normalizedYear, semester, startDateStr, endDateStr, effectivePeriod]);
 
   const fetchClassLearningGoals = React.useCallback(async () => {
     const docId = getClassGoalsDocId();
@@ -535,47 +648,37 @@ export default function MidtermSummary() {
     }
   };
 
-  // Load all midterm drafts for the selected class to map the status dots of students
+  // Load all midterm drafts for the selected class without requiring periodKey
   const fetchMidtermDraftsForClass = React.useCallback(async () => {
-    if (!selectedClassId) return;
+    if (!selectedClassId) {
+      setAllClassDrafts([]);
+      return;
+    }
     setIsFetchingDrafts(true);
     try {
       const q = query(
         collection(db, 'midterm_summary_drafts'),
+        where('unit', '==', 'KINDERGARTEN'),
+        where('reportType', '==', 'KINDY_MIDTERM_REPORT'),
         where('classId', '==', selectedClassId),
         where('academicYear', '==', activeYear || '2026/2027'),
-        where('semester', '==', semester),
-        where('startDate', '==', startDateStr),
-        where('endDate', '==', endDateStr)
+        where('semester', '==', semester)
       );
       const snap = await getDocs(q);
       logFirestoreRead('attendanceReports', snap.docs.length || 1);
       
-      const draftsMap: Record<string, MidtermSummaryDraft> = {};
-      const notesMap: Record<string, string> = {};
-      snap.docs.forEach(docSnap => {
-        const data = docSnap.data() as MidtermSummaryDraft;
-        draftsMap[data.studentId] = {
-          ...data,
-          id: docSnap.id
-        };
-        notesMap[data.studentId] = data.reviewNote || '';
-      });
-      setMidtermDrafts(draftsMap);
-      setReviewNotes(notesMap);
+      const rawDrafts: MidtermSummaryDraft[] = snap.docs.map(docSnap => ({
+        ...(docSnap.data() as MidtermSummaryDraft),
+        id: docSnap.id
+      }));
 
-      // Initialize local editor comment if the active student has a draft
-      if (selectedStudentId) {
-        const activeDraft = draftsMap[selectedStudentId];
-        setLocalComment(activeDraft?.midtermGeneralComment || '');
-        setHasUnsavedChanges(false);
-      }
+      setAllClassDrafts(rawDrafts);
     } catch (err) {
       console.error('[MidtermSummary] Error fetching midterm drafts:', err);
     } finally {
       setIsFetchingDrafts(false);
     }
-  }, [selectedClassId, activeYear, semester, startDateStr, endDateStr, selectedStudentId]);
+  }, [selectedClassId, activeYear, semester]);
 
   const saveAuditHistory = async (
     studentId: string,
@@ -717,14 +820,6 @@ export default function MidtermSummary() {
     type: 'student' | 'class' | 'tab' | 'semester' | 'dates',
     targetValue: string
   ) => {
-    if (type === 'dates') {
-      const activeDraft = midtermDrafts[selectedStudentId];
-      const hasExistingDraft = !!activeDraft || localComment.trim().length > 0;
-      if (hasExistingDraft) {
-        setPendingSelection({ type, targetValue });
-        return;
-      }
-    }
     if (hasUnsavedChanges || hasUnsavedClassGoals) {
       setPendingSelection({ type, targetValue });
     } else {
@@ -782,7 +877,10 @@ export default function MidtermSummary() {
         const wStart = data.startDate;
         const wEnd = data.endDate;
 
-        const overlaps = wStart && wEnd && (wStart <= endDateStr && wEnd >= startDateStr);
+        const effectiveStart = startDateStr || activeDraft?.startDate || effectivePeriod?.startDate || '';
+        const effectiveEnd = endDateStr || activeDraft?.endDate || effectivePeriod?.endDate || '';
+
+        const overlaps = !effectiveStart || !effectiveEnd || (wStart && wEnd && (wStart <= effectiveEnd && wEnd >= effectiveStart));
         if (overlaps) {
           filteredSources.push({
             id: docSnap.id,
@@ -800,26 +898,28 @@ export default function MidtermSummary() {
     } finally {
       setIsFetchingWeeklySources(false);
     }
-  }, [selectedStudentId, selectedClassId, startDateStr, endDateStr, activeYear]);
+  }, [selectedStudentId, selectedClassId, startDateStr, endDateStr, activeDraft, effectivePeriod, activeYear]);
 
   // --- E. LIFECYCLE EFFECTS (useEffect) ---
   // Real Attendance fetch hook matching requested formula:
   // startDate = tanggal mulai Midterm
   // endDate = minimum(tanggal akhir Midterm, tanggal hari ini)
   React.useEffect(() => {
-    if (!selectedClassId || !startDateStr || !endDateStr) return;
+    const effStart = startDateStr || activeDraft?.startDate || effectivePeriod?.startDate || '';
+    const effEnd = endDateStr || activeDraft?.endDate || effectivePeriod?.endDate || '';
+    if (!selectedClassId || !effStart || !effEnd) return;
     
     async function fetchRealAttendanceData() {
       setIsFetchingRealAttendance(true);
       try {
         const todayStr = new Date().toISOString().split('T')[0];
-        const minEndDateStr = endDateStr < todayStr ? endDateStr : todayStr;
+        const minEndDateStr = effEnd < todayStr ? effEnd : todayStr;
         
-        console.log(`[Attendance Sync] Querying attendance from ${startDateStr} to ${minEndDateStr}`);
+        console.log(`[Attendance Sync] Querying attendance from ${effStart} to ${minEndDateStr}`);
         const q = query(
           collection(db, 'attendance'),
           where('classId', '==', selectedClassId),
-          where('date', '>=', startDateStr),
+          where('date', '>=', effStart),
           where('date', '<=', minEndDateStr)
         );
         
@@ -844,7 +944,7 @@ export default function MidtermSummary() {
     }
     
     fetchRealAttendanceData();
-  }, [selectedClassId, startDateStr, endDateStr]);
+  }, [selectedClassId, startDateStr, endDateStr, activeDraft, effectivePeriod]);
 
   // Measuring comments height effect to decide whether to move signatures to Page 3
   React.useEffect(() => {
@@ -1150,6 +1250,11 @@ export default function MidtermSummary() {
 
     const midtermComment = activeDraft?.midtermGeneralComment || '';
 
+    const effPeriodKey = activeDraft?.periodKey || (startDateStr && endDateStr ? `${startDateStr}_${endDateStr}` : (distinctPeriods[0]?.periodKey || ''));
+    const effStartDate = activeDraft?.startDate || startDateStr || distinctPeriods[0]?.startDate || '';
+    const effEndDate = activeDraft?.endDate || endDateStr || distinctPeriods[0]?.endDate || '';
+    const effPeriodLabel = activeDraft?.periodLabel || formattedPeriodRangeIndo || distinctPeriods[0]?.periodLabel || '';
+
     const payload: MidtermSummaryDraft = {
       unit: 'KINDERGARTEN',
       reportType: 'KINDY_MIDTERM_REPORT',
@@ -1159,10 +1264,10 @@ export default function MidtermSummary() {
       classNameSnapshot: activeClassObj.name,
       academicYear: activeYear || '2026/2027',
       semester,
-      periodKey: `${startDateStr}_${endDateStr}`,
-      startDate: startDateStr,
-      endDate: endDateStr,
-      periodLabel: formattedPeriodRangeIndo,
+      periodKey: effPeriodKey,
+      startDate: effStartDate,
+      endDate: effEndDate,
+      periodLabel: effPeriodLabel,
       midtermGeneralComment: midtermComment,
       status: activeDraft?.status || 'DRAFT',
       compiledWeeklySources: sources,
@@ -1181,7 +1286,17 @@ export default function MidtermSummary() {
     try {
       await setDoc(doc(db, 'midterm_summary_drafts', draftId), payload, { merge: true });
       
-      // Update local midtermDrafts cache state
+      // Update local allClassDrafts and midtermDrafts cache state
+      setAllClassDrafts(prev => {
+        const idx = prev.findIndex(d => d.id === draftId || (d.studentId === selectedStudentId && d.periodKey === payload.periodKey));
+        const item = { ...(prev[idx] || {}), ...payload, id: draftId } as MidtermSummaryDraft;
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = item;
+          return next;
+        }
+        return [...prev, item];
+      });
       setMidtermDrafts(prev => ({
         ...prev,
         [selectedStudentId]: {
@@ -1229,6 +1344,11 @@ export default function MidtermSummary() {
       newStatus = 'READY_FOR_REVIEW';
     }
 
+    const effStart = startDateStr || activeDraft?.startDate || effectivePeriod?.startDate || '';
+    const effEnd = endDateStr || activeDraft?.endDate || effectivePeriod?.endDate || '';
+    const effKey = (effStart && effEnd) ? `${effStart}_${effEnd}` : (activeDraft?.periodKey || effectivePeriod?.periodKey || '');
+    const effLabel = activeDraft?.periodLabel || effectivePeriod?.periodLabel || formattedPeriodRangeIndo || '';
+
     const payload: Partial<MidtermSummaryDraft> = {
       unit: 'KINDERGARTEN',
       reportType: 'KINDY_MIDTERM_REPORT',
@@ -1238,10 +1358,10 @@ export default function MidtermSummary() {
       classNameSnapshot: activeClassObj.name,
       academicYear: activeYear || '2026/2027',
       semester,
-      periodKey: `${startDateStr}_${endDateStr}`,
-      startDate: startDateStr,
-      endDate: endDateStr,
-      periodLabel: formattedPeriodRangeIndo,
+      periodKey: effKey,
+      startDate: effStart,
+      endDate: effEnd,
+      periodLabel: effLabel,
       midtermGeneralComment: localComment,
       status: newStatus,
       compiledWeeklySources: activeDraft?.compiledWeeklySources || [],
@@ -1324,6 +1444,11 @@ export default function MidtermSummary() {
       return;
     }
 
+    const effStart = startDateStr || activeDraft?.startDate || effectivePeriod?.startDate || '';
+    const effEnd = endDateStr || activeDraft?.endDate || effectivePeriod?.endDate || '';
+    const effKey = (effStart && effEnd) ? `${effStart}_${effEnd}` : (activeDraft?.periodKey || effectivePeriod?.periodKey || '');
+    const effLabel = activeDraft?.periodLabel || effectivePeriod?.periodLabel || formattedPeriodRangeIndo || '';
+
     const payload: Partial<MidtermSummaryDraft> = {
       unit: 'KINDERGARTEN',
       reportType: 'KINDY_MIDTERM_REPORT',
@@ -1333,10 +1458,10 @@ export default function MidtermSummary() {
       classNameSnapshot: activeClassObj.name,
       academicYear: activeYear || '2026/2027',
       semester,
-      periodKey: `${startDateStr}_${endDateStr}`,
-      startDate: startDateStr,
-      endDate: endDateStr,
-      periodLabel: formattedPeriodRangeIndo,
+      periodKey: effKey,
+      startDate: effStart,
+      endDate: effEnd,
+      periodLabel: effLabel,
       
       heightCm: parsedHeight,
       weightKg: parsedWeight,
@@ -1405,6 +1530,11 @@ export default function MidtermSummary() {
     const draftId = getMidtermDraftId(selectedStudentId);
     const activeDraft = midtermDrafts[selectedStudentId];
 
+    const effStart = startDateStr || activeDraft?.startDate || effectivePeriod?.startDate || '';
+    const effEnd = endDateStr || activeDraft?.endDate || effectivePeriod?.endDate || '';
+    const effKey = (effStart && effEnd) ? `${effStart}_${effEnd}` : (activeDraft?.periodKey || effectivePeriod?.periodKey || '');
+    const effLabel = activeDraft?.periodLabel || effectivePeriod?.periodLabel || formattedPeriodRangeIndo || '';
+
     const payload: Partial<MidtermSummaryDraft> = {
       unit: 'KINDERGARTEN',
       reportType: 'KINDY_MIDTERM_REPORT',
@@ -1414,10 +1544,10 @@ export default function MidtermSummary() {
       classNameSnapshot: activeClassObj.name,
       academicYear: activeYear || '2026/2027',
       semester,
-      periodKey: `${startDateStr}_${endDateStr}`,
-      startDate: startDateStr,
-      endDate: endDateStr,
-      periodLabel: formattedPeriodRangeIndo,
+      periodKey: effKey,
+      startDate: effStart,
+      endDate: effEnd,
+      periodLabel: effLabel,
       midtermGeneralComment: localComment,
       status: 'READY_FOR_REVIEW',
       compiledWeeklySources: activeDraft?.compiledWeeklySources || [],
@@ -2132,7 +2262,7 @@ export default function MidtermSummary() {
     const draft = midtermDrafts[studId];
     if (!draft) {
       return {
-        label: 'Belum dibuat',
+        label: 'Belum ada kompilasi',
         dotColor: 'bg-gray-300',
         textColor: 'text-gray-500 bg-gray-50 border-gray-150'
       };
@@ -2146,12 +2276,12 @@ export default function MidtermSummary() {
     }
     if (draft.status === 'APPROVED') {
       return {
-        label: 'ACC',
+        label: 'Disetujui',
         dotColor: 'bg-purple-500',
         textColor: 'text-purple-700 bg-purple-50 border-purple-150'
       };
     }
-    if (draft.status === 'READY_FOR_REVIEW') {
+    if (draft.status === 'READY_FOR_REVIEW' || draft.status === 'SUBMITTED_FOR_REVIEW') {
       return {
         label: 'Menunggu Review',
         dotColor: 'bg-emerald-500 animate-pulse',
@@ -2322,69 +2452,136 @@ export default function MidtermSummary() {
       </header>
 
       {/* FILTER & PERIOD SELECTOR CARD */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white p-6 rounded-[2rem] border border-gray-150 shadow-sm">
-        
-        {/* Class Selection Dropdown */}
-        <div className="space-y-1.5">
-          <label className="text-[10px] font-black text-[#109E58] uppercase tracking-wider block">Pilih Kelas</label>
-          <div className="relative">
-            <select
-              value={selectedClassId}
-              onChange={(e) => confirmNavigation('class', e.target.value)}
-              disabled={isRestrictedToAssignedClasses && classes.length <= 1}
-              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-xs font-bold outline-none text-gray-700 appearance-none pr-8 cursor-pointer hover:bg-gray-100/50 disabled:opacity-75 disabled:cursor-not-allowed"
-            >
-              {isLoadingClasses ? (
-                <option value="">Memuat kelas...</option>
-              ) : classes.length === 0 ? (
-                <option value="">Belum ada kelas</option>
-              ) : (
-                classes.map(cls => (
-                  <option key={cls.id} value={cls.id}>
-                    {cls.name} ({cls.grade || 'K'})
-                  </option>
-                ))
+      <div className="bg-white p-6 rounded-[2rem] border border-gray-150 shadow-sm space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          
+          {/* Class Selection Dropdown */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-[#109E58] uppercase tracking-wider block">Pilih Kelas</label>
+            <div className="relative">
+              <select
+                value={selectedClassId}
+                onChange={(e) => confirmNavigation('class', e.target.value)}
+                disabled={isRestrictedToAssignedClasses && classes.length <= 1}
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-xs font-bold outline-none text-gray-700 appearance-none pr-8 cursor-pointer hover:bg-gray-100/50 disabled:opacity-75 disabled:cursor-not-allowed"
+              >
+                {isLoadingClasses ? (
+                  <option value="">Memuat kelas...</option>
+                ) : classes.length === 0 ? (
+                  <option value="">Belum ada kelas</option>
+                ) : (
+                  classes.map(cls => (
+                    <option key={cls.id} value={cls.id}>
+                      {cls.name} ({cls.grade || 'K'})
+                    </option>
+                  ))
+                )}
+              </select>
+              <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            </div>
+          </div>
+
+          {/* Start Date Picker */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-[#109E58] uppercase tracking-wider block">Tanggal Mulai</label>
+            <div className="relative">
+              <input
+                type="date"
+                value={startDateStr}
+                onChange={(e) => confirmNavigation('dates', `${e.target.value}|${endDateStr}`)}
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2 text-xs font-bold outline-none text-gray-700 cursor-pointer"
+              />
+            </div>
+          </div>
+
+          {/* End Date Picker */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-[#109E58] uppercase tracking-wider block">Tanggal Selesai</label>
+            <div className="relative">
+              <input
+                type="date"
+                value={endDateStr}
+                onChange={(e) => confirmNavigation('dates', `${startDateStr}|${e.target.value}`)}
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2 text-xs font-bold outline-none text-gray-700 cursor-pointer"
+              />
+            </div>
+          </div>
+
+          {/* Current Date Range Information Visual */}
+          <div className="space-y-1.5">
+            <div className="flex justify-between items-center">
+              <span className="text-[10px] font-black text-[#109E58] uppercase tracking-wider block">Rentang Terpilih (S{semester})</span>
+              {(startDateStr || endDateStr) && (
+                <button
+                  type="button"
+                  onClick={() => confirmNavigation('dates', '|')}
+                  className="text-[10px] font-bold text-rose-600 hover:text-rose-700 flex items-center gap-1 cursor-pointer transition-colors"
+                  title="Hapus filter periode"
+                >
+                  <X size={11} /> Hapus Filter
+                </button>
               )}
-            </select>
-            <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            </div>
+            <div className="flex items-center justify-between gap-2 bg-[#109E58]/5 border border-[#109E58]/10 text-gray-700 rounded-xl px-3.5 py-2 text-xs font-bold min-h-[38px]">
+              <div className="flex items-center gap-2 truncate">
+                <Calendar size={14} className="text-[#109E58] shrink-0" />
+                <span className="truncate leading-tight">
+                  {formattedPeriodRangeIndo || "Semua Periode (Tanpa Filter)"}
+                </span>
+              </div>
+            </div>
           </div>
+
         </div>
 
-        {/* Start Date Picker */}
-        <div className="space-y-1.5">
-          <label className="text-[10px] font-black text-[#109E58] uppercase tracking-wider block">Tanggal Mulai</label>
-          <div className="relative">
-            <input
-              type="date"
-              value={startDateStr}
-              onChange={(e) => confirmNavigation('dates', `${e.target.value}|${endDateStr}`)}
-              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2 text-xs font-bold outline-none text-gray-700 cursor-pointer"
-            />
-          </div>
-        </div>
+        {/* Quick Period Selector Pills */}
+        <div className="pt-2 border-t border-gray-100 flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">
+            Filter Periode:
+          </span>
+          <button
+            type="button"
+            onClick={() => confirmNavigation('dates', '|')}
+            className={cn(
+              "px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer border",
+              !startDateStr && !endDateStr
+                ? "bg-[#109E58] text-white border-[#109E58] shadow-sm"
+                : "bg-gray-50 hover:bg-gray-100 text-gray-600 border-gray-200"
+            )}
+          >
+            Semua Periode ({allClassDrafts.length} Draf)
+          </button>
 
-        {/* End Date Picker */}
-        <div className="space-y-1.5">
-          <label className="text-[10px] font-black text-[#109E58] uppercase tracking-wider block">Tanggal Selesai</label>
-          <div className="relative">
-            <input
-              type="date"
-              value={endDateStr}
-              onChange={(e) => confirmNavigation('dates', `${startDateStr}|${e.target.value}`)}
-              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2 text-xs font-bold outline-none text-gray-700 cursor-pointer"
-            />
-          </div>
-        </div>
+          {distinctPeriods.map((p) => {
+            const isSelected = startDateStr === p.startDate && endDateStr === p.endDate;
+            const periodDraftCount = allClassDrafts.filter(d => 
+              d.periodKey === p.periodKey || (d.startDate === p.startDate && d.endDate === p.endDate)
+            ).length;
 
-        {/* Current Date Range Information Visual */}
-        <div className="space-y-1.5">
-          <span className="text-[10px] font-black text-[#109E58] uppercase tracking-wider block">Rentang Terpilih (S{semester})</span>
-          <div className="flex items-center gap-2 bg-[#109E58]/5 border border-[#109E58]/10 text-gray-700 rounded-xl px-3.5 py-2 text-xs font-bold min-h-[38px]">
-            <Calendar size={14} className="text-[#109E58] shrink-0" />
-            <span className="truncate leading-tight">{formattedPeriodRangeIndo || "Pilih rentang tanggal"}</span>
-          </div>
+            return (
+              <button
+                key={p.periodKey}
+                type="button"
+                onClick={() => confirmNavigation('dates', `${p.startDate}|${p.endDate}`)}
+                className={cn(
+                  "px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer border flex items-center gap-1.5",
+                  isSelected
+                    ? "bg-[#109E58] text-white border-[#109E58] shadow-sm"
+                    : "bg-gray-50 hover:bg-gray-100 text-gray-700 border-gray-200"
+                )}
+              >
+                <Calendar size={11} className={isSelected ? "text-white" : "text-[#109E58]"} />
+                <span>{p.periodLabel || `${p.startDate} s/d ${p.endDate}`}</span>
+                <span className={cn(
+                  "px-1.5 py-0.2 rounded-full text-[9px]",
+                  isSelected ? "bg-white/20 text-white" : "bg-gray-200 text-gray-600"
+                )}>
+                  {periodDraftCount}
+                </span>
+              </button>
+            );
+          })}
         </div>
-
       </div>
 
       {/* PANEL LEARNING GOALS KELAS */}
@@ -2668,18 +2865,21 @@ export default function MidtermSummary() {
                 classStudents.map((stud) => {
                   const isSelected = stud.id === selectedStudentId;
                   const stat = getStudentStatusBadge(stud.id);
+                  const draft = midtermDrafts[stud.id];
+                  const draftPeriodLabel = draft?.periodLabel || (draft?.startDate && draft?.endDate ? `${draft.startDate} - ${draft.endDate}` : '');
+
                   return (
                     <button
                       key={stud.id}
                       onClick={() => confirmNavigation('student', stud.id)}
                       className={cn(
-                        "w-full text-left p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 cursor-pointer",
+                        "w-full text-left p-3 rounded-2xl border transition-all flex items-center justify-between gap-2.5 cursor-pointer",
                         isSelected
                           ? "bg-emerald-50/55 border-emerald-200 shadow-sm"
                           : "bg-white hover:bg-gray-50 border-gray-150"
                       )}
                     >
-                      <div className="space-y-0.5 min-w-0">
+                      <div className="space-y-1 min-w-0 flex-1">
                         <p className={cn(
                           "text-xs font-bold truncate",
                           isSelected ? "text-emerald-900" : "text-gray-800"
@@ -2689,18 +2889,34 @@ export default function MidtermSummary() {
                         <p className="text-[10px] text-gray-400 font-medium flex items-center gap-1.5">
                           <span>No. Absen: {stud.attendanceNumber || stud.noAbsen || '-'}</span>
                         </p>
-                        <div className="pt-0.5">
-                          <span className={cn("px-1.5 py-0.5 rounded text-[8px] font-black tracking-tight border", getCompilationStatus(stud.id).color)}>
-                            {getCompilationStatus(stud.id).label}
-                          </span>
-                        </div>
+                        {draft ? (
+                          <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                            {draftPeriodLabel && (
+                              <span className="text-[8px] font-bold text-emerald-800 bg-emerald-100/70 border border-emerald-200 px-1.5 py-0.5 rounded flex items-center gap-1 max-w-full truncate" title={draftPeriodLabel}>
+                                <Calendar size={8} className="shrink-0 text-emerald-600" />
+                                <span className="truncate">{draftPeriodLabel}</span>
+                              </span>
+                            )}
+                            <span className={cn("px-1.5 py-0.5 rounded text-[8px] font-black tracking-tight border", getCompilationStatus(stud.id).color)}>
+                              {getCompilationStatus(stud.id).label}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="pt-0.5">
+                            <span className="px-1.5 py-0.5 rounded text-[8px] font-medium border text-gray-400 bg-gray-50 border-gray-200">
+                              Belum ada kompilasi
+                            </span>
+                          </div>
+                        )}
                       </div>
                       
-                      {/* Status indicator dot */}
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <div className={cn("w-2 h-2 rounded-full", stat.dotColor)} />
-                        <span className="text-[9px] text-gray-450 font-black uppercase tracking-wider hidden sm:inline">
-                          {stat.label.split(' ')[0]}
+                      {/* Status indicator badge */}
+                      <div className="flex flex-col items-end gap-1 shrink-0">
+                        <span className={cn(
+                          "px-2 py-0.5 rounded-full text-[9px] font-black border tracking-tight text-center whitespace-nowrap",
+                          stat.textColor
+                        )}>
+                          {stat.label}
                         </span>
                       </div>
                     </button>
@@ -2717,11 +2933,26 @@ export default function MidtermSummary() {
           
           {/* Quick Roster Nav header bar */}
           <div className="bg-white px-5 py-3 rounded-2xl border border-gray-150 shadow-sm flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5 flex-wrap">
               <span className="px-2 py-0.5 rounded bg-gray-100 text-gray-700 text-[10px] font-black">
                 {selectedStudentObj?.attendanceNumber || selectedStudentObj?.noAbsen || '01'}
               </span>
               <p className="text-xs font-bold text-gray-800 font-sans">{selectedStudentObj?.name || "Pilih Siswa"}</p>
+              {activeDraft ? (
+                <>
+                  <span className={cn("px-2.5 py-0.5 rounded-full text-[10px] font-black border", currentStudentStatus.textColor)}>
+                    {currentStudentStatus.label}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-[#109E58]/10 text-[#109E58] text-[10px] font-bold flex items-center gap-1 border border-[#109E58]/20">
+                    <Calendar size={11} className="text-[#109E58]" />
+                    {activeDraft.periodLabel || (activeDraft.startDate && activeDraft.endDate ? `${activeDraft.startDate} s/d ${activeDraft.endDate}` : 'Periode Midterm')}
+                  </span>
+                </>
+              ) : (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold border text-gray-400 bg-gray-50 border-gray-200">
+                  Belum ada kompilasi
+                </span>
+              )}
             </div>
 
             <div className="flex items-center gap-1.5">
@@ -2979,9 +3210,15 @@ export default function MidtermSummary() {
                   <div className="flex justify-between items-center pb-2.5 border-b border-gray-100 flex-wrap gap-2">
                     <div className="space-y-0.5">
                       <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider font-sans">General Comments Midterm</h3>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className={cn("inline-block w-2 h-2 rounded-full", currentStudentStatus.dotColor)} />
                         <span className="text-[10px] text-gray-500 font-bold font-sans">Status: {currentStudentStatus.label}</span>
+                        {activeDraft && (
+                          <span className="text-[10px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded font-bold font-sans flex items-center gap-1">
+                            <Calendar size={10} className="text-emerald-600" />
+                            {activeDraft.periodLabel || (activeDraft.startDate && activeDraft.endDate ? `${activeDraft.startDate} s/d ${activeDraft.endDate}` : 'Periode Midterm')}
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -3098,7 +3335,7 @@ export default function MidtermSummary() {
                   <div className="bg-emerald-50/70 p-2.5 rounded-2xl border border-emerald-150 text-center">
                     <span className="text-[9px] font-black text-emerald-700 uppercase tracking-wider block">Menunggu Review</span>
                     <span className="text-sm font-black text-emerald-800">
-                      {classStudents.filter(s => midtermDrafts[s.id]?.status === 'READY_FOR_REVIEW').length}
+                      {classStudents.filter(s => midtermDrafts[s.id]?.status === 'READY_FOR_REVIEW' || midtermDrafts[s.id]?.status === 'SUBMITTED_FOR_REVIEW').length}
                     </span>
                   </div>
                   <div className="bg-rose-50/70 p-2.5 rounded-2xl border border-rose-150 text-center">
@@ -3142,9 +3379,13 @@ export default function MidtermSummary() {
                     <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-gray-100">
                       <div className="space-y-1">
                         <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">Status Saat Ini</span>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className={cn("px-2.5 py-1 rounded-full text-xs font-black border", currentStudentStatus.textColor)}>
                             {currentStudentStatus.label}
+                          </span>
+                          <span className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full font-bold font-sans flex items-center gap-1.5">
+                            <Calendar size={12} className="text-emerald-600" />
+                            {activeDraft.periodLabel || (activeDraft.startDate && activeDraft.endDate ? `${activeDraft.startDate} s/d ${activeDraft.endDate}` : 'Periode Midterm')}
                           </span>
                         </div>
                       </div>
