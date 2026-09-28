@@ -15,7 +15,8 @@ import {
   saveElementaryMidtermStudentPerformingArtsUa,
   saveBulkElementaryMidtermStudentPerformingArtsUa,
   fetchElementaryMidtermCustomUas,
-  saveElementaryMidtermCustomUas
+  saveElementaryMidtermCustomUas,
+  fetchElementaryMidtermMasterGoals
 } from '../../../services/elementaryMidtermService';
 import { getLearningGoals, getActiveStudents } from '../../../lib/firebase';
 import { 
@@ -208,6 +209,16 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
   const [savedStudentUaSelection, setSavedStudentUaSelection] = React.useState<Record<string, string>>({});
   const [uaSaveStatus, setUaSaveStatus] = React.useState<'saved' | 'saving' | 'error' | null>(null);
 
+  const [goalsLoadError, setGoalsLoadError] = React.useState<boolean>(false);
+
+  // Active students for input remarks table (filtered by UA if subject is Performing Arts)
+  const activeStudentsForGrading = React.useMemo(() => {
+    if (activeSubject === 'Performing Arts') {
+      return students.filter(st => studentUaSelection[st.id] === activeUaTab);
+    }
+    return students;
+  }, [students, activeSubject, studentUaSelection, activeUaTab]);
+
   // Import Peserta Unit Activity Modal State
   const [showImportUaModal, setShowImportUaModal] = React.useState<boolean>(false);
   const [selectedImportUa, setSelectedImportUa] = React.useState<string>('');
@@ -291,6 +302,11 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
   }, [activeGoalsForMidterm, singleTargetGoalId]);
 
   const handleParseRemarksInput = () => {
+    if (goalsLoadError || goals.length === 0) {
+      toast.error('Daftar master goals belum siap.');
+      return;
+    }
+
     if (!remarksRawInput.trim()) {
       toast.error('Silakan paste data nilai terlebih dahulu.');
       return;
@@ -558,35 +574,37 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
         // Default to all goals active for backwards compatibility
         setActiveGoalIds(currentSubjectMasterDoc.goals.map(g => g.id));
       }
+      setGoalsLoadError(false);
     } else {
       // Offline/Default fallback if no master doc exists in cache/DB
       const loadDefaultGoals = async () => {
         try {
-          const cat = activeSubject === 'Projects' ? 'PROJECTS' : 'SUBJECTS';
-          const defaultGoals = await fetchElementaryMidtermMasterGoals({
-            classId: selectedClassId,
-            academicYear: selectedYear,
-            semester: selectedSemester,
-            midtermTerm: selectedTerm,
-            subjectKey: effectiveSubjectKey,
-            category: cat
-          });
-          if (defaultGoals && defaultGoals.length > 0) {
-            const mapped = defaultGoals[0].goals.map((g: any, idx: number) => ({
+          const defaultGoalsMap = await fetchElementaryMidtermMasterGoals(
+            selectedClassId,
+            selectedYear,
+            selectedSemester,
+            selectedTerm
+          );
+          const masterGoalDoc = defaultGoalsMap && defaultGoalsMap[effectiveSubjectKey];
+          if (masterGoalDoc && Array.isArray(masterGoalDoc.goals)) {
+            const mapped = masterGoalDoc.goals.map((g: any, idx: number) => ({
               id: g.id || g.code || `goal_${idx + 1}`,
-              text: g.goalText || g.code || `Goal ${idx + 1}`,
+              text: g.text || g.goalText || `Goal ${idx + 1}`,
               order: idx + 1
             }));
             setGoals(mapped);
             setActiveGoalIds(mapped.map(g => g.id));
+            setGoalsLoadError(false);
           } else {
             setGoals([]);
             setActiveGoalIds([]);
+            setGoalsLoadError(false);
           }
         } catch (e) {
           console.warn("Could not fetch default system goals:", e);
           setGoals([]);
           setActiveGoalIds([]);
+          setGoalsLoadError(true);
         }
       };
       loadDefaultGoals();
@@ -1080,14 +1098,6 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
     }
   };
 
-  // Active students for input remarks table (filtered by UA if subject is Performing Arts)
-  const activeStudentsForGrading = React.useMemo(() => {
-    if (activeSubject === 'Performing Arts') {
-      return students.filter(st => studentUaSelection[st.id] === activeUaTab);
-    }
-    return students;
-  }, [students, activeSubject, studentUaSelection, activeUaTab]);
-
   // Confirm and Execute Bulk Action
   const executeBulkRemark = async () => {
     const { goalId, value } = bulkModal;
@@ -1297,7 +1307,18 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
           <div className="text-xs font-black uppercase tracking-wider text-slate-500">
             Bank Learning Goals:
           </div>
-          {goals.length === 0 ? (
+          {goalsLoadError ? (
+            <div className="p-6 bg-red-50 text-red-800 rounded-2xl border border-red-200 text-center text-xs font-bold space-y-1">
+              <p>Learning Goals belum dapat dimuat. Silakan coba Refresh Data.</p>
+              <button 
+                type="button" 
+                onClick={() => onRefreshData()}
+                className="mt-2 px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 rounded-lg text-[10.5px] uppercase font-black tracking-wider transition-all cursor-pointer font-bold"
+              >
+                Refresh Data
+              </button>
+            </div>
+          ) : goals.length === 0 ? (
             <div className="p-6 bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-center text-xs text-slate-400 font-medium">
               Belum ada Learning Goals di Bank untuk {activeSubject === 'Performing Arts' ? `Performing Arts (${activeUaTab})` : activeSubject}. Tambahkan di bawah.
             </div>
@@ -1854,7 +1875,7 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
                   setSingleTargetGoalId(activeGoalsForMidterm[0].id);
                 }
               }}
-              disabled={activeGoalsForMidterm.length === 0}
+              disabled={activeGoalsForMidterm.length === 0 || goalsLoadError || goals.length === 0}
               className="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 text-emerald-800 border border-emerald-200 hover:border-emerald-300 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer"
             >
               <Upload size={14} />
