@@ -41,6 +41,14 @@ service cloud.firestore {
         (userRole() == 'TEACHER' || userRole() == 'HOMEROOM_TEACHER');
     }
 
+    function isJuniorHighTeacher() {
+      return isTeacher() && (
+        currentUser().unitId == 'JUNIOR_HIGH' || 
+        currentUser().unitId == 'ALL' ||
+        ('unit' in currentUser() && (currentUser().unit == 'JUNIOR_HIGH' || currentUser().unit == 'ALL'))
+      );
+    }
+
     function isSecretaryKindy() {
       return isActive() && userRole() == 'SECRETARY_KINDY' && currentUser().unitId == 'KINDERGARTEN';
     }
@@ -1141,7 +1149,22 @@ service cloud.firestore {
     }
 
     match /learning_goals/{goalId} {
-      allow read, write: if isJuniorHighStaff();
+      allow get, list: if isActive() && (isJuniorHighStaff() || isAdmin() || isJuniorHighTeacher());
+      allow create: if isActive() && (
+        isAdmin() ||
+        (isJuniorHighTeacher() && incoming().unitId == 'JUNIOR_HIGH') ||
+        (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL') && incoming().unitId == 'JUNIOR_HIGH')
+      );
+      allow update: if isActive() && (
+        isAdmin() ||
+        (isJuniorHighTeacher() && existing().unitId == 'JUNIOR_HIGH' && incoming().unitId == 'JUNIOR_HIGH') ||
+        (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL') && existing().unitId == 'JUNIOR_HIGH' && incoming().unitId == 'JUNIOR_HIGH')
+      );
+      allow delete: if isActive() && (
+        isAdmin() ||
+        (isJuniorHighTeacher() && existing().unitId == 'JUNIOR_HIGH') ||
+        (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL') && existing().unitId == 'JUNIOR_HIGH')
+      );
     }
 
     match /learning_power_up_tasks/{taskId} {
@@ -1379,60 +1402,64 @@ service cloud.firestore {
     }
 
     match /jh_midterm_master_goals/{goalId} {
-      allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
-      allow write: if isActive() && (
+      allow get, list: if isActive() && (isJuniorHighStaff() || isAdmin() || isJuniorHighTeacher());
+      allow create, update, delete: if isActive() && (
         isAdmin() ||
+        (isJuniorHighTeacher() && currentUser().unitId == 'JUNIOR_HIGH') ||
         (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL'))
       );
     }
 
     match /jh_midterm_student_data/{dataId} {
-      allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
-      
+      allow get, list: if isActive() && (isJuniorHighStaff() || isAdmin() || isJuniorHighTeacher());
       allow create, update: if isActive() && (
         isAdmin() ||
+        (isJuniorHighTeacher() && currentUser().unitId == 'JUNIOR_HIGH' && isJuniorHighClassId(incoming().classId)) ||
         (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL') && isJuniorHighClassId(incoming().classId))
       );
-
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL'));
     }
 
     match /jh_midterm_class_comments_config/{configId} {
-      allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
-      allow write: if isActive() && (
+      allow get, list: if isActive() && (isJuniorHighStaff() || isAdmin() || isJuniorHighTeacher());
+      allow create, update, delete: if isActive() && (
         isAdmin() ||
+        (isJuniorHighTeacher() && currentUser().unitId == 'JUNIOR_HIGH') ||
         (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL'))
       );
     }
 
     match /jh_midterm_published_reports/{reportId} {
-      allow read: if isActive() && (
+      allow get, list: if isActive() && (
         isJuniorHighStaff() ||
+        isJuniorHighTeacher() ||
         isAdmin() ||
         isOwnStudentData(resource.data.studentId) ||
         isLinkedStudent(resource.data.studentId)
       );
       allow create: if isActive() && (
         isAdmin() ||
+        (isJuniorHighTeacher() && currentUser().unitId == 'JUNIOR_HIGH' && isJuniorHighClassId(incoming().classId)) ||
         (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL') && isJuniorHighClassId(incoming().classId))
       );
       allow update: if isActive() && (
         (isLinkedStudent(resource.data.studentId) && 
          incoming().diff(existing()).affectedKeys().hasOnly(['isOpened', 'firstOpenedAt', 'lastOpenedAt', 'openCount'])) ||
         isAdmin() ||
+        (isJuniorHighTeacher() && currentUser().unitId == 'JUNIOR_HIGH') ||
         (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL'))
       );
       allow delete: if isAdmin();
     }
 
     match /jh_midterm_period_configs/{configId} {
-      allow read: if isActive() && isJuniorHighStaff();
-
+      allow get, list: if isActive() && (isJuniorHighStaff() || isAdmin() || isJuniorHighTeacher());
       allow create, update: if isActive() && (
         isAdmin() ||
+        (isJuniorHighTeacher() && currentUser().unitId == 'JUNIOR_HIGH') ||
+        (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) ||
         userRole() in ['PRINCIPAL', 'HEAD_JUNIOR', 'HEAD_UNIT', 'VICE_PRINCIPAL', 'COORDINATOR', 'SECRETARY_JH']
       );
-
       allow delete: if isAdmin();
     }
 

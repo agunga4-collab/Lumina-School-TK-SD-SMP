@@ -29,48 +29,21 @@ export function normalizeMidtermFilename(
 }
 
 /**
- * Generates 2-page A4 PDF from the rendered report DOM elements
+ * Generates A4 PDF from the rendered report DOM elements dynamically
  */
 export async function generateMidtermPdfBlob(
-  page1Element: HTMLElement,
-  page2Element: HTMLElement
+  firstArg: HTMLElement | HTMLElement[],
+  secondArg?: HTMLElement
 ): Promise<Blob> {
-  const canvas1 = await html2canvasWithModernColors(page1Element, {
-    scale: 2,
-    useCORS: true,
-    logging: false,
-    windowWidth: 794,
-    windowHeight: 1123,
-    onclone: (clonedDoc, clonedElement) => {
-      if (clonedElement) {
-        clonedElement.style.width = '794px';
-        clonedElement.style.height = '1123px';
-        clonedElement.style.minWidth = '794px';
-        clonedElement.style.minHeight = '1123px';
-        clonedElement.style.boxSizing = 'border-box';
-      }
-    },
-  });
-
-  const canvas2 = await html2canvasWithModernColors(page2Element, {
-    scale: 2,
-    useCORS: true,
-    logging: false,
-    windowWidth: 794,
-    windowHeight: 1123,
-    onclone: (clonedDoc, clonedElement) => {
-      if (clonedElement) {
-        clonedElement.style.width = '794px';
-        clonedElement.style.height = '1123px';
-        clonedElement.style.minWidth = '794px';
-        clonedElement.style.minHeight = '1123px';
-        clonedElement.style.boxSizing = 'border-box';
-      }
-    },
-  });
-
-  const imgData1 = canvas1.toDataURL('image/jpeg', 0.90);
-  const imgData2 = canvas2.toDataURL('image/jpeg', 0.90);
+  let pageElements: HTMLElement[] = [];
+  if (Array.isArray(firstArg)) {
+    pageElements = firstArg;
+  } else {
+    pageElements = [firstArg];
+    if (secondArg) {
+      pageElements.push(secondArg);
+    }
+  }
 
   const pdf = new jsPDF({
     orientation: 'portrait',
@@ -81,12 +54,32 @@ export async function generateMidtermPdfBlob(
   const pdfWidth = pdf.internal.pageSize.getWidth();
   const pdfHeight = pdf.internal.pageSize.getHeight();
 
-  // Page 1
-  pdf.addImage(imgData1, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
+  for (let i = 0; i < pageElements.length; i++) {
+    const pageEl = pageElements[i];
+    const canvas = await html2canvasWithModernColors(pageEl, {
+      scale: 2,
+      useCORS: true,
+      logging: false,
+      windowWidth: 794,
+      windowHeight: 1123,
+      onclone: (clonedDoc, clonedElement) => {
+        if (clonedElement) {
+          clonedElement.style.width = '794px';
+          clonedElement.style.height = '1123px';
+          clonedElement.style.minWidth = '794px';
+          clonedElement.style.minHeight = '1123px';
+          clonedElement.style.boxSizing = 'border-box';
+        }
+      },
+    });
 
-  // Page 2
-  pdf.addPage();
-  pdf.addImage(imgData2, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
+    const imgData = canvas.toDataURL('image/jpeg', 0.90);
+    
+    if (i > 0) {
+      pdf.addPage();
+    }
+    pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
+  }
 
   return pdf.output('blob');
 }

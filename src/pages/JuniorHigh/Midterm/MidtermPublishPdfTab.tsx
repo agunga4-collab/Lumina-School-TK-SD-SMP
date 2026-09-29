@@ -305,15 +305,14 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
     // Give DOM time to update the hidden print template
     await new Promise(r => setTimeout(r, 400));
 
-    const page1El = document.getElementById('jh-midterm-generator-page-1');
-    const page2El = document.getElementById('jh-midterm-generator-page-2');
+    const pageElements = Array.from(document.querySelectorAll('[id^="jh-midterm-generator-page"]')) as HTMLElement[];
 
-    if (!page1El || !page2El) {
+    if (pageElements.length === 0) {
       throw new Error('Element render layout PDF tidak ditemukan.');
     }
 
     // 1. Generate PDF
-    const pdfBlob = await generateMidtermPdfBlob(page1El, page2El);
+    const pdfBlob = await generateMidtermPdfBlob(pageElements);
     const fileName = normalizeMidtermFilename(selectedClass.name, student.name, midtermTerm, academicYear);
 
     // 2. Upload to Google Drive
