@@ -65,6 +65,7 @@ export default function ReportConfigPage() {
               unitId: 'KINDERGARTEN',
               principalName: '',
               principalTitle: 'Principal',
+              principalNIY: '',
               principalSignatureUrl: null,
               principalSignatureStoragePath: null
             } as any);
@@ -364,7 +365,7 @@ export default function ReportConfigPage() {
                </div>
 
                <div className="bg-white p-10 rounded-[3rem] border border-gray-100 shadow-sm space-y-8">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                      <div className="space-y-2">
                         <label className="text-[10px] font-black uppercase tracking-wider text-gray-400 font-sans block">Principal Name</label>
                         <input 
@@ -383,6 +384,17 @@ export default function ReportConfigPage() {
                            value={(config as any)?.principalTitle || 'Principal'}
                            onChange={(e) => setConfig(prev => prev ? ({ ...prev, principalTitle: e.target.value } as any) : null)}
                            placeholder="Principal"
+                           className="w-full p-4 bg-gray-50 rounded-2xl border-none font-bold text-gray-700 outline-none focus:ring-2 focus:ring-emerald-500 font-sans text-sm"
+                        />
+                     </div>
+
+                     <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-wider text-gray-400 font-sans block">Principal NIY</label>
+                        <input 
+                           type="text"
+                           value={(config as any)?.principalNIY || ''}
+                           onChange={(e) => setConfig(prev => prev ? ({ ...prev, principalNIY: e.target.value } as any) : null)}
+                           placeholder="Masukkan NIY..."
                            className="w-full p-4 bg-gray-50 rounded-2xl border-none font-bold text-gray-700 outline-none focus:ring-2 focus:ring-emerald-500 font-sans text-sm"
                         />
                      </div>
