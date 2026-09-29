@@ -627,6 +627,19 @@ export default function MidtermSummary() {
       payload.createdBy = classLearningGoals.createdBy || profile?.email || 'System';
     }
 
+    console.info('[Kindy Midterm] learning-goals save audit', {
+      documentPath: 'kindy_midterm_class_learning_goals/' + docId,
+      exists: !!classLearningGoals,
+      currentUserUid: profile?.uid || currentUser?.uid,
+      currentUserEmail: profile?.email,
+      classId: selectedClassId,
+      academicYear: activeYear || '2026/2027',
+      semester,
+      periodKey: payload.midtermPeriodKey,
+      startDate: startDateStr,
+      endDate: endDateStr,
+    });
+
     setIsSavingClassGoals(true);
     const toastId = toast.loading('Menyimpan Learning Goals Kelas...');
     try {
