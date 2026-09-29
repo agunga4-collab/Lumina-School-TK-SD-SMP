@@ -1379,71 +1379,48 @@ service cloud.firestore {
     }
 
     match /jh_midterm_master_goals/{goalId} {
-      allow read: if isActive() && (isJuniorHighStaff() || isAdmin() || isTeacher());
-      allow write: if isActive() && (isJuniorHighStaff() || isAdmin() || isTeacher());
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow write: if isActive() && (
+        isAdmin() ||
+        (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL'))
+      );
     }
 
     match /jh_midterm_student_data/{dataId} {
-      allow read: if isActive() && (isJuniorHighStaff() || isAdmin() || isTeacher());
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
       
-      allow create: if isActive() && (
+      allow create, update: if isActive() && (
         isAdmin() ||
-        isJuniorHighTeacherOrAuthorizedStaff()
-      );
-
-      allow update: if isActive() && (
-        isAdmin() ||
-        
-        (isJuniorHighTeacherOrAuthorizedStaff() && (
-          ((resource.data.generalCommentReviewStatus == 'DRAFT' || resource.data.generalCommentReviewStatus == 'REVISION_REQUESTED' || !('generalCommentReviewStatus' in resource.data)) &&
-           request.resource.data.generalCommentReviewStatus in ['DRAFT', 'SUBMITTED_FOR_REVIEW'] &&
-           !('revisionFeedback' in request.resource.data && request.resource.data.revisionFeedback != resource.data.revisionFeedback)) ||
-          
-          ((resource.data.generalCommentReviewStatus == 'SUBMITTED_FOR_REVIEW' || resource.data.generalCommentReviewStatus == 'APPROVED') &&
-           request.resource.data.generalComment == resource.data.generalComment &&
-           request.resource.data.commentBuilder == resource.data.commentBuilder &&
-           request.resource.data.generalCommentReviewStatus == resource.data.generalCommentReviewStatus)
-        )) ||
-
-        ((userRole() in ['PRINCIPAL', 'SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR'] || isAdmin()) &&
-         (isAdmin() || userRole() == 'SUPER_ADMIN' || !('unitId' in currentUser()) || currentUser().unitId in ['JUNIOR_HIGH', 'ALL'] || userRole() == 'HEAD_JUNIOR') &&
-         resource.data.generalCommentReviewStatus == 'SUBMITTED_FOR_REVIEW' &&
-         request.resource.data.generalCommentReviewStatus in ['APPROVED', 'REVISION_REQUESTED'] &&
-         !(exists(/databases/$(database)/documents/classes/$(resource.data.classId)) && get(/databases/$(database)/documents/classes/$(resource.data.classId)).data.homeroomTeacherId == request.auth.uid) &&
-         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-           'generalCommentReviewStatus', 'revisionFeedback', 
-           'reviewedBy', 'reviewedByName', 'reviewedAt', 
-           'updatedAt', 'updatedBy'
-         ])
-        )
+        (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL') && isJuniorHighClassId(incoming().classId))
       );
 
       allow delete: if isAdmin();
     }
 
     match /jh_midterm_class_comments_config/{configId} {
-      allow read: if isActive() && (isJuniorHighStaff() || isAdmin() || isTeacher());
-      allow write: if isActive() && (isJuniorHighStaff() || isAdmin() || isTeacher());
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow write: if isActive() && (
+        isAdmin() ||
+        (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL'))
+      );
     }
 
     match /jh_midterm_published_reports/{reportId} {
       allow read: if isActive() && (
         isJuniorHighStaff() ||
         isAdmin() ||
-        isTeacher() ||
         isOwnStudentData(resource.data.studentId) ||
         isLinkedStudent(resource.data.studentId)
       );
       allow create: if isActive() && (
         isAdmin() ||
-        isJuniorHighStaff() ||
-        isTeacher()
+        (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL') && isJuniorHighClassId(incoming().classId))
       );
       allow update: if isActive() && (
         (isLinkedStudent(resource.data.studentId) && 
          incoming().diff(existing()).affectedKeys().hasOnly(['isOpened', 'firstOpenedAt', 'lastOpenedAt', 'openCount'])) ||
         isAdmin() ||
-        isJuniorHighStaff()
+        (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL'))
       );
       allow delete: if isAdmin();
     }
