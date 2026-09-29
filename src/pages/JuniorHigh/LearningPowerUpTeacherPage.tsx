@@ -1829,10 +1829,103 @@ function LearningPowerUpTeacherPageContent() {
     return { isValid: true };
   };
 
+  const getGradeGroupFromClasses = (targetClassIds: string[]): { isValid: boolean; gradeGroup?: string; error?: string } => {
+    if (targetClassIds.length === 0) {
+      return { isValid: true };
+    }
+    const grades = targetClassIds.map(classId => {
+      const classObj = classes.find(c => c.id === classId);
+      if (!classObj) return '';
+      if (classObj.grade !== undefined && classObj.grade !== null && String(classObj.grade).trim() !== '') {
+        return String(classObj.grade).trim();
+      }
+      const className = String(classObj.name || '').toUpperCase();
+      if (className.includes('VIII')) return '8';
+      if (className.includes('VII')) return '7';
+      if (className.includes('IX')) return '9';
+      const match = className.match(/([789])/);
+      return match ? match[1] : '';
+    }).filter(Boolean);
+
+    const uniqueGrades = Array.from(new Set(grades));
+    if (uniqueGrades.length > 1) {
+      return {
+        isValid: false,
+        error: "Pilih kelas dari satu grade saja untuk membuat tugas LPU."
+      };
+    };
+    return {
+      isValid: true,
+      gradeGroup: uniqueGrades[0] || 'Unknown'
+    };
+  };
+
+  const getGradeGroupOfBatch = (batch: LearningPowerUpTaskBatch): string => {
+    if (batch.gradeGroup) return String(batch.gradeGroup);
+    const targetClassIds = batch.targetClassIds || [];
+    if (targetClassIds.length > 0) {
+      const classObj = classes.find(c => c.id === targetClassIds[0]);
+      if (classObj) {
+        if (classObj.grade !== undefined && classObj.grade !== null && String(classObj.grade).trim() !== '') {
+          return String(classObj.grade).trim();
+        }
+        const className = String(classObj.name || '').toUpperCase();
+        if (className.includes('VIII')) return '8';
+        if (className.includes('VII')) return '7';
+        if (className.includes('IX')) return '9';
+        const match = className.match(/([789])/);
+        return match ? match[1] : '';
+      }
+    }
+    return '';
+  };
+
   const handleSaveNewBatchDraft = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
 
-    const formBatchId = editingBatchId || (newSubject && newWeekStartDate ? `batch_${newSubject}_${newWeekStartDate}_${activeYear.replace('/', '_')}` : null);
+    // 0. If creating a new batch, validate that subject, weekStartDate, and classes are selected
+    if (!editingBatchId) {
+      if (!newSubject) {
+        toast.error("Silakan pilih mata pelajaran terlebih dahulu.");
+        return;
+      }
+      if (newTargetClassIds.length === 0) {
+        toast.error("Silakan pilih setidaknya satu kelas target.");
+        return;
+      }
+      if (!newWeekStartDate) {
+        toast.error("Silakan tentukan tanggal mulai pekan terlebih dahulu.");
+        return;
+      }
+    }
+
+    // 1. Validate target classes belong to a single grade group
+    const classesValidation = getGradeGroupFromClasses(newTargetClassIds);
+    if (!classesValidation.isValid) {
+      toast.error(classesValidation.error || "Pilih kelas dari satu grade saja untuk membuat tugas LPU.");
+      return;
+    }
+    const currentFormGradeGroup = classesValidation.gradeGroup || '';
+
+    // 2. If editing, check if grade of target classes matches the existing gradeGroup of the batch
+    if (editingBatchId) {
+      const originalBatch = taskBatches.find(b => b.id === editingBatchId);
+      if (originalBatch) {
+        const existingGradeGroup = getGradeGroupOfBatch(originalBatch);
+        if (existingGradeGroup && currentFormGradeGroup && existingGradeGroup !== currentFormGradeGroup) {
+          toast.error(`Gagal menyimpan: Kelas target yang dipilih memiliki grade (${currentFormGradeGroup}) yang berbeda dengan grade batch existing (${existingGradeGroup}).`);
+          return;
+        }
+      }
+    }
+
+    const academicYearId = activeYear.replace('/', '_');
+    const formBatchId = editingBatchId || (
+      newSubject && newWeekStartDate && currentFormGradeGroup
+        ? ['batch', newSubject, newWeekStartDate, academicYearId, 'grade', currentFormGradeGroup].join('_')
+        : null
+    );
+
     const loadedBatches: LearningPowerUpTaskBatch[] = [...taskBatches];
     if (formBatchId && !loadedBatches.some(b => b.id === formBatchId) && newSubject && newTargetClassIds.length > 0) {
       loadedBatches.unshift({
@@ -1850,7 +1943,8 @@ function LearningPowerUpTeacherPageContent() {
         status: 'DRAFT',
         createdBy: currentUser.uid,
         createdAt: serverTimestamp() as any,
-        updatedAt: serverTimestamp() as any
+        updatedAt: serverTimestamp() as any,
+        gradeGroup: currentFormGradeGroup ? String(currentFormGradeGroup) : undefined
       });
     }
 
@@ -1859,14 +1953,16 @@ function LearningPowerUpTeacherPageContent() {
       .filter((batch) => batch.id)
       .map((batch) => batch.id);
 
-    const batchIdsToSave = (
+    const batchIdsToSave =
       selectedBatchIds.length > 0
         ? selectedBatchIds
-        : availableBatchIds
-    ).filter((id) => {
-      const b = loadedBatches.find(batch => batch.id === id);
-      return !b || b.status !== 'PUBLISHED';
-    });
+        : (formBatchId
+            ? [formBatchId]
+            : availableBatchIds.filter((id) => {
+                const b = loadedBatches.find(batch => batch.id === id);
+                return !b || b.status !== 'PUBLISHED';
+              })
+          );
 
     const selectedClassIds = newTargetClassIds.length > 0 
       ? newTargetClassIds 
@@ -1938,7 +2034,8 @@ function LearningPowerUpTeacherPageContent() {
           updatedBy: currentUser.uid,
           updatedByEmail: currentUser.email || '',
           updatedByName: currentUser.displayName || '',
-          updatedAt: now
+          updatedAt: now,
+          gradeGroup: isCurrentForm ? String(currentFormGradeGroup) : (targetBatch.gradeGroup ? String(targetBatch.gradeGroup) : getGradeGroupOfBatch(targetBatch))
         };
 
         await setDoc(doc(db, 'learning_power_up_task_batches', batchId), batchDoc, { merge: true });
@@ -1960,7 +2057,49 @@ function LearningPowerUpTeacherPageContent() {
       return;
     }
 
-    const formBatchId = editingBatchId || (newSubject && newWeekStartDate ? `batch_${newSubject}_${newWeekStartDate}_${activeYear.replace('/', '_')}` : null);
+    // 0. If creating a new batch, validate that subject, weekStartDate, and classes are selected
+    if (!editingBatchId) {
+      if (!newSubject) {
+        toast.error("Silakan pilih mata pelajaran terlebih dahulu.");
+        return;
+      }
+      if (newTargetClassIds.length === 0) {
+        toast.error("Silakan pilih setidaknya satu kelas target.");
+        return;
+      }
+      if (!newWeekStartDate) {
+        toast.error("Silakan tentukan tanggal mulai pekan terlebih dahulu.");
+        return;
+      }
+    }
+
+    // 1. Validate target classes belong to a single grade group
+    const classesValidation = getGradeGroupFromClasses(newTargetClassIds);
+    if (!classesValidation.isValid) {
+      toast.error(classesValidation.error || "Pilih kelas dari satu grade saja untuk membuat tugas LPU.");
+      return;
+    }
+    const currentFormGradeGroup = classesValidation.gradeGroup || '';
+
+    // 2. If editing, check if grade of target classes matches the existing gradeGroup of the batch
+    if (editingBatchId) {
+      const originalBatch = taskBatches.find(b => b.id === editingBatchId);
+      if (originalBatch) {
+        const existingGradeGroup = getGradeGroupOfBatch(originalBatch);
+        if (existingGradeGroup && currentFormGradeGroup && existingGradeGroup !== currentFormGradeGroup) {
+          toast.error(`Gagal menyimpan: Kelas target yang dipilih memiliki grade (${currentFormGradeGroup}) yang berbeda dengan grade batch existing (${existingGradeGroup}).`);
+          return;
+        }
+      }
+    }
+
+    const academicYearId = activeYear.replace('/', '_');
+    const formBatchId = editingBatchId || (
+      newSubject && newWeekStartDate && currentFormGradeGroup
+        ? ['batch', newSubject, newWeekStartDate, academicYearId, 'grade', currentFormGradeGroup].join('_')
+        : null
+    );
+
     const loadedBatches: LearningPowerUpTaskBatch[] = [...taskBatches];
     if (formBatchId && !loadedBatches.some(b => b.id === formBatchId) && newSubject && newTargetClassIds.length > 0) {
       loadedBatches.unshift({
@@ -1978,7 +2117,8 @@ function LearningPowerUpTeacherPageContent() {
         status: 'DRAFT',
         createdBy: currentUser.uid,
         createdAt: serverTimestamp() as any,
-        updatedAt: serverTimestamp() as any
+        updatedAt: serverTimestamp() as any,
+        gradeGroup: currentFormGradeGroup ? String(currentFormGradeGroup) : undefined
       });
     }
 
@@ -2126,7 +2266,8 @@ function LearningPowerUpTeacherPageContent() {
           publishedBy: currentUser.uid,
           publishedByEmail: currentUser.email || '',
           publishedByName: currentUser.displayName || '',
-          publishedAt: targetBatch.publishedAt || now
+          publishedAt: targetBatch.publishedAt || now,
+          gradeGroup: isCurrentForm ? String(currentFormGradeGroup) : (targetBatch.gradeGroup ? String(targetBatch.gradeGroup) : getGradeGroupOfBatch(targetBatch))
         };
 
         // 3. Resolve student roster for classIdsToPublish only
