@@ -4095,7 +4095,7 @@ export default function MidtermSummary() {
                            {/* Section: Catatan Ketidakhadiran */}
                            <div className="space-y-1.5 mt-6">
                              <h4 className="text-[12.5px] font-bold text-emerald-900 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 font-sans">
-                               Catatan Ketidakhadiran (Periode: {formatIndoDate(getAcademicYearAttendanceStartDate(activeYear || '2026/2027'))} s.d. {formatIndoDate(classGoalsInput.signingDate || classLearningGoals?.signingDate || '')})
+                               Catatan Ketidakhadiran
                              </h4>
                              {!(classGoalsInput.signingDate || classLearningGoals?.signingDate) ? (
                                <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl text-center text-xs text-amber-800 font-sans font-bold leading-relaxed mt-2">
