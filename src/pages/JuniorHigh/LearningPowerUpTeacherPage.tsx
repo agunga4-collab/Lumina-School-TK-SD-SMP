@@ -1831,50 +1831,12 @@ function LearningPowerUpTeacherPageContent() {
 
   const handleSaveNewBatchDraft = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!newSubject) {
-      toast.error("Harap pilih Subject!");
-      return;
-    }
-    if (newTargetClassIds.length === 0) {
-      toast.error("Harap pilih setidaknya satu Kelas Target!");
-      return;
-    }
-    if (!newWeekStartDate || !newWeekEndDate) {
-      toast.error("Harap isi rentang Tanggal!");
-      return;
-    }
 
-    // Validate teacher scope
-    const validation = validateTeacherScopeForBatch(newSubject, newTargetClassIds);
-    if (!validation.isValid) {
-      toast.error(validation.error);
-      return;
-    }
-
-    // Ensure at least one task is entered
-    const hasSomeTask = (Object.values(levelTasks) as Array<{ title: string; instructions: string }>).some(t => t.title.trim() && t.instructions.trim());
-    if (!hasSomeTask) {
-      toast.error("Harap masukkan setidaknya satu judul dan instruksi tugas untuk level kemampuan!");
-      return;
-    }
-
-    setLoadingData(true);
-    try {
-      const batchId = editingBatchId || `batch_${newSubject}_${newWeekStartDate}_${activeYear.replace('/', '_')}`;
-      const cleanLevelTasks: Record<string, LpuLevelTask> = {};
-      Object.entries(levelTasks).forEach(([lvl, rawTask]) => {
-        const task = rawTask as { title: string; instructions: string };
-        if (task.title.trim() || task.instructions.trim()) {
-          cleanLevelTasks[lvl] = {
-            title: task.title.trim(),
-            instructions: task.instructions.trim()
-          };
-        }
-      });
-
-      const isEditing = !!editingBatchId;
-      const batchDoc: LearningPowerUpTaskBatch = {
-        id: batchId,
+    const formBatchId = editingBatchId || (newSubject && newWeekStartDate ? `batch_${newSubject}_${newWeekStartDate}_${activeYear.replace('/', '_')}` : null);
+    const loadedBatches: LearningPowerUpTaskBatch[] = [...taskBatches];
+    if (formBatchId && !loadedBatches.some(b => b.id === formBatchId) && newSubject && newTargetClassIds.length > 0) {
+      loadedBatches.unshift({
+        id: formBatchId,
         unit: 'JUNIOR_HIGH',
         subjectKey: newSubject,
         subjectArea: LPU_SUBJECT_MAP[newSubject],
@@ -1884,96 +1846,125 @@ function LearningPowerUpTeacherPageContent() {
         weekStartDate: newWeekStartDate,
         weekEndDate: newWeekEndDate,
         weekLabel: newWeekLabel || `Pekan (${formatDateShort(newWeekStartDate)} - ${formatDateShort(newWeekEndDate)})`,
-        levelTasks: cleanLevelTasks,
+        levelTasks: levelTasks as any,
         status: 'DRAFT',
-        createdBy: isEditing ? (taskBatches.find(b => b.id === batchId)?.createdBy || currentUser.uid) : currentUser.uid,
-        createdByEmail: isEditing ? (taskBatches.find(b => b.id === batchId)?.createdByEmail || currentUser.email || '') : (currentUser.email || ''),
-        createdByName: isEditing ? (taskBatches.find(b => b.id === batchId)?.createdByName || currentUser.displayName || '') : (currentUser.displayName || ''),
-        createdAt: isEditing ? (taskBatches.find(b => b.id === batchId)?.createdAt || serverTimestamp()) : serverTimestamp(),
-        updatedBy: currentUser.uid,
-        updatedByEmail: currentUser.email || '',
-        updatedByName: currentUser.displayName || '',
-        updatedAt: serverTimestamp()
-      };
+        createdBy: currentUser.uid,
+        createdAt: serverTimestamp() as any,
+        updatedAt: serverTimestamp() as any
+      });
+    }
 
-      await setDoc(doc(db, 'learning_power_up_task_batches', batchId), batchDoc);
+    const selectedBatchIds = editingBatchId ? [editingBatchId] : [];
+    const availableBatchIds = loadedBatches
+      .filter((batch) => batch.id)
+      .map((batch) => batch.id);
+
+    const batchIdsToSave = (
+      selectedBatchIds.length > 0
+        ? selectedBatchIds
+        : availableBatchIds
+    ).filter((id) => {
+      const b = loadedBatches.find(batch => batch.id === id);
+      return !b || b.status !== 'PUBLISHED';
+    });
+
+    const selectedClassIds = newTargetClassIds.length > 0 
+      ? newTargetClassIds 
+      : Array.from(new Set(loadedBatches.flatMap(b => b.targetClassIds || [])));
+
+    console.info('[LPU] save draft ready', {
+      selectedBatchIds,
+      availableBatchIds,
+      batchIdsToSave,
+      selectedClassIds,
+    });
+
+    if (batchIdsToSave.length === 0) {
+      toast.error("Tidak ada batch yang dapat disimpan sebagai draf.");
+      return;
+    }
+
+    setLoadingData(true);
+    try {
+      for (const batchId of batchIdsToSave) {
+        let targetBatch = loadedBatches.find(b => b.id === batchId);
+        if (!targetBatch) continue;
+
+        // Skip if already published in Firestore
+        const batchDocRef = doc(db, 'learning_power_up_task_batches', batchId);
+        const existingSnap = await getDoc(batchDocRef);
+        if (existingSnap.exists() && existingSnap.data()?.status === 'PUBLISHED') {
+          continue;
+        }
+
+        const isCurrentForm = (batchId === editingBatchId || (formBatchId && formBatchId === batchId));
+        const batchSubject = isCurrentForm && newSubject ? newSubject : targetBatch.subjectKey;
+        const batchTargetClassIds = isCurrentForm && newTargetClassIds.length > 0 ? newTargetClassIds : (targetBatch.targetClassIds || []);
+        const batchWeekStartDate = isCurrentForm && newWeekStartDate ? newWeekStartDate : targetBatch.weekStartDate;
+        const batchWeekEndDate = isCurrentForm && newWeekEndDate ? newWeekEndDate : targetBatch.weekEndDate;
+        const batchWeekLabel = isCurrentForm && newWeekLabel ? newWeekLabel : (targetBatch.weekLabel || `Pekan (${formatDateShort(batchWeekStartDate)} - ${formatDateShort(batchWeekEndDate)})`);
+        const batchSemester = isCurrentForm && newSemester ? newSemester : (targetBatch.semester || '1');
+        const batchLevelTasks = isCurrentForm && Object.keys(levelTasks).length > 0 ? levelTasks : targetBatch.levelTasks;
+
+        const cleanLevelTasks: Record<string, LpuLevelTask> = {};
+        Object.entries(batchLevelTasks || {}).forEach(([lvl, rawTask]) => {
+          const task = rawTask as { title?: string; instructions?: string };
+          if (task && (task.title?.trim() || task.instructions?.trim())) {
+            cleanLevelTasks[lvl] = {
+              title: (task.title || '').trim(),
+              instructions: (task.instructions || '').trim()
+            };
+          }
+        });
+
+        const now = serverTimestamp();
+        const batchDoc: LearningPowerUpTaskBatch = {
+          id: batchId,
+          unit: 'JUNIOR_HIGH',
+          subjectKey: batchSubject,
+          subjectArea: LPU_SUBJECT_MAP[batchSubject],
+          academicYearId: activeYear,
+          semester: batchSemester,
+          targetClassIds: batchTargetClassIds,
+          weekStartDate: batchWeekStartDate,
+          weekEndDate: batchWeekEndDate,
+          weekLabel: batchWeekLabel,
+          levelTasks: cleanLevelTasks,
+          status: 'DRAFT',
+          createdBy: targetBatch.createdBy || currentUser.uid,
+          createdByEmail: targetBatch.createdByEmail || currentUser.email || '',
+          createdByName: targetBatch.createdByName || currentUser.displayName || '',
+          createdAt: targetBatch.createdAt || now,
+          updatedBy: currentUser.uid,
+          updatedByEmail: currentUser.email || '',
+          updatedByName: currentUser.displayName || '',
+          updatedAt: now
+        };
+
+        await setDoc(doc(db, 'learning_power_up_task_batches', batchId), batchDoc, { merge: true });
+      }
+
       toast.success("Draft tugas berhasil disimpan!");
-      
       resetNewBatchForm();
       await loadTaskBatches();
-    } catch (err) {
-      console.error("Error saving draft batch:", err);
-      toast.error("Gagal menyimpan draft tugas.");
+    } catch (err: any) {
+      console.error("[LPU] Error saving draft batch:", err);
+      toast.error(err?.message ? `Gagal menyimpan draft: ${err.message}` : "Gagal menyimpan draft tugas.");
     } finally {
       setLoadingData(false);
     }
   };
 
   const handlePublish = async () => {
-    const selectedBatchIds = editingBatchId ? [editingBatchId] : [];
-    const selectedClassIds = newTargetClassIds;
-    console.info('[LPU] publish clicked', {
-      selectedBatchIds,
-      selectedClassIds,
-    });
-
     if (isPublishing) {
       return;
     }
 
-    if (!newSubject) {
-      toast.error("Harap pilih Subject tugas terlebih dahulu.");
-      return;
-    }
-    if (!newTargetClassIds || newTargetClassIds.length === 0) {
-      toast.error("Harap pilih minimal satu Kelas Target.");
-      return;
-    }
-    if (!newWeekStartDate || !newWeekEndDate) {
-      toast.error("Harap tentukan rentang Tanggal Pekan (Tanggal Mulai dan Tanggal Selesai).");
-      return;
-    }
-
-    // Validate teacher scope
-    const validation = validateTeacherScopeForBatch(newSubject, newTargetClassIds);
-    if (!validation.isValid) {
-      toast.error(validation.error || "Anda tidak berwenang menerbitkan tugas untuk kelas yang dipilih.");
-      return;
-    }
-
-    // Ensure at least one task is entered
-    const hasSomeTask = (Object.values(levelTasks) as Array<{ title?: string; instructions?: string }>).some(
-      t => t && t.title?.trim() && t.instructions?.trim()
-    );
-    if (!hasSomeTask) {
-      toast.error("Harap masukkan setidaknya satu judul dan instruksi tugas untuk level kemampuan.");
-      return;
-    }
-
-    setIsPublishing(true);
-
-    try {
-      const batchId = editingBatchId || `batch_${newSubject}_${newWeekStartDate}_${activeYear.replace('/', '_')}`;
-
-      // 1. Prepare clean levelTasks
-      const cleanLevelTasks: Record<string, LpuLevelTask> = {};
-      Object.entries(levelTasks).forEach(([lvl, rawTask]) => {
-        const task = rawTask as { title?: string; instructions?: string };
-        if (task && (task.title?.trim() || task.instructions?.trim())) {
-          cleanLevelTasks[lvl] = {
-            title: (task.title || '').trim(),
-            instructions: (task.instructions || '').trim()
-          };
-        }
-      });
-
-      // 2. Prepare task batch record
-      const isEditing = !!editingBatchId;
-      const existingBatch = isEditing ? taskBatches.find(b => b.id === batchId) : null;
-      const now = serverTimestamp();
-
-      const batchDoc: LearningPowerUpTaskBatch = {
-        id: batchId,
+    const formBatchId = editingBatchId || (newSubject && newWeekStartDate ? `batch_${newSubject}_${newWeekStartDate}_${activeYear.replace('/', '_')}` : null);
+    const loadedBatches: LearningPowerUpTaskBatch[] = [...taskBatches];
+    if (formBatchId && !loadedBatches.some(b => b.id === formBatchId) && newSubject && newTargetClassIds.length > 0) {
+      loadedBatches.unshift({
+        id: formBatchId,
         unit: 'JUNIOR_HIGH',
         subjectKey: newSubject,
         subjectArea: LPU_SUBJECT_MAP[newSubject],
@@ -1983,27 +1974,122 @@ function LearningPowerUpTeacherPageContent() {
         weekStartDate: newWeekStartDate,
         weekEndDate: newWeekEndDate,
         weekLabel: newWeekLabel || `Pekan (${formatDateShort(newWeekStartDate)} - ${formatDateShort(newWeekEndDate)})`,
-        levelTasks: cleanLevelTasks,
-        status: 'PUBLISHED',
-        createdBy: existingBatch?.createdBy || currentUser.uid,
-        createdByEmail: existingBatch?.createdByEmail || currentUser.email || '',
-        createdByName: existingBatch?.createdByName || currentUser.displayName || '',
-        createdAt: existingBatch?.createdAt || now,
-        updatedBy: currentUser.uid,
-        updatedByEmail: currentUser.email || '',
-        updatedByName: currentUser.displayName || '',
-        updatedAt: now,
-        publishedBy: currentUser.uid,
-        publishedByEmail: currentUser.email || '',
-        publishedByName: currentUser.displayName || '',
-        publishedAt: now
-      };
+        levelTasks: levelTasks as any,
+        status: 'DRAFT',
+        createdBy: currentUser.uid,
+        createdAt: serverTimestamp() as any,
+        updatedAt: serverTimestamp() as any
+      });
+    }
 
-      // 3. Resolve student roster if rosterLevels is empty or not yet loaded
-      let targetRoster = rosterLevels;
-      if (!targetRoster || targetRoster.length === 0) {
+    const selectedBatchIds = editingBatchId ? [editingBatchId] : [];
+    const publishableBatchIds = loadedBatches
+      .filter((batch) => batch.id && batch.status !== 'PUBLISHED')
+      .map((batch) => batch.id);
+
+    const batchIdsToPublish =
+      selectedBatchIds.length > 0
+        ? selectedBatchIds.filter((id) =>
+            publishableBatchIds.includes(id)
+          )
+        : publishableBatchIds;
+
+    const selectedClassIds = newTargetClassIds.length > 0
+      ? newTargetClassIds
+      : Array.from(new Set(loadedBatches.flatMap(b => b.targetClassIds || [])));
+
+    console.info('[LPU] publish ready', {
+      selectedBatchIds,
+      publishableBatchIds,
+      batchIdsToPublish,
+      selectedClassIds,
+    });
+
+    if (batchIdsToPublish.length === 0) {
+      toast.error("Tidak ada batch baru yang dapat diterbitkan.");
+      return;
+    }
+
+    setIsPublishing(true);
+
+    try {
+      for (const batchId of batchIdsToPublish) {
+        let targetBatch = loadedBatches.find(b => b.id === batchId);
+        if (!targetBatch) continue;
+
+        // Ensure we don't republish an already published batch
+        const batchDocRef = doc(db, 'learning_power_up_task_batches', batchId);
+        const existingBatchSnap = await getDoc(batchDocRef);
+        if (existingBatchSnap.exists()) {
+          const existingData = existingBatchSnap.data() as LearningPowerUpTaskBatch;
+          if (existingData.status === 'PUBLISHED') {
+            console.info(`[LPU] Skipping already published batch: ${batchId}`);
+            continue;
+          }
+        }
+
+        const isCurrentForm = (batchId === editingBatchId || (formBatchId && formBatchId === batchId));
+        const batchSubject = isCurrentForm && newSubject ? newSubject : targetBatch.subjectKey;
+        const batchTargetClassIds = isCurrentForm && newTargetClassIds.length > 0 ? newTargetClassIds : (targetBatch.targetClassIds || []);
+        const batchWeekStartDate = isCurrentForm && newWeekStartDate ? newWeekStartDate : targetBatch.weekStartDate;
+        const batchWeekEndDate = isCurrentForm && newWeekEndDate ? newWeekEndDate : targetBatch.weekEndDate;
+        const batchWeekLabel = isCurrentForm && newWeekLabel ? newWeekLabel : (targetBatch.weekLabel || `Pekan (${formatDateShort(batchWeekStartDate)} - ${formatDateShort(batchWeekEndDate)})`);
+        const batchSemester = isCurrentForm && newSemester ? newSemester : (targetBatch.semester || '1');
+        const batchLevelTasks = isCurrentForm && Object.keys(levelTasks).length > 0 ? levelTasks : targetBatch.levelTasks;
+
+        // Validate teacher scope if current form
+        if (isCurrentForm) {
+          const validation = validateTeacherScopeForBatch(batchSubject, batchTargetClassIds);
+          if (!validation.isValid) {
+            toast.error(validation.error || "Anda tidak berwenang menerbitkan tugas untuk kelas yang dipilih.");
+            continue;
+          }
+        }
+
+        // 1. Prepare clean levelTasks
+        const cleanLevelTasks: Record<string, LpuLevelTask> = {};
+        Object.entries(batchLevelTasks || {}).forEach(([lvl, rawTask]) => {
+          const task = rawTask as { title?: string; instructions?: string };
+          if (task && (task.title?.trim() || task.instructions?.trim())) {
+            cleanLevelTasks[lvl] = {
+              title: (task.title || '').trim(),
+              instructions: (task.instructions || '').trim()
+            };
+          }
+        });
+
+        // 2. Prepare task batch record
+        const now = serverTimestamp();
+        const batchDoc: LearningPowerUpTaskBatch = {
+          id: batchId,
+          unit: 'JUNIOR_HIGH',
+          subjectKey: batchSubject,
+          subjectArea: LPU_SUBJECT_MAP[batchSubject],
+          academicYearId: activeYear,
+          semester: batchSemester,
+          targetClassIds: batchTargetClassIds,
+          weekStartDate: batchWeekStartDate,
+          weekEndDate: batchWeekEndDate,
+          weekLabel: batchWeekLabel,
+          levelTasks: cleanLevelTasks,
+          status: 'PUBLISHED',
+          createdBy: targetBatch.createdBy || currentUser.uid,
+          createdByEmail: targetBatch.createdByEmail || currentUser.email || '',
+          createdByName: targetBatch.createdByName || currentUser.displayName || '',
+          createdAt: targetBatch.createdAt || now,
+          updatedBy: currentUser.uid,
+          updatedByEmail: currentUser.email || '',
+          updatedByName: currentUser.displayName || '',
+          updatedAt: now,
+          publishedBy: currentUser.uid,
+          publishedByEmail: currentUser.email || '',
+          publishedByName: currentUser.displayName || '',
+          publishedAt: now
+        };
+
+        // 3. Resolve student roster for target classes
         const allStudentsInClasses: any[] = [];
-        for (const classId of newTargetClassIds) {
+        for (const classId of batchTargetClassIds) {
           const roster = (await getActiveStudents(classId, activeYear)) || [];
           allStudentsInClasses.push(...roster);
         }
@@ -2011,7 +2097,7 @@ function LearningPowerUpTeacherPageContent() {
         const qRecords = query(
           collection(db, 'junior_high_literacy_numeracy_records'),
           where('schoolYear', '==', activeYear),
-          where('subjectArea', '==', LPU_SUBJECT_MAP[newSubject])
+          where('subjectArea', '==', LPU_SUBJECT_MAP[batchSubject])
         );
         const recordsSnap = await getDocs(qRecords);
         const recordsByStudentId: Record<string, any> = {};
@@ -2022,106 +2108,97 @@ function LearningPowerUpTeacherPageContent() {
           }
         });
 
-        targetRoster = allStudentsInClasses.map(student => {
+        // 4. Query existing assignments for this batch to ensure deterministic, idempotent writes
+        const existingAssignmentsSnap = await getDocs(
+          query(collection(db, 'learning_power_up_assignments'), where('taskBatchId', '==', batchId))
+        );
+        const existingAssignmentsMap = new Map<string, LearningPowerUpAssignment>();
+        existingAssignmentsSnap.forEach(docSnap => {
+          existingAssignmentsMap.set(docSnap.id, docSnap.data() as LearningPowerUpAssignment);
+        });
+
+        // 5. Collect all assignments to create or update
+        const assignmentsToCreate: LearningPowerUpAssignment[] = [];
+        allStudentsInClasses.forEach(student => {
+          const assignmentId = generateDeterministicAssignmentId(batchId, student.id, batchSubject);
+          const existingAsg = existingAssignmentsMap.get(assignmentId);
+
+          // If assignment already exists and has been worked on (e.g. SUBMITTED/VERIFIED), keep it intact
+          if (existingAsg && existingAsg.status !== 'ASSIGNED') {
+            return;
+          }
+
           const classObj = classes.find(c => c.id === student.classId);
           const record = recordsByStudentId[student.id];
           let lvl = '';
           if (record) {
-            if (newSubject === 'bahasaIndonesia' || newSubject === 'english') {
+            if (batchSubject === 'bahasaIndonesia' || batchSubject === 'english') {
               lvl = record.readingLevel || '';
-            } else if (newSubject === 'mengaji') {
+            } else if (batchSubject === 'mengaji') {
               const raw = record.mengajiLevel || record.level;
               const norm = normalizeMengajiLevel(raw);
               lvl = norm ? formatMengajiDisplay(norm) : (raw || '');
-            } else if (newSubject === 'numerasi') {
+            } else if (batchSubject === 'numerasi') {
               const raw = record.numerasiLevel || record.mathLevel;
               const norm = normalizeNumerasiLevel(raw);
               lvl = norm ? formatNumerasiDisplay(norm) : (raw || '');
             }
           }
-          return {
-            student,
-            classId: student.classId,
-            className: classObj?.name || student.classId || 'Unknown Class',
-            level: lvl,
-            resolved: !!lvl
+
+          const studentLevel = lvl || null;
+          const resolvedTask = resolveLevelTask(cleanLevelTasks, studentLevel, batchSubject);
+
+          const defaultTitle = `Tugas Penguatan ${CATEGORY_CONFIG[batchSubject]?.label || batchSubject}`;
+          const fallbackInstructions = "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.";
+
+          const historyEntry: LpuAssignmentHistoryEntry = {
+            action: 'ASSIGN',
+            performedByUid: currentUser.uid,
+            performedByName: currentUser.displayName || currentUser.email || 'Guru',
+            performedByRole: currentUser.role,
+            timestamp: new Date()
           };
+
+          const assignmentDoc: LearningPowerUpAssignment = {
+            id: assignmentId,
+            unit: 'JUNIOR_HIGH',
+            taskBatchId: batchId,
+            studentId: student.id,
+            studentNameSnapshot: student.name,
+            classId: student.classId,
+            classNameSnapshot: classObj?.name || student.classId || 'Unknown Class',
+            subjectKey: batchSubject,
+            subjectArea: LPU_SUBJECT_MAP[batchSubject],
+            levelSnapshot: studentLevel,
+            taskTitle: resolvedTask ? resolvedTask.title : defaultTitle,
+            taskInstructions: resolvedTask ? resolvedTask.instructions : fallbackInstructions,
+            academicYearId: activeYear,
+            semester: batchSemester,
+            weekStartDate: batchWeekStartDate,
+            weekEndDate: batchWeekEndDate,
+            weekLabel: batchWeekLabel,
+            status: existingAsg?.status || 'ASSIGNED',
+            history: existingAsg?.history || [historyEntry],
+            updatedAt: now
+          };
+
+          assignmentsToCreate.push(assignmentDoc);
         });
-      }
 
-      // 4. Query existing assignments for this batch to ensure deterministic, idempotent writes
-      const existingAssignmentsSnap = await getDocs(
-        query(collection(db, 'learning_power_up_assignments'), where('taskBatchId', '==', batchId))
-      );
-      const existingAssignmentsMap = new Map<string, LearningPowerUpAssignment>();
-      existingAssignmentsSnap.forEach(docSnap => {
-        existingAssignmentsMap.set(docSnap.id, docSnap.data() as LearningPowerUpAssignment);
-      });
-
-      // 5. Collect all assignments to create or update
-      const assignmentsToCreate: LearningPowerUpAssignment[] = [];
-      targetRoster.forEach(({ student, className, level, resolved }) => {
-        const assignmentId = generateDeterministicAssignmentId(batchId, student.id, newSubject);
-        const existingAsg = existingAssignmentsMap.get(assignmentId);
-
-        // If assignment already exists and has been worked on (e.g. SUBMITTED/VERIFIED), keep it intact
-        if (existingAsg && existingAsg.status !== 'ASSIGNED') {
-          return;
+        // 6. Batch-write assignments in chunks of 400
+        const chunkSize = 400;
+        for (let i = 0; i < assignmentsToCreate.length; i += chunkSize) {
+          const chunk = assignmentsToCreate.slice(i, i + chunkSize);
+          const writeB = writeBatch(db);
+          chunk.forEach(asg => {
+            writeB.set(doc(db, 'learning_power_up_assignments', asg.id), asg, { merge: true });
+          });
+          await writeB.commit();
         }
 
-        const historyEntry: LpuAssignmentHistoryEntry = {
-          action: 'ASSIGN',
-          performedByUid: currentUser.uid,
-          performedByName: currentUser.displayName || currentUser.email || 'Guru',
-          performedByRole: currentUser.role,
-          timestamp: new Date()
-        };
-
-        const studentLevel = (resolved && level) ? level : null;
-        const resolvedTask = resolveLevelTask(cleanLevelTasks, studentLevel, newSubject);
-
-        const defaultTitle = `Tugas Penguatan ${CATEGORY_CONFIG[newSubject]?.label || newSubject}`;
-        const fallbackInstructions = "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.";
-
-        const assignmentDoc: LearningPowerUpAssignment = {
-          id: assignmentId,
-          unit: 'JUNIOR_HIGH',
-          taskBatchId: batchId,
-          studentId: student.id,
-          studentNameSnapshot: student.name,
-          classId: student.classId,
-          classNameSnapshot: className,
-          subjectKey: newSubject,
-          subjectArea: LPU_SUBJECT_MAP[newSubject],
-          levelSnapshot: studentLevel,
-          taskTitle: resolvedTask ? resolvedTask.title : defaultTitle,
-          taskInstructions: resolvedTask ? resolvedTask.instructions : fallbackInstructions,
-          academicYearId: activeYear,
-          semester: newSemester,
-          weekStartDate: newWeekStartDate,
-          weekEndDate: newWeekEndDate,
-          weekLabel: newWeekLabel || `Pekan (${formatDateShort(newWeekStartDate)} - ${formatDateShort(newWeekEndDate)})`,
-          status: existingAsg?.status || 'ASSIGNED',
-          history: existingAsg?.history || [historyEntry],
-          updatedAt: now
-        };
-
-        assignmentsToCreate.push(assignmentDoc);
-      });
-
-      // 6. Batch-write assignments in chunks of 400
-      const chunkSize = 400;
-      for (let i = 0; i < assignmentsToCreate.length; i += chunkSize) {
-        const chunk = assignmentsToCreate.slice(i, i + chunkSize);
-        const writeB = writeBatch(db);
-        chunk.forEach(asg => {
-          writeB.set(doc(db, 'learning_power_up_assignments', asg.id), asg, { merge: true });
-        });
-        await writeB.commit();
+        // 7. Write the published task batch doc to mark it as PUBLISHED
+        await setDoc(doc(db, 'learning_power_up_task_batches', batchId), batchDoc, { merge: true });
       }
-
-      // 7. Write the published task batch doc to mark it as PUBLISHED
-      await setDoc(doc(db, 'learning_power_up_task_batches', batchId), batchDoc, { merge: true });
 
       toast.success("Tugas berhasil diterbitkan");
       setPublishPreflight(null);
@@ -5354,8 +5431,8 @@ function LearningPowerUpTeacherPageContent() {
                     <button
                       type="button"
                       onClick={() => handleSaveNewBatchDraft()}
-                      disabled={loadingData || !newSubject || newTargetClassIds.length === 0}
-                      className="px-5 py-3 border border-[#109E58] text-[#109E58] hover:bg-[#109E58]/5 text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center gap-2 disabled:opacity-50"
+                      disabled={loadingData || isPublishing}
+                      className="px-5 py-3 border border-[#109E58] text-[#109E58] hover:bg-[#109E58]/5 text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
                     >
                       {loadingData ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
                       Simpan Draft
