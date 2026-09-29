@@ -105,6 +105,90 @@ interface MidtermSummaryHistoryLog {
   reviewNote?: string;
 }
 
+export function getAcademicYearAttendanceStartDate(academicYear: string): string {
+  const startYear = academicYear.split("/")[0];
+  return `${startYear}-07-20`;
+}
+
+export function formatIndoDate(dateStr: string): string {
+  if (!dateStr) return '....................';
+  try {
+    const parts = dateStr.split('-');
+    if (parts.length !== 3) return dateStr;
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+    const day = Number(parts[2]);
+    if (isNaN(year) || isNaN(month) || isNaN(day)) return dateStr;
+    
+    const monthsIndo = [
+      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+    ];
+    return `${day} ${monthsIndo[month - 1]} ${year}`;
+  } catch (_) {
+    return dateStr;
+  }
+}
+
+export function getAttendanceRange(academicYear: string, reportSigningDate: string | null | undefined): { startDate: string; endDate: string | null } {
+  const startDate = getAcademicYearAttendanceStartDate(academicYear);
+  return {
+    startDate,
+    endDate: reportSigningDate || null
+  };
+}
+
+export function calculateAttendanceSummary(
+  studentId: string,
+  startDate: string,
+  endDate: string,
+  realAttendanceList: any[]
+) {
+  const summary = {
+    present: 0,
+    sick: 0,
+    izin: 0,
+    noNews: 0,
+    total: 0,
+    totalEffectiveDays: 0
+  };
+
+  if (!studentId || !startDate || !endDate || !realAttendanceList || realAttendanceList.length === 0) {
+    return summary;
+  }
+
+  realAttendanceList.forEach(doc => {
+    if (doc.date >= startDate && doc.date <= endDate) {
+      const studentRecord = doc.students?.find((s: any) => s.studentId === studentId);
+      if (studentRecord) {
+        summary.totalEffectiveDays++;
+        const status = (studentRecord.status || '').toLowerCase();
+        const emotion = (studentRecord.emotion || '').toLowerCase();
+        
+        if (status === 'sakit' || emotion === 'sick') {
+          summary.sick++;
+        } else if (status === 'izin' || emotion === 'izin') {
+          summary.izin++;
+        } else if (
+          status === 'tanpa_kabar' || 
+          status === 'alpha' || 
+          status === 'tanpa keterangan' || 
+          emotion === 'nonews' || 
+          status === 'no_news' ||
+          status === 'no news'
+        ) {
+          summary.noNews++;
+        } else {
+          summary.present++;
+        }
+      }
+    }
+  });
+
+  summary.total = summary.sick + summary.izin + summary.noNews;
+  return summary;
+}
+
 export default function MidtermSummary() {
   // --- A. ROUTER, AUTH, AND CONTEXT HOOKS ---
   const navigate = useNavigate();
@@ -915,25 +999,29 @@ export default function MidtermSummary() {
 
   // --- E. LIFECYCLE EFFECTS (useEffect) ---
   // Real Attendance fetch hook matching requested formula:
-  // startDate = tanggal mulai Midterm
-  // endDate = minimum(tanggal akhir Midterm, tanggal hari ini)
+  // Kehadiran dihitung kumulatif mulai 20 Juli pada tahun awal academic year
+  // sampai tanggal penandatanganan rapor (reportSigningDate).
   React.useEffect(() => {
-    const effStart = startDateStr || activeDraft?.startDate || effectivePeriod?.startDate || '';
-    const effEnd = endDateStr || activeDraft?.endDate || effectivePeriod?.endDate || '';
-    if (!selectedClassId || !effStart || !effEnd) return;
+    if (!selectedClassId) return;
+    
+    const attStartDate = getAcademicYearAttendanceStartDate(activeYear || '2026/2027');
+    const attEndDate = classGoalsInput.signingDate || classLearningGoals?.signingDate || '';
+    
+    // If reportSigningDate is not filled, invalid, or earlier than attStartDate, do not query
+    if (!attEndDate || attEndDate < attStartDate) {
+      setRealAttendanceList([]);
+      return;
+    }
     
     async function fetchRealAttendanceData() {
       setIsFetchingRealAttendance(true);
       try {
-        const todayStr = new Date().toISOString().split('T')[0];
-        const minEndDateStr = effEnd < todayStr ? effEnd : todayStr;
-        
-        console.log(`[Attendance Sync] Querying attendance from ${effStart} to ${minEndDateStr}`);
+        console.log(`[Attendance Sync] Querying attendance from ${attStartDate} to ${attEndDate}`);
         const q = query(
           collection(db, 'attendance'),
           where('classId', '==', selectedClassId),
-          where('date', '>=', effStart),
-          where('date', '<=', minEndDateStr)
+          where('date', '>=', attStartDate),
+          where('date', '<=', attEndDate)
         );
         
         const snap = await getDocs(q);
@@ -957,7 +1045,7 @@ export default function MidtermSummary() {
     }
     
     fetchRealAttendanceData();
-  }, [selectedClassId, startDateStr, endDateStr, activeDraft, effectivePeriod]);
+  }, [selectedClassId, activeYear, classGoalsInput.signingDate, classLearningGoals?.signingDate]);
 
   // Measuring comments height effect to decide whether to move signatures to Page 3
   React.useEffect(() => {
@@ -2008,6 +2096,22 @@ export default function MidtermSummary() {
       }
       const nextVersion = maxVersion > 0 ? maxVersion + 1 : 1;
 
+      const attStartDate = getAcademicYearAttendanceStartDate(activeYear || '2026/2027');
+      const attEndDate = classGoalsInput.signingDate || classLearningGoals?.signingDate || '';
+      const attendanceData = getAttendance();
+
+      const attendanceSnapshot = {
+        basis: "ACADEMIC_YEAR_20_JULY_TO_REPORT_SIGNING_DATE",
+        startDate: attStartDate,
+        endDate: attEndDate,
+        present: attendanceData.present || 0,
+        sick: attendanceData.sick || 0,
+        permitted: attendanceData.izin || 0,
+        absent: attendanceData.noNews || 0,
+        totalEffectiveDays: attendanceData.totalEffectiveDays || 0,
+        calculatedAt: serverTimestamp()
+      };
+
       const reportPayload = {
         classId: selectedClassId,
         className: activeClassObj?.name || 'Unknown Class',
@@ -2026,6 +2130,7 @@ export default function MidtermSummary() {
         publishedBy: profile?.uid || 'Unknown',
         publishedByEmail: profile?.email || 'Unknown',
         status: 'ready_to_send',
+        attendanceSnapshot,
 
         reportSnapshot: {
           version: nextVersion,
@@ -2061,6 +2166,7 @@ export default function MidtermSummary() {
             }
           },
           attendanceSummary: getAttendance(),
+          attendanceSnapshot,
           compiledWeeks: activeDraft.compiledWeeklySources || []
         }
       };
@@ -2338,44 +2444,16 @@ export default function MidtermSummary() {
   const publishedReportObj = publishedReports[selectedStudentId];
 
   const computedAttendance = React.useMemo(() => {
-    const summary = {
-      present: 0,
-      sick: 0,
-      izin: 0,
-      noNews: 0,
-      total: 0
-    };
+    const attStartDate = getAcademicYearAttendanceStartDate(activeYear || '2026/2027');
+    const attEndDate = classGoalsInput.signingDate || classLearningGoals?.signingDate || '';
     
-    if (!selectedStudentId || realAttendanceList.length === 0) return summary;
-    
-    realAttendanceList.forEach(doc => {
-      const studentRecord = doc.students?.find((s: any) => s.studentId === selectedStudentId);
-      if (studentRecord) {
-        const status = (studentRecord.status || '').toLowerCase();
-        const emotion = (studentRecord.emotion || '').toLowerCase();
-        
-        if (status === 'sakit' || emotion === 'sick') {
-          summary.sick++;
-        } else if (status === 'izin' || emotion === 'izin') {
-          summary.izin++;
-        } else if (
-          status === 'tanpa_kabar' || 
-          status === 'alpha' || 
-          status === 'tanpa keterangan' || 
-          emotion === 'nonews' || 
-          status === 'no_news' ||
-          status === 'no news'
-        ) {
-          summary.noNews++;
-        } else {
-          summary.present++;
-        }
-      }
-    });
-    
-    summary.total = summary.sick + summary.izin + summary.noNews;
-    return summary;
-  }, [selectedStudentId, realAttendanceList]);
+    return calculateAttendanceSummary(
+      selectedStudentId,
+      attStartDate,
+      attEndDate,
+      realAttendanceList
+    );
+  }, [selectedStudentId, activeYear, classGoalsInput.signingDate, classLearningGoals?.signingDate, realAttendanceList]);
 
   // Getters for PDF rendering
   const getAgamaGoalText = () => {
@@ -2407,6 +2485,19 @@ export default function MidtermSummary() {
   };
 
   const getAttendance = () => {
+    if (publishedReportObj?.reportSnapshot?.attendanceSnapshot) {
+      const snap = publishedReportObj.reportSnapshot.attendanceSnapshot;
+      return {
+        present: snap.present || 0,
+        sick: snap.sick || 0,
+        izin: snap.permitted || 0,
+        noNews: snap.absent || 0,
+        totalEffectiveDays: snap.totalEffectiveDays || 0
+      };
+    }
+    if (publishedReportObj?.reportSnapshot?.attendanceSummary) {
+      return publishedReportObj.reportSnapshot.attendanceSummary;
+    }
     return computedAttendance;
   };
 
@@ -3926,8 +4017,18 @@ export default function MidtermSummary() {
                            {/* Section: Catatan Ketidakhadiran */}
                            <div className="space-y-1.5 mt-6">
                              <h4 className="text-[10px] font-black text-emerald-800 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-0.5 font-sans">
-                               Catatan Ketidakhadiran
+                               Catatan Ketidakhadiran {classGoalsInput.signingDate || classLearningGoals?.signingDate ? `(Periode: ${formatIndoDate(getAcademicYearAttendanceStartDate(activeYear || '2026/2027'))} s.d. ${formatIndoDate(classGoalsInput.signingDate || classLearningGoals?.signingDate)})` : ''}
                              </h4>
+                             {!(classGoalsInput.signingDate || classLearningGoals?.signingDate) ? (
+                               <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl text-center text-xs text-amber-800 font-sans font-bold leading-relaxed mt-2">
+                                 Tanggal penandatanganan rapor perlu diisi untuk menghitung kehadiran.
+                               </div>
+                             ) : (classGoalsInput.signingDate || classLearningGoals?.signingDate) < getAcademicYearAttendanceStartDate(activeYear || '2026/2027') ? (
+                               <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl text-center text-xs text-rose-800 font-sans font-bold leading-relaxed mt-2">
+                                 Tanggal penandatanganan rapor tidak boleh sebelum 20 Juli pada tahun ajaran terkait.
+                               </div>
+                             ) : (
+                               <>
                              <table className="w-full border-collapse text-left text-[9.5px] font-sans">
                                <thead>
                                  <tr className="bg-emerald-50 text-emerald-800 border border-emerald-100">
@@ -3963,7 +4064,12 @@ export default function MidtermSummary() {
                                  </tr>
                                </tbody>
                              </table>
-                           </div>
+                             <p className="text-[8.5px] text-gray-400 italic font-semibold mt-2 pl-1 font-sans">
+                               Kehadiran dihitung kumulatif mulai 20 Juli hingga tanggal penandatanganan rapor.
+                             </p>
+                           </>
+                         )}
+                       </div>
                          </div>
 
                          {/* Signatures Area - Rendered here on Page 2 ONLY if they do NOT overflow to Page 3 */}
