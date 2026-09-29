@@ -110,6 +110,80 @@ export function getAcademicYearAttendanceStartDate(academicYear: string): string
   return `${startYear}-07-20`;
 }
 
+export function formatAndDeduplicateGoals(text: string): string {
+  if (!text) return '';
+  const lines = text.split('\n');
+  const uniqueLines: string[] = [];
+  const seenText = new Set<string>();
+  
+  for (let line of lines) {
+    let trimmed = line.trim();
+    if (!trimmed) {
+      if (uniqueLines.length > 0 && uniqueLines[uniqueLines.length - 1] !== '') {
+        uniqueLines.push('');
+      }
+      continue;
+    }
+    
+    // Let's clean the individual line's smart quotes
+    let cleanedLine = trimmed
+      .replace(/^["'“”‘’\s]+/, '')
+      .replace(/["'“”‘’\s]+$/, '');
+      
+    // Ensure single period at end of line if it doesn't have punctuation and ends with letters or numbers
+    if (cleanedLine && !/[.!?]$/.test(cleanedLine)) {
+      cleanedLine += '.';
+    }
+    
+    // Normalize for duplicate check: strip numbers/bullet prefixes like "1. ", "2. ", "- " to see if the core text is identical
+    const coreText = cleanedLine.replace(/^\d+[\s.)-]+\s*/i, '').trim().toLowerCase();
+    if (coreText) {
+      if (seenText.has(coreText)) {
+        // Skip duplicate item
+        continue;
+      }
+      seenText.add(coreText);
+    }
+    
+    // Keep original leading number/prefix but clean the rest
+    let matchNumber = trimmed.match(/^(\d+[\s.)-]+\s*)/);
+    const prefix = matchNumber ? matchNumber[1] : '';
+    const lineCoreCleaned = cleanedLine.slice(prefix.length).trim();
+    
+    uniqueLines.push(prefix + lineCoreCleaned);
+  }
+  
+  return uniqueLines.filter((l, i) => l !== '' || (i > 0 && uniqueLines[i-1] !== '')).join('\n');
+}
+
+export function formatGeneralCommentText(text: string): string {
+  if (!text) return '';
+  let cleaned = text.trim();
+  
+  // Replace missing spaces after periods, question marks, exclamation marks:
+  // e.g., "Akram.Dalam" -> "Akram. Dalam"
+  // Negative lookahead so we don't match decimal numbers like 10.5 or dates or emails
+  cleaned = cleaned.replace(/([.!?])([A-Za-z])/g, '$1 $2');
+  
+  // Normalise multiple spaces
+  cleaned = cleaned.replace(/ +/g, ' ');
+  
+  return cleaned;
+}
+
+export function renderFormattedParagraphs(text: string) {
+  const cleaned = formatGeneralCommentText(text);
+  if (!cleaned) return null;
+  
+  // Split by double newlines or single newlines
+  const paragraphs = cleaned.split(/\n+/);
+  return paragraphs.map((para, i) => (
+    <p key={i} className="mb-2.5 last:mb-0 text-left">
+      {para.trim()}
+    </p>
+  ));
+}
+
 export function formatIndoDate(dateStr: string): string {
   if (!dateStr) return '....................';
   try {
@@ -2458,23 +2532,23 @@ export default function MidtermSummary() {
   // Getters for PDF rendering
   const getAgamaGoalText = () => {
     if (publishedReportObj?.reportSnapshot?.learningGoals?.nilaiAgamaBudiPekerti !== undefined) {
-      return publishedReportObj.reportSnapshot.learningGoals.nilaiAgamaBudiPekerti;
+      return formatAndDeduplicateGoals(publishedReportObj.reportSnapshot.learningGoals.nilaiAgamaBudiPekerti);
     }
-    return classGoalsInput.nilaiAgamaBudiPekerti || classLearningGoals?.nilaiAgamaBudiPekerti || '';
+    return formatAndDeduplicateGoals(classGoalsInput.nilaiAgamaBudiPekerti || classLearningGoals?.nilaiAgamaBudiPekerti || '');
   };
 
   const getJatiDiriGoalText = () => {
     if (publishedReportObj?.reportSnapshot?.learningGoals?.jatiDiri !== undefined) {
-      return publishedReportObj.reportSnapshot.learningGoals.jatiDiri;
+      return formatAndDeduplicateGoals(publishedReportObj.reportSnapshot.learningGoals.jatiDiri);
     }
-    return classGoalsInput.jatiDiri || classLearningGoals?.jatiDiri || '';
+    return formatAndDeduplicateGoals(classGoalsInput.jatiDiri || classLearningGoals?.jatiDiri || '');
   };
 
   const getSteamGoalText = () => {
     if (publishedReportObj?.reportSnapshot?.learningGoals?.dasarLiterasiSteam !== undefined) {
-      return publishedReportObj.reportSnapshot.learningGoals.dasarLiterasiSteam;
+      return formatAndDeduplicateGoals(publishedReportObj.reportSnapshot.learningGoals.dasarLiterasiSteam);
     }
-    return classGoalsInput.dasarLiterasiSteam || classLearningGoals?.dasarLiterasiSteam || '';
+    return formatAndDeduplicateGoals(classGoalsInput.dasarLiterasiSteam || classLearningGoals?.dasarLiterasiSteam || '');
   };
 
   const getGeneralCommentText = () => {
@@ -3944,16 +4018,16 @@ export default function MidtermSummary() {
 
                         {/* Semester Learning Goals */}
                         <div className="space-y-2">
-                          <h4 className="text-[11px] font-black text-emerald-800 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 text-center font-sans">
+                          <h4 className="text-[11.5px] font-bold text-emerald-900 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 text-center font-sans">
                             {semester === 1 || semester === '1' ? '1st' : '2nd'} Semester Learning Goals
                           </h4>
                           <div className="grid grid-cols-3 gap-3">
                             {/* Column 1: Nilai Agama & Budi Pekerti */}
-                            <div className="border border-emerald-100 rounded-lg p-3 bg-emerald-50/10 flex flex-col h-[730px]">
-                              <span className="text-[9px] font-black text-emerald-800 block text-center border-b border-emerald-100 pb-1.5 mb-2 font-sans">
+                            <div className="border border-emerald-150 rounded-xl px-4 py-3 bg-emerald-50/10 flex flex-col h-[730px]">
+                              <span className="text-[11.5px] font-bold text-emerald-900 block text-center border-b border-emerald-100 pb-2 mb-2.5 font-sans">
                                 Nilai Agama & Budi Pekerti
                               </span>
-                              <div className="overflow-y-auto flex-1 pr-1 custom-scrollbar text-[9.5px] text-gray-700 leading-relaxed space-y-1.5 font-serif whitespace-pre-wrap">
+                              <div className="overflow-y-auto flex-1 pr-1 custom-scrollbar text-[10.5px] text-gray-900 leading-[1.4] space-y-2 font-serif whitespace-pre-wrap">
                                 {getAgamaGoalText() ? (
                                   getAgamaGoalText()
                                 ) : (
@@ -3963,11 +4037,11 @@ export default function MidtermSummary() {
                             </div>
 
                             {/* Column 2: Jati Diri */}
-                            <div className="border border-emerald-100 rounded-lg p-3 bg-emerald-50/10 flex flex-col h-[730px]">
-                              <span className="text-[9px] font-black text-emerald-800 block text-center border-b border-emerald-100 pb-1.5 mb-2 font-sans">
+                            <div className="border border-emerald-150 rounded-xl px-4 py-3 bg-emerald-50/10 flex flex-col h-[730px]">
+                              <span className="text-[11.5px] font-bold text-emerald-900 block text-center border-b border-emerald-100 pb-2 mb-2.5 font-sans">
                                 Jati Diri
                               </span>
-                              <div className="overflow-y-auto flex-1 pr-1 custom-scrollbar text-[9.5px] text-gray-700 leading-relaxed space-y-1.5 font-serif whitespace-pre-wrap">
+                              <div className="overflow-y-auto flex-1 pr-1 custom-scrollbar text-[10.5px] text-gray-900 leading-[1.4] space-y-2 font-serif whitespace-pre-wrap">
                                 {getJatiDiriGoalText() ? (
                                   getJatiDiriGoalText()
                                 ) : (
@@ -3977,11 +4051,11 @@ export default function MidtermSummary() {
                             </div>
 
                             {/* Column 3: Dasar-dasar Literasi & STEAM */}
-                            <div className="border border-emerald-100 rounded-lg p-3 bg-emerald-50/10 flex flex-col h-[730px]">
-                              <span className="text-[9px] font-black text-emerald-800 block text-center border-b border-emerald-100 pb-1.5 mb-2 font-sans">
+                            <div className="border border-emerald-150 rounded-xl px-4 py-3 bg-emerald-50/10 flex flex-col h-[730px]">
+                              <span className="text-[11.5px] font-bold text-emerald-900 block text-center border-b border-emerald-100 pb-2 mb-2.5 font-sans">
                                 Dasar-dasar Literasi & STEAM
                               </span>
-                              <div className="overflow-y-auto flex-1 pr-1 custom-scrollbar text-[9.5px] text-gray-700 leading-relaxed space-y-1.5 font-serif whitespace-pre-wrap">
+                              <div className="overflow-y-auto flex-1 pr-1 custom-scrollbar text-[10.5px] text-gray-900 leading-[1.4] space-y-2 font-serif whitespace-pre-wrap">
                                 {getSteamGoalText() ? (
                                   getSteamGoalText()
                                 ) : (
@@ -4006,18 +4080,22 @@ export default function MidtermSummary() {
                          <div>
                            {/* Section: General Comments */}
                            <div className="space-y-2">
-                             <h3 className="text-xs font-black text-emerald-800 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 text-center font-sans">
+                             <h3 className="text-[12.5px] font-bold text-emerald-900 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 text-center font-sans">
                                General Comments (Catatan Umum)
                              </h3>
-                             <div id="preview-comments-container" className="bg-emerald-50/10 border border-emerald-100 p-4 rounded-xl text-[11px] text-gray-800 font-serif leading-relaxed whitespace-pre-wrap">
-                               {getGeneralCommentText() || "Komentar evaluasi tengah semester belum dimasukkan."}
+                             <div id="preview-comments-container" className="bg-white border border-gray-200 p-5 rounded-2xl text-[11px] text-gray-900 font-serif leading-[1.5] h-auto">
+                               {getGeneralCommentText() ? (
+                                 renderFormattedParagraphs(getGeneralCommentText())
+                               ) : (
+                                 <p className="text-gray-400 italic text-center">Komentar evaluasi tengah semester belum dimasukkan.</p>
+                               )}
                              </div>
                            </div>
 
                            {/* Section: Catatan Ketidakhadiran */}
                            <div className="space-y-1.5 mt-6">
-                             <h4 className="text-[10px] font-black text-emerald-800 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-0.5 font-sans">
-                               Catatan Ketidakhadiran {classGoalsInput.signingDate || classLearningGoals?.signingDate ? `(Periode: ${formatIndoDate(getAcademicYearAttendanceStartDate(activeYear || '2026/2027'))} s.d. ${formatIndoDate(classGoalsInput.signingDate || classLearningGoals?.signingDate)})` : ''}
+                             <h4 className="text-[12.5px] font-bold text-emerald-900 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 font-sans">
+                               Catatan Ketidakhadiran (Periode: {formatIndoDate(getAcademicYearAttendanceStartDate(activeYear || '2026/2027'))} s.d. {formatIndoDate(classGoalsInput.signingDate || classLearningGoals?.signingDate || '')})
                              </h4>
                              {!(classGoalsInput.signingDate || classLearningGoals?.signingDate) ? (
                                <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl text-center text-xs text-amber-800 font-sans font-bold leading-relaxed mt-2">
@@ -4029,44 +4107,41 @@ export default function MidtermSummary() {
                                </div>
                              ) : (
                                <>
-                             <table className="w-full border-collapse text-left text-[9.5px] font-sans">
+                             <table className="w-full border-collapse border border-gray-300 text-left text-[10.5px] text-gray-900 font-sans mt-3">
                                <thead>
-                                 <tr className="bg-emerald-50 text-emerald-800 border border-emerald-100">
-                                   <th className="p-1.5 font-black border border-emerald-100 text-center w-12 font-sans">No</th>
-                                   <th className="p-1.5 font-black border border-emerald-100 font-sans">Alasan</th>
-                                   <th className="p-1.5 font-black border border-emerald-100 text-center w-24 font-sans">Jumlah</th>
-                                   <th className="p-1.5 font-black border border-emerald-100 font-sans">Keterangan</th>
+                                 <tr className="bg-gray-100/80 text-gray-900 border-b border-gray-300">
+                                   <th className="p-2.5 font-bold border-r border-gray-300 text-center w-[10%]">No</th>
+                                   <th className="p-2.5 font-bold border-r border-gray-300 w-[45%]">Alasan</th>
+                                   <th className="p-2.5 font-bold border-r border-gray-300 text-center w-[20%]">Jumlah</th>
+                                   <th className="p-2.5 font-bold w-[25%]">Keterangan</th>
                                  </tr>
                                </thead>
                                <tbody>
-                                 <tr className="border border-gray-150">
-                                   <td className="p-1.5 text-center border border-gray-150 font-sans">1</td>
-                                   <td className="p-1.5 border border-gray-150 font-medium font-sans">Sakit</td>
-                                   <td className="p-1.5 text-center border border-gray-150 font-extrabold font-sans">{getAttendance().sick} Hari</td>
-                                   <td className="p-1.5 border border-gray-150 text-gray-400 font-sans">-</td>
+                                 <tr className="border-b border-gray-300">
+                                   <td className="p-2.5 text-center border-r border-gray-300">1</td>
+                                   <td className="p-2.5 border-r border-gray-300 font-medium">Sakit</td>
+                                   <td className="p-2.5 text-center border-r border-gray-300 font-bold">{getAttendance().sick} Hari</td>
+                                   <td className="p-2.5 text-gray-400">-</td>
                                  </tr>
-                                 <tr className="border border-gray-150">
-                                   <td className="p-1.5 text-center border border-gray-150 font-sans">2</td>
-                                   <td className="p-1.5 border border-gray-150 font-medium font-sans">Izin</td>
-                                   <td className="p-1.5 text-center border border-gray-150 font-extrabold font-sans">{getAttendance().izin} Hari</td>
-                                   <td className="p-1.5 border border-gray-150 text-gray-400 font-sans">-</td>
+                                 <tr className="border-b border-gray-300">
+                                   <td className="p-2.5 text-center border-r border-gray-300">2</td>
+                                   <td className="p-2.5 border-r border-gray-300 font-medium">Izin</td>
+                                   <td className="p-2.5 text-center border-r border-gray-300 font-bold">{getAttendance().izin} Hari</td>
+                                   <td className="p-2.5 text-gray-400">-</td>
                                  </tr>
-                                 <tr className="border border-gray-150">
-                                   <td className="p-1.5 text-center border border-gray-150 font-sans">3</td>
-                                   <td className="p-1.5 border border-gray-150 font-medium font-sans">Tanpa Keterangan</td>
-                                   <td className="p-1.5 text-center border border-gray-150 font-extrabold font-sans">{getAttendance().noNews} Hari</td>
-                                   <td className="p-1.5 border border-gray-150 text-gray-400 font-sans">-</td>
+                                 <tr className="border-b border-gray-300">
+                                   <td className="p-2.5 text-center border-r border-gray-300">3</td>
+                                   <td className="p-2.5 border-r border-gray-300 font-medium">Tanpa Keterangan</td>
+                                   <td className="p-2.5 text-center border-r border-gray-300 font-bold">{getAttendance().noNews} Hari</td>
+                                   <td className="p-2.5 text-gray-400">-</td>
                                  </tr>
-                                 <tr className="border border-emerald-100 bg-emerald-50/20">
-                                   <td className="p-1.5 text-center border border-emerald-100 font-extrabold font-sans" colSpan={2}>Total Ketidakhadiran</td>
-                                   <td className="p-1.5 text-center border border-emerald-100 font-black text-emerald-800 font-sans">{getAttendance().sick + getAttendance().izin + getAttendance().noNews} Hari</td>
-                                   <td className="p-1.5 border border-emerald-100 text-gray-400 font-sans">-</td>
+                                 <tr className="bg-gray-50 font-bold">
+                                   <td className="p-2.5 text-center border-r border-gray-300" colSpan={2}>Total Ketidakhadiran</td>
+                                   <td className="p-2.5 text-center border-r border-gray-300 font-black text-gray-950">{getAttendance().sick + getAttendance().izin + getAttendance().noNews} Hari</td>
+                                   <td className="p-2.5 text-gray-400">-</td>
                                  </tr>
                                </tbody>
                              </table>
-                             <p className="text-[8.5px] text-gray-400 italic font-semibold mt-2 pl-1 font-sans">
-                               Kehadiran dihitung kumulatif mulai 20 Juli hingga tanggal penandatanganan rapor.
-                             </p>
                            </>
                          )}
                        </div>
@@ -4074,62 +4149,62 @@ export default function MidtermSummary() {
 
                          {/* Signatures Area - Rendered here on Page 2 ONLY if they do NOT overflow to Page 3 */}
                           {!shouldMoveSignaturesToPage3 && (
-                            <div className="pt-6 border-t border-dashed border-gray-200 mt-8 shrink-0">
-                              <div className="text-right text-[9.5px] font-sans text-gray-800 pr-8 mb-4">
+                            <div className="pt-6 border-t border-dashed border-gray-200 mt-8 shrink-0 break-inside-avoid">
+                              <div className="text-left text-[11px] font-sans text-gray-900 mb-4 pl-2">
                                 Depok, {formattedSigningDate}
                               </div>
-                              <div className="grid grid-cols-2 gap-8 text-center">
+                              <div className="grid grid-cols-2 gap-8 text-center text-gray-900 font-sans">
                                 {/* Principal */}
-                                <div className="flex flex-col items-center justify-between h-[100px]">
-                                  <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">
+                                <div className="flex flex-col items-center justify-between h-[120px]">
+                                  <span className="text-[11px] font-bold uppercase tracking-wider leading-none">
                                     Kepala Pra-TK/TK Lazuardi GCS
                                   </span>
-                                  <div className="h-12 flex items-center justify-center">
+                                  <div className="h-14 flex items-center justify-center my-1.5">
                                     {isValidPrincipalSignature ? (
                                       <img 
                                         src={kindySignatory!.principalSignatureUrl!} 
                                         alt="Signature" 
-                                        className="h-10 w-auto object-contain"
+                                        className="h-12 w-auto object-contain"
                                         referrerPolicy="no-referrer"
                                         crossOrigin={kindySignatory!.principalSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
                                       />
                                     ) : (
-                                      <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
+                                      <div className="text-[10px] text-gray-400 italic">Verified Digitally</div>
                                     )}
                                   </div>
-                                  <div className="text-center font-sans leading-none">
-                                    <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
+                                  <div className="text-center leading-normal">
+                                    <span className="text-[11px] font-bold underline block">
                                       {toTitleCase(kindySignatory?.principalName) || "Nama Kepala Unit"}
                                     </span>
-                                    {kindySignatory?.principalNiy && kindySignatory.principalNiy !== '-' && kindySignatory.principalNiy !== '' && (
-                                      <span className="text-[8px] text-gray-400 block mt-1 font-sans">
-                                        NIY: {kindySignatory.principalNiy}
-                                      </span>
-                                    )}
+                                    <span className="text-[10px] text-gray-700 block mt-0.5">
+                                      NIY: {kindySignatory?.principalNiy && kindySignatory.principalNiy !== '-' && kindySignatory.principalNiy !== '' ? kindySignatory.principalNiy : '-'}
+                                    </span>
                                   </div>
                                 </div>
 
                                 {/* Homeroom Teacher */}
-                                <div className="flex flex-col items-center justify-between h-[100px]">
-                                  <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">Guru Kelas</span>
-                                  <div className="h-12 flex items-center justify-center">
+                                <div className="flex flex-col items-center justify-between h-[120px]">
+                                  <span className="text-[11px] font-bold uppercase tracking-wider leading-none">
+                                    Guru Kelas
+                                  </span>
+                                  <div className="h-14 flex items-center justify-center my-1.5">
                                     {isValidHomeroomSignature ? (
                                       <img 
                                         src={resolvedSignatureUrl!} 
                                         alt="Signature" 
-                                        className="h-10 w-auto object-contain"
+                                        className="h-12 w-auto object-contain"
                                         referrerPolicy="no-referrer"
                                         crossOrigin={resolvedSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
                                       />
                                     ) : (
-                                      <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
+                                      <div className="text-[10px] text-gray-400 italic">Verified Digitally</div>
                                     )}
                                   </div>
-                                  <div className="text-center font-sans leading-none">
-                                    <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
+                                  <div className="text-center leading-normal">
+                                    <span className="text-[11px] font-bold underline block">
                                       {toTitleCase(resolvedTeacherName) || "Nama Guru Kelas"}
                                     </span>
-                                    <span className="text-[8px] text-gray-400 block mt-1 font-sans">
+                                    <span className="text-[10px] text-gray-700 block mt-0.5">
                                       NIY: {(!resolvedTeacherNiy || resolvedTeacherNiy === '-') ? '-' : resolvedTeacherNiy}
                                     </span>
                                   </div>
@@ -4167,35 +4242,35 @@ export default function MidtermSummary() {
                             </div>
 
                             {/* Signatures Area */}
-                            <div className="pt-10 border-t border-dashed border-gray-200 shrink-0">
-                              <div className="text-right text-[9.5px] font-sans text-gray-800 pr-8 mb-4">
+                            <div className="pt-10 border-t border-dashed border-gray-200 shrink-0 break-inside-avoid">
+                              <div className="text-left text-[11px] font-sans text-gray-900 mb-4 pl-2">
                                 Depok, {formattedSigningDate}
                               </div>
-                              <div className="grid grid-cols-2 gap-8 text-center">
+                              <div className="grid grid-cols-2 gap-8 text-center text-gray-900 font-sans">
                                 {/* Principal */}
-                                <div className="flex flex-col items-center justify-between h-[100px]">
-                                  <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">
+                                <div className="flex flex-col items-center justify-between h-[120px]">
+                                  <span className="text-[11px] font-bold uppercase tracking-wider leading-none">
                                     Kepala Pra-TK/TK Lazuardi GCS
                                   </span>
-                                  <div className="h-12 flex items-center justify-center">
+                                  <div className="h-14 flex items-center justify-center my-1.5">
                                     {isValidPrincipalSignature ? (
                                       <img 
                                         src={kindySignatory!.principalSignatureUrl!} 
                                         alt="Signature" 
-                                        className="h-10 w-auto object-contain"
+                                        className="h-12 w-auto object-contain"
                                         referrerPolicy="no-referrer"
                                         crossOrigin={kindySignatory!.principalSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
                                       />
                                     ) : (
-                                      <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
+                                      <div className="text-[10px] text-gray-400 italic">Verified Digitally</div>
                                     )}
                                   </div>
-                                  <div className="text-center font-sans leading-none">
-                                    <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
+                                  <div className="text-center leading-normal">
+                                    <span className="text-[11px] font-bold underline block">
                                       {toTitleCase(kindySignatory?.principalName) || "Nama Kepala Unit"}
                                     </span>
                                     {kindySignatory?.principalNiy && kindySignatory.principalNiy !== '-' && kindySignatory.principalNiy !== '' && (
-                                      <span className="text-[8px] text-gray-400 block mt-1 font-sans">
+                                      <span className="text-[10px] text-gray-700 block mt-0.5">
                                         NIY: {kindySignatory.principalNiy}
                                       </span>
                                     )}
@@ -4203,26 +4278,28 @@ export default function MidtermSummary() {
                                 </div>
 
                                 {/* Homeroom Teacher */}
-                                <div className="flex flex-col items-center justify-between h-[100px]">
-                                  <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none font-sans">Guru Kelas</span>
-                                  <div className="h-12 flex items-center justify-center">
+                                <div className="flex flex-col items-center justify-between h-[120px]">
+                                  <span className="text-[11px] font-bold uppercase tracking-wider leading-none">
+                                    Guru Kelas
+                                  </span>
+                                  <div className="h-14 flex items-center justify-center my-1.5">
                                     {isValidHomeroomSignature ? (
                                       <img 
                                         src={resolvedSignatureUrl!} 
                                         alt="Signature" 
-                                        className="h-10 w-auto object-contain"
+                                        className="h-12 w-auto object-contain"
                                         referrerPolicy="no-referrer"
                                         crossOrigin={resolvedSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
                                       />
                                     ) : (
-                                      <div className="text-[9px] text-gray-400 italic font-sans">Verified Digitally</div>
+                                      <div className="text-[10px] text-gray-400 italic">Verified Digitally</div>
                                     )}
                                   </div>
-                                  <div className="text-center font-sans leading-none">
-                                    <span className="text-[10px] font-extrabold text-gray-800 leading-none underline block">
+                                  <div className="text-center leading-normal">
+                                    <span className="text-[11px] font-bold underline block">
                                       {toTitleCase(resolvedTeacherName) || "Nama Guru Kelas"}
                                     </span>
-                                    <span className="text-[8px] text-gray-400 block mt-1 font-sans">
+                                    <span className="text-[10px] text-gray-700 block mt-0.5">
                                       NIY: {(!resolvedTeacherNiy || resolvedTeacherNiy === '-') ? '-' : resolvedTeacherNiy}
                                     </span>
                                   </div>
