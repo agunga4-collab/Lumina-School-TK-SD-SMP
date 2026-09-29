@@ -1909,130 +1909,166 @@ function LearningPowerUpTeacherPageContent() {
     }
   };
 
-  const handlePublishPreflight = () => {
-    if (!newSubject) {
-      toast.error("Harap pilih Subject!");
+  const handlePublish = async () => {
+    const selectedBatchIds = editingBatchId ? [editingBatchId] : [];
+    const selectedClassIds = newTargetClassIds;
+    console.info('[LPU] publish clicked', {
+      selectedBatchIds,
+      selectedClassIds,
+    });
+
+    if (isPublishing) {
       return;
     }
-    if (newTargetClassIds.length === 0) {
-      toast.error("Harap pilih Kelas Target!");
+
+    if (!newSubject) {
+      toast.error("Harap pilih Subject tugas terlebih dahulu.");
+      return;
+    }
+    if (!newTargetClassIds || newTargetClassIds.length === 0) {
+      toast.error("Harap pilih minimal satu Kelas Target.");
       return;
     }
     if (!newWeekStartDate || !newWeekEndDate) {
-      toast.error("Harap isi rentang Tanggal!");
+      toast.error("Harap tentukan rentang Tanggal Pekan (Tanggal Mulai dan Tanggal Selesai).");
       return;
     }
 
     // Validate teacher scope
     const validation = validateTeacherScopeForBatch(newSubject, newTargetClassIds);
     if (!validation.isValid) {
-      toast.error(validation.error);
+      toast.error(validation.error || "Anda tidak berwenang menerbitkan tugas untuk kelas yang dipilih.");
       return;
     }
 
     // Ensure at least one task is entered
-    const hasSomeTask = (Object.values(levelTasks) as Array<{ title: string; instructions: string }>).some(t => t.title.trim() && t.instructions.trim());
+    const hasSomeTask = (Object.values(levelTasks) as Array<{ title?: string; instructions?: string }>).some(
+      t => t && t.title?.trim() && t.instructions?.trim()
+    );
     if (!hasSomeTask) {
-      toast.error("Harap masukkan setidaknya satu judul dan instruksi tugas untuk level kemampuan!");
+      toast.error("Harap masukkan setidaknya satu judul dan instruksi tugas untuk level kemampuan.");
       return;
     }
 
-    // Count recipients per level
-    const recipientsCountByLevel: Record<string, number> = {};
-    const studentsWithoutLevel: any[] = [];
-    const studentsSkippedNoTask: any[] = [];
-
-    rosterLevels.forEach(({ student, className, level, resolved }) => {
-      if (!resolved || !level) {
-        studentsWithoutLevel.push({ student, className });
-      } else {
-        const task = levelTasks[level] as { title: string; instructions: string } | undefined;
-        const hasTask = task && task.title.trim() && task.instructions.trim();
-        if (!hasTask) {
-          studentsSkippedNoTask.push({ student, className, level });
-        } else {
-          recipientsCountByLevel[level] = (recipientsCountByLevel[level] || 0) + 1;
-        }
-      }
-    });
-
-    const classesNames = newTargetClassIds.map(cid => classes.find(c => c.id === cid)?.name || cid);
-
-    const batchObj: Partial<LearningPowerUpTaskBatch> = {
-      subjectKey: newSubject,
-      subjectArea: LPU_SUBJECT_MAP[newSubject],
-      academicYearId: activeYear,
-      semester: newSemester,
-      targetClassIds: newTargetClassIds,
-      weekStartDate: newWeekStartDate,
-      weekEndDate: newWeekEndDate,
-      weekLabel: newWeekLabel || `Pekan (${formatDateShort(newWeekStartDate)} - ${formatDateShort(newWeekEndDate)})`,
-      levelTasks: levelTasks
-    };
-
-    setPublishPreflight({
-      batch: batchObj,
-      recipientsCountByLevel,
-      studentsWithoutLevel,
-      studentsSkippedNoTask,
-      classesNames
-    });
-  };
-
-  const executePublishBatch = async () => {
-    if (!publishPreflight) return;
     setIsPublishing(true);
 
     try {
-      const { batch } = publishPreflight;
-      const batchId = editingBatchId || `batch_${batch.subjectKey}_${batch.weekStartDate}_${activeYear.replace('/', '_')}`;
+      const batchId = editingBatchId || `batch_${newSubject}_${newWeekStartDate}_${activeYear.replace('/', '_')}`;
 
       // 1. Prepare clean levelTasks
       const cleanLevelTasks: Record<string, LpuLevelTask> = {};
       Object.entries(levelTasks).forEach(([lvl, rawTask]) => {
-        const task = rawTask as { title: string; instructions: string };
-        if (task.title.trim() || task.instructions.trim()) {
+        const task = rawTask as { title?: string; instructions?: string };
+        if (task && (task.title?.trim() || task.instructions?.trim())) {
           cleanLevelTasks[lvl] = {
-            title: task.title.trim(),
-            instructions: task.instructions.trim()
+            title: (task.title || '').trim(),
+            instructions: (task.instructions || '').trim()
           };
         }
       });
 
       // 2. Prepare task batch record
       const isEditing = !!editingBatchId;
+      const existingBatch = isEditing ? taskBatches.find(b => b.id === batchId) : null;
+      const now = serverTimestamp();
+
       const batchDoc: LearningPowerUpTaskBatch = {
         id: batchId,
         unit: 'JUNIOR_HIGH',
-        subjectKey: batch.subjectKey!,
-        subjectArea: batch.subjectArea!,
+        subjectKey: newSubject,
+        subjectArea: LPU_SUBJECT_MAP[newSubject],
         academicYearId: activeYear,
-        semester: batch.semester!,
-        targetClassIds: batch.targetClassIds!,
-        weekStartDate: batch.weekStartDate!,
-        weekEndDate: batch.weekEndDate!,
-        weekLabel: batch.weekLabel!,
+        semester: newSemester,
+        targetClassIds: newTargetClassIds,
+        weekStartDate: newWeekStartDate,
+        weekEndDate: newWeekEndDate,
+        weekLabel: newWeekLabel || `Pekan (${formatDateShort(newWeekStartDate)} - ${formatDateShort(newWeekEndDate)})`,
         levelTasks: cleanLevelTasks,
         status: 'PUBLISHED',
-        createdBy: isEditing ? (taskBatches.find(b => b.id === batchId)?.createdBy || currentUser.uid) : currentUser.uid,
-        createdByEmail: isEditing ? (taskBatches.find(b => b.id === batchId)?.createdByEmail || currentUser.email || '') : (currentUser.email || ''),
-        createdByName: isEditing ? (taskBatches.find(b => b.id === batchId)?.createdByName || currentUser.displayName || '') : (currentUser.displayName || ''),
-        createdAt: isEditing ? (taskBatches.find(b => b.id === batchId)?.createdAt || serverTimestamp()) : serverTimestamp(),
+        createdBy: existingBatch?.createdBy || currentUser.uid,
+        createdByEmail: existingBatch?.createdByEmail || currentUser.email || '',
+        createdByName: existingBatch?.createdByName || currentUser.displayName || '',
+        createdAt: existingBatch?.createdAt || now,
         updatedBy: currentUser.uid,
         updatedByEmail: currentUser.email || '',
         updatedByName: currentUser.displayName || '',
-        updatedAt: serverTimestamp(),
+        updatedAt: now,
         publishedBy: currentUser.uid,
         publishedByEmail: currentUser.email || '',
         publishedByName: currentUser.displayName || '',
-        publishedAt: serverTimestamp()
+        publishedAt: now
       };
 
-      // 3. Collect all assignments to create
+      // 3. Resolve student roster if rosterLevels is empty or not yet loaded
+      let targetRoster = rosterLevels;
+      if (!targetRoster || targetRoster.length === 0) {
+        const allStudentsInClasses: any[] = [];
+        for (const classId of newTargetClassIds) {
+          const roster = (await getActiveStudents(classId, activeYear)) || [];
+          allStudentsInClasses.push(...roster);
+        }
+
+        const qRecords = query(
+          collection(db, 'junior_high_literacy_numeracy_records'),
+          where('schoolYear', '==', activeYear),
+          where('subjectArea', '==', LPU_SUBJECT_MAP[newSubject])
+        );
+        const recordsSnap = await getDocs(qRecords);
+        const recordsByStudentId: Record<string, any> = {};
+        recordsSnap.forEach(docSnap => {
+          const data = docSnap.data();
+          if (data.studentId && !recordsByStudentId[data.studentId]) {
+            recordsByStudentId[data.studentId] = data;
+          }
+        });
+
+        targetRoster = allStudentsInClasses.map(student => {
+          const classObj = classes.find(c => c.id === student.classId);
+          const record = recordsByStudentId[student.id];
+          let lvl = '';
+          if (record) {
+            if (newSubject === 'bahasaIndonesia' || newSubject === 'english') {
+              lvl = record.readingLevel || '';
+            } else if (newSubject === 'mengaji') {
+              const raw = record.mengajiLevel || record.level;
+              const norm = normalizeMengajiLevel(raw);
+              lvl = norm ? formatMengajiDisplay(norm) : (raw || '');
+            } else if (newSubject === 'numerasi') {
+              const raw = record.numerasiLevel || record.mathLevel;
+              const norm = normalizeNumerasiLevel(raw);
+              lvl = norm ? formatNumerasiDisplay(norm) : (raw || '');
+            }
+          }
+          return {
+            student,
+            classId: student.classId,
+            className: classObj?.name || student.classId || 'Unknown Class',
+            level: lvl,
+            resolved: !!lvl
+          };
+        });
+      }
+
+      // 4. Query existing assignments for this batch to ensure deterministic, idempotent writes
+      const existingAssignmentsSnap = await getDocs(
+        query(collection(db, 'learning_power_up_assignments'), where('taskBatchId', '==', batchId))
+      );
+      const existingAssignmentsMap = new Map<string, LearningPowerUpAssignment>();
+      existingAssignmentsSnap.forEach(docSnap => {
+        existingAssignmentsMap.set(docSnap.id, docSnap.data() as LearningPowerUpAssignment);
+      });
+
+      // 5. Collect all assignments to create or update
       const assignmentsToCreate: LearningPowerUpAssignment[] = [];
-      rosterLevels.forEach(({ student, className, level, resolved }) => {
-        const assignmentId = generateDeterministicAssignmentId(batchId, student.id, batch.subjectKey!);
-        
+      targetRoster.forEach(({ student, className, level, resolved }) => {
+        const assignmentId = generateDeterministicAssignmentId(batchId, student.id, newSubject);
+        const existingAsg = existingAssignmentsMap.get(assignmentId);
+
+        // If assignment already exists and has been worked on (e.g. SUBMITTED/VERIFIED), keep it intact
+        if (existingAsg && existingAsg.status !== 'ASSIGNED') {
+          return;
+        }
+
         const historyEntry: LpuAssignmentHistoryEntry = {
           action: 'ASSIGN',
           performedByUid: currentUser.uid,
@@ -2042,9 +2078,9 @@ function LearningPowerUpTeacherPageContent() {
         };
 
         const studentLevel = (resolved && level) ? level : null;
-        const resolvedTask = resolveLevelTask(levelTasks, studentLevel, batch.subjectKey!);
+        const resolvedTask = resolveLevelTask(cleanLevelTasks, studentLevel, newSubject);
 
-        const defaultTitle = `Tugas Penguatan ${CATEGORY_CONFIG[batch.subjectKey!]?.label || batch.subjectKey}`;
+        const defaultTitle = `Tugas Penguatan ${CATEGORY_CONFIG[newSubject]?.label || newSubject}`;
         const fallbackInstructions = "Siswa belum memiliki level yang ditetapkan. Silakan lakukan koordinasi dengan guru bidang untuk menentukan level siswa.";
 
         const assignmentDoc: LearningPowerUpAssignment = {
@@ -2055,48 +2091,59 @@ function LearningPowerUpTeacherPageContent() {
           studentNameSnapshot: student.name,
           classId: student.classId,
           classNameSnapshot: className,
-          subjectKey: batch.subjectKey!,
-          subjectArea: batch.subjectArea!,
+          subjectKey: newSubject,
+          subjectArea: LPU_SUBJECT_MAP[newSubject],
           levelSnapshot: studentLevel,
           taskTitle: resolvedTask ? resolvedTask.title : defaultTitle,
           taskInstructions: resolvedTask ? resolvedTask.instructions : fallbackInstructions,
           academicYearId: activeYear,
-          semester: batch.semester!,
-          weekStartDate: batch.weekStartDate!,
-          weekEndDate: batch.weekEndDate!,
-          weekLabel: batch.weekLabel!,
-          status: 'ASSIGNED',
-          history: [historyEntry],
-          updatedAt: serverTimestamp()
+          semester: newSemester,
+          weekStartDate: newWeekStartDate,
+          weekEndDate: newWeekEndDate,
+          weekLabel: newWeekLabel || `Pekan (${formatDateShort(newWeekStartDate)} - ${formatDateShort(newWeekEndDate)})`,
+          status: existingAsg?.status || 'ASSIGNED',
+          history: existingAsg?.history || [historyEntry],
+          updatedAt: now
         };
 
         assignmentsToCreate.push(assignmentDoc);
       });
 
-      // 4. Batch-write assignments in chunks of 400 to protect limits
+      // 6. Batch-write assignments in chunks of 400
       const chunkSize = 400;
       for (let i = 0; i < assignmentsToCreate.length; i += chunkSize) {
         const chunk = assignmentsToCreate.slice(i, i + chunkSize);
         const writeB = writeBatch(db);
         chunk.forEach(asg => {
-          writeB.set(doc(db, 'learning_power_up_assignments', asg.id), asg);
+          writeB.set(doc(db, 'learning_power_up_assignments', asg.id), asg, { merge: true });
         });
         await writeB.commit();
       }
 
-      // 5. Finally, write the published task batch doc to mark it as PUBLISHED
-      await setDoc(doc(db, 'learning_power_up_task_batches', batchId), batchDoc);
+      // 7. Write the published task batch doc to mark it as PUBLISHED
+      await setDoc(doc(db, 'learning_power_up_task_batches', batchId), batchDoc, { merge: true });
 
-      toast.success(`Berhasil menerbitkan tugas! ${assignmentsToCreate.length} tugas individu berhasil disebar.`);
+      toast.success("Tugas berhasil diterbitkan");
       setPublishPreflight(null);
       resetNewBatchForm();
       await loadTaskBatches();
-    } catch (err) {
-      console.error("Error executing publish:", err);
-      toast.error("Gagal menerbitkan tugas. Pastikan Anda memiliki koneksi internet stabil.");
+      if (selectedClassId) {
+        await loadClassData();
+      }
+    } catch (err: any) {
+      console.error("[LPU] Error publishing batch to Firestore:", err);
+      toast.error(err?.message ? `Gagal menerbitkan tugas: ${err.message}` : "Gagal menerbitkan tugas ke Firestore.");
     } finally {
       setIsPublishing(false);
     }
+  };
+
+  const handlePublishPreflight = () => {
+    handlePublish();
+  };
+
+  const executePublishBatch = async () => {
+    await handlePublish();
   };
 
   const handleEditBatch = async (batch: LearningPowerUpTaskBatch) => {
@@ -5315,11 +5362,11 @@ function LearningPowerUpTeacherPageContent() {
                     </button>
                     <button
                       type="button"
-                      onClick={handlePublishPreflight}
-                      disabled={loadingData || !newSubject || newTargetClassIds.length === 0}
-                      className="px-5 py-3 bg-[#109E58] hover:bg-[#0d854a] text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center gap-2 disabled:opacity-50"
+                      onClick={handlePublish}
+                      disabled={isPublishing || loadingData}
+                      className="px-5 py-3 bg-[#109E58] hover:bg-[#0d854a] text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center gap-2 disabled:opacity-50 cursor-pointer"
                     >
-                      <Send size={16} />
+                      {isPublishing ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                       Terbitkan Tugas
                     </button>
                   </>
