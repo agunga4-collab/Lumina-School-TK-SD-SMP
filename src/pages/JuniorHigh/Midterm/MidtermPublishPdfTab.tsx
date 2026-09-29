@@ -85,6 +85,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
   // Modal Preview state
   const [previewStudent, setPreviewStudent] = React.useState<Student | null>(null);
   const [previewSnapshot, setPreviewSnapshot] = React.useState<MidtermReportSnapshot | null>(null);
+  const [isPreviewReady, setIsPreviewReady] = React.useState<boolean>(false);
 
   // Publishing in progress
   const [publishingStudentId, setPublishingStudentId] = React.useState<string | null>(null);
@@ -719,6 +720,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
                 onClick={() => {
                   setPreviewStudent(null);
                   setPreviewSnapshot(null);
+                  setIsPreviewReady(false);
                 }}
                 className="p-1.5 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors"
               >
@@ -752,6 +754,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
                 reportSigningLocation={reportSigningLocation}
                 reportSigningDate={reportSigningDate}
                 attendanceCutoffDate={attendanceCutoffDate}
+                onReadyChange={setIsPreviewReady}
               />
             </div>
 
@@ -764,7 +767,8 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => window.print()}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all"
+                  disabled={!isPreviewReady}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all"
                 >
                   <Download size={14} /> Cetak / Print
                 </button>
@@ -772,6 +776,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
                   onClick={() => {
                     setPreviewStudent(null);
                     setPreviewSnapshot(null);
+                    setIsPreviewReady(false);
                   }}
                   className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold rounded-xl transition-all"
                 >
