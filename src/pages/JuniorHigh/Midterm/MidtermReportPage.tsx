@@ -287,14 +287,17 @@ function MidtermReportPageContent() {
     const fetchJHClasses = async () => {
       setLoadingClasses(true);
       try {
-        const [all, enrollmentsSnap] = await Promise.all([
-          getClasses(),
-          getDocs(query(
+        const all = await getClasses();
+        let enrollmentsSnap = null;
+        try {
+          enrollmentsSnap = await getDocs(query(
             collection(db, 'enrollments'),
             where('academicYear', '==', selectedYear),
             where('status', '==', 'active')
-          ))
-        ]);
+          ));
+        } catch (enrollErr) {
+          console.warn("User lacks broad enrollments query permission; bypassing active enrollment filtering:", enrollErr);
+        }
 
         const activeClassKeys = new Set<string>();
         if (enrollmentsSnap && Array.isArray(enrollmentsSnap.docs)) {
@@ -312,7 +315,11 @@ function MidtermReportPageContent() {
           const isNotArchived = c.status !== 'archived';
           if (!isJH || !isActiveYear || !isNotArchived) return false;
 
-          return activeClassKeys.has(c.id) || activeClassKeys.has(c.name) || Boolean((c as any).classId && activeClassKeys.has((c as any).classId));
+          // If broad enrollments snap was successful, filter active classes. Otherwise show all JH classes.
+          if (enrollmentsSnap) {
+            return activeClassKeys.has(c.id) || activeClassKeys.has(c.name) || Boolean((c as any).classId && activeClassKeys.has((c as any).classId));
+          }
+          return true;
         });
 
         setClassesList(jhClasses);

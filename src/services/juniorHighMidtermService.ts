@@ -112,6 +112,7 @@ export function canUserEditMidtermGoals(
 ): boolean {
   if (!user) return false;
   const role = user.role;
+  const unitId = user.unitId || (user as any).unit || '';
 
   // Super Admin, Head JH, Secretary JH can edit all goals
   if (['SUPER_ADMIN', 'HEAD_JUNIOR', 'SECRETARY_JH'].includes(role)) {
@@ -121,6 +122,15 @@ export function canUserEditMidtermGoals(
   // BK Mentor, MTSS PJ are read-only
   if (['BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'COUNSELOR'].includes(role)) {
     return false;
+  }
+
+  // If unitId is JUNIOR_HIGH/ALL and role is TEACHER/HOMEROOM_TEACHER, allow editing for JH classes!
+  if (
+    (unitId === 'JUNIOR_HIGH' || unitId === 'ALL') &&
+    (role === 'TEACHER' || role === 'HOMEROOM_TEACHER') &&
+    (!classData || classData.unitId === 'JUNIOR_HIGH')
+  ) {
+    return true;
   }
 
   // Homeroom can edit goals for their class

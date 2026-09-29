@@ -742,8 +742,21 @@ export async function markAllBehaviorNotificationsRead(userId: string, notifIds:
 }
 
 export async function cleanupClosedNotifications(): Promise<number> {
+  if (!auth.currentUser) return 0;
+
   try {
-    const cases = await getMTSSCases() || [];
+    let cases: MTSSCase[] = [];
+    try {
+      cases = await getMTSSCases() || [];
+    } catch (e: any) {
+      const errStr = e.message || String(e);
+      if (errStr.includes('permission') || errStr.includes('Permission') || errStr.includes('Missing or insufficient permissions') || errStr.includes('insufficient')) {
+        console.log("[cleanupClosedNotifications] Skip cleanup: User does not have permissions to read behavior cases.");
+        return 0;
+      }
+      throw e;
+    }
+
     const closedOrArchivedCases = cases.filter(c => c.status === 'CLOSED' || (c.status as string) === 'archived');
     const closedCaseIds = closedOrArchivedCases.map(c => c.id);
 
@@ -757,21 +770,27 @@ export async function cleanupClosedNotifications(): Promise<number> {
         collection(db, 'behavior_notifications'),
         where('caseId', 'in', chunk)
       );
-      const snapshot = await getDocs(q);
-      if (!snapshot.empty) {
-        const batch = writeBatch(db);
-        snapshot.docs.forEach((doc) => {
-          batch.delete(doc.ref);
-          deletedCount++;
-        });
-        await batch.commit();
+      try {
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+          const batch = writeBatch(db);
+          snapshot.docs.forEach((doc) => {
+            batch.delete(doc.ref);
+            deletedCount++;
+          });
+          await batch.commit();
+        }
+      } catch (e: any) {
+        console.log("[cleanupClosedNotifications] Skip chunk deletion: User does not have permissions to delete these notifications.");
       }
     }
 
-    console.log(`[cleanupClosedNotifications] Successfully cleaned up ${deletedCount} notifications for CLOSED/archived cases.`);
+    if (deletedCount > 0) {
+      console.log(`[cleanupClosedNotifications] Successfully cleaned up ${deletedCount} notifications for CLOSED/archived cases.`);
+    }
     return deletedCount;
-  } catch (err) {
-    console.error("[cleanupClosedNotifications] Error during cleanup:", err);
+  } catch (err: any) {
+    console.log("[cleanupClosedNotifications] Cleanup skipped or user unauthorized:", err.message || err);
     return 0;
   }
 }
