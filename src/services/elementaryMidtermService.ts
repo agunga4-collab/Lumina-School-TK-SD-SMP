@@ -313,11 +313,13 @@ export async function fetchElementaryMidtermStudentData(
       where('semester', '==', semester),
       where('midtermTerm', '==', midtermTerm)
     );
+    console.log(`[ElementaryMidtermRead] Querying path: elem_midterm_student_data, classId: ${classId}, year: ${academicYear}, sem: ${semester}, term: ${midtermTerm}`);
     const snap = await getDocs(q);
     const map: Record<string, ElementaryMidtermStudentDataDoc> = {};
     snap.docs.forEach(d => {
       const data = d.data();
       if (data && data.studentId) {
+        console.log(`[ElementaryMidtermRead] Found doc for student: ${data.studentId}, ID: ${d.id}, remarks:`, data.remarks);
         map[data.studentId] = normalizeElementaryMidtermStudentData(data, {
           studentId: data.studentId,
           studentName: data.studentName || 'Siswa',
@@ -328,6 +330,7 @@ export async function fetchElementaryMidtermStudentData(
         });
       }
     });
+    console.log(`[ElementaryMidtermRead] Completed fetching. Loaded ${snap.docs.length} documents.`);
     return map;
   } catch (err: any) {
     handleFirestoreError(err, 'list', 'elem_midterm_student_data');

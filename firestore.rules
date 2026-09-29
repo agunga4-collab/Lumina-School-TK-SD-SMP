@@ -180,6 +180,17 @@ service cloud.firestore {
       return isActive() && isJuniorHighStaff();
     }
 
+    function isJuniorHighStaffAuthorized() {
+      return isActive() && (
+        isAdmin() ||
+        isJuniorHighTeacher() ||
+        (isJuniorHighStaff() && (
+          ('unitId' in currentUser() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) ||
+          ('unit' in currentUser() && (currentUser().unit == 'JUNIOR_HIGH' || currentUser().unit == 'ALL'))
+        ))
+      );
+    }
+
     function isMTSSAcademicManager() {
       return isActive() && userRole() in [
         'HEAD_UNIT', 'HEAD_JUNIOR', 'MTSS_ACADEMIC_PJ', 'SUPER_ADMIN'
@@ -1269,6 +1280,7 @@ service cloud.firestore {
         ((request.auth.uid in existing().targetUserIds
           && incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'isDismissed']))
           || isAdmin());
+      allow delete: if isSignedIn() && (request.auth.uid in existing().targetUserIds || isAdmin());
     }
 
     match /parentStudentLinks/{linkId} {
@@ -1403,30 +1415,21 @@ service cloud.firestore {
 
     match /jh_midterm_master_goals/{goalId} {
       allow get, list: if isActive() && (isJuniorHighStaff() || isAdmin() || isJuniorHighTeacher());
-      allow create, update, delete: if isActive() && (
-        isAdmin() ||
-        (isJuniorHighTeacher() && currentUser().unitId == 'JUNIOR_HIGH') ||
-        (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL'))
-      );
+      allow create, update, delete: if isJuniorHighStaffAuthorized();
     }
 
     match /jh_midterm_student_data/{dataId} {
       allow get, list: if isActive() && (isJuniorHighStaff() || isAdmin() || isJuniorHighTeacher());
-      allow create, update: if isActive() && (
-        isAdmin() ||
-        (isJuniorHighTeacher() && currentUser().unitId == 'JUNIOR_HIGH' && isJuniorHighClassId(incoming().classId)) ||
-        (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL') && isJuniorHighClassId(incoming().classId))
-      );
-      allow delete: if isAdmin() || (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL'));
+      allow create, update: if isJuniorHighStaffAuthorized() && isJuniorHighClassId(incoming().classId);
+      allow delete: if isAdmin() || (isJuniorHighStaff() && (
+        ('unitId' in currentUser() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) ||
+        ('unit' in currentUser() && (currentUser().unit == 'JUNIOR_HIGH' || currentUser().unit == 'ALL'))
+      ));
     }
 
     match /jh_midterm_class_comments_config/{configId} {
       allow get, list: if isActive() && (isJuniorHighStaff() || isAdmin() || isJuniorHighTeacher());
-      allow create, update, delete: if isActive() && (
-        isAdmin() ||
-        (isJuniorHighTeacher() && currentUser().unitId == 'JUNIOR_HIGH') ||
-        (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL'))
-      );
+      allow create, update, delete: if isJuniorHighStaffAuthorized();
     }
 
     match /jh_midterm_published_reports/{reportId} {
@@ -1437,17 +1440,11 @@ service cloud.firestore {
         isOwnStudentData(resource.data.studentId) ||
         isLinkedStudent(resource.data.studentId)
       );
-      allow create: if isActive() && (
-        isAdmin() ||
-        (isJuniorHighTeacher() && currentUser().unitId == 'JUNIOR_HIGH' && isJuniorHighClassId(incoming().classId)) ||
-        (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL') && isJuniorHighClassId(incoming().classId))
-      );
+      allow create: if isJuniorHighStaffAuthorized() && isJuniorHighClassId(incoming().classId);
       allow update: if isActive() && (
         (isLinkedStudent(resource.data.studentId) && 
          incoming().diff(existing()).affectedKeys().hasOnly(['isOpened', 'firstOpenedAt', 'lastOpenedAt', 'openCount'])) ||
-        isAdmin() ||
-        (isJuniorHighTeacher() && currentUser().unitId == 'JUNIOR_HIGH') ||
-        (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL'))
+        isJuniorHighStaffAuthorized()
       );
       allow delete: if isAdmin();
     }
@@ -1456,8 +1453,6 @@ service cloud.firestore {
       allow get, list: if isActive() && (isJuniorHighStaff() || isAdmin() || isJuniorHighTeacher());
       allow create, update: if isActive() && (
         isAdmin() ||
-        (isJuniorHighTeacher() && currentUser().unitId == 'JUNIOR_HIGH') ||
-        (isJuniorHighStaff() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL')) ||
         userRole() in ['PRINCIPAL', 'HEAD_JUNIOR', 'HEAD_UNIT', 'VICE_PRINCIPAL', 'COORDINATOR', 'SECRETARY_JH']
       );
       allow delete: if isAdmin();

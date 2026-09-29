@@ -768,7 +768,8 @@ export async function cleanupClosedNotifications(): Promise<number> {
       const chunk = closedCaseIds.slice(i, i + chunkSize);
       const q = query(
         collection(db, 'behavior_notifications'),
-        where('caseId', 'in', chunk)
+        where('caseId', 'in', chunk),
+        where('targetUserIds', 'array-contains', auth.currentUser.uid)
       );
       try {
         const snapshot = await getDocs(q);

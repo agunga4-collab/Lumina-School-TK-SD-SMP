@@ -501,7 +501,8 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
       for (const row of targets) {
         if (!row.matchedStudent) continue;
         const studentId = row.matchedStudent.id;
-        const docId = `${studentId}_${selectedYear.replace(/\//g, '_')}_S${selectedSemester}_T${selectedTerm}`;
+        const docId = buildStudentDataDocId(studentId, selectedClassId, selectedYear, selectedSemester, selectedTerm);
+        console.log(`[ElementaryMidtermWrite] Staging write to path: elem_midterm_student_data/${docId}`);
         const docRef = doc(db, 'elem_midterm_student_data', docId);
 
         const existingData = studentDataMap[studentId];
@@ -527,7 +528,7 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
         });
 
         if (updatedAny) {
-          batch.set(docRef, {
+          const payload = {
             id: docId,
             studentId,
             studentName: row.matchedStudent.name,
@@ -538,7 +539,9 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
             remarks: currentRemarks,
             updatedAt: Date.now(),
             updatedBy: currentUser?.uid || (currentUser as any)?.id || 'system'
-          }, { merge: true });
+          };
+          console.log(`[ElementaryMidtermWrite] Staging write payload for studentId ${studentId}:`, payload);
+          batch.set(docRef, payload, { merge: true });
 
           setLocalRemarks(prev => ({
             ...prev,
@@ -552,7 +555,9 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
         }
       }
 
+      console.log(`[ElementaryMidtermWrite] Committing batch write with ${successCount} entries...`);
       await batch.commit();
+      console.log(`[ElementaryMidtermWrite] Batch write committed successfully.`);
       toast.success(`Berhasil mengimpor nilai untuk ${successCount} siswa.`);
       if (skipCount > 0) {
         toast.info(`${skipCount} nilai dilewati karena sudah memiliki nilai sebelumnya.`);
