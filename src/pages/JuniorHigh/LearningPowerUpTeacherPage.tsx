@@ -1983,16 +1983,15 @@ function LearningPowerUpTeacherPageContent() {
     }
 
     const selectedBatchIds = editingBatchId ? [editingBatchId] : [];
-    const publishableBatchIds = loadedBatches
-      .filter((batch) => batch.id && batch.status !== 'PUBLISHED')
+    // Do NOT filter out published batches! Batches already published for certain classes can still be published to other classes.
+    const availableBatchIds = loadedBatches
+      .filter((batch) => batch.id)
       .map((batch) => batch.id);
 
     const batchIdsToPublish =
       selectedBatchIds.length > 0
-        ? selectedBatchIds.filter((id) =>
-            publishableBatchIds.includes(id)
-          )
-        : publishableBatchIds;
+        ? selectedBatchIds
+        : (formBatchId ? [formBatchId] : availableBatchIds);
 
     const selectedClassIds = newTargetClassIds.length > 0
       ? newTargetClassIds
@@ -2000,50 +1999,92 @@ function LearningPowerUpTeacherPageContent() {
 
     console.info('[LPU] publish ready', {
       selectedBatchIds,
-      publishableBatchIds,
+      availableBatchIds,
       batchIdsToPublish,
       selectedClassIds,
     });
 
     if (batchIdsToPublish.length === 0) {
-      toast.error("Tidak ada batch baru yang dapat diterbitkan.");
+      toast.error("Tidak ada batch yang dapat diterbitkan.");
       return;
     }
 
     setIsPublishing(true);
 
     try {
+      let totalPublishedClasses = 0;
+      let totalSkippedClasses = 0;
+
       for (const batchId of batchIdsToPublish) {
         let targetBatch = loadedBatches.find(b => b.id === batchId);
         if (!targetBatch) continue;
 
-        // Ensure we don't republish an already published batch
-        const batchDocRef = doc(db, 'learning_power_up_task_batches', batchId);
-        const existingBatchSnap = await getDoc(batchDocRef);
-        if (existingBatchSnap.exists()) {
-          const existingData = existingBatchSnap.data() as LearningPowerUpTaskBatch;
-          if (existingData.status === 'PUBLISHED') {
-            console.info(`[LPU] Skipping already published batch: ${batchId}`);
-            continue;
-          }
-        }
-
         const isCurrentForm = (batchId === editingBatchId || (formBatchId && formBatchId === batchId));
         const batchSubject = isCurrentForm && newSubject ? newSubject : targetBatch.subjectKey;
-        const batchTargetClassIds = isCurrentForm && newTargetClassIds.length > 0 ? newTargetClassIds : (targetBatch.targetClassIds || []);
         const batchWeekStartDate = isCurrentForm && newWeekStartDate ? newWeekStartDate : targetBatch.weekStartDate;
         const batchWeekEndDate = isCurrentForm && newWeekEndDate ? newWeekEndDate : targetBatch.weekEndDate;
         const batchWeekLabel = isCurrentForm && newWeekLabel ? newWeekLabel : (targetBatch.weekLabel || `Pekan (${formatDateShort(batchWeekStartDate)} - ${formatDateShort(batchWeekEndDate)})`);
         const batchSemester = isCurrentForm && newSemester ? newSemester : (targetBatch.semester || '1');
         const batchLevelTasks = isCurrentForm && Object.keys(levelTasks).length > 0 ? levelTasks : targetBatch.levelTasks;
 
+        const currentSelectedClassIds = isCurrentForm && newTargetClassIds.length > 0
+          ? newTargetClassIds
+          : (targetBatch.targetClassIds || []);
+
+        const existingTargetClassIds = targetBatch.targetClassIds ?? [];
+
         // Validate teacher scope if current form
         if (isCurrentForm) {
-          const validation = validateTeacherScopeForBatch(batchSubject, batchTargetClassIds);
+          const validation = validateTeacherScopeForBatch(batchSubject, currentSelectedClassIds);
           if (!validation.isValid) {
             toast.error(validation.error || "Anda tidak berwenang menerbitkan tugas untuk kelas yang dipilih.");
             continue;
           }
+        }
+
+        // Query existing assignments for this batch to check combo:
+        // batchId + classId + academicYearId + semester + subject + weekStartDate + weekEndDate
+        const existingAssignmentsSnap = await getDocs(
+          query(collection(db, 'learning_power_up_assignments'), where('taskBatchId', '==', batchId))
+        );
+        const existingAssignments = existingAssignmentsSnap.docs.map(d => d.data() as LearningPowerUpAssignment);
+
+        const classIdsToPublish: string[] = [];
+        const skippedClassIds: string[] = [];
+
+        for (const classId of currentSelectedClassIds) {
+          const hasExistingAssignmentForCombo = existingAssignments.some(asg =>
+            asg.taskBatchId === batchId &&
+            asg.classId === classId &&
+            asg.academicYearId === activeYear &&
+            asg.semester === batchSemester &&
+            asg.subjectKey === batchSubject &&
+            asg.weekStartDate === batchWeekStartDate &&
+            asg.weekEndDate === batchWeekEndDate
+          );
+
+          const isAlreadyInBatchAndPublished = existingTargetClassIds.includes(classId) && (targetBatch.status === 'PUBLISHED' || hasExistingAssignmentForCombo);
+
+          if (hasExistingAssignmentForCombo || isAlreadyInBatchAndPublished) {
+            skippedClassIds.push(classId);
+          } else {
+            classIdsToPublish.push(classId);
+          }
+        }
+
+        console.info('[LPU] class publish eligibility', {
+          batchId: targetBatch.id,
+          selectedClassIds: currentSelectedClassIds,
+          existingTargetClassIds: targetBatch.targetClassIds ?? [],
+          classIdsToPublish,
+          skippedClassIds,
+        });
+
+        totalPublishedClasses += classIdsToPublish.length;
+        totalSkippedClasses += skippedClassIds.length;
+
+        if (classIdsToPublish.length === 0) {
+          continue;
         }
 
         // 1. Prepare clean levelTasks
@@ -2058,7 +2099,8 @@ function LearningPowerUpTeacherPageContent() {
           }
         });
 
-        // 2. Prepare task batch record
+        // 2. Prepare task batch record with merged targetClassIds (preserve existing classes, add newly published ones)
+        const mergedTargetClassIds = Array.from(new Set([...(targetBatch.targetClassIds || []), ...classIdsToPublish]));
         const now = serverTimestamp();
         const batchDoc: LearningPowerUpTaskBatch = {
           id: batchId,
@@ -2067,7 +2109,7 @@ function LearningPowerUpTeacherPageContent() {
           subjectArea: LPU_SUBJECT_MAP[batchSubject],
           academicYearId: activeYear,
           semester: batchSemester,
-          targetClassIds: batchTargetClassIds,
+          targetClassIds: mergedTargetClassIds,
           weekStartDate: batchWeekStartDate,
           weekEndDate: batchWeekEndDate,
           weekLabel: batchWeekLabel,
@@ -2084,14 +2126,14 @@ function LearningPowerUpTeacherPageContent() {
           publishedBy: currentUser.uid,
           publishedByEmail: currentUser.email || '',
           publishedByName: currentUser.displayName || '',
-          publishedAt: now
+          publishedAt: targetBatch.publishedAt || now
         };
 
-        // 3. Resolve student roster for target classes
-        const allStudentsInClasses: any[] = [];
-        for (const classId of batchTargetClassIds) {
+        // 3. Resolve student roster for classIdsToPublish only
+        const studentsToPublish: any[] = [];
+        for (const classId of classIdsToPublish) {
           const roster = (await getActiveStudents(classId, activeYear)) || [];
-          allStudentsInClasses.push(...roster);
+          studentsToPublish.push(...roster);
         }
 
         const qRecords = query(
@@ -2108,22 +2150,17 @@ function LearningPowerUpTeacherPageContent() {
           }
         });
 
-        // 4. Query existing assignments for this batch to ensure deterministic, idempotent writes
-        const existingAssignmentsSnap = await getDocs(
-          query(collection(db, 'learning_power_up_assignments'), where('taskBatchId', '==', batchId))
-        );
         const existingAssignmentsMap = new Map<string, LearningPowerUpAssignment>();
-        existingAssignmentsSnap.forEach(docSnap => {
-          existingAssignmentsMap.set(docSnap.id, docSnap.data() as LearningPowerUpAssignment);
+        existingAssignments.forEach(asg => {
+          existingAssignmentsMap.set(asg.id, asg);
         });
 
-        // 5. Collect all assignments to create or update
+        // 4. Collect assignments for studentsToPublish
         const assignmentsToCreate: LearningPowerUpAssignment[] = [];
-        allStudentsInClasses.forEach(student => {
+        studentsToPublish.forEach(student => {
           const assignmentId = generateDeterministicAssignmentId(batchId, student.id, batchSubject);
           const existingAsg = existingAssignmentsMap.get(assignmentId);
 
-          // If assignment already exists and has been worked on (e.g. SUBMITTED/VERIFIED), keep it intact
           if (existingAsg && existingAsg.status !== 'ASSIGNED') {
             return;
           }
@@ -2185,7 +2222,7 @@ function LearningPowerUpTeacherPageContent() {
           assignmentsToCreate.push(assignmentDoc);
         });
 
-        // 6. Batch-write assignments in chunks of 400
+        // 5. Batch-write assignments in chunks of 400
         const chunkSize = 400;
         for (let i = 0; i < assignmentsToCreate.length; i += chunkSize) {
           const chunk = assignmentsToCreate.slice(i, i + chunkSize);
@@ -2196,11 +2233,20 @@ function LearningPowerUpTeacherPageContent() {
           await writeB.commit();
         }
 
-        // 7. Write the published task batch doc to mark it as PUBLISHED
+        // 6. Write the published task batch doc to mark it as PUBLISHED and update targetClassIds
         await setDoc(doc(db, 'learning_power_up_task_batches', batchId), batchDoc, { merge: true });
       }
 
-      toast.success("Tugas berhasil diterbitkan");
+      if (totalPublishedClasses === 0 && totalSkippedClasses > 0) {
+        toast.info("Seluruh kelas yang dipilih sudah memiliki tugas untuk batch ini.");
+      } else if (totalPublishedClasses > 0 && totalSkippedClasses > 0) {
+        toast.success(`Tugas diterbitkan untuk ${totalPublishedClasses} kelas. ${totalSkippedClasses} kelas dilewati karena tugas sudah ada.`);
+      } else if (totalPublishedClasses > 0) {
+        toast.success(`Tugas berhasil diterbitkan untuk ${totalPublishedClasses} kelas.`);
+      } else {
+        toast.info("Tidak ada tugas baru yang perlu diterbitkan.");
+      }
+
       setPublishPreflight(null);
       resetNewBatchForm();
       await loadTaskBatches();
@@ -5417,15 +5463,26 @@ function LearningPowerUpTeacherPageContent() {
                   </button>
                 )}
                 {editingBatchStatus === 'PUBLISHED' ? (
-                  <button
-                    type="button"
-                    onClick={handleSavePublishedChanges}
-                    disabled={loadingData || !newSubject || newTargetClassIds.length === 0}
-                    className="px-5 py-3 bg-[#109E58] hover:bg-[#0d854a] text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center gap-2 disabled:opacity-50"
-                  >
-                    {loadingData ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-                    Simpan Perubahan
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleSavePublishedChanges}
+                      disabled={loadingData || !newSubject || newTargetClassIds.length === 0}
+                      className="px-5 py-3 border border-[#109E58] text-[#109E58] hover:bg-[#109E58]/5 text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center gap-2 disabled:opacity-50"
+                    >
+                      {loadingData ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                      Simpan Perubahan
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handlePublish}
+                      disabled={isPublishing || loadingData}
+                      className="px-5 py-3 bg-[#109E58] hover:bg-[#0d854a] text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+                    >
+                      {isPublishing ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                      Terbitkan Tugas
+                    </button>
+                  </>
                 ) : (
                   <>
                     <button

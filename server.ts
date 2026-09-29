@@ -9446,48 +9446,52 @@ app.get("/api/self-exploration/plan-photo/:fileId", async (req, res) => {
 // --- Server Start & Export ---
 
 // --- Server Initialization ---
-if (process.env.NODE_ENV !== "production") {
-  // In dev, use Vite middleware
-  import("vite").then(({ createServer: createViteServer }) => {
-    createViteServer({
+async function startServer() {
+  if (process.env.NODE_ENV !== "production") {
+    // In dev, use Vite middleware
+    const { createServer: createViteServer } = await import("vite");
+    const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
-    }).then(vite => {
-      app.use(vite.middlewares);
+    });
+    app.use(vite.middlewares);
+  } else {
+    // In production (including Vercel), serve static files from dist
+    const distPath = path.join(process.cwd(), "dist");
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+      app.get("*", (req, res, next) => {
+        // If it's an API route that didn't match, don't serve index.html
+        if (req.path.startsWith('/api/')) return next();
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    }
+  }
+
+  // Global error handler
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error("[GlobalError]", err.stack || err);
+    if (res.headersSent) {
+      return next(err);
+    }
+    res.status(500).json({
+      ok: false,
+      message: err.message || "Internal Server Error",
+      stack: process.env.NODE_ENV === "production" ? undefined : err.stack
     });
   });
-} else {
-  // In production (including Vercel), serve static files from dist
-  const distPath = path.join(process.cwd(), "dist");
-  if (fs.existsSync(distPath)) {
-    app.use(express.static(distPath));
-    app.get("*", (req, res, next) => {
-      // If it's an API route that didn't match, don't serve index.html
-      if (req.path.startsWith('/api/')) return next();
-      res.sendFile(path.join(distPath, "index.html"));
+
+  // Bind to port if not in Vercel
+  if (process.env.VERCEL !== '1') {
+    const PORT = 3000;
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:3000`);
     });
   }
 }
 
-// Global error handler
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error("[GlobalError]", err.stack || err);
-  if (res.headersSent) {
-    return next(err);
-  }
-  res.status(500).json({
-    ok: false,
-    message: err.message || "Internal Server Error",
-    stack: process.env.NODE_ENV === "production" ? undefined : err.stack
-  });
+startServer().catch(err => {
+  console.error("Failed to start server:", err);
 });
-
-// Bind to port if not in Vercel
-if (process.env.VERCEL !== '1') {
-  const PORT = 3000;
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:3000`);
-  });
-}
 
 export default app;
