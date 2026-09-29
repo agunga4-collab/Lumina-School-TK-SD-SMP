@@ -87,7 +87,7 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
     rawName: string;
     rawNickname: string;
     rawComment: string;
-    status: 'VALID' | 'NAMA_TIDAK_DITEMUKAN' | 'AMBIGU' | 'KOMENTAR_KOSONG' | 'SUDAH_ADA_DRAFT' | 'WORKFLOW_LOCKED';
+    status: 'VALID' | 'NAMA_TIDAK_DITEMUKAN' | 'AMBIGU' | 'KOMENTAR_KOSONG' | 'SUDAH_ADA_DRAFT' | 'WORKFLOW_LOCKED' | 'DUPLIKAT';
     matchedStudent: Student | null;
     existingStatus?: string;
     checked: boolean;
@@ -98,6 +98,94 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
   const [parsedRows, setParsedRows] = React.useState<ImportRow[]>([]);
   const [allowOverwrite, setAllowOverwrite] = React.useState<boolean>(false);
   const [importing, setImporting] = React.useState<boolean>(false);
+  const [filterMode, setFilterMode] = React.useState<'ALL' | 'READY' | 'REPAIR' | 'NOT_FOUND'>('ALL');
+
+  // Parser that handles spreadsheet pasting (tabs) and CSV (commas, semicolons) safely with quotes
+  const parsePastedData = (text: string): { headers: string[], rows: string[][] } => {
+    const rows: string[][] = [];
+    let currentRow: string[] = [];
+    let currentCell = '';
+    let inQuotes = false;
+
+    // Detect separator
+    const hasTab = text.includes('\t');
+    const separator = hasTab ? '\t' : (text.includes(';') && !text.includes(',') ? ';' : ',');
+
+    let i = 0;
+    while (i < text.length) {
+      const char = text[i];
+      const nextChar = text[i + 1];
+
+      if (char === '"') {
+        if (inQuotes && nextChar === '"') {
+          currentCell += '"';
+          i += 2;
+          continue;
+        } else {
+          inQuotes = !inQuotes;
+          i++;
+          continue;
+        }
+      }
+
+      if (!inQuotes) {
+        if (char === separator) {
+          currentRow.push(currentCell);
+          currentCell = '';
+          i++;
+          continue;
+        }
+        if (char === '\r' && nextChar === '\n') {
+          currentRow.push(currentCell);
+          rows.push(currentRow);
+          currentRow = [];
+          currentCell = '';
+          i += 2;
+          continue;
+        }
+        if (char === '\n') {
+          currentRow.push(currentCell);
+          rows.push(currentRow);
+          currentRow = [];
+          currentCell = '';
+          i++;
+          continue;
+        }
+      }
+
+      currentCell += char;
+      i++;
+    }
+
+    if (currentCell !== '' || currentRow.length > 0) {
+      currentRow.push(currentCell);
+      rows.push(currentRow);
+    }
+
+    // Filter out completely empty rows
+    const filteredRows = rows.filter(row => row.some(cell => cell.trim() !== ''));
+
+    if (filteredRows.length === 0) {
+      return { headers: [], rows: [] };
+    }
+
+    const headers = filteredRows[0].map(h => h.trim());
+    const dataRows = filteredRows.slice(1);
+
+    return { headers, rows: dataRows };
+  };
+
+  const cleanHeader = (h: string) => h.trim().toLowerCase().replace(/\s+/g, '').replace(/[\-_\s]/g, '');
+  const isFullnameHeader = (h: string) => [
+    'namalengkap', 'fullname', 'nama', 'studentname', 'name', 'namasiswa', 'student', 'siswa'
+  ].includes(cleanHeader(h));
+  const isNicknameHeader = (h: string) => [
+    'namapanggilan', 'nickname', 'nicknam', 'nick', 'panggilan'
+  ].includes(cleanHeader(h));
+  const isCommentHeader = (h: string) => [
+    'komentar', 'narrativereport', 'narrative', 'generalcomment', 'generalcomments', 'comment', 'comments', 
+    'catatanperkembangan', 'finalcomment', 'finalcomments', 'catatan', 'catatanguru', 'description', 'desc', 'nilai', 'narasi'
+  ].includes(cleanHeader(h));
 
   const handleParseInput = () => {
     if (!rawInput.trim()) {
@@ -105,25 +193,12 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
       return;
     }
 
-    const lines = rawInput.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
-    if (lines.length === 0) {
+    const { headers, rows: rawRows } = parsePastedData(rawInput);
+
+    if (headers.length === 0 || rawRows.length === 0) {
       toast.error('Tidak ada data yang ditemukan.');
       return;
     }
-
-    // Try splitting by tab first, fallback to comma/semicolon if tab doesn't produce multiple columns
-    let isTsv = true;
-    let headers = lines[0].split('\t');
-    if (headers.length <= 1) {
-      headers = lines[0].split(/,|;/);
-      isTsv = false;
-    }
-
-    // Normalise helpers
-    const cleanHeader = (h: string) => h.trim().toLowerCase().replace(/[\s_\-]/g, '');
-    const isFullnameHeader = (h: string) => ['namalengkap', 'fullname', 'nama', 'studentname'].includes(cleanHeader(h));
-    const isNicknameHeader = (h: string) => ['namapanggilan', 'nickname', 'nicknam', 'nickname'].includes(cleanHeader(h));
-    const isCommentHeader = (h: string) => ['komentar', 'narrativereport', 'narrative', 'generalcomment', 'catatanperkembangan', 'finalcomment'].includes(cleanHeader(h));
 
     let fullnameIndex = -1;
     let nicknameIndex = -1;
@@ -136,12 +211,20 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
       else if (isCommentHeader(h)) commentIndex = idx;
     });
 
-    let dataLines = lines.slice(1);
-    
-    // If no header detected, alert and stop
+    // If no header detected, let's try a smart fallback guess
     if (fullnameIndex === -1 || commentIndex === -1) {
-      toast.error("Header kolom tidak terdeteksi. Pastikan baris pertama tabel memiliki judul 'Nama Lengkap' dan 'Komentar'.");
-      return;
+      if (headers.length >= 2) {
+        // Let's guess: column 0 is name, last column is comment
+        fullnameIndex = 0;
+        commentIndex = headers.length - 1;
+        if (headers.length === 3) {
+          nicknameIndex = 1;
+        }
+        toast.info("Header tidak terdeteksi otomatis, menyelaraskan Kolom 1 sebagai Nama dan Kolom Terakhir sebagai Komentar.");
+      } else {
+        toast.error("Header kolom tidak terdeteksi. Pastikan baris pertama memiliki header nama ('Nama Lengkap'/'Full Name'/'Nama'/'Student Name'/'Name') dan komentar ('Komentar'/'Narrative'/'General Comment'/'Comment').");
+        return;
+      }
     }
 
     const normalizeName = (n: string) => {
@@ -149,8 +232,9 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
       return n.trim().toLowerCase().replace(/\s+/g, ' ');
     };
 
-    const rows: ImportRow[] = dataLines.map((line, idx) => {
-      const cells = isTsv ? line.split('\t') : line.split(/,|;/);
+    const seenStudentIds = new Set<string>();
+
+    const rows: ImportRow[] = rawRows.map((cells, idx) => {
       const rawName = (cells[fullnameIndex] || '').trim();
       const rawNickname = nicknameIndex !== -1 ? (cells[nicknameIndex] || '').trim() : '';
       const rawComment = (cells[commentIndex] || '').trim();
@@ -159,15 +243,43 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
       let matchedStudent: Student | null = null;
       let existingStatus = 'DRAFT';
 
-      const targetNormal = normalizeName(rawName);
-      const matches = safeStudents.filter(s => normalizeName(s.name) === targetNormal);
-
-      if (matches.length === 1) {
-        matchedStudent = matches[0];
-      } else if (matches.length > 1) {
-        status = 'AMBIGU';
-      } else {
+      if (!rawName) {
         status = 'NAMA_TIDAK_DITEMUKAN';
+      } else {
+        const targetNormal = normalizeName(rawName);
+        const targetNicknameNormal = rawNickname ? normalizeName(rawNickname) : '';
+
+        // Match roster: first match fullName/name (exact normalized check)
+        let matches = safeStudents.filter(s => normalizeName(s.name) === targetNormal);
+
+        // If no match by full name, try match by nickname on Student object
+        if (matches.length === 0) {
+          matches = safeStudents.filter(s => {
+            const sNick = s.nickname || (s as any).nickName || '';
+            return sNick && normalizeName(sNick) === targetNormal;
+          });
+        }
+
+        // If no match by full name, try match by nickname from the pasted row (nickname is optional column)
+        if (matches.length === 0 && targetNicknameNormal) {
+          matches = safeStudents.filter(s => {
+            const sNick = s.nickname || (s as any).nickName || '';
+            return sNick && normalizeName(sNick) === targetNicknameNormal;
+          });
+        }
+
+        if (matches.length === 1) {
+          matchedStudent = matches[0];
+          if (seenStudentIds.has(matchedStudent.id)) {
+            status = 'DUPLIKAT';
+          } else {
+            seenStudentIds.add(matchedStudent.id);
+          }
+        } else if (matches.length > 1) {
+          status = 'AMBIGU';
+        } else {
+          status = 'NAMA_TIDAK_DITEMUKAN';
+        }
       }
 
       if (status === 'VALID' && !rawComment) {
@@ -197,12 +309,74 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
         status,
         matchedStudent,
         existingStatus,
-        checked: status === 'VALID'
+        checked: status === 'VALID' || (status === 'SUDAH_ADA_DRAFT' && allowOverwrite)
       };
     });
 
     setParsedRows(rows);
     toast.success(`Berhasil memproses ${rows.length} baris.`);
+  };
+
+  const handleSelectStudentManually = (rowIndex: number, studentId: string) => {
+    setParsedRows(prev => {
+      const seenStudentIds = new Set<string>();
+      
+      return prev.map(row => {
+        let matched = row.matchedStudent;
+        if (row.index === rowIndex) {
+          matched = safeStudents.find(s => s.id === studentId) || null;
+        }
+
+        let status = row.status;
+        let existingStatus = row.existingStatus || 'DRAFT';
+
+        if (row.index === rowIndex) {
+          if (!matched) {
+            status = 'NAMA_TIDAK_DITEMUKAN';
+          } else {
+            status = 'VALID';
+          }
+        }
+
+        if (matched) {
+          if (seenStudentIds.has(matched.id)) {
+            status = 'DUPLIKAT';
+          } else {
+            seenStudentIds.add(matched.id);
+            if (row.index === rowIndex) {
+              status = 'VALID';
+            }
+          }
+        }
+
+        if (status === 'VALID' && !row.rawComment) {
+          status = 'KOMENTAR_KOSONG';
+        }
+
+        if ((status === 'VALID' || status === 'SUDAH_ADA_DRAFT') && matched) {
+          const sData = safeStudentDataMap[matched.id];
+          const existingComment = sData?.generalComment?.finalComment || sData?.generalComment?.aiDraft;
+          const reviewStatus = sData?.generalCommentReviewStatus || 'DRAFT';
+          existingStatus = reviewStatus;
+
+          if (existingComment) {
+            if (reviewStatus === 'DRAFT' || reviewStatus === 'REVISION_REQUESTED') {
+              status = 'SUDAH_ADA_DRAFT';
+            } else {
+              status = 'WORKFLOW_LOCKED';
+            }
+          }
+        }
+
+        return {
+          ...row,
+          matchedStudent: matched,
+          status,
+          existingStatus,
+          checked: status === 'VALID' || (status === 'SUDAH_ADA_DRAFT' && allowOverwrite)
+        };
+      });
+    });
   };
 
   const handleSaveImport = async () => {
@@ -213,7 +387,10 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
     }
 
     setImporting(true);
-    let successCount = 0;
+    let createdCount = 0;
+    let updatedCount = 0;
+    let skippedCount = parsedRows.length - selectedRows.length;
+    const failedStudents: string[] = [];
 
     try {
       // Firebase Firestore limits batch to 500 writes
@@ -224,10 +401,13 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
 
         chunk.forEach(row => {
           if (!row.matchedStudent) return;
-          const docId = `${row.matchedStudent.id}_${selectedYear.replace(/\//g, '_')}_S${selectedSemester}_T${selectedTerm}`;
+          const normYear = selectedYear.replace(/\//g, '_');
+          const docId = `${row.matchedStudent.id}_${selectedClassId}_${normYear}_S${selectedSemester}_T${selectedTerm}`;
           const docRef = doc(db, 'elem_midterm_student_data', docId);
 
           const existingData = safeStudentDataMap[row.matchedStudent.id];
+          const nicknameValue = row.rawNickname.trim() || row.matchedStudent.nickname || row.matchedStudent.name.split(' ')[0] || 'Ananda';
+
           const newPayload: any = {
             id: docId,
             studentId: row.matchedStudent.id,
@@ -238,7 +418,7 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
             midtermTerm: selectedTerm,
             generalComment: {
               studentName: row.matchedStudent.name,
-              nickname: row.rawNickname.trim() || row.matchedStudent.nickname || row.matchedStudent.name.split(' ')[0],
+              nickname: nicknameValue,
               finalComment: row.rawComment.trim(),
               isFinal: false,
               strengths: existingData?.generalComment?.strengths || [],
@@ -255,18 +435,43 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
           batch.set(docRef, newPayload, { merge: true });
         });
 
-        await batch.commit();
-        successCount += chunk.length;
+        try {
+          await batch.commit();
+          chunk.forEach(row => {
+            if (!row.matchedStudent) return;
+            const existingData = safeStudentDataMap[row.matchedStudent.id];
+            const hasExistingComment = existingData?.generalComment?.finalComment || existingData?.generalComment?.aiDraft;
+            if (hasExistingComment) {
+              updatedCount++;
+            } else {
+              createdCount++;
+            }
+          });
+        } catch (chunkErr: any) {
+          console.error("Chunk batch write failed:", chunkErr);
+          chunk.forEach(row => {
+            if (row.matchedStudent) failedStudents.push(row.matchedStudent.name);
+          });
+        }
       }
 
-      toast.success(`Berhasil mengimpor ${successCount} komentar sebagai DRAFT.`);
-      setIsImportModalOpen(false);
-      setParsedRows([]);
-      setRawInput('');
+      if (failedStudents.length > 0) {
+        toast.error(`Beberapa komentar siswa gagal disimpan: ${failedStudents.join(', ')}`);
+      } else {
+        toast.success(`Berhasil menyimpan ${createdCount} komentar baru, memperbarui ${updatedCount} komentar, dan melewati ${skippedCount} baris.`);
+        setIsImportModalOpen(false);
+        setParsedRows([]);
+        setRawInput('');
+        setFilterMode('ALL');
+      }
       await onRefreshData();
     } catch (err: any) {
-      console.error(err);
-      toast.error('Gagal memproses import: ' + err.message);
+      console.error("Firestore batch commit failed:", err);
+      if (err.message && (err.message.includes('permission') || err.message.includes('PERMISSION_DENIED') || err.code === 'permission-denied')) {
+        toast.error('Anda tidak memiliki izin untuk menyimpan General Comments Midterm Elementary.');
+      } else {
+        toast.error('Gagal memproses import: ' + err.message);
+      }
     } finally {
       setImporting(false);
     }
@@ -602,6 +807,22 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
 
   const finalCommentWordCount = countWords(finalComment);
   const isWordCountExceeded = finalCommentWordCount > 120;
+
+  const filteredParsedRows = React.useMemo(() => {
+    return parsedRows.filter(row => {
+      if (filterMode === 'ALL') return true;
+      if (filterMode === 'READY') {
+        return row.status === 'VALID' || (row.status === 'SUDAH_ADA_DRAFT' && allowOverwrite);
+      }
+      if (filterMode === 'NOT_FOUND') {
+        return row.status === 'NAMA_TIDAK_DITEMUKAN';
+      }
+      if (filterMode === 'REPAIR') {
+        return row.status === 'AMBIGU' || row.status === 'KOMENTAR_KOSONG' || row.status === 'DUPLIKAT' || row.status === 'WORKFLOW_LOCKED' || (row.status === 'SUDAH_ADA_DRAFT' && !allowOverwrite);
+      }
+      return true;
+    });
+  }, [parsedRows, filterMode, allowOverwrite]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -1137,6 +1358,7 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => {
                   setIsImportModalOpen(false);
                   setParsedRows([]);
@@ -1184,6 +1406,7 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
 
                   <div className="flex items-center justify-end">
                     <button
+                      type="button"
                       onClick={handleParseInput}
                       className="px-6 py-3 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold uppercase tracking-wider rounded-2xl shadow-sm cursor-pointer transition-all"
                     >
@@ -1272,6 +1495,50 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
                     </div>
                   </div>
 
+                  {/* Filters */}
+                  <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 pb-3">
+                    <button
+                      onClick={() => setFilterMode('ALL')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all uppercase tracking-wider ${
+                        filterMode === 'ALL'
+                          ? 'bg-slate-900 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      Semua ({parsedRows.length})
+                    </button>
+                    <button
+                      onClick={() => setFilterMode('READY')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all uppercase tracking-wider ${
+                        filterMode === 'READY'
+                          ? 'bg-emerald-800 text-white'
+                          : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                      }`}
+                    >
+                      Siap Diimpor ({parsedRows.filter(r => r.status === 'VALID' || (r.status === 'SUDAH_ADA_DRAFT' && allowOverwrite)).length})
+                    </button>
+                    <button
+                      onClick={() => setFilterMode('REPAIR')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all uppercase tracking-wider ${
+                        filterMode === 'REPAIR'
+                          ? 'bg-amber-600 text-white'
+                          : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                      }`}
+                    >
+                      Perlu Perbaikan ({parsedRows.filter(r => r.status === 'AMBIGU' || r.status === 'KOMENTAR_KOSONG' || r.status === 'DUPLIKAT' || r.status === 'WORKFLOW_LOCKED' || (r.status === 'SUDAH_ADA_DRAFT' && !allowOverwrite)).length})
+                    </button>
+                    <button
+                      onClick={() => setFilterMode('NOT_FOUND')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all uppercase tracking-wider ${
+                        filterMode === 'NOT_FOUND'
+                          ? 'bg-rose-600 text-white'
+                          : 'bg-rose-50 text-rose-700 hover:bg-rose-100'
+                      }`}
+                    >
+                      Tidak Ditemukan ({parsedRows.filter(r => r.status === 'NAMA_TIDAK_DITEMUKAN').length})
+                    </button>
+                  </div>
+
                   {/* Preview Table */}
                   <div className="border border-slate-200 rounded-2xl overflow-hidden max-h-[400px] overflow-y-auto">
                     <table className="w-full text-left border-collapse">
@@ -1280,15 +1547,16 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
                           <th className="p-3 w-12 text-center bg-slate-50">
                             <input
                               type="checkbox"
-                              checked={parsedRows.every(r => {
+                              checked={filteredParsedRows.length > 0 && filteredParsedRows.every(r => {
                                 if (r.status === 'VALID') return r.checked;
                                 if (r.status === 'SUDAH_ADA_DRAFT' && allowOverwrite) return r.checked;
                                 return true;
-                              }) && parsedRows.some(r => r.checked)}
+                              }) && filteredParsedRows.some(r => r.checked)}
                               onChange={(e) => {
                                 const checked = e.target.checked;
                                 setParsedRows(prev => prev.map(r => {
-                                  if (r.status === 'VALID' || (r.status === 'SUDAH_ADA_DRAFT' && allowOverwrite)) {
+                                  const isShown = filteredParsedRows.some(f => f.index === r.index);
+                                  if (isShown && (r.status === 'VALID' || (r.status === 'SUDAH_ADA_DRAFT' && allowOverwrite))) {
                                     return { ...r, checked };
                                   }
                                   return r;
@@ -1298,19 +1566,20 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
                             />
                           </th>
                           <th className="p-3 w-12 text-center bg-slate-50">Baris</th>
-                          <th className="p-3 bg-slate-50">Nama di Sheet</th>
-                          <th className="p-3 bg-slate-50">Siswa Hasil Cocok</th>
+                          <th className="p-3 bg-slate-50">Nama dari Sheet</th>
+                          <th className="p-3 bg-slate-50">Siswa Terdeteksi</th>
+                          <th className="p-3 bg-slate-50">Nickname</th>
                           <th className="p-3 bg-slate-50">Status</th>
                           <th className="p-3 bg-slate-50">Preview Komentar</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-xs">
-                        {parsedRows.map((row) => {
-                          let statusText = 'Valid';
+                        {filteredParsedRows.map((row) => {
+                          let statusText = 'Siap Diimpor';
                           let badgeColor = 'bg-emerald-50 text-emerald-700 border border-emerald-100';
                           
                           if (row.status === 'NAMA_TIDAK_DITEMUKAN') {
-                            statusText = 'Nama Tidak Ditemukan';
+                            statusText = 'Siswa Tidak Ditemukan';
                             badgeColor = 'bg-rose-50 text-rose-700 border border-rose-100';
                           } else if (row.status === 'AMBIGU') {
                             statusText = 'Nama Ambigu';
@@ -1324,6 +1593,9 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
                           } else if (row.status === 'WORKFLOW_LOCKED') {
                             statusText = `Locked (${row.existingStatus})`;
                             badgeColor = 'bg-rose-100 text-rose-800 border border-rose-200';
+                          } else if (row.status === 'DUPLIKAT') {
+                            statusText = 'Duplikat';
+                            badgeColor = 'bg-rose-50 text-rose-700 border border-rose-100';
                           }
 
                           const canCheck = row.status === 'VALID' || (row.status === 'SUDAH_ADA_DRAFT' && allowOverwrite);
@@ -1345,14 +1617,28 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
                               <td className="p-3 text-center font-bold text-slate-400">{row.index}</td>
                               <td className="p-3 font-semibold text-slate-800">{row.rawName}</td>
                               <td className="p-3 font-bold text-emerald-900">
-                                {row.matchedStudent ? row.matchedStudent.name : <span className="text-slate-400 font-normal italic">-</span>}
+                                <select
+                                  value={row.matchedStudent?.id || ''}
+                                  onChange={(e) => handleSelectStudentManually(row.index, e.target.value)}
+                                  className="text-xs font-bold p-1 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 w-full max-w-[200px]"
+                                >
+                                  <option value="">-- Pilih Siswa Manual --</option>
+                                  {safeStudents.map(student => (
+                                    <option key={student.id} value={student.id}>
+                                      {student.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td className="p-3 text-slate-600 font-medium">
+                                {row.rawNickname || <span className="text-slate-400 font-normal italic">-</span>}
                               </td>
                               <td className="p-3">
                                 <span className={`text-[9px] font-black px-2 py-0.5 rounded-lg ${badgeColor} uppercase tracking-wider`}>
                                   {statusText}
                                 </span>
                               </td>
-                              <td className="p-3 max-w-xs truncate text-slate-600 animate-pulse" title={row.rawComment}>
+                              <td className="p-3 max-w-xs truncate text-slate-600 font-sans leading-relaxed" title={row.rawComment}>
                                 {row.rawComment}
                               </td>
                             </tr>
@@ -1363,29 +1649,37 @@ export const ElementaryMidtermGeneralCommentsTab: React.FC<ElementaryMidtermGene
                   </div>
 
                   {/* Actions */}
-                  <div className="flex items-center justify-between pt-4 border-t border-slate-100">
-                    <button
-                      onClick={() => {
-                        setParsedRows([]);
-                        setRawInput('');
-                      }}
-                      className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer"
-                    >
-                      Kembali / Edit Input
-                    </button>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between pt-4 border-t border-slate-100 gap-4">
+                    <div className="text-xs font-black text-slate-600 uppercase tracking-tight">
+                      Ringkasan: <span className="text-emerald-800">{parsedRows.filter(r => r.checked).length} dari {parsedRows.length} komentar siap diimpor.</span>
+                    </div>
 
-                    <button
-                      onClick={handleSaveImport}
-                      disabled={importing || !parsedRows.some(r => r.checked)}
-                      className="px-6 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                    >
-                      {importing ? (
-                        <RefreshCw size={14} className="animate-spin" />
-                      ) : (
-                        <Check size={14} />
-                      )}
-                      <span>Simpan ({parsedRows.filter(r => r.checked).length} Komentar)</span>
-                    </button>
+                    <div className="flex items-center gap-3 self-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setParsedRows([]);
+                          setRawInput('');
+                        }}
+                        className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+                      >
+                        Kembali / Edit Input
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleSaveImport}
+                        disabled={importing || !parsedRows.some(r => r.checked)}
+                        className="px-6 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold uppercase tracking-wider rounded-xl transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                      >
+                        {importing ? (
+                          <RefreshCw size={14} className="animate-spin" />
+                        ) : (
+                          <Check size={14} />
+                        )}
+                        <span>Simpan {parsedRows.filter(r => r.checked).length} General Comments</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
