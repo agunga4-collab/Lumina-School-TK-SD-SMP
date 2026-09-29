@@ -832,6 +832,8 @@ function MidtermReportPageContent() {
               publishedReports={safePublishedReports}
               loading={loadingData}
               onRefreshData={loadClassData}
+              masterGoalsMap={safeMasterGoalsMap}
+              studentDataMap={safeStudentDataMap}
             />
           )}
         </>
