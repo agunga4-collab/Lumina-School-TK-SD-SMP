@@ -326,6 +326,7 @@ export default function MidtermSummary() {
   const [resolvedTeacherNiy, setResolvedTeacherNiy] = React.useState<string>('-');
   const [isSignatureLoading, setIsSignatureLoading] = React.useState<boolean>(false);
   const [resolvedLogoUrl, setResolvedLogoUrl] = React.useState<string | null>(null);
+  const [allKgClasses, setAllKgClasses] = React.useState<any[]>([]);
 
   const [realAttendanceList, setRealAttendanceList] = React.useState<any[]>([]);
   const [isFetchingRealAttendance, setIsFetchingRealAttendance] = React.useState(false);
@@ -1662,13 +1663,35 @@ export default function MidtermSummary() {
 
   React.useEffect(() => {
     let active = true;
+    const fetchAllClasses = async () => {
+      try {
+        const list = await getKindergartenClasses(activeYear || '2026/2027');
+        if (active) {
+          setAllKgClasses(list);
+        }
+      } catch (err) {
+        console.error("Error loading all Kindergarten classes in MidtermSummary:", err);
+      }
+    };
+    fetchAllClasses();
+    return () => {
+      active = false;
+    };
+  }, [activeYear]);
+
+  React.useEffect(() => {
+    let active = true;
     const currentStudentObj = students.find(s => s.id === selectedStudentId);
     const studentClassIdRaw = currentStudentObj?.classId || selectedClassId || "";
-    const studentCanonicalClassId = resolveCanonicalClassId(studentClassIdRaw, classes) || studentClassIdRaw;
+    
+    // Always prefer allKgClasses (which fetch all classes regardless of role) so that Head Unit can resolve signatures and NIY
+    const availableClasses = allKgClasses.length > 0 ? allKgClasses : classes;
+    const studentCanonicalClassId = resolveCanonicalClassId(studentClassIdRaw, availableClasses) || studentClassIdRaw;
 
     if (!studentCanonicalClassId) {
       setResolvedSignatureUrl(null);
       setResolvedTeacherName(null);
+      setResolvedTeacherNiy('-');
       return;
     }
 
@@ -1707,7 +1730,7 @@ export default function MidtermSummary() {
           setResolvedTeacherName(resolvedName || 'Homeroom Teacher');
           setResolvedTeacherNiy(teacherNiyVal || '-');
         } else if (active) {
-          const fallbackClass = classes.find(c => c.id === studentCanonicalClassId) || activeClassObj;
+          const fallbackClass = availableClasses.find(c => c.id === studentCanonicalClassId) || activeClassObj;
           setResolvedSignatureUrl(fallbackClass?.teacherSignatureUrl || null);
           
           let resolvedName: string | null = null;
@@ -1721,9 +1744,9 @@ export default function MidtermSummary() {
           setResolvedTeacherNiy(fallbackClass?.teacherNiy || fallbackClass?.homeroomTeacherNiy || '-');
         }
       } catch (err) {
-        console.error("Error fetching class signature from Firestore:", err);
+        console.error("Error fetching class signature from Firestore in MidtermSummary:", err);
         if (active) {
-          const fallbackClass = classes.find(c => c.id === studentCanonicalClassId) || activeClassObj;
+          const fallbackClass = availableClasses.find(c => c.id === studentCanonicalClassId) || activeClassObj;
           setResolvedSignatureUrl(fallbackClass?.teacherSignatureUrl || null);
           setResolvedTeacherName(fallbackClass?.homeroomTeacherName || null);
           setResolvedTeacherNiy(fallbackClass?.teacherNiy || fallbackClass?.homeroomTeacherNiy || '-');
@@ -1739,7 +1762,7 @@ export default function MidtermSummary() {
     return () => {
       active = false;
     };
-  }, [selectedStudentId, selectedClassId, classes, activeClassObj, students]);
+  }, [selectedStudentId, selectedClassId, classes, allKgClasses, activeClassObj, students]);
 
   // Synchronize local editors when selectedStudentId or midtermDrafts changes
   React.useEffect(() => {
@@ -2243,6 +2266,11 @@ export default function MidtermSummary() {
     const activeDraft = midtermDrafts[selectedStudentId];
     if (!activeDraft) {
       toast.error("Draft Midterm belum dibuat.");
+      return;
+    }
+
+    if (isSignatureLoading || !resolvedTeacherName || resolvedTeacherNiy === '' || allKgClasses.length === 0) {
+      toast.error("Data Tanda Tangan & NIY Guru Kelas sedang dimuat. Silakan tunggu beberapa saat...");
       return;
     }
 
