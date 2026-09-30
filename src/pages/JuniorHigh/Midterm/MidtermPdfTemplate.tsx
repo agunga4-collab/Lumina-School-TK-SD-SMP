@@ -243,40 +243,31 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
     });
   };
 
-  const spiritualSubjects = getCategoryData('SPIRITUAL_HEALTH', 'SPIRITUAL HEALTH');
-  const learningJourneySubjects = getCategoryData('LEARNING_JOURNEY', 'LEARNING JOURNEY');
-  const weeklyLessonSubjects = getCategoryData('WEEKLY_LESSONS', 'WEEKLY LESSONS');
-  const unitActivitySubjects = getCategoryData('UNIT_ACTIVITY', 'UNIT ACTIVITY');
+  const spiritualSubjects = React.useMemo(() => getCategoryData('SPIRITUAL_HEALTH', 'SPIRITUAL HEALTH'), [snapshot, masterGoalsMap, studentDataDoc]);
+  const learningJourneySubjects = React.useMemo(() => getCategoryData('LEARNING_JOURNEY', 'LEARNING JOURNEY'), [snapshot, masterGoalsMap, studentDataDoc]);
+  const weeklyLessonSubjects = React.useMemo(() => getCategoryData('WEEKLY_LESSONS', 'WEEKLY LESSONS'), [snapshot, masterGoalsMap, studentDataDoc]);
+  const unitActivitySubjects = React.useMemo(() => getCategoryData('UNIT_ACTIVITY', 'UNIT ACTIVITY'), [snapshot, masterGoalsMap, studentDataDoc]);
+
+  const categoriesKey = React.useMemo(() => {
+    return JSON.stringify([spiritualSubjects, learningJourneySubjects, weeklyLessonSubjects, unitActivitySubjects]);
+  }, [spiritualSubjects, learningJourneySubjects, weeklyLessonSubjects, unitActivitySubjects]);
 
   // React Pagination States
-  const [previewStatus, setPreviewStatus] = React.useState<"idle" | "loading-data" | "measuring" | "paginating" | "ready" | "error">("measuring");
+  const [isPreparingPreview, setIsPreparingPreview] = React.useState<boolean>(true);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [previewPages, setPreviewPages] = React.useState<PageConfig[]>([]);
+  const [retryTrigger, setRetryTrigger] = React.useState<number>(0);
 
-  // Trigger remeasure whenever key identity or goals content changes
-  React.useEffect(() => {
-    setPreviewStatus("measuring");
-    setPreviewPages([]);
-  }, [
-    studentName, 
-    studentNisn, 
-    className, 
-    effAcademicYear, 
-    effTerm, 
-    effGeneralComment,
-    JSON.stringify(spiritualSubjects),
-    JSON.stringify(learningJourneySubjects),
-    JSON.stringify(weeklyLessonSubjects),
-    JSON.stringify(unitActivitySubjects)
-  ]);
-
-  // Notify parent components if status changes
+  // Notify parent components only when preview is truly ready or not
   React.useEffect(() => {
     if (onReadyChange) {
-      onReadyChange(previewStatus === 'ready');
+      const isReady = !isPreparingPreview && !previewError && previewPages.length > 0;
+      onReadyChange(isReady);
     }
-  }, [previewStatus, onReadyChange]);
+  }, [isPreparingPreview, previewError, previewPages.length, onReadyChange]);
 
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const measContainerRef = React.useRef<HTMLDivElement>(null);
 
   // Main Header (Page 1)
   const renderMainHeader = () => (
@@ -506,9 +497,22 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
     );
   };
 
-  // Measurement DOM definition (hidden container)
+  // Measurement DOM definition (rendered offscreen with full geometry)
   const renderMeasurementDom = () => (
-    <div className="absolute opacity-0 pointer-events-none" style={{ width: '722px', left: '-9999px', top: '-9999px' }}>
+    <div
+      ref={measContainerRef}
+      className="absolute pointer-events-none select-none"
+      style={{
+        width: '722px',
+        maxWidth: '722px',
+        position: 'fixed',
+        left: '-9999px',
+        top: 0,
+        zIndex: -9999,
+        visibility: 'hidden',
+      }}
+      aria-hidden="true"
+    >
       {renderMainHeader()}
       {renderRepeatedHeader()}
       
@@ -601,237 +605,368 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
     ];
   };
 
-  // Double-pass layout calculation inside useLayoutEffect
-  React.useLayoutEffect(() => {
-    if (previewStatus !== "measuring") return;
-    if (!containerRef.current) return;
+  // Pure pagination algorithm
+  const computePaginatedPages = (params: {
+    categoriesList: Array<{ id: string; name: string; subjects: any[] }>;
+    page1HeaderHeight: number;
+    pageGt1HeaderHeight: number;
+    commentsHeight: number;
+    notesAttendanceHeight: number;
+    signatoryHeight: number;
+    getMeasHeight: (measId: string, fallback: number) => number;
+  }): PageConfig[] => {
+    const {
+      categoriesList,
+      page1HeaderHeight,
+      pageGt1HeaderHeight,
+      commentsHeight,
+      notesAttendanceHeight,
+      signatoryHeight,
+      getMeasHeight,
+    } = params;
 
-    try {
-      setPreviewStatus("paginating");
+    const totalPageHeight = 1123;
+    const paddingY = 72; // top 36px, bottom 36px
+    const footerHeight = 25;
+    const usableHeightFirstPage = totalPageHeight - paddingY - page1HeaderHeight - footerHeight;
+    const usableHeightSubsequentPage = totalPageHeight - paddingY - pageGt1HeaderHeight - footerHeight;
 
-      const getMeasHeight = (measId: string, fallback: number): number => {
-        const el = containerRef.current?.querySelector(`[data-meas-id="${measId}"]`) as HTMLElement;
-        return el?.offsetHeight || fallback;
-      };
+    const computedPages: PageConfig[] = [];
+    let currentPageNumber = 1;
+    let currentSpace = usableHeightFirstPage;
+    let currentPageContent: any[] = [];
 
-      const page1HeaderHeight = getMeasHeight('page-1-header', 190);
-      const pageGt1HeaderHeight = getMeasHeight('page-gt1-header', 40);
-      const commentsHeight = getMeasHeight('comments', 160);
-      const notesAttendanceHeight = getMeasHeight('notes-attendance', 120);
-      const signatoryHeight = getMeasHeight('signatory', 250);
-
-      const categoriesList = [
-        { id: 'SPIRITUAL_HEALTH', name: 'SPIRITUAL HEALTH', subjects: spiritualSubjects },
-        { id: 'LEARNING_JOURNEY', name: 'LEARNING JOURNEY', subjects: learningJourneySubjects },
-        { id: 'WEEKLY_LESSONS', name: 'WEEKLY LESSONS', subjects: weeklyLessonSubjects },
-        { id: 'UNIT_ACTIVITY', name: 'UNIT ACTIVITY', subjects: unitActivitySubjects },
-      ].filter(c => c.subjects.some(s => s.goals.length > 0));
-
-      const totalPageHeight = 1123;
-      const paddingY = 72; // top 36px, bottom 36px
-      const footerHeight = 25;
-      const usableHeightFirstPage = totalPageHeight - paddingY - page1HeaderHeight - footerHeight;
-      const usableHeightSubsequentPage = totalPageHeight - paddingY - pageGt1HeaderHeight - footerHeight;
-
-      const computedPages: PageConfig[] = [];
-      let currentPageNumber = 1;
-      let currentSpace = usableHeightFirstPage;
-      let currentPageContent: any[] = [];
-
-      const startNewPage = () => {
+    const startNewPage = () => {
+      if (currentPageContent.length > 0) {
         computedPages.push({
           pageNumber: currentPageNumber,
           headerType: currentPageNumber === 1 ? 'main' : 'repeated',
           content: [...currentPageContent]
         });
         currentPageNumber++;
-        currentSpace = usableHeightSubsequentPage;
-        currentPageContent = [];
-      };
+      }
+      currentSpace = usableHeightSubsequentPage;
+      currentPageContent = [];
+    };
 
-      // Loop categories
-      categoriesList.forEach((cat) => {
-        const catHeaderHeight = getMeasHeight(`cat-header-${cat.id}`, 25);
-        const tblHeaderHeight = getMeasHeight(`tbl-header-${cat.id}`, 25);
+    // Loop categories
+    categoriesList.forEach((cat) => {
+      const catHeaderHeight = getMeasHeight(`cat-header-${cat.id}`, 25);
+      const tblHeaderHeight = getMeasHeight(`tbl-header-${cat.id}`, 25);
 
-        // Check if cat header + tbl header + first goal of first subject fits
-        const firstSubj = cat.subjects[0];
-        const firstGoal = firstSubj?.goals[0];
-        let firstRowHeight = 45;
-        if (firstSubj && firstGoal) {
-          const rowMeasId = `row-${cat.id}-${firstSubj.name.replace(/[^a-zA-Z0-9]/g, '_')}-${firstGoal.id}`;
-          firstRowHeight = getMeasHeight(rowMeasId, 45);
-        }
+      // Check if cat header + tbl header + first goal of first subject fits
+      const firstSubj = cat.subjects[0];
+      const firstGoal = firstSubj?.goals?.[0];
+      let firstRowHeight = 45;
+      if (firstSubj && firstGoal) {
+        const rowMeasId = `row-${cat.id}-${firstSubj.name.replace(/[^a-zA-Z0-9]/g, '_')}-${firstGoal.id}`;
+        firstRowHeight = getMeasHeight(rowMeasId, 45);
+      }
 
-        const neededStartHeight = catHeaderHeight + tblHeaderHeight + firstRowHeight;
-        if (currentSpace < neededStartHeight) {
-          startNewPage();
-        }
+      const neededStartHeight = catHeaderHeight + tblHeaderHeight + firstRowHeight;
+      if (currentSpace < neededStartHeight && currentPageContent.length > 0) {
+        startNewPage();
+      }
 
-        // Add category header
-        currentPageContent.push({
-          type: 'category-header',
-          catId: cat.id,
-          catName: cat.name,
-          height: catHeaderHeight
-        });
-        currentSpace -= catHeaderHeight;
+      // Add category header
+      currentPageContent.push({
+        type: 'category-header',
+        catId: cat.id,
+        catName: cat.name,
+        height: catHeaderHeight
+      });
+      currentSpace -= catHeaderHeight;
 
-        let currentTableSubjects: any[] = [];
+      let currentTableSubjects: any[] = [];
 
-        cat.subjects.forEach((subj, sIdx) => {
-          let subjectGoalsForPage: any[] = [];
-          const goalsList = subj.goals.length > 0 ? subj.goals : [{ id: 'empty', text: '(No learning goals recorded)', remark: '-' }];
+      cat.subjects.forEach((subj, sIdx) => {
+        let subjectGoalsForPage: any[] = [];
+        const goalsList = subj.goals.length > 0 ? subj.goals : [{ id: 'empty', text: '(No learning goals recorded)', remark: '-' }];
 
-          goalsList.forEach((goal, gIdx) => {
-            const rowMeasId = `row-${cat.id}-${subj.name.replace(/[^a-zA-Z0-9]/g, '_')}-${goal.id}`;
-            const rowHeight = getMeasHeight(rowMeasId, 45);
+        goalsList.forEach((goal: any, gIdx: number) => {
+          const rowMeasId = `row-${cat.id}-${subj.name.replace(/[^a-zA-Z0-9]/g, '_')}-${goal.id}`;
+          const rowHeight = getMeasHeight(rowMeasId, 45);
 
-            // If row does not fit
-            if (currentSpace < rowHeight || (subjectGoalsForPage.length === 0 && currentSpace < rowHeight + tblHeaderHeight)) {
-              // Flush current page table if there's any
-              if (subjectGoalsForPage.length > 0) {
-                currentTableSubjects.push({
-                  name: subj.name,
-                  goals: [...subjectGoalsForPage],
-                  startIndex: sIdx + 1,
-                  isContinued: gIdx > 0
-                });
-              }
+          const isFirstGoalOfTable = currentTableSubjects.length === 0 && subjectGoalsForPage.length === 0;
+          const neededSpace = isFirstGoalOfTable ? (tblHeaderHeight + rowHeight) : rowHeight;
 
-              if (currentTableSubjects.length > 0) {
-                currentPageContent.push({
-                  type: 'subject-table',
-                  catId: cat.id,
-                  subjects: [...currentTableSubjects]
-                });
-                currentTableSubjects = [];
-              }
-
-              startNewPage();
-
-              // Add continued category header on new page
-              currentPageContent.push({
-                type: 'category-header-continued',
-                catId: cat.id,
-                catName: `${cat.name} (Continued)`,
-                height: catHeaderHeight
+          // If row does not fit
+          if (currentSpace < neededSpace && (currentPageContent.length > 0 || currentTableSubjects.length > 0 || subjectGoalsForPage.length > 0)) {
+            // Flush current page table if there's any
+            if (subjectGoalsForPage.length > 0) {
+              currentTableSubjects.push({
+                name: subj.name,
+                goals: [...subjectGoalsForPage],
+                startIndex: sIdx + 1,
+                isContinued: gIdx > subjectGoalsForPage.length
               });
-              currentSpace -= catHeaderHeight;
-
               subjectGoalsForPage = [];
             }
 
-            subjectGoalsForPage.push({
-              id: goal.id,
-              text: goal.text,
-              remark: goal.remark
-            });
-            currentSpace -= rowHeight;
-          });
+            if (currentTableSubjects.length > 0) {
+              currentPageContent.push({
+                type: 'subject-table',
+                catId: cat.id,
+                subjects: [...currentTableSubjects]
+              });
+              currentTableSubjects = [];
+            }
 
-          if (subjectGoalsForPage.length > 0) {
-            currentTableSubjects.push({
-              name: subj.name,
-              goals: [...subjectGoalsForPage],
-              startIndex: sIdx + 1,
-              isContinued: goalsList.length > subjectGoalsForPage.length && subjectGoalsForPage.length > 0
+            startNewPage();
+
+            // Add continued category header on new page
+            currentPageContent.push({
+              type: 'category-header-continued',
+              catId: cat.id,
+              catName: `${cat.name} (Continued)`,
+              height: catHeaderHeight
             });
+            currentSpace -= catHeaderHeight;
           }
+
+          subjectGoalsForPage.push({
+            id: goal.id,
+            text: goal.text,
+            remark: goal.remark
+          });
+          currentSpace -= rowHeight;
         });
 
-        if (currentTableSubjects.length > 0) {
-          currentPageContent.push({
-            type: 'subject-table',
-            catId: cat.id,
-            subjects: [...currentTableSubjects]
+        if (subjectGoalsForPage.length > 0) {
+          currentTableSubjects.push({
+            name: subj.name,
+            goals: [...subjectGoalsForPage],
+            startIndex: sIdx + 1,
+            isContinued: goalsList.length > subjectGoalsForPage.length && subjectGoalsForPage.length > 0
           });
+          subjectGoalsForPage = [];
         }
       });
 
-      // 1. GENERAL COMMENTS BLOCK
-      const neededCommentsHeight = 30 + commentsHeight;
-      if (currentSpace < neededCommentsHeight) {
-        startNewPage();
+      if (currentTableSubjects.length > 0) {
+        currentPageContent.push({
+          type: 'subject-table',
+          catId: cat.id,
+          subjects: [...currentTableSubjects]
+        });
+        currentTableSubjects = [];
       }
-      currentPageContent.push({
-        type: 'general-comments',
-        height: commentsHeight
-      });
-      currentSpace -= neededCommentsHeight;
+    });
 
-      // 2. NOTES & ATTENDANCE BLOCK
-      if (currentSpace < notesAttendanceHeight) {
-        startNewPage();
-      }
-      currentPageContent.push({
-        type: 'notes-attendance',
-        height: notesAttendanceHeight
-      });
-      currentSpace -= notesAttendanceHeight;
+    // 1. GENERAL COMMENTS BLOCK
+    const neededCommentsHeight = 30 + commentsHeight;
+    if (currentSpace < neededCommentsHeight && currentPageContent.length > 0) {
+      startNewPage();
+    }
+    currentPageContent.push({
+      type: 'general-comments',
+      height: commentsHeight
+    });
+    currentSpace -= neededCommentsHeight;
 
-      // 3. SIGNATORY BLOCK
-      if (currentSpace < signatoryHeight) {
-        startNewPage();
-      }
-      currentPageContent.push({
-        type: 'signatory',
-        height: signatoryHeight
-      });
-      currentSpace -= signatoryHeight;
+    // 2. NOTES & ATTENDANCE BLOCK
+    if (currentSpace < notesAttendanceHeight && currentPageContent.length > 0) {
+      startNewPage();
+    }
+    currentPageContent.push({
+      type: 'notes-attendance',
+      height: notesAttendanceHeight
+    });
+    currentSpace -= notesAttendanceHeight;
 
-      // Finish last page
+    // 3. SIGNATORY BLOCK
+    if (currentSpace < signatoryHeight && currentPageContent.length > 0) {
+      startNewPage();
+    }
+    currentPageContent.push({
+      type: 'signatory',
+      height: signatoryHeight
+    });
+    currentSpace -= signatoryHeight;
+
+    // Finish last page
+    if (currentPageContent.length > 0) {
       computedPages.push({
         pageNumber: currentPageNumber,
         headerType: currentPageNumber === 1 ? 'main' : 'repeated',
         content: [...currentPageContent]
       });
-
-      setPreviewPages(computedPages);
-      setPreviewStatus("ready");
-    } catch (err) {
-      console.error("Preview pagination calculations failed:", err);
-      setPreviewStatus("error");
     }
+
+    return computedPages.length > 0 ? computedPages : buildFallbackPages();
+  };
+
+  // Single reliable measurement and pagination lifecycle
+  React.useEffect(() => {
+    let isCancelled = false;
+    let timerId: any = null;
+    let timeoutId: any = null;
+    let rafId: number | null = null;
+
+    setIsPreparingPreview(true);
+    setPreviewError(null);
+
+    // Timeout safety guard: 12 seconds
+    timeoutId = setTimeout(() => {
+      if (isCancelled) return;
+      console.error(`[MidtermPdfTemplate] Pagination timed out after 12s for student: ${studentName}`);
+      setPreviewError("Pratinjau rapor tidak dapat disiapkan. Silakan coba lagi.");
+      setIsPreparingPreview(false);
+    }, 12000);
+
+    const performMeasurementAndPagination = async () => {
+      try {
+        console.log(`[MidtermPdfTemplate] Memulai proses pratinjau untuk: "${studentName || 'Student'}" (${className || '-'})`);
+
+        // Wait a frame and short delay for the measurement DOM to be attached and layout rendered
+        await new Promise<void>((resolve) => {
+          rafId = requestAnimationFrame(() => {
+            timerId = setTimeout(resolve, 80);
+          });
+        });
+
+        if (isCancelled) return;
+
+        // Check document fonts ready if available
+        if (typeof document !== 'undefined' && (document as any).fonts?.ready) {
+          try {
+            await Promise.race([
+              (document as any).fonts.ready,
+              new Promise((r) => setTimeout(r, 200)),
+            ]);
+          } catch {
+            // ignore font load errors or timeouts
+          }
+        }
+
+        if (isCancelled) return;
+
+        const measContainer = measContainerRef.current;
+        if (!measContainer) {
+          throw new Error("Container elemen referensi pengukuran belum siap (DOM null).");
+        }
+
+        // Safe measurement helper that iterates elements by attribute (avoids querySelector syntax errors)
+        const getMeasHeight = (measId: string, fallback: number): number => {
+          if (!measContainer) return fallback;
+          try {
+            const elements = measContainer.querySelectorAll('[data-meas-id]');
+            for (let i = 0; i < elements.length; i++) {
+              if (elements[i].getAttribute('data-meas-id') === measId) {
+                const h = (elements[i] as HTMLElement).offsetHeight;
+                if (h && Number.isFinite(h) && h > 0) {
+                  return h;
+                }
+              }
+            }
+          } catch (err) {
+            console.warn('[MidtermPdfTemplate] Error reading height for', measId, err);
+          }
+          return fallback;
+        };
+
+        const page1HeaderHeight = getMeasHeight('page-1-header', 190);
+        const pageGt1HeaderHeight = getMeasHeight('page-gt1-header', 40);
+        const commentsHeight = getMeasHeight('comments', 160);
+        const notesAttendanceHeight = getMeasHeight('notes-attendance', 120);
+        const signatoryHeight = getMeasHeight('signatory', 250);
+
+        const categoriesList = [
+          { id: 'SPIRITUAL_HEALTH', name: 'SPIRITUAL HEALTH', subjects: spiritualSubjects },
+          { id: 'LEARNING_JOURNEY', name: 'LEARNING JOURNEY', subjects: learningJourneySubjects },
+          { id: 'WEEKLY_LESSONS', name: 'WEEKLY LESSONS', subjects: weeklyLessonSubjects },
+          { id: 'UNIT_ACTIVITY', name: 'UNIT ACTIVITY', subjects: unitActivitySubjects },
+        ].filter((c) => c.subjects.some((s) => s.goals && s.goals.length > 0));
+
+        console.log(`[MidtermPdfTemplate] Tinggi terukur untuk "${studentName}":`, {
+          header1: page1HeaderHeight,
+          headerGt1: pageGt1HeaderHeight,
+          comments: commentsHeight,
+          notes: notesAttendanceHeight,
+          signatory: signatoryHeight,
+          activeCategories: categoriesList.length,
+        });
+
+        // Run pagination
+        const computedPages = computePaginatedPages({
+          categoriesList,
+          page1HeaderHeight,
+          pageGt1HeaderHeight,
+          commentsHeight,
+          notesAttendanceHeight,
+          signatoryHeight,
+          getMeasHeight,
+        });
+
+        if (isCancelled) return;
+
+        if (!computedPages || computedPages.length === 0) {
+          throw new Error("Hasil pembagian halaman kosong.");
+        }
+
+        console.log(`[MidtermPdfTemplate] Selesai membagi halaman: ${computedPages.length} halaman A4 untuk ${studentName}`);
+
+        setPreviewPages(computedPages);
+        setPreviewError(null);
+      } catch (err: any) {
+        if (isCancelled) return;
+        console.error("[MidtermPdfTemplate] Error saat mengukur dan membagi halaman:", err);
+        setPreviewError(err?.message || "Terjadi kesalahan teknis saat membagi tata letak halaman.");
+      } finally {
+        if (!isCancelled) {
+          setIsPreparingPreview(false);
+          if (timeoutId) clearTimeout(timeoutId);
+        }
+      }
+    };
+
+    performMeasurementAndPagination();
+
+    return () => {
+      isCancelled = true;
+      if (timerId) clearTimeout(timerId);
+      if (timeoutId) clearTimeout(timeoutId);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
   }, [
-    previewStatus,
     studentName,
     studentNisn,
     className,
     effAcademicYear,
     effTerm,
     effGeneralComment,
-    JSON.stringify(spiritualSubjects),
-    JSON.stringify(learningJourneySubjects),
-    JSON.stringify(weeklyLessonSubjects),
-    JSON.stringify(unitActivitySubjects)
+    categoriesKey,
+    retryTrigger,
   ]);
 
   // Loading/Error states layout
-  if (previewStatus !== "ready") {
+  if (isPreparingPreview || previewError || previewPages.length === 0) {
     return (
       <div ref={containerRef} className="w-[794px] min-w-[794px] min-h-[500px] bg-slate-900 border border-slate-800 rounded-3xl p-12 text-white flex flex-col items-center justify-center space-y-6 relative box-border shadow-2xl">
-        {/* Absolute hidden measurement wrapper */}
+        {/* Render measurement DOM off-screen */}
         {renderMeasurementDom()}
 
-        {previewStatus === "error" ? (
-          <div className="max-w-md p-6 bg-slate-800 border border-red-500/30 rounded-2xl text-center space-y-4">
+        {previewError ? (
+          <div className="max-w-md p-6 bg-slate-800 border border-red-500/30 rounded-2xl text-center space-y-4 shadow-lg animate-in fade-in">
             <div className="flex justify-center text-red-500">
               <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
             </div>
-            <div className="space-y-1">
-              <h4 className="text-base font-bold">Gagal Menghitung Tata Letak Halaman</h4>
-              <p className="text-xs text-slate-400 leading-relaxed">Terjadi kesalahan teknis saat membagi konten laporan midterm ke format A4 portrait.</p>
+            <div className="space-y-1.5">
+              <h4 className="text-base font-bold text-white">Pratinjau rapor tidak dapat disiapkan. Silakan coba lagi.</h4>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                {previewError}
+              </p>
             </div>
             <div className="flex justify-center gap-3 pt-2">
               <button
                 onClick={() => {
-                  setPreviewStatus("measuring");
-                  setPreviewPages([]);
+                  setPreviewError(null);
+                  setIsPreparingPreview(true);
+                  setRetryTrigger((prev) => prev + 1);
                 }}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer"
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-md"
               >
                 Coba Lagi
               </button>
@@ -840,7 +975,8 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
                   try {
                     const fallback = buildFallbackPages();
                     setPreviewPages(fallback);
-                    setPreviewStatus("ready");
+                    setPreviewError(null);
+                    setIsPreparingPreview(false);
                   } catch (e) {
                     console.error("Fallback construction failed", e);
                   }

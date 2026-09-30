@@ -104,6 +104,14 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
     return cutoffDateRaw <= signingDateRaw;
   }, [signingDateRaw, cutoffDateRaw]);
 
+  const studentsKey = React.useMemo(() => {
+    return safeStudents.map(s => s.id).join(',');
+  }, [safeStudents]);
+
+  const handlePreviewReadyChange = React.useCallback((ready: boolean) => {
+    setIsPreviewReady(ready);
+  }, []);
+
   React.useEffect(() => {
     if (!selectedClass || !academicYear || !semester || !cutoffDateRaw || safeStudents.length === 0) {
       setCutoffAttendanceMap({});
@@ -166,7 +174,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
     };
 
     fetchCutoffAttendance();
-  }, [selectedClass, academicYear, semester, cutoffDateRaw, safeStudents]);
+  }, [selectedClass?.id, academicYear, semester, cutoffDateRaw, studentsKey]);
 
   React.useEffect(() => {
     const fetchLogo = async () => {
@@ -303,10 +311,13 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
     if (!selectedClass) return;
 
     setActiveGeneratingStudent(student);
-    // Give DOM time to update the hidden print template
-    await new Promise(r => setTimeout(r, 400));
-
-    const pageElements = Array.from(document.querySelectorAll('[id^="jh-midterm-generator-page"]')) as HTMLElement[];
+    // Give DOM time to update and paginate the hidden print template
+    let pageElements: HTMLElement[] = [];
+    for (let wait = 0; wait < 20; wait++) {
+      await new Promise(r => setTimeout(r, 150));
+      pageElements = Array.from(document.querySelectorAll('[id^="jh-midterm-generator-page"]')) as HTMLElement[];
+      if (pageElements.length > 0) break;
+    }
 
     if (pageElements.length === 0) {
       throw new Error('Element render layout PDF tidak ditemukan.');
@@ -731,6 +742,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
             {/* Modal Content / Printable Template Preview */}
             <div className="flex-1 overflow-y-auto p-6 bg-slate-800 flex justify-center">
               <MidtermPdfTemplate
+                key={`preview-${previewStudent.id}-${previewSnapshot?.publishedAt || previewSnapshot?.id || 'live'}`}
                 snapshot={previewSnapshot || undefined}
                 student={previewStudent}
                 currentClass={selectedClass || undefined}
@@ -754,7 +766,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
                 reportSigningLocation={reportSigningLocation}
                 reportSigningDate={reportSigningDate}
                 attendanceCutoffDate={attendanceCutoffDate}
-                onReadyChange={setIsPreviewReady}
+                onReadyChange={handlePreviewReadyChange}
               />
             </div>
 
@@ -792,6 +804,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
       {activeGeneratingStudent && (
         <div style={{ position: 'fixed', left: '-9999px', top: '-9999px', zIndex: -100 }}>
           <MidtermPdfTemplate
+            key={`generator-${activeGeneratingStudent.id}`}
             page1Id="jh-midterm-generator-page-1"
             page2Id="jh-midterm-generator-page-2"
             student={activeGeneratingStudent}
