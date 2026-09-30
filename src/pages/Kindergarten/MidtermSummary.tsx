@@ -1717,10 +1717,13 @@ export default function MidtermSummary() {
 
           if (data.homeroomTeacherId) {
             try {
-              const userSnap = await getDoc(doc(db, 'users', data.homeroomTeacherId));
-              if (userSnap.exists()) {
-                const uData = userSnap.data();
-                teacherNiyVal = uData.niy || '';
+              // Secure server-side proxy fetch to bypass client firestore security rules
+              const response = await fetch(`/api/users/profile/${data.homeroomTeacherId}`);
+              if (response.ok) {
+                const uData = await response.json();
+                teacherNiyVal = uData.niy ?? uData.NIY ?? uData.employeeNumber ?? uData.employeeId ?? '';
+              } else {
+                console.warn(`[fetchClassSignature] Proxy profile fetch returned status: ${response.status}`);
               }
             } catch (e) {
               console.error("Error fetching teacher details from user doc:", e);
@@ -1728,7 +1731,7 @@ export default function MidtermSummary() {
           }
 
           setResolvedTeacherName(resolvedName || 'Homeroom Teacher');
-          setResolvedTeacherNiy(teacherNiyVal || '-');
+          setResolvedTeacherNiy(teacherNiyVal || 'NIY belum tersedia');
         } else if (active) {
           const fallbackClass = availableClasses.find(c => c.id === studentCanonicalClassId) || activeClassObj;
           setResolvedSignatureUrl(fallbackClass?.teacherSignatureUrl || null);
@@ -1741,7 +1744,8 @@ export default function MidtermSummary() {
           }
 
           setResolvedTeacherName(resolvedName || 'Homeroom Teacher');
-          setResolvedTeacherNiy(fallbackClass?.teacherNiy || fallbackClass?.homeroomTeacherNiy || '-');
+          const fallbackNiy = fallbackClass?.teacherNiy || fallbackClass?.homeroomTeacherNiy || '';
+          setResolvedTeacherNiy(fallbackNiy || 'NIY belum tersedia');
         }
       } catch (err) {
         console.error("Error fetching class signature from Firestore in MidtermSummary:", err);
@@ -1749,7 +1753,8 @@ export default function MidtermSummary() {
           const fallbackClass = availableClasses.find(c => c.id === studentCanonicalClassId) || activeClassObj;
           setResolvedSignatureUrl(fallbackClass?.teacherSignatureUrl || null);
           setResolvedTeacherName(fallbackClass?.homeroomTeacherName || null);
-          setResolvedTeacherNiy(fallbackClass?.teacherNiy || fallbackClass?.homeroomTeacherNiy || '-');
+          const fallbackNiy = fallbackClass?.teacherNiy || fallbackClass?.homeroomTeacherNiy || '';
+          setResolvedTeacherNiy(fallbackNiy || 'NIY belum tersedia');
         }
       } finally {
         if (active) {

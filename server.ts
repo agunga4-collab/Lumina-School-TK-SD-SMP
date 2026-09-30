@@ -9442,6 +9442,39 @@ app.get("/api/self-exploration/plan-photo/:fileId", async (req, res) => {
 });
 
 
+// API: Get user profile securely bypassing firestore security rules for teacher details lookup
+app.get("/api/users/profile/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (!userId) {
+      return res.status(400).json({ error: "Missing userId" });
+    }
+
+    const db = getAdminDb();
+    if (!db) {
+      return res.status(503).json({ error: "Firestore is not initialized" });
+    }
+
+    const userSnap = await db.collection("users").doc(userId).get();
+    if (!userSnap.exists) {
+      return res.status(404).json({ error: "User profile not found" });
+    }
+
+    const uData = userSnap.data();
+    return res.json({
+      uid: userId,
+      displayName: uData?.displayName || uData?.name || "",
+      niy: uData?.niy ?? uData?.NIY ?? uData?.employeeNumber ?? uData?.employeeId ?? null,
+      role: uData?.role || "",
+      unitId: uData?.unitId || ""
+    });
+  } catch (err: any) {
+    console.error("[GetUserProfile] Failed to fetch user profile:", err.message);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+
 
 // --- Server Start & Export ---
 
