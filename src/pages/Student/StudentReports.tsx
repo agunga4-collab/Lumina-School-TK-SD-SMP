@@ -17,8 +17,9 @@ import {
 } from '../../lib/firebase';
 import { cn } from '../../lib/utils';
 import { useAcademicYear } from '../../context/AcademicYearContext';
-import { collection, query, where, getDocs, doc, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc, setDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
+import { toast } from 'sonner';
 
 const indonesianMonths = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -41,6 +42,7 @@ export default function StudentReports() {
   const [studentData, setStudentData] = React.useState<Student | null>(null);
   const [reports, setReports] = React.useState<ReportCard[]>([]);
   const [kgReports, setKgReports] = React.useState<any[]>([]);
+  const [kgMidtermReports, setKgMidtermReports] = React.useState<any[]>([]);
   const [jhManualLinks, setJhManualLinks] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
 
@@ -55,19 +57,40 @@ export default function StudentReports() {
 
         if (student) {
           if (student.unitId === 'KINDERGARTEN') {
-            const studentId = student.id || (student as any).luminaId || currentUser.luminaId || '';
-            const q = query(
+            const studentIdClean = (student.id || (student as any).luminaId || currentUser.luminaId || '').trim();
+            
+            // 1. Weekly Reports (existing logic unchanged)
+            const qWeekly = query(
               collection(db, 'published_kg_reports'),
-              where('studentId', '==', studentId.trim()),
+              where('studentId', '==', studentIdClean),
               where('academicYear', '==', activeYear),
               where('status', '==', 'sent')
             );
-            const snap = await getDocs(q);
-            const list = snap.docs.map(docSnap => ({
+            const snapWeekly = await getDocs(qWeekly);
+            const listWeekly = snapWeekly.docs.map(docSnap => ({
               id: docSnap.id,
               ...docSnap.data()
             } as any));
-            setKgReports(list.sort((a: any, b: any) => (b.publishedAt || 0) - (a.publishedAt || 0)));
+            setKgReports(listWeekly.sort((a: any, b: any) => (b.publishedAt || 0) - (a.publishedAt || 0)));
+
+            // 2. Midterm Reports Tracking
+            const qMidterm = query(
+              collection(db, 'kg_midterm_delivery_tracking'),
+              where('studentId', '==', studentIdClean),
+              where('activeForStudent', '==', true)
+            );
+            const snapMidterm = await getDocs(qMidterm);
+            const listMidterm: any[] = [];
+            snapMidterm.docs.forEach(docSnap => {
+              const data = docSnap.data();
+              if (data.deliveryStatus === 'SENT' || data.deliveryStatus === 'VIEWED') {
+                listMidterm.push({
+                  id: docSnap.id,
+                  ...data
+                });
+              }
+            });
+            setKgMidtermReports(listMidterm.sort((a: any, b: any) => (b.sentAt || b.updatedAt || 0) - (a.sentAt || a.updatedAt || 0)));
           } else {
             const allReports = await getReportCards({
                unitId: student.unitId as any,
@@ -127,6 +150,45 @@ export default function StudentReports() {
     }
   };
 
+  const handleMidtermPdfClick = async (report: any) => {
+    try {
+      if (report.id) {
+        const trackingRef = doc(db, 'kg_midterm_delivery_tracking', report.id);
+        const historyLog = report.history || [];
+        historyLog.push({
+          action: 'VIEWED',
+          timestamp: Date.now(),
+          actorUid: currentUser?.uid || 'student'
+        });
+
+        const now = Date.now();
+        const updatePayload = {
+          deliveryStatus: 'VIEWED',
+          firstViewedAt: report.firstViewedAt || now,
+          lastViewedAt: now,
+          viewCount: (report.viewCount || 0) + 1,
+          history: historyLog,
+          updatedAt: now
+        };
+
+        await setDoc(trackingRef, updatePayload, { merge: true });
+
+        setKgMidtermReports(prev =>
+          prev.map(r => r.id === report.id ? { ...r, ...updatePayload } : r)
+        );
+      }
+    } catch (err) {
+      console.warn("Failed to update midterm tracking view:", err);
+    }
+
+    const pdfUrl = report.pdfUrl || report.driveFileUrl;
+    if (pdfUrl) {
+      window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+    } else {
+      toast.error("URL PDF tidak tersedia.");
+    }
+  };
+
   if (loading) {
     return (
       <div className="h-[60vh] flex items-center justify-center">
@@ -137,7 +199,7 @@ export default function StudentReports() {
 
   if (studentData?.unitId === 'KINDERGARTEN') {
     return (
-      <div className="max-w-5xl mx-auto space-y-8 pb-20 animate-in fade-in duration-700">
+      <div className="max-w-5xl mx-auto space-y-10 pb-20 animate-in fade-in duration-700">
         {/* Breadcrumb */}
         <div className="flex items-center gap-1 text-xs font-black uppercase tracking-widest text-gray-400">
           Rapor Saya
@@ -153,84 +215,155 @@ export default function StudentReports() {
           </p>
         </div>
 
-        {kgReports.length === 0 ? (
-          <div className="bg-white border border-gray-100 p-16 rounded-[2rem] text-center space-y-2 shadow-sm">
-            <h3 className="text-xl font-bold text-gray-900">Belum Ada Rapor</h3>
-            <p className="text-sm text-gray-500 font-medium max-w-md mx-auto">
-              Sekolah belum menerbitkan rapor untuk periode ini.
-            </p>
+        {/* SECTION 1: WEEKLY REPORT */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
+            <h2 className="text-sm font-black text-gray-900 uppercase tracking-wider flex items-center gap-2 font-mono">
+              <Calendar size={16} className="text-purple-600" />
+              WEEKLY REPORT
+            </h2>
           </div>
-        ) : (
-          <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-gray-50 text-[11px] font-black uppercase tracking-wider text-gray-400 border-b border-gray-100">
-                    <th className="py-5 px-6">Tahun Ajaran</th>
-                    <th className="py-5 px-6">Semester</th>
-                    <th className="py-5 px-6">Periode</th>
-                    <th className="py-5 px-6">Status</th>
-                    <th className="py-5 px-6 text-right">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 text-sm font-semibold text-gray-700">
-                  {kgReports.map((report) => {
-                    const semesterText = report.semester || activeSemester || "Semester 1";
-                    const periodText = report.theme ? `${report.theme}${report.week ? ` - Minggu ${report.week}` : ''}` : (report.period || 'Ganjil');
-                    return (
-                      <tr key={report.id} className="hover:bg-gray-50/50 transition-colors">
-                        <td className="py-5 px-6 font-bold text-gray-900">{report.academicYear}</td>
-                        <td className="py-5 px-6">{semesterText}</td>
-                        <td className="py-5 px-6">{periodText}</td>
-                        <td className="py-5 px-6">
-                          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-100">
-                            Diterbitkan
-                          </span>
-                        </td>
-                        <td className="py-5 px-6 text-right">
-                          <div className="flex flex-col sm:flex-row justify-end items-end sm:items-center gap-2">
-                            {report.reportSnapshot ? (
-                              <Link
-                                to={`/student/weekly-report/${report.id}`}
-                                className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm"
-                              >
-                                <Eye size={12} /> Lihat Mobile
-                              </Link>
-                            ) : (
-                              <div className="flex flex-col items-end">
-                                <button
-                                  disabled
-                                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-gray-100 text-gray-400 rounded-xl text-xs font-black uppercase tracking-wider border border-gray-200 cursor-not-allowed"
+
+          {kgReports.length === 0 ? (
+            <div className="bg-white border border-gray-100 p-8 rounded-3xl text-center space-y-1 shadow-sm">
+              <p className="text-sm font-bold text-gray-700">Belum Ada Weekly Report</p>
+              <p className="text-xs text-gray-400 font-medium">
+                Sekolah belum menerbitkan laporan mingguan untuk periode ini.
+              </p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 text-[11px] font-black uppercase tracking-wider text-gray-400 border-b border-gray-100">
+                      <th className="py-4 px-6">Tahun Ajaran</th>
+                      <th className="py-4 px-6">Semester</th>
+                      <th className="py-4 px-6">Periode</th>
+                      <th className="py-4 px-6">Status</th>
+                      <th className="py-4 px-6 text-right">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 text-sm font-semibold text-gray-700">
+                    {kgReports.map((report) => {
+                      const semesterText = report.semester || activeSemester || "Semester 1";
+                      const periodText = report.theme ? `${report.theme}${report.week ? ` - Minggu ${report.week}` : ''}` : (report.period || 'Ganjil');
+                      return (
+                        <tr key={report.id} className="hover:bg-gray-50/50 transition-colors">
+                          <td className="py-4 px-6 font-bold text-gray-900">{report.academicYear}</td>
+                          <td className="py-4 px-6">{semesterText}</td>
+                          <td className="py-4 px-6">{periodText}</td>
+                          <td className="py-4 px-6">
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-100">
+                              Diterbitkan
+                            </span>
+                          </td>
+                          <td className="py-4 px-6 text-right">
+                            <div className="flex flex-col sm:flex-row justify-end items-end sm:items-center gap-2">
+                              {report.reportSnapshot ? (
+                                <Link
+                                  to={`/student/weekly-report/${report.id}`}
+                                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm"
                                 >
                                   <Eye size={12} /> Lihat Mobile
-                                </button>
-                                <span className="text-[9px] text-gray-400 font-bold mt-1 text-right max-w-[180px] leading-normal">
-                                  Tampilan mobile tersedia untuk laporan setelah pembaruan sistem.
-                                </span>
-                              </div>
-                            )}
+                                </Link>
+                              ) : (
+                                <div className="flex flex-col items-end">
+                                  <button
+                                    disabled
+                                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-gray-100 text-gray-400 rounded-xl text-xs font-black uppercase tracking-wider border border-gray-200 cursor-not-allowed"
+                                  >
+                                    <Eye size={12} /> Lihat Mobile
+                                  </button>
+                                  <span className="text-[9px] text-gray-400 font-bold mt-1 text-right max-w-[180px] leading-normal">
+                                    Tampilan mobile tersedia untuk laporan setelah pembaruan sistem.
+                                  </span>
+                                </div>
+                              )}
 
-                            {report.driveFileUrl && (
-                              <a
-                                href={report.driveFileUrl}
-                                onClick={() => handlePdfClick(report.id)}
-                                target="_blank"
-                                rel="referrer noopener noreferrer"
-                                className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm whitespace-nowrap"
-                              >
-                                <FileText size={12} /> Lihat PDF
-                              </a>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                              {report.driveFileUrl && (
+                                <a
+                                  href={report.driveFileUrl}
+                                  onClick={() => handlePdfClick(report.id)}
+                                  target="_blank"
+                                  rel="referrer noopener noreferrer"
+                                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm whitespace-nowrap"
+                                >
+                                  <FileText size={12} /> Lihat PDF
+                                </a>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
+          )}
+        </div>
+
+        {/* SECTION 2: MIDTERM REPORT */}
+        <div className="space-y-4 pt-4">
+          <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
+            <h2 className="text-sm font-black text-gray-900 uppercase tracking-wider flex items-center gap-2 font-mono">
+              <FileText size={16} className="text-emerald-600" />
+              MIDTERM REPORT
+            </h2>
           </div>
-        )}
+
+          {kgMidtermReports.length === 0 ? (
+            <div className="bg-white border border-gray-100 p-8 rounded-3xl text-center space-y-1 shadow-sm">
+              <p className="text-sm font-bold text-gray-700">Belum ada laporan Midterm yang dikirim untuk Anda.</p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 text-[11px] font-black uppercase tracking-wider text-gray-400 border-b border-gray-100">
+                      <th className="py-4 px-6">Tahun Ajaran</th>
+                      <th className="py-4 px-6">Semester</th>
+                      <th className="py-4 px-6">Periode</th>
+                      <th className="py-4 px-6">Status</th>
+                      <th className="py-4 px-6 text-right">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 text-sm font-semibold text-gray-700">
+                    {kgMidtermReports.map((report) => {
+                      const academicYear = report.academicYear || activeYear || '2026/2027';
+                      const sem = report.semester || 1;
+                      const periodLabel = `Midterm ${sem}`;
+
+                      return (
+                        <tr key={report.id} className="hover:bg-gray-50/50 transition-colors">
+                          <td className="py-4 px-6 font-bold text-gray-900">{academicYear}</td>
+                          <td className="py-4 px-6">{sem}</td>
+                          <td className="py-4 px-6 font-bold text-gray-800">{periodLabel}</td>
+                          <td className="py-4 px-6">
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-100">
+                              Diterbitkan
+                            </span>
+                          </td>
+                          <td className="py-4 px-6 text-right">
+                            <button
+                              onClick={() => handleMidtermPdfClick(report)}
+                              className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm cursor-pointer"
+                            >
+                              <FileText size={12} /> Lihat PDF
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+
       </div>
     );
   }
