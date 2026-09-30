@@ -3,7 +3,7 @@ import {
   FileCheck2, Eye, Download, Send, CheckCircle2, 
   AlertCircle, RefreshCw, User, Sparkles, X, Printer,
   Check, Clock, FileText, AlertTriangle, BookOpen,
-  ChevronDown, ChevronUp, Info, HelpCircle
+  ChevronDown, ChevronUp, Info, HelpCircle, ExternalLink
 } from 'lucide-react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../../lib/firebase';
@@ -23,6 +23,13 @@ import {
 } from '../../../types/elementaryMidtermReport';
 import type { Student, Class, ReportConfig, User as UserType } from '../../../types';
 import { toast } from 'sonner';
+import { useAuth } from '../../../context/AuthContext';
+import {
+  normalizeElementaryMidtermFilename,
+  generateElementaryMidtermPdfBlob,
+  ensureElementaryDriveFolders,
+  uploadElementaryMidtermPdfToDrive
+} from '../../../lib/elementaryMidtermReportPdf';
 
 interface ElementaryMidtermPublishPdfTabProps {
   selectedClassId: string;
@@ -69,6 +76,8 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
   showAttendanceRecap,
   onSwitchTab
 }) => {
+  const { getGoogleDriveToken } = useAuth();
+
   // Modal Preview state
   const [previewStudent, setPreviewStudent] = React.useState<Student | null>(null);
 
@@ -78,7 +87,11 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
 
   // Publishing State
   const [publishingStudentId, setPublishingStudentId] = React.useState<string | null>(null);
+  const [publishStatusText, setPublishStatusText] = React.useState<string>('');
   const [publishMessage, setPublishMessage] = React.useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Student currently being generated into hidden PDF DOM
+  const [generatingStudent, setGeneratingStudent] = React.useState<Student | null>(null);
 
   // Student Unit Activity Map: studentId -> UA Name (e.g. "Choir")
   const [studentUaMap, setStudentUaMap] = React.useState<Record<string, string>>({});
@@ -358,21 +371,93 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
     };
   }, [masterGoalsMap, studentDataMap, studentUaMap, selectedClassId, selectedYear, selectedSemester, selectedTerm]);
 
-  // Publish Individual Report Function
+  // Publish Individual Report Function (with PDF Generation & Google Drive Upload)
   const handlePublishStudentReport = async (student: Student) => {
     if (!student || !selectedClass) return;
     if (dateConfigError) {
       toast.error(dateConfigError);
       return;
     }
+
+    const toastId = `pub-${student.id}`;
     setPublishingStudentId(student.id);
     setPublishMessage(null);
+    setPublishStatusText('Menyiapkan PDF…');
+    toast.loading('Menyiapkan PDF…', { id: toastId });
+
+    let uploadedDriveFileId = '';
 
     try {
+      // 1. Prepare student for hidden PDF generator DOM
+      setGeneratingStudent(student);
+
+      // Allow DOM to render and fonts to settle
+      await new Promise(r => setTimeout(r, 450));
+      if (typeof document !== 'undefined' && (document as any).fonts && (document as any).fonts.ready) {
+        await (document as any).fonts.ready;
+      }
+
+      // Query PDF page elements
+      const container = document.getElementById('elem-pdf-generator-container');
+      let pageElements = Array.from(container?.querySelectorAll('.pdf-page') || []) as HTMLElement[];
+      if (pageElements.length === 0) {
+        const previewEl = document.querySelector('.printable-container');
+        if (previewEl) {
+          pageElements = Array.from(previewEl.querySelectorAll('.pdf-page')) as HTMLElement[];
+        }
+      }
+
+      if (pageElements.length === 0) {
+        throw new Error('Elemen halaman laporan PDF tidak ditemukan.');
+      }
+
+      // 2. Generate PDF Blob
+      setPublishStatusText('Menghasilkan file PDF…');
+      toast.loading('Menghasilkan file PDF…', { id: toastId });
+      const pdfBlob = await generateElementaryMidtermPdfBlob(pageElements);
+      const fileName = normalizeElementaryMidtermFilename(student.name, selectedTerm, selectedYear);
+
+      // 3. Connect to Google Drive (OAuth)
+      setPublishStatusText('Menghubungkan ke Google Drive…');
+      toast.loading('Menghubungkan ke Google Drive…', { id: toastId });
+      const token = await getGoogleDriveToken();
+      if (!token) {
+        throw new Error('Gagal mendapatkan token akses Google Drive. Silakan berikan izin Google Drive untuk melanjutkan.');
+      }
+
+      // 4. Ensure hierarchy in official Elementary root folder
+      setPublishStatusText('Menyiapkan folder Google Drive…');
+      toast.loading('Menyiapkan folder Google Drive…', { id: toastId });
+      const { classFolderId } = await ensureElementaryDriveFolders(
+        token,
+        selectedYear,
+        selectedClass.name,
+        selectedTerm
+      );
+
+      // 5. Upload PDF Blob to Google Drive
+      setPublishStatusText('Mengunggah PDF ke Google Drive…');
+      toast.loading('Mengunggah PDF ke Google Drive…', { id: toastId });
+      const { driveFileId, driveFileUrl } = await uploadElementaryMidtermPdfToDrive(
+        pdfBlob,
+        fileName,
+        classFolderId,
+        token
+      );
+
+      if (!driveFileId || !driveFileUrl) {
+        throw new Error('Upload PDF ke Google Drive gagal: URL atau File ID tidak valid.');
+      }
+
+      uploadedDriveFileId = driveFileId;
+
+      // 6. Build Snapshot Categories using student's progress calculation
+      setPublishStatusText('Menyimpan metadata laporan…');
+      toast.loading('Menyimpan metadata laporan…', { id: toastId });
+
       const studentDataDoc = studentDataMap[student.id];
       const progress = calculateStudentGoalsProgress(student);
 
-      // Build Snapshot Categories using student's progress calculation
       const subjectsList = progress.applicableSubjects.map(s => ({
         name: s.displayName,
         goals: s.goals.map(g => ({
@@ -387,12 +472,14 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
         { name: 'PROJECTS', subjects: subjectsList.filter(s => s.name.includes('Projects')) }
       ];
 
-      // Approved General Comment
       const approvedGenCom = studentDataDoc?.generalCommentReviewStatus === 'APPROVED' || studentDataDoc?.generalComment?.isFinal
         ? (studentDataDoc?.generalComment?.finalComment || studentDataDoc?.generalComment?.aiDraft || '')
         : '';
 
-      const dynamicAttendance = getDynamicAttendanceForStudent(student.id, studentDataDoc?.attendance || { sakit: 0, izin: 0, tanpaKeterangan: 0 });
+      const dynamicAttendance = getDynamicAttendanceForStudent(
+        student.id,
+        studentDataDoc?.attendance || { sakit: 0, izin: 0, tanpaKeterangan: 0 }
+      );
 
       const snapshot: ElementaryMidtermReportSnapshot = {
         student: {
@@ -431,40 +518,72 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
         showAttendanceRecap: showAttendanceRecap !== false
       };
 
-      await publishElementaryMidtermReport({
-        studentId: student.id,
-        studentName: student.name,
-        nisn: student.nisn || (student as any)?.nis || '-',
-        classId: selectedClassId,
-        className: selectedClass.name,
-        grade: selectedClass.grade || '',
-        academicYear: selectedYear,
-        semester: selectedSemester,
-        midtermTerm: selectedTerm,
-        reportSnapshot: snapshot,
-        user: currentUser
-      });
+      // 7. Save metadata to Firestore (elem_midterm_published_reports)
+      let publishedDoc: PublishedElementaryMidtermReport;
+      try {
+        publishedDoc = await publishElementaryMidtermReport({
+          studentId: student.id,
+          studentName: student.name,
+          nisn: student.nisn || (student as any)?.nis || '-',
+          classId: selectedClassId,
+          className: selectedClass.name,
+          grade: selectedClass.grade || '',
+          academicYear: selectedYear,
+          semester: selectedSemester,
+          midtermTerm: selectedTerm,
+          reportSnapshot: snapshot,
+          driveFolderId: classFolderId,
+          driveFileId,
+          driveFileUrl,
+          fileName,
+          user: currentUser
+        });
+      } catch (saveErr: any) {
+        console.error('[CRITICAL] Firestore metadata save failed after Drive upload. driveFileId:', uploadedDriveFileId, saveErr);
+        throw new Error(`Upload ke Google Drive berhasil (File ID: ${uploadedDriveFileId}), tetapi gagal menyimpan metadata ke database: ${saveErr.message || saveErr}`);
+      }
 
+      setPublishStatusText('Rapor berhasil diterbitkan.');
+      toast.success(`Rapor Midterm ${student.name} (v${publishedDoc.version}) berhasil diterbitkan ke Google Drive!`, { id: toastId });
       setPublishMessage({
         type: 'success',
-        text: `Rapor Midterm ${student.name} berhasil dipublikasikan!`
+        text: `Rapor Midterm ${student.name} (v${publishedDoc.version}) berhasil diterbitkan dan tersimpan di Google Drive!`
       });
 
       await onRefreshData();
-      setTimeout(() => setPublishMessage(null), 4000);
-    } catch (e) {
+      setTimeout(() => setPublishMessage(null), 5000);
+    } catch (e: any) {
       console.error("Error publishing report:", e);
+      const errMsg = e.message || `Gagal mempublikasikan rapor ${student.name}. Coba lagi.`;
+      toast.error(errMsg, { id: toastId });
       setPublishMessage({
         type: 'error',
-        text: `Gagal mempublikasikan rapor ${student.name}. Coba lagi.`
+        text: errMsg
       });
     } finally {
       setPublishingStudentId(null);
+      setGeneratingStudent(null);
+      setPublishStatusText('');
     }
   };
 
   const handlePrintPdf = () => {
     window.print();
+  };
+
+  const formatPublishDate = (ts?: number) => {
+    if (!ts) return '-';
+    try {
+      return new Date(ts).toLocaleDateString('id-ID', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (e) {
+      return String(ts);
+    }
   };
 
   return (
@@ -485,7 +604,7 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
             <span>Publish PDF Report — Elementary</span>
           </h2>
           <p className="text-xs text-slate-500 font-medium pt-0.5">
-            Cek kelengkapan data siswa, pratinjau format rapor PDF, dan publikasikan rapor Midterm.
+            Cek kelengkapan data siswa, pratinjau format rapor PDF, dan publikasikan rapor Midterm ke Google Drive resmi.
           </p>
         </div>
 
@@ -522,7 +641,7 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
             <span>Daftar Siswa & Status Rapor ({students.length})</span>
           </div>
           <span className="text-[10.5px] font-medium text-slate-400">
-            Klik status Learning Goals untuk memeriksa rincian pengisian
+            Klik angka Learning Goals untuk memeriksa rincian pengisian
           </span>
         </div>
 
@@ -535,8 +654,8 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
                 <th className="p-3.5 border-r border-slate-200 w-32">NISN</th>
                 <th className="p-3.5 border-r border-slate-200 w-44 text-center">Learning Goals</th>
                 <th className="p-3.5 border-r border-slate-200 w-40 text-center">General Comments</th>
-                <th className="p-3.5 border-r border-slate-200 w-36 text-center">Status Rapor</th>
-                <th className="p-3.5 text-center w-48">Aksi</th>
+                <th className="p-3.5 border-r border-slate-200 w-44 text-center">Status Rapor</th>
+                <th className="p-3.5 text-center min-w-[200px]">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
@@ -627,10 +746,18 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
                     {/* Status Rapor Column */}
                     <td className="p-3.5 border-r border-slate-100 text-center">
                       {isPub ? (
-                        <div className="space-y-0.5">
+                        <div className="space-y-1">
                           <span className="px-2.5 py-1 bg-emerald-800 text-white font-extrabold text-[10px] rounded-full inline-flex items-center gap-1 shadow-2xs uppercase tracking-wider">
                             <CheckCircle2 size={11} /> Published (v{publishedRep.version || 1})
                           </span>
+                          <div className="text-[10px] text-slate-500 font-medium space-y-0.5">
+                            <div>{formatPublishDate(publishedRep.generatedAt || (publishedRep as any).updatedAt)}</div>
+                            {publishedRep.generatedByName && (
+                              <div className="text-slate-400 truncate max-w-[130px] mx-auto" title={publishedRep.generatedByName}>
+                                Oleh: {publishedRep.generatedByName}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       ) : (
                         <span className="px-2.5 py-1 bg-slate-100 text-slate-500 font-bold text-[10.5px] rounded-full">
@@ -641,24 +768,46 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
 
                     {/* Action Column */}
                     <td className="p-3.5 text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        {/* Preview Button (ALWAYS AVAILABLE) */}
+                      <div className="flex flex-wrap items-center justify-center gap-1.5">
+                        {/* Preview Button */}
                         <button
                           onClick={() => setPreviewStudent(st)}
-                          className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[11px] font-bold flex items-center gap-1.5 cursor-pointer transition-all shadow-2xs"
+                          className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[10.5px] font-bold flex items-center gap-1 cursor-pointer transition-all shadow-2xs"
                           title="Lihat Pratinjau Rapor Midterm Elementary"
                         >
                           <Eye size={13} />
                           <span>Preview</span>
                         </button>
 
-                        {/* Publish Button */}
+                        {/* Buka PDF di Google Drive Button (if published) */}
+                        {isPub && (
+                          publishedRep.driveFileUrl ? (
+                            <a
+                              href={publishedRep.driveFileUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[10.5px] font-extrabold flex items-center gap-1 cursor-pointer transition-all shadow-2xs"
+                              title="Buka PDF di Google Drive"
+                            >
+                              <ExternalLink size={13} />
+                              <span>Buka PDF</span>
+                            </a>
+                          ) : (
+                            <span className="text-[9.5px] text-amber-700 italic block py-0.5">
+                              PDF Drive belum tersedia
+                            </span>
+                          )
+                        )}
+
+                        {/* Publish / Terbitkan Ulang Button */}
                         <button
                           onClick={() => handlePublishStudentReport(st)}
                           disabled={!canPublish || isPublishingThis}
-                          className={`px-3 py-1.5 rounded-xl text-[11px] font-extrabold flex items-center gap-1.5 transition-all ${
+                          className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-extrabold flex items-center gap-1 transition-all ${
                             canPublish
-                              ? 'bg-emerald-800 hover:bg-emerald-900 text-white shadow-2xs cursor-pointer'
+                              ? isPub 
+                                ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-2xs cursor-pointer'
+                                : 'bg-emerald-800 hover:bg-emerald-900 text-white shadow-2xs cursor-pointer'
                               : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-60'
                           }`}
                           title={
@@ -668,7 +817,9 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
                                 ? !isGenComApproved 
                                   ? 'General comment belum diapprove' 
                                   : 'Learning goals belum lengkap'
-                                : 'Publikasikan PDF Rapor Siswa'
+                                : isPub
+                                  ? 'Terbitkan Ulang versi baru ke Google Drive'
+                                  : 'Publikasikan PDF Rapor Siswa ke Google Drive'
                           }
                         >
                           {isPublishingThis ? (
@@ -676,7 +827,9 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
                           ) : (
                             <Send size={13} />
                           )}
-                          <span>{isPub ? 'Re-Publish' : 'Publish'}</span>
+                          <span>
+                            {isPublishingThis ? (publishStatusText || 'Memproses…') : isPub ? 'Terbitkan Ulang' : 'Publish'}
+                          </span>
                         </button>
                       </div>
                     </td>
@@ -687,6 +840,41 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
           </table>
         </div>
       </div>
+
+      {/* Hidden PDF Generator Container */}
+      {generatingStudent && (
+        <div
+          id="elem-pdf-generator-container"
+          style={{
+            position: 'fixed',
+            left: '-9999px',
+            top: 0,
+            width: '210mm',
+            zIndex: -50,
+            opacity: 0,
+            pointerEvents: 'none'
+          }}
+        >
+          <ElementaryMidtermPdfTemplate
+            student={generatingStudent}
+            currentClass={selectedClass}
+            academicYear={selectedYear}
+            semester={selectedSemester}
+            midtermTerm={selectedTerm}
+            masterGoalsMap={masterGoalsMap}
+            studentDataDoc={studentDataMap[generatingStudent.id]}
+            reportConfig={reportConfig}
+            logoUrl={logoUrl}
+            homeroomTeacherProfile={homeroomTeacherProfile || undefined}
+            studentUaName={studentUaMap[generatingStudent.id]}
+            attendance={getDynamicAttendanceForStudent(generatingStudent.id, studentDataMap[generatingStudent.id]?.attendance || { sakit: 0, izin: 0, tanpaKeterangan: 0 })}
+            reportSigningDate={reportSigningDate}
+            reportSigningLocation="Depok"
+            attendanceCutoffDate={attendanceCutoffDate}
+            showAttendanceRecap={showAttendanceRecap}
+          />
+        </div>
+      )}
 
       {/* MODAL DETAIL LEARNING GOALS (VIEW-ONLY) */}
       {detailStudent && (() => {
@@ -1007,31 +1195,51 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
               </div>
 
               {/* Action Buttons inside Preview Header */}
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={handlePrintPdf}
-                  className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs border border-slate-700"
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs border border-slate-700"
                 >
                   <Printer size={14} />
                   <span>Cetak PDF</span>
                 </button>
+
+                {publishedMap[previewStudent.id]?.driveFileUrl && (
+                  <a
+                    href={publishedMap[previewStudent.id].driveFileUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+                  >
+                    <ExternalLink size={14} />
+                    <span>Buka PDF di Drive</span>
+                  </a>
+                )}
 
                 <button
                   onClick={() => handlePublishStudentReport(previewStudent)}
                   disabled={publishingStudentId === previewStudent.id || Boolean(dateConfigError)}
                   className={`px-3.5 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all ${
                     !dateConfigError
-                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer shadow-2xs'
+                      ? publishedMap[previewStudent.id]
+                        ? 'bg-amber-600 hover:bg-amber-500 text-white cursor-pointer shadow-2xs'
+                        : 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer shadow-2xs'
                       : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
                   }`}
-                  title={dateConfigError || "Publish Rapor Midterm"}
+                  title={dateConfigError || (publishedMap[previewStudent.id] ? "Terbitkan Ulang ke Google Drive" : "Publish Rapor ke Google Drive")}
                 >
                   {publishingStudentId === previewStudent.id ? (
                     <RefreshCw size={14} className="animate-spin" />
                   ) : (
                     <Send size={14} />
                   )}
-                  <span>Publish Rapor</span>
+                  <span>
+                    {publishingStudentId === previewStudent.id 
+                      ? (publishStatusText || 'Memproses…')
+                      : publishedMap[previewStudent.id] 
+                        ? 'Terbitkan Ulang' 
+                        : 'Publish Rapor'}
+                  </span>
                 </button>
 
                 <button
