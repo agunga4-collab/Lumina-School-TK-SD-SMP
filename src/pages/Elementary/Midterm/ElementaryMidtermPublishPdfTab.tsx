@@ -669,8 +669,9 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
                 const isGoalsComplete = progress.isComplete;
 
                 // General Comments Review Status
-                const genComReviewStatus = stData?.generalCommentReviewStatus || (stData?.generalComment?.isFinal ? 'APPROVED' : 'DRAFT');
-                const isGenComApproved = genComReviewStatus === 'APPROVED' || Boolean(stData?.generalComment?.isFinal);
+                const genComReviewStatus = stData?.generalCommentReviewStatus || 'DRAFT';
+                const isGenComApproved = genComReviewStatus === 'APPROVED';
+                const isGenComPending = genComReviewStatus === 'SUBMITTED_FOR_REVIEW' || (genComReviewStatus as string) === 'PENDING_REVIEW';
 
                 // Can publish check with date config constraint
                 const canPublish = isGenComApproved && isGoalsComplete && !dateConfigError;
@@ -724,7 +725,7 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
                         <span className="px-2.5 py-1 bg-emerald-100 text-emerald-900 border border-emerald-300 font-black text-[10.5px] rounded-full inline-flex items-center gap-1">
                           <CheckCircle2 size={12} /> Approved
                         </span>
-                      ) : genComReviewStatus === 'SUBMITTED_FOR_REVIEW' ? (
+                      ) : isGenComPending ? (
                         <span className="px-2.5 py-1 bg-blue-50 text-blue-800 border border-blue-200 font-bold text-[10.5px] rounded-full">
                           Menunggu Review
                         </span>

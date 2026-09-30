@@ -99,16 +99,61 @@ export interface ElementaryMidtermGeneralCommentData {
   updatedBy?: string;
 }
 
-export type ElementaryMidtermGenComReviewStatus = 'DRAFT' | 'SUBMITTED_FOR_REVIEW' | 'REVISION_REQUESTED' | 'APPROVED';
+export type ElementaryMidtermGenComReviewStatus = 'DRAFT' | 'SUBMITTED_FOR_REVIEW' | 'PENDING_REVIEW' | 'REVISION_REQUESTED' | 'APPROVED';
 
 export interface ElementaryMidtermReviewHistoryEntry {
-  action: 'DRAFT_SAVED' | 'SUBMITTED_FOR_REVIEW' | 'REVISION_REQUESTED' | 'RESUBMITTED_FOR_REVIEW' | 'APPROVED';
+  action: 'DRAFT_SAVED' | 'SUBMITTED_FOR_REVIEW' | 'REVISION_REQUESTED' | 'RESUBMITTED_FOR_REVIEW' | 'APPROVED' | 'WITHDRAWN_FROM_REVIEW';
   actorId: string;
   actorName: string;
   actorRole: string;
   timestamp: number;
   feedback?: string;
   commentSnapshot?: string;
+}
+
+/**
+ * Resolves the display name of the approver without exposing raw UIDs
+ */
+export function getApprovedByName(studentData?: ElementaryMidtermStudentDataDoc | null): string {
+  if (studentData?.approvedByName && studentData.approvedByName.trim()) {
+    return studentData.approvedByName.trim();
+  }
+  if (Array.isArray(studentData?.reviewHistory)) {
+    for (let i = studentData.reviewHistory.length - 1; i >= 0; i--) {
+      const entry = studentData.reviewHistory[i];
+      if (entry && entry.action === 'APPROVED' && entry.actorName && entry.actorName.trim()) {
+        return entry.actorName.trim();
+      }
+    }
+  }
+  return '';
+}
+
+/**
+ * Formats timestamp to Indonesian local datetime string
+ */
+export function formatIndonesianDateTime(timestamp?: number | null): string {
+  if (!timestamp) return '-';
+  try {
+    const date = new Date(timestamp);
+    return new Intl.DateTimeFormat('id-ID', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Jakarta'
+    }).format(date) + ' WIB';
+  } catch {
+    return new Date(timestamp).toLocaleString('id-ID');
+  }
+}
+
+/**
+ * Checks if a review status is pending review
+ */
+export function isReviewPending(status?: string | null): boolean {
+  return status === 'SUBMITTED_FOR_REVIEW' || status === 'PENDING_REVIEW';
 }
 
 export interface ElementaryMidtermStudentDataDoc {

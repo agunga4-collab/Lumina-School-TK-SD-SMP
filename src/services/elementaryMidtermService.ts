@@ -20,11 +20,12 @@ import type {
   ElementaryMidtermGoalItem, 
   ElementaryMidtermGeneralCommentData,
   ElementaryMidtermGenComReviewStatus,
+  ElementaryMidtermReviewHistoryEntry,
   PublishedElementaryMidtermReport,
   ElementaryMidtermReportSnapshot,
   ElementaryMidtermClassCommentsConfig
 } from '../types/elementaryMidtermReport';
-import type { User, UnitActivityEnrollment } from '../types';
+import type { User, UnitActivityEnrollment, Class } from '../types';
 
 export function normalizeAcademicYear(academicYear: string): string {
   return academicYear ? academicYear.replace(/\//g, '_') : '2025_2026';
@@ -520,6 +521,18 @@ export async function saveElementaryMidtermGeneralComment(
     const docId = buildStudentDataDocId(studentId, classId, academicYear, semester, midtermTerm);
     const docRef = doc(db, 'elem_midterm_student_data', docId);
 
+    // Validate that comments already APPROVED cannot be edited or overwritten
+    const existingSnap = await getDoc(docRef);
+    if (existingSnap.exists()) {
+      const existingData = existingSnap.data();
+      if (existingData?.generalCommentReviewStatus === 'APPROVED') {
+        throw new Error('General Comment yang sudah disetujui (APPROVED) tidak dapat diedit atau diubah.');
+      }
+      if (existingData?.generalCommentReviewStatus === 'SUBMITTED_FOR_REVIEW' || existingData?.generalCommentReviewStatus === 'PENDING_REVIEW') {
+        throw new Error('General Comment sedang dalam peninjauan (Menunggu Review). Tarik kembali pengajuan terlebih dahulu jika ingin menyunting.');
+      }
+    }
+
     const payload = {
       id: docId,
       studentId,
@@ -536,6 +549,7 @@ export async function saveElementaryMidtermGeneralComment(
     await setDoc(docRef, payload, { merge: true });
   } catch (err: any) {
     handleFirestoreError(err, 'update', `elem_midterm_student_data/${studentId}/genCom`);
+    throw err;
   }
 }
 
@@ -551,6 +565,13 @@ export async function updateElementaryGenComReviewStatus(
   commentSnapshot?: string
 ): Promise<void> {
   try {
+    // Enforce strict access control: Only Head Unit Elementary and Super Admin can APPROVE or REQUEST_REVISION
+    if (action === 'APPROVE' || action === 'REQUEST_REVISION') {
+      if (!isElementaryHeadOrSuperAdmin(user)) {
+        throw new Error('Akses ditolak: Hanya Head Unit Elementary dan Super Admin yang berhak menyetujui (Approve) atau meminta revisi General Comment.');
+      }
+    }
+
     const docId = buildStudentDataDocId(studentId, classId, academicYear, semester, midtermTerm);
     const docRef = doc(db, 'elem_midterm_student_data', docId);
 
@@ -558,6 +579,12 @@ export async function updateElementaryGenComReviewStatus(
     if (!snap.exists()) throw new Error('Student midterm document not found.');
 
     const data = snap.data();
+
+    // Homeroom teacher cannot modify or withdraw an already APPROVED comment
+    if (data?.generalCommentReviewStatus === 'APPROVED' && action !== 'RESET_DRAFT' && !isElementaryHeadOrSuperAdmin(user)) {
+      throw new Error('General Comment yang sudah disetujui (APPROVED) tidak dapat diubah oleh Guru Kelas.');
+    }
+
     const history = Array.isArray(data.reviewHistory) ? [...data.reviewHistory] : [];
     const now = Date.now();
 
@@ -569,24 +596,26 @@ export async function updateElementaryGenComReviewStatus(
       updatedBy: user.uid || (user as any).id
     };
 
+    const approverName = user.displayName || (user as any).name || (user.role === 'SUPER_ADMIN' ? 'Super Admin' : 'Head Unit Elementary');
+
     if (action === 'SUBMIT_REVIEW') {
       newStatus = 'SUBMITTED_FOR_REVIEW';
       historyAction = 'SUBMITTED_FOR_REVIEW';
       updatePayload.submittedForReviewAt = now;
       updatePayload.submittedForReviewBy = user.uid || (user as any).id;
-      updatePayload.submittedForReviewByName = user.displayName || (user as any).name || 'Teacher';
+      updatePayload.submittedForReviewByName = user.displayName || (user as any).name || 'Guru Kelas';
     } else if (action === 'APPROVE') {
       newStatus = 'APPROVED';
       historyAction = 'APPROVED';
       updatePayload.approvedAt = now;
       updatePayload.approvedBy = user.uid || (user as any).id;
-      updatePayload.approvedByName = user.displayName || (user as any).name || 'Reviewer';
+      updatePayload.approvedByName = approverName;
     } else if (action === 'REQUEST_REVISION') {
       newStatus = 'REVISION_REQUESTED';
       historyAction = 'REVISION_REQUESTED';
       updatePayload.revisionRequestedAt = now;
       updatePayload.revisionRequestedBy = user.uid || (user as any).id;
-      updatePayload.revisionRequestedByName = user.displayName || (user as any).name || 'Reviewer';
+      updatePayload.revisionRequestedByName = approverName;
       updatePayload.revisionFeedback = feedback || '';
     } else if (action === 'RESET_DRAFT') {
       newStatus = 'DRAFT';
@@ -598,7 +627,7 @@ export async function updateElementaryGenComReviewStatus(
     history.push({
       action: historyAction,
       actorId: user.uid || (user as any).id,
-      actorName: user.displayName || (user as any).name || 'User',
+      actorName: approverName,
       actorRole: user.role,
       timestamp: now,
       feedback: feedback || '',
@@ -925,7 +954,64 @@ export const ELEM_NEEDS_IMPROVEMENT_BANK = [
 ];
 
 /**
- * Checks if user is homeroom teacher of this class
+ * Checks if user is Head Unit Elementary or Super Admin
+ */
+export function isElementaryHeadOrSuperAdmin(user: User | null | undefined): boolean {
+  if (!user) return false;
+  const role = (user.role || (user as any).roleId || '').toUpperCase();
+  if (role === 'SUPER_ADMIN') return true;
+  if (role === 'HEAD_UNIT' || role === 'PRINCIPAL') {
+    const unit = (user.unitId || '').toUpperCase();
+    return !unit || unit === 'ELEMENTARY';
+  }
+  return false;
+}
+
+/**
+ * Checks if user is the assigned homeroom teacher of this class
+ */
+export function isAssignedHomeroomTeacherOfClass(user: User | null | undefined, classData: Class | null | undefined): boolean {
+  if (!user || !classData) return false;
+  const uid = user.uid || (user as any).id;
+  if (!uid) return false;
+
+  if (classData.homeroomTeacherId === uid) return true;
+  if (Array.isArray(classData.homeroomTeacherIds) && classData.homeroomTeacherIds.includes(uid)) return true;
+  if (Array.isArray((classData as any).waliKelasIds) && (classData as any).waliKelasIds.includes(uid)) return true;
+  if (Array.isArray(classData.assignedTeacherIds) && classData.assignedTeacherIds.includes(uid)) return true;
+  if (Array.isArray(classData.teacherAssignments) && classData.teacherAssignments.some(ta => ta.userId === uid)) return true;
+
+  return false;
+}
+
+/**
+ * Checks if user is the authoring homeroom teacher of a student's general comment
+ */
+export function isAuthorHomeroomTeacher(
+  user: User | null | undefined,
+  classData: Class | null | undefined,
+  studentData?: ElementaryMidtermStudentDataDoc | null
+): boolean {
+  if (!user) return false;
+  const uid = user.uid || (user as any).id;
+  if (!uid) return false;
+
+  // If user is the submitter
+  if (studentData?.submittedForReviewBy === uid) return true;
+
+  // Or assigned homeroom teacher of the class
+  if (isAssignedHomeroomTeacherOfClass(user, classData)) return true;
+
+  // Or homeroom teacher role of class
+  if (user.role === 'TEACHER' || user.role === 'HOMEROOM_TEACHER') {
+    if (isHomeroomTeacherOfClass(user, classData)) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Checks if user is homeroom teacher of this class (or admin/head unit)
  */
 export function isHomeroomTeacherOfClass(user: User | null | undefined, classData: Class | null | undefined): boolean {
   if (!user || !classData) return false;
@@ -989,7 +1075,7 @@ export async function getElementaryMidtermClassCommentsConfig(
 }
 
 /**
- * Submit Elementary General Comments for review
+ * Submit Elementary General Comments for review by Homeroom Teacher
  */
 export async function submitElementaryMidtermGeneralCommentForReview(
   studentId: string,
@@ -1007,18 +1093,22 @@ export async function submitElementaryMidtermGeneralCommentForReview(
 
   const snap = await getDoc(ref);
   const existing = snap.exists() ? (snap.data() as ElementaryMidtermStudentDataDoc) : null;
+
+  if (existing?.generalCommentReviewStatus === 'APPROVED') {
+    throw new Error('General Comment yang sudah disetujui (APPROVED) tidak dapat diajukan kembali.');
+  }
   
   const history = Array.isArray(existing?.reviewHistory) ? [...existing.reviewHistory] : [];
   const previousStatus = existing?.generalCommentReviewStatus || 'DRAFT';
   const action = previousStatus === 'REVISION_REQUESTED' ? 'RESUBMITTED_FOR_REVIEW' : 'SUBMITTED_FOR_REVIEW';
 
-  const entry: any = {
-    action,
+  const entry: ElementaryMidtermReviewHistoryEntry = {
+    action: 'SUBMITTED_FOR_REVIEW',
     actorId: userUid,
     actorName: userName,
     actorRole: userRole,
     timestamp: Date.now(),
-    commentSnapshot
+    commentSnapshot: commentSnapshot || ''
   };
   history.push(entry);
 
@@ -1035,6 +1125,70 @@ export async function submitElementaryMidtermGeneralCommentForReview(
     updatedAt: Date.now(),
     updatedBy: userUid
   }, { merge: true });
+}
+
+/**
+ * Withdraw Elementary General Comments from review by Homeroom Teacher
+ */
+export async function withdrawElementaryMidtermGeneralCommentFromReview(
+  studentId: string,
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  user: User,
+  classData?: Class | null
+): Promise<void> {
+  const docId = buildStudentDataDocId(studentId, classId, academicYear, semester, midtermTerm);
+  const ref = doc(db, 'elem_midterm_student_data', docId);
+
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new Error('Data midterm siswa tidak ditemukan.');
+  }
+
+  const existing = snap.data() as ElementaryMidtermStudentDataDoc;
+  const currentStatus = existing.generalCommentReviewStatus || 'DRAFT';
+
+  if (currentStatus === 'APPROVED') {
+    throw new Error('General Comment yang sudah disetujui (APPROVED) tidak dapat ditarik kembali.');
+  }
+
+  if (currentStatus !== 'SUBMITTED_FOR_REVIEW' && (currentStatus as string) !== 'PENDING_REVIEW') {
+    throw new Error('Hanya General Comment dengan status Menunggu Review yang dapat ditarik kembali.');
+  }
+
+  const userUid = user.uid || (user as any).id;
+  const isSubmitter = existing.submittedForReviewBy === userUid;
+  const isClassTeacher = classData ? isHomeroomTeacherOfClass(user, classData) : false;
+  const isHeadOrAdmin = isElementaryHeadOrSuperAdmin(user);
+
+  if (!isSubmitter && !isClassTeacher && !isHeadOrAdmin) {
+    throw new Error('Hanya Guru Kelas penyusun yang berhak menarik kembali pengajuan General Comment ini.');
+  }
+
+  const now = Date.now();
+  const history = Array.isArray(existing.reviewHistory) ? [...existing.reviewHistory] : [];
+  const commentSnapshot = existing.generalComment?.finalComment || existing.generalComment?.aiDraft || '';
+
+  history.push({
+    action: 'WITHDRAWN_FROM_REVIEW',
+    actorId: userUid,
+    actorName: user.displayName || (user as any).name || 'Guru Kelas',
+    actorRole: user.role || 'Homeroom Teacher',
+    timestamp: now,
+    commentSnapshot
+  });
+
+  await updateDoc(ref, {
+    generalCommentReviewStatus: 'DRAFT',
+    submittedForReviewAt: null,
+    submittedForReviewBy: null,
+    submittedForReviewByName: null,
+    reviewHistory: history,
+    updatedAt: now,
+    updatedBy: userUid
+  });
 }
 
 /**
