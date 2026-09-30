@@ -573,6 +573,16 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
 
       {renderAttendanceAndNotes()}
       {renderSignatoryBlock()}
+
+      {/* Measurable Footer for accurate height calculations */}
+      <div 
+        id="meas-footer" 
+        data-meas-id="footer" 
+        className="border-t border-slate-300 pt-2 flex justify-between items-center text-[9px] text-slate-500 font-medium"
+      >
+        <span>{studentName} / Midterm {effTerm} - {effAcademicYear}</span>
+        <span>Page 1 of 1</span>
+      </div>
     </div>
   );
 
@@ -605,7 +615,7 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
     ];
   };
 
-  // Pure pagination algorithm
+  // Pure pagination algorithm with strict safe printable area and layout constants
   const computePaginatedPages = (params: {
     categoriesList: Array<{ id: string; name: string; subjects: any[] }>;
     page1HeaderHeight: number;
@@ -625,16 +635,35 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
       getMeasHeight,
     } = params;
 
-    const totalPageHeight = 1123;
-    const paddingY = 72; // top 36px, bottom 36px
-    const footerHeight = 25;
-    const usableHeightFirstPage = totalPageHeight - paddingY - page1HeaderHeight - footerHeight;
-    const usableHeightSubsequentPage = totalPageHeight - paddingY - pageGt1HeaderHeight - footerHeight;
+    // Layout Constants & Dimension Tokens (A4: 794 x 1123 px at 96 DPI)
+    const PAGE_HEIGHT = 1123;
+    const PAGE_PADDING_TOP = 36;
+    const PAGE_PADDING_BOTTOM = 36;
+
+    // Measured footer height from DOM
+    const measuredFooterHeight = getMeasHeight('footer', 24);
+    // Area reserved exclusively for the footer (border + text + padding)
+    const FOOTER_RESERVED_HEIGHT = Math.max(28, measuredFooterHeight + 8);
+
+    // Minimal 16-24px breathing space above footer (we use 24px for generous, professional breathing space)
+    const BOTTOM_SAFETY_GAP = 24;
+
+    // CONTENT_MAX_Y: The absolute bottom coordinate that content is forbidden to cross
+    const CONTENT_MAX_Y = PAGE_HEIGHT - PAGE_PADDING_BOTTOM - FOOTER_RESERVED_HEIGHT - BOTTOM_SAFETY_GAP;
+
+    // Top reserves: Top of the content area on page 1 vs continuation pages
+    const PAGE_TOP_RESERVE = PAGE_PADDING_TOP + page1HeaderHeight + 14;
+    const CONTINUATION_TOP_RESERVE = PAGE_PADDING_TOP + pageGt1HeaderHeight + 16;
+
+    const TABLE_BOTTOM_MARGIN = 16;
+    const BLOCK_SPACING = 12;
 
     const computedPages: PageConfig[] = [];
     let currentPageNumber = 1;
-    let currentSpace = usableHeightFirstPage;
+    let currentY = PAGE_TOP_RESERVE;
     let currentPageContent: any[] = [];
+    let iterationCount = 0;
+    const MAX_ITERATIONS = 800;
 
     const startNewPage = () => {
       if (currentPageContent.length > 0) {
@@ -645,16 +674,16 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
         });
         currentPageNumber++;
       }
-      currentSpace = usableHeightSubsequentPage;
+      currentY = CONTINUATION_TOP_RESERVE;
       currentPageContent = [];
     };
 
-    // Loop categories
+    // Loop through each subject category (Spiritual Health, Learning Journey, Weekly Lessons, Unit Activity)
     categoriesList.forEach((cat) => {
-      const catHeaderHeight = getMeasHeight(`cat-header-${cat.id}`, 25);
-      const tblHeaderHeight = getMeasHeight(`tbl-header-${cat.id}`, 25);
+      const SECTION_HEADER_HEIGHT = getMeasHeight(`cat-header-${cat.id}`, 24) + 4; // text bar + mb-1
+      const TABLE_HEADER_HEIGHT = getMeasHeight(`tbl-header-${cat.id}`, 26); // table thead row
 
-      // Check if cat header + tbl header + first goal of first subject fits
+      // Check first subject & first goal of category
       const firstSubj = cat.subjects[0];
       const firstGoal = firstSubj?.goals?.[0];
       let firstRowHeight = 45;
@@ -663,8 +692,12 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
         firstRowHeight = getMeasHeight(rowMeasId, 45);
       }
 
-      const neededStartHeight = catHeaderHeight + tblHeaderHeight + firstRowHeight;
-      if (currentSpace < neededStartHeight && currentPageContent.length > 0) {
+      // Minimum space required to start a category:
+      // Category header + Table thead + at least 1 goal row + table bottom margin
+      const minCategoryStartHeight = SECTION_HEADER_HEIGHT + TABLE_HEADER_HEIGHT + firstRowHeight + TABLE_BOTTOM_MARGIN;
+
+      // If predicted bottom exceeds CONTENT_MAX_Y, start category on a fresh page
+      if (currentY + minCategoryStartHeight > CONTENT_MAX_Y && currentPageContent.length > 0) {
         startNewPage();
       }
 
@@ -673,36 +706,50 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
         type: 'category-header',
         catId: cat.id,
         catName: cat.name,
-        height: catHeaderHeight
+        height: SECTION_HEADER_HEIGHT
       });
-      currentSpace -= catHeaderHeight;
+      currentY += SECTION_HEADER_HEIGHT;
 
       let currentTableSubjects: any[] = [];
 
       cat.subjects.forEach((subj, sIdx) => {
+        const rowNo = sIdx + 1;
         let subjectGoalsForPage: any[] = [];
         const goalsList = subj.goals.length > 0 ? subj.goals : [{ id: 'empty', text: '(No learning goals recorded)', remark: '-' }];
 
         goalsList.forEach((goal: any, gIdx: number) => {
+          if (++iterationCount > MAX_ITERATIONS) {
+            throw new Error("Paginasi melebihi batas iterasi maksimal (safety guard).");
+          }
+
           const rowMeasId = `row-${cat.id}-${subj.name.replace(/[^a-zA-Z0-9]/g, '_')}-${goal.id}`;
-          const rowHeight = getMeasHeight(rowMeasId, 45);
+          let rowHeight = getMeasHeight(rowMeasId, 45);
 
-          const isFirstGoalOfTable = currentTableSubjects.length === 0 && subjectGoalsForPage.length === 0;
-          const neededSpace = isFirstGoalOfTable ? (tblHeaderHeight + rowHeight) : rowHeight;
+          // Guard against single rows taller than the entire page content area
+          const maxAllowedRowHeight = CONTENT_MAX_Y - CONTINUATION_TOP_RESERVE - SECTION_HEADER_HEIGHT - TABLE_HEADER_HEIGHT - TABLE_BOTTOM_MARGIN;
+          if (rowHeight > maxAllowedRowHeight) {
+            rowHeight = maxAllowedRowHeight;
+          }
 
-          // If row does not fit
-          if (currentSpace < neededSpace && (currentPageContent.length > 0 || currentTableSubjects.length > 0 || subjectGoalsForPage.length > 0)) {
-            // Flush current page table if there's any
+          // If table is not open yet on this page, opening it requires the table header (thead)
+          const isTableOpenOnPage = currentTableSubjects.length > 0 || subjectGoalsForPage.length > 0;
+          const costToPlace = isTableOpenOnPage ? rowHeight : (TABLE_HEADER_HEIGHT + rowHeight);
+          const predictedBottomY = currentY + costToPlace + TABLE_BOTTOM_MARGIN;
+
+          // If row cannot fit within CONTENT_MAX_Y, break to new page
+          if (predictedBottomY > CONTENT_MAX_Y && (currentPageContent.length > 0 || isTableOpenOnPage)) {
+            // Flush current goals of this subject into the table slice
             if (subjectGoalsForPage.length > 0) {
               currentTableSubjects.push({
                 name: subj.name,
                 goals: [...subjectGoalsForPage],
-                startIndex: sIdx + 1,
+                startIndex: rowNo,
                 isContinued: gIdx > subjectGoalsForPage.length
               });
               subjectGoalsForPage = [];
             }
 
+            // Flush table to current page
             if (currentTableSubjects.length > 0) {
               currentPageContent.push({
                 type: 'subject-table',
@@ -714,29 +761,35 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
 
             startNewPage();
 
-            // Add continued category header on new page
+            // Repeat section title on continuation page with clean spacing
             currentPageContent.push({
               type: 'category-header-continued',
               catId: cat.id,
               catName: `${cat.name} (Continued)`,
-              height: catHeaderHeight
+              height: SECTION_HEADER_HEIGHT
             });
-            currentSpace -= catHeaderHeight;
+            currentY += SECTION_HEADER_HEIGHT;
           }
 
+          // Place goal into subject slice
           subjectGoalsForPage.push({
             id: goal.id,
             text: goal.text,
             remark: goal.remark
           });
-          currentSpace -= rowHeight;
+
+          if (currentTableSubjects.length === 0 && subjectGoalsForPage.length === 1) {
+            currentY += TABLE_HEADER_HEIGHT + rowHeight;
+          } else {
+            currentY += rowHeight;
+          }
         });
 
         if (subjectGoalsForPage.length > 0) {
           currentTableSubjects.push({
             name: subj.name,
             goals: [...subjectGoalsForPage],
-            startIndex: sIdx + 1,
+            startIndex: rowNo,
             isContinued: goalsList.length > subjectGoalsForPage.length && subjectGoalsForPage.length > 0
           });
           subjectGoalsForPage = [];
@@ -750,39 +803,42 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
           subjects: [...currentTableSubjects]
         });
         currentTableSubjects = [];
+        currentY += TABLE_BOTTOM_MARGIN;
       }
     });
 
     // 1. GENERAL COMMENTS BLOCK
-    const neededCommentsHeight = 30 + commentsHeight;
-    if (currentSpace < neededCommentsHeight && currentPageContent.length > 0) {
+    const commentsTotalCost = commentsHeight + BLOCK_SPACING;
+    if (currentY + commentsTotalCost > CONTENT_MAX_Y && currentPageContent.length > 0) {
       startNewPage();
     }
     currentPageContent.push({
       type: 'general-comments',
       height: commentsHeight
     });
-    currentSpace -= neededCommentsHeight;
+    currentY += commentsTotalCost;
 
     // 2. NOTES & ATTENDANCE BLOCK
-    if (currentSpace < notesAttendanceHeight && currentPageContent.length > 0) {
+    const notesTotalCost = notesAttendanceHeight + BLOCK_SPACING;
+    if (currentY + notesTotalCost > CONTENT_MAX_Y && currentPageContent.length > 0) {
       startNewPage();
     }
     currentPageContent.push({
       type: 'notes-attendance',
       height: notesAttendanceHeight
     });
-    currentSpace -= notesAttendanceHeight;
+    currentY += notesTotalCost;
 
     // 3. SIGNATORY BLOCK
-    if (currentSpace < signatoryHeight && currentPageContent.length > 0) {
+    const signatoryTotalCost = signatoryHeight + BLOCK_SPACING;
+    if (currentY + signatoryTotalCost > CONTENT_MAX_Y && currentPageContent.length > 0) {
       startNewPage();
     }
     currentPageContent.push({
       type: 'signatory',
       height: signatoryHeight
     });
-    currentSpace -= signatoryHeight;
+    currentY += signatoryTotalCost;
 
     // Finish last page
     if (currentPageContent.length > 0) {
