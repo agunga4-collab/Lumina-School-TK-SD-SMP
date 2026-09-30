@@ -1394,6 +1394,23 @@ service cloud.firestore {
       allow delete: if isAdmin() || isKindergartenHeadUnit() || isSecretaryKindy();
     }
 
+    match /kg_midterm_delivery_tracking/{trackingId} {
+      allow read: if isSignedIn() && (
+        isAdmin() ||
+        isKindergartenHeadUnit() ||
+        isSecretaryKindy() ||
+        (isTeacher() && (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL')) ||
+        (resource != null && (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)))
+      );
+      allow write: if isSignedIn() && (
+        isAdmin() ||
+        isKindergartenHeadUnit() ||
+        isSecretaryKindy() ||
+        (isTeacher() && (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL')) ||
+        (resource != null && (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)))
+      );
+    }
+
     match /published_junior_high_monthly_reports/{reportId} {
       allow read: if isActive() && (
         isJuniorHighStaff() ||

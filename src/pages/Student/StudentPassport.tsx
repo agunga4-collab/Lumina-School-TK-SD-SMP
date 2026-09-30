@@ -11,7 +11,8 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { auth, db, getParentStudentLinks } from '../../lib/firebase';
-import { doc, getDoc, getDocs, collection, query, where, orderBy } from 'firebase/firestore';
+import { doc, getDoc, getDocs, setDoc, collection, query, where, orderBy } from 'firebase/firestore';
+import { toast } from 'sonner';
 import { getKindergartenClasses, getKindergartenStudents, getUnitClasses, getUnitStudents } from '../../lib/kindergartenMetadataCache';
 import { ACTIVITY_LABEL_MAP, DOMAIN_LABEL_MAP } from '../../lib/kindergartenWeeklyReport';
 import { useAcademicYear } from '../../context/AcademicYearContext';
@@ -156,6 +157,10 @@ export default function StudentPassport() {
   const [jhSelfExplorationLogs, setJhSelfExplorationLogs] = React.useState<Record<string, any[]>>({});
   const [jhSelfExplorationAssessments, setJhSelfExplorationAssessments] = React.useState<Record<string, any[]>>({});
 
+  // Kindergarten Midterm delivery reports state
+  const [activeMidtermReports, setActiveMidtermReports] = React.useState<any[]>([]);
+  const [isFetchingMidtermReports, setIsFetchingMidtermReports] = React.useState<boolean>(false);
+
   // Reset tab on unit transition
   React.useEffect(() => {
     setActiveTab('overview');
@@ -284,6 +289,77 @@ export default function StudentPassport() {
 
     loadRegistries();
   }, [currentUser, userRole, activeYear, activeUnit]);
+
+  // Fetch Kindergarten Midterm Report tracking for selected student
+  React.useEffect(() => {
+    if (!selectedStudentId || activeUnit !== 'KINDERGARTEN') return;
+
+    const fetchStudentMidtermReports = async () => {
+      setIsFetchingMidtermReports(true);
+      try {
+        const q = query(
+          collection(db, 'kg_midterm_delivery_tracking'),
+          where('studentId', '==', selectedStudentId),
+          where('activeForStudent', '==', true)
+        );
+        const snap = await getDocs(q);
+        const list: any[] = [];
+        snap.docs.forEach(docSnap => {
+          const data = docSnap.data();
+          if (data.deliveryStatus !== 'WITHDRAWN') {
+            list.push({ id: docSnap.id, ...data });
+          }
+        });
+        setActiveMidtermReports(list);
+      } catch (err) {
+        console.error('Error loading student midterm reports:', err);
+      } finally {
+        setIsFetchingMidtermReports(false);
+      }
+    };
+
+    fetchStudentMidtermReports();
+  }, [selectedStudentId, activeUnit]);
+
+  const handleOpenMidtermPdf = async (report: any) => {
+    const isStaff = ['TEACHER', 'HEAD_UNIT', 'SUPER_ADMIN', 'ADMIN'].includes(userRole);
+
+    if (!isStaff && report.id) {
+      try {
+        const trackingRef = doc(db, 'kg_midterm_delivery_tracking', report.id);
+        const historyLog = report.history || [];
+        historyLog.push({
+          action: 'VIEWED',
+          timestamp: Date.now(),
+          actorUid: currentUser?.uid || 'student'
+        });
+
+        const now = Date.now();
+        const updatePayload = {
+          deliveryStatus: 'VIEWED',
+          firstViewedAt: report.firstViewedAt || now,
+          lastViewedAt: now,
+          viewCount: (report.viewCount || 0) + 1,
+          history: historyLog,
+          updatedAt: now
+        };
+
+        await setDoc(trackingRef, updatePayload, { merge: true });
+
+        setActiveMidtermReports(prev =>
+          prev.map(r => r.id === report.id ? { ...r, ...updatePayload } : r)
+        );
+      } catch (err) {
+        console.error('Error updating view tracking:', err);
+      }
+    }
+
+    if (report.pdfUrl) {
+      window.open(report.pdfUrl, '_blank');
+    } else {
+      toast.error('URL PDF tidak tersedia.');
+    }
+  };
 
   // Whenever selectedStudentId changes, pull all data for this student
   React.useEffect(() => {
@@ -1804,6 +1880,17 @@ export default function StudentPassport() {
               <MessageCircle size={14} />
               Weekly Narrative Reports
             </button>
+
+            <button
+              onClick={() => setActiveTab('midterm_report')}
+              className={cn(
+                "px-5 py-3 rounded-full text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
+                activeTab === 'midterm_report' ? "bg-slate-950 text-white shadow-md shadow-slate-200" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+              )}
+            >
+              <FileText size={14} />
+              Laporan Midterm
+            </button>
           </>
         )}
       </div>
@@ -2718,6 +2805,79 @@ export default function StudentPassport() {
                   <p className="text-[11px] text-slate-400 mt-1.5">Teacher weekly comments or growth narratives have not been created for this period.</p>
                 </div>
               )}
+            </motion.div>
+          )}
+
+          {/* TAB: LAPORAN MIDTERM (KINDERGARTEN) */}
+          {activeTab === 'midterm_report' && (
+            <motion.div
+              key="kg-midterm-report-tab"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              className="space-y-6"
+            >
+              <div className="bg-white p-6 md:p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6 font-sans">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-slate-100">
+                  <div>
+                    <h3 className="text-base font-black text-slate-900 tracking-tight flex items-center gap-2">
+                      <FileText size={20} className="text-emerald-600" />
+                      Laporan Perkembangan Midterm (Midterm Progress Report)
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium mt-1">
+                      Laporan resmi hasil evaluasi pembelajaran siswa untuk unit Kindergarten.
+                    </p>
+                  </div>
+                </div>
+
+                {isFetchingMidtermReports ? (
+                  <div className="py-12 text-center space-y-3">
+                    <Loader2 size={24} className="animate-spin text-emerald-600 mx-auto" />
+                    <p className="text-xs text-slate-500 font-medium">Memuat laporan Midterm...</p>
+                  </div>
+                ) : activeMidtermReports.length === 0 ? (
+                  <div className="p-8 text-center bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+                    <AlertCircle size={24} className="text-slate-400 mx-auto" />
+                    <p className="text-xs font-bold text-slate-700">Belum Ada Laporan Midterm Aktif</p>
+                    <p className="text-[11px] text-slate-500">Laporan Midterm akan muncul di sini setelah diterbitkan dan dikirimkan oleh guru/sekolah.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {activeMidtermReports.map((report) => (
+                      <div key={report.id} className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4 hover:border-emerald-200 transition-all">
+                        <div className="flex justify-between items-start gap-2">
+                          <div className="space-y-1">
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-200 uppercase">
+                              Semester {report.semester || 1} • v{report.reportVersion || 1}
+                            </span>
+                            <h4 className="text-sm font-black text-slate-900 pt-1">
+                              Laporan Midterm TK - {report.academicYear || '2026/2027'}
+                            </h4>
+                          </div>
+                          {report.deliveryStatus === 'VIEWED' && (
+                            <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 flex items-center gap-1">
+                              <CheckCircle2 size={10} /> Dilihat
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="text-[11px] text-slate-500 space-y-1 border-t border-slate-200/80 pt-3">
+                          <p><b>Dikirim pada:</b> {report.sentAt ? new Date(report.sentAt).toLocaleString('id-ID') : '-'}</p>
+                          <p><b>Pengirim:</b> {report.sentByName || 'Sekolah'}</p>
+                        </div>
+
+                        <button
+                          onClick={() => handleOpenMidtermPdf(report)}
+                          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                        >
+                          <FileText size={14} />
+                          <span>Buka Laporan Midterm (PDF)</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </motion.div>
           )}
 

@@ -291,9 +291,21 @@ export default function MidtermSummary() {
   const [students, setStudents] = React.useState<any[]>(() => DEFAULT_STUDENTS);
   const [selectedStudentId, setSelectedStudentId] = React.useState<string>('');
   const [semester, setSemester] = React.useState<number>(1);
-  const [activeTab, setActiveTab] = React.useState<'kompilasi' | 'editor' | 'review' | 'publish'>('kompilasi');
+  const [activeTab, setActiveTab] = React.useState<'kompilasi' | 'editor' | 'review' | 'publish' | 'kirim'>('kompilasi');
   const [allClassDrafts, setAllClassDrafts] = React.useState<MidtermSummaryDraft[]>([]);
   const [midtermDrafts, setMidtermDrafts] = React.useState<Record<string, MidtermSummaryDraft>>({});
+  
+  // Kirim & Tracking states
+  const [studentConnections, setStudentConnections] = React.useState<Record<string, boolean>>({});
+  const [isCheckingConnections, setIsCheckingConnections] = React.useState<boolean>(false);
+  const [allPublishedReports, setAllPublishedReports] = React.useState<any[]>([]);
+  const [deliveryTrackingMap, setDeliveryTrackingMap] = React.useState<Record<string, any>>({});
+  const [isFetchingTracking, setIsFetchingTracking] = React.useState<boolean>(false);
+  const [withdrawalReason, setWithdrawalReason] = React.useState<string>('');
+  const [withdrawModal, setWithdrawModal] = React.useState<{ reportId: string; studentId: string; studentName: string; } | null>(null);
+  const [bulkSendConfirm, setBulkSendConfirm] = React.useState<boolean>(false);
+  const [historyModal, setHistoryModal] = React.useState<any | null>(null);
+  const [trackingFilter, setTrackingFilter] = React.useState<'ALL' | 'READY_TO_SEND' | 'SENT' | 'VIEWED' | 'NOT_VIEWED' | 'WITHDRAWN'>('ALL');
 
   // Date selections - Default to empty so all drafts in semester load immediately without requiring period selection
   const [startDateStr, setStartDateStr] = React.useState<string>('');
@@ -943,9 +955,11 @@ export default function MidtermSummary() {
       logFirestoreRead('attendanceReports', snap.docs.length || 1);
       
       const publishedMap: Record<string, any> = {};
+      const allList: any[] = [];
       snap.docs.forEach(docSnap => {
         const data = docSnap.data();
         const studentId = data.studentId;
+        allList.push({ id: docSnap.id, ...data });
         const existing = publishedMap[studentId];
         if (!existing || (data.version || 1) > (existing.version || 1)) {
           publishedMap[studentId] = {
@@ -955,12 +969,319 @@ export default function MidtermSummary() {
         }
       });
       setPublishedReports(publishedMap);
+      setAllPublishedReports(allList);
     } catch (err) {
       console.error('[MidtermSummary] Error fetching published reports:', err);
     } finally {
       setIsFetchingPublished(false);
     }
   }, [selectedClassId, activeYear, semester]);
+
+  const fetchDeliveryTrackingForClass = React.useCallback(async () => {
+    if (!selectedClassId) return;
+    setIsFetchingTracking(true);
+    try {
+      const q = query(
+        collection(db, 'kg_midterm_delivery_tracking'),
+        where('classId', '==', selectedClassId),
+        where('semester', '==', semester)
+      );
+      const snap = await getDocs(q);
+      const trackingMap: Record<string, any> = {};
+      snap.docs.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.studentId) {
+          trackingMap[data.studentId] = {
+            id: docSnap.id,
+            ...data
+          };
+        }
+      });
+      setDeliveryTrackingMap(trackingMap);
+    } catch (err) {
+      console.error('[MidtermSummary] Error fetching delivery tracking:', err);
+    } finally {
+      setIsFetchingTracking(false);
+    }
+  }, [selectedClassId, semester]);
+
+  const checkStudentConnections = React.useCallback(async () => {
+    if (!classStudents || classStudents.length === 0) return;
+    setIsCheckingConnections(true);
+    try {
+      const connections: Record<string, boolean> = {};
+      const q = query(
+        collection(db, 'users'),
+        where('role', '==', 'STUDENT')
+      );
+      const snap = await getDocs(q);
+      snap.docs.forEach(docSnap => {
+        const u = docSnap.data();
+        if (u.studentId) connections[u.studentId] = true;
+        if (u.luminaId) connections[u.luminaId] = true;
+        connections[docSnap.id] = true;
+      });
+
+      for (const st of classStudents) {
+        if (!connections[st.id]) {
+          if (st.email || st.hasUserAccount) {
+            connections[st.id] = true;
+          }
+        }
+      }
+      setStudentConnections(connections);
+    } catch (err) {
+      console.error('[MidtermSummary] Error checking student connections:', err);
+    } finally {
+      setIsCheckingConnections(false);
+    }
+  }, [classStudents]);
+
+  const handleSendReport = async (student: any) => {
+    const pubReport = publishedReports[student.id];
+    if (!pubReport) {
+      toast.error(`Laporan PDF belum terbit (published) untuk ${student.name}.`);
+      return;
+    }
+
+    const isConnected = !!studentConnections[student.id];
+    if (!isConnected) {
+      toast.error(`Akun siswa ${student.name} belum terhubung. Tidak dapat menandai sebagai terkirim.`);
+      return;
+    }
+
+    try {
+      const docId = `${student.id}_S${semester}_MIDTERM`;
+      const trackingRef = doc(db, 'kg_midterm_delivery_tracking', docId);
+
+      const existingTracking = deliveryTrackingMap[student.id];
+      const isResend = existingTracking && (existingTracking.deliveryStatus === 'SENT' || existingTracking.deliveryStatus === 'VIEWED');
+
+      const actorName = profile?.displayName || currentUser?.displayName || currentUser?.email || 'Guru / Admin';
+      const actorUid = profile?.uid || currentUser?.uid || 'system';
+
+      const historyLog = existingTracking?.history || [];
+      historyLog.push({
+        action: isResend ? 'RESENT' : 'SENT',
+        timestamp: Date.now(),
+        actorUid,
+        actorName,
+        version: pubReport.version || 1
+      });
+
+      const payload = {
+        id: docId,
+        studentId: student.id,
+        studentName: student.name,
+        classId: selectedClassId,
+        className: activeClassObj?.name || 'Class',
+        unit: 'KINDERGARTEN',
+        academicYear: activeYear || '2026/2027',
+        semester,
+        reportId: pubReport.id,
+        reportVersion: pubReport.version || 1,
+        pdfFileId: pubReport.driveFileId || '',
+        pdfUrl: pubReport.driveFileUrl || '',
+        sentAt: Date.now(),
+        sentBy: actorUid,
+        sentByName: actorName,
+        deliveryStatus: 'SENT',
+        activeForStudent: true,
+        viewCount: existingTracking?.viewCount || 0,
+        firstViewedAt: existingTracking?.firstViewedAt || null,
+        lastViewedAt: existingTracking?.lastViewedAt || null,
+        history: historyLog,
+        updatedAt: Date.now()
+      };
+
+      await setDoc(trackingRef, payload, { merge: true });
+      toast.success(`Laporan Midterm untuk ${student.name} berhasil ${isResend ? 'dikirim ulang' : 'dikirim'}!`);
+      await fetchDeliveryTrackingForClass();
+    } catch (err) {
+      console.error('Error sending report:', err);
+      toast.error('Gagal mengirim laporan. Silakan coba lagi.');
+    }
+  };
+
+  const handleBulkSendReady = async () => {
+    const readyTargets = classStudents.filter(stud => {
+      const pub = publishedReports[stud.id];
+      if (!pub) return false;
+      const track = deliveryTrackingMap[stud.id];
+      if (!track) return true;
+      return track.deliveryStatus === 'READY_TO_SEND' || track.deliveryStatus === 'WITHDRAWN';
+    });
+
+    if (readyTargets.length === 0) {
+      toast.error("Tidak ada laporan siswa yang siap dikirim.");
+      return;
+    }
+
+    let sentCount = 0;
+    let skippedNotConnected = 0;
+
+    for (const student of readyTargets) {
+      const pubReport = publishedReports[student.id];
+      if (!pubReport) continue;
+
+      const isConnected = !!studentConnections[student.id];
+      if (!isConnected) {
+        skippedNotConnected++;
+        continue;
+      }
+
+      const docId = `${student.id}_S${semester}_MIDTERM`;
+      const trackingRef = doc(db, 'kg_midterm_delivery_tracking', docId);
+
+      const existingTracking = deliveryTrackingMap[student.id];
+      const actorName = profile?.displayName || currentUser?.displayName || currentUser?.email || 'Guru / Admin';
+      const actorUid = profile?.uid || currentUser?.uid || 'system';
+
+      const historyLog = existingTracking?.history || [];
+      historyLog.push({
+        action: 'SENT',
+        timestamp: Date.now(),
+        actorUid,
+        actorName,
+        version: pubReport.version || 1
+      });
+
+      const payload = {
+        id: docId,
+        studentId: student.id,
+        studentName: student.name,
+        classId: selectedClassId,
+        className: activeClassObj?.name || 'Class',
+        unit: 'KINDERGARTEN',
+        academicYear: activeYear || '2026/2027',
+        semester,
+        reportId: pubReport.id,
+        reportVersion: pubReport.version || 1,
+        pdfFileId: pubReport.driveFileId || '',
+        pdfUrl: pubReport.driveFileUrl || '',
+        sentAt: Date.now(),
+        sentBy: actorUid,
+        sentByName: actorName,
+        deliveryStatus: 'SENT',
+        activeForStudent: true,
+        viewCount: existingTracking?.viewCount || 0,
+        firstViewedAt: existingTracking?.firstViewedAt || null,
+        lastViewedAt: existingTracking?.lastViewedAt || null,
+        history: historyLog,
+        updatedAt: Date.now()
+      };
+
+      await setDoc(trackingRef, payload, { merge: true });
+      sentCount++;
+    }
+
+    setBulkSendConfirm(false);
+    await fetchDeliveryTrackingForClass();
+
+    if (sentCount > 0) {
+      toast.success(`Berhasil mengirim ${sentCount} laporan Midterm!${skippedNotConnected > 0 ? ` (${skippedNotConnected} akun siswa belum terhubung)` : ''}`);
+    } else if (skippedNotConnected > 0) {
+      toast.error(`${skippedNotConnected} siswa belum memiliki akun yang terhubung. Laporan tidak dikirim.`);
+    }
+  };
+
+  const handleWithdrawReport = async () => {
+    if (!withdrawModal) return;
+    if (!withdrawalReason.trim()) {
+      toast.error("Alasan penarikan wajib diisi.");
+      return;
+    }
+
+    try {
+      const docId = `${withdrawModal.studentId}_S${semester}_MIDTERM`;
+      const trackingRef = doc(db, 'kg_midterm_delivery_tracking', docId);
+
+      const existingTracking = deliveryTrackingMap[withdrawModal.studentId];
+      const actorName = profile?.displayName || currentUser?.displayName || currentUser?.email || 'Admin / Kepala Unit';
+      const actorUid = profile?.uid || currentUser?.uid || 'system';
+
+      const historyLog = existingTracking?.history || [];
+      historyLog.push({
+        action: 'WITHDRAWN',
+        timestamp: Date.now(),
+        actorUid,
+        actorName,
+        reason: withdrawalReason.trim(),
+        version: existingTracking?.reportVersion || 1
+      });
+
+      const payload = {
+        activeForStudent: false,
+        deliveryStatus: 'WITHDRAWN',
+        withdrawnAt: Date.now(),
+        withdrawnBy: actorUid,
+        withdrawnByName: actorName,
+        withdrawalReason: withdrawalReason.trim(),
+        history: historyLog,
+        updatedAt: Date.now()
+      };
+
+      await setDoc(trackingRef, payload, { merge: true });
+      toast.success(`Akses laporan untuk ${withdrawModal.studentName} berhasil ditarik.`);
+      setWithdrawModal(null);
+      setWithdrawalReason('');
+      await fetchDeliveryTrackingForClass();
+    } catch (err) {
+      console.error('Error withdrawing report:', err);
+      toast.error('Gagal menarik laporan. Silakan coba lagi.');
+    }
+  };
+
+  const trackingSummary = React.useMemo(() => {
+    const total = classStudents.length;
+    let ready = 0;
+    let sent = 0;
+    let viewed = 0;
+    let notViewed = 0;
+    let withdrawn = 0;
+
+    classStudents.forEach(st => {
+      const pub = publishedReports[st.id];
+      const track = deliveryTrackingMap[st.id];
+
+      if (!pub) return;
+
+      if (!track || track.deliveryStatus === 'READY_TO_SEND') {
+        ready++;
+      } else if (track.deliveryStatus === 'SENT') {
+        sent++;
+        if (!track.firstViewedAt || track.viewCount === 0) {
+          notViewed++;
+        }
+      } else if (track.deliveryStatus === 'VIEWED') {
+        viewed++;
+      } else if (track.deliveryStatus === 'WITHDRAWN') {
+        withdrawn++;
+      }
+    });
+
+    return { total, ready, sent, viewed, notViewed, withdrawn };
+  }, [classStudents, publishedReports, deliveryTrackingMap]);
+
+  const filteredTrackingStudents = React.useMemo(() => {
+    return classStudents.filter(st => {
+      const pub = publishedReports[st.id];
+      const track = deliveryTrackingMap[st.id];
+      const status = !pub
+        ? 'NOT_PUBLISHED'
+        : (!track || track.deliveryStatus === 'READY_TO_SEND')
+          ? 'READY_TO_SEND'
+          : track.deliveryStatus;
+
+      if (trackingFilter === 'ALL') return true;
+      if (trackingFilter === 'READY_TO_SEND') return status === 'READY_TO_SEND';
+      if (trackingFilter === 'SENT') return status === 'SENT' || status === 'VIEWED';
+      if (trackingFilter === 'VIEWED') return status === 'VIEWED';
+      if (trackingFilter === 'NOT_VIEWED') return status === 'SENT' && (!track?.firstViewedAt || track?.viewCount === 0);
+      if (trackingFilter === 'WITHDRAWN') return status === 'WITHDRAWN';
+      return true;
+    });
+  }, [classStudents, publishedReports, deliveryTrackingMap, trackingFilter]);
 
   const checkHasUnsavedChanges = (
     comment: string
@@ -1222,7 +1543,9 @@ export default function MidtermSummary() {
   React.useEffect(() => {
     fetchMidtermDraftsForClass();
     fetchPublishedReportsForClass();
-  }, [fetchMidtermDraftsForClass, fetchPublishedReportsForClass]);
+    fetchDeliveryTrackingForClass();
+    checkStudentConnections();
+  }, [fetchMidtermDraftsForClass, fetchPublishedReportsForClass, fetchDeliveryTrackingForClass, checkStudentConnections]);
 
   React.useEffect(() => {
     let active = true;
@@ -3017,6 +3340,17 @@ export default function MidtermSummary() {
         >
           4. Publish PDF
         </button>
+        <button
+          onClick={() => confirmNavigation('tab', 'kirim')}
+          className={cn(
+            "px-5 py-3 text-xs font-black transition-all cursor-pointer border-b-2 -mb-[2px] tracking-tight flex items-center gap-1.5 whitespace-nowrap",
+            activeTab === 'kirim'
+              ? "border-[#109E58] text-[#109E58]"
+              : "border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200"
+          )}
+        >
+          5. Kirim & Tracking
+        </button>
       </div>
 
       {/* DETAILED WORKFLOW BODY (SPLIT VIEW) */}
@@ -4327,6 +4661,297 @@ export default function MidtermSummary() {
             </div>
           )}
 
+          {/* TAB 5: KIRIM & TRACKING CONTENT */}
+          {activeTab === 'kirim' && (
+            <div className="space-y-6 lg:col-span-12">
+              
+              {/* Ringkasan Roster dan Periode Aktif */}
+              <div className="bg-white p-6 rounded-3xl border border-gray-150 shadow-sm space-y-5 font-sans">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b border-gray-100">
+                  <div>
+                    <h2 className="text-base font-black text-gray-900 uppercase tracking-tight flex items-center gap-2 font-sans">
+                      <Send size={18} className="text-[#109E58]" />
+                      Pengiriman & Tracking Laporan Midterm
+                    </h2>
+                    <p className="text-xs text-gray-500 font-medium mt-0.5">
+                      Kelas: <span className="font-bold text-gray-800">{activeClassObj?.name || 'Unknown'}</span> | Semester {semester} | T.A. {activeYear || '2026/2027'}
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => setBulkSendConfirm(true)}
+                    disabled={trackingSummary.ready === 0}
+                    className="bg-[#109E58] hover:bg-[#0e8a4d] disabled:opacity-40 disabled:cursor-not-allowed text-white font-extrabold text-xs px-5 py-2.5 rounded-2xl flex items-center gap-2 shadow-md shadow-emerald-600/10 cursor-pointer transition-all"
+                  >
+                    <Send size={14} />
+                    <span>Kirim Semua yang Siap ({trackingSummary.ready})</span>
+                  </button>
+                </div>
+
+                {/* Metric Cards Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                  <div className="bg-gray-50 border border-gray-150 rounded-2xl p-3.5 space-y-1">
+                    <span className="text-[10px] font-black uppercase text-gray-400 tracking-wider">Total Roster</span>
+                    <p className="text-xl font-black text-gray-900">{trackingSummary.total}</p>
+                  </div>
+                  <div className="bg-amber-50/70 border border-amber-200/60 rounded-2xl p-3.5 space-y-1">
+                    <span className="text-[10px] font-black uppercase text-amber-700 tracking-wider">Siap Dikirim</span>
+                    <p className="text-xl font-black text-amber-900">{trackingSummary.ready}</p>
+                  </div>
+                  <div className="bg-blue-50/70 border border-blue-200/60 rounded-2xl p-3.5 space-y-1">
+                    <span className="text-[10px] font-black uppercase text-blue-700 tracking-wider">Terkirim</span>
+                    <p className="text-xl font-black text-blue-900">{trackingSummary.sent}</p>
+                  </div>
+                  <div className="bg-emerald-50/70 border border-emerald-200/60 rounded-2xl p-3.5 space-y-1">
+                    <span className="text-[10px] font-black uppercase text-emerald-700 tracking-wider">Dilihat</span>
+                    <p className="text-xl font-black text-emerald-900">{trackingSummary.viewed}</p>
+                  </div>
+                  <div className="bg-slate-100/70 border border-slate-250 rounded-2xl p-3.5 space-y-1">
+                    <span className="text-[10px] font-black uppercase text-slate-600 tracking-wider">Belum Dilihat</span>
+                    <p className="text-xl font-black text-slate-800">{trackingSummary.notViewed}</p>
+                  </div>
+                  <div className="bg-rose-50/70 border border-rose-200/60 rounded-2xl p-3.5 space-y-1">
+                    <span className="text-[10px] font-black uppercase text-rose-700 tracking-wider">Ditarik</span>
+                    <p className="text-xl font-black text-rose-900">{trackingSummary.withdrawn}</p>
+                  </div>
+                </div>
+
+                {/* Filter Controls */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                  <div className="flex flex-wrap items-center gap-1.5 bg-gray-100 p-1 rounded-2xl border border-gray-200 text-xs">
+                    {(['ALL', 'READY_TO_SEND', 'SENT', 'VIEWED', 'NOT_VIEWED', 'WITHDRAWN'] as const).map(fKey => {
+                      const labels: Record<string, string> = {
+                        ALL: 'Semua',
+                        READY_TO_SEND: 'Siap Dikirim',
+                        SENT: 'Terkirim',
+                        VIEWED: 'Dilihat',
+                        NOT_VIEWED: 'Belum Dilihat',
+                        WITHDRAWN: 'Ditarik'
+                      };
+                      const isAct = trackingFilter === fKey;
+                      return (
+                        <button
+                          key={fKey}
+                          onClick={() => setTrackingFilter(fKey)}
+                          className={cn(
+                            "px-3 py-1.5 rounded-xl font-extrabold transition-all cursor-pointer text-[11px]",
+                            isAct
+                              ? "bg-white text-gray-900 shadow-xs border border-gray-200"
+                              : "text-gray-500 hover:text-gray-800"
+                          )}
+                        >
+                          {labels[fKey]}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      fetchPublishedReportsForClass();
+                      fetchDeliveryTrackingForClass();
+                      checkStudentConnections();
+                    }}
+                    className="p-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition-all cursor-pointer flex items-center gap-1 text-xs font-bold"
+                    title="Refresh Status"
+                  >
+                    <RefreshCw size={14} className={isFetchingTracking ? "animate-spin" : ""} />
+                    <span>Refresh</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Tabel Status Pengiriman & Tracking */}
+              <div className="bg-white rounded-3xl border border-gray-150 shadow-sm overflow-hidden font-sans">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-gray-50/80 border-b border-gray-200 text-[10px] font-black uppercase text-gray-500 tracking-wider">
+                        <th className="py-3.5 px-4 w-12 text-center">No</th>
+                        <th className="py-3.5 px-4">Nama Siswa</th>
+                        <th className="py-3.5 px-4">Status Laporan</th>
+                        <th className="py-3.5 px-4 text-center">Versi</th>
+                        <th className="py-3.5 px-4">Waktu Dikirim</th>
+                        <th className="py-3.5 px-4">Status Dilihat</th>
+                        <th className="py-3.5 px-4 text-right">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 text-xs">
+                      {filteredTrackingStudents.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="py-8 text-center text-gray-400 italic">
+                            Tidak ada data siswa sesuai filter ini.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredTrackingStudents.map((stud, idx) => {
+                          const pub = publishedReports[stud.id];
+                          const track = deliveryTrackingMap[stud.id];
+                          const isConnected = !!studentConnections[stud.id];
+
+                          let statusKey: 'NOT_PUBLISHED' | 'READY_TO_SEND' | 'SENT' | 'VIEWED' | 'WITHDRAWN' = 'NOT_PUBLISHED';
+                          if (pub) {
+                            if (!track || track.deliveryStatus === 'READY_TO_SEND') {
+                              statusKey = 'READY_TO_SEND';
+                            } else {
+                              statusKey = track.deliveryStatus || 'READY_TO_SEND';
+                            }
+                          }
+
+                          return (
+                            <tr key={stud.id} className="hover:bg-gray-50/60 transition-colors">
+                              <td className="py-3.5 px-4 text-center text-gray-400 font-bold">{idx + 1}</td>
+                              
+                              <td className="py-3.5 px-4">
+                                <div className="space-y-0.5">
+                                  <p className="font-bold text-gray-900">{stud.name}</p>
+                                  {!isConnected ? (
+                                    <span className="inline-flex items-center gap-1 text-[9px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                                      <AlertCircle size={10} /> Akun siswa belum terhubung
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-gray-400 font-medium">Akun terhubung</span>
+                                  )}
+                                </div>
+                              </td>
+
+                              <td className="py-3.5 px-4">
+                                {statusKey === 'NOT_PUBLISHED' && (
+                                  <span className="px-2.5 py-1 rounded-full text-[10px] font-black bg-gray-100 text-gray-500 border border-gray-200 uppercase tracking-wide">
+                                    Belum Published
+                                  </span>
+                                )}
+                                {statusKey === 'READY_TO_SEND' && (
+                                  <span className="px-2.5 py-1 rounded-full text-[10px] font-black bg-amber-50 text-amber-800 border border-amber-200 uppercase tracking-wide">
+                                    Siap Dikirim
+                                  </span>
+                                )}
+                                {statusKey === 'SENT' && (
+                                  <span className="px-2.5 py-1 rounded-full text-[10px] font-black bg-blue-50 text-blue-800 border border-blue-200 uppercase tracking-wide">
+                                    Terkirim
+                                  </span>
+                                )}
+                                {statusKey === 'VIEWED' && (
+                                  <span className="px-2.5 py-1 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-800 border border-emerald-200 uppercase tracking-wide">
+                                    Dilihat
+                                  </span>
+                                )}
+                                {statusKey === 'WITHDRAWN' && (
+                                  <span className="px-2.5 py-1 rounded-full text-[10px] font-black bg-rose-50 text-rose-800 border border-rose-200 uppercase tracking-wide">
+                                    Ditarik
+                                  </span>
+                                )}
+                              </td>
+
+                              <td className="py-3.5 px-4 text-center font-bold text-gray-700">
+                                {pub ? `v${pub.version || 1}` : '-'}
+                              </td>
+
+                              <td className="py-3.5 px-4">
+                                {track?.sentAt ? (
+                                  <div className="space-y-0.5">
+                                    <p className="font-bold text-gray-800 text-[11px]">
+                                      {new Date(track.sentAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                    </p>
+                                    <p className="text-[10px] text-gray-400">
+                                      {new Date(track.sentAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} • oleh {track.sentByName || 'Guru'}
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <span className="text-gray-400 italic text-[11px]">-</span>
+                                )}
+                              </td>
+
+                              <td className="py-3.5 px-4">
+                                {statusKey === 'VIEWED' && track?.firstViewedAt ? (
+                                  <div className="space-y-0.5">
+                                    <p className="font-extrabold text-emerald-700 text-[11px] flex items-center gap-1">
+                                      <CheckCircle2 size={12} /> Dilihat ({track.viewCount || 1}x)
+                                    </p>
+                                    <p className="text-[10px] text-gray-400">
+                                      Pertama: {new Date(track.firstViewedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} {new Date(track.firstViewedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                                    </p>
+                                  </div>
+                                ) : statusKey === 'SENT' ? (
+                                  <span className="text-slate-500 font-medium text-[11px]">Belum Dilihat</span>
+                                ) : statusKey === 'WITHDRAWN' ? (
+                                  <span className="text-rose-600 font-bold text-[11px]">Akses Ditarik</span>
+                                ) : (
+                                  <span className="text-gray-400 italic text-[11px]">-</span>
+                                )}
+                              </td>
+
+                              <td className="py-3.5 px-4 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  
+                                  {/* Buka PDF link */}
+                                  {pub?.driveFileUrl && (
+                                    <a
+                                      href={pub.driveFileUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="p-2 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all cursor-pointer"
+                                      title="Buka PDF di Drive"
+                                    >
+                                      <Eye size={15} />
+                                    </a>
+                                  )}
+
+                                  {/* Send / Resend button */}
+                                  {pub && (
+                                    (statusKey === 'READY_TO_SEND' || statusKey === 'NOT_PUBLISHED') ? (
+                                      <button
+                                        onClick={() => handleSendReport(stud)}
+                                        className="bg-[#109E58] hover:bg-[#0e8a4d] text-white font-extrabold text-[11px] px-3 py-1.5 rounded-xl flex items-center gap-1 shadow-xs cursor-pointer transition-all"
+                                      >
+                                        <Send size={12} /> Kirim
+                                      </button>
+                                    ) : (
+                                      <button
+                                        onClick={() => handleSendReport(stud)}
+                                        className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-[11px] px-3 py-1.5 rounded-xl flex items-center gap-1 shadow-xs cursor-pointer transition-all"
+                                      >
+                                        <RefreshCw size={12} /> Kirim Ulang
+                                      </button>
+                                    )
+                                  )}
+
+                                  {/* Withdraw button */}
+                                  {isAuthorizer && (statusKey === 'SENT' || statusKey === 'VIEWED') && (
+                                    <button
+                                      onClick={() => setWithdrawModal({ reportId: track?.id || pub?.id, studentId: stud.id, studentName: stud.name })}
+                                      className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-extrabold text-[11px] px-2.5 py-1.5 rounded-xl flex items-center gap-1 cursor-pointer transition-all"
+                                    >
+                                      <XSquare size={12} /> Tarik
+                                    </button>
+                                  )}
+
+                                  {/* Audit History button */}
+                                  {track?.history && track.history.length > 0 && (
+                                    <button
+                                      onClick={() => setHistoryModal({ studentName: stud.name, history: track.history, tracking: track, pub })}
+                                      className="p-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition-all cursor-pointer"
+                                      title="Lihat Riwayat Audit"
+                                    >
+                                      <History size={15} />
+                                    </button>
+                                  )}
+
+                                </div>
+                              </td>
+
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+          )}
+
         </div>
 
       </div>
@@ -4532,6 +5157,205 @@ Draft untuk rentang sebelumnya tidak akan dihapus.`
                   </button>
                 </div>
 
+              </motion.div>
+            </div>
+          </div>
+        )}
+
+        {/* Bulk Send Confirmation Modal */}
+        {bulkSendConfirm && (
+          <div className="fixed inset-0 z-50 overflow-y-auto font-sans">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setBulkSendConfirm(false)}
+              className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm cursor-pointer"
+            />
+            <div className="flex min-h-screen items-center justify-center p-4">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="relative w-full max-w-md bg-white rounded-3xl p-6 shadow-xl border border-gray-150 space-y-5"
+              >
+                <div className="flex items-start gap-3 text-[#109E58]">
+                  <Send size={24} className="shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-black text-gray-900">Konfirmasi Kirim Semua Laporan Siap</h3>
+                    <p className="text-xs text-gray-500 font-medium leading-relaxed">
+                      Anda akan mengirimkan laporan Midterm Kindergarten ke Student Page untuk <b>{trackingSummary.ready} siswa</b> yang memiliki PDF terbit dan belum terkirim.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="max-h-40 overflow-y-auto bg-gray-50 rounded-2xl p-3 border border-gray-200 text-xs space-y-1">
+                  {classStudents
+                    .filter(st => {
+                      const pub = publishedReports[st.id];
+                      const track = deliveryTrackingMap[st.id];
+                      return pub && (!track || track.deliveryStatus === 'READY_TO_SEND' || track.deliveryStatus === 'WITHDRAWN');
+                    })
+                    .map((st, i) => (
+                      <div key={st.id} className="flex justify-between items-center py-0.5 text-gray-700 font-medium">
+                        <span>{i + 1}. {st.name}</span>
+                        {!studentConnections[st.id] ? (
+                          <span className="text-[10px] text-amber-700 font-bold">Akun belum terhubung</span>
+                        ) : (
+                          <span className="text-[10px] text-emerald-700 font-bold">Siap</span>
+                        )}
+                      </div>
+                    ))}
+                </div>
+
+                <div className="flex justify-end gap-2.5 pt-2">
+                  <button
+                    onClick={() => setBulkSendConfirm(false)}
+                    className="border border-gray-200 hover:bg-gray-50 text-gray-700 font-extrabold text-xs px-4 py-2.5 rounded-xl cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    onClick={handleBulkSendReady}
+                    className="bg-[#109E58] hover:bg-[#0e8a4d] text-white font-extrabold text-xs px-4.5 py-2.5 rounded-xl cursor-pointer shadow-md shadow-emerald-600/10"
+                  >
+                    Ya, Kirim Sekarang ({trackingSummary.ready})
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          </div>
+        )}
+
+        {/* Withdrawal Modal */}
+        {withdrawModal && (
+          <div className="fixed inset-0 z-50 overflow-y-auto font-sans">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setWithdrawModal(null)}
+              className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm cursor-pointer"
+            />
+            <div className="flex min-h-screen items-center justify-center p-4">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="relative w-full max-w-md bg-white rounded-3xl p-6 shadow-xl border border-gray-150 space-y-5"
+              >
+                <div className="flex items-start gap-3 text-rose-600">
+                  <XSquare size={24} className="shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-black text-gray-900">Tarik Akses Laporan Midterm</h3>
+                    <p className="text-xs text-gray-500 font-medium leading-relaxed">
+                      Siswa <b>{withdrawModal.studentName}</b> tidak akan dapat melihat laporan ini di Student Page. File PDF dan riwayat audit tetap tersimpan.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-black text-gray-700 uppercase tracking-wide">
+                    Alasan Penarikan <span className="text-rose-500">*</span>
+                  </label>
+                  <textarea
+                    value={withdrawalReason}
+                    onChange={(e) => setWithdrawalReason(e.target.value)}
+                    placeholder="Contoh: Terdapat perbaikan narasi/evaluasi pada bagian General Comment..."
+                    className="w-full border border-gray-250 rounded-2xl p-3 text-xs focus:ring-2 focus:ring-rose-500 focus:outline-none min-h-[90px]"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2.5 pt-2">
+                  <button
+                    onClick={() => {
+                      setWithdrawModal(null);
+                      setWithdrawalReason('');
+                    }}
+                    className="border border-gray-200 hover:bg-gray-50 text-gray-700 font-extrabold text-xs px-4 py-2.5 rounded-xl cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    onClick={handleWithdrawReport}
+                    className="bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs px-4.5 py-2.5 rounded-xl cursor-pointer shadow-md shadow-rose-600/10"
+                  >
+                    Ya, Tarik Akses Laporan
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          </div>
+        )}
+
+        {/* Audit History Modal */}
+        {historyModal && (
+          <div className="fixed inset-0 z-50 overflow-y-auto font-sans">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setHistoryModal(null)}
+              className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm cursor-pointer"
+            />
+            <div className="flex min-h-screen items-center justify-center p-4">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="relative w-full max-w-lg bg-white rounded-3xl p-6 shadow-xl border border-gray-150 space-y-5"
+              >
+                <div className="flex justify-between items-center pb-3 border-b border-gray-150">
+                  <h3 className="text-sm font-black text-gray-900 flex items-center gap-2">
+                    <History size={18} className="text-indigo-600" />
+                    Riwayat Laporan: {historyModal.studentName}
+                  </h3>
+                  <button
+                    onClick={() => setHistoryModal(null)}
+                    className="p-1 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+                  {historyModal.pub && (
+                    <div className="bg-blue-50/60 border border-blue-150 rounded-2xl p-3 text-xs space-y-1">
+                      <p className="font-extrabold text-blue-900">Publish PDF (v{historyModal.pub.version || 1})</p>
+                      <p className="text-[10px] text-blue-700">
+                        Dipublish pada {new Date(historyModal.pub.publishedAt).toLocaleString('id-ID')} oleh {historyModal.pub.publishedByEmail || 'Guru/Admin'}
+                      </p>
+                    </div>
+                  )}
+
+                  {historyModal.history && historyModal.history.map((log: any, i: number) => (
+                    <div key={i} className="bg-gray-50 border border-gray-200 rounded-2xl p-3 text-xs space-y-1">
+                      <div className="flex justify-between items-center font-extrabold text-gray-800">
+                        <span>Aksi: {log.action}</span>
+                        <span className="text-[10px] text-gray-400">
+                          {new Date(log.timestamp).toLocaleString('id-ID')}
+                        </span>
+                      </div>
+                      {log.actorName && (
+                        <p className="text-[10px] text-gray-500">Oleh: {log.actorName}</p>
+                      )}
+                      {log.reason && (
+                        <p className="text-[11px] text-rose-700 italic bg-rose-50 p-2 rounded-xl mt-1 border border-rose-150">
+                          Alasan: "{log.reason}"
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex justify-end pt-2 border-t border-gray-150">
+                  <button
+                    onClick={() => setHistoryModal(null)}
+                    className="border border-gray-200 hover:bg-gray-50 text-gray-700 font-extrabold text-xs px-4 py-2 rounded-xl cursor-pointer"
+                  >
+                    Tutup
+                  </button>
+                </div>
               </motion.div>
             </div>
           </div>

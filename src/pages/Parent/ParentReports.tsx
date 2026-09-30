@@ -27,7 +27,8 @@ import {
   where,
   getDocs,
   getDoc,
-  doc
+  doc,
+  setDoc
 } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 
@@ -238,6 +239,8 @@ export default function ParentReports() {
           setActiveTab('ACADEMIC');
         }
 
+        const mList: any[] = [];
+
         // Fetch Junior High published midterm reports
         try {
           const midtermSnap = await getDocs(
@@ -246,19 +249,59 @@ export default function ParentReports() {
               where('studentId', 'in', studentIdsToSearch.slice(0, 10))
             )
           );
-          const mList: PublishedMidtermReport[] = [];
           midtermSnap.docs.forEach(docSnap => {
             mList.push({ id: docSnap.id, ...docSnap.data() } as PublishedMidtermReport);
           });
-          // Keep highest version per midterm term/semester
-          mList.sort((a, b) => (b.generatedAt || 0) - (a.generatedAt || 0));
-          setMidtermReports(mList);
-          if (studentData.unitId === 'JUNIOR_HIGH' && mList.length > 0 && filteredReports.length === 0) {
-            setActiveTab('MIDTERM');
-          }
         } catch (mErr) {
-          console.warn("Failed to query Midterm reports for parent:", mErr);
-          setMidtermReports([]);
+          console.warn("Failed to query JH Midterm reports for parent:", mErr);
+        }
+
+        // Fetch Kindergarten published midterm reports
+        if (studentData.unitId === 'KINDERGARTEN') {
+          try {
+            const kgMidtermSnap = await getDocs(
+              query(
+                collection(db, 'published_kg_reports'),
+                where('studentId', 'in', studentIdsToSearch.slice(0, 10)),
+                where('reportType', '==', 'KINDY_MIDTERM_REPORT')
+              )
+            );
+            
+            // Map Kindergarten reports
+            kgMidtermSnap.docs.forEach(docSnap => {
+              const data = docSnap.data();
+              // Only display if SENT/VIEWED and NOT withdrawn
+              if ((data.deliveryStatus === 'SENT' || data.deliveryStatus === 'VIEWED') && data.activeForParent !== false) {
+                mList.push({
+                  id: docSnap.id,
+                  studentId: data.studentId,
+                  studentName: data.studentName,
+                  academicYear: data.academicYear,
+                  semester: data.semester,
+                  midtermTerm: data.semester === 1 ? '1' : '2',
+                  version: data.version || 1,
+                  generatedAt: data.publishedAt || Date.now(),
+                  classNameSnapshot: data.className || data.classNameSnapshot || 'TK',
+                  driveFileUrl: data.driveFileUrl,
+                  unit: 'KINDERGARTEN',
+                  deliveryStatus: data.deliveryStatus,
+                  firstViewedAt: data.firstViewedAt,
+                  lastViewedAt: data.lastViewedAt,
+                  viewCount: data.viewCount || 0
+                });
+              }
+            });
+          } catch (kgMidtermErr) {
+            console.warn("Failed to query Kindergarten Midterm reports for parent:", kgMidtermErr);
+          }
+        }
+
+        // Sort by generation timestamp descending
+        mList.sort((a, b) => (b.generatedAt || 0) - (a.generatedAt || 0));
+        setMidtermReports(mList);
+
+        if ((studentData.unitId === 'JUNIOR_HIGH' || studentData.unitId === 'KINDERGARTEN') && mList.length > 0 && filteredReports.length === 0) {
+          setActiveTab('MIDTERM');
         }
       } catch (err) {
         console.error(err);
@@ -283,10 +326,37 @@ export default function ParentReports() {
     }
   };
 
-  const handleOpenMidtermReport = async (rep: PublishedMidtermReport) => {
+  const handleOpenMidtermReport = async (rep: any) => {
     try {
-      await recordMidtermReportOpen(rep.id, currentUser?.email || 'parent', rep.studentId);
-      setMidtermReports(prev => prev.map(m => m.id === rep.id ? { ...m, isOpened: true, openCount: (m.openCount || 0) + 1 } : m));
+      if (rep.unit === 'KINDERGARTEN') {
+        const docRef = doc(db, 'published_kg_reports', rep.id);
+        const currentFirstViewed = rep.firstViewedAt || null;
+        const currentCount = rep.viewCount || 0;
+        
+        const updateData: any = {
+          deliveryStatus: 'VIEWED',
+          lastViewedAt: Date.now(),
+          viewCount: currentCount + 1
+        };
+        if (!currentFirstViewed) {
+          updateData.firstViewedAt = Date.now();
+        }
+        
+        await setDoc(docRef, updateData, { merge: true });
+        console.log(`[ParentReportOpen] Updated Kindergarten report tracking for ${rep.id}`);
+        
+        // Update local state so view counts refresh in UI
+        setMidtermReports(prev => prev.map(m => m.id === rep.id ? { 
+          ...m, 
+          deliveryStatus: 'VIEWED',
+          firstViewedAt: currentFirstViewed || updateData.firstViewedAt,
+          lastViewedAt: updateData.lastViewedAt,
+          viewCount: currentCount + 1
+        } : m));
+      } else {
+        await recordMidtermReportOpen(rep.id, currentUser?.email || 'parent', rep.studentId);
+        setMidtermReports(prev => prev.map(m => m.id === rep.id ? { ...m, isOpened: true, openCount: (m.openCount || 0) + 1 } : m));
+      }
     } catch (err) {
       console.warn('Error recording midterm report open:', err);
     }
