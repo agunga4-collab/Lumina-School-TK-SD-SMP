@@ -497,32 +497,28 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
           </thead>
           <tbody>
             {subjects.map((subj, sIdx) => {
-              const hasGoals = subj.goals.length > 0;
               return (
                 <React.Fragment key={`subj-${sIdx}`}>
                   {/* Subject Header Row */}
                   <tr className="bg-slate-50 font-extrabold border-b border-slate-900 text-slate-900 uppercase tr-keep-together">
-                    <td className="border-r border-slate-900 p-1.5 text-center">
-                      {!hasGoals ? (subj.isContinued ? "" : subj.originalNo) : ""}
+                    <td className="border-r border-b border-slate-900 p-1.5 text-center align-middle font-bold text-slate-900 text-[10px]">
+                      {subj.isContinued ? "" : subj.originalNo}
                     </td>
-                    <td className="border-r border-slate-900 p-1.5 font-bold" colSpan={4}>
+                    <td className="border-b border-slate-900 p-1.5 font-bold" colSpan={4}>
                       {subj.name}
                     </td>
                   </tr>
 
                   {/* Goals Rows */}
                   {subj.goals.map((goal, gIdx) => {
-                    const isFirstGoal = gIdx === 0;
+                    const isLastGoal = gIdx === subj.goals.length - 1;
                     return (
                       <tr key={goal.id} className="tr-keep-together">
-                        {isFirstGoal && (
-                          <td
-                            rowSpan={subj.goals.length}
-                            className="border-r border-b border-slate-900 p-1.5 text-center align-middle font-bold text-slate-900 text-[10px]"
-                          >
-                            {subj.isContinued ? "" : subj.originalNo}
-                          </td>
-                        )}
+                        <td
+                          className={`border-r border-slate-900 p-1.5 text-center align-middle text-[10px] ${
+                            isLastGoal ? "border-b border-slate-900" : ""
+                          }`}
+                        />
                         <td className="border-r border-b border-slate-900 p-1.5 leading-relaxed text-slate-800">
                           <div className="flex items-start gap-1">
                             <span className="shrink-0">•</span>
