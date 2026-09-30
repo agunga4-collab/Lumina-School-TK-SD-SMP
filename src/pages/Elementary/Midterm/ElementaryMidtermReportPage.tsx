@@ -767,6 +767,7 @@ function ElementaryMidtermReportPageContent() {
               reportSigningDate={signingDateFormatted}
               attendanceCutoffDate={cutoffDateFormatted}
               showAttendanceRecap={showAttendanceRecap}
+              onSwitchTab={(tab) => setActiveTab(tab)}
             />
           )}
 

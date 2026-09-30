@@ -2,7 +2,8 @@ import * as React from 'react';
 import { 
   FileCheck2, Eye, Download, Send, CheckCircle2, 
   AlertCircle, RefreshCw, User, Sparkles, X, Printer,
-  Check, Clock, FileText, AlertTriangle
+  Check, Clock, FileText, AlertTriangle, BookOpen,
+  ChevronDown, ChevronUp, Info, HelpCircle
 } from 'lucide-react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../../lib/firebase';
@@ -16,10 +17,12 @@ import {
   ElementaryMidtermStudentDataDoc,
   PublishedElementaryMidtermReport,
   ElementaryMidtermReportSnapshot,
-  getActiveMasterGoals
+  getActiveMasterGoals,
+  ELEMENTARY_OFFICIAL_SUBJECTS,
+  normalizeElementarySubjectName
 } from '../../../types/elementaryMidtermReport';
-import { normalizeElementarySubjectName } from '../../../types/elementaryMidtermReport';
 import type { Student, Class, ReportConfig, User as UserType } from '../../../types';
+import { toast } from 'sonner';
 
 interface ElementaryMidtermPublishPdfTabProps {
   selectedClassId: string;
@@ -41,6 +44,7 @@ interface ElementaryMidtermPublishPdfTabProps {
   reportSigningDate: string;
   attendanceCutoffDate: string;
   showAttendanceRecap?: boolean;
+  onSwitchTab?: (tab: 'GOALS' | 'COMMENTS' | 'REVIEW' | 'PUBLISH' | 'REKAP') => void;
 }
 
 export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPdfTabProps> = ({
@@ -62,10 +66,15 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
   cutoffDateRaw,
   reportSigningDate,
   attendanceCutoffDate,
-  showAttendanceRecap
+  showAttendanceRecap,
+  onSwitchTab
 }) => {
   // Modal Preview state
   const [previewStudent, setPreviewStudent] = React.useState<Student | null>(null);
+
+  // Modal Detail Learning Goals State (View-Only)
+  const [detailStudent, setDetailStudent] = React.useState<Student | null>(null);
+  const [showDebug, setShowDebug] = React.useState<boolean>(false);
 
   // Publishing State
   const [publishingStudentId, setPublishingStudentId] = React.useState<string | null>(null);
@@ -174,21 +183,180 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
     return map;
   }, [publishedReports]);
 
-  // Calculate Active Master Goals stats across valid official subjects
-  const allMasterGoalsList = React.useMemo(() => {
-    const list: Array<{ id: string; subjectKey: string }> = [];
-    Object.keys(masterGoalsMap || {}).forEach(key => {
-      const doc = masterGoalsMap[key];
-      const norm = normalizeElementarySubjectName(doc?.subjectKey || key);
-      const activeGoals = getActiveMasterGoals(doc);
-      if (norm && doc && activeGoals.length > 0) {
-        activeGoals.forEach(g => {
-          list.push({ id: g.id, subjectKey: norm });
-        });
-      }
+  // Calculate Learning Goals Progress for a specific student dynamically
+  const calculateStudentGoalsProgress = React.useCallback((student: Student) => {
+    if (!student) {
+      return {
+        totalGoalsCount: 0,
+        filledGoalsCount: 0,
+        isComplete: true,
+        applicableSubjects: [],
+        unfilledGoalsList: [],
+        systemBreakdown: [],
+        debugInfo: {
+          activeClassId: selectedClassId,
+          activeAcademicYear: selectedYear,
+          activeSemester: selectedSemester,
+          activePeriod: selectedTerm === '2' ? 'Midterm 2' : 'Midterm 1',
+          studentId: '',
+          studentName: '',
+          studentUa: '',
+          totalGoalIdsCount: 0,
+          allCountedGoalIds: [],
+          filledGoalIds: [],
+          unfilledGoalIds: [],
+          logs: []
+        }
+      };
+    }
+
+    const stData = studentDataMap[student.id];
+    const studentUa = (stData?.performingArtsUA || studentUaMap[student.id] || '').trim();
+
+    const logs: string[] = [];
+    const allCountedGoalIds: string[] = [];
+    const filledGoalIds: string[] = [];
+    const unfilledGoalIds: string[] = [];
+    const unfilledGoalsList: Array<{ subjectName: string; goalId: string; goalText: string }> = [];
+
+    const applicableSubjects: Array<{
+      subjectKey: string;
+      displayName: string;
+      category: 'SUBJECTS' | 'PROJECTS';
+      totalCount: number;
+      filledCount: number;
+      goals: Array<{
+        id: string;
+        text: string;
+        order: number;
+        remark: string;
+        isFilled: boolean;
+      }>;
+    }> = [];
+
+    const systemBreakdownMap: Record<string, number> = {};
+
+    // Sort master goal docs by official elementary subjects order
+    const sortedSubjKeys = Object.keys(masterGoalsMap || {}).sort((aKey, bKey) => {
+      const docA = masterGoalsMap[aKey];
+      const docB = masterGoalsMap[bKey];
+      const normA = normalizeElementarySubjectName(docA?.subjectKey || aKey);
+      const normB = normalizeElementarySubjectName(docB?.subjectKey || bKey);
+      const idxA = ELEMENTARY_OFFICIAL_SUBJECTS.indexOf(normA as any);
+      const idxB = ELEMENTARY_OFFICIAL_SUBJECTS.indexOf(normB as any);
+      return (idxA >= 0 ? idxA : 99) - (idxB >= 0 ? idxB : 99);
     });
-    return list;
-  }, [masterGoalsMap]);
+
+    sortedSubjKeys.forEach(subjKey => {
+      const doc = masterGoalsMap[subjKey];
+      if (!doc) return;
+
+      const normName = normalizeElementarySubjectName(doc.subjectKey || subjKey);
+      if (!normName) {
+        logs.push(`[EXCLUDE] Key "${subjKey}" could not be normalized.`);
+        return;
+      }
+
+      const rawKey = doc.subjectKey || subjKey;
+
+      // Performing Arts UA filtering
+      if (normName === 'Performing Arts') {
+        if (rawKey.includes('-') || rawKey.includes('::')) {
+          const keyUa = rawKey.split(/[-:]+/).pop()?.trim();
+          if (keyUa && studentUa && keyUa.toLowerCase() !== studentUa.toLowerCase()) {
+            logs.push(`[EXCLUDE] "${rawKey}" skipped for ${student.name}: student UA is "${studentUa}", doc UA is "${keyUa}".`);
+            return;
+          }
+        }
+      }
+
+      const activeGoals = getActiveMasterGoals(doc);
+      if (activeGoals.length === 0) {
+        logs.push(`[EXCLUDE] "${rawKey}" has 0 active goals selected.`);
+        return;
+      }
+
+      let displayName = normName;
+      if (normName === 'Performing Arts') {
+        const uaName = studentUa || (rawKey.includes('-') ? rawKey.split('-').pop()?.trim() : '');
+        if (uaName) displayName = `Performing Arts (${uaName})`;
+      }
+
+      let subjFilledCount = 0;
+      const goalsList = activeGoals.map((g, gIdx) => {
+        const rawRemark = stData?.remarks?.[g.id];
+        const remarkClean = (rawRemark || '').trim().toUpperCase();
+        const isFilled = ['A', 'D', 'B'].includes(remarkClean);
+
+        allCountedGoalIds.push(g.id);
+        if (isFilled) {
+          filledGoalIds.push(g.id);
+          subjFilledCount++;
+        } else {
+          unfilledGoalIds.push(g.id);
+          unfilledGoalsList.push({
+            subjectName: displayName,
+            goalId: g.id,
+            goalText: g.text || `Goal #${gIdx + 1}`
+          });
+        }
+
+        return {
+          id: g.id,
+          text: g.text || `Goal #${gIdx + 1}`,
+          order: g.order || gIdx + 1,
+          remark: isFilled ? remarkClean : '',
+          isFilled
+        };
+      });
+
+      const category: 'SUBJECTS' | 'PROJECTS' = (doc.category === 'PROJECTS' || normName === 'Projects') ? 'PROJECTS' : 'SUBJECTS';
+
+      applicableSubjects.push({
+        subjectKey: rawKey,
+        displayName,
+        category,
+        totalCount: goalsList.length,
+        filledCount: subjFilledCount,
+        goals: goalsList
+      });
+
+      systemBreakdownMap[displayName] = goalsList.length;
+      logs.push(`[INCLUDE] "${displayName}" added with ${goalsList.length} active goals (${subjFilledCount} filled).`);
+    });
+
+    const totalGoalsCount = allCountedGoalIds.length;
+    const filledGoalsCount = filledGoalIds.length;
+    const isComplete = totalGoalsCount === 0 || filledGoalsCount >= totalGoalsCount;
+
+    const systemBreakdown = Object.keys(systemBreakdownMap).map(k => ({
+      categoryOrSubject: k,
+      count: systemBreakdownMap[k]
+    }));
+
+    return {
+      totalGoalsCount,
+      filledGoalsCount,
+      isComplete,
+      applicableSubjects,
+      unfilledGoalsList,
+      systemBreakdown,
+      debugInfo: {
+        activeClassId: selectedClassId,
+        activeAcademicYear: selectedYear,
+        activeSemester: selectedSemester,
+        activePeriod: selectedTerm === '2' ? 'Midterm 2' : 'Midterm 1',
+        studentId: student.id,
+        studentName: student.name,
+        studentUa,
+        totalGoalIdsCount: totalGoalsCount,
+        allCountedGoalIds,
+        filledGoalIds,
+        unfilledGoalIds,
+        logs
+      }
+    };
+  }, [masterGoalsMap, studentDataMap, studentUaMap, selectedClassId, selectedYear, selectedSemester, selectedTerm]);
 
   // Publish Individual Report Function
   const handlePublishStudentReport = async (student: Student) => {
@@ -202,29 +370,17 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
 
     try {
       const studentDataDoc = studentDataMap[student.id];
+      const progress = calculateStudentGoalsProgress(student);
 
-      // Build Snapshot Categories
-      const subjectsList: Array<{ name: string; goals: Array<{ id: string; text: string; remark: string }> }> = [];
-
-      Object.keys(masterGoalsMap || {}).forEach(subjKey => {
-        const doc = masterGoalsMap[subjKey];
-        const norm = normalizeElementarySubjectName(doc?.subjectKey || subjKey);
-        const activeGoals = getActiveMasterGoals(doc);
-        if (norm && doc && activeGoals.length > 0) {
-          const goalsList = activeGoals.map(g => ({
-            id: g.id,
-            text: g.text,
-            remark: studentDataDoc?.remarks?.[g.id] || '-'
-          }));
-          
-          let displayName = norm;
-          if (norm === 'Performing Arts' && studentUaMap[student.id]) {
-            displayName = `Performing Arts (${studentUaMap[student.id]})`;
-          }
-
-          subjectsList.push({ name: displayName, goals: goalsList });
-        }
-      });
+      // Build Snapshot Categories using student's progress calculation
+      const subjectsList = progress.applicableSubjects.map(s => ({
+        name: s.displayName,
+        goals: s.goals.map(g => ({
+          id: g.id,
+          text: g.text,
+          remark: g.remark || '-'
+        }))
+      }));
 
       const categoriesSnapshot = [
         { name: 'SUBJECTS', subjects: subjectsList.filter(s => !s.name.includes('Projects')) },
@@ -366,7 +522,7 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
             <span>Daftar Siswa & Status Rapor ({students.length})</span>
           </div>
           <span className="text-[10.5px] font-medium text-slate-400">
-            Preview tersedia kapan saja untuk guru mengecek rapor
+            Klik status Learning Goals untuk memeriksa rincian pengisian
           </span>
         </div>
 
@@ -377,7 +533,7 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
                 <th className="p-3.5 text-center w-12 border-r border-slate-200">No</th>
                 <th className="p-3.5 border-r border-slate-200 min-w-[180px]">Nama Siswa</th>
                 <th className="p-3.5 border-r border-slate-200 w-32">NISN</th>
-                <th className="p-3.5 border-r border-slate-200 w-40 text-center">Learning Goals</th>
+                <th className="p-3.5 border-r border-slate-200 w-44 text-center">Learning Goals</th>
                 <th className="p-3.5 border-r border-slate-200 w-40 text-center">General Comments</th>
                 <th className="p-3.5 border-r border-slate-200 w-36 text-center">Status Rapor</th>
                 <th className="p-3.5 text-center w-48">Aksi</th>
@@ -389,15 +545,9 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
                 const publishedRep = publishedMap[st.id];
                 const isPub = Boolean(publishedRep);
 
-                // Calculate goals count
-                const totalGoals = allMasterGoalsList.length;
-                let filledGoalsCount = 0;
-                if (stData?.remarks && totalGoals > 0) {
-                  allMasterGoalsList.forEach(g => {
-                    if (stData.remarks[g.id]) filledGoalsCount++;
-                  });
-                }
-                const isGoalsComplete = totalGoals === 0 || filledGoalsCount >= totalGoals;
+                // Calculate goals count dynamically
+                const progress = calculateStudentGoalsProgress(st);
+                const isGoalsComplete = progress.isComplete;
 
                 // General Comments Review Status
                 const genComReviewStatus = stData?.generalCommentReviewStatus || (stData?.generalComment?.isFinal ? 'APPROVED' : 'DRAFT');
@@ -428,19 +578,25 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
 
                     {/* Learning Goals Column */}
                     <td className="p-3.5 border-r border-slate-100 text-center">
-                      {totalGoals === 0 ? (
-                        <span className="px-2.5 py-1 bg-slate-100 text-slate-500 font-bold text-[10.5px] rounded-full">
-                          Belum set goals
-                        </span>
-                      ) : isGoalsComplete ? (
-                        <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 font-black text-[10.5px] rounded-full inline-flex items-center gap-1">
-                          <Check size={12} /> Lengkap ({filledGoalsCount}/{totalGoals})
-                        </span>
-                      ) : (
-                        <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 font-bold text-[10.5px] rounded-full inline-flex items-center gap-1">
-                          <Clock size={12} /> ({filledGoalsCount}/{totalGoals})
-                        </span>
-                      )}
+                      <button
+                        onClick={() => setDetailStudent(st)}
+                        className="group inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10.5px] font-black transition-all cursor-pointer hover:scale-105"
+                        title="Klik untuk melihat Detail & Rincian Learning Goals"
+                      >
+                        {progress.totalGoalsCount === 0 ? (
+                          <span className="px-2.5 py-1 bg-slate-100 text-slate-500 font-bold rounded-full">
+                            Belum set goals
+                          </span>
+                        ) : isGoalsComplete ? (
+                          <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 font-black rounded-full inline-flex items-center gap-1 group-hover:bg-emerald-100 shadow-2xs">
+                            <Check size={12} /> Lengkap ({progress.filledGoalsCount}/{progress.totalGoalsCount})
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 font-bold rounded-full inline-flex items-center gap-1 group-hover:bg-amber-100 shadow-2xs">
+                            <Clock size={12} /> ({progress.filledGoalsCount}/{progress.totalGoalsCount} Terisi)
+                          </span>
+                        )}
+                      </button>
                     </td>
 
                     {/* General Comments Column */}
@@ -532,6 +688,304 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
         </div>
       </div>
 
+      {/* MODAL DETAIL LEARNING GOALS (VIEW-ONLY) */}
+      {detailStudent && (() => {
+        const progress = calculateStudentGoalsProgress(detailStudent);
+        return (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 z-50 overflow-y-auto">
+            <div className="bg-white rounded-3xl max-w-3xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150 font-sans text-slate-800">
+              
+              {/* Modal Header Bar */}
+              <div className="p-5 bg-slate-900 text-white border-b border-slate-800 flex items-center justify-between gap-4 shrink-0">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-black text-base border border-emerald-500/30 shrink-0">
+                    <BookOpen size={20} />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-base font-black text-white uppercase tracking-tight truncate">
+                      Detail Learning Goals — {detailStudent.name}
+                    </h3>
+                    <p className="text-xs text-slate-400 font-medium truncate">
+                      Kelas {selectedClass?.name || ''} • NISN: {detailStudent.nisn || (detailStudent as any)?.nis || '-'} • {selectedYear} S{selectedSemester} (Midterm {selectedTerm})
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => {
+                      setDetailStudent(null);
+                      if (onSwitchTab) {
+                        onSwitchTab('GOALS');
+                      } else {
+                        const p = new URLSearchParams(window.location.search);
+                        p.set('tab', 'learning-goals');
+                        window.location.search = p.toString();
+                      }
+                    }}
+                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                  >
+                    <BookOpen size={14} />
+                    <span>Buka Learning Goals & Remarks</span>
+                  </button>
+
+                  <button
+                    onClick={() => setDetailStudent(null)}
+                    className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Scrollable Body */}
+              <div className="p-6 overflow-y-auto space-y-6">
+
+                {/* Summary Banner */}
+                <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                  progress.isComplete
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                    : 'bg-amber-50 border-amber-200 text-amber-900'
+                }`}>
+                  <div className="flex items-center gap-2.5">
+                    {progress.isComplete ? (
+                      <CheckCircle2 size={22} className="text-emerald-600 shrink-0" />
+                    ) : (
+                      <AlertCircle size={22} className="text-amber-600 shrink-0" />
+                    )}
+                    <div>
+                      <span className="text-sm font-black uppercase tracking-tight block">
+                        {progress.filledGoalsCount} dari {progress.totalGoalsCount} Learning Goals telah dinilai
+                      </span>
+                      <p className="text-xs font-medium opacity-80 pt-0.5">
+                        {progress.isComplete
+                          ? 'Semua Learning Goals aktif sudah memiliki nilai A/D/B valid.'
+                          : `Terdapat ${progress.unfilledGoalsList.length} Learning Goal yang belum diisi nilai (A/D/B).`}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="shrink-0">
+                    <span className={`px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider ${
+                      progress.isComplete
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-amber-600 text-white'
+                    }`}>
+                      {progress.isComplete ? '100% Lengkap' : `${progress.unfilledGoalsList.length} Belum Diisi`}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Unfilled Goals Banner List (If Any) */}
+                {progress.unfilledGoalsList.length > 0 && (
+                  <div className="p-4 bg-red-50/70 border border-red-200 rounded-2xl space-y-3">
+                    <div className="flex items-center gap-2 text-red-900 font-extrabold text-xs uppercase tracking-wider">
+                      <AlertTriangle size={16} className="text-red-600" />
+                      <span>Daftar Learning Goals Belum Diisi ({progress.unfilledGoalsList.length})</span>
+                    </div>
+                    <div className="space-y-2">
+                      {progress.unfilledGoalsList.map((ug, uIdx) => (
+                        <div key={`unfilled-${uIdx}`} className="p-3 bg-white rounded-xl border border-red-100 flex items-start justify-between gap-3 text-xs shadow-2xs">
+                          <div className="space-y-0.5">
+                            <span className="px-2 py-0.5 bg-slate-100 text-slate-700 font-bold text-[10px] rounded-md">
+                              {ug.subjectName}
+                            </span>
+                            <p className="font-semibold text-slate-800 leading-relaxed pt-1">
+                              • {ug.goalText}
+                            </p>
+                          </div>
+                          <span className="px-2.5 py-1 bg-amber-100 text-amber-800 font-extrabold text-[10px] rounded-full shrink-0 flex items-center gap-1">
+                            <Clock size={11} /> Belum Diisi
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Grouped By Subject Detail */}
+                <div className="space-y-4">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-2 border-b border-slate-200 pb-2">
+                    <BookOpen size={16} className="text-emerald-600" />
+                    <span>Status Pengisian Per Mata Pelajaran</span>
+                  </h4>
+
+                  <div className="space-y-4">
+                    {progress.applicableSubjects.map((subj, sIdx) => (
+                      <div key={`subj-detail-${sIdx}`} className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-3">
+                        <div className="flex items-center justify-between pb-2 border-b border-slate-200/80">
+                          <span className="font-black text-slate-900 text-xs uppercase tracking-tight">
+                            {subj.displayName}
+                          </span>
+                          <span className={`px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold ${
+                            subj.filledCount === subj.totalCount
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            {subj.displayName}: {subj.filledCount}/{subj.totalCount} Terisi
+                          </span>
+                        </div>
+
+                        <div className="space-y-2">
+                          {subj.goals.map((g) => (
+                            <div key={g.id} className="p-2.5 bg-white rounded-xl border border-slate-200/60 flex items-center justify-between gap-3 text-xs">
+                              <div className="flex items-start gap-2 min-w-0">
+                                <span className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] mt-0.5 ${
+                                  g.isFilled
+                                    ? 'bg-emerald-100 text-emerald-700'
+                                    : 'bg-amber-100 text-amber-700'
+                                }`}>
+                                  {g.isFilled ? '✓' : '!'}
+                                </span>
+                                <span className="font-medium text-slate-800 leading-relaxed">
+                                  {g.text}
+                                </span>
+                              </div>
+
+                              <div className="shrink-0">
+                                {g.isFilled ? (
+                                  <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 font-extrabold text-[10.5px] rounded-lg inline-flex items-center gap-1">
+                                    ✓ Nilai: {g.remark}
+                                  </span>
+                                ) : (
+                                  <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 font-bold text-[10.5px] rounded-lg inline-flex items-center gap-1">
+                                    <Clock size={11} /> Belum Diisi
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* LG yang Dihitung Sistem */}
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                        <Info size={15} className="text-blue-600" />
+                        <span>LG yang Dihitung Sistem (Total: {progress.totalGoalsCount})</span>
+                      </h4>
+                      <p className="text-[11px] text-slate-500 pt-0.5">
+                        Rincian jumlah Learning Goals aktif yang relevan untuk konteks kelas, semester, dan unit activity saat ini.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-xl border border-slate-200 overflow-hidden text-xs">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-100 text-slate-700 font-extrabold uppercase text-[10px] tracking-wider border-b border-slate-200">
+                          <th className="p-2.5">Mata Pelajaran / Activity</th>
+                          <th className="p-2.5 text-center">Kategori</th>
+                          <th className="p-2.5 text-center">Jumlah Active Goal</th>
+                          <th className="p-2.5 text-center">Status Terisi</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-medium">
+                        {progress.applicableSubjects.map((s, idx) => (
+                          <tr key={`sys-breakdown-${idx}`} className="hover:bg-slate-50/60">
+                            <td className="p-2.5 font-bold text-slate-800">{s.displayName}</td>
+                            <td className="p-2.5 text-center text-slate-500 text-[10.5px]">{s.category}</td>
+                            <td className="p-2.5 text-center font-extrabold text-slate-900">{s.totalCount}</td>
+                            <td className="p-2.5 text-center">
+                              <span className={`font-bold text-[10.5px] ${s.filledCount === s.totalCount ? 'text-emerald-700' : 'text-amber-700'}`}>
+                                {s.filledCount}/{s.totalCount}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-slate-900 text-white font-black uppercase text-xs">
+                          <td className="p-2.5" colSpan={2}>Total Learning Goals Systems</td>
+                          <td className="p-2.5 text-center text-emerald-400">{progress.totalGoalsCount}</td>
+                          <td className="p-2.5 text-center">{progress.filledGoalsCount}/{progress.totalGoalsCount} Terisi</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Development Debug Section */}
+                <div className="border border-slate-300 rounded-2xl overflow-hidden">
+                  <button
+                    onClick={() => setShowDebug(!showDebug)}
+                    className="w-full p-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs uppercase tracking-wider flex items-center justify-between transition-colors cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      <span>🔧 Temporary Dev Debug Information</span>
+                      <span className="px-2 py-0.5 bg-slate-200 text-slate-800 text-[9.5px] rounded-md font-mono">
+                        Internal Logs
+                      </span>
+                    </span>
+                    {showDebug ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  </button>
+
+                  {showDebug && (
+                    <div className="p-4 bg-slate-950 text-slate-200 text-[11px] font-mono space-y-3 overflow-x-auto">
+                      <div>
+                        <span className="text-emerald-400 font-bold">// Active Context:</span>
+                        <div className="text-slate-300 pt-0.5">
+                          classId: "{progress.debugInfo.activeClassId}" | year: "{progress.debugInfo.activeAcademicYear}" | semester: "{progress.debugInfo.activeSemester}" | period: "{progress.debugInfo.activePeriod}"
+                        </div>
+                        <div className="text-slate-300">
+                          studentId: "{progress.debugInfo.studentId}" | studentName: "{progress.debugInfo.studentName}" | studentUa: "{progress.debugInfo.studentUa || 'N/A'}"
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-emerald-400 font-bold">// Calculated Summary:</span>
+                        <div className="text-slate-300 pt-0.5">
+                          totalLG: {progress.debugInfo.totalGoalIdsCount} | filledLG: {progress.debugInfo.filledGoalIds.length} | unfilledLG: {progress.debugInfo.unfilledGoalIds.length}
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-emerald-400 font-bold">// Counted Active Goal IDs ({progress.debugInfo.allCountedGoalIds.length}):</span>
+                        <div className="text-slate-400 pt-0.5 max-h-24 overflow-y-auto break-all bg-slate-900 p-2 rounded-lg">
+                          {JSON.stringify(progress.debugInfo.allCountedGoalIds)}
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-emerald-400 font-bold">// Filled Goal IDs ({progress.debugInfo.filledGoalIds.length}):</span>
+                        <div className="text-emerald-300/80 pt-0.5 max-h-24 overflow-y-auto break-all bg-slate-900 p-2 rounded-lg">
+                          {JSON.stringify(progress.debugInfo.filledGoalIds)}
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-emerald-400 font-bold">// Unfilled Goal IDs ({progress.debugInfo.unfilledGoalIds.length}):</span>
+                        <div className="text-amber-300/80 pt-0.5 max-h-24 overflow-y-auto break-all bg-slate-900 p-2 rounded-lg">
+                          {JSON.stringify(progress.debugInfo.unfilledGoalIds)}
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-emerald-400 font-bold">// Subject Inclusion / Exclusion Reason Logs:</span>
+                        <div className="text-slate-300 pt-0.5 space-y-0.5 bg-slate-900 p-2.5 rounded-lg max-h-36 overflow-y-auto">
+                          {progress.debugInfo.logs.map((log, lIdx) => (
+                            <div key={`log-${lIdx}`} className={log.startsWith('[EXCLUDE]') ? 'text-amber-400' : 'text-slate-300'}>
+                              {log}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
+
       {/* MODAL PREVIEW RAPOR MIDTERM ELEMENTARY */}
       {previewStudent && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 z-50 overflow-y-auto">
@@ -552,29 +1006,25 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
                 </div>
               </div>
 
-              {/* Modal Actions */}
-              <div className="flex items-center gap-2.5">
+              {/* Action Buttons inside Preview Header */}
+              <div className="flex items-center gap-2">
                 <button
                   onClick={handlePrintPdf}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs flex items-center gap-2 cursor-pointer transition-all border border-slate-700"
+                  className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs border border-slate-700"
                 >
                   <Printer size={14} />
-                  <span>Cetak / PDF</span>
+                  <span>Cetak PDF</span>
                 </button>
 
                 <button
-                  onClick={async () => {
-                    await handlePublishStudentReport(previewStudent);
-                  }}
-                  disabled={
-                    publishingStudentId === previewStudent.id ||
-                    !!dateConfigError ||
-                    !(
-                      (studentDataMap[previewStudent.id]?.generalCommentReviewStatus === 'APPROVED' || Boolean(studentDataMap[previewStudent.id]?.generalComment?.isFinal))
-                    )
-                  }
-                  className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 disabled:opacity-50 text-white font-extrabold rounded-xl text-xs uppercase tracking-wider flex items-center gap-2 cursor-pointer transition-all shadow-sm"
-                  title={dateConfigError || 'Publish Rapor'}
+                  onClick={() => handlePublishStudentReport(previewStudent)}
+                  disabled={publishingStudentId === previewStudent.id || Boolean(dateConfigError)}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all ${
+                    !dateConfigError
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer shadow-2xs'
+                      : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                  }`}
+                  title={dateConfigError || "Publish Rapor Midterm"}
                 >
                   {publishingStudentId === previewStudent.id ? (
                     <RefreshCw size={14} className="animate-spin" />
