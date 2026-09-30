@@ -374,7 +374,8 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
               name: isContinued ? `${subj.name} (Continued)` : subj.name,
               originalNo,
               isContinued,
-              goals: goalsForThisPage
+              goals: goalsForThisPage,
+              isLastChunk: goalIndex >= subj.goals.length
             });
           }
 
@@ -437,7 +438,8 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
               name: isContinued ? `${subj.name} (Continued)` : subj.name,
               originalNo,
               isContinued,
-              goals: goalsForThisPage
+              goals: goalsForThisPage,
+              isLastChunk: goalIndex >= subj.goals.length
             });
           }
 
@@ -469,7 +471,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
   const normalizedYear = effAcademicYear.replace(/\//g, '-');
 
   const renderPartitionedTable = (
-    subjects: Array<{ name: string; originalNo: number; isContinued?: boolean; goals: Array<{ id: string; text: string; remark: string }> }>,
+    subjects: Array<{ name: string; originalNo: number; isContinued?: boolean; isLastChunk?: boolean; goals: Array<{ id: string; text: string; remark: string }> }>,
     sectionTitle: string
   ) => {
     if (subjects.length === 0) return null;
@@ -508,9 +510,10 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                   </tr>
 
                   {/* Goals Rows */}
-                  {subj.goals.map((goal) => {
+                  {subj.goals.map((goal, gIdx) => {
+                    const isLastGoalInSubj = (gIdx === subj.goals.length - 1) && (subj.isLastChunk !== false);
                     return (
-                      <tr key={goal.id} className="border-b border-slate-900/40 tr-keep-together">
+                      <tr key={goal.id} className={`${isLastGoalInSubj ? 'border-b border-slate-900' : ''} tr-keep-together`}>
                         <td className="border-r border-slate-900 p-1.5 text-center text-slate-500 font-medium text-[9px]">
                           {/* Empty */}
                         </td>
