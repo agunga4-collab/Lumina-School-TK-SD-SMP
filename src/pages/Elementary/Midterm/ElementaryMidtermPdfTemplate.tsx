@@ -38,12 +38,14 @@ interface PageData {
     name: string;
     originalNo: number;
     isContinued?: boolean;
+    isLastChunk?: boolean;
     goals: Array<{ id: string; text: string; remark: string }>;
   }>;
   projectSubjects: Array<{
     name: string;
     originalNo: number;
     isContinued?: boolean;
+    isLastChunk?: boolean;
     goals: Array<{ id: string; text: string; remark: string }>;
   }>;
   showAcademicHeader?: boolean;
@@ -815,7 +817,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
                         </div>
                         <div className="border-t border-slate-900 pt-1 mt-1 text-center">
                           <p className="font-extrabold text-slate-900 text-[11px]">{effHomeroomName}</p>
-                          {effHomeroomNiy && <p className="text-[9px] text-slate-500">NIY: {effHomeroomNiy}</p>}
+                          <p className="text-[9px] text-slate-500">NIY: {effHomeroomNiy || '-'}</p>
                         </div>
                       </div>
 

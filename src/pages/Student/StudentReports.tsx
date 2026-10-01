@@ -44,6 +44,7 @@ export default function StudentReports() {
   const [kgReports, setKgReports] = React.useState<any[]>([]);
   const [kgMidtermReports, setKgMidtermReports] = React.useState<any[]>([]);
   const [elemMidtermReports, setElemMidtermReports] = React.useState<any[]>([]);
+  const [jhMidtermReports, setJhMidtermReports] = React.useState<any[]>([]);
   const [jhManualLinks, setJhManualLinks] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
 
@@ -62,6 +63,7 @@ export default function StudentReports() {
             luminaId: currentUser.luminaId || currentUser.uid,
             name: currentUser.displayName || currentUser.email || 'Ananda',
             email: currentUser.email || '',
+            currentUnit: currentUser.unitId || 'ELEMENTARY',
             unitId: currentUser.unitId || 'ELEMENTARY',
             academicYear: activeYear || '2025/2026',
             classId: (currentUser as any).classId || 'TBD',
@@ -215,13 +217,71 @@ export default function StudentReports() {
 
           // Fetch manual junior high PDF links if unit is JUNIOR_HIGH
           if (effectiveUnit === 'JUNIOR_HIGH') {
-            const primaryId = student?.id || currentUser?.luminaId || currentUser?.uid || '';
-            const qJh = query(
+            const primaryId = (student?.id || student?.luminaId || (currentUser as any)?.studentId || currentUser?.luminaId || currentUser?.uid || '').trim();
+            const candidateList = Array.from(candidateIds).filter(Boolean);
+            if (primaryId && !candidateList.includes(primaryId)) candidateList.push(primaryId);
+
+            // 1. Fetch Junior High Midterm Delivery Tracking based on studentId as primary key
+            const listJhMidterm: any[] = [];
+            for (const stId of candidateList) {
+              try {
+                const qJh = query(
+                  collection(db, 'jh_midterm_delivery_tracking'),
+                  where('studentId', '==', stId)
+                );
+                const snapJh = await getDocs(qJh);
+                snapJh.docs.forEach(docSnap => {
+                  const data = docSnap.data();
+                  const st = String(data.deliveryStatus || '').toUpperCase();
+                  if (
+                    data.activeForStudent !== false &&
+                    (st === 'SENT' || st === 'VIEWED')
+                  ) {
+                    if (!listJhMidterm.some(item => item.id === docSnap.id)) {
+                      listJhMidterm.push({ id: docSnap.id, ...data });
+                    }
+                  }
+                });
+              } catch (e) {
+                console.warn("[StudentReports] JH midterm studentId query error:", e);
+              }
+            }
+
+            // Also check by studentUid / studentAccountId if currentUser.uid is available
+            const userUid = currentUser?.uid || '';
+            if (userUid) {
+              try {
+                const qUid = query(
+                  collection(db, 'jh_midterm_delivery_tracking'),
+                  where('studentUid', '==', userUid)
+                );
+                const snapUid = await getDocs(qUid);
+                snapUid.docs.forEach(docSnap => {
+                  const data = docSnap.data();
+                  const st = String(data.deliveryStatus || '').toUpperCase();
+                  if (
+                    data.activeForStudent !== false &&
+                    (st === 'SENT' || st === 'VIEWED')
+                  ) {
+                    if (!listJhMidterm.some(item => item.id === docSnap.id)) {
+                      listJhMidterm.push({ id: docSnap.id, ...data });
+                    }
+                  }
+                });
+              } catch (e) {
+                console.warn("[StudentReports] JH midterm studentUid query error:", e);
+              }
+            }
+
+            setJhMidtermReports(listJhMidterm.sort((a, b) => (b.sentAt || b.updatedAt || 0) - (a.sentAt || a.updatedAt || 0)));
+
+            // 2. Fetch manual junior high PDF links
+            const qJhManual = query(
               collection(db, 'manual_junior_high_report_links'),
               where('studentId', '==', primaryId),
               where('status', '==', 'PUBLISHED')
             );
-            unsubscribeJh = onSnapshot(qJh, (snapshot) => {
+            unsubscribeJh = onSnapshot(qJhManual, (snapshot) => {
               const jhLinks = snapshot.docs.map(docSnap => ({
                 id: docSnap.id,
                 ...docSnap.data()
@@ -330,6 +390,49 @@ export default function StudentReports() {
       }
     } catch (err) {
       console.warn("Failed to update elem midterm tracking view:", err);
+    }
+
+    const pdfUrl = report.activePdfUrl || report.pdfUrl || report.driveFileUrl;
+    if (pdfUrl) {
+      window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+    } else {
+      toast.error("URL PDF tidak tersedia.");
+    }
+  };
+
+  const handleJhMidtermPdfClick = async (report: any) => {
+    try {
+      if (report.id) {
+        const trackingRef = doc(db, 'jh_midterm_delivery_tracking', report.id);
+        const historyLog = Array.isArray(report.history) ? [...report.history] : [];
+        historyLog.push({
+          action: 'VIEWED',
+          timestamp: Date.now(),
+          actorUid: currentUser?.uid || 'student'
+        });
+
+        const now = Date.now();
+        const updatePayload = {
+          deliveryStatus: 'VIEWED',
+          firstOpenedAt: report.firstOpenedAt || report.firstViewedAt || now,
+          firstViewedAt: report.firstViewedAt || report.firstOpenedAt || now,
+          lastOpenedAt: now,
+          lastViewedAt: now,
+          openCount: (report.openCount || report.viewCount || 0) + 1,
+          viewCount: (report.viewCount || report.openCount || 0) + 1,
+          openedByEmail: currentUser?.email || '',
+          history: historyLog,
+          updatedAt: now
+        };
+
+        await setDoc(trackingRef, updatePayload, { merge: true });
+
+        setJhMidtermReports(prev =>
+          prev.map(r => r.id === report.id ? { ...r, ...updatePayload } : r)
+        );
+      }
+    } catch (err) {
+      console.warn("Failed to update jh midterm tracking view:", err);
     }
 
     const pdfUrl = report.activePdfUrl || report.pdfUrl || report.driveFileUrl;
@@ -676,7 +779,7 @@ export default function StudentReports() {
         </p>
       </div>
 
-      {reports.length === 0 && jhManualLinks.length === 0 ? (
+      {reports.length === 0 && jhManualLinks.length === 0 && jhMidtermReports.length === 0 ? (
         <div className="bg-gray-50 border-2 border-dashed border-gray-200 p-20 rounded-[3rem] text-center space-y-4">
           <div className="w-20 h-20 bg-gray-100 rounded-[2rem] flex items-center justify-center mx-auto">
             <FileText className="text-gray-300" size={40} />
@@ -688,6 +791,72 @@ export default function StudentReports() {
         </div>
       ) : (
         <div className="space-y-12">
+          {/* SECTION: JUNIOR HIGH MIDTERM REPORT */}
+          {jhMidtermReports.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
+                <h2 className="text-sm font-black text-gray-900 uppercase tracking-wider flex items-center gap-2 font-mono">
+                  <FileText size={16} className="text-emerald-600" />
+                  MIDTERM REPORT
+                </h2>
+              </div>
+
+              <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-gray-50 text-[11px] font-black uppercase tracking-wider text-gray-400 border-b border-gray-100">
+                        <th className="py-4 px-6">Tahun Ajaran</th>
+                        <th className="py-4 px-6">Semester</th>
+                        <th className="py-4 px-6">Periode</th>
+                        <th className="py-4 px-6">Versi PDF</th>
+                        <th className="py-4 px-6">Status</th>
+                        <th className="py-4 px-6 text-right">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 text-sm font-semibold text-gray-700">
+                      {jhMidtermReports.map((report) => {
+                        const academicYear = report.academicYear || activeYear || '2025/2026';
+                        const sem = report.semester || 1;
+                        const term = report.midtermTerm || 1;
+                        const periodLabel = `Mid Term ${term}`;
+                        const isViewed = String(report.deliveryStatus || '').toUpperCase() === 'VIEWED';
+                        const versionText = report.reportVersion ? `v${report.reportVersion}` : 'v1';
+
+                        return (
+                          <tr key={report.id} className="hover:bg-gray-50/50 transition-colors">
+                            <td className="py-4 px-6 font-bold text-gray-900">{academicYear}</td>
+                            <td className="py-4 px-6">Semester {sem}</td>
+                            <td className="py-4 px-6 font-bold text-gray-800">{periodLabel}</td>
+                            <td className="py-4 px-6 font-black text-gray-700">{versionText}</td>
+                            <td className="py-4 px-6">
+                              {isViewed ? (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-purple-50 text-purple-700 border border-purple-100">
+                                  <Eye size={12} /> Dilihat
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-100">
+                                  <Send size={12} /> Terkirim
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-4 px-6 text-right">
+                              <button
+                                onClick={() => handleJhMidtermPdfClick(report)}
+                                className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm cursor-pointer"
+                              >
+                                <FileText size={12} /> Buka Rapor PDF
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
           {reports.length > 0 && (
             <div className="space-y-6">
               <h2 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900">

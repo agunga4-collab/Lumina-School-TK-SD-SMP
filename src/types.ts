@@ -747,10 +747,12 @@ export interface Student {
   classId: string;
   unitId?: string;
   nis?: string;
+  luminaId?: string;
   oldLuminaId?: string; // Old NIS/Lumina ID
   grade?: number;
   academicYear?: string;
   email?: string;
+  status?: string;
   birthDate?: string;
   attendanceNumber?: number;
   noAbsen?: number;

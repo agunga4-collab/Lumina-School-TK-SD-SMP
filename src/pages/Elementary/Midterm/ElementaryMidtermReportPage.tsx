@@ -458,9 +458,36 @@ function ElementaryMidtermReportPageContent() {
           resolvedName = selectedClass.homeroomTeacherName;
         }
 
+        let niyVal = '';
+        if (selectedClass.homeroomTeacherId) {
+          try {
+            const teacherDoc = await getDoc(doc(db, 'users', selectedClass.homeroomTeacherId));
+            if (teacherDoc.exists()) {
+              const teacherData = teacherDoc.data();
+              niyVal = teacherData?.niy || teacherData?.NIY || '';
+            }
+          } catch (teacherErr) {
+            console.warn("Failed to fetch teacher profile for NIY by ID:", teacherErr);
+          }
+        }
+
+        if (!niyVal && selectedClass.homeroomTeacherName) {
+          try {
+            const usersRef = collection(db, 'users');
+            const qUsers = query(usersRef, where('displayName', '==', selectedClass.homeroomTeacherName));
+            const querySnap = await getDocs(qUsers);
+            if (!querySnap.empty) {
+              const docData = querySnap.docs[0].data();
+              niyVal = docData?.niy || docData?.NIY || '';
+            }
+          } catch (qErr) {
+            console.warn("Failed to query teacher profile by name:", qErr);
+          }
+        }
+
         setHomeroomTeacherProfile({
           displayName: resolvedName || 'Homeroom Teacher',
-          niy: '',
+          niy: niyVal || '',
           signatureUrl: selectedClass.teacherSignatureUrl || null
         });
       } else {
