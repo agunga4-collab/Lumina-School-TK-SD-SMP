@@ -5887,6 +5887,123 @@ app.post("/api/junior-high/midterm/refine-general-comment", async (req, res) => 
   }
 });
 
+// POST /api/junior-high/midterm/upload-pdf
+// Uploads Junior High Midterm PDF to Shared Drive folder 1fdDP4BFPe8yFuCN8lHJ8SHJ7wp9gQK4Q using backend Service Account
+app.post("/api/junior-high/midterm/upload-pdf", async (req, res) => {
+  try {
+    const { pdfBase64, fileName, academicYear, semester, midtermTerm, className } = req.body;
+
+    if (!pdfBase64 || !fileName || !academicYear || !semester || !midtermTerm || !className) {
+      return res.status(400).json({
+        success: false,
+        error: "Data upload tidak lengkap: pdfBase64, fileName, academicYear, semester, midtermTerm, dan className wajib diisi."
+      });
+    }
+
+    const ROOT_FOLDER_ID = "1fdDP4BFPe8yFuCN8lHJ8SHJ7wp9gQK4Q";
+
+    // Helper: Find or create subfolder inside Shared Drive hierarchy
+    const ensureDriveFolder = async (folderName: string, parentId: string): Promise<string> => {
+      const escapedName = folderName.replace(/'/g, "\\'");
+      const q = `name = '${escapedName}' and '${parentId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+      
+      const listRes = await drive.files.list({
+        q,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+        corpora: 'allDrives',
+        fields: 'files(id, name)'
+      });
+
+      if (listRes.data.files && listRes.data.files.length > 0) {
+        return listRes.data.files[0].id;
+      }
+
+      const createRes = await drive.files.create({
+        requestBody: {
+          name: folderName,
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: [parentId]
+        },
+        supportsAllDrives: true,
+        fields: 'id'
+      });
+
+      return createRes.data.id;
+    };
+
+    // 1. Build Shared Drive folder structure: Tahun Ajaran > Semester > Midterm > Kelas
+    const cleanYear = academicYear.replace(/\//g, '-').trim();
+    const yearFolderName = `Tahun Ajaran ${cleanYear}`;
+    const yearFolderId = await ensureDriveFolder(yearFolderName, ROOT_FOLDER_ID);
+
+    const semesterFolderName = `Semester ${semester}`;
+    const semesterFolderId = await ensureDriveFolder(semesterFolderName, yearFolderId);
+
+    const termFolderName = `Midterm ${midtermTerm}`;
+    const termFolderId = await ensureDriveFolder(termFolderName, semesterFolderId);
+
+    const classFolderName = className.trim();
+    const classFolderId = await ensureDriveFolder(classFolderName, termFolderId);
+
+    // 2. Upload PDF file stream
+    const buffer = Buffer.from(pdfBase64, 'base64');
+    const mediaStream = Readable.from(buffer);
+
+    const uploadResponse = await drive.files.create({
+      requestBody: {
+        name: fileName,
+        parents: [classFolderId],
+        mimeType: 'application/pdf'
+      },
+      media: {
+        mimeType: 'application/pdf',
+        body: mediaStream
+      },
+      supportsAllDrives: true,
+      fields: 'id, name'
+    });
+
+    const fileId = uploadResponse.data.id;
+    if (!fileId) {
+      throw new Error("Google Drive tidak mengembalikan ID file setelah upload.");
+    }
+
+    // 3. Grant 'anyone/reader' permission
+    try {
+      await drive.permissions.create({
+        fileId: fileId,
+        requestBody: {
+          role: 'reader',
+          type: 'anyone'
+        },
+        supportsAllDrives: true
+      });
+    } catch (permErr: any) {
+      console.warn(`[JH-Midterm-Upload] Permission warning for file ${fileId}:`, permErr.message);
+    }
+
+    const fileUrl = `https://drive.google.com/file/d/${fileId}/view`;
+
+    console.log(`[JH-Midterm-Upload] Successfully uploaded '${fileName}' to Shared Drive class folder '${classFolderName}' (${classFolderId}). File ID: ${fileId}`);
+
+    res.json({
+      success: true,
+      driveFileId: fileId,
+      driveFileUrl: fileUrl,
+      folderId: classFolderId,
+      fileName
+    });
+  } catch (error: any) {
+    console.error("[JH-Midterm-Upload] Error uploading PDF to Shared Drive:", error);
+    const detailMsg = error.response?.data?.error?.message || error.message || String(error);
+    res.status(500).json({
+      success: false,
+      error: `Upload Google Shared Drive gagal: ${detailMsg}`
+    });
+  }
+});
+
 // ==========================================
 // Elementary Midterm AI Endpoints
 // ==========================================

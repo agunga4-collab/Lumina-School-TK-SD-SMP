@@ -17,6 +17,7 @@ import {
 import { 
   normalizeMidtermFilename,
   generateMidtermPdfBlob,
+  blobToBase64,
   ensureJuniorHighMidtermDriveFolders,
   uploadJuniorHighMidtermPdfToDrive,
   JUNIOR_HIGH_MIDTERM_ROOT_FOLDER_ID
@@ -334,37 +335,47 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
     }
 
     // 1. Generate PDF
+    toast.loading(`Menghasilkan file PDF ${student.name}...`, { id: `pub-${student.id}` });
     const pdfBlob = await generateMidtermPdfBlob(pageElements);
     const fileName = normalizeMidtermFilename(selectedClass.name, student.name, midtermTerm, academicYear);
+    const pdfBase64 = await blobToBase64(pdfBlob);
 
-    // 2. Upload to Google Drive (Shared Drive hierarchy: Tahun Ajaran > Semester > Midterm > Kelas)
-    toast.loading(`Menyiapkan folder Google Drive...`, { id: `pub-${student.id}` });
-    const token = await getGoogleDriveToken();
-    let driveFileId = 'local-preview';
-    let driveFileUrl = '#';
+    // 2. Upload to Google Drive (Shared Drive hierarchy: Tahun Ajaran > Semester > Midterm > Kelas) via backend Service Account
+    toast.loading(`Mengunggah PDF ${student.name} ke Google Shared Drive...`, { id: `pub-${student.id}` });
+    
+    let driveFileId = '';
+    let driveFileUrl = '';
     let targetClassFolderId = JUNIOR_HIGH_MIDTERM_ROOT_FOLDER_ID;
 
-    if (token) {
-      try {
-        const { classFolderId } = await ensureJuniorHighMidtermDriveFolders(
-          token,
+    try {
+      const uploadRes = await fetch('/api/junior-high/midterm/upload-pdf', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          pdfBase64,
+          fileName,
           academicYear,
           semester,
           midtermTerm,
-          selectedClass.name
-        );
-        targetClassFolderId = classFolderId;
+          className: selectedClass.name
+        })
+      });
 
-        toast.loading(`Mengunggah PDF ${student.name} ke Google Drive...`, { id: `pub-${student.id}` });
-        const uploadRes = await uploadJuniorHighMidtermPdfToDrive(pdfBlob, fileName, classFolderId, token);
-        driveFileId = uploadRes.driveFileId;
-        driveFileUrl = uploadRes.driveFileUrl;
-      } catch (driveErr: any) {
-        console.warn('Drive upload error:', driveErr);
-        throw new Error('Upload Google Drive gagal: ' + (driveErr.message || driveErr));
+      const uploadData = await uploadRes.json();
+
+      if (!uploadRes.ok || !uploadData.success) {
+        const errorDetail = uploadData?.error || `Upload Google Drive gagal dengan status ${uploadRes.status}`;
+        throw new Error(errorDetail);
       }
-    } else {
-      throw new Error('Gagal mendapatkan token akses Google Drive. Harap berikan izin Google Drive untuk melanjutkan.');
+
+      driveFileId = uploadData.driveFileId;
+      driveFileUrl = uploadData.driveFileUrl;
+      targetClassFolderId = uploadData.folderId || JUNIOR_HIGH_MIDTERM_ROOT_FOLDER_ID;
+    } catch (uploadErr: any) {
+      console.error('[CRITICAL] Upload PDF to Shared Drive failed:', uploadErr);
+      throw new Error(uploadErr.message || 'Upload ke Google Shared Drive gagal.');
     }
 
     // 3. Compute version & build snapshot
@@ -378,7 +389,8 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
 
     const snapshot = buildLiveSnapshot(student);
 
-    // 4. Save Published Report
+    // 4. Save Published Report ONLY after successful Google Drive upload
+    toast.loading(`Menyimpan metadata publikasi ke database...`, { id: `pub-${student.id}` });
     await savePublishedMidtermReport({
       id: '',
       unit: 'JUNIOR_HIGH',
