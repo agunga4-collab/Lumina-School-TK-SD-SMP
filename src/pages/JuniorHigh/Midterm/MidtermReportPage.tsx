@@ -150,33 +150,61 @@ function MidtermReportPageContent() {
     return searchParams.get('classId') || '';
   });
 
-  // Primitive contextKey for single fetch trigger
-  const contextKey = `${selectedYear}|${selectedSemester}|${selectedTerm}|${selectedClassId}`;
+  // Direct handlers that immediately update React UI state as the primary source of truth and sync URL
+  const handleTabSelect = React.useCallback((tab: 'GOALS' | 'COMMENTS' | 'REVIEW' | 'PUBLISH' | 'REKAP') => {
+    setActiveTab(tab);
+    const params = new URLSearchParams(searchParams);
+    const tabSlug = inverseTabMapping[tab] || 'learning-goals';
+    if (params.get('tab') !== tabSlug) {
+      params.set('tab', tabSlug);
+      setSearchParams(params, { replace: true });
+    }
+  }, [searchParams, inverseTabMapping, setSearchParams]);
 
-  // Helper to update local states (which automatically syncs to searchParams and triggers data load)
-  const updateUrlParams = React.useCallback((updates: {
-    academicYear?: string;
-    semester?: string;
-    period?: string;
-    classId?: string;
-    tab?: 'GOALS' | 'COMMENTS' | 'REVIEW' | 'PUBLISH' | 'REKAP';
-  }) => {
-    if (updates.academicYear !== undefined) {
-      setSelectedYear(updates.academicYear);
+  const handleYearChange = React.useCallback((year: string) => {
+    setSelectedYear(year);
+    const params = new URLSearchParams(searchParams);
+    if (params.get('academicYear') !== year) {
+      params.set('academicYear', year);
+      setSearchParams(params, { replace: true });
     }
-    if (updates.semester !== undefined) {
-      setSelectedSemester(updates.semester);
+  }, [searchParams, setSearchParams]);
+
+  const handleSemesterChange = React.useCallback((sem: string) => {
+    setSelectedSemester(sem);
+    const params = new URLSearchParams(searchParams);
+    const targetSem = sem === '2' ? '2' : '1';
+    if (params.get('semester') !== targetSem) {
+      params.set('semester', targetSem);
+      setSearchParams(params, { replace: true });
     }
-    if (updates.period !== undefined) {
-      setSelectedTerm(updates.period === '2' || updates.period === 'midterm-2' ? '2' : '1');
+  }, [searchParams, setSearchParams]);
+
+  const handleTermChange = React.useCallback((term: string) => {
+    setSelectedTerm(term);
+    const params = new URLSearchParams(searchParams);
+    const targetPeriod = term === '2' ? 'midterm-2' : 'midterm-1';
+    if (params.get('period') !== targetPeriod) {
+      params.set('period', targetPeriod);
+      setSearchParams(params, { replace: true });
     }
-    if (updates.classId !== undefined) {
-      setSelectedClassId(updates.classId);
+  }, [searchParams, setSearchParams]);
+
+  const handleClassChange = React.useCallback((classId: string) => {
+    setSelectedClassId(classId);
+    const params = new URLSearchParams(searchParams);
+    if (classId) {
+      if (params.get('classId') !== classId) {
+        params.set('classId', classId);
+        setSearchParams(params, { replace: true });
+      }
+    } else {
+      if (params.has('classId')) {
+        params.delete('classId');
+        setSearchParams(params, { replace: true });
+      }
     }
-    if (updates.tab !== undefined) {
-      setActiveTab(updates.tab);
-    }
-  }, []);
+  }, [searchParams, setSearchParams]);
 
   // Update selectedYear if activeYear finishes loading and no URL param was set
   React.useEffect(() => {
@@ -185,15 +213,18 @@ function MidtermReportPageContent() {
     }
   }, [activeYear, searchParams]);
 
-  // 1. Sync from URL searchParams back to React states (e.g., when back/forward button is clicked)
+  // Sync from URL searchParams back to React states (e.g. browser back/forward or initial deep links) without loops
   React.useEffect(() => {
     const urlYear = searchParams.get('academicYear');
     if (urlYear && urlYear !== selectedYear) {
       setSelectedYear(urlYear);
     }
     const urlSem = searchParams.get('semester');
-    if (urlSem && urlSem !== selectedSemester) {
-      setSelectedSemester(urlSem === '2' ? '2' : '1');
+    if (urlSem) {
+      const targetSem = urlSem === '2' ? '2' : '1';
+      if (targetSem !== selectedSemester) {
+        setSelectedSemester(targetSem);
+      }
     }
     const urlPeriod = searchParams.get('period');
     if (urlPeriod) {
@@ -214,47 +245,6 @@ function MidtermReportPageContent() {
       setSelectedClassId(urlClassId);
     }
   }, [searchParams, tabMapping, selectedYear, selectedSemester, selectedTerm, activeTab, selectedClassId]);
-
-  // 2. Sync React states back to URL searchParams
-  React.useEffect(() => {
-    const params = new URLSearchParams(searchParams);
-    let hasChange = false;
-
-    if (params.get('academicYear') !== selectedYear) {
-      params.set('academicYear', selectedYear);
-      hasChange = true;
-    }
-    const targetSem = selectedSemester === '2' ? '2' : '1';
-    if (params.get('semester') !== targetSem) {
-      params.set('semester', targetSem);
-      hasChange = true;
-    }
-    const targetPeriod = selectedTerm === '2' ? 'midterm-2' : 'midterm-1';
-    if (params.get('period') !== targetPeriod) {
-      params.set('period', targetPeriod);
-      hasChange = true;
-    }
-    const tabSlug = inverseTabMapping[activeTab] || 'learning-goals';
-    if (params.get('tab') !== tabSlug) {
-      params.set('tab', tabSlug);
-      hasChange = true;
-    }
-    if (selectedClassId) {
-      if (params.get('classId') !== selectedClassId) {
-        params.set('classId', selectedClassId);
-        hasChange = true;
-      }
-    } else {
-      if (params.has('classId')) {
-        params.delete('classId');
-        hasChange = true;
-      }
-    }
-
-    if (hasChange) {
-      setSearchParams(params, { replace: true });
-    }
-  }, [selectedYear, selectedSemester, selectedTerm, activeTab, selectedClassId, inverseTabMapping, setSearchParams, searchParams]);
 
   // Config states for Titimangsa & Cut Off
   const [signingDateRaw, setSigningDateRaw] = React.useState<string>('');
@@ -500,15 +490,18 @@ function MidtermReportPageContent() {
   }, [selectedClassId, classesList]);
 
   // Manual or in-tab refresh function
-  const loadClassData = React.useCallback(async (silent = false) => {
-    if (!selectedClassId || !selectedYear) return;
-
-    if (!silent) {
-      setLoadingData(true);
+  const loadClassData = React.useCallback(async (showLoading = true) => {
+    if (!selectedClassId || !selectedYear) {
       setStudents([]);
       setMasterGoalsMap({});
       setStudentDataMap({});
       setPublishedReports([]);
+      setLoadingData(false);
+      return;
+    }
+
+    if (showLoading) {
+      setLoadingData(true);
     }
 
     try {
@@ -556,102 +549,26 @@ function MidtermReportPageContent() {
       setStudentDataMap(fullStudentDataMap);
       setPublishedReports(Array.isArray(published) ? published.filter(Boolean) : []);
     } catch (err) {
-      console.error('Error refreshing midterm class data:', err);
+      console.error('Error loading midterm class data:', err);
     } finally {
-      if (!silent) {
-        setLoadingData(false);
-      }
+      setLoadingData(false);
     }
   }, [selectedClassId, selectedYear, selectedSemester, selectedTerm]);
 
-  // Single reactive fetch effect triggered strictly by primitive contextKey
+  // Single reactive fetch effect triggered whenever context or activeTab changes
   React.useEffect(() => {
     let isCancelled = false;
 
-    const executeFetch = async () => {
-      if (!selectedClassId || !selectedYear) {
-        setStudents(prev => prev.length === 0 ? prev : []);
-        setMasterGoalsMap(prev => Object.keys(prev).length === 0 ? prev : {});
-        setStudentDataMap(prev => Object.keys(prev).length === 0 ? prev : {});
-        setPublishedReports(prev => prev.length === 0 ? prev : []);
-        setLoadingData(false);
-        return;
-      }
-
-      setLoadingData(true);
-      setStudents([]);
-      setMasterGoalsMap({});
-      setStudentDataMap({});
-      setPublishedReports([]);
-
-      try {
-        const [studentList, config, goals, sData, published] = await Promise.all([
-          getActiveStudents(selectedClassId, selectedYear),
-          getReportConfig('JUNIOR_HIGH'),
-          fetchMidtermMasterGoals(selectedClassId, selectedYear, selectedSemester, selectedTerm),
-          fetchMidtermStudentData(selectedClassId, selectedYear, selectedSemester, selectedTerm),
-          fetchPublishedMidtermReports({
-            classId: selectedClassId,
-            academicYear: selectedYear,
-            semester: selectedSemester,
-            midtermTerm: selectedTerm
-          })
-        ]);
-
-        if (isCancelled) return;
-
-        const rawStudentList = Array.isArray(studentList) ? studentList.filter(Boolean) : [];
-        const sortedStudents = rawStudentList.sort((a, b) => {
-          const numA = a.attendanceNumber ?? (a as any).noAbsen ?? 999;
-          const numB = b.attendanceNumber ?? (b as any).noAbsen ?? 999;
-          if (numA !== numB) return numA - numB;
-          const nameA = typeof a.name === 'string' ? a.name : '';
-          const nameB = typeof b.name === 'string' ? b.name : '';
-          return nameA.localeCompare(nameB);
-        });
-
-        const safeSData = sData && typeof sData === 'object' ? sData : {};
-        const fullStudentDataMap: Record<string, MidtermStudentDataDoc> = {};
-        sortedStudents.forEach(student => {
-          if (!student || !student.id) return;
-          const existing = safeSData[student.id];
-          fullStudentDataMap[student.id] = existing || normalizeMidtermStudentData(null, {
-            studentId: student.id,
-            studentName: student.name || 'Siswa',
-            classId: selectedClassId,
-            academicYear: selectedYear,
-            semester: selectedSemester,
-            midtermTerm: selectedTerm
-          });
-        });
-
-        setStudents(sortedStudents);
-        setReportConfig(config || null);
-        setMasterGoalsMap(goals && typeof goals === 'object' ? goals : {});
-        setStudentDataMap(fullStudentDataMap);
-        setPublishedReports(Array.isArray(published) ? published.filter(Boolean) : []);
-      } catch (err) {
-        if (!isCancelled) console.error('Error loading midterm class data:', err);
-      } finally {
-        if (!isCancelled) {
-          setLoadingData(false);
-        }
-      }
-    };
-
-    executeFetch();
+    if (selectedClassId && selectedYear) {
+      loadClassData(true);
+    } else {
+      setLoadingData(false);
+    }
 
     return () => {
       isCancelled = true;
     };
-  }, [contextKey]);
-
-  // Silent re-fetch / load of required data whenever activeTab changes
-  React.useEffect(() => {
-    if (selectedClassId && selectedYear && !loadingData) {
-      loadClassData(true);
-    }
-  }, [activeTab]);
+  }, [selectedClassId, selectedYear, selectedSemester, selectedTerm, activeTab, loadClassData]);
 
   const safePublishedReports = Array.isArray(publishedReports) ? publishedReports.filter(Boolean) : [];
   const publishedMap = React.useMemo(() => {
@@ -669,8 +586,8 @@ function MidtermReportPageContent() {
   const safeMasterGoalsMap = masterGoalsMap && typeof masterGoalsMap === 'object' ? masterGoalsMap : {};
   const safeStudentDataMap = studentDataMap && typeof studentDataMap === 'object' ? studentDataMap : {};
 
-  // Tab key strictly based on URL state source of truth
-  const tabContentKey = `${selectedYear}-${selectedSemester}-${selectedTerm}-${selectedClassId}-${activeTab}`;
+  // Tab key strictly based on activeTab-classId-academicYear-semester-period as requested
+  const tabContentKey = `${activeTab}-${selectedClassId}-${selectedYear}-${selectedSemester}-${selectedTerm}`;
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
@@ -702,7 +619,7 @@ function MidtermReportPageContent() {
               </label>
               <select
                 value={selectedYear}
-                onChange={(e) => updateUrlParams({ academicYear: e.target.value })}
+                onChange={(e) => handleYearChange(e.target.value)}
                 className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10"
               >
                 {availableYears.map(y => (
@@ -718,7 +635,7 @@ function MidtermReportPageContent() {
               </label>
               <select
                 value={selectedSemester}
-                onChange={(e) => updateUrlParams({ semester: e.target.value })}
+                onChange={(e) => handleSemesterChange(e.target.value)}
                 className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10"
               >
                 <option value="1">Semester 1</option>
@@ -733,7 +650,7 @@ function MidtermReportPageContent() {
               </label>
               <select
                 value={selectedTerm}
-                onChange={(e) => updateUrlParams({ period: e.target.value })}
+                onChange={(e) => handleTermChange(e.target.value)}
                 className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10"
               >
                 <option value="1">Midterm 1</option>
@@ -748,7 +665,7 @@ function MidtermReportPageContent() {
               </label>
               <select
                 value={selectedClassId}
-                onChange={(e) => updateUrlParams({ classId: e.target.value })}
+                onChange={(e) => handleClassChange(e.target.value)}
                 disabled={loadingClasses || safeClassesList.length === 0}
                 className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/10 min-w-[140px]"
               >
@@ -827,7 +744,7 @@ function MidtermReportPageContent() {
       {/* Navigation Tabs (5 main tabs) */}
       <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-2">
         <button
-          onClick={() => updateUrlParams({ tab: 'GOALS' })}
+          onClick={() => handleTabSelect('GOALS')}
           className={`px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
             activeTab === 'GOALS'
               ? 'bg-slate-900 text-white shadow-sm'
@@ -839,7 +756,7 @@ function MidtermReportPageContent() {
         </button>
 
         <button
-          onClick={() => updateUrlParams({ tab: 'COMMENTS' })}
+          onClick={() => handleTabSelect('COMMENTS')}
           className={`px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
             activeTab === 'COMMENTS'
               ? 'bg-slate-900 text-white shadow-sm'
@@ -851,7 +768,7 @@ function MidtermReportPageContent() {
         </button>
 
         <button
-          onClick={() => updateUrlParams({ tab: 'REVIEW' })}
+          onClick={() => handleTabSelect('REVIEW')}
           className={`px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
             activeTab === 'REVIEW'
               ? 'bg-slate-900 text-white shadow-sm'
@@ -863,7 +780,7 @@ function MidtermReportPageContent() {
         </button>
 
         <button
-          onClick={() => updateUrlParams({ tab: 'PUBLISH' })}
+          onClick={() => handleTabSelect('PUBLISH')}
           className={`px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
             activeTab === 'PUBLISH'
               ? 'bg-slate-900 text-white shadow-sm'
@@ -875,7 +792,7 @@ function MidtermReportPageContent() {
         </button>
 
         <button
-          onClick={() => updateUrlParams({ tab: 'REKAP' })}
+          onClick={() => handleTabSelect('REKAP')}
           className={`px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
             activeTab === 'REKAP'
               ? 'bg-slate-900 text-white shadow-sm'
@@ -995,14 +912,14 @@ function MidtermReportPageContent() {
               currentUser={effectiveUser}
               classes={safeClassesList}
               selectedClassId={selectedClassId}
-              onSelectClassId={(id) => updateUrlParams({ classId: id })}
+              onSelectClassId={(id) => handleClassChange(id)}
               students={safeStudents}
               academicYear={selectedYear}
               semester={selectedSemester}
               midtermTerm={selectedTerm}
               publishedReports={safePublishedReports}
               loading={loadingData}
-              onRefreshData={() => loadClassData(true)}
+              onRefreshData={() => loadClassData()}
               masterGoalsMap={safeMasterGoalsMap}
               studentDataMap={safeStudentDataMap}
             />
