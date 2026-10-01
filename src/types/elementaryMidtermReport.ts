@@ -232,13 +232,14 @@ export function getDefaultPerformingArtsUAs(gradeLevel: number): string[] {
 /**
  * Normalizes a Performing Arts Unit Activity name for robust comparison.
  * - Lowercase & trim
- * - Strips punctuation, spaces, and hyphens (e.g. 'role-play' -> 'roleplay', 'role play' -> 'roleplay')
- * - Maps aliases (e.g. 'play' -> 'roleplay') specifically for Role-play context.
+ * - Strips punctuation, spaces, and hyphens (e.g. 'Role-play' -> 'roleplay', 'role play' -> 'roleplay', 'role-playing' -> 'roleplay')
+ * - Maps aliases ('play', 'roleplay', 'roleplaying', 'role-play', 'role play') specifically to 'roleplay'.
+ * - Preserves strict separation for other UAs: 'choir', 'dancing', 'ensemblemusic', 'percussionpals', 'traditionalsymphony', 'acting'.
  */
 export function normalizePerformingArtsUa(ua: string | null | undefined): string {
   if (!ua) return '';
   const clean = ua.trim().toLowerCase().replace(/[\s\-_.,/\\:;'"()[\]{}]+/g, '');
-  if (clean === 'play' || clean === 'roleplay') {
+  if (clean === 'play' || clean === 'roleplay' || clean === 'roleplaying' || clean === 'roleplayacting') {
     return 'roleplay';
   }
   return clean;
@@ -257,17 +258,24 @@ export function isPerformingArtsUaMatch(uaA: string | null | undefined, uaB: str
 /**
  * Extracts the UA component from a Performing Arts subject key.
  * E.g. 'Performing Arts - Role-play' -> 'Role-play'
+ * E.g. 'Performing Arts - play' -> 'play'
  * E.g. 'Performing Arts::Choir' -> 'Choir'
+ * E.g. 'Performing Arts (Role-play)' -> 'Role-play'
+ * E.g. 'PERFORMING_ARTS_ROLE_PLAY' -> 'ROLE_PLAY'
  */
 export function extractPerformingArtsUaFromKey(rawKey: string | null | undefined): string | null {
   if (!rawKey) return null;
-  const match = rawKey.match(/^Performing\s+Arts\s*[-:]+\s*(.+)$/i);
+  const match = rawKey.match(/^Performing[\s_]+Arts\s*[-:]+\s*(.+)$/i);
   if (match && match[1]) {
     return match[1].trim();
   }
-  const parenMatch = rawKey.match(/^Performing\s+Arts\s*\((.+)\)$/i);
+  const parenMatch = rawKey.match(/^Performing[\s_]+Arts\s*[\(\[](.+)[\)\]]$/i);
   if (parenMatch && parenMatch[1]) {
     return parenMatch[1].trim();
+  }
+  const underMatch = rawKey.match(/^PERFORMING_ARTS_(.+)$/i);
+  if (underMatch && underMatch[1]) {
+    return underMatch[1].trim();
   }
   return null;
 }
