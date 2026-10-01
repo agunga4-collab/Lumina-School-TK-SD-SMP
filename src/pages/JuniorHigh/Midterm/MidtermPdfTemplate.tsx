@@ -65,25 +65,19 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
   onReadyChange,
 }) => {
   // Derive student identity
-  const studentName = snapshot ? snapshot.student.name : (student?.name || '');
-  const studentNisn = snapshot ? (snapshot.student.nisn || '-') : (student?.nisn || (student as any)?.nis || '-');
-  const className = snapshot ? snapshot.student.className : (currentClass?.name || '');
-  const effAcademicYear = snapshot ? snapshot.academicYear : academicYear;
-  const effTerm = snapshot ? snapshot.midtermTerm : midtermTerm;
+  const studentName = snapshot ? (snapshot.student?.name || '-') : (student?.name || '-');
+  const studentNisn = snapshot ? (snapshot.student?.nisn || '-') : (student?.nisn || (student as any)?.nis || '-');
+  const className = snapshot ? (snapshot.student?.className || '-') : (currentClass?.name || '-');
+  const effAcademicYear = snapshot ? (snapshot.academicYear || academicYear || '2025/2026') : (academicYear || '2025/2026');
+  const effTerm = snapshot ? (snapshot.midtermTerm || midtermTerm || '1') : (midtermTerm || '1');
   const effGeneralComment = snapshot 
-    ? snapshot.generalComment 
+    ? (snapshot.generalComment || '') 
     : (studentDataDoc?.generalComment?.finalComment || studentDataDoc?.generalComment?.aiDraft || '');
   
-  const effAttendance = snapshot ? snapshot.attendance : attendance;
-  const effPrincipalName = snapshot 
-    ? snapshot.signatory.principalName 
-    : (reportConfig?.principalName || 'Principal');
-  const effPrincipalNiy = snapshot 
-    ? snapshot.signatory.principalNiy 
-    : (reportConfig?.principalNIY || '');
-  const effPrincipalSignatureUrl = snapshot 
-    ? snapshot.signatory.principalSignatureUrl 
-    : (reportConfig?.principalSignatureUrl || null);
+  const effAttendance = snapshot ? (snapshot.attendance || attendance || { sakit: 0, izin: 0, tanpaKeterangan: 0 }) : (attendance || { sakit: 0, izin: 0, tanpaKeterangan: 0 });
+  const effPrincipalName = snapshot ? (snapshot.signatory?.principalName || reportConfig?.principalName || 'Principal') : (reportConfig?.principalName || 'Principal');
+  const effPrincipalNiy = snapshot ? (snapshot.signatory?.principalNiy || reportConfig?.principalNIY || '') : (reportConfig?.principalNIY || '');
+  const effPrincipalSignatureUrl = snapshot ? (snapshot.signatory?.principalSignatureUrl || reportConfig?.principalSignatureUrl || null) : (reportConfig?.principalSignatureUrl || null);
 
   const effSigningLocation = snapshot?.reportSigningLocation || reportSigningLocation || 'Depok';
   const effSigningDate = snapshot?.reportSigningDate || reportSigningDate || '';
@@ -162,7 +156,7 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
   const effHomeroomName = (() => {
     const isEmail = (val?: string | null) => !!val && val.includes('@');
     if (snapshot) {
-      const snapName = snapshot.signatory.homeroomTeacherName;
+      const snapName = snapshot.signatory?.homeroomTeacherName;
       if (snapName && !isEmail(snapName)) return snapName;
       return 'Homeroom Teacher';
     }
@@ -174,10 +168,10 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
   })();
 
   const effHomeroomNiy = snapshot 
-    ? (snapshot.signatory.homeroomTeacherNiy || '') 
+    ? (snapshot.signatory?.homeroomTeacherNiy || '') 
     : (homeroomTeacherProfile?.niy || '');
   const effHomeroomSignatureUrl = snapshot 
-    ? snapshot.signatory.homeroomTeacherSignatureUrl 
+    ? (snapshot.signatory?.homeroomTeacherSignatureUrl || null) 
     : (dbClass?.teacherSignatureUrl || currentClass?.teacherSignatureUrl || null);
 
   // Validate signatures to prevent broken images
@@ -199,9 +193,9 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
       "July", "August", "September", "October", "November", "December"
     ];
     let d = new Date();
-    if (snapshot && (snapshot as any).publishedAt) {
+    if (snapshot && (snapshot as any)?.publishedAt) {
       d = new Date((snapshot as any).publishedAt);
-    } else if (snapshot && (snapshot as any).createdAt) {
+    } else if (snapshot && (snapshot as any)?.createdAt) {
       d = new Date((snapshot as any).createdAt);
     }
     return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
@@ -212,32 +206,33 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
   const getCategoryData = (catId: string, fallbackName: string) => {
     if (snapshot) {
       const categories = Array.isArray(snapshot.categories) ? snapshot.categories : [];
-      const found = categories.find(c => c && typeof c.name === 'string' && c.name.toUpperCase() === fallbackName.toUpperCase());
-      const rawSubjects = found && Array.isArray(found.subjects) ? found.subjects : [];
-      return rawSubjects.map(s => ({
-        name: s && typeof s.name === 'string' ? s.name : '',
-        goals: s && Array.isArray(s.goals) ? s.goals.map((g: any) => ({
-          id: g?.id || '',
-          text: g?.text || '',
+      const found = categories.find(c => c && typeof c?.name === 'string' && c.name.toUpperCase() === fallbackName.toUpperCase());
+      const rawSubjects = found && Array.isArray(found?.subjects) ? found.subjects : [];
+      return rawSubjects.map((s: any) => ({
+        name: (s && typeof s?.name === 'string') ? s.name : 'Subject',
+        goals: (s && Array.isArray(s?.goals)) ? s.goals.map((g: any) => ({
+          id: g?.id || `g_${Math.random()}`,
+          text: g?.text || '-',
           remark: g?.remark || '-'
         })) : []
       }));
     }
 
-    const config = JH_MIDTERM_CATEGORIES.find(c => c.id === catId);
+    const config = Array.isArray(JH_MIDTERM_CATEGORIES) ? JH_MIDTERM_CATEGORIES.find(c => c && c.id === catId) : undefined;
     if (!config) return [];
 
     const subjectsList = Array.isArray(config.subjects) ? config.subjects : [];
     return subjectsList.map(subjName => {
-      const master = masterGoalsMap && typeof masterGoalsMap === 'object' ? masterGoalsMap[subjName] : undefined;
-      const rawGoals = master && Array.isArray(master.goals) ? master.goals : [];
+      const safeSubjName = typeof subjName === 'string' ? subjName : 'Subject';
+      const master = masterGoalsMap && typeof masterGoalsMap === 'object' ? masterGoalsMap[safeSubjName] : undefined;
+      const rawGoals = master && Array.isArray(master?.goals) ? master.goals : [];
       const goals = rawGoals.map(g => ({
-        id: g?.id || '',
-        text: g?.text || '',
-        remark: (studentDataDoc?.remarks?.[g?.id] || (subjName === 'Spiritual Health' ? (studentDataDoc?.spiritualHealthRemark || '') : '') || '-')
+        id: g?.id || `g_${Math.random()}`,
+        text: g?.text || '-',
+        remark: (studentDataDoc?.remarks?.[g?.id] || (safeSubjName === 'Spiritual Health' ? (studentDataDoc?.spiritualHealthRemark || '') : '') || '-')
       }));
       return {
-        name: subjName,
+        name: safeSubjName,
         goals
       };
     });
@@ -455,36 +450,39 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
           </tr>
         </thead>
         <tbody>
-          {subjects.map((subj, sIdx) => {
-            const rowNo = subj.startIndex;
-            const goals = subj.goals;
+          {(Array.isArray(subjects) ? subjects : []).map((subj: any, sIdx: number) => {
+            const subjName = (subj && typeof subj.name === 'string') ? subj.name : 'Subject';
+            const rowNo = subj?.startIndex || (sIdx + 1);
+            const goals = Array.isArray(subj?.goals) ? subj.goals : [];
+            const totalGoals = goals.length > 0 ? goals.length : 1;
             return (
-              <React.Fragment key={subj.name + sIdx}>
+              <React.Fragment key={subjName + sIdx}>
                 {goals.map((goal: any, gIdx: number) => {
                   const isFirst = gIdx === 0;
+                  const isLast = gIdx === goals.length - 1;
                   return (
-                    <tr key={goal.id + gIdx} className="border-b border-black">
+                    <tr key={(goal?.id || gIdx) + '' + gIdx}>
                       {isFirst ? (
                         <td 
-                          rowSpan={goals.length} 
-                          className="border-r border-black p-1.5 text-center font-bold align-top"
+                          rowSpan={totalGoals} 
+                          className="border-r border-black border-b border-b-black p-1.5 text-center font-bold align-top"
                         >
                           {rowNo}.
                         </td>
                       ) : null}
-                      <td className="border-r border-black p-1.5 align-top">
+                      <td className={`border-r border-black p-1.5 align-top ${isLast ? 'border-b border-b-black' : 'border-b border-b-slate-300'}`}>
                         {isFirst && (
                           <div className="font-bold text-black mb-1 text-[11px] uppercase">
-                            {subj.name} {subj.isContinued ? '(Continued)' : ''}
+                            {subjName} {subj?.isContinued ? '(Continued)' : ''}
                           </div>
                         )}
                         <div className="flex items-start gap-1.5 text-slate-800 leading-snug pl-1">
                           <span className="font-bold text-black select-none">•</span>
-                          <span>{goal.text}</span>
+                          <span>{goal?.text || '-'}</span>
                         </div>
                       </td>
-                      <td className="p-1.5 text-center align-middle font-bold text-black">
-                        {goal.remark || '-'}
+                      <td className={`p-1.5 text-center align-middle font-bold text-black ${isLast ? 'border-b border-b-black' : 'border-b border-b-slate-300'}`}>
+                        {goal?.remark || '-'}
                       </td>
                     </tr>
                   );
@@ -535,28 +533,53 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
               </tr>
             </thead>
             <tbody>
-              {cat.subjects.map((subj) => (
-                <React.Fragment key={subj.name}>
-                  {(subj.goals.length > 0 ? subj.goals : [{ id: 'empty', text: '(No learning goals recorded)', remark: '-' }]).map((goal) => (
-                    <tr 
-                      key={goal.id} 
-                      id={`meas-row-${cat.id}-${subj.name.replace(/[^a-zA-Z0-9]/g, '_')}-${goal.id}`} 
-                      data-meas-id={`row-${cat.id}-${subj.name.replace(/[^a-zA-Z0-9]/g, '_')}-${goal.id}`}
-                      className="border-b border-black"
-                    >
-                      <td className="border-r border-black p-1.5 text-center font-bold align-top">1.</td>
-                      <td className="border-r border-black p-1.5 align-top">
-                        <div className="font-bold text-black mb-1 text-[11px] uppercase">{subj.name}</div>
-                        <div className="flex items-start gap-1.5 text-slate-800 leading-snug pl-1">
-                          <span className="font-bold text-black select-none">•</span>
-                          <span>{goal.text}</span>
-                        </div>
-                      </td>
-                      <td className="p-1.5 text-center align-middle font-bold text-black">{goal.remark}</td>
-                    </tr>
-                  ))}
-                </React.Fragment>
-              ))}
+              {(Array.isArray(cat.subjects) ? cat.subjects : []).map((subj: any, sIdx: number) => {
+                const subjName = (subj && typeof subj.name === 'string') ? subj.name : `Subject_${sIdx + 1}`;
+                const safeSlug = subjName.replace(/[^a-zA-Z0-9]/g, '_');
+                const rowNo = sIdx + 1;
+                const rawGoals = (subj && Array.isArray(subj.goals)) ? subj.goals : [];
+                const goalsList = rawGoals.length > 0 ? rawGoals : [{ id: 'empty', text: '(No learning goals recorded)', remark: '-' }];
+
+                return (
+                  <React.Fragment key={subjName + sIdx}>
+                    {goalsList.map((goal: any, gIdx: number) => {
+                      const goalId = goal?.id || `g_${gIdx}`;
+                      const isFirst = gIdx === 0;
+                      const isLast = gIdx === goalsList.length - 1;
+                      return (
+                        <tr 
+                          key={goalId} 
+                          id={`meas-row-${cat.id}-${safeSlug}-${goalId}`} 
+                          data-meas-id={`row-${cat.id}-${safeSlug}-${goalId}`}
+                        >
+                          {isFirst ? (
+                            <td 
+                              rowSpan={goalsList.length} 
+                              className="border-r border-black border-b border-b-black p-1.5 text-center font-bold align-top"
+                            >
+                              {rowNo}.
+                            </td>
+                          ) : null}
+                          <td className={`border-r border-black p-1.5 align-top ${isLast ? 'border-b border-b-black' : 'border-b border-b-slate-300'}`}>
+                            {isFirst && (
+                              <div className="font-bold text-black mb-1 text-[11px] uppercase">
+                                {subjName}
+                              </div>
+                            )}
+                            <div className="flex items-start gap-1.5 text-slate-800 leading-snug pl-1">
+                              <span className="font-bold text-black select-none">•</span>
+                              <span>{goal?.text || '-'}</span>
+                            </div>
+                          </td>
+                          <td className={`p-1.5 text-center align-middle font-bold text-black ${isLast ? 'border-b border-b-black' : 'border-b border-b-slate-300'}`}>
+                            {goal?.remark || '-'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -684,11 +707,12 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
       const TABLE_HEADER_HEIGHT = getMeasHeight(`tbl-header-${cat.id}`, 26); // table thead row
 
       // Check first subject & first goal of category
-      const firstSubj = cat.subjects[0];
+      const firstSubj = cat.subjects?.[0];
       const firstGoal = firstSubj?.goals?.[0];
       let firstRowHeight = 45;
       if (firstSubj && firstGoal) {
-        const rowMeasId = `row-${cat.id}-${firstSubj.name.replace(/[^a-zA-Z0-9]/g, '_')}-${firstGoal.id}`;
+        const firstSubjName = (typeof firstSubj.name === 'string') ? firstSubj.name : 'Subject';
+        const rowMeasId = `row-${cat.id}-${firstSubjName.replace(/[^a-zA-Z0-9]/g, '_')}-${firstGoal.id || 'empty'}`;
         firstRowHeight = getMeasHeight(rowMeasId, 45);
       }
 
@@ -712,17 +736,21 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
 
       let currentTableSubjects: any[] = [];
 
-      cat.subjects.forEach((subj, sIdx) => {
+      (Array.isArray(cat.subjects) ? cat.subjects : []).forEach((subj: any, sIdx: number) => {
         const rowNo = sIdx + 1;
+        const subjName = (subj && typeof subj.name === 'string') ? subj.name : 'Subject';
+        const safeSlug = subjName.replace(/[^a-zA-Z0-9]/g, '_');
         let subjectGoalsForPage: any[] = [];
-        const goalsList = subj.goals.length > 0 ? subj.goals : [{ id: 'empty', text: '(No learning goals recorded)', remark: '-' }];
+        const rawGoals = (subj && Array.isArray(subj.goals)) ? subj.goals : [];
+        const goalsList = rawGoals.length > 0 ? rawGoals : [{ id: 'empty', text: '(No learning goals recorded)', remark: '-' }];
 
         goalsList.forEach((goal: any, gIdx: number) => {
           if (++iterationCount > MAX_ITERATIONS) {
             throw new Error("Paginasi melebihi batas iterasi maksimal (safety guard).");
           }
 
-          const rowMeasId = `row-${cat.id}-${subj.name.replace(/[^a-zA-Z0-9]/g, '_')}-${goal.id}`;
+          const goalId = goal?.id || 'empty';
+          const rowMeasId = `row-${cat.id}-${safeSlug}-${goalId}`;
           let rowHeight = getMeasHeight(rowMeasId, 45);
 
           // Guard against single rows taller than the entire page content area
@@ -741,7 +769,7 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
             // Flush current goals of this subject into the table slice
             if (subjectGoalsForPage.length > 0) {
               currentTableSubjects.push({
-                name: subj.name,
+                name: subjName,
                 goals: [...subjectGoalsForPage],
                 startIndex: rowNo,
                 isContinued: gIdx > subjectGoalsForPage.length
@@ -787,7 +815,7 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
 
         if (subjectGoalsForPage.length > 0) {
           currentTableSubjects.push({
-            name: subj.name,
+            name: subjName,
             goals: [...subjectGoalsForPage],
             startIndex: rowNo,
             isContinued: goalsList.length > subjectGoalsForPage.length && subjectGoalsForPage.length > 0

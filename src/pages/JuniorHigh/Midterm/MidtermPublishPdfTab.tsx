@@ -308,18 +308,36 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
   };
 
   const handleOpenPreview = (student: Student) => {
+    if (!student || !student.id || !(student.name && student.name.trim())) {
+      toast.error('Pratinjau tidak dapat dibuka: Data nama atau ID siswa wajib diisi.');
+      return;
+    }
+    if (!selectedClass || !(selectedClass.name && selectedClass.name.trim())) {
+      toast.error('Pratinjau tidak dapat dibuka: Data nama kelas wajib diisi.');
+      return;
+    }
     const published = publishedReportsMap[student.id];
     if (published && published.reportSnapshot) {
       setPreviewSnapshot(published.reportSnapshot);
       setPreviewStudent(student);
     } else {
-      setPreviewSnapshot(buildLiveSnapshot(student));
-      setPreviewStudent(student);
+      try {
+        setPreviewSnapshot(buildLiveSnapshot(student));
+        setPreviewStudent(student);
+      } catch (err: any) {
+        console.error('Error building live snapshot for preview:', err);
+        toast.error(`Gagal menyiapkan pratinjau: ${err?.message || 'Data tidak lengkap.'}`);
+      }
     }
   };
 
   const executePublishStudent = async (student: Student) => {
-    if (!selectedClass) return;
+    if (!student || !student.id || !(student.name && student.name.trim())) {
+      throw new Error('Data wajib siswa (ID atau Nama) tidak lengkap.');
+    }
+    if (!selectedClass || !(selectedClass.name && selectedClass.name.trim())) {
+      throw new Error('Data wajib kelas (Nama Kelas) tidak lengkap.');
+    }
 
     setActiveGeneratingStudent(student);
     // Give DOM time to update and paginate the hidden print template

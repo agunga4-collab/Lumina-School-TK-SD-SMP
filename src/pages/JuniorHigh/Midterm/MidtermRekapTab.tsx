@@ -921,7 +921,7 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
                                 <button
                                   onClick={() => {
                                     setPreviewSnapshot(pub.reportSnapshot);
-                                    setPreviewTitle(`Preview Rapor ${student.name} (v${pub.version})`);
+                                    setPreviewTitle(`Preview Rapor ${student?.name || 'Siswa'} (v${pub?.version || 1})`);
                                   }}
                                   title="Preview Snapshot PDF"
                                   className="p-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg transition-all cursor-pointer"
