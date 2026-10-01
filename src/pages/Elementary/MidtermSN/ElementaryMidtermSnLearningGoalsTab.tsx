@@ -1,8 +1,8 @@
 import * as React from 'react';
 import {
   Plus, Trash2, Edit2, Check, Save,
-  Layers, CheckCircle2, BookOpen, Clock, Loader2,
-  X, AlertCircle
+  BookOpen, CheckCircle2, Loader2,
+  X
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { saveElemSnMidtermReport } from '../../../services/elementarySnMidtermService';
@@ -42,6 +42,9 @@ export const ElementaryMidtermSnLearningGoalsTab: React.FC<ElementaryMidtermSnLe
   const [saving, setSaving] = React.useState<boolean>(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = React.useState<boolean>(false);
 
+  // Track the currently active report document identifier
+  const currentDocKeyRef = React.useRef<string>('');
+
   // Modals / forms state
   const [newSubjectName, setNewSubjectName] = React.useState<string>('');
   const [newSubjectCategory, setNewSubjectCategory] = React.useState<'ACADEMIC' | 'PROJECTS'>('ACADEMIC');
@@ -50,9 +53,11 @@ export const ElementaryMidtermSnLearningGoalsTab: React.FC<ElementaryMidtermSnLe
   const [editingSubjectIndex, setEditingSubjectIndex] = React.useState<number | null>(null);
   const [editSubjectName, setEditSubjectName] = React.useState<string>('');
 
-  // Sync state when reportDoc changes
+  // Sync subjects only when context or reportDoc ID changes
   React.useEffect(() => {
-    if (reportDoc?.subjects) {
+    const docKey = `${reportDoc?.id || ''}_${reportDoc?.studentId || ''}_${reportDoc?.updatedAt || 0}`;
+    if (docKey !== currentDocKeyRef.current && reportDoc?.subjects) {
+      currentDocKeyRef.current = docKey;
       setSubjects(JSON.parse(JSON.stringify(reportDoc.subjects)));
       setHasUnsavedChanges(false);
     }
@@ -71,7 +76,6 @@ export const ElementaryMidtermSnLearningGoalsTab: React.FC<ElementaryMidtermSnLe
 
     setSubjects(updated);
     setHasUnsavedChanges(true);
-    onUpdateReportDoc({ ...reportDoc, subjects: updated });
   };
 
   const handleAddGoal = (subjectIdx: number) => {
@@ -92,7 +96,6 @@ export const ElementaryMidtermSnLearningGoalsTab: React.FC<ElementaryMidtermSnLe
 
     setSubjects(updated);
     setHasUnsavedChanges(true);
-    onUpdateReportDoc({ ...reportDoc, subjects: updated });
   };
 
   const handleGoalTextChange = (subjectIdx: number, goalIdx: number, text: string) => {
@@ -108,7 +111,6 @@ export const ElementaryMidtermSnLearningGoalsTab: React.FC<ElementaryMidtermSnLe
 
     setSubjects(updated);
     setHasUnsavedChanges(true);
-    onUpdateReportDoc({ ...reportDoc, subjects: updated });
   };
 
   const handleDeleteGoal = (subjectIdx: number, goalIdx: number) => {
@@ -120,7 +122,6 @@ export const ElementaryMidtermSnLearningGoalsTab: React.FC<ElementaryMidtermSnLe
 
     setSubjects(updated);
     setHasUnsavedChanges(true);
-    onUpdateReportDoc({ ...reportDoc, subjects: updated });
   };
 
   const handleAddSubject = () => {
@@ -147,10 +148,9 @@ export const ElementaryMidtermSnLearningGoalsTab: React.FC<ElementaryMidtermSnLe
     const updated = [...subjects, newSubj];
     setSubjects(updated);
     setHasUnsavedChanges(true);
-    onUpdateReportDoc({ ...reportDoc, subjects: updated });
     setNewSubjectName('');
     setShowAddSubjectModal(false);
-    toast.success(`Bidang studi "${newSubj.subjectName}" berhasil ditambahkan.`);
+    toast.success(`Bidang studi "${newSubj.subjectName}" berhasil ditambahkan ke draf.`);
   };
 
   const handleSaveEditSubject = (subjectIdx: number) => {
@@ -162,7 +162,6 @@ export const ElementaryMidtermSnLearningGoalsTab: React.FC<ElementaryMidtermSnLe
     updated[subjectIdx] = { ...updated[subjectIdx], subjectName: editSubjectName.trim() };
     setSubjects(updated);
     setHasUnsavedChanges(true);
-    onUpdateReportDoc({ ...reportDoc, subjects: updated });
     setEditingSubjectIndex(null);
     setEditSubjectName('');
     toast.success('Nama bidang studi diperbarui.');
@@ -177,7 +176,6 @@ export const ElementaryMidtermSnLearningGoalsTab: React.FC<ElementaryMidtermSnLe
     const updated = subjects.filter((_, idx) => idx !== subjectIdx);
     setSubjects(updated);
     setHasUnsavedChanges(true);
-    onUpdateReportDoc({ ...reportDoc, subjects: updated });
     toast.success(`Bidang studi "${subjName}" berhasil dihapus.`);
   };
 
@@ -189,20 +187,22 @@ export const ElementaryMidtermSnLearningGoalsTab: React.FC<ElementaryMidtermSnLe
 
     setSaving(true);
     try {
+      const now = Date.now();
       const updatedDoc: ElementarySnMidtermReportDoc = {
         ...reportDoc,
         subjects,
-        updatedAt: Date.now(),
+        updatedAt: now,
         updatedBy: currentUser.uid
       };
 
       await saveElemSnMidtermReport(updatedDoc, currentUser);
+      currentDocKeyRef.current = `${updatedDoc.id}_${updatedDoc.studentId}_${now}`;
       onUpdateReportDoc(updatedDoc);
       setHasUnsavedChanges(false);
       toast.success('Data Learning Goals & Remarks Siswa SN berhasil disimpan ke Firestore!');
     } catch (err: any) {
       console.error('[ElementaryMidtermSnLearningGoalsTab] save error:', err);
-      toast.error('Gagal menyimpan: ' + (err.message || 'Error'));
+      toast.error('Gagal menyimpan ke Firestore: ' + (err.message || 'Error'));
     } finally {
       setSaving(false);
     }
@@ -252,7 +252,11 @@ export const ElementaryMidtermSnLearningGoalsTab: React.FC<ElementaryMidtermSnLe
           <button
             onClick={handleSaveAll}
             disabled={saving || !hasUnsavedChanges}
-            className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-black rounded-2xl shadow-sm transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+            className={`px-5 py-2.5 text-xs font-black rounded-2xl shadow-sm transition-all flex items-center gap-2 cursor-pointer ${
+              hasUnsavedChanges
+                ? 'bg-amber-600 hover:bg-amber-700 text-white animate-pulse'
+                : 'bg-slate-100 text-slate-400 cursor-default opacity-80'
+            }`}
           >
             {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
             <span>{hasUnsavedChanges ? 'Simpan Perubahan' : 'Tersimpan'}</span>

@@ -8,7 +8,6 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
-  orderBy,
   QueryConstraint
 } from 'firebase/firestore';
 import { db, handleFirestoreError } from '../lib/firebase';
@@ -21,7 +20,8 @@ import type {
 import type { Student, Class, User } from '../types';
 
 export function normalizeAcademicYear(academicYear: string): string {
-  return (academicYear || '2025/2026').replace(/\//g, '_');
+  if (!academicYear || typeof academicYear !== 'string') return '2025_2026';
+  return academicYear.replace(/\//g, '_').trim();
 }
 
 export function getElemSnDocId(
@@ -31,8 +31,12 @@ export function getElemSnDocId(
   semester: string,
   midtermPeriod: string
 ): string {
+  const sId = (studentId || '').trim();
+  const cId = (classId || '').trim();
   const normYear = normalizeAcademicYear(academicYear);
-  return `${studentId}_${classId}_${normYear}_S${semester}_T${midtermPeriod}_SN`;
+  const sem = (semester || '1').trim();
+  const per = (midtermPeriod || '1').trim();
+  return `${sId}_${cId}_${normYear}_${sem}_${per}_SN`;
 }
 
 // ----------------------------------------------------
@@ -217,19 +221,25 @@ export function createDefaultElemSnReport(
   midtermPeriod: string,
   currentUser: User
 ): ElementarySnMidtermReportDoc {
-  const docId = getElemSnDocId(student.id, classObj.id, academicYear, semester, midtermPeriod);
+  const sId = (student?.id || '').trim();
+  const cId = (classObj?.id || '').trim();
+  const aYear = (academicYear || '').trim();
+  const sem = (semester || '1').trim();
+  const per = (midtermPeriod || '1').trim();
+
+  const docId = getElemSnDocId(sId, cId, aYear, sem, per);
 
   return {
     id: docId,
     reportType: 'SN',
-    studentId: student.id,
+    studentId: sId,
     studentName: student.name || 'Siswa',
     nisn: (student as any).nisn || (student as any).nis || '',
-    classId: classObj.id,
+    classId: cId,
     className: classObj.name || '',
-    academicYear,
-    semester,
-    midtermPeriod,
+    academicYear: aYear,
+    semester: sem,
+    midtermPeriod: per,
     subjects: JSON.parse(JSON.stringify(DEFAULT_ELEMENTARY_SN_SUBJECTS)),
     generalComment: {
       finalComment: '',
@@ -261,20 +271,44 @@ export async function fetchElemSnMidtermReport(
   semester: string,
   midtermPeriod: string
 ): Promise<ElementarySnMidtermReportDoc | null> {
-  if (!studentId || !classId || !academicYear || !semester || !midtermPeriod) {
+  const sId = (studentId || '').trim();
+  const cId = (classId || '').trim();
+  const aYear = (academicYear || '').trim();
+  const sem = (semester || '1').trim();
+  const per = (midtermPeriod || '1').trim();
+
+  if (!sId || !cId || !aYear || !sem || !per) {
     return null;
   }
 
   try {
-    const docId = getElemSnDocId(studentId, classId, academicYear, semester, midtermPeriod);
+    const docId = getElemSnDocId(sId, cId, aYear, sem, per);
     const docRef = doc(db, 'elem_sn_midterm_reports', docId);
-    const snap = await getDoc(docRef);
+    let snap = await getDoc(docRef);
+
+    // Fallback check for legacy doc ID format if standard not found
+    if (!snap.exists()) {
+      const legacyDocId = `${sId}_${cId}_${normalizeAcademicYear(aYear)}_S${sem}_T${per}_SN`;
+      if (legacyDocId !== docId) {
+        const legacyRef = doc(db, 'elem_sn_midterm_reports', legacyDocId);
+        const legacySnap = await getDoc(legacyRef);
+        if (legacySnap.exists()) {
+          snap = legacySnap;
+        }
+      }
+    }
 
     if (snap.exists()) {
       const data = snap.data() as ElementarySnMidtermReportDoc;
       return {
         ...data,
-        id: snap.id,
+        id: docId,
+        studentId: sId,
+        classId: cId,
+        academicYear: aYear,
+        semester: sem,
+        midtermPeriod: per,
+        reportType: 'SN',
         subjects: Array.isArray(data.subjects) ? data.subjects : [],
         generalComment: data.generalComment || {
           finalComment: '',
@@ -290,7 +324,7 @@ export async function fetchElemSnMidtermReport(
     }
     return null;
   } catch (err: any) {
-    console.error('[elementarySnMidtermService] fetchElemSnMidtermReport error:', { studentId, classId, academicYear, semester, midtermPeriod }, err);
+    console.error('[elementarySnMidtermService] fetchElemSnMidtermReport error:', { studentId: sId, classId: cId, academicYear: aYear, semester: sem, midtermPeriod: per }, err);
     handleFirestoreError(err, 'get', 'elem_sn_midterm_reports');
     return null;
   }
@@ -298,33 +332,32 @@ export async function fetchElemSnMidtermReport(
 
 export async function saveElemSnMidtermReport(
   reportDoc: ElementarySnMidtermReportDoc,
-  currentUser: User
+  currentUser?: User | null
 ): Promise<void> {
-  if (!reportDoc?.studentId || !reportDoc?.classId || !reportDoc?.academicYear || !reportDoc?.semester || !reportDoc?.midtermPeriod) {
+  const studentId = (reportDoc?.studentId || '').trim();
+  const classId = (reportDoc?.classId || '').trim();
+  const academicYear = (reportDoc?.academicYear || '').trim();
+  const semester = (reportDoc?.semester || '1').trim();
+  const midtermPeriod = (reportDoc?.midtermPeriod || '1').trim();
+
+  if (!studentId || !classId || !academicYear || !semester || !midtermPeriod) {
     throw new Error('Konteks dokumen rapor SN tidak lengkap.');
   }
 
   try {
-    const docId = reportDoc.id || getElemSnDocId(
-      reportDoc.studentId,
-      reportDoc.classId,
-      reportDoc.academicYear,
-      reportDoc.semester,
-      reportDoc.midtermPeriod
-    );
-
+    const docId = getElemSnDocId(studentId, classId, academicYear, semester, midtermPeriod);
     const docRef = doc(db, 'elem_sn_midterm_reports', docId);
 
     // Deep clean undefined fields to prevent Firestore serialization errors
     const cleanedSubjects = (reportDoc.subjects || []).map((s, sIdx) => ({
-      subjectId: s.subjectId || `elem_subj_${sIdx}`,
+      subjectId: s.subjectId || `elem_subj_${sIdx + 1}`,
       subjectName: s.subjectName || 'Subject',
       order: typeof s.order === 'number' ? s.order : sIdx + 1,
       category: s.category || (s.subjectName === 'Projects' ? 'PROJECTS' : 'ACADEMIC'),
       learningGoals: (s.learningGoals || []).map((g, gIdx) => ({
-        goalId: g.goalId || `goal_${sIdx}_${gIdx}`,
-        text: g.text || '',
-        remark: g.remark || '',
+        goalId: g.goalId || `goal_${sIdx + 1}_${gIdx + 1}`,
+        text: typeof g.text === 'string' ? g.text : '',
+        remark: typeof g.remark === 'string' ? g.remark : '',
         order: typeof g.order === 'number' ? g.order : gIdx + 1
       }))
     }));
@@ -344,14 +377,14 @@ export async function saveElemSnMidtermReport(
     const cleanedPayload: ElementarySnMidtermReportDoc = {
       id: docId,
       reportType: 'SN',
-      studentId: reportDoc.studentId,
+      studentId,
       studentName: reportDoc.studentName || 'Siswa',
       nisn: reportDoc.nisn || '',
-      classId: reportDoc.classId,
+      classId,
       className: reportDoc.className || '',
-      academicYear: reportDoc.academicYear,
-      semester: reportDoc.semester,
-      midtermPeriod: reportDoc.midtermPeriod,
+      academicYear,
+      semester,
+      midtermPeriod,
       subjects: cleanedSubjects,
       generalComment: cleanedGenCom,
       reviewStatus: reportDoc.reviewStatus || 'DRAFT',
@@ -365,7 +398,7 @@ export async function saveElemSnMidtermReport(
 
     await setDoc(docRef, cleanedPayload, { merge: true });
   } catch (err: any) {
-    console.error('[elementarySnMidtermService] saveElemSnMidtermReport error:', { id: reportDoc?.id }, err);
+    console.error('[elementarySnMidtermService] saveElemSnMidtermReport error:', { studentId, classId, academicYear, semester, midtermPeriod }, err);
     handleFirestoreError(err, 'update', 'elem_sn_midterm_reports');
     throw err;
   }
@@ -439,7 +472,7 @@ export async function publishElemSnMidtermReport(
 
   try {
     const normYear = normalizeAcademicYear(academicYear);
-    const docId = `${student.id}_${classObj.id}_${normYear}_S${semester}_T${midtermPeriod}_v${reportVersion}_SN`;
+    const docId = `${student.id}_${classObj.id}_${normYear}_${semester}_${midtermPeriod}_v${reportVersion}_SN`;
     const docRef = doc(db, 'elem_sn_midterm_published_reports', docId);
 
     const payload: ElementarySnPublishedMidtermReportDoc = {

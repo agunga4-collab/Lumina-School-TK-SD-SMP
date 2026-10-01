@@ -17,7 +17,8 @@ import {
   fetchElemSnMidtermReport,
   createDefaultElemSnReport,
   saveElemSnMidtermReport,
-  fetchElemSnPublishedReports
+  fetchElemSnPublishedReports,
+  getElemSnDocId
 } from '../../../services/elementarySnMidtermService';
 import { ManageSnStudentsModal } from './ManageSnStudentsModal';
 import { ElementaryMidtermSnLearningGoalsTab } from './ElementaryMidtermSnLearningGoalsTab';
@@ -48,7 +49,6 @@ class ElementaryMidtermSnErrorBoundary extends Component<any, any> {
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    this.setState({ errorInfo });
     console.error('Elementary Midterm SN Module Error:', error, errorInfo);
   }
 
@@ -132,6 +132,9 @@ function ElementaryMidtermSnReportPageContent() {
   const [reportConfig, setReportConfig] = React.useState<ReportConfig | null>(null);
   const [loadingReportData, setLoadingReportData] = React.useState<boolean>(false);
 
+  // Active request tracking to avoid race conditions
+  const activeReportRequestIdRef = React.useRef<number>(0);
+
   // Manage SN Students Modal
   const [isManageModalOpen, setIsManageModalOpen] = React.useState<boolean>(false);
 
@@ -141,18 +144,6 @@ function ElementaryMidtermSnReportPageContent() {
   const [showAttendanceRecap, setShowAttendanceRecap] = React.useState<boolean>(true);
 
   const configDocId = `ELEMENTARY_${selectedYear.replace(/\//g, '_')}_${selectedSemester}_${selectedTerm}`;
-
-  const formatToCustomDate = (dateStr: string): string => {
-    if (!dateStr) return '';
-    const [year, month, day] = dateStr.split('-');
-    const months = [
-      'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December'
-    ];
-    const mIndex = parseInt(month, 10) - 1;
-    const dNum = parseInt(day, 10);
-    return `${dNum} ${months[mIndex]} ${year}`;
-  };
 
   // Load period config
   React.useEffect(() => {
@@ -208,9 +199,7 @@ function ElementaryMidtermSnReportPageContent() {
           return isElem && isActiveYear && isNotArchived;
         });
 
-        // Sort classes by grade/name
         elemClasses.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-
         setClassesList(elemClasses);
 
         // Class selection sync
@@ -294,14 +283,16 @@ function ElementaryMidtermSnReportPageContent() {
     } as Student;
   }, [selectedSnStudentDoc]);
 
-  // Load Report Data for selected SN student
+  // Load Report Data for selected SN student with race-condition guard
   const loadStudentReportData = React.useCallback(async () => {
     if (!selectedStudentId || !selectedClassId || !selectedYear || !selectedSemester || !selectedTerm) {
       setReportDoc(null);
       return;
     }
 
+    const currentRequestId = ++activeReportRequestIdRef.current;
     setLoadingReportData(true);
+
     try {
       const [config, existingReport, publishedList] = await Promise.all([
         getReportConfig('ELEMENTARY'),
@@ -309,13 +300,17 @@ function ElementaryMidtermSnReportPageContent() {
         fetchElemSnPublishedReports(selectedClassId, selectedYear, selectedSemester, selectedTerm)
       ]);
 
+      if (currentRequestId !== activeReportRequestIdRef.current) {
+        return;
+      }
+
       setReportConfig(config || null);
       setPublishedReports(publishedList);
 
       if (existingReport) {
         setReportDoc(existingReport);
       } else if (selectedStudentObject && selectedClass && effectiveUser) {
-        // Auto initialize default SN report structure
+        // Only initialize default if no report exists in Firestore
         const newDraft = createDefaultElemSnReport(
           selectedStudentObject,
           selectedClass,
@@ -325,12 +320,16 @@ function ElementaryMidtermSnReportPageContent() {
           effectiveUser
         );
         await saveElemSnMidtermReport(newDraft, effectiveUser);
-        setReportDoc(newDraft);
+        if (currentRequestId === activeReportRequestIdRef.current) {
+          setReportDoc(newDraft);
+        }
       }
     } catch (err) {
       console.error('Error loading SN student report data:', err);
     } finally {
-      setLoadingReportData(false);
+      if (currentRequestId === activeReportRequestIdRef.current) {
+        setLoadingReportData(false);
+      }
     }
   }, [selectedStudentId, selectedClassId, selectedYear, selectedSemester, selectedTerm, selectedStudentObject, selectedClass, effectiveUser]);
 
@@ -444,7 +443,10 @@ function ElementaryMidtermSnReportPageContent() {
             </label>
             <select
               value={selectedSemester}
-              onChange={(e) => setSelectedSemester(e.target.value)}
+              onChange={(e) => {
+                setSelectedSemester(e.target.value);
+                setReportDoc(null);
+              }}
               className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 outline-hidden"
             >
               <option value="1">Semester 1 (Ganjil)</option>
@@ -459,7 +461,10 @@ function ElementaryMidtermSnReportPageContent() {
             </label>
             <select
               value={selectedTerm}
-              onChange={(e) => setSelectedTerm(e.target.value)}
+              onChange={(e) => {
+                setSelectedTerm(e.target.value);
+                setReportDoc(null);
+              }}
               className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 outline-hidden"
             >
               <option value="1">Midterm 1</option>
@@ -614,7 +619,7 @@ function ElementaryMidtermSnReportPageContent() {
               selectedClass={selectedClass}
               selectedStudent={selectedStudentObject}
               reportDoc={reportDoc}
-              onUpdateReportDoc={setReportDoc}
+              onUpdateReportDoc={(updated) => setReportDoc(updated)}
               onRefreshData={loadStudentReportData}
               loading={loadingReportData}
             />
@@ -626,7 +631,7 @@ function ElementaryMidtermSnReportPageContent() {
               selectedClass={selectedClass}
               selectedStudent={selectedStudentObject}
               reportDoc={reportDoc}
-              onUpdateReportDoc={setReportDoc}
+              onUpdateReportDoc={(updated) => setReportDoc(updated)}
               onRefreshData={loadStudentReportData}
               loading={loadingReportData}
             />
@@ -638,7 +643,7 @@ function ElementaryMidtermSnReportPageContent() {
               selectedClass={selectedClass}
               selectedStudent={selectedStudentObject}
               reportDoc={reportDoc}
-              onUpdateReportDoc={setReportDoc}
+              onUpdateReportDoc={(updated) => setReportDoc(updated)}
               onRefreshData={loadStudentReportData}
               loading={loadingReportData}
             />
