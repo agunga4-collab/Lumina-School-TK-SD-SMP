@@ -249,7 +249,14 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
 
   React.useEffect(() => {
     fetchDeliveryTracking();
-  }, [fetchDeliveryTracking]);
+  }, [selectedClassId, academicYear, semester, midtermTerm]);
+
+  // Reset modal states on mount and whenever context changes
+  React.useEffect(() => {
+    setWithdrawModal(null);
+    setHistoryModal(null);
+    setPreviewSnapshot(null);
+  }, [selectedClassId, academicYear, semester, midtermTerm]);
 
   // Helper to determine effective status
   const getStudentDeliveryStatus = React.useCallback((studentId: string): 'UNPUBLISHED' | 'READY_TO_SEND' | 'SENT' | 'VIEWED' | 'WITHDRAWN' => {

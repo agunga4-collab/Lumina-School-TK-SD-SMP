@@ -82,6 +82,20 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
   const canEdit = canUserEditMidtermGeneralComments(currentUser, selectedClass);
   const [submittingForReview, setSubmittingForReview] = React.useState<boolean>(false);
 
+  // Reset form states on mount and whenever context changes
+  const classId = selectedClass?.id;
+  React.useEffect(() => {
+    setSelectedStudentId('');
+    setNickname('');
+    setSelectedStrengths([]);
+    setSelectedAchievements([]);
+    setSelectedNeedsImprovement([]);
+    setManualNotes('');
+    setAiDraft('');
+    setFinalComment('');
+    setIsFinal(false);
+  }, [classId, academicYear, semester, midtermTerm]);
+
   // Load custom configs for this class context
   React.useEffect(() => {
     if (!selectedClass) return;
@@ -220,11 +234,13 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
   };
 
   // Auto-select first student if none selected
+  const studentsKey = React.useMemo(() => safeStudents.map(s => s.id).join(','), [safeStudents]);
   React.useEffect(() => {
     if ((!selectedStudentId || !safeStudents.some(s => s && s.id === selectedStudentId)) && safeStudents.length > 0) {
-      setSelectedStudentId(safeStudents[0].id);
+      const firstId = safeStudents[0].id;
+      setSelectedStudentId(prev => (prev === firstId ? prev : firstId));
     }
-  }, [safeStudents, selectedStudentId]);
+  }, [studentsKey, selectedStudentId]);
 
   const selectedStudent = safeStudents.find(s => s && s.id === selectedStudentId) || safeStudents[0] || null;
 
@@ -232,7 +248,8 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
   const currentReviewStatus: MidtermGenComReviewStatus = studentData?.generalCommentReviewStatus || 'DRAFT';
   const isEditorLocked = !canEdit || currentReviewStatus === 'SUBMITTED_FOR_REVIEW' || currentReviewStatus === 'APPROVED';
 
-  // Sync form when student changes or studentDataMap updates
+  // Sync form when student changes or studentData updates
+  const studentDataKey = selectedStudent ? `${selectedStudent.id}_${studentData?.updatedAt || ''}_${studentData?.status || ''}` : '';
   React.useEffect(() => {
     if (!selectedStudent) return;
     const sData = safeStudentDataMap[selectedStudent.id];
@@ -250,7 +267,7 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
     setAiDraft(gc?.aiDraft || '');
     setFinalComment(gc?.finalComment || gc?.aiDraft || '');
     setIsFinal(Boolean(gc?.isFinal));
-  }, [selectedStudent?.id, safeStudentDataMap]);
+  }, [selectedStudent?.id, studentDataKey]);
 
   // Helper to toggle bank items
   const toggleItem = (list: string[], setList: (v: string[]) => void, item: string) => {

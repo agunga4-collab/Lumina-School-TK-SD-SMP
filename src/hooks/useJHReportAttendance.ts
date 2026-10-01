@@ -42,6 +42,9 @@ export function useJHReportAttendance({
   // Ref to track the current query parameters to prevent race conditions (stale responses overriding newer selected context data)
   const activeQueryRef = useRef<string>('');
 
+  // Primitive key for studentIds to prevent unnecessary re-runs
+  const studentIdsKey = Array.isArray(studentIds) ? studentIds.join(',') : '';
+
   useEffect(() => {
     // 9. On class/year/semester/period change, immediately clear state to prevent leakage of old totals
     setLoading(true);
@@ -55,7 +58,7 @@ export function useJHReportAttendance({
       return;
     }
 
-    const currentQueryKey = `${selectedClassId}_${selectedYear}_${selectedSemester}_${selectedMonth}_${studentIds.join(',')}`;
+    const currentQueryKey = `${selectedClassId}_${selectedYear}_${selectedSemester}_${selectedMonth}_${studentIdsKey}`;
     activeQueryRef.current = currentQueryKey;
 
     let isMounted = true;
@@ -167,7 +170,7 @@ export function useJHReportAttendance({
     return () => {
       isMounted = false;
     };
-  }, [selectedClassId, selectedClassName, selectedYear, selectedSemester, selectedMonth, studentIds]);
+  }, [selectedClassId, selectedClassName, selectedYear, selectedSemester, selectedMonth, studentIdsKey]);
 
   return {
     loading,

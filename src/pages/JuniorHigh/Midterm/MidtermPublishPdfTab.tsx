@@ -115,6 +115,15 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
     setIsPreviewReady(ready);
   }, []);
 
+  // Reset preview state on mount and whenever context changes
+  const classId = selectedClass?.id;
+  React.useEffect(() => {
+    setPreviewStudent(null);
+    setPreviewSnapshot(null);
+    setIsPreviewReady(false);
+    setPublishingStudentId(null);
+  }, [classId, academicYear, semester, midtermTerm]);
+
   React.useEffect(() => {
     if (!selectedClass || !academicYear || !semester || !cutoffDateRaw || safeStudents.length === 0) {
       setCutoffAttendanceMap({});

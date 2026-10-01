@@ -84,13 +84,34 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
   const [bulkGoalSuccessMsg, setBulkGoalSuccessMsg] = React.useState<string | null>(null);
 
   // Synchronize default selected target classes when grade or selected class changes
+  const sameGradeClassIds = React.useMemo(() => sameGradeClasses.map(c => c.id).join(','), [sameGradeClasses]);
   React.useEffect(() => {
     if (sameGradeClasses.length > 0) {
-      setSelectedTargetClassIds(sameGradeClasses.map(c => c.id));
+      const ids = sameGradeClasses.map(c => c.id);
+      setSelectedTargetClassIds(prev => {
+        if (prev.join(',') === ids.join(',')) return prev;
+        return ids;
+      });
     } else if (selectedClass?.id) {
-      setSelectedTargetClassIds([selectedClass.id]);
+      const singleId = [selectedClass.id];
+      setSelectedTargetClassIds(prev => {
+        if (prev.length === 1 && prev[0] === selectedClass.id) return prev;
+        return singleId;
+      });
     }
-  }, [selectedClass?.id, sameGradeClasses]);
+  }, [selectedClass?.id, sameGradeClassIds]);
+
+  // Reset form states on mount and whenever context changes
+  const classId = selectedClass?.id;
+  React.useEffect(() => {
+    setIsAddingGoal(false);
+    setNewGoalText('');
+    setEditingGoalId(null);
+    setEditingGoalText('');
+    setSaveStatus('SAVED');
+    setBulkConfirmModal(null);
+    setIsImportModalOpen(false);
+  }, [classId, academicYear, semester, midtermTerm]);
 
   // Remarks saving state
   const [savingRemarkKey, setSavingRemarkKey] = React.useState<string | null>(null);

@@ -125,18 +125,19 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
       }
     };
     fetchLogo();
-  }, [snapshot, logoUrl]);
+  }, [snapshot?.logoUrl, logoUrl]);
 
   // Local states to resolve dynamic Class and Homeroom profile from DB
   const [dbClass, setDbClass] = React.useState<Class | null>(null);
+  const targetClassId = student?.classId || currentClass?.id;
+  const hasSnapshot = Boolean(snapshot);
 
   React.useEffect(() => {
-    if (snapshot) return; // Snapshot mode doesn't need DB resolve
-    const targetClassId = student?.classId || currentClass?.id;
+    if (hasSnapshot) return; // Snapshot mode doesn't need DB resolve
     if (!targetClassId) return;
 
     if (currentClass && currentClass.id === targetClassId) {
-      setDbClass(currentClass);
+      setDbClass(prev => (prev?.id === currentClass.id ? prev : currentClass));
       return;
     }
 
@@ -144,14 +145,15 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
       try {
         const snap = await getDoc(doc(db, 'classes', targetClassId));
         if (snap.exists()) {
-          setDbClass({ id: snap.id, ...snap.data() } as Class);
+          const loaded = { id: snap.id, ...snap.data() } as Class;
+          setDbClass(prev => (prev?.id === loaded.id ? prev : loaded));
         }
       } catch (e) {
         console.warn("Failed to fetch class in PDF Template:", targetClassId, e);
       }
     };
     fetchClass();
-  }, [student?.classId, currentClass, snapshot]);
+  }, [targetClassId, currentClass?.id, hasSnapshot]);
 
   const effHomeroomName = (() => {
     const isEmail = (val?: string | null) => !!val && val.includes('@');

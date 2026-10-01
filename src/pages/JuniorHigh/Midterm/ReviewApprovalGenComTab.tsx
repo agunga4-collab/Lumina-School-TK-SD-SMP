@@ -48,6 +48,13 @@ export function ReviewApprovalGenComTab({
     setTimeout(() => setToast(null), 4000);
   };
 
+  // Reset drawer state on mount and whenever context changes
+  const classId = selectedClass?.id;
+  React.useEffect(() => {
+    setSelectedStudentId(null);
+    setFeedbackText('');
+  }, [classId, academicYear, semester, midtermTerm]);
+
   // Helper roles
   const userRoleStr = currentUser.role || '';
   const isApprover = 
