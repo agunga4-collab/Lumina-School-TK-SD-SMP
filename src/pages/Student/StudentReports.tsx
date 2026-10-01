@@ -132,19 +132,19 @@ export default function StudentReports() {
           // Fetch Elementary Midterm Delivery Tracking if unit is ELEMENTARY
           if (effectiveUnit === 'ELEMENTARY') {
             const listElemMidterm: any[] = [];
+            
             for (const stId of Array.from(candidateIds)) {
               if (!stId) continue;
               try {
                 const qElemMidterm = query(
                   collection(db, 'elem_midterm_delivery_tracking'),
-                  where('studentId', '==', stId),
-                  where('activeForStudent', '==', true)
+                  where('studentId', '==', stId)
                 );
                 const snapElemMidterm = await getDocs(qElemMidterm);
                 snapElemMidterm.docs.forEach(docSnap => {
                   const data = docSnap.data();
                   if (
-                    data.activeForStudent === true &&
+                    data.activeForStudent !== false &&
                     (data.deliveryStatus === 'SENT' || data.deliveryStatus === 'VIEWED')
                   ) {
                     if (!listElemMidterm.some(item => item.id === docSnap.id)) {
@@ -159,6 +159,44 @@ export default function StudentReports() {
                 console.error("[StudentReports] Error querying elem_midterm_delivery_tracking:", err);
               }
             }
+
+            // Fallback query by name/email matching for Elementary if ID query returned empty
+            if (listElemMidterm.length === 0) {
+              try {
+                const studentNameClean = (student?.name || currentUser?.displayName || '').toLowerCase().trim();
+                const studentEmailClean = (student?.email || currentUser?.email || '').toLowerCase().trim();
+
+                const allElemTrackingSnap = await getDocs(query(
+                  collection(db, 'elem_midterm_delivery_tracking'),
+                  where('unit', '==', 'ELEMENTARY')
+                ));
+
+                allElemTrackingSnap.docs.forEach(docSnap => {
+                  const data = docSnap.data();
+                  const recName = String(data.studentName || '').toLowerCase().trim();
+                  const recEmail = String(data.studentEmail || '').toLowerCase().trim();
+
+                  const matchesName = studentNameClean && (recName.includes(studentNameClean) || studentNameClean.includes(recName));
+                  const matchesEmail = studentEmailClean && recEmail && recEmail === studentEmailClean;
+
+                  if (
+                    (matchesName || matchesEmail) &&
+                    data.activeForStudent !== false &&
+                    (data.deliveryStatus === 'SENT' || data.deliveryStatus === 'VIEWED')
+                  ) {
+                    if (!listElemMidterm.some(item => item.id === docSnap.id)) {
+                      listElemMidterm.push({
+                        id: docSnap.id,
+                        ...data
+                      });
+                    }
+                  }
+                });
+              } catch (err) {
+                console.warn("[StudentReports] Fallback elem_midterm_delivery_tracking search:", err);
+              }
+            }
+
             setElemMidtermReports(listElemMidterm.sort((a: any, b: any) => (b.sentAt || b.updatedAt || 0) - (a.sentAt || a.updatedAt || 0)));
           }
 
@@ -501,33 +539,43 @@ export default function StudentReports() {
                       <th className="py-4 px-6">Tahun Ajaran</th>
                       <th className="py-4 px-6">Semester</th>
                       <th className="py-4 px-6">Periode</th>
+                      <th className="py-4 px-6">Versi PDF</th>
                       <th className="py-4 px-6">Status</th>
                       <th className="py-4 px-6 text-right">Aksi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 text-sm font-semibold text-gray-700">
                     {elemMidtermReports.map((report) => {
-                      const academicYear = report.academicYear || activeYear || '2025/2026';
+                      const academicYear = report.academicYear || activeYear || '2026/2027';
                       const sem = report.semester || 1;
                       const term = report.midtermTerm || 1;
-                      const periodLabel = `Midterm Term ${term}`;
+                      const periodLabel = `Mid Term ${term}`;
+                      const isViewed = report.deliveryStatus === 'VIEWED';
+                      const versionText = report.reportVersion ? `v${report.reportVersion}` : 'v1';
 
                       return (
                         <tr key={report.id} className="hover:bg-gray-50/50 transition-colors">
                           <td className="py-4 px-6 font-bold text-gray-900">{academicYear}</td>
                           <td className="py-4 px-6">Semester {sem}</td>
                           <td className="py-4 px-6 font-bold text-gray-800">{periodLabel}</td>
+                          <td className="py-4 px-6 font-black text-gray-700">{versionText}</td>
                           <td className="py-4 px-6">
-                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-100">
-                              Diterbitkan
-                            </span>
+                            {isViewed ? (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-purple-50 text-purple-700 border border-purple-100">
+                                <Eye size={12} /> Dilihat
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-100">
+                                <Send size={12} /> Terkirim
+                              </span>
+                            )}
                           </td>
                           <td className="py-4 px-6 text-right">
                             <button
                               onClick={() => handleElemMidtermPdfClick(report)}
                               className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm cursor-pointer"
                             >
-                              <FileText size={12} /> Lihat PDF
+                              <FileText size={12} /> Buka Rapor PDF
                             </button>
                           </td>
                         </tr>
