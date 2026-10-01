@@ -1484,6 +1484,53 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    match /jh_midterm_delivery_tracking/{trackingId} {
+      allow read: if isSignedIn() && (
+        isAdmin() ||
+        isJuniorHighStaffAuthorized() ||
+        isSecretaryJH() ||
+        (isTeacher() && (currentUser().unitId == 'JUNIOR_HIGH' || currentUser().unitId == 'ALL' || (resource != null && isTeacherAssignedToClass(resource.data.classId)))) ||
+        (resource != null && (
+          (isStudent() && ('studentUid' in resource.data) && resource.data.studentUid == request.auth.uid) ||
+          (isStudent() && ('studentAccountId' in resource.data) && resource.data.studentAccountId == request.auth.uid) ||
+          isOwnStudentData(resource.data.studentId) ||
+          isLinkedStudent(resource.data.studentId)
+        ))
+      );
+
+      allow create: if isSignedIn() && (
+        isAdmin() ||
+        isJuniorHighStaffAuthorized() ||
+        isSecretaryJH() ||
+        (isTeacher() && isTeacherAssignedToClass(request.resource.data.classId))
+      );
+
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        isJuniorHighStaffAuthorized() ||
+        isSecretaryJH() ||
+        (isTeacher() && isTeacherAssignedToClass(request.resource.data.classId)) ||
+        (
+          isStudent() &&
+          resource != null &&
+          (
+            ('studentUid' in resource.data && resource.data.studentUid == request.auth.uid) ||
+            ('studentAccountId' in resource.data && resource.data.studentAccountId == request.auth.uid) ||
+            isOwnStudentData(resource.data.studentId)
+          ) &&
+          request.resource.data.studentId == resource.data.studentId &&
+          (!('studentUid' in resource.data) || request.resource.data.studentUid == resource.data.studentUid) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'deliveryStatus', 'firstOpenedAt', 'lastOpenedAt', 'openCount',
+            'firstViewedAt', 'lastViewedAt', 'viewCount', 'history', 'updatedAt',
+            'openedByEmail'
+          ])
+        )
+      );
+
+      allow delete: if isAdmin() || isJuniorHighStaffAuthorized();
+    }
+
     match /jh_midterm_period_configs/{configId} {
       allow get, list: if isActive() && (isJuniorHighStaff() || isAdmin() || isJuniorHighTeacher());
       allow create, update: if isActive() && (

@@ -118,6 +118,10 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
   // Delivery tracking data & loading state
   const [deliveryTrackingMap, setDeliveryTrackingMap] = React.useState<Record<string, any>>({});
   const [isFetchingTracking, setIsFetchingTracking] = React.useState<boolean>(true);
+  const [trackingFetchError, setTrackingFetchError] = React.useState<string | null>(null);
+
+  // Student Account resolution map (studentId -> account info)
+  const [studentAccountsMap, setStudentAccountsMap] = React.useState<Record<string, { studentUid: string; studentAccountId: string } | null>>({});
 
   // Filters & search
   const [filterDeliveryStatus, setFilterDeliveryStatus] = React.useState<'ALL' | 'READY_TO_SEND' | 'SENT' | 'VIEWED' | 'WITHDRAWN' | 'UNPUBLISHED'>('ALL');
@@ -155,6 +159,30 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
 
   const canManageDelivery = isSuperAdminOrHead || isAssignedTeacher;
 
+  // Resolve student accounts when students list changes
+  React.useEffect(() => {
+    let isCancelled = false;
+    const resolveAccounts = async () => {
+      const map: Record<string, { studentUid: string; studentAccountId: string } | null> = {};
+      for (const st of safeStudents) {
+        if (!st?.id) continue;
+        const acc = await resolveStudentUserAccount(st.id, st.name);
+        map[st.id] = acc;
+      }
+      if (!isCancelled) {
+        setStudentAccountsMap(map);
+      }
+    };
+    if (safeStudents.length > 0) {
+      resolveAccounts();
+    } else {
+      setStudentAccountsMap({});
+    }
+    return () => {
+      isCancelled = true;
+    };
+  }, [safeStudents]);
+
   // Active latest published reports map
   const publishedMap = React.useMemo(() => {
     const map: Record<string, PublishedMidtermReport> = {};
@@ -172,6 +200,7 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
   const fetchDeliveryTracking = React.useCallback(async () => {
     if (!selectedClassId || !academicYear) return;
     setIsFetchingTracking(true);
+    setTrackingFetchError(null);
     try {
       const q = query(
         collection(db, 'jh_midterm_delivery_tracking'),
@@ -210,8 +239,9 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
       }
 
       setDeliveryTrackingMap(map);
-    } catch (err) {
+    } catch (err: any) {
       console.error('[MidtermRekapTab] Error fetching delivery tracking:', err);
+      setTrackingFetchError(err.message || 'Gagal memuat status tracking pengiriman.');
     } finally {
       setIsFetchingTracking(false);
     }
@@ -282,21 +312,26 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
       return;
     }
 
+    const existingTracking = deliveryTrackingMap[student.id];
+    const resolvedAcc = studentAccountsMap[student.id] || (await resolveStudentUserAccount(student.id, student.name));
+    const studentUid = resolvedAcc?.studentUid || existingTracking?.studentUid || '';
+    const studentAccountId = resolvedAcc?.studentAccountId || existingTracking?.studentAccountId || studentUid;
+
+    if (!studentUid) {
+      toast.error(`Akun siswa belum terhubung untuk ${student.name}. Pastikan data siswa/user sudah memiliki studentId/NIS yang sesuai.`);
+      return;
+    }
+
     setIsSending(true);
     try {
       const docId = `JH_${student.id}_S${semester}_T${midtermTerm}`;
       const trackingRef = doc(db, 'jh_midterm_delivery_tracking', docId);
 
-      const existingTracking = deliveryTrackingMap[student.id];
       const existingStatus = String(existingTracking?.deliveryStatus || '').toUpperCase();
       const isResend = existingTracking && (existingStatus === 'SENT' || existingStatus === 'VIEWED');
 
       const actorName = currentUser?.displayName || (currentUser as any)?.name || currentUser?.email || 'Guru / Admin';
       const actorUid = currentUser?.uid || 'system';
-
-      const resolvedAcc = await resolveStudentUserAccount(student.id, student.name);
-      const studentUid = resolvedAcc?.studentUid || existingTracking?.studentUid || '';
-      const studentAccountId = resolvedAcc?.studentAccountId || existingTracking?.studentAccountId || studentUid;
 
       const historyLog = Array.isArray(existingTracking?.history) ? [...existingTracking.history] : [];
       historyLog.push({
@@ -635,6 +670,21 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
         </div>
       </div>
 
+      {/* Error Banner if Tracking fetch fails */}
+      {trackingFetchError && (
+        <div className="bg-rose-50 border border-rose-200 p-4 rounded-2xl flex items-start gap-3 shadow-xs">
+          <AlertTriangle size={18} className="text-rose-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <h4 className="text-xs font-black text-rose-950 uppercase tracking-wide">
+              Gagal Memuat Data Pengiriman
+            </h4>
+            <p className="text-xs text-rose-800">
+              {trackingFetchError}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Main Delivery & Tracking Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         {loading || isFetchingTracking ? (
@@ -672,6 +722,9 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
                   const track = deliveryTrackingMap[student.id];
                   const status = getStudentDeliveryStatus(student.id);
 
+                  const resolvedAcc = studentAccountsMap[student.id];
+                  const isAccountLinked = Boolean(resolvedAcc?.studentUid || track?.studentUid);
+
                   const isPublished = Boolean(pub);
                   const isSent = status === 'SENT';
                   const isViewed = status === 'VIEWED';
@@ -688,8 +741,14 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
                       {/* Nama Siswa & ID */}
                       <td className="py-3.5 px-4">
                         <div className="font-extrabold text-slate-900">{student.name}</div>
-                        <div className="text-[10px] text-slate-400 font-bold">
-                          ID: {student.id} {student.nisn ? `• NISN: ${student.nisn}` : ''}
+                        <div className="flex items-center gap-1.5 flex-wrap text-[10px] text-slate-400 font-bold">
+                          <span>ID: {student.id}</span>
+                          {student.nisn ? <span>• NISN: {student.nisn}</span> : null}
+                          {!isAccountLinked && (
+                            <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded text-[9px] font-bold">
+                              Akun Belum Terhubung
+                            </span>
+                          )}
                         </div>
                       </td>
 
@@ -775,8 +834,8 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
                               {(isReady || isWithdrawn) && (
                                 <button
                                   onClick={() => handleSendReport(student)}
-                                  disabled={!canManageDelivery || isSending}
-                                  title={canManageDelivery ? 'Kirim laporan ke akun siswa' : 'Hanya Guru Kelas atau Admin yang dapat mengirim'}
+                                  disabled={!canManageDelivery || isSending || !isAccountLinked}
+                                  title={!canManageDelivery ? 'Hanya Guru Kelas atau Admin yang dapat mengirim' : !isAccountLinked ? 'Akun siswa belum terhubung' : 'Kirim laporan ke akun siswa'}
                                   className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer disabled:cursor-not-allowed"
                                 >
                                   <Send size={10} /> Kirim
@@ -787,8 +846,8 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
                               {(isSent || isViewed) && (
                                 <button
                                   onClick={() => handleSendReport(student)}
-                                  disabled={!canManageDelivery || isSending}
-                                  title={canManageDelivery ? 'Kirim ulang update versi PDF terbaru' : 'Hanya Guru Kelas atau Admin yang dapat mengirim ulang'}
+                                  disabled={!canManageDelivery || isSending || !isAccountLinked}
+                                  title={!canManageDelivery ? 'Hanya Guru Kelas atau Admin yang dapat mengirim ulang' : !isAccountLinked ? 'Akun siswa belum terhubung' : 'Kirim ulang update versi PDF terbaru'}
                                   className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer disabled:cursor-not-allowed"
                                 >
                                   <RefreshCw size={10} /> Kirim Ulang

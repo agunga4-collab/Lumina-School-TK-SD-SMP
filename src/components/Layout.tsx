@@ -699,6 +699,7 @@ export function Layout() {
                         <>
                           <NavItem to="/student/learning-power-up" icon={<CheckSquare size={18} />} label="Learning Power-Up" />
                           <NavItem to="/student/unit-activities" icon={<Compass size={18} />} label="Unit Aktivitas" />
+                          <NavItem to="/student/reports" icon={<FileText size={18} />} label="Rapor Saya" />
                           <NavItem to="/student/monthly-reports" icon={<FileText size={18} />} label="Rapor Bulanan" />
                           <NavItem to="/student/aap" icon={<FileSpreadsheet size={18} />} label="Asesmen Awal Pembelajaran" />
                         </>
