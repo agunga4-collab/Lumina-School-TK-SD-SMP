@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import {
   FileText, Calendar, Users, Layers, Sparkles,
   Shield, UserCheck, AlertCircle, RefreshCw, Layers3,
-  BookOpen, MessageSquare, FileCheck2, Send, BarChart3
+  BookOpen, MessageSquare, FileCheck2, Send, BarChart3, Loader2
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import { useAcademicYear } from '../../../context/AcademicYearContext';
@@ -112,36 +112,49 @@ function MidtermSnReportPageContent() {
   const [publishedReports, setPublishedReports] = React.useState<SnPublishedMidtermReportDoc[]>([]);
   const [reportConfig, setReportConfig] = React.useState<ReportConfig | null>(null);
 
-  const [loading, setLoading] = React.useState<boolean>(false);
+  const [loadingMaster, setLoadingMaster] = React.useState<boolean>(true);
+  const [loadingStudents, setLoadingStudents] = React.useState<boolean>(false);
+  const [loadingReport, setLoadingReport] = React.useState<boolean>(false);
+
   const [isManageModalOpen, setIsManageModalOpen] = React.useState<boolean>(false);
 
   const canManageSn = canUserManageSnStatus(effectiveUser);
 
   // Load Classes & Config on Mount
   React.useEffect(() => {
+    let isMounted = true;
     const initMaster = async () => {
+      setLoadingMaster(true);
       try {
         const [classList, cfg] = await Promise.all([
           getClasses(),
           getReportConfig('JUNIOR_HIGH')
         ]);
+        if (!isMounted) return;
+
         const jhClasses = (classList || []).filter(
-          (c) => c.unitId === 'JUNIOR_HIGH' || (c as any).unit === 'JUNIOR_HIGH'
+          (c) => c && (c.unitId === 'JUNIOR_HIGH' || (c as any).unit === 'JUNIOR_HIGH')
         );
         setAllClasses(jhClasses);
-        setReportConfig(cfg);
+        setReportConfig(cfg || null);
 
+        // Auto-select class only if none was specified in searchParams
         if (!selectedClassId && jhClasses.length > 0) {
           setSelectedClassId(jhClasses[0].id);
         }
       } catch (err) {
-        console.error("Gagal memuat daftar kelas Junior High:", err);
+        console.error("[MidtermSnReportPage] Gagal memuat data master kelas:", err);
+      } finally {
+        if (isMounted) setLoadingMaster(false);
       }
     };
     initMaster();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
-  // Update selected class object when classId changes
+  // Update selected class object when selectedClassId or allClasses change
   React.useEffect(() => {
     if (selectedClassId && allClasses.length > 0) {
       const cls = allClasses.find((c) => c.id === selectedClassId) || null;
@@ -173,20 +186,21 @@ function MidtermSnReportPageContent() {
 
   // Load SN Students list when class or academic year changes
   const loadSnStudents = React.useCallback(async () => {
-    if (!selectedClassId) {
+    if (!selectedClassId || typeof selectedClassId !== 'string' || !selectedClassId.trim()) {
       setSnStudents([]);
       return;
     }
-    setLoading(true);
+
+    setLoadingStudents(true);
     try {
-      const list = await fetchSnStudentsForClass(selectedClassId, selectedYear);
+      const list = await fetchSnStudentsForClass(selectedClassId.trim(), selectedYear?.trim());
       setSnStudents(list || []);
 
       // If current selectedStudentId is not in the list, auto-select first or clear
       if (selectedStudentId) {
-        const match = list.find((s) => s.studentId === selectedStudentId);
+        const match = (list || []).find((s) => s.studentId === selectedStudentId);
         if (!match) {
-          if (list.length > 0) {
+          if (list && list.length > 0) {
             setSelectedStudentId(list[0].studentId);
           } else {
             setSelectedStudentId('');
@@ -194,59 +208,81 @@ function MidtermSnReportPageContent() {
             setSnReportDoc(null);
           }
         }
-      } else if (list.length > 0) {
+      } else if (list && list.length > 0) {
         setSelectedStudentId(list[0].studentId);
       }
     } catch (err) {
-      console.error("Gagal memuat siswa SN:", err);
+      console.error("[MidtermSnReportPage] Gagal memuat siswa SN:", { selectedClassId, selectedYear }, err);
+      setSnStudents([]);
     } finally {
-      setLoading(false);
+      setLoadingStudents(false);
     }
-  }, [selectedClassId, selectedYear]);
+  }, [selectedClassId, selectedYear, selectedStudentId]);
 
   React.useEffect(() => {
     loadSnStudents();
-  }, [loadSnStudents]);
+  }, [selectedClassId, selectedYear]);
 
   // Load Selected SN Student's Data & Report Doc
   const loadStudentReport = React.useCallback(async () => {
-    if (!selectedStudentId || !selectedClass) {
+    if (
+      !selectedStudentId ||
+      typeof selectedStudentId !== 'string' ||
+      !selectedStudentId.trim() ||
+      !selectedClass ||
+      !selectedClass.id ||
+      !selectedYear ||
+      !selectedSemester ||
+      !selectedTerm
+    ) {
       setSelectedStudentObj(null);
       setSnReportDoc(null);
       return;
     }
 
-    setLoading(true);
+    setLoadingReport(true);
     try {
-      const [stdDoc, publishedList] = await Promise.all([
-        getStudentById(selectedStudentId),
-        fetchSnPublishedReportsForClass(selectedClass.id, selectedYear, selectedSemester, selectedTerm)
-      ]);
+      const sId = selectedStudentId.trim();
+      const cId = selectedClass.id.trim();
+      const aYear = selectedYear.trim();
+      const sem = selectedSemester.trim();
+      const term = selectedTerm.trim();
 
+      // Safe fetch for student profile
+      let stdDoc: Student | null = null;
+      try {
+        stdDoc = await getStudentById(sId);
+      } catch (e) {
+        console.warn("[MidtermSnReportPage] getStudentById fallback:", e);
+      }
+
+      const fallbackName = snStudents.find((s) => s.studentId === sId)?.studentName || 'Siswa SN';
       const studentData: Student = stdDoc || {
-        id: selectedStudentId,
-        name: snStudents.find((s) => s.studentId === selectedStudentId)?.studentName || 'Siswa SN',
-        classId: selectedClass.id,
+        id: sId,
+        name: fallbackName,
+        classId: cId,
         currentUnit: 'JUNIOR_HIGH'
       };
 
       setSelectedStudentObj(studentData);
+
+      // Safe fetch for published reports
+      let publishedList: SnPublishedMidtermReportDoc[] = [];
+      try {
+        publishedList = await fetchSnPublishedReportsForClass(cId, aYear, sem, term);
+      } catch (e) {
+        console.warn("[MidtermSnReportPage] fetchSnPublishedReportsForClass error:", e);
+      }
       setPublishedReports(publishedList || []);
 
-      const report = await fetchSnMidtermReport(
-        studentData,
-        selectedClass,
-        selectedYear,
-        selectedSemester,
-        selectedTerm
-      );
-
+      // Safe fetch for SN midterm report draft
+      const report = await fetchSnMidtermReport(studentData, selectedClass, aYear, sem, term);
       setSnReportDoc(report);
     } catch (err) {
-      console.error("Gagal memuat rapor siswa SN:", err);
+      console.error("[MidtermSnReportPage] Gagal memuat data rapor siswa SN:", { selectedStudentId, classId: selectedClass?.id }, err);
       toast.error('Gagal memuat data rapor siswa SN.');
     } finally {
-      setLoading(false);
+      setLoadingReport(false);
     }
   }, [
     selectedStudentId,
@@ -368,6 +404,7 @@ function MidtermSnReportPageContent() {
             }}
             className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
           >
+            <option value="">-- Pilih Kelas --</option>
             {allClasses.map((cls) => (
               <option key={cls.id} value={cls.id}>
                 {cls.name}
@@ -384,24 +421,42 @@ function MidtermSnReportPageContent() {
           <select
             value={selectedStudentId}
             onChange={(e) => handleSelectStudent(e.target.value)}
-            disabled={snStudents.length === 0}
+            disabled={!selectedClassId || snStudents.length === 0}
             className="w-full px-3 py-2 bg-purple-50 border border-purple-300 rounded-2xl text-xs font-black text-purple-950 focus:outline-none focus:ring-2 focus:ring-purple-500/30 disabled:opacity-50"
           >
-            {snStudents.length === 0 ? (
+            {!selectedClassId ? (
+              <option value="">-- Pilih Kelas Dahulu --</option>
+            ) : snStudents.length === 0 ? (
               <option value="">-- Belum ada Siswa SN --</option>
             ) : (
-              snStudents.map((sn) => (
-                <option key={sn.studentId} value={sn.studentId}>
-                  {sn.studentName}
-                </option>
-              ))
+              <>
+                <option value="">-- Pilih Siswa SN --</option>
+                {snStudents.map((sn) => (
+                  <option key={sn.studentId} value={sn.studentId}>
+                    {sn.studentName}
+                  </option>
+                ))}
+              </>
             )}
           </select>
         </div>
       </div>
 
+      {/* No Class Selected Banner */}
+      {!selectedClassId && !loadingMaster && (
+        <div className="p-8 text-center bg-white rounded-3xl border border-slate-200 shadow-2xs space-y-2">
+          <Users size={32} className="mx-auto text-purple-600" />
+          <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight">
+            Pilih Kelas Terlebih Dahulu
+          </h3>
+          <p className="text-xs text-slate-500 max-w-md mx-auto">
+            Silakan tentukan kelas di atas untuk melihat siswa SN dan mengelola rapor individual.
+          </p>
+        </div>
+      )}
+
       {/* No SN Students Alert Banner */}
-      {snStudents.length === 0 && selectedClass && (
+      {selectedClassId && snStudents.length === 0 && !loadingStudents && selectedClass && (
         <div className="p-5 bg-purple-50 border border-purple-200 rounded-3xl flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-purple-950">
           <div className="flex items-center gap-3">
             <Shield size={20} className="text-purple-700 shrink-0" />
@@ -421,69 +476,71 @@ function MidtermSnReportPageContent() {
       )}
 
       {/* Navigation Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-200 overflow-x-auto pb-1">
-        <button
-          onClick={() => setActiveTab('GOALS')}
-          disabled={!selectedStudentId}
-          className={`px-5 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-            activeTab === 'GOALS'
-              ? 'bg-purple-900 text-white shadow-xs'
-              : 'text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'
-          }`}
-        >
-          <BookOpen size={16} /> 1. Learning Goals & Remarks
-        </button>
+      {selectedClassId && (
+        <div className="flex items-center gap-2 border-b border-slate-200 overflow-x-auto pb-1">
+          <button
+            onClick={() => setActiveTab('GOALS')}
+            disabled={!selectedStudentId}
+            className={`px-5 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'GOALS'
+                ? 'bg-purple-900 text-white shadow-xs'
+                : 'text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'
+            }`}
+          >
+            <BookOpen size={16} /> 1. Learning Goals & Remarks
+          </button>
 
-        <button
-          onClick={() => setActiveTab('COMMENTS')}
-          disabled={!selectedStudentId}
-          className={`px-5 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-            activeTab === 'COMMENTS'
-              ? 'bg-purple-900 text-white shadow-xs'
-              : 'text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'
-          }`}
-        >
-          <MessageSquare size={16} /> 2. General Comments
-        </button>
+          <button
+            onClick={() => setActiveTab('COMMENTS')}
+            disabled={!selectedStudentId}
+            className={`px-5 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'COMMENTS'
+                ? 'bg-purple-900 text-white shadow-xs'
+                : 'text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'
+            }`}
+          >
+            <MessageSquare size={16} /> 2. General Comments
+          </button>
 
-        <button
-          onClick={() => setActiveTab('REVIEW')}
-          disabled={!selectedStudentId}
-          className={`px-5 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-            activeTab === 'REVIEW'
-              ? 'bg-purple-900 text-white shadow-xs'
-              : 'text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'
-          }`}
-        >
-          <FileCheck2 size={16} /> 3. Review & Approval GenCom
-        </button>
+          <button
+            onClick={() => setActiveTab('REVIEW')}
+            disabled={!selectedStudentId}
+            className={`px-5 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'REVIEW'
+                ? 'bg-purple-900 text-white shadow-xs'
+                : 'text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'
+            }`}
+          >
+            <FileCheck2 size={16} /> 3. Review & Approval GenCom
+          </button>
 
-        <button
-          onClick={() => setActiveTab('PUBLISH')}
-          disabled={!selectedStudentId}
-          className={`px-5 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-            activeTab === 'PUBLISH'
-              ? 'bg-purple-900 text-white shadow-xs'
-              : 'text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'
-          }`}
-        >
-          <Send size={16} /> 4. Publish PDF
-        </button>
+          <button
+            onClick={() => setActiveTab('PUBLISH')}
+            disabled={!selectedStudentId}
+            className={`px-5 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'PUBLISH'
+                ? 'bg-purple-900 text-white shadow-xs'
+                : 'text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'
+            }`}
+          >
+            <Send size={16} /> 4. Publish PDF
+          </button>
 
-        <button
-          onClick={() => setActiveTab('REKAP')}
-          className={`px-5 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-            activeTab === 'REKAP'
-              ? 'bg-purple-900 text-white shadow-xs'
-              : 'text-slate-500 hover:bg-slate-100'
-          }`}
-        >
-          <BarChart3 size={16} /> 5. Rekap Publikasi & Tracking
-        </button>
-      </div>
+          <button
+            onClick={() => setActiveTab('REKAP')}
+            className={`px-5 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'REKAP'
+                ? 'bg-purple-900 text-white shadow-xs'
+                : 'text-slate-500 hover:bg-slate-100'
+            }`}
+          >
+            <BarChart3 size={16} /> 5. Rekap Publikasi & Tracking
+          </button>
+        </div>
+      )}
 
       {/* Tab Content Display */}
-      {!selectedStudentId && activeTab !== 'REKAP' ? (
+      {selectedClassId && !selectedStudentId && activeTab !== 'REKAP' ? (
         <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 space-y-3">
           <AlertCircle size={36} className="mx-auto text-amber-500" />
           <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight">
@@ -503,7 +560,7 @@ function MidtermSnReportPageContent() {
                 selectedStudent={selectedStudentObj}
                 reportDoc={snReportDoc}
                 onRefreshData={loadStudentReport}
-                loading={loading}
+                loading={loadingReport}
               />
             )}
 
@@ -514,7 +571,7 @@ function MidtermSnReportPageContent() {
                 selectedStudent={selectedStudentObj}
                 reportDoc={snReportDoc}
                 onRefreshData={loadStudentReport}
-                loading={loading}
+                loading={loadingReport}
               />
             )}
 
@@ -525,7 +582,7 @@ function MidtermSnReportPageContent() {
                 selectedStudent={selectedStudentObj}
                 reportDoc={snReportDoc}
                 onRefreshData={loadStudentReport}
-                loading={loading}
+                loading={loadingReport}
               />
             )}
 
@@ -538,7 +595,7 @@ function MidtermSnReportPageContent() {
                 publishedReports={publishedReports}
                 reportConfig={reportConfig}
                 onRefreshData={loadStudentReport}
-                loading={loading}
+                loading={loadingReport}
               />
             )}
 
@@ -548,7 +605,7 @@ function MidtermSnReportPageContent() {
                 snStudents={snStudents}
                 publishedReports={publishedReports}
                 onRefreshData={loadSnStudents}
-                loading={loading}
+                loading={loadingStudents}
               />
             )}
           </>

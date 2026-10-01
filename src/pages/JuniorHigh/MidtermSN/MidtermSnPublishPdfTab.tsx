@@ -40,8 +40,8 @@ export const MidtermSnPublishPdfTab: React.FC<MidtermSnPublishPdfTabProps> = ({
   const latestPublished = studentPublishedList[0] || null;
 
   const handlePublish = async () => {
-    if (!reportDoc || !reportDoc.subjects) {
-      toast.error('Data draf belum lengkap.');
+    if (!reportDoc || !reportDoc.subjects || !selectedStudent?.id || !selectedClass?.id || !currentUser?.uid) {
+      toast.error('Data siswa, kelas, atau draf belum lengkap untuk dipublish.');
       return;
     }
 
@@ -52,14 +52,14 @@ export const MidtermSnPublishPdfTab: React.FC<MidtermSnPublishPdfTabProps> = ({
       const reportSnapshot = {
         student: {
           id: selectedStudent.id,
-          name: selectedStudent.name,
-          nisn: (selectedStudent as any).nisn || reportDoc.nisn || '',
-          className: selectedClass.name
+          name: selectedStudent.name || 'Siswa SN',
+          nisn: (selectedStudent as any).nisn || (selectedStudent as any).nis || reportDoc.nisn || '',
+          className: selectedClass.name || ''
         },
-        academicYear: reportDoc.academicYear,
-        semester: reportDoc.semester,
-        midtermPeriod: reportDoc.midtermPeriod,
-        subjects: reportDoc.subjects,
+        academicYear: reportDoc.academicYear || '',
+        semester: reportDoc.semester || '1',
+        midtermPeriod: reportDoc.midtermPeriod || '1',
+        subjects: Array.isArray(reportDoc.subjects) ? reportDoc.subjects : [],
         generalComment: reportDoc.generalComment?.finalComment || '',
         signatory: {
           principalName: reportConfig?.principalName || 'Dra. Hj. Unit Principal',
@@ -89,6 +89,11 @@ export const MidtermSnPublishPdfTab: React.FC<MidtermSnPublishPdfTabProps> = ({
       await onRefreshData();
       toast.success(`Rapor SN untuk ${selectedStudent.name} v${nextVersion} berhasil dipublish!`);
     } catch (err: any) {
+      console.error("[MidtermSnPublishPdfTab] handlePublish error:", {
+        studentId: selectedStudent?.id,
+        classId: selectedClass?.id,
+        academicYear: reportDoc?.academicYear
+      }, err);
       toast.error('Gagal merilis PDF Rapor SN: ' + (err.message || 'Error'));
     } finally {
       setPublishing(false);

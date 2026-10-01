@@ -85,15 +85,19 @@ export const MidtermSnGeneralCommentsTab: React.FC<MidtermSnGeneralCommentsTabPr
   };
 
   const handleSaveGeneralComment = async () => {
+    if (!reportDoc?.id || !currentUser?.uid) {
+      toast.error('Data dokumen tidak lengkap untuk menyimpan.');
+      return;
+    }
     setSaving(true);
     try {
       const updatedGenCom = {
         ...reportDoc.generalComment,
-        finalComment,
-        manualNotes,
-        strengths: selectedStrengths,
-        achievements: selectedAchievements,
-        needsImprovement: selectedNeeds,
+        finalComment: finalComment || '',
+        manualNotes: manualNotes || '',
+        strengths: selectedStrengths || [],
+        achievements: selectedAchievements || [],
+        needsImprovement: selectedNeeds || [],
         status: reportDoc.generalComment?.status || 'DRAFT',
         updatedAt: Date.now(),
         updatedBy: currentUser.uid
@@ -109,6 +113,11 @@ export const MidtermSnGeneralCommentsTab: React.FC<MidtermSnGeneralCommentsTabPr
 
       toast.success('General Comment berhasil disimpan!');
     } catch (err: any) {
+      console.error("[MidtermSnGeneralCommentsTab] handleSaveGeneralComment error:", {
+        reportId: reportDoc?.id,
+        studentId: selectedStudent?.id,
+        classId: selectedClass?.id
+      }, err);
       toast.error('Gagal menyimpan General Comment: ' + (err.message || 'Error'));
     } finally {
       setSaving(false);

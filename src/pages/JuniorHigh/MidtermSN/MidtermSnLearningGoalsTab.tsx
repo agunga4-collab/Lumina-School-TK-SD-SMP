@@ -55,6 +55,10 @@ export const MidtermSnLearningGoalsTab: React.FC<MidtermSnLearningGoalsTabProps>
   }, [reportDoc?.id, reportDoc?.updatedAt]);
 
   const handlePersistSubjects = async (updatedSubjects: SnSubject[]) => {
+    if (!reportDoc?.id || !currentUser?.uid) {
+      toast.error('Data dokumen tidak lengkap untuk menyimpan.');
+      return;
+    }
     setSaveStatus('SAVING');
     setSubjects(updatedSubjects);
     try {
@@ -68,6 +72,11 @@ export const MidtermSnLearningGoalsTab: React.FC<MidtermSnLearningGoalsTabProps>
       setSaveStatus('SAVED');
     } catch (err: any) {
       setSaveStatus('ERROR');
+      console.error("[MidtermSnLearningGoalsTab] handlePersistSubjects error:", {
+        reportId: reportDoc?.id,
+        studentId: selectedStudent?.id,
+        classId: selectedClass?.id
+      }, err);
       toast.error('Gagal menyimpan perubahan: ' + (err.message || 'Error'));
     }
   };

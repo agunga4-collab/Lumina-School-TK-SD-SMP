@@ -34,24 +34,38 @@ export const ManageSnStudentsModal: React.FC<ManageSnStudentsModalProps> = ({
   const [searchQuery, setSearchQuery] = React.useState<string>('');
 
   const loadData = React.useCallback(async () => {
-    if (!selectedClass?.id) return;
+    if (!selectedClass?.id || !academicYear) {
+      setClassStudents([]);
+      setSnStudentsMap({});
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     try {
+      const cId = selectedClass.id.trim();
+      const aYear = academicYear.trim();
+
+      // IMPORTANT: getActiveStudents takes (classId, activeYear)
       const [allStudents, snDocs] = await Promise.all([
-        getActiveStudents(selectedClass.id),
-        fetchSnStudentsForClass(selectedClass.id, academicYear)
+        getActiveStudents(cId, aYear),
+        fetchSnStudentsForClass(cId, aYear)
       ]);
 
       setClassStudents(allStudents || []);
 
       const map: Record<string, SnStudentDoc> = {};
       (snDocs || []).forEach((doc) => {
-        if (doc.isSN) {
+        if (doc && doc.studentId && doc.isSN) {
           map[doc.studentId] = doc;
         }
       });
       setSnStudentsMap(map);
     } catch (err: any) {
+      console.error("[ManageSnStudentsModal] loadData error:", {
+        classId: selectedClass?.id,
+        academicYear
+      }, err);
       toast.error('Gagal memuat daftar siswa kelas: ' + (err.message || 'Error'));
     } finally {
       setLoading(false);
@@ -67,11 +81,16 @@ export const ManageSnStudentsModal: React.FC<ManageSnStudentsModalProps> = ({
   if (!isOpen) return null;
 
   const filteredStudents = classStudents.filter((student) =>
-    (student.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-    ((student as any).nisn || '').includes(searchQuery)
+    (student?.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    ((student as any)?.nisn || (student as any)?.nis || '').includes(searchQuery)
   );
 
   const handleToggleSn = async (student: Student) => {
+    if (!student?.id || !selectedClass?.id || !currentUser?.uid) {
+      toast.error('Data siswa atau kelas tidak lengkap.');
+      return;
+    }
+
     const isCurrentlySn = !!snStudentsMap[student.id];
     setSavingId(student.id);
     try {
@@ -88,10 +107,10 @@ export const ManageSnStudentsModal: React.FC<ManageSnStudentsModalProps> = ({
           [student.id]: {
             id: `${student.id}_${selectedClass.id}`,
             studentId: student.id,
-            studentName: student.name,
+            studentName: student.name || 'Siswa SN',
             nisn: (student as any).nisn || '',
             classId: selectedClass.id,
-            className: selectedClass.name,
+            className: selectedClass.name || '',
             academicYear,
             isSN: true,
             assignedAt: Date.now(),
@@ -104,6 +123,11 @@ export const ManageSnStudentsModal: React.FC<ManageSnStudentsModalProps> = ({
       }
       await onRefresh();
     } catch (err: any) {
+      console.error("[ManageSnStudentsModal] handleToggleSn error:", {
+        studentId: student.id,
+        classId: selectedClass.id,
+        academicYear
+      }, err);
       toast.error('Gagal memperbarui status SN: ' + (err.message || 'Error'));
     } finally {
       setSavingId(null);
@@ -197,7 +221,7 @@ export const ManageSnStudentsModal: React.FC<ManageSnStudentsModalProps> = ({
                       )}
                     </div>
                     <p className="text-[11px] text-slate-400 font-medium">
-                      NISN: {(student as any).nisn || '-'}
+                      NISN: {(student as any).nisn || (student as any).nis || '-'}
                     </p>
                   </div>
 

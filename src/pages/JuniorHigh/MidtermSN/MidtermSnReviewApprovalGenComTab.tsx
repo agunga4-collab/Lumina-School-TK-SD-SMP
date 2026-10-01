@@ -46,6 +46,11 @@ export const MidtermSnReviewApprovalGenComTab: React.FC<MidtermSnReviewApprovalG
     actionLabel: string,
     historyAction: string
   ) => {
+    if (!reportDoc?.id || !currentUser?.uid) {
+      toast.error('Data dokumen tidak lengkap untuk memperbarui status review.');
+      return;
+    }
+
     setProcessing(true);
     try {
       const newEntry = {
@@ -54,8 +59,8 @@ export const MidtermSnReviewApprovalGenComTab: React.FC<MidtermSnReviewApprovalG
         actorName: currentUser.displayName || currentUser.email || 'Pengguna',
         actorRole: currentUser.role || 'GURU',
         timestamp: Date.now(),
-        feedback: feedback.trim() || undefined,
-        commentSnapshot: finalComment
+        feedback: feedback.trim() || '',
+        commentSnapshot: finalComment || ''
       };
 
       const updatedHistory = [newEntry, ...historyList];
@@ -76,6 +81,11 @@ export const MidtermSnReviewApprovalGenComTab: React.FC<MidtermSnReviewApprovalG
       setFeedback('');
       toast.success(`Status review berhasil diperbarui menjadi: ${actionLabel}`);
     } catch (err: any) {
+      console.error("[MidtermSnReviewApprovalGenComTab] handleUpdateStatus error:", {
+        reportId: reportDoc?.id,
+        newStatus,
+        historyAction
+      }, err);
       toast.error('Gagal mengupdate status review: ' + (err.message || 'Error'));
     } finally {
       setProcessing(false);
