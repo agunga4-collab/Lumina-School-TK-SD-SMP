@@ -32,7 +32,10 @@ import {
   normalizeElementarySubjectName,
   getGradeLevelNumber,
   getDefaultPerformingArtsUAs,
-  getActiveMasterGoals
+  getActiveMasterGoals,
+  normalizePerformingArtsUa,
+  isPerformingArtsUaMatch,
+  extractPerformingArtsUaFromKey
 } from '../../../types/elementaryMidtermReport';
 import type { Student, Class, User as UserType, UnitActivityEnrollment } from '../../../types';
 
@@ -180,7 +183,8 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
 
     const foundKey = Object.keys(masterGoalsMap).find(key => {
       if (activeSubject === 'Performing Arts') {
-        return key === `Performing Arts - ${activeUaTab}` || key === `Performing Arts::${activeUaTab}`;
+        const docUa = extractPerformingArtsUaFromKey(key);
+        return docUa ? isPerformingArtsUaMatch(docUa, activeUaTab) : false;
       }
       return normalizeElementarySubjectName(key) === activeSubject;
     });
@@ -219,7 +223,7 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
   // Active students for input remarks table (filtered by UA if subject is Performing Arts)
   const activeStudentsForGrading = React.useMemo(() => {
     if (activeSubject === 'Performing Arts') {
-      return students.filter(st => studentUaSelection[st.id] === activeUaTab);
+      return students.filter(st => isPerformingArtsUaMatch(studentUaSelection[st.id], activeUaTab));
     }
     return students;
   }, [students, activeSubject, studentUaSelection, activeUaTab]);
@@ -438,7 +442,7 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
           status = 'NILAI_TIDAK_VALID';
         } else {
           if (row.matchedStudent) {
-            const currentGrade = localRemarks[row.matchedStudent.id]?.[goalId] || studentDataMap[row.matchedStudent.id]?.remarks?.[goalId];
+            const currentGrade = localRemarks[row.matchedStudent.id]?.[String(goalId)] || studentDataMap[row.matchedStudent.id]?.remarks?.[String(goalId)];
             if (currentGrade && currentGrade !== rawVal) {
               status = 'SUDAH_ADA_NILAI';
             }
@@ -448,11 +452,11 @@ export const ElementaryMidtermLearningGoalsTab: React.FC<ElementaryMidtermLearni
         const targetGoal = activeGoalsForMidterm.find(g => g.id === goalId);
 
         return {
-          goalId,
+          goalId: String(goalId),
           goalText: targetGoal?.text || 'Goal',
           val: rawVal,
           status,
-          currentGrade: row.matchedStudent ? (localRemarks[row.matchedStudent.id]?.[goalId] || studentDataMap[row.matchedStudent.id]?.remarks?.[goalId] || '-') : '-'
+          currentGrade: row.matchedStudent ? (localRemarks[row.matchedStudent.id]?.[String(goalId)] || studentDataMap[row.matchedStudent.id]?.remarks?.[String(goalId)] || '-') : '-'
         };
       }).filter(Boolean);
 

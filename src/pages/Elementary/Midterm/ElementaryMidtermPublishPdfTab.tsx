@@ -19,7 +19,10 @@ import {
   ElementaryMidtermReportSnapshot,
   getActiveMasterGoals,
   ELEMENTARY_OFFICIAL_SUBJECTS,
-  normalizeElementarySubjectName
+  normalizeElementarySubjectName,
+  normalizePerformingArtsUa,
+  isPerformingArtsUaMatch,
+  extractPerformingArtsUaFromKey
 } from '../../../types/elementaryMidtermReport';
 import type { Student, Class, ReportConfig, User as UserType } from '../../../types';
 import { toast } from 'sonner';
@@ -274,10 +277,10 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
 
       // Performing Arts UA filtering
       if (normName === 'Performing Arts') {
-        if (rawKey.includes('-') || rawKey.includes('::')) {
-          const keyUa = rawKey.split(/[-:]+/).pop()?.trim();
-          if (keyUa && studentUa && keyUa.toLowerCase() !== studentUa.toLowerCase()) {
-            logs.push(`[EXCLUDE] "${rawKey}" skipped for ${student.name}: student UA is "${studentUa}", doc UA is "${keyUa}".`);
+        const docUa = extractPerformingArtsUaFromKey(rawKey);
+        if (docUa && studentUa) {
+          if (!isPerformingArtsUaMatch(docUa, studentUa)) {
+            logs.push(`[EXCLUDE] "${rawKey}" skipped for ${student.name}: student UA is "${studentUa}", doc UA is "${docUa}".`);
             return;
           }
         }
@@ -291,7 +294,7 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
 
       let displayName = normName;
       if (normName === 'Performing Arts') {
-        const uaName = studentUa || (rawKey.includes('-') ? rawKey.split('-').pop()?.trim() : '');
+        const uaName = studentUa || extractPerformingArtsUaFromKey(rawKey) || '';
         if (uaName) displayName = `Performing Arts (${uaName})`;
       }
 

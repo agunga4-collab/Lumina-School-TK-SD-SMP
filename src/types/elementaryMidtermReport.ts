@@ -229,6 +229,49 @@ export function getDefaultPerformingArtsUAs(gradeLevel: number): string[] {
   return ['Dancing', 'Choir', 'Acting', 'Ensemble Music'];
 }
 
+/**
+ * Normalizes a Performing Arts Unit Activity name for robust comparison.
+ * - Lowercase & trim
+ * - Strips punctuation, spaces, and hyphens (e.g. 'role-play' -> 'roleplay', 'role play' -> 'roleplay')
+ * - Maps aliases (e.g. 'play' -> 'roleplay') specifically for Role-play context.
+ */
+export function normalizePerformingArtsUa(ua: string | null | undefined): string {
+  if (!ua) return '';
+  const clean = ua.trim().toLowerCase().replace(/[\s\-_.,/\\:;'"()[\]{}]+/g, '');
+  if (clean === 'play' || clean === 'roleplay') {
+    return 'roleplay';
+  }
+  return clean;
+}
+
+/**
+ * Checks whether two Performing Arts UA values match after normalization.
+ */
+export function isPerformingArtsUaMatch(uaA: string | null | undefined, uaB: string | null | undefined): boolean {
+  const normA = normalizePerformingArtsUa(uaA);
+  const normB = normalizePerformingArtsUa(uaB);
+  if (!normA || !normB) return false;
+  return normA === normB;
+}
+
+/**
+ * Extracts the UA component from a Performing Arts subject key.
+ * E.g. 'Performing Arts - Role-play' -> 'Role-play'
+ * E.g. 'Performing Arts::Choir' -> 'Choir'
+ */
+export function extractPerformingArtsUaFromKey(rawKey: string | null | undefined): string | null {
+  if (!rawKey) return null;
+  const match = rawKey.match(/^Performing\s+Arts\s*[-:]+\s*(.+)$/i);
+  if (match && match[1]) {
+    return match[1].trim();
+  }
+  const parenMatch = rawKey.match(/^Performing\s+Arts\s*\((.+)\)$/i);
+  if (parenMatch && parenMatch[1]) {
+    return parenMatch[1].trim();
+  }
+  return null;
+}
+
 export interface ElementaryMidtermSnapshotGoal {
   id: string;
   text: string;

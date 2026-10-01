@@ -9,7 +9,10 @@ import type {
 import {
   normalizeElementarySubjectName,
   ELEMENTARY_OFFICIAL_SUBJECTS,
-  getActiveMasterGoals
+  getActiveMasterGoals,
+  normalizePerformingArtsUa,
+  isPerformingArtsUaMatch,
+  extractPerformingArtsUaFromKey
 } from '../../../types/elementaryMidtermReport';
 import type { Student, Class, ReportConfig } from '../../../types';
 
@@ -202,9 +205,9 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
 
       if (normName === 'Performing Arts') {
         const rawKey = doc.subjectKey || subjKey;
-        if (rawKey.includes('-') || rawKey.includes('::')) {
-          const keyUa = rawKey.split(/[-:]+/).pop()?.trim();
-          if (keyUa && studentUa && keyUa.toLowerCase() !== studentUa.toLowerCase()) {
+        const docUa = extractPerformingArtsUaFromKey(rawKey);
+        if (docUa && studentUa) {
+          if (!isPerformingArtsUaMatch(docUa, studentUa)) {
             return;
           }
         }
@@ -217,8 +220,9 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
       }));
 
       let displayName = normName;
-      if (normName === 'Performing Arts' && studentUa) {
-        displayName = `Performing Arts (${studentUa})`;
+      if (normName === 'Performing Arts') {
+        const uaName = studentUa || extractPerformingArtsUaFromKey(doc.subjectKey || subjKey) || '';
+        if (uaName) displayName = `Performing Arts (${uaName})`;
       }
 
       if (doc.category === 'PROJECTS' || normName === 'Projects') {
