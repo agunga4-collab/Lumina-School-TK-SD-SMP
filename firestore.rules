@@ -54,7 +54,7 @@ service cloud.firestore {
     }
 
     function isKindergartenHeadUnit() {
-      return isActive() && userRole() == 'HEAD_UNIT' && (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL');
+      return isActive() && (userRole() == 'HEAD_UNIT' || userRole() == 'kindergarten_head') && (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL' || !('unitId' in currentUser()));
     }
 
     function isMidtermIdentityUnchanged() {
@@ -1360,7 +1360,7 @@ service cloud.firestore {
           (
             isKindergartenHeadUnit() || 
             isSecretaryKindy() || 
-            (isTeacher() && (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL' || isTeacherAssignedToClass(request.resource.data.classId)))
+            (isTeacher() && isTeacherAssignedToClass(request.resource.data.classId))
           ) && (
             // Validate: unit is KINDERGARTEN
             (exists(/databases/$(database)/documents/classes/$(request.resource.data.classId)) && 
@@ -1377,7 +1377,7 @@ service cloud.firestore {
           (
             isKindergartenHeadUnit() || 
             isSecretaryKindy() || 
-            (isTeacher() && (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL' || isTeacherAssignedToClass(resource.data.classId)))
+            (isTeacher() && isTeacherAssignedToClass(resource.data.classId))
           ) && (
             // Ensure studentId and classId are immutable during update
             request.resource.data.studentId == resource.data.studentId &&
@@ -1399,14 +1399,14 @@ service cloud.firestore {
         isAdmin() ||
         isKindergartenHeadUnit() ||
         isSecretaryKindy() ||
-        (isTeacher() && (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL')) ||
+        (isTeacher() && (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL' || (resource != null && isTeacherAssignedToClass(resource.data.classId)))) ||
         (resource != null && (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)))
       );
       allow write: if isSignedIn() && (
         isAdmin() ||
         isKindergartenHeadUnit() ||
         isSecretaryKindy() ||
-        (isTeacher() && (currentUser().unitId == 'KINDERGARTEN' || currentUser().unitId == 'ALL')) ||
+        (isTeacher() && isTeacherAssignedToClass(request.resource.data.classId)) ||
         (resource != null && (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)))
       );
     }

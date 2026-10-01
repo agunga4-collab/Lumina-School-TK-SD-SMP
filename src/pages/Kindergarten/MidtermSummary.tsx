@@ -277,6 +277,7 @@ export default function MidtermSummary() {
   // Custom class assignment hook
   const {
     assignedClasses: classes,
+    assignedClassIds = [],
     primaryClassId,
     isRestrictedToAssignedClasses,
     loading: isLoadingClasses,
@@ -1049,6 +1050,11 @@ export default function MidtermSummary() {
   }, [classStudents]);
 
   const handleSendReport = async (student: any) => {
+    if (!canPublishForCurrentClass) {
+      toast.error("Anda hanya dapat mengirim rapor untuk kelas yang ditugaskan kepada Anda.");
+      return;
+    }
+
     const pubReport = publishedReports[student.id];
     if (!pubReport) {
       toast.error(`Laporan PDF belum terbit (published) untuk ${student.name}.`);
@@ -1115,6 +1121,11 @@ export default function MidtermSummary() {
   };
 
   const handleBulkSendReady = async () => {
+    if (!canPublishForCurrentClass) {
+      toast.error("Anda hanya dapat mengirim rapor untuk kelas yang ditugaskan kepada Anda.");
+      return;
+    }
+
     const readyTargets = classStudents.filter(stud => {
       const pub = publishedReports[stud.id];
       if (!pub) return false;
@@ -2268,6 +2279,11 @@ export default function MidtermSummary() {
   };
 
   const handlePublishMidterm = async () => {
+    if (!canPublishForCurrentClass) {
+      toast.error("Anda hanya dapat mempublikasikan rapor untuk kelas yang ditugaskan kepada Anda.");
+      return;
+    }
+
     const activeDraft = midtermDrafts[selectedStudentId];
     if (!activeDraft) {
       toast.error("Draft Midterm belum dibuat.");
@@ -2398,8 +2414,23 @@ export default function MidtermSummary() {
 
       const base64Data = await getBase64(pdfBlob);
 
-      // Filename standard matching 'S1 - Zac Jaden Kotahatuhaha - Midterm Report.pdf'
-      const filename = `S${semester} - ${selectedStudentObj?.name} - Midterm Report.pdf`;
+      // Calculate next version before uploading to Google Drive
+      const existingVersions = Object.values(publishedReports).filter((r: any) => {
+        return r.studentId === selectedStudentId && r.semester === semester;
+      });
+      let maxVersion = 0;
+      for (const r of (existingVersions as any[])) {
+        const v = r.version || 1;
+        if (v > maxVersion) {
+          maxVersion = v;
+        }
+      }
+      const nextVersion = maxVersion > 0 ? maxVersion + 1 : 1;
+
+      // Filename standard: version 1 uses standard name, re-publish (v > 1) includes version suffix
+      const filename = nextVersion > 1
+        ? `S${semester} - ${selectedStudentObj?.name} - Midterm Report (v${nextVersion}).pdf`
+        : `S${semester} - ${selectedStudentObj?.name} - Midterm Report.pdf`;
 
       setPublishStatus("Menyiapkan folder Google Drive...");
       toast.loading("Menyiapkan folder Google Drive...", { id: toastId });
@@ -2515,31 +2546,7 @@ export default function MidtermSummary() {
         }
       }
 
-      // 3. Search and delete any existing files with the exact same name inside the class midterm folder to prevent duplicate file entries on Google Drive
-      try {
-        setPublishStatus("Mengecek file lama...");
-        const escapedFilename = filename.replace(/'/g, "\\'");
-        const qSearch = `name = '${escapedFilename}' and '${classMidtermFolderId}' in parents and trashed = false`;
-        const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(qSearch)}&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id)`;
-        const searchRes = await fetch(searchUrl, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (searchRes.ok) {
-          const searchData = await searchRes.json();
-          if (searchData.files && searchData.files.length > 0) {
-            setPublishStatus("Mengganti file lama di Google Drive...");
-            for (const oldFile of searchData.files) {
-              await fetch(`https://www.googleapis.com/drive/v3/files/${oldFile.id}?supportsAllDrives=true`, {
-                method: 'DELETE',
-                headers: { Authorization: `Bearer ${token}` }
-              });
-            }
-          }
-        }
-      } catch (err) {
-        console.warn("Error while searching/deleting old midterm report on Google Drive:", err);
-      }
-
+      // 3. Upload PDF to Google Drive without deleting old files (preserving previous versions)
       setPublishStatus("Mengunggah ke Google Drive...");
       toast.loading("Mengunggah ke Google Drive...", { id: toastId });
 
@@ -2604,19 +2611,6 @@ export default function MidtermSummary() {
       setPublishStatus("Menyimpan publikasi...");
       toast.loading("Menyimpan publikasi...", { id: toastId });
 
-      // Calculate versions
-      const existingVersions = Object.values(publishedReports).filter((r: any) => {
-        return r.studentId === selectedStudentId && r.semester === semester;
-      });
-      let maxVersion = 0;
-      for (const r of (existingVersions as any[])) {
-        const v = r.version || 1;
-        if (v > maxVersion) {
-          maxVersion = v;
-        }
-      }
-      const nextVersion = maxVersion > 0 ? maxVersion + 1 : 1;
-
       const attStartDate = getAcademicYearAttendanceStartDate(activeYear || '2026/2027');
       const attEndDate = classGoalsInput.signingDate || classLearningGoals?.signingDate || '';
       const attendanceData = getAttendance();
@@ -2642,6 +2636,8 @@ export default function MidtermSummary() {
         startDate: startDateStr,
         endDate: endDateStr,
         semester,
+        unit: 'KINDERGARTEN',
+        unitId: 'KINDERGARTEN',
         reportType: 'KINDY_MIDTERM_REPORT',
         publishedAt: Date.now(),
         driveFileId,
@@ -3020,7 +3016,40 @@ export default function MidtermSummary() {
     return computedAttendance;
   };
 
-  const isAuthorizer = profile?.role === 'SUPER_ADMIN' || profile?.role === 'HEAD_UNIT' || profile?.role === 'kindergarten_head';
+  const isSuperAdminOrHead = profile?.role === 'SUPER_ADMIN' || profile?.role === 'HEAD_UNIT' || profile?.role === 'kindergarten_head';
+  const isAuthorizer = isSuperAdminOrHead;
+
+  // Determines if current user is an assigned teacher for the selected class
+  const isTeacherAssignedToCurrentClass = React.useMemo(() => {
+    if (!selectedClassId) return false;
+    // 1. From useTeacherAssignedClasses assignedClassIds
+    if (assignedClassIds && assignedClassIds.includes(selectedClassId)) return true;
+    // 2. From activeClassObj
+    if (activeClassObj && profile?.uid) {
+      if (activeClassObj.homeroomTeacherId === profile.uid) return true;
+      if (Array.isArray(activeClassObj.homeroomTeacherIds) && activeClassObj.homeroomTeacherIds.includes(profile.uid)) return true;
+      if (Array.isArray((activeClassObj as any).waliKelasIds) && (activeClassObj as any).waliKelasIds.includes(profile.uid)) return true;
+      if (Array.isArray(activeClassObj.assignedTeacherIds) && activeClassObj.assignedTeacherIds.includes(profile.uid)) return true;
+      if (Array.isArray((activeClassObj as any).gpkTeacherIds) && (activeClassObj as any).gpkTeacherIds.includes(profile.uid)) return true;
+      if (Array.isArray(activeClassObj.teacherAssignments) && activeClassObj.teacherAssignments.some((a: any) => a.userId === profile.uid)) return true;
+    }
+    // 3. From allKgClasses fallback
+    if (allKgClasses && profile?.uid) {
+      const found = allKgClasses.find(c => c.id === selectedClassId);
+      if (found) {
+        if (found.homeroomTeacherId === profile.uid) return true;
+        if (Array.isArray(found.homeroomTeacherIds) && found.homeroomTeacherIds.includes(profile.uid)) return true;
+        if (Array.isArray((found as any).waliKelasIds) && (found as any).waliKelasIds.includes(profile.uid)) return true;
+        if (Array.isArray(found.assignedTeacherIds) && found.assignedTeacherIds.includes(profile.uid)) return true;
+        if (Array.isArray((found as any).gpkTeacherIds) && (found as any).gpkTeacherIds.includes(profile.uid)) return true;
+        if (Array.isArray(found.teacherAssignments) && found.teacherAssignments.some((a: any) => a.userId === profile.uid)) return true;
+      }
+    }
+    return false;
+  }, [selectedClassId, assignedClassIds, activeClassObj, allKgClasses, profile?.uid]);
+
+  // Teachers assigned to this class and Super Admin / Head Unit can publish, re-publish, and send reports
+  const canPublishForCurrentClass = isSuperAdminOrHead || isTeacherAssignedToCurrentClass;
 
   const isValidHomeroomSignature = !!(resolvedSignatureUrl && 
     resolvedSignatureUrl !== "none" && 
@@ -4391,14 +4420,24 @@ export default function MidtermSummary() {
                         <Eye size={14} /> Buka PDF di Google Drive
                       </a>
                       
-                      {isAuthorizer && (
+                      {canPublishForCurrentClass && (
                         <button
                           onClick={handlePublishMidterm}
                           disabled={isPublishing}
                           className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 shadow-md cursor-pointer"
                         >
                           <RefreshCw size={14} className={isPublishing ? "animate-spin" : ""} />
-                          {isPublishing ? "Menerbitkan Ulang..." : "Terbitkan Ulang (vUbah)"}
+                          {isPublishing ? "Menerbitkan Ulang..." : "Terbitkan Ulang"}
+                        </button>
+                      )}
+
+                      {canPublishForCurrentClass && selectedStudentObj && (
+                        <button
+                          onClick={() => handleSendReport(selectedStudentObj)}
+                          className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 shadow-md cursor-pointer"
+                        >
+                          <Send size={14} />
+                          <span>Kirim Ulang</span>
                         </button>
                       )}
                     </>
@@ -4446,23 +4485,29 @@ export default function MidtermSummary() {
                           {/* If status is APPROVED */}
                           {activeDraft.status === 'APPROVED' && (
                             <>
-                              <button
-                                onClick={handlePublishMidterm}
-                                disabled={isPublishing}
-                                className="bg-[#109E58] hover:bg-[#0e8a4d] disabled:opacity-50 text-white font-extrabold text-xs px-4.5 py-2.5 rounded-xl flex items-center gap-1.5 shadow-md shadow-emerald-600/10 cursor-pointer"
-                              >
-                                {isPublishing ? (
-                                  <>
-                                    <Loader2 size={14} className="animate-spin" />
-                                    <span>{publishStatus || "Menerbitkan..."}</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <CheckCircle2 size={14} />
-                                    <span>Terbitkan PDF</span>
-                                  </>
-                                )}
-                              </button>
+                              {canPublishForCurrentClass ? (
+                                <button
+                                  onClick={handlePublishMidterm}
+                                  disabled={isPublishing}
+                                  className="bg-[#109E58] hover:bg-[#0e8a4d] disabled:opacity-50 text-white font-extrabold text-xs px-4.5 py-2.5 rounded-xl flex items-center gap-1.5 shadow-md shadow-emerald-600/10 cursor-pointer"
+                                >
+                                  {isPublishing ? (
+                                    <>
+                                      <Loader2 size={14} className="animate-spin" />
+                                      <span>{publishStatus || "Menerbitkan..."}</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <CheckCircle2 size={14} />
+                                      <span>Terbitkan PDF</span>
+                                    </>
+                                  )}
+                                </button>
+                              ) : (
+                                <div className="text-xs text-gray-500 italic py-1">
+                                  Hanya guru yang ditugaskan di kelas ini atau Kepala Unit yang dapat menerbitkan PDF.
+                                </div>
+                              )}
 
                               {isAuthorizer && (
                                 <button
@@ -4798,7 +4843,7 @@ export default function MidtermSummary() {
 
                   <button
                     onClick={() => setBulkSendConfirm(true)}
-                    disabled={trackingSummary.ready === 0}
+                    disabled={trackingSummary.ready === 0 || !canPublishForCurrentClass}
                     className="bg-[#109E58] hover:bg-[#0e8a4d] disabled:opacity-40 disabled:cursor-not-allowed text-white font-extrabold text-xs px-5 py-2.5 rounded-2xl flex items-center gap-2 shadow-md shadow-emerald-600/10 cursor-pointer transition-all"
                   >
                     <Send size={14} />
@@ -5016,7 +5061,7 @@ export default function MidtermSummary() {
                                   )}
 
                                   {/* Send / Resend button */}
-                                  {pub && (
+                                  {pub && canPublishForCurrentClass && (
                                     (statusKey === 'READY_TO_SEND' || statusKey === 'NOT_PUBLISHED') ? (
                                       <button
                                         onClick={() => handleSendReport(stud)}
