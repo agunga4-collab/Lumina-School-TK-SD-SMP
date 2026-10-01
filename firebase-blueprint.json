@@ -1330,6 +1330,15 @@
     },
     "jh_sn_midterm_published_reports/{reportId}": {
       "description": "Published SN midterm reports and PDF snapshots."
+    },
+    "elem_sn_students/{docId}": {
+      "description": "SN designated elementary students list managed by Admin."
+    },
+    "elem_sn_midterm_reports/{reportId}": {
+      "description": "Custom SN elementary midterm report drafts."
+    },
+    "elem_sn_midterm_published_reports/{reportId}": {
+      "description": "Published SN elementary midterm reports and PDF snapshots."
     }
   }
 }

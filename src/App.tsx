@@ -129,6 +129,7 @@ import MonthlyReportPdfLinkPage from './pages/JuniorHigh/MonthlyReportPdfLinkPag
 import MidtermReportPage from './pages/JuniorHigh/Midterm/MidtermReportPage';
 import MidtermSnReportPage from './pages/JuniorHigh/MidtermSN/MidtermSnReportPage';
 import ElementaryMidtermReportPage from './pages/Elementary/Midterm/ElementaryMidtermReportPage';
+import ElementaryMidtermSnReportPage from './pages/Elementary/MidtermSN/ElementaryMidtermSnReportPage';
 import { IncidentReportPage } from './pages/JuniorHigh/IncidentReportPage';
 import WeeklyReportDetail from './pages/Kindergarten/WeeklyReportDetail';
 
@@ -500,6 +501,11 @@ export default function App() {
           <Route path="elementary/midterm" element={
             <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER', 'SECRETARY_ELEM']}>
               <ElementaryMidtermReportPage />
+            </RoleGuard>
+          } />
+          <Route path="elementary/midterm-sn" element={
+            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER', 'SECRETARY_ELEM']}>
+              <ElementaryMidtermSnReportPage />
             </RoleGuard>
           } />
           <Route path="elementary/ldss/settings" element={
