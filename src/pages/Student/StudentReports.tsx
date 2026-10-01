@@ -132,72 +132,85 @@ export default function StudentReports() {
           // Fetch Elementary Midterm Delivery Tracking if unit is ELEMENTARY
           if (effectiveUnit === 'ELEMENTARY') {
             const listElemMidterm: any[] = [];
-            
-            for (const stId of Array.from(candidateIds)) {
-              if (!stId) continue;
+            const userUid = currentUser?.uid || '';
+
+            // 1. Primary: Query by studentUid == auth.uid
+            if (userUid) {
               try {
-                const qElemMidterm = query(
+                const qUid = query(
                   collection(db, 'elem_midterm_delivery_tracking'),
-                  where('studentId', '==', stId)
+                  where('studentUid', '==', userUid)
                 );
-                const snapElemMidterm = await getDocs(qElemMidterm);
-                snapElemMidterm.docs.forEach(docSnap => {
+                const snapUid = await getDocs(qUid);
+                snapUid.docs.forEach(docSnap => {
                   const data = docSnap.data();
+                  const st = String(data.deliveryStatus || '').toLowerCase();
                   if (
                     data.activeForStudent !== false &&
-                    (data.deliveryStatus === 'SENT' || data.deliveryStatus === 'VIEWED')
+                    (st === 'sent' || st === 'viewed')
                   ) {
                     if (!listElemMidterm.some(item => item.id === docSnap.id)) {
-                      listElemMidterm.push({
-                        id: docSnap.id,
-                        ...data
-                      });
+                      listElemMidterm.push({ id: docSnap.id, ...data });
                     }
                   }
                 });
-              } catch (err) {
-                console.error("[StudentReports] Error querying elem_midterm_delivery_tracking:", err);
+              } catch (e) {
+                console.warn("[StudentReports] studentUid query:", e);
               }
-            }
 
-            // Fallback query by name/email matching for Elementary if ID query returned empty
-            if (listElemMidterm.length === 0) {
+              // 2. Query by studentAccountId == auth.uid
               try {
-                const studentNameClean = (student?.name || currentUser?.displayName || '').toLowerCase().trim();
-                const studentEmailClean = (student?.email || currentUser?.email || '').toLowerCase().trim();
-
-                const allElemTrackingSnap = await getDocs(query(
+                const qAcc = query(
                   collection(db, 'elem_midterm_delivery_tracking'),
-                  where('unit', '==', 'ELEMENTARY')
-                ));
-
-                allElemTrackingSnap.docs.forEach(docSnap => {
+                  where('studentAccountId', '==', userUid)
+                );
+                const snapAcc = await getDocs(qAcc);
+                snapAcc.docs.forEach(docSnap => {
                   const data = docSnap.data();
-                  const recName = String(data.studentName || '').toLowerCase().trim();
-                  const recEmail = String(data.studentEmail || '').toLowerCase().trim();
-
-                  const matchesName = studentNameClean && (recName.includes(studentNameClean) || studentNameClean.includes(recName));
-                  const matchesEmail = studentEmailClean && recEmail && recEmail === studentEmailClean;
-
+                  const st = String(data.deliveryStatus || '').toLowerCase();
                   if (
-                    (matchesName || matchesEmail) &&
                     data.activeForStudent !== false &&
-                    (data.deliveryStatus === 'SENT' || data.deliveryStatus === 'VIEWED')
+                    (st === 'sent' || st === 'viewed')
                   ) {
                     if (!listElemMidterm.some(item => item.id === docSnap.id)) {
-                      listElemMidterm.push({
-                        id: docSnap.id,
-                        ...data
-                      });
+                      listElemMidterm.push({ id: docSnap.id, ...data });
                     }
                   }
                 });
-              } catch (err) {
-                console.warn("[StudentReports] Fallback elem_midterm_delivery_tracking search:", err);
+              } catch (e) {
+                console.warn("[StudentReports] studentAccountId query:", e);
               }
             }
 
-            setElemMidtermReports(listElemMidterm.sort((a: any, b: any) => (b.sentAt || b.updatedAt || 0) - (a.sentAt || a.updatedAt || 0)));
+            // 3. Fallback: Query by internal studentId matching
+            if (listElemMidterm.length === 0) {
+              for (const stId of Array.from(candidateIds)) {
+                if (!stId) continue;
+                try {
+                  const qElem = query(
+                    collection(db, 'elem_midterm_delivery_tracking'),
+                    where('studentId', '==', stId)
+                  );
+                  const snapElem = await getDocs(qElem);
+                  snapElem.docs.forEach(docSnap => {
+                    const data = docSnap.data();
+                    const st = String(data.deliveryStatus || '').toLowerCase();
+                    if (
+                      data.activeForStudent !== false &&
+                      (st === 'sent' || st === 'viewed')
+                    ) {
+                      if (!listElemMidterm.some(item => item.id === docSnap.id)) {
+                        listElemMidterm.push({ id: docSnap.id, ...data });
+                      }
+                    }
+                  });
+                } catch (e) {
+                  console.warn("[StudentReports] studentId query:", e);
+                }
+              }
+            }
+
+            setElemMidtermReports(listElemMidterm.sort((a, b) => (b.sentAt || b.updatedAt || 0) - (a.sentAt || a.updatedAt || 0)));
           }
 
           // Fetch manual junior high PDF links if unit is JUNIOR_HIGH
@@ -288,7 +301,7 @@ export default function StudentReports() {
     try {
       if (report.id) {
         const trackingRef = doc(db, 'elem_midterm_delivery_tracking', report.id);
-        const historyLog = report.history || [];
+        const historyLog = Array.isArray(report.history) ? [...report.history] : [];
         historyLog.push({
           action: 'VIEWED',
           timestamp: Date.now(),
@@ -297,10 +310,14 @@ export default function StudentReports() {
 
         const now = Date.now();
         const updatePayload = {
-          deliveryStatus: 'VIEWED',
-          firstViewedAt: report.firstViewedAt || now,
+          deliveryStatus: 'viewed',
+          firstOpenedAt: report.firstOpenedAt || report.firstViewedAt || now,
+          firstViewedAt: report.firstViewedAt || report.firstOpenedAt || now,
+          lastOpenedAt: now,
           lastViewedAt: now,
-          viewCount: (report.viewCount || 0) + 1,
+          openCount: (report.openCount || report.viewCount || 0) + 1,
+          viewCount: (report.viewCount || report.openCount || 0) + 1,
+          openedByEmail: currentUser?.email || '',
           history: historyLog,
           updatedAt: now
         };
@@ -315,7 +332,7 @@ export default function StudentReports() {
       console.warn("Failed to update elem midterm tracking view:", err);
     }
 
-    const pdfUrl = report.pdfUrl || report.driveFileUrl;
+    const pdfUrl = report.activePdfUrl || report.pdfUrl || report.driveFileUrl;
     if (pdfUrl) {
       window.open(pdfUrl, '_blank', 'noopener,noreferrer');
     } else {
@@ -550,7 +567,7 @@ export default function StudentReports() {
                       const sem = report.semester || 1;
                       const term = report.midtermTerm || 1;
                       const periodLabel = `Mid Term ${term}`;
-                      const isViewed = report.deliveryStatus === 'VIEWED';
+                      const isViewed = String(report.deliveryStatus || '').toLowerCase() === 'viewed';
                       const versionText = report.reportVersion ? `v${report.reportVersion}` : 'v1';
 
                       return (

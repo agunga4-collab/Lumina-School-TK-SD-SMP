@@ -1568,15 +1568,49 @@ service cloud.firestore {
         isElementaryHeadUnitOrPrincipal() ||
         isSecretaryElem() ||
         (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL' || (resource != null && isTeacherAssignedToClass(resource.data.classId)))) ||
-        (resource != null && (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)))
+        (resource != null && (
+          (isStudent() && ('studentUid' in resource.data) && resource.data.studentUid == request.auth.uid) ||
+          (isStudent() && ('studentAccountId' in resource.data) && resource.data.studentAccountId == request.auth.uid) ||
+          isOwnStudentData(resource.data.studentId) ||
+          isLinkedStudent(resource.data.studentId)
+        ))
       );
-      allow write: if isSignedIn() && (
+
+      allow create: if isSignedIn() && (
+        isAdmin() ||
+        isElementaryHeadUnitOrPrincipal() ||
+        isSecretaryElem() ||
+        (isTeacher() && isTeacherAssignedToClass(request.resource.data.classId))
+      );
+
+      allow update: if isSignedIn() && (
         isAdmin() ||
         isElementaryHeadUnitOrPrincipal() ||
         isSecretaryElem() ||
         (isTeacher() && isTeacherAssignedToClass(request.resource.data.classId)) ||
-        (resource != null && (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)))
+        (
+          isStudent() &&
+          resource != null &&
+          (
+            ('studentUid' in resource.data && resource.data.studentUid == request.auth.uid) ||
+            ('studentAccountId' in resource.data && resource.data.studentAccountId == request.auth.uid) ||
+            isOwnStudentData(resource.data.studentId)
+          ) &&
+          request.resource.data.studentId == resource.data.studentId &&
+          (!('studentUid' in resource.data) || request.resource.data.studentUid == resource.data.studentUid) &&
+          (!('studentAccountId' in resource.data) || request.resource.data.studentAccountId == resource.data.studentAccountId) &&
+          (!('unit' in resource.data) || request.resource.data.unit == resource.data.unit) &&
+          (!('activePdfUrl' in resource.data) || request.resource.data.activePdfUrl == resource.data.activePdfUrl) &&
+          (!('pdfUrl' in resource.data) || request.resource.data.pdfUrl == resource.data.pdfUrl) &&
+          (!('reportVersion' in resource.data) || request.resource.data.reportVersion == resource.data.reportVersion) &&
+          (!('activeReportId' in resource.data) || request.resource.data.activeReportId == resource.data.activeReportId) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'deliveryStatus', 'firstOpenedAt', 'lastOpenedAt', 'openCount', 'openedByEmail', 'updatedAt', 'history', 'firstViewedAt', 'lastViewedAt', 'viewCount'
+          ])
+        )
       );
+
+      allow delete: if isAdmin() || isElementaryHeadUnitOrPrincipal();
     }
 
     match /elem_sn_students/{docId} {

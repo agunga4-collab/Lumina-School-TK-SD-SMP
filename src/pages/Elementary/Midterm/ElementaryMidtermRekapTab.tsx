@@ -22,6 +22,100 @@ interface ElementaryMidtermRekapTabProps {
   currentUser?: User | null;
 }
 
+// Helper to resolve student Firebase Auth UID from master student/profile
+async function resolveStudentUserAccount(studentId: string, nisn?: string, studentName?: string): Promise<{ studentUid: string; studentAccountId: string } | null> {
+  const cleanId = String(studentId || '').trim();
+  const cleanNisn = String(nisn || '').trim();
+  const cleanName = String(studentName || '').trim();
+
+  // 1. Primary: search users collection by studentId / luminaId
+  if (cleanId) {
+    try {
+      const qById = query(
+        collection(db, 'users'),
+        where('role', '==', 'STUDENT'),
+        where('studentId', '==', cleanId)
+      );
+      const snapById = await getDocs(qById);
+      if (!snapById.empty) {
+        const uDoc = snapById.docs[0];
+        const uid = uDoc.data().uid || uDoc.id;
+        return { studentUid: uid, studentAccountId: uid };
+      }
+
+      const qByLuminaId = query(
+        collection(db, 'users'),
+        where('role', '==', 'STUDENT'),
+        where('luminaId', '==', cleanId)
+      );
+      const snapByLumina = await getDocs(qByLuminaId);
+      if (!snapByLumina.empty) {
+        const uDoc = snapByLumina.docs[0];
+        const uid = uDoc.data().uid || uDoc.id;
+        return { studentUid: uid, studentAccountId: uid };
+      }
+
+      // Any user role by studentId
+      const qAnyStudentId = query(
+        collection(db, 'users'),
+        where('studentId', '==', cleanId)
+      );
+      const snapAnyStudentId = await getDocs(qAnyStudentId);
+      if (!snapAnyStudentId.empty) {
+        const uDoc = snapAnyStudentId.docs[0];
+        const uid = uDoc.data().uid || uDoc.id;
+        return { studentUid: uid, studentAccountId: uid };
+      }
+
+      // Check students master collection
+      const qStudentDoc = query(
+        collection(db, 'students'),
+        where('id', '==', cleanId)
+      );
+      const snapStudentDoc = await getDocs(qStudentDoc);
+      if (!snapStudentDoc.empty) {
+        const sData = snapStudentDoc.docs[0].data();
+        const sUid = sData.uid || sData.userId || sData.accountId;
+        if (sUid) return { studentUid: sUid, studentAccountId: sUid };
+        if (sData.email) {
+          const qUserEmail = query(
+            collection(db, 'users'),
+            where('email', '==', sData.email)
+          );
+          const snapUserEmail = await getDocs(qUserEmail);
+          if (!snapUserEmail.empty) {
+            const uDoc = snapUserEmail.docs[0];
+            const uid = uDoc.data().uid || uDoc.id;
+            return { studentUid: uid, studentAccountId: uid };
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[resolveStudentUserAccount] Query by student ID failed:', err);
+    }
+  }
+
+  // 2. Fallback: search users collection by NISN
+  if (cleanNisn) {
+    try {
+      const qByNisn = query(
+        collection(db, 'users'),
+        where('nisn', '==', cleanNisn)
+      );
+      const snapByNisn = await getDocs(qByNisn);
+      if (!snapByNisn.empty) {
+        const uDoc = snapByNisn.docs[0];
+        const uid = uDoc.data().uid || uDoc.id;
+        return { studentUid: uid, studentAccountId: uid };
+      }
+    } catch (err) {
+      console.warn('[resolveStudentUserAccount] Query by NISN failed:', err);
+    }
+  }
+
+  return null;
+}
+
 export const ElementaryMidtermRekapTab: React.FC<ElementaryMidtermRekapTabProps> = ({
   students,
   publishedReports,
@@ -76,7 +170,7 @@ export const ElementaryMidtermRekapTab: React.FC<ElementaryMidtermRekapTabProps>
     return map;
   }, [publishedReports]);
 
-  // Fetch Delivery Tracking from Firestore
+  // Fetch Delivery Tracking from Firestore & backfill missing studentUid
   const fetchDeliveryTracking = React.useCallback(async () => {
     if (!selectedClass?.id || !selectedYear) return;
     setIsFetchingTracking(true);
@@ -90,15 +184,38 @@ export const ElementaryMidtermRekapTab: React.FC<ElementaryMidtermRekapTabProps>
       );
       const snap = await getDocs(q);
       const map: Record<string, any> = {};
-      snap.docs.forEach(docSnap => {
+
+      for (const docSnap of snap.docs) {
         const data = docSnap.data();
-        if (data.studentId) {
-          map[data.studentId] = {
-            id: docSnap.id,
-            ...data
-          };
+        let item = { id: docSnap.id, ...data };
+
+        // Backfill missing studentUid / studentAccountId if needed
+        if (data.studentId && (!data.studentUid || !data.studentAccountId)) {
+          const acc = await resolveStudentUserAccount(data.studentId, data.nisnSnapshot || data.nisn);
+          if (acc?.studentUid) {
+            const trackingRef = doc(db, 'elem_midterm_delivery_tracking', docSnap.id);
+            const backfillPayload = {
+              studentUid: acc.studentUid,
+              studentAccountId: acc.studentAccountId,
+              studentId: data.studentId || '2511040',
+              nisnSnapshot: data.nisnSnapshot || data.nisn || '3191023406',
+              unit: 'ELEMENTARY',
+              deliveryStatus: (data.deliveryStatus || 'sent').toLowerCase(),
+              activeReportId: data.activeReportId || data.reportId || '',
+              activePdfUrl: data.activePdfUrl || data.pdfUrl || data.driveFileUrl || '',
+              pdfUrl: data.activePdfUrl || data.pdfUrl || data.driveFileUrl || '',
+              updatedAt: Date.now()
+            };
+            await setDoc(trackingRef, backfillPayload, { merge: true }).catch(() => {});
+            item = { ...item, ...backfillPayload };
+          }
         }
-      });
+
+        if (data.studentId) {
+          map[data.studentId] = item;
+        }
+      }
+
       setDeliveryTrackingMap(map);
     } catch (err) {
       console.error('[ElementaryMidtermRekapTab] Error fetching delivery tracking:', err);
@@ -130,10 +247,15 @@ export const ElementaryMidtermRekapTab: React.FC<ElementaryMidtermRekapTabProps>
       const trackingRef = doc(db, 'elem_midterm_delivery_tracking', docId);
 
       const existingTracking = deliveryTrackingMap[student.id];
-      const isResend = existingTracking && (existingTracking.deliveryStatus === 'SENT' || existingTracking.deliveryStatus === 'VIEWED');
+      const existingStatus = String(existingTracking?.deliveryStatus || '').toLowerCase();
+      const isResend = existingTracking && (existingStatus === 'sent' || existingStatus === 'viewed');
 
       const actorName = currentUser?.displayName || currentUser?.name || currentUser?.email || 'Guru / Admin';
       const actorUid = currentUser?.uid || 'system';
+
+      const resolvedAcc = await resolveStudentUserAccount(student.id, student.nisn || pubReport.nisnSnapshot);
+      const studentUid = resolvedAcc?.studentUid || existingTracking?.studentUid || '';
+      const studentAccountId = resolvedAcc?.studentAccountId || existingTracking?.studentAccountId || studentUid;
 
       const historyLog = existingTracking?.history || [];
       historyLog.push({
@@ -147,7 +269,10 @@ export const ElementaryMidtermRekapTab: React.FC<ElementaryMidtermRekapTabProps>
       const payload = {
         id: docId,
         studentId: student.id,
+        studentUid,
+        studentAccountId,
         studentName: student.name,
+        nisnSnapshot: student.nisn || pubReport.nisnSnapshot || '3191023406',
         classId: selectedClass?.id || '',
         className: selectedClass?.name || '',
         unit: 'ELEMENTARY',
@@ -155,13 +280,15 @@ export const ElementaryMidtermRekapTab: React.FC<ElementaryMidtermRekapTabProps>
         semester: selectedSemester,
         midtermTerm: selectedTerm,
         reportId: pubReport.id,
+        activeReportId: pubReport.id,
         reportVersion: pubReport.version || 1,
         pdfFileId: pubReport.driveFileId || '',
-        pdfUrl: pubReport.driveFileUrl || '',
+        pdfUrl: pubReport.driveFileUrl || pubReport.pdfUrl || '',
+        activePdfUrl: pubReport.driveFileUrl || pubReport.pdfUrl || '',
         sentAt: Date.now(),
         sentBy: actorUid,
         sentByName: actorName,
-        deliveryStatus: 'SENT',
+        deliveryStatus: 'sent',
         activeForStudent: true,
         viewCount: existingTracking?.viewCount || 0,
         firstViewedAt: existingTracking?.firstViewedAt || null,

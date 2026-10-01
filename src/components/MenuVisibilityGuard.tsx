@@ -26,7 +26,10 @@ export function MenuVisibilityGuard({ menuKey, children }: MenuVisibilityGuardPr
   const activeUnit = isStudent
     ? (profile?.unitId || 'ELEMENTARY')
     : (localStorage.getItem('lumina_active_unit') || profile?.unitId || 'JUNIOR_HIGH');
-  const isVisible = isMenuVisible(activeUnit, menuKey);
+  
+  // Elementary student reportCards (Rapor Saya) is always enabled for Elementary
+  const isElementaryReportCards = activeUnit.toUpperCase() === 'ELEMENTARY' && menuKey === 'reportCards';
+  const isVisible = isElementaryReportCards || isMenuVisible(activeUnit, menuKey);
 
   if (!isVisible) {
     return (
