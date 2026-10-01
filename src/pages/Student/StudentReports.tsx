@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { 
   FileText, Download, Eye, 
   Calendar, Award, ChevronLeft,
-  Loader2, ExternalLink
+  Loader2, ExternalLink, Send
 } from 'lucide-react';
 import { useOutletContext, Link } from 'react-router-dom';
 import { 
