@@ -1560,6 +1560,23 @@ service cloud.firestore {
       allow delete: if isAdmin() || isElementaryHeadUnitOrPrincipal();
     }
 
+    match /elem_midterm_delivery_tracking/{trackingId} {
+      allow read: if isSignedIn() && (
+        isAdmin() ||
+        isElementaryHeadUnitOrPrincipal() ||
+        isSecretaryElem() ||
+        (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL' || (resource != null && isTeacherAssignedToClass(resource.data.classId)))) ||
+        (resource != null && (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)))
+      );
+      allow write: if isSignedIn() && (
+        isAdmin() ||
+        isElementaryHeadUnitOrPrincipal() ||
+        isSecretaryElem() ||
+        (isTeacher() && isTeacherAssignedToClass(request.resource.data.classId)) ||
+        (resource != null && (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)))
+      );
+    }
+
     match /elem_sn_students/{docId} {
       allow read: if isActive() && isElementaryStaff();
       allow create, update, delete: if isActive() && (isAdmin() || isElementaryHeadUnitOrPrincipal());

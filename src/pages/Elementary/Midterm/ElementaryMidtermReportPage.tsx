@@ -663,7 +663,7 @@ function ElementaryMidtermReportPageContent() {
           { id: 'COMMENTS', label: '2. General Comments (AI)', icon: Sparkles },
           { id: 'REVIEW', label: '3. Review & Approval GenCom', icon: FileText },
           { id: 'PUBLISH', label: '4. Publish PDF', icon: FileCheck2 },
-          { id: 'REKAP', label: '5. Rekap Publikasi & Tracking', icon: Users },
+          { id: 'REKAP', label: '5. Kirim & Tracking', icon: Users },
         ].map(tab => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -780,6 +780,7 @@ function ElementaryMidtermReportPageContent() {
               selectedSemester={selectedSemester}
               selectedTerm={selectedTerm}
               onRefreshData={loadClassData}
+              currentUser={effectiveUser}
             />
           )}
         </div>

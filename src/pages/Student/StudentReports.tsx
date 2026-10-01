@@ -43,6 +43,7 @@ export default function StudentReports() {
   const [reports, setReports] = React.useState<ReportCard[]>([]);
   const [kgReports, setKgReports] = React.useState<any[]>([]);
   const [kgMidtermReports, setKgMidtermReports] = React.useState<any[]>([]);
+  const [elemMidtermReports, setElemMidtermReports] = React.useState<any[]>([]);
   const [jhManualLinks, setJhManualLinks] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
 
@@ -104,6 +105,28 @@ export default function StudentReports() {
             );
             
             setReports(studentReports.sort((a, b) => b.createdAt - a.createdAt));
+
+            // Fetch Elementary Midterm Delivery Tracking if unit is ELEMENTARY
+            if (student.unitId === 'ELEMENTARY') {
+              const studentIdClean = (student.id || (student as any).luminaId || currentUser.luminaId || '').trim();
+              const qElemMidterm = query(
+                collection(db, 'elem_midterm_delivery_tracking'),
+                where('studentId', '==', studentIdClean),
+                where('activeForStudent', '==', true)
+              );
+              const snapElemMidterm = await getDocs(qElemMidterm);
+              const listElemMidterm: any[] = [];
+              snapElemMidterm.docs.forEach(docSnap => {
+                const data = docSnap.data();
+                if (data.deliveryStatus === 'SENT' || data.deliveryStatus === 'VIEWED') {
+                  listElemMidterm.push({
+                    id: docSnap.id,
+                    ...data
+                  });
+                }
+              });
+              setElemMidtermReports(listElemMidterm.sort((a: any, b: any) => (b.sentAt || b.updatedAt || 0) - (a.sentAt || a.updatedAt || 0)));
+            }
 
             // Fetch manual junior high PDF links if unit is JUNIOR_HIGH
             if (student.unitId === 'JUNIOR_HIGH') {
@@ -179,6 +202,45 @@ export default function StudentReports() {
       }
     } catch (err) {
       console.warn("Failed to update midterm tracking view:", err);
+    }
+
+    const pdfUrl = report.pdfUrl || report.driveFileUrl;
+    if (pdfUrl) {
+      window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+    } else {
+      toast.error("URL PDF tidak tersedia.");
+    }
+  };
+
+  const handleElemMidtermPdfClick = async (report: any) => {
+    try {
+      if (report.id) {
+        const trackingRef = doc(db, 'elem_midterm_delivery_tracking', report.id);
+        const historyLog = report.history || [];
+        historyLog.push({
+          action: 'VIEWED',
+          timestamp: Date.now(),
+          actorUid: currentUser?.uid || 'student'
+        });
+
+        const now = Date.now();
+        const updatePayload = {
+          deliveryStatus: 'VIEWED',
+          firstViewedAt: report.firstViewedAt || now,
+          lastViewedAt: now,
+          viewCount: (report.viewCount || 0) + 1,
+          history: historyLog,
+          updatedAt: now
+        };
+
+        await setDoc(trackingRef, updatePayload, { merge: true });
+
+        setElemMidtermReports(prev =>
+          prev.map(r => r.id === report.id ? { ...r, ...updatePayload } : r)
+        );
+      }
+    } catch (err) {
+      console.warn("Failed to update elem midterm tracking view:", err);
     }
 
     const pdfUrl = report.pdfUrl || report.driveFileUrl;
@@ -370,7 +432,7 @@ export default function StudentReports() {
 
   if (studentData?.unitId === 'ELEMENTARY') {
     return (
-      <div className="max-w-5xl mx-auto space-y-12 pb-20 animate-in fade-in duration-700">
+      <div className="max-w-5xl mx-auto space-y-10 pb-20 animate-in fade-in duration-700">
         <div className="space-y-4">
           <Link to="/student/dashboard" className="group flex items-center gap-1 text-xs font-black uppercase tracking-widest text-gray-400 hover:text-blue-600 transition-colors">
             <ChevronLeft size={14} className="group-hover:-translate-x-1 transition-transform" /> Dashboard
@@ -383,17 +445,76 @@ export default function StudentReports() {
           </p>
         </div>
 
-        {reports.length === 0 ? (
-          <div className="bg-gray-50 border-2 border-dashed border-gray-200 p-20 rounded-[3rem] text-center space-y-4">
-            <div className="w-20 h-20 bg-gray-100 rounded-[2rem] flex items-center justify-center mx-auto">
-              <FileText className="text-gray-300" size={40} />
-            </div>
-            <div className="space-y-2">
-              <h3 className="text-xl font-black text-gray-900 uppercase italic tracking-tighter">Belum ada rapor yang tersedia.</h3>
-            </div>
+        {/* SECTION: MIDTERM REPORT */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
+            <h2 className="text-sm font-black text-gray-900 uppercase tracking-wider flex items-center gap-2 font-mono">
+              <FileText size={16} className="text-emerald-600" />
+              MIDTERM REPORT
+            </h2>
           </div>
-        ) : (
-          <div className="space-y-6">
+
+          {elemMidtermReports.length === 0 ? (
+            <div className="bg-white border border-gray-100 p-8 rounded-3xl text-center space-y-1 shadow-sm">
+              <p className="text-sm font-bold text-gray-700">Belum ada laporan Midterm yang dikirim untuk Anda.</p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 text-[11px] font-black uppercase tracking-wider text-gray-400 border-b border-gray-100">
+                      <th className="py-4 px-6">Tahun Ajaran</th>
+                      <th className="py-4 px-6">Semester</th>
+                      <th className="py-4 px-6">Periode</th>
+                      <th className="py-4 px-6">Status</th>
+                      <th className="py-4 px-6 text-right">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 text-sm font-semibold text-gray-700">
+                    {elemMidtermReports.map((report) => {
+                      const academicYear = report.academicYear || activeYear || '2025/2026';
+                      const sem = report.semester || 1;
+                      const term = report.midtermTerm || 1;
+                      const periodLabel = `Midterm Term ${term}`;
+
+                      return (
+                        <tr key={report.id} className="hover:bg-gray-50/50 transition-colors">
+                          <td className="py-4 px-6 font-bold text-gray-900">{academicYear}</td>
+                          <td className="py-4 px-6">Semester {sem}</td>
+                          <td className="py-4 px-6 font-bold text-gray-800">{periodLabel}</td>
+                          <td className="py-4 px-6">
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-100">
+                              Diterbitkan
+                            </span>
+                          </td>
+                          <td className="py-4 px-6 text-right">
+                            <button
+                              onClick={() => handleElemMidtermPdfClick(report)}
+                              className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm cursor-pointer"
+                            >
+                              <FileText size={12} /> Lihat PDF
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* SECTION: ACADEMIC REPORT CARDS */}
+        {reports.length > 0 && (
+          <div className="space-y-4 pt-4">
+            <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
+              <h2 className="text-sm font-black text-gray-900 uppercase tracking-wider flex items-center gap-2 font-mono">
+                <Award size={16} className="text-blue-600" />
+                RAPOR AKHIR SEMESTER
+              </h2>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
               {reports.map((report, idx) => (
                 <motion.div
