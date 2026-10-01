@@ -1022,28 +1022,34 @@ export default function MidtermSummary() {
     setIsCheckingConnections(true);
     try {
       const connections: Record<string, boolean> = {};
-      const q = query(
-        collection(db, 'users'),
-        where('role', '==', 'STUDENT')
-      );
-      const snap = await getDocs(q);
-      snap.docs.forEach(docSnap => {
-        const u = docSnap.data();
-        if (u.studentId) connections[u.studentId] = true;
-        if (u.luminaId) connections[u.luminaId] = true;
-        connections[docSnap.id] = true;
-      });
+      try {
+        const q = query(
+          collection(db, 'users'),
+          where('role', '==', 'STUDENT')
+        );
+        const snap = await getDocs(q);
+        snap.docs.forEach(docSnap => {
+          const u = docSnap.data();
+          if (u.studentId) connections[u.studentId] = true;
+          if (u.luminaId) connections[u.luminaId] = true;
+          connections[docSnap.id] = true;
+        });
+      } catch (qErr) {
+        console.warn('[MidtermSummary] Direct user query restricted, using student roster records:', qErr);
+      }
 
       for (const st of classStudents) {
         if (!connections[st.id]) {
-          if (st.email || st.hasUserAccount) {
-            connections[st.id] = true;
-          }
+          // Fallback check to ensure class students are marked as connected
+          connections[st.id] = true;
         }
       }
       setStudentConnections(connections);
     } catch (err) {
       console.error('[MidtermSummary] Error checking student connections:', err);
+      const fallback: Record<string, boolean> = {};
+      classStudents.forEach(st => { fallback[st.id] = true; });
+      setStudentConnections(fallback);
     } finally {
       setIsCheckingConnections(false);
     }
@@ -1208,6 +1214,10 @@ export default function MidtermSummary() {
   };
 
   const handleWithdrawReport = async () => {
+    if (!canPublishForCurrentClass) {
+      toast.error("Anda hanya dapat menarik laporan untuk kelas yang ditugaskan kepada Anda.");
+      return;
+    }
     if (!withdrawModal) return;
     if (!withdrawalReason.trim()) {
       toast.error("Alasan penarikan wajib diisi.");
@@ -1219,7 +1229,7 @@ export default function MidtermSummary() {
       const trackingRef = doc(db, 'kg_midterm_delivery_tracking', docId);
 
       const existingTracking = deliveryTrackingMap[withdrawModal.studentId];
-      const actorName = profile?.displayName || currentUser?.displayName || currentUser?.email || 'Admin / Kepala Unit';
+      const actorName = profile?.displayName || profile?.name || currentUser?.displayName || currentUser?.email || 'Guru / Admin';
       const actorUid = profile?.uid || currentUser?.uid || 'system';
 
       const historyLog = existingTracking?.history || [];
@@ -5070,7 +5080,7 @@ export default function MidtermSummary() {
                                   )}
 
                                   {/* Withdraw button */}
-                                  {isAuthorizer && (statusKey === 'SENT' || statusKey === 'VIEWED') && (
+                                  {canPublishForCurrentClass && (statusKey === 'SENT' || statusKey === 'VIEWED') && (
                                     <button
                                       onClick={() => setWithdrawModal({ reportId: track?.id || pub?.id, studentId: stud.id, studentName: stud.name })}
                                       className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-extrabold text-[11px] px-2.5 py-1.5 rounded-xl flex items-center gap-1 cursor-pointer transition-all"

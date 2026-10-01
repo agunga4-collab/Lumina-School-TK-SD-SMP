@@ -545,14 +545,30 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-      allow list: if isAdmin() || (
-        isJHConferenceStaff() &&
-        resource.data.status == 'active' &&
-        resource.data.role in [
-          'TEACHER', 'HOMEROOM_TEACHER', 'BK_MENTOR',
-          'HEAD_JUNIOR', 'HEAD_UNIT', 'SUPER_ADMIN'
-        ]
+      allow get: if isSignedIn() && (
+        request.auth.uid == userId ||
+        isAdmin() ||
+        isTeacher() ||
+        isKindergartenHeadUnit() ||
+        isSecretaryKindy() ||
+        isElementaryStaff() ||
+        isJuniorHighStaff()
+      );
+      allow list: if isSignedIn() && (
+        isAdmin() ||
+        isTeacher() ||
+        isKindergartenHeadUnit() ||
+        isSecretaryKindy() ||
+        isElementaryStaff() ||
+        isJuniorHighStaff() ||
+        (
+          isJHConferenceStaff() &&
+          resource.data.status == 'active' &&
+          resource.data.role in [
+            'TEACHER', 'HOMEROOM_TEACHER', 'BK_MENTOR',
+            'HEAD_JUNIOR', 'HEAD_UNIT', 'SUPER_ADMIN'
+          ]
+        )
       );
       allow create: if isSignedIn() && userId == request.auth.uid && isValidUser(incoming());
       allow update: if isAdmin()
