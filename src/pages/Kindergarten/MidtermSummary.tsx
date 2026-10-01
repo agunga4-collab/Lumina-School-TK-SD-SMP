@@ -171,14 +171,14 @@ export function formatGeneralCommentText(text: string): string {
   return cleaned;
 }
 
-export function renderFormattedParagraphs(text: string) {
+export function renderFormattedParagraphs(text: string, compact = false) {
   const cleaned = formatGeneralCommentText(text);
   if (!cleaned) return null;
   
   // Split by double newlines or single newlines
   const paragraphs = cleaned.split(/\n+/);
   return paragraphs.map((para, i) => (
-    <p key={i} className="mb-2.5 last:mb-0 text-left">
+    <p key={i} className={compact ? "mb-1.5 last:mb-0 text-left" : "mb-2.5 last:mb-0 text-left"}>
       {para.trim()}
     </p>
   ));
@@ -332,12 +332,7 @@ export default function MidtermSummary() {
   const [realAttendanceList, setRealAttendanceList] = React.useState<any[]>([]);
   const [isFetchingRealAttendance, setIsFetchingRealAttendance] = React.useState(false);
 
-  const [attendancePage, setAttendancePage] = React.useState<2 | 3>(2);
-  const [signaturesPage, setSignaturesPage] = React.useState<2 | 3>(2);
-  const [commentsSplitIndex, setCommentsSplitIndex] = React.useState<number | null>(null);
-
-  const shouldMoveSignaturesToPage3 = attendancePage === 3 || signaturesPage === 3 || commentsSplitIndex !== null;
-  const totalPages = shouldMoveSignaturesToPage3 ? 3 : 2;
+  const totalPages = 2;
 
   const [kindySignatory, setKindySignatory] = React.useState<{
     principalName: string;
@@ -1474,104 +1469,6 @@ export default function MidtermSummary() {
     fetchRealAttendanceData();
   }, [selectedClassId, activeYear, classGoalsInput.signingDate, classLearningGoals?.signingDate]);
 
-  // Exact A4 content pagination calculation per safe margin & flow content specifications
-  const calculatePagination = React.useCallback(() => {
-    const measureBox = document.getElementById('preview-kindy-measure-box');
-    if (!measureBox) return;
-
-    const commentsSection = measureBox.querySelector('#measure-comments-section') as HTMLElement | null;
-    const attendanceSection = measureBox.querySelector('#measure-attendance-section') as HTMLElement | null;
-    const signaturesSection = measureBox.querySelector('#measure-signatures-section') as HTMLElement | null;
-    const footerEl = measureBox.querySelector('#measure-footer') as HTMLElement | null;
-
-    if (!commentsSection || !attendanceSection || !signaturesSection) return;
-
-    const commentsHeight = commentsSection.offsetHeight;
-    const attendanceHeight = attendanceSection.offsetHeight;
-    const signaturesHeight = signaturesSection.offsetHeight;
-    const footerHeight = footerEl ? footerEl.offsetHeight : 21;
-
-    // A4 dimensions & page padding:
-    // Fixed page height: 1123px (A4 794x1123)
-    // Page container vertical padding: md:py-8 is 32px top and 32px bottom (64px total)
-    // smallSafetyBuffer: 8px (per rule: 6-10 px)
-    const PAGE_HEIGHT = 1123;
-    const PADDING_TOP = 32;
-    const PADDING_BOTTOM = 32;
-    const SMALL_SAFETY_BUFFER = 8;
-
-    // Formula per requirement:
-    // contentMaxY = pageHeight - actualFooterHeight - smallSafetyBuffer
-    // maxUsableHeight = contentMaxY - PADDING_TOP - PADDING_BOTTOM
-    const maxUsableHeight = PAGE_HEIGHT - PADDING_BOTTOM - footerHeight - SMALL_SAFETY_BUFFER - PADDING_TOP;
-
-    // Check if comments alone exceeds maxUsableHeight (split across pages if necessary)
-    const commentParagraphEls = measureBox.querySelectorAll('#measure-comments-container p');
-    let splitIdx: number | null = null;
-    if (commentsHeight > maxUsableHeight && commentParagraphEls.length > 1) {
-      for (let i = 0; i < commentParagraphEls.length; i++) {
-        const p = commentParagraphEls[i] as HTMLElement;
-        if (p.offsetTop + p.offsetHeight > maxUsableHeight) {
-          splitIdx = Math.max(1, i);
-          break;
-        }
-      }
-    }
-
-    if (splitIdx !== null) {
-      setCommentsSplitIndex(prev => (prev !== splitIdx ? splitIdx : prev));
-      setAttendancePage(3);
-      setSignaturesPage(3);
-      return;
-    } else {
-      setCommentsSplitIndex(prev => (prev !== null ? null : prev));
-    }
-
-    // 1. Comments takes commentsHeight
-    // 2. Remaining space after comments on Page 2:
-    const spaceAfterComments = maxUsableHeight - commentsHeight;
-
-    // 3 & 4 & 5. Does Attendance fit in remaining space?
-    // Catatan Ketidakhadiran needs 24px mt-6 margin plus its block height
-    const attendanceBlockHeight = attendanceHeight + 24;
-    const attendanceFits = attendanceBlockHeight <= spaceAfterComments;
-
-    let signaturesFits = false;
-    if (attendanceFits) {
-      // 6 & 7 & 8. Space after attendance on Page 2:
-      const spaceAfterAttendance = spaceAfterComments - attendanceBlockHeight;
-      // Signature needs 32px mt-8 margin plus its block height
-      const signaturesBlockHeight = signaturesHeight + 32;
-      signaturesFits = signaturesBlockHeight <= spaceAfterAttendance;
-    }
-
-    const nextAttendancePage: 2 | 3 = attendanceFits ? 2 : 3;
-    const nextSignaturesPage: 2 | 3 = (attendanceFits && signaturesFits) ? 2 : 3;
-
-    setAttendancePage(prev => (prev !== nextAttendancePage ? nextAttendancePage : prev));
-    setSignaturesPage(prev => (prev !== nextSignaturesPage ? nextSignaturesPage : prev));
-  }, []);
-
-  React.useEffect(() => {
-    // Run after font & layout are settled
-    const timer = setTimeout(() => {
-      calculatePagination();
-    }, 100);
-    return () => clearTimeout(timer);
-  }, [
-    calculatePagination,
-    selectedStudentId,
-    activeDraft?.midtermGeneralComment,
-    publishedReportObj,
-    activeTab,
-    classGoalsInput.signingDate,
-    classLearningGoals?.signingDate,
-    activeYear,
-    realAttendanceList,
-    resolvedSignatureUrl,
-    kindySignatory
-  ]);
-
   React.useEffect(() => {
     const fetchLogo = async () => {
       try {
@@ -2325,8 +2222,6 @@ export default function MidtermSummary() {
       setPublishStatus("Membuat PDF...");
       toast.loading("Membuat PDF...", { id: toastId });
 
-      calculatePagination();
-
       if (typeof document !== 'undefined' && (document as any).fonts && (document as any).fonts.ready) {
         await (document as any).fonts.ready;
       }
@@ -2338,7 +2233,7 @@ export default function MidtermSummary() {
         });
       });
 
-      // 3. Render pages to Canvas & PDF
+      // 3. Render pages to Canvas & PDF (strictly 2 pages max)
       const pdf = new jsPDF({
         orientation: 'portrait',
         unit: 'mm',
@@ -2348,9 +2243,6 @@ export default function MidtermSummary() {
       const pdfHeight = pdf.internal.pageSize.getHeight();
 
       const pageIds = ["midterm-report-page-1", "midterm-report-page-2"];
-      if (document.getElementById("midterm-report-page-3")) {
-        pageIds.push("midterm-report-page-3");
-      }
 
       let renderedAny = false;
 
@@ -3083,71 +2975,57 @@ export default function MidtermSummary() {
     return cleanedGeneralComment.split(/\n+/).filter(Boolean);
   }, [cleanedGeneralComment]);
 
-  const page2CommentParagraphs = React.useMemo(() => {
-    if (commentsSplitIndex === null || commentsSplitIndex >= allCommentParagraphs.length) {
-      return allCommentParagraphs;
-    }
-    return allCommentParagraphs.slice(0, commentsSplitIndex);
-  }, [allCommentParagraphs, commentsSplitIndex]);
-
-  const overflowCommentParagraphs = React.useMemo(() => {
-    if (commentsSplitIndex === null || commentsSplitIndex >= allCommentParagraphs.length) {
-      return [];
-    }
-    return allCommentParagraphs.slice(commentsSplitIndex);
-  }, [allCommentParagraphs, commentsSplitIndex]);
-
   const renderAttendanceSection = () => {
     const attendance = getAttendance();
     const signingDateVal = classGoalsInput.signingDate || classLearningGoals?.signingDate;
     const startDateVal = getAcademicYearAttendanceStartDate(activeYear || '2026/2027');
 
     return (
-      <div className="space-y-1.5 mt-6 break-inside-avoid">
-        <h4 className="text-[12.5px] font-bold text-emerald-900 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 font-sans">
+      <div className="space-y-1 mt-3.5 break-inside-avoid">
+        <h4 className="text-[11.5px] font-bold text-emerald-900 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-0.5 font-sans">
           Catatan Ketidakhadiran
         </h4>
         {!signingDateVal ? (
-          <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl text-center text-xs text-amber-800 font-sans font-bold leading-relaxed mt-2">
+          <div className="bg-amber-50 border border-amber-200 py-2 px-3 rounded-lg text-center text-xs text-amber-800 font-sans font-bold leading-relaxed mt-1.5">
             Tanggal penandatanganan rapor perlu diisi untuk menghitung kehadiran.
           </div>
         ) : signingDateVal < startDateVal ? (
-          <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl text-center text-xs text-rose-800 font-sans font-bold leading-relaxed mt-2">
+          <div className="bg-rose-50 border border-rose-200 py-2 px-3 rounded-lg text-center text-xs text-rose-800 font-sans font-bold leading-relaxed mt-1.5">
             Tanggal penandatanganan rapor tidak boleh sebelum 20 Juli pada tahun ajaran terkait.
           </div>
         ) : (
-          <table className="w-full border-collapse border border-gray-300 text-left text-[10.5px] text-gray-900 font-sans mt-3">
+          <table className="w-full border-collapse border border-gray-300 text-left text-[10px] text-gray-900 font-sans mt-2">
             <thead>
               <tr className="bg-gray-100/80 text-gray-900 border-b border-gray-300">
-                <th className="p-2.5 font-bold border-r border-gray-300 text-center w-[10%]">No</th>
-                <th className="p-2.5 font-bold border-r border-gray-300 w-[45%]">Alasan</th>
-                <th className="p-2.5 font-bold border-r border-gray-300 text-center w-[20%]">Jumlah</th>
-                <th className="p-2.5 font-bold w-[25%]">Keterangan</th>
+                <th className="py-1.5 px-3 font-bold border-r border-gray-300 text-center w-[10%]">No</th>
+                <th className="py-1.5 px-3 font-bold border-r border-gray-300 w-[45%]">Alasan</th>
+                <th className="py-1.5 px-3 font-bold border-r border-gray-300 text-center w-[20%]">Jumlah</th>
+                <th className="py-1.5 px-3 font-bold w-[25%]">Keterangan</th>
               </tr>
             </thead>
             <tbody>
               <tr className="border-b border-gray-300">
-                <td className="p-2.5 text-center border-r border-gray-300">1</td>
-                <td className="p-2.5 border-r border-gray-300 font-medium">Sakit</td>
-                <td className="p-2.5 text-center border-r border-gray-300 font-bold">{attendance.sick} Hari</td>
-                <td className="p-2.5 text-gray-400">-</td>
+                <td className="py-1.5 px-3 text-center border-r border-gray-300">1</td>
+                <td className="py-1.5 px-3 border-r border-gray-300 font-medium">Sakit</td>
+                <td className="py-1.5 px-3 text-center border-r border-gray-300 font-bold">{attendance.sick} Hari</td>
+                <td className="py-1.5 px-3 text-gray-400">-</td>
               </tr>
               <tr className="border-b border-gray-300">
-                <td className="p-2.5 text-center border-r border-gray-300">2</td>
-                <td className="p-2.5 border-r border-gray-300 font-medium">Izin</td>
-                <td className="p-2.5 text-center border-r border-gray-300 font-bold">{attendance.izin} Hari</td>
-                <td className="p-2.5 text-gray-400">-</td>
+                <td className="py-1.5 px-3 text-center border-r border-gray-300">2</td>
+                <td className="py-1.5 px-3 border-r border-gray-300 font-medium">Izin</td>
+                <td className="py-1.5 px-3 text-center border-r border-gray-300 font-bold">{attendance.izin} Hari</td>
+                <td className="py-1.5 px-3 text-gray-400">-</td>
               </tr>
               <tr className="border-b border-gray-300">
-                <td className="p-2.5 text-center border-r border-gray-300">3</td>
-                <td className="p-2.5 border-r border-gray-300 font-medium">Tanpa Keterangan</td>
-                <td className="p-2.5 text-center border-r border-gray-300 font-bold">{attendance.noNews} Hari</td>
-                <td className="p-2.5 text-gray-400">-</td>
+                <td className="py-1.5 px-3 text-center border-r border-gray-300">3</td>
+                <td className="py-1.5 px-3 border-r border-gray-300 font-medium">Tanpa Keterangan</td>
+                <td className="py-1.5 px-3 text-center border-r border-gray-300 font-bold">{attendance.noNews} Hari</td>
+                <td className="py-1.5 px-3 text-gray-400">-</td>
               </tr>
               <tr className="bg-gray-50 font-bold">
-                <td className="p-2.5 text-center border-r border-gray-300" colSpan={2}>Total Ketidakhadiran</td>
-                <td className="p-2.5 text-center border-r border-gray-300 font-black text-gray-950">{attendance.sick + attendance.izin + attendance.noNews} Hari</td>
-                <td className="p-2.5 text-gray-400">-</td>
+                <td className="py-1.5 px-3 text-center border-r border-gray-300" colSpan={2}>Total Ketidakhadiran</td>
+                <td className="py-1.5 px-3 text-center border-r border-gray-300 font-black text-gray-950">{attendance.sick + attendance.izin + attendance.noNews} Hari</td>
+                <td className="py-1.5 px-3 text-gray-400">-</td>
               </tr>
             </tbody>
           </table>
@@ -3158,62 +3036,62 @@ export default function MidtermSummary() {
 
   const renderSignaturesSection = () => {
     return (
-      <div className="pt-6 border-t border-dashed border-gray-200 mt-8 shrink-0 break-inside-avoid">
-        <div className="text-left text-[11px] font-sans text-gray-900 mb-4 pl-2">
+      <div className="pt-3.5 border-t border-dashed border-gray-200 mt-4 shrink-0 break-inside-avoid">
+        <div className="text-left text-[10px] font-sans text-gray-900 mb-2 pl-1">
           Depok, {formattedSigningDate}
         </div>
-        <div className="grid grid-cols-2 gap-8 text-center text-gray-900 font-sans">
+        <div className="grid grid-cols-2 gap-6 text-center text-gray-900 font-sans">
           {/* Principal */}
-          <div className="flex flex-col items-center justify-between h-[120px]">
-            <span className="text-[11px] font-bold uppercase tracking-wider leading-none">
+          <div className="flex flex-col items-center justify-between h-[105px]">
+            <span className="text-[10.5px] font-bold uppercase tracking-wider leading-none">
               Kepala Pra-TK/TK Lazuardi GCS
             </span>
-            <div className="h-14 flex items-center justify-center my-1.5">
+            <div className="h-11 flex items-center justify-center my-1">
               {isValidPrincipalSignature ? (
                 <img 
                   src={kindySignatory!.principalSignatureUrl!} 
                   alt="Signature" 
-                  className="h-12 w-auto object-contain"
+                  className="h-10 w-auto object-contain"
                   referrerPolicy="no-referrer"
                   crossOrigin={kindySignatory!.principalSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
                 />
               ) : (
-                <div className="text-[10px] text-gray-400 italic">Verified Digitally</div>
+                <div className="text-[9.5px] text-gray-400 italic">Verified Digitally</div>
               )}
             </div>
             <div className="text-center leading-normal">
-              <span className="text-[11px] font-bold underline block">
+              <span className="text-[10.5px] font-bold underline block">
                 {toTitleCase(kindySignatory?.principalName) || "Nama Kepala Unit"}
               </span>
-              <span className="text-[10px] text-gray-700 block mt-0.5">
+              <span className="text-[9.5px] text-gray-700 block mt-0.5">
                 NIY: {kindySignatory?.principalNiy && kindySignatory.principalNiy !== '-' && kindySignatory.principalNiy !== '' ? kindySignatory.principalNiy : '-'}
               </span>
             </div>
           </div>
 
           {/* Homeroom Teacher */}
-          <div className="flex flex-col items-center justify-between h-[120px]">
-            <span className="text-[11px] font-bold uppercase tracking-wider leading-none">
+          <div className="flex flex-col items-center justify-between h-[105px]">
+            <span className="text-[10.5px] font-bold uppercase tracking-wider leading-none">
               Guru Kelas
             </span>
-            <div className="h-14 flex items-center justify-center my-1.5">
+            <div className="h-11 flex items-center justify-center my-1">
               {isValidHomeroomSignature ? (
                 <img 
                   src={resolvedSignatureUrl!} 
                   alt="Signature" 
-                  className="h-12 w-auto object-contain"
+                  className="h-10 w-auto object-contain"
                   referrerPolicy="no-referrer"
                   crossOrigin={resolvedSignatureUrl!.startsWith("data:") ? undefined : "anonymous"}
                 />
               ) : (
-                <div className="text-[10px] text-gray-400 italic">Verified Digitally</div>
+                <div className="text-[9.5px] text-gray-400 italic">Verified Digitally</div>
               )}
             </div>
             <div className="text-center leading-normal">
-              <span className="text-[11px] font-bold underline block">
+              <span className="text-[10.5px] font-bold underline block">
                 {toTitleCase(resolvedTeacherName) || "Nama Guru Kelas"}
               </span>
-              <span className="text-[10px] text-gray-700 block mt-0.5">
+              <span className="text-[9.5px] text-gray-700 block mt-0.5">
                 NIY: {(!resolvedTeacherNiy || resolvedTeacherNiy === '-') ? '-' : resolvedTeacherNiy}
               </span>
             </div>
@@ -4724,94 +4602,37 @@ export default function MidtermSummary() {
                       </div>
                     </div>
 
-                     {/* PAGE 2 — COMMENTS & ATTENDANCE TABLE */}
-                     <div className="bg-white px-8 py-6 md:px-12 md:py-8 shadow-md border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-start print:border-none print:shadow-none print:p-0 print:m-0" id="midterm-report-page-2">
+                     {/* PAGE 2 — COMMENTS, ATTENDANCE & SIGNATURES */}
+                     <div className="bg-white px-8 py-5 md:px-10 md:py-6 shadow-md border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-between print:border-none print:shadow-none print:p-0 print:m-0" id="midterm-report-page-2">
                        
-                       <div className="space-y-4 flex-1 flex flex-col justify-start">
-                         <div>
-                           {/* Section: General Comments */}
-                           <div className="space-y-2">
-                             <h3 className="text-[12.5px] font-bold text-emerald-900 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 text-center font-sans">
-                               General Comments (Catatan Umum)
-                             </h3>
-                             <div id="preview-comments-container" className="bg-white border border-gray-200 p-5 rounded-2xl text-[11px] text-gray-900 font-serif leading-[1.5] h-auto">
-                               {getGeneralCommentText() ? (
-                                 commentsSplitIndex === null ? (
-                                   renderFormattedParagraphs(getGeneralCommentText())
-                                 ) : (
-                                   page2CommentParagraphs.map((para, i) => (
-                                     <p key={i} className="mb-2.5 last:mb-0 text-left">
-                                       {para}
-                                     </p>
-                                   ))
-                                 )
-                               ) : (
-                                 <p className="text-gray-400 italic text-center">Komentar evaluasi tengah semester belum dimasukkan.</p>
-                               )}
-                             </div>
+                       <div className="space-y-3.5 flex-1 flex flex-col justify-start">
+                         {/* Section: General Comments */}
+                         <div className="space-y-1.5">
+                           <h3 className="text-[11.5px] font-bold text-emerald-900 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-0.5 text-center font-sans">
+                             General Comments (Catatan Umum)
+                           </h3>
+                           <div id="preview-comments-container" className="bg-white border border-gray-200 p-3.5 sm:p-4 rounded-xl text-[10px] sm:text-[10.5px] text-gray-900 font-serif leading-[1.45] h-auto">
+                             {getGeneralCommentText() ? (
+                               renderFormattedParagraphs(getGeneralCommentText(), true)
+                             ) : (
+                               <p className="text-gray-400 italic text-center">Komentar evaluasi tengah semester belum dimasukkan.</p>
+                             )}
                            </div>
-
-                           {/* Section: Catatan Ketidakhadiran */}
-                           {attendancePage === 2 && renderAttendanceSection()}
                          </div>
 
-                         {/* Signatures Area - Rendered here on Page 2 ONLY if they do NOT overflow to Page 3 */}
-                         {signaturesPage === 2 && renderSignaturesSection()}
+                         {/* Section: Catatan Ketidakhadiran */}
+                         {renderAttendanceSection()}
+
+                         {/* Section: Tanda Tangan */}
+                         {renderSignaturesSection()}
                        </div>
 
                        {/* Footer */}
                        <div className="flex justify-between items-center text-[8px] text-gray-400 font-sans mt-auto pt-2 border-t border-gray-100">
                          <span>Lazuardi GCS Kindergarten</span>
-                         <span>Halaman 2 dari {shouldMoveSignaturesToPage3 ? '3' : '2'}</span>
+                         <span>Halaman 2 dari {totalPages}</span>
                        </div>
                      </div>
-
-                     {/* PAGE 3 — CONDITIONAL SIGNATURES PAGE */}
-                     {shouldMoveSignaturesToPage3 && (
-                        <div className="bg-white px-8 py-6 md:px-12 md:py-8 shadow-md border border-gray-200 text-gray-950 mx-auto w-full max-w-[794px] min-[794px]:w-[794px] min-[794px]:h-[1123px] min-[794px]:min-h-[1123px] font-sans flex flex-col justify-between print:border-none print:shadow-none print:p-0 print:m-0" id="midterm-report-page-3">
-                          
-                          <div className="space-y-4 flex-1 flex flex-col justify-start">
-                            {/* School/Report info context header */}
-                            <div className="border-b border-gray-200 pb-2.5 mb-6">
-                              <div className="flex justify-between items-center text-[9px] font-sans font-black text-gray-400 uppercase tracking-widest">
-                                <span>Lazuardi GCS Kindergarten</span>
-                                <span>Midterm Progress Report - Page 3</span>
-                              </div>
-                              <div className="text-[10px] text-gray-800 font-bold mt-1.5">
-                                Nama Siswa: {selectedStudentObj?.name} | Kelas: {activeClassObj?.name}
-                              </div>
-                            </div>
-
-                            {/* Section: General Comments (Continuation) */}
-                            {commentsSplitIndex !== null && (
-                              <div className="space-y-2">
-                                <h3 className="text-[12.5px] font-bold text-emerald-900 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-1 text-center font-sans">
-                                  General Comments (Catatan Umum - Lanjutan)
-                                </h3>
-                                <div className="bg-white border border-gray-200 p-5 rounded-2xl text-[11px] text-gray-900 font-serif leading-[1.5] h-auto">
-                                  {overflowCommentParagraphs.map((para, i) => (
-                                    <p key={i} className="mb-2.5 last:mb-0 text-left">
-                                      {para}
-                                    </p>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Section: Catatan Ketidakhadiran */}
-                            {attendancePage === 3 && renderAttendanceSection()}
-
-                            {/* Signatures Area */}
-                            {signaturesPage === 3 && renderSignaturesSection()}
-                          </div>
-
-                          {/* Footer */}
-                          <div className="flex justify-between items-center text-[8px] text-gray-400 font-sans mt-auto pt-2 border-t border-gray-100">
-                            <span>Lazuardi GCS Kindergarten</span>
-                            <span>Halaman 3 dari 3</span>
-                          </div>
-                        </div>
-                      )}
                   </div>
                 ) : (
                   <div className="bg-white p-12 border border-gray-150 rounded-3xl shadow-sm text-center">
@@ -5525,32 +5346,6 @@ Draft untuk rentang sebelumnya tidak akan dihapus.`
         )}
 
       </AnimatePresence>
-
-      {/* Offscreen Measurement Box for Kindergarten Midterm Pagination */}
-      <div
-        id="preview-kindy-measure-box"
-        style={{
-          position: 'absolute',
-          top: '-9999px',
-          left: '-9999px',
-          width: '794px',
-          visibility: 'hidden',
-          pointerEvents: 'none'
-        }}
-      >
-        <div id="measure-comments-section">
-          <div id="measure-comments-container">
-            {renderFormattedParagraphs(getGeneralCommentText())}
-          </div>
-        </div>
-        <div id="measure-attendance-section">
-          {renderAttendanceSection()}
-        </div>
-        <div id="measure-signatures-section">
-          {renderSignaturesSection()}
-        </div>
-        <div id="measure-footer" className="h-[21px]" />
-      </div>
 
     </div>
   );
