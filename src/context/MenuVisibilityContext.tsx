@@ -17,16 +17,16 @@ export interface MenuVisibilityConfig {
 
 const INITIAL_SETTINGS: MenuVisibilityConfig = {
   ELEMENTARY: {
-    learningGoals: false,
-    lxd: false,
+    learningGoals: true,
+    lxd: true,
     gradebook: true,
     reportCards: true,
   },
   JUNIOR_HIGH: {
-    learningGoals: false,
-    lxd: false,
-    gradebook: false,
-    reportCards: false,
+    learningGoals: true,
+    lxd: true,
+    gradebook: true,
+    reportCards: true,
   },
   KINDERGARTEN: {
     learningGoals: true,

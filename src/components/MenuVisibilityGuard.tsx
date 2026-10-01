@@ -22,7 +22,10 @@ export function MenuVisibilityGuard({ menuKey, children }: MenuVisibilityGuardPr
     );
   }
 
-  const activeUnit = localStorage.getItem('lumina_active_unit') || profile?.unitId || 'JUNIOR_HIGH';
+  const isStudent = profile?.role === 'STUDENT';
+  const activeUnit = isStudent
+    ? (profile?.unitId || 'ELEMENTARY')
+    : (localStorage.getItem('lumina_active_unit') || profile?.unitId || 'JUNIOR_HIGH');
   const isVisible = isMenuVisible(activeUnit, menuKey);
 
   if (!isVisible) {

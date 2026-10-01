@@ -53,98 +53,132 @@ export default function StudentReports() {
     const fetchReports = async () => {
       setLoading(true);
       try {
-        const student = await getStudentById(currentUser.luminaId || '');
+        const searchId = currentUser?.luminaId || (currentUser as any)?.studentId || currentUser?.uid || '';
+        let student = await getStudentById(searchId);
+
+        if (!student && currentUser) {
+          student = {
+            id: currentUser.luminaId || currentUser.uid,
+            luminaId: currentUser.luminaId || currentUser.uid,
+            name: currentUser.displayName || currentUser.email || 'Ananda',
+            email: currentUser.email || '',
+            unitId: currentUser.unitId || 'ELEMENTARY',
+            academicYear: activeYear || '2025/2026',
+            classId: (currentUser as any).classId || 'TBD',
+            status: 'active'
+          } as Student;
+        }
         setStudentData(student);
 
-        if (student) {
-          if (student.unitId === 'KINDERGARTEN') {
-            const studentIdClean = (student.id || (student as any).luminaId || currentUser.luminaId || '').trim();
-            
-            // 1. Weekly Reports (existing logic unchanged)
-            const qWeekly = query(
-              collection(db, 'published_kg_reports'),
-              where('studentId', '==', studentIdClean),
-              where('academicYear', '==', activeYear),
-              where('status', '==', 'sent')
-            );
-            const snapWeekly = await getDocs(qWeekly);
-            const listWeekly = snapWeekly.docs.map(docSnap => ({
-              id: docSnap.id,
-              ...docSnap.data()
-            } as any));
-            setKgReports(listWeekly.sort((a: any, b: any) => (b.publishedAt || 0) - (a.publishedAt || 0)));
+        const candidateIds = new Set<string>();
+        if (student?.id) candidateIds.add(String(student.id).trim());
+        if (student?.luminaId) candidateIds.add(String(student.luminaId).trim());
+        if ((student as any)?.docId) candidateIds.add(String((student as any).docId).trim());
+        if (currentUser?.luminaId) candidateIds.add(String(currentUser.luminaId).trim());
+        if (currentUser?.uid) candidateIds.add(String(currentUser.uid).trim());
+        if ((currentUser as any)?.studentId) candidateIds.add(String((currentUser as any).studentId).trim());
 
-            // 2. Midterm Reports Tracking
-            const qMidterm = query(
-              collection(db, 'kg_midterm_delivery_tracking'),
-              where('studentId', '==', studentIdClean),
-              where('activeForStudent', '==', true)
-            );
-            const snapMidterm = await getDocs(qMidterm);
-            const listMidterm: any[] = [];
-            snapMidterm.docs.forEach(docSnap => {
-              const data = docSnap.data();
-              if (data.deliveryStatus === 'SENT' || data.deliveryStatus === 'VIEWED') {
-                listMidterm.push({
-                  id: docSnap.id,
-                  ...data
+        const effectiveUnit = student?.unitId || currentUser?.unitId || 'ELEMENTARY';
+
+        if (effectiveUnit === 'KINDERGARTEN') {
+          const studentIdClean = (student?.id || student?.luminaId || currentUser?.luminaId || '').trim();
+          
+          // 1. Weekly Reports (existing logic unchanged)
+          const qWeekly = query(
+            collection(db, 'published_kg_reports'),
+            where('studentId', '==', studentIdClean),
+            where('academicYear', '==', activeYear),
+            where('status', '==', 'sent')
+          );
+          const snapWeekly = await getDocs(qWeekly);
+          const listWeekly = snapWeekly.docs.map(docSnap => ({
+            id: docSnap.id,
+            ...docSnap.data()
+          } as any));
+          setKgReports(listWeekly.sort((a: any, b: any) => (b.publishedAt || 0) - (a.publishedAt || 0)));
+
+          // 2. Midterm Reports Tracking
+          const qMidterm = query(
+            collection(db, 'kg_midterm_delivery_tracking'),
+            where('studentId', '==', studentIdClean),
+            where('activeForStudent', '==', true)
+          );
+          const snapMidterm = await getDocs(qMidterm);
+          const listMidterm: any[] = [];
+          snapMidterm.docs.forEach(docSnap => {
+            const data = docSnap.data();
+            if (data.deliveryStatus === 'SENT' || data.deliveryStatus === 'VIEWED') {
+              listMidterm.push({
+                id: docSnap.id,
+                ...data
+              });
+            }
+          });
+          setKgMidtermReports(listMidterm.sort((a: any, b: any) => (b.sentAt || b.updatedAt || 0) - (a.sentAt || a.updatedAt || 0)));
+        } else {
+          const allReports = await getReportCards({
+             unitId: effectiveUnit as any,
+             academicYear: activeYear || '2025/2026',
+             status: 'PUBLISHED'
+          });
+          
+          // Filter reports where student is included
+          const studentReports = allReports.filter(rc => 
+            rc.studentReports.some(sr => candidateIds.has(sr.studentId))
+          );
+          
+          setReports(studentReports.sort((a, b) => b.createdAt - a.createdAt));
+
+          // Fetch Elementary Midterm Delivery Tracking if unit is ELEMENTARY
+          if (effectiveUnit === 'ELEMENTARY') {
+            const listElemMidterm: any[] = [];
+            for (const stId of Array.from(candidateIds)) {
+              if (!stId) continue;
+              try {
+                const qElemMidterm = query(
+                  collection(db, 'elem_midterm_delivery_tracking'),
+                  where('studentId', '==', stId),
+                  where('activeForStudent', '==', true)
+                );
+                const snapElemMidterm = await getDocs(qElemMidterm);
+                snapElemMidterm.docs.forEach(docSnap => {
+                  const data = docSnap.data();
+                  if (
+                    data.activeForStudent === true &&
+                    (data.deliveryStatus === 'SENT' || data.deliveryStatus === 'VIEWED')
+                  ) {
+                    if (!listElemMidterm.some(item => item.id === docSnap.id)) {
+                      listElemMidterm.push({
+                        id: docSnap.id,
+                        ...data
+                      });
+                    }
+                  }
                 });
+              } catch (err) {
+                console.error("[StudentReports] Error querying elem_midterm_delivery_tracking:", err);
               }
-            });
-            setKgMidtermReports(listMidterm.sort((a: any, b: any) => (b.sentAt || b.updatedAt || 0) - (a.sentAt || a.updatedAt || 0)));
-          } else {
-            const allReports = await getReportCards({
-               unitId: student.unitId as any,
-               academicYear: activeYear || '2025/2026',
-               status: 'PUBLISHED'
-            });
-            
-            // Filter reports where student is included
-            const studentReports = allReports.filter(rc => 
-              rc.studentReports.some(sr => sr.studentId === student.id)
+            }
+            setElemMidtermReports(listElemMidterm.sort((a: any, b: any) => (b.sentAt || b.updatedAt || 0) - (a.sentAt || a.updatedAt || 0)));
+          }
+
+          // Fetch manual junior high PDF links if unit is JUNIOR_HIGH
+          if (effectiveUnit === 'JUNIOR_HIGH') {
+            const primaryId = student?.id || currentUser?.luminaId || currentUser?.uid || '';
+            const qJh = query(
+              collection(db, 'manual_junior_high_report_links'),
+              where('studentId', '==', primaryId),
+              where('status', '==', 'PUBLISHED')
             );
-            
-            setReports(studentReports.sort((a, b) => b.createdAt - a.createdAt));
-
-            // Fetch Elementary Midterm Delivery Tracking if unit is ELEMENTARY
-            if (student.unitId === 'ELEMENTARY') {
-              const studentIdClean = (student.id || (student as any).luminaId || currentUser.luminaId || '').trim();
-              const qElemMidterm = query(
-                collection(db, 'elem_midterm_delivery_tracking'),
-                where('studentId', '==', studentIdClean),
-                where('activeForStudent', '==', true)
-              );
-              const snapElemMidterm = await getDocs(qElemMidterm);
-              const listElemMidterm: any[] = [];
-              snapElemMidterm.docs.forEach(docSnap => {
-                const data = docSnap.data();
-                if (data.deliveryStatus === 'SENT' || data.deliveryStatus === 'VIEWED') {
-                  listElemMidterm.push({
-                    id: docSnap.id,
-                    ...data
-                  });
-                }
-              });
-              setElemMidtermReports(listElemMidterm.sort((a: any, b: any) => (b.sentAt || b.updatedAt || 0) - (a.sentAt || a.updatedAt || 0)));
-            }
-
-            // Fetch manual junior high PDF links if unit is JUNIOR_HIGH
-            if (student.unitId === 'JUNIOR_HIGH') {
-              const qJh = query(
-                collection(db, 'manual_junior_high_report_links'),
-                where('studentId', '==', student.id),
-                where('status', '==', 'PUBLISHED')
-              );
-              unsubscribeJh = onSnapshot(qJh, (snapshot) => {
-                const jhLinks = snapshot.docs.map(docSnap => ({
-                  id: docSnap.id,
-                  ...docSnap.data()
-                } as any));
-                setJhManualLinks(jhLinks);
-              }, (err) => {
-                console.error("onSnapshot error in StudentReports:", err);
-              });
-            }
+            unsubscribeJh = onSnapshot(qJh, (snapshot) => {
+              const jhLinks = snapshot.docs.map(docSnap => ({
+                id: docSnap.id,
+                ...docSnap.data()
+              } as any));
+              setJhManualLinks(jhLinks);
+            }, (err) => {
+              console.error("onSnapshot error in StudentReports:", err);
+            });
           }
         }
       } catch (err) {
@@ -430,7 +464,7 @@ export default function StudentReports() {
     );
   }
 
-  if (studentData?.unitId === 'ELEMENTARY') {
+  if (studentData?.unitId === 'ELEMENTARY' || currentUser?.unitId === 'ELEMENTARY') {
     return (
       <div className="max-w-5xl mx-auto space-y-10 pb-20 animate-in fade-in duration-700">
         <div className="space-y-4">

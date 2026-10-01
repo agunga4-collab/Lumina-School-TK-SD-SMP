@@ -244,9 +244,11 @@ service cloud.firestore {
     }
 
     function isOwnStudentData(studentId) {
-      return isStudent() && studentId is string && currentUserExists() &&
-        ('luminaId' in currentUser()) &&
-        currentUser().luminaId == studentId;
+      return isStudent() && studentId is string && currentUserExists() && (
+        (request.auth.uid == studentId) ||
+        ('luminaId' in currentUser() && currentUser().luminaId == studentId) ||
+        ('studentId' in currentUser() && currentUser().studentId == studentId)
+      );
     }
 
     function isTeacherAssignedToClass(classId) {
